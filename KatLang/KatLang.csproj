@@ -3,10 +3,10 @@
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <Description>.net library of KatLang scanner and parser.</Description>
+    <Description>.net library of KatLang scanner and parser. KatLang is a programming language for calculations.</Description>
     <Copyright>KatLang Contributors</Copyright>
     <PackageProjectUrl>http://katlang.org</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/rabarbers/katlang</RepositoryUrl>
+    <RepositoryUrl>https://github.com/katlangorg/katlangnet</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 	<title>KatLang parser</title>
 	<Authors>KatLang Contributors</Authors>
@@ -16,7 +16,8 @@
     <AssemblyVersion>0.6.0.0</AssemblyVersion>
     <FileVersion>0.6.0.0</FileVersion>
     <Version>0.6.0</Version>
-    <PackageReleaseNotes>Initial version</PackageReleaseNotes>
+    <PackageReleaseNotes>Language for calculations</PackageReleaseNotes>
+    <PackageTags>katlang; calculation;</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
