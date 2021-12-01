@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31912.275
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "KatLangTests", "KatLangTests\KatLangTests.csproj", "{80EDA226-5A35-420D-82F4-0756D7076A04}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "KatLang", "KatLang\KatLang.csproj", "{FF02682E-956C-461D-B367-17CAE197DF18}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DemoApp", "DemoApp\DemoApp.csproj", "{FC0C8274-D10E-4245-8F9B-10927199FEE4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{80EDA226-5A35-420D-82F4-0756D7076A04}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{80EDA226-5A35-420D-82F4-0756D7076A04}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{80EDA226-5A35-420D-82F4-0756D7076A04}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{80EDA226-5A35-420D-82F4-0756D7076A04}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FF02682E-956C-461D-B367-17CAE197DF18}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FF02682E-956C-461D-B367-17CAE197DF18}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FF02682E-956C-461D-B367-17CAE197DF18}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FF02682E-956C-461D-B367-17CAE197DF18}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC0C8274-D10E-4245-8F9B-10927199FEE4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC0C8274-D10E-4245-8F9B-10927199FEE4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC0C8274-D10E-4245-8F9B-10927199FEE4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC0C8274-D10E-4245-8F9B-10927199FEE4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {75C6B390-4238-4A06-93A8-168BC2EECB3E}
+	EndGlobalSection
+EndGlobal
