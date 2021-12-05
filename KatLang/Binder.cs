@@ -11,9 +11,9 @@ namespace KatLang
         private Environment? _environment;
         private readonly ParameterDetector _detector;
         private readonly ExpressionCloneMaker _cloneMaker;
-        private readonly Func<string, string> downloadKatLangCode;
+        private readonly Func<string, string>? downloadKatLangCode;
 
-        public Binder(Func<string, string> katLangCodeDownloadFunc)
+        public Binder(Func<string, string>? katLangCodeDownloadFunc = null)
         {
             _detector = new ParameterDetector(algorithmName => _environment?.GetAlgorithm(algorithmName) != default);
             _cloneMaker = new ExpressionCloneMaker();
@@ -632,7 +632,7 @@ namespace KatLang
 
             if(expression.Identity.Name == Language.Load)
             {
-                if (expression.Input?.Expressions.Count == 1 && expression.Input.Expressions[0] is StringExpression addressExpression)
+                if (downloadKatLangCode != default && expression.Input?.Expressions.Count == 1 && expression.Input.Expressions[0] is StringExpression addressExpression)
                 {
                     string code;
                     try
@@ -650,6 +650,10 @@ namespace KatLang
                         throw new KatLangRuntimeException($"Invalid KatLang code at: '{addressExpression.Value}'", expression);
                     }
                     return VisitExpression(result.Expression);
+                }
+                if(downloadKatLangCode == default)
+                {
+                    throw new KatLangRuntimeException("Code loading not supported in this environment.", expression);
                 }
                 throw new KatLangRuntimeException("Algorithm loading expects one parameter - URL of the KatLang code", expression);
             }
@@ -682,7 +686,7 @@ namespace KatLang
             {
                 if (expression.Input?.Expressions.Count == 1)
                 {
-                    if (expression.Input.Expressions[0] is StringExpression addressExpression)
+                    if (downloadKatLangCode != default && expression.Input.Expressions[0] is StringExpression addressExpression)
                     {
                         string code;
                         try
@@ -702,6 +706,13 @@ namespace KatLang
                         var algorithm = VisitExpression(result.Expression) as AlgorithmExpression;
                         _environment?.JoinAlgorithm(algorithm?.Properties);
                         return default;
+                    }
+                    else
+                    {
+                        if (downloadKatLangCode == default)
+                        {
+                            throw new KatLangRuntimeException("Code loading not supported in this environment.", expression);
+                        }
                     }
                     if (expression.Input.Expressions[0] is ParameterExpression parameter)
                     {

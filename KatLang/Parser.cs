@@ -26,7 +26,7 @@ namespace KatLang
                     var tokens = StringScanner.Scan(source, interruptionPosition, newLines);
                     var abstractSyntaxTree = Parse(tokens, isPanicMode);
                     completed = true; //if parsing did not caused error, then all the tokens have been read
-                    var binder = new Binder(katLangCodeDownloadFunc ?? DownloadCode);
+                    var binder = new Binder(katLangCodeDownloadFunc);
                     result = binder.Bind(abstractSyntaxTree);
                 }
                 catch (KatLangException e)
@@ -50,7 +50,7 @@ namespace KatLang
             return new ParsingResult(result, errors);
         }
 
-        private static string DownloadCode(string url)
+        public static string DownloadCode(string url)
         {
             if (_httpClient == default)
             {

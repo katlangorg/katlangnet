@@ -1363,13 +1363,13 @@ namespace KatLangTests
         }
 
         [TestMethod]
-        public void OpenAlgorithmFromWeb()
+        public void LoadAlgorithmFromWeb()
         {
             var source = @"
                 A=load('https://kat.blob.core.windows.net/examples/algorithm.kat')
                 A.X+5";
 
-            var result = Parser.Parse(source);
+            var result = Parser.Parse(source, Parser.DownloadCode);
 
             Assert.AreEqual(0, result.Errors.Count);
             Assert.AreEqual("25", result.Expression.ToString());
@@ -1394,7 +1394,7 @@ namespace KatLangTests
                 join('https://kat.blob.core.windows.net/examples/algorithm.kat')
                 X+5";
 
-            var result = Parser.Parse(source);
+            var result = Parser.Parse(source, Parser.DownloadCode);
 
             Assert.AreEqual(0, result.Errors.Count);
             Assert.AreEqual("25", result.Expression.ToString());
@@ -1408,7 +1408,7 @@ namespace KatLangTests
                 join(A)
                 X+5";
 
-            var result = Parser.Parse(source);
+            var result = Parser.Parse(source, Parser.DownloadCode);
 
             Assert.AreEqual(0, result.Errors.Count);
             Assert.AreEqual("25", result.Expression.ToString());
