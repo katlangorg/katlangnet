@@ -1,0 +1,11 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "dotnet test": true,
+        "dotnet build": true,
+        "dotnet run": true,
+        "/^cd d:\\\\Projects\\\\katlangorg_dotnet; \\$code = @\"\nusing KatLang;\nvar source = @\"\"NetSalary = \\{\n  SocialSecurityTax = grossSalary \\* 0\\.105\n  NonTaxableMinimum  = grossSalary-SocialSecurityTax-75\n  ChildTaxCredit = numberOfChildren \\* 162\n  TaxableIncome = NonTaxableMinimum - ChildTaxCredit\n  IncomeTax = TaxableIncome \\* 0\\.24\n  Output = grossSalary - SocialSecurityTax - IncomeTax\n\\}\nNetSalary\\.IncomeTax\\(1000, 2\\)\"\";\n\nvar ast = Parser\\.Parse\\(source\\)\\.Root;\nConsole\\.WriteLine\\(\"\"=== AST ===\"\"\"\\);\n// Print params\nConsole\\.WriteLine\\(\\$\"\"Root params: \\[\\{string\\.Join\\(\"\", \"\", ast\\.Params\\)\\}\\]\"\"\\);\nforeach \\(var prop in ast\\.Properties\\)\n\\{\n    Console\\.WriteLine\\(\\$\"\"  \\{prop\\.Name\\} params: \\[\\{string\\.Join\\(\"\", \"\", prop\\.Value\\.Params\\)\\}\\]\"\"\\);\n    foreach \\(var p2 in prop\\.Value\\.Properties\\)\n        Console\\.WriteLine\\(\\$\"\"    \\{p2\\.Name\\} params: \\[\\{string\\.Join\\(\"\", \"\", p2\\.Value\\.Params\\)\\}\\]\"\"\\);\n\\}\n\nConsole\\.WriteLine\\(\\);\nConsole\\.WriteLine\\(\"\"=== Evaluation ===\"\"\"\\);\nvar evalResult = Evaluator\\.Run\\(new Expr\\.Block\\(ast\\)\\);\nif \\(evalResult\\.IsOk\\)\n\\{\n    var atoms = evalResult\\.Value\\.ToAtoms\\(\\);\n    Console\\.WriteLine\\(\\$\"\"Result: \\[\\{string\\.Join\\(\"\", \"\", atoms\\)\\}\\]\"\"\\);\n\\}\nelse\n\\{\n    Console\\.WriteLine\\(\\$\"\"Error: \\{evalResult\\.Error\\}\"\"\\);\n\\}\n\"@; \\$code \\| Set-Content -Path \"src/DemoApp/TestNetSalary\\.cs\" -Encoding UTF8$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

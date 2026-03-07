@@ -1,0 +1,62 @@
+Program         = Algorithm ;
+
+Algorithm       = { AlgorithmItem } ;
+AlgorithmItem   = OpenDeclaration | PropertyDefinition | OutputLine ;
+
+OpenDeclaration = "open" "=" OpenList ;
+OpenList        = OpenCombine { "," OpenCombine } ;
+OpenCombine     = OpenAtom { ";" OpenAtom } ;
+OpenAtom        = OpenPath | BraceAlgorithmExpr | LoadExpr ;
+OpenPath        = Identifier { "." Identifier } ;
+LoadExpr        = "load" "(" StringLiteral ")" ;
+
+PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
+PropertyBody       = OutputBundle ;
+
+OutputLine      = OutputBundle ;
+OutputBundle    = OutputList ;
+OutputList      = CombineItem { "," CombineItem } ;
+CombineItem     = Expression { ";" Expression } ;
+
+Expression      = OrExpr ;
+OrExpr          = XorExpr { "or" XorExpr } ;
+XorExpr         = AndExpr { "xor" AndExpr } ;
+AndExpr         = EqualityExpr { "and" EqualityExpr } ;
+EqualityExpr    = ComparisonExpr { ( "==" | "!=" ) ComparisonExpr } ;
+ComparisonExpr  = AdditiveExpr { ( "<" | ">" | "<=" | ">=" ) AdditiveExpr } ;
+AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
+MultiplicativeExpr
+              = PowerExpr { ( "*" | "/" | "div" | "mod" ) PowerExpr } ;
+PowerExpr       = UnaryExpr [ "^" PowerExpr ] ;
+
+UnaryExpr       = "-" UnaryExpr
+                | "not" UnaryExpr
+                | PostfixExpr ;
+
+PostfixExpr     = Primary { PostfixOp } ;
+PostfixOp       = ":" Expression
+                | "." Identifier [ CallArgs ]
+                | CallArgs ;
+
+CallArgs        = BraceArgs | ParenArgs | DoubleParenArgs ;
+BraceArgs       = "{" Algorithm "}" ;
+ParenArgs       = "(" OutputBundle ")" ;
+DoubleParenArgs = "((" OutputBundle "))" ;
+
+Primary         = NumberLiteral
+                | StringLiteral
+                | GraceIdentifier
+                | SelfExpr
+                | ParenBundleExpr
+                | BraceAlgorithmExpr ;
+
+GraceIdentifier = { "~" } Identifier { "~" } ;
+SelfExpr        = "self" ;
+ParenBundleExpr = "(" OutputBundle ")" ;
+BraceAlgorithmExpr = "{" Algorithm "}" ;
+
+NumberLiteral   = Number ;
+Number          = /\d+(\.\d+)?/ ;
+Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
+StringLiteral   = /'([^'\r\n])*'/ ;
+Comment         = /\/\/[^\r\n]*/ ;

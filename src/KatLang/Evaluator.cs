@@ -1,0 +1,1358 @@
+namespace KatLang;
+
+/// <summary>
+/// KatLang 0.73 evaluator matching the Lean specification.
+/// Uses <see cref="EvalResult{T}"/> (<c>EvalM := Except Error</c>) for structured errors
+/// instead of nullable returns.
+/// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
+/// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
+///
+/// Builtins (If, While, Repeat, Atoms) are injected via a prelude algorithm in the initial
+/// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
+/// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
+/// <c>Algorithm.User</c> → eager arg evaluation + <c>bindParams</c>.
+/// </summary>
+public static class Evaluator
+{
+    // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Evaluation context threaded through resolution and evaluation.
+    /// Wraps the algorithm chain (current algorithm + enclosing callers) used for
+    /// both lexical resolution and runtime dispatch.
+    /// Lean: structure EvalCtx where callStack : List Algorithm.
+    /// </summary>
+    private readonly record struct EvalCtx(IReadOnlyList<Algorithm> CallStack)
+    {
+        public static readonly EvalCtx Empty = new([]);
+
+        /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
+        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack));
+
+        /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
+        public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
+    }
+
+    // ── Environment types ────────────────────────────────────────────────────
+
+    /// <summary>Value environment: maps parameter names to results. Lean: lookupVal (Option).</summary>
+    private static Result? LookupVal(IReadOnlyList<(string Name, Result Value)> env, string name)
+    {
+        foreach (var (n, v) in env)
+            if (n == name) return v;
+        return null;
+    }
+
+    // ── Algorithm helpers ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Lean: Algorithm.withParent. No-op for Builtin variant.
+    /// </summary>
+    private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
+    {
+        Algorithm.Builtin => alg,
+        _ => alg with { Parent = parent },
+    };
+
+    private static ScopeCtx AsScopeCtx(Algorithm alg)
+        => new(alg.Parent, alg.Opens, alg.Properties);
+
+    /// <summary>Lean: Algorithm.childOf — wire a child algorithm to its parent's scope context.</summary>
+    private static Algorithm ChildOf(Algorithm parent, Algorithm child)
+        => WithParent(child, AsScopeCtx(parent));
+
+    /// <summary>
+    /// Create a temporary algorithm from a ScopeCtx for open resolution.
+    /// Lean: Algorithm.forOpens.
+    /// </summary>
+    private static Algorithm ForOpens(ScopeCtx sc)
+        => new Algorithm.User(
+            Parent: sc, Params: [], Opens: sc.Opens,
+            Properties: [], Output: []);
+
+    /// <summary>Lean: Algorithm.lookupProp (any visibility).</summary>
+    private static Algorithm? LookupProp(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+            if (prop.Name == name) return prop.Value;
+        return null;
+    }
+
+    /// <summary>Lean: Algorithm.lookupPublicProp (public only).</summary>
+    private static Algorithm? LookupPublicProp(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+            if (prop.Name == name && prop.IsPublic) return prop.Value;
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if a property exists (any visibility) in the algorithm.
+    /// Used to distinguish "missing" from "exists but private" in error reporting.
+    /// </summary>
+    private static bool HasPropAny(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+            if (prop.Name == name) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Human-readable constructor kind for diagnostics.
+    /// Lean: Expr.kind.
+    /// </summary>
+    private static string ExprKind(Expr e) => e switch
+    {
+        Expr.Param => "param",
+        Expr.NameLiteral => "nameLiteral",
+        Expr.Num => "num",
+        Expr.StringLiteral => "stringLiteral",
+        Expr.Unary => "unary",
+        Expr.Binary => "binary",
+        Expr.Index => "index",
+        Expr.Self => "self",
+        Expr.Combine => "combine",
+        Expr.Resolve => "resolve",
+        Expr.Prop => "prop",
+        Expr.Block => "block",
+        Expr.Call => "call",
+        Expr.DotCall => "dotCall",
+        Expr.Grace => "grace",
+        Expr.NativeCall => "nativeCall",
+        _ => "unknown",
+    };
+
+    /// <summary>
+    /// Predicate defining which expression forms are allowed in open position.
+    /// Only structural references to libraries are permitted.
+    /// Lean: Expr.isOpenForm.
+    /// </summary>
+    private static bool IsOpenForm(Expr e) => e is
+        Expr.Combine or Expr.Block or Expr.Resolve or Expr.Prop;
+
+    /// <summary>
+    /// Extract a descriptive name from an open expression for error messages.
+    /// Lean: openExprName.
+    /// </summary>
+    private static string OpenExprName(Expr e) => e switch
+    {
+        Expr.Resolve(var n) => n,
+        Expr.Prop(var o, var n) => OpenExprName(o) + "." + n,
+        Expr.DotCall(var o, var n, _) => OpenExprName(o) + "." + n,
+        Expr.Block => "(inline library)",
+        Expr.Combine(var a, var b) => OpenExprName(a) + " + " + OpenExprName(b),
+        Expr.NameLiteral(var s) => $"'{s}",
+        _ => $"({ExprKind(e)})",
+    };
+
+    // ── Context string helpers (Lean: CtxMsg.open, CtxMsg.call, CtxMsg.prop) ─
+
+    private static string CtxOpen(string key) => $"while resolving open: {key}";
+    private static string CtxCall(Expr f) => $"while evaluating call to {OpenExprName(f)}";
+    private static string CtxProp(Expr obj, string name) => $"while evaluating property .{name} of {OpenExprName(obj)}";
+    private static string CtxDotCall(Expr obj, string name) => $"while evaluating dotCall .{name} of {OpenExprName(obj)}";
+
+    // ── Error context helper ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Attach context to any error raised by the given result.
+    /// Lean: withCtx.
+    /// </summary>
+    private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result) =>
+        result.IsError
+            ? new EvalError.WithContext(context, result.Error)
+            : result;
+
+    private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
+        result.IsError && result.Error.Span is null
+            ? (result.Error with { Span = span })
+            : result;
+
+    // ── Lexical lookup (direct — no opens, used for open resolution) ────────
+
+    /// <summary>Lean: lookupInParentsDirect (Option).</summary>
+    private static Algorithm? LookupInParentsDirect(ScopeCtx sc, string name)
+    {
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name)
+                return WithParent(prop.Value, sc);
+        }
+
+        return sc.Parent is { } parent ? LookupInParentsDirect(parent, name) : null;
+    }
+
+    /// <summary>
+    /// Direct lexical lookup: local properties + parent chain only (no opens).
+    /// Lean: lookupLexicalDirect (Option).
+    /// </summary>
+    private static Algorithm? LookupLexicalDirect(Algorithm alg, string name)
+    {
+        var local = LookupProp(alg, name);
+        if (local is not null)
+            return ChildOf(alg, local);
+
+        return alg.Parent is { } sc ? LookupInParentsDirect(sc, name) : null;
+    }
+
+    /// <summary>
+    /// Unwired parent-chain lookup: returns algorithm as stored at its definition site,
+    /// without rewiring parent. Used by open resolution to enforce isolation.
+    /// Lean: lookupInParentsDirectUnwired.
+    /// </summary>
+    private static Algorithm? LookupInParentsDirectUnwired(ScopeCtx sc, string name)
+    {
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name)
+                return prop.Value; // no wiring
+        }
+        return sc.Parent is { } parent ? LookupInParentsDirectUnwired(parent, name) : null;
+    }
+
+    /// <summary>
+    /// Unwired direct lexical lookup: same search path as LookupLexicalDirect
+    /// but returns algorithms without rewiring to the caller.
+    /// Lean: lookupLexicalDirectUnwired.
+    /// </summary>
+    private static Algorithm? LookupLexicalDirectUnwired(Algorithm alg, string name)
+    {
+        var local = LookupProp(alg, name);
+        if (local is not null)
+            return local; // no wiring
+        return alg.Parent is { } sc ? LookupInParentsDirectUnwired(sc, name) : null;
+    }
+
+    /// <summary>
+    /// Public-only unwired parent-chain lookup: returns public properties only, unwired.
+    /// Lean: lookupInParentsDirectUnwiredPublic.
+    /// </summary>
+    private static Algorithm? LookupInParentsDirectUnwiredPublic(ScopeCtx sc, string name)
+    {
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name && prop.IsPublic)
+                return prop.Value; // no wiring, public only
+        }
+        return sc.Parent is { } parent ? LookupInParentsDirectUnwiredPublic(parent, name) : null;
+    }
+
+    /// <summary>
+    /// Public-only unwired direct lexical lookup: searches local then parent chain
+    /// for public properties only, returning algorithms unwired (definition-site parent preserved).
+    /// Lean: lookupLexicalDirectUnwiredPublic.
+    /// </summary>
+    private static Algorithm? LookupLexicalDirectUnwiredPublic(Algorithm alg, string name)
+    {
+        var local = LookupPublicProp(alg, name);
+        if (local is not null)
+            return local; // no wiring, public only
+        return alg.Parent is { } sc ? LookupInParentsDirectUnwiredPublic(sc, name) : null;
+    }
+
+    // ── Open resolution ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves an open expression to a library algorithm.
+    /// Lean: resolveOpen → EvalM Algorithm.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveOpen(Expr openExpr, EvalCtx ctx)
+        => ResolveAlgForOpen(openExpr, ctx);
+
+    /// <summary>
+    /// A resolved open: its canonical dedup key, original expression, and resolved algorithm.
+    /// Lean: ResolvedOpen (key, expr, lib).
+    /// </summary>
+    private readonly record struct ResolvedOpen(string Key, Expr Expr, Algorithm Lib);
+
+    /// <summary>
+    /// A single hit from open lookup: which provider supplied it, the library, and the child algorithm.
+    /// Lean: OpenHit (provider, lib, child).
+    /// </summary>
+    private readonly record struct OpenHit(string Provider, Algorithm Lib, Algorithm Child);
+
+    /// <summary>
+    /// Resolve all opens of an algorithm upfront.
+    /// Deduplicates named opens by <c>openExprName</c> (first occurrence wins) to avoid
+    /// repeated resolution and spurious ambiguity from duplicate opens.
+    /// Inline blocks are never deduplicated (each gets a unique positional key).
+    /// Validates all open expressions first for fail-fast diagnostics.
+    /// Lean: resolveAllOpens → EvalM (List ResolvedOpen).
+    /// </summary>
+    private static EvalResult<IReadOnlyList<ResolvedOpen>> ResolveAllOpens(
+        Algorithm alg, EvalCtx ctx)
+    {
+        if (alg.Opens.Count == 0)
+            return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok([]);
+
+        // Deduplicate by key (first occurrence wins); inline blocks use positional keys
+        var seen = new HashSet<string>();
+        var deduped = new List<(string Key, Expr Expr)>();
+        for (var i = 0; i < alg.Opens.Count; i++)
+        {
+            var openExpr = alg.Opens[i];
+            var key = openExpr is Expr.Block
+                ? $"(inline#{i})"  // unique per original position, never deduped
+                : OpenExprName(openExpr);
+            if (seen.Add(key))
+                deduped.Add((key, openExpr));
+        }
+
+        // Validate all open expressions first (fail-fast with clear errors)
+        foreach (var (key, openExpr) in deduped)
+        {
+            if (!IsOpenForm(openExpr))
+                return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {key}");
+        }
+
+        // Then resolve (each open wrapped with context using its dedup key)
+        var result = new List<ResolvedOpen>(deduped.Count);
+        foreach (var (key, openExpr) in deduped)
+        {
+            var libResult = WithCtx(
+                CtxOpen(key),
+                ResolveOpen(openExpr, ctx));
+            if (libResult.IsError) return libResult.Error;
+            result.Add(new ResolvedOpen(key, openExpr, libResult.Value));
+        }
+        return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok(result);
+    }
+
+    /// <summary>
+    /// Searches opened namespaces for a name using public-only property lookup.
+    /// Returns Ok(null) if no open provides the name publicly.
+    /// Returns Ok(alg) if exactly one open provides it publicly.
+    /// Returns Err(AmbiguousOpen) if multiple opens provide it publicly.
+    /// Lean: lookupOpens → EvalM (Option Algorithm).
+    /// </summary>
+    private static EvalResult<Algorithm?> LookupOpens(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        if (alg.Opens.Count == 0) return EvalResult<Algorithm?>.Ok(null);
+
+        var innerCtx = ctx.Push(alg);
+        var resolvedResult = ResolveAllOpens(alg, innerCtx);
+        if (resolvedResult.IsError) return resolvedResult.Error;
+
+        var hits = new List<OpenHit>();
+
+        // Public-only filtering: only public properties visible through opens
+        foreach (var ri in resolvedResult.Value)
+        {
+            var child = LookupPublicProp(ri.Lib, name);
+            if (child is not null)
+                hits.Add(new OpenHit(ri.Key, ri.Lib, child));
+        }
+
+        if (hits.Count == 0)
+            return EvalResult<Algorithm?>.Ok(null);
+        if (hits.Count == 1)
+            return EvalResult<Algorithm?>.Ok(ChildOf(hits[0].Lib, hits[0].Child));
+        return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
+    }
+
+    // ── Lexical resolution (ownership-first) ────────────────────────────────
+
+    /// <summary>
+    /// Open-based lookup in parent chain (helper for LookupOpensInChain).
+    /// Checks opens at each level of the parent chain as fallback.
+    /// Lean: lookupOpensInParentChain → EvalM (Option Algorithm).
+    /// </summary>
+    private static EvalResult<Algorithm?> LookupOpensInParentChain(
+        ScopeCtx sc, string name, EvalCtx ctx)
+    {
+        var tempAlg = ForOpens(sc);
+        var openResult = LookupOpens(tempAlg, name, ctx);
+        if (openResult.IsError) return openResult.Error;
+        if (openResult.Value is not null)
+            return EvalResult<Algorithm?>.Ok(openResult.Value);
+
+        return sc.Parent is { } parent
+            ? LookupOpensInParentChain(parent, name, ctx)
+            : EvalResult<Algorithm?>.Ok(null);
+    }
+
+    /// <summary>
+    /// Open-based lookup across the algorithm chain (current first, then parents).
+    /// Checks opens at each level of the parent chain as fallback.
+    /// Lean: lookupOpensInChain → EvalM (Option Algorithm).
+    /// </summary>
+    private static EvalResult<Algorithm?> LookupOpensInChain(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        // Try opens at current level
+        var openResult = LookupOpens(alg, name, ctx);
+        if (openResult.IsError) return openResult.Error;
+        if (openResult.Value is not null)
+            return EvalResult<Algorithm?>.Ok(openResult.Value);
+
+        // Try parent chain
+        return alg.Parent is { } sc
+            ? LookupOpensInParentChain(sc, name, ctx)
+            : EvalResult<Algorithm?>.Ok(null);
+    }
+
+    /// <summary>
+    /// Full lexical lookup with ownership-first model:
+    /// 1. Local properties (owned by this algorithm — any visibility)
+    /// 2. Parent chain structural properties (owned by ancestors — any visibility, no opens)
+    /// 3. Opens as fallback across the entire chain (public only)
+    /// Structural ownership always takes precedence over opens.
+    /// Lean: lookupLexical → EvalM Algorithm.
+    /// </summary>
+    private static EvalResult<Algorithm> LookupLexical(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        // 1. Local properties (any visibility)
+        var local = LookupProp(alg, name);
+        if (local is not null)
+            return EvalResult<Algorithm>.Ok(ChildOf(alg, local));
+
+        // 2. Parent chain structural only (any visibility, no opens)
+        if (alg.Parent is { } sc)
+        {
+            var structural = LookupInParentsDirect(sc, name);
+            if (structural is not null)
+                return EvalResult<Algorithm>.Ok(structural);
+        }
+
+        // 3. Opens fallback across the entire chain (public only)
+        var opensResult = LookupOpensInChain(alg, name, ctx);
+        if (opensResult.IsError) return opensResult.Error;
+        if (opensResult.Value is not null)
+            return EvalResult<Algorithm>.Ok(opensResult.Value);
+
+        return new EvalError.UnknownName(name);
+    }
+
+    // ── Wire parent ─────────────────────────────────────────────────────────
+
+    /// <summary>Lean: wireToCaller.</summary>
+    private static Algorithm WireToCaller(EvalCtx ctx, Algorithm alg)
+    {
+        if (ctx.CallStack.Count > 0)
+            return ChildOf(ctx.CallStack[0], alg);
+        return alg;
+    }
+
+    /// <summary>Coerce a Result to decimal, or raise BadArity. Lean: expectInt.</summary>
+    private static EvalResult<decimal> ExpectInt(Result r)
+    {
+        var v = r.AsNum();
+        return v is not null
+            ? EvalResult<decimal>.Ok(v.Value)
+            : new EvalError.BadArity();
+    }
+
+    /// <summary>
+    /// Split a step result into (state, continue-flag).
+    /// Convention: the last atom is the continue flag (nonzero = keep going).
+    /// Lean: splitCont.
+    /// </summary>
+    private static EvalResult<(Result Next, decimal Cont)> SplitCont(Result output)
+    {
+        switch (output)
+        {
+            case Result.Atom(var n):
+                return EvalResult<(Result, decimal)>.Ok((new Result.Atom(n), n));
+            case Result.Group(var items) when items.Count > 0:
+            {
+                var lastR = ExpectInt(items[^1]);
+                if (lastR.IsError) return lastR.Error;
+                var state = new Result.Group(items.Take(items.Count - 1).ToList()).Normalize();
+                return EvalResult<(Result, decimal)>.Ok((state, lastR.Value));
+            }
+            default:
+                return new EvalError.BadArity();
+        }
+    }
+
+    // ── Bind parameters ─────────────────────────────────────────────────────
+
+    /// <summary>Lean: bindParams → EvalM ValEnv. Errors with ArityMismatch.</summary>
+    private static EvalResult<IReadOnlyList<(string, Result)>> BindParams(
+        IReadOnlyList<string> paramNames,
+        IReadOnlyList<Result> values)
+    {
+        if (paramNames.Count != values.Count)
+            return new EvalError.ArityMismatch(paramNames.Count, values.Count);
+
+        var result = new List<(string, Result)>(paramNames.Count);
+        for (var i = 0; i < paramNames.Count; i++)
+            result.Add((paramNames[i], values[i]));
+        return EvalResult<IReadOnlyList<(string, Result)>>.Ok(result);
+    }
+
+    /// <summary>
+    /// Argument passing rule: a single atom is wrapped in a one-element list;
+    /// a group is unpacked into its elements. Lean: unpackArgs.
+    /// </summary>
+    private static IReadOnlyList<Result> UnpackArgs(Result r) => r switch
+    {
+        Result.Atom(var n) => [new Result.Atom(n)],
+        Result.Group(var items) => items,
+        _ => [],
+    };
+
+    // ── Combine algorithms ──────────────────────────────────────────────────
+
+    /// <summary>Lean: combineAlg. Merges params, opens, properties, output.</summary>
+    private static Algorithm CombineAlg(Algorithm a, Algorithm b)
+    {
+        return new Algorithm.User(
+            Parent: null, // wired later by ResolveAlg
+            Params: a.Params.Concat(b.Params).ToList(),
+            Opens: a.Opens.Concat(b.Opens).ToList(),
+            Properties: a.Properties.Concat(b.Properties).ToList(),
+            Output: [new Expr.Block(a), new Expr.Block(b)]);
+    }
+
+    /// <summary>
+    /// Lean: combineAlgOpensClosed. Like CombineAlg but with opens set to empty.
+    /// Enforces isolation: libraries cannot smuggle in transitive opens.
+    /// Used by ResolveAlgForOpen for open resolution.
+    /// </summary>
+    private static Algorithm CombineAlgOpensClosed(Algorithm a, Algorithm b)
+    {
+        return new Algorithm.User(
+            Parent: null,
+            Params: a.Params.Concat(b.Params).ToList(),
+            Opens: [],
+            Properties: a.Properties.Concat(b.Properties).ToList(),
+            Output: [new Expr.Block(a), new Expr.Block(b)]);
+    }
+
+    // ── Built-in prelude ────────────────────────────────────────────────────
+
+    private static Property MathConstant(string name, decimal value) =>
+        new(name, new Algorithm.User(Parent: null, Params: [], Opens: [],
+            Properties: [], Output: [new Expr.Num(value)]), IsPublic: true);
+
+    private static Property MathFn1(string name) =>
+        new(name, new Algorithm.User(Parent: null, Params: ["x"], Opens: [],
+            Properties: [], Output: [new Expr.NativeCall(name, ["x"])]), IsPublic: true);
+
+    private static Property MathFn2(string name) =>
+        new(name, new Algorithm.User(Parent: null, Params: ["x", "y"], Opens: [],
+            Properties: [], Output: [new Expr.NativeCall(name, ["x", "y"])]), IsPublic: true);
+
+    private static readonly Algorithm MathAlgorithm = new Algorithm.User(
+        Parent: null,
+        Params: [],
+        Opens: [],
+        Properties:
+        [
+            MathConstant("Pi", (decimal)Math.PI),
+            MathConstant("E", (decimal)Math.E),
+            MathFn1("Abs"),
+            MathFn1("Ceil"),
+            MathFn1("Floor"),
+            MathFn1("Round"),
+            MathFn1("Sign"),
+            MathFn1("Sqrt"),
+            MathFn1("Ln"),
+            MathFn1("Lg"),
+            MathFn1("Sin"),
+            MathFn1("Asin"),
+            MathFn1("Cos"),
+            MathFn1("Acos"),
+            MathFn1("Tan"),
+            MathFn1("Atan"),
+            MathFn2("Pow"),
+            MathFn2("Log"),
+        ],
+        Output: []);
+
+    /// <summary>
+    /// Prelude algorithm providing builtin operations in scope by default.
+    /// Lean: preludeAlg. Builtins are injected into the initial call stack.
+    /// All builtins and Math are public for use in opened contexts.
+    /// </summary>
+    private static readonly Algorithm PreludeAlg = new Algorithm.User(
+        Parent: null,
+        Params: [],
+        Opens: [],
+        Properties:
+        [
+            new("if",     new Algorithm.Builtin(BuiltinId.@if),     IsPublic: true),
+            new("while",  new Algorithm.Builtin(BuiltinId.@while),  IsPublic: true),
+            new("repeat", new Algorithm.Builtin(BuiltinId.@repeat), IsPublic: true),
+            new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
+            new("Math",   MathAlgorithm,                           IsPublic: true),
+        ],
+        Output: []);
+
+    /// <summary>Lean: builtinArity.</summary>
+    private static int BuiltinArity(BuiltinId b) => b switch
+    {
+        BuiltinId.@if => 3,
+        BuiltinId.@while => 2,
+        BuiltinId.@repeat => 3,
+        BuiltinId.@atoms => 1,
+        _ => 0,
+    };
+
+    // ── Intrinsics ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Lean: isIntrinsic. Predicate for intrinsic (non-builtin) property names.
+    /// These are handled specially in resolveAlg / evalProp / evalDotCall.
+    /// </summary>
+    private static bool IsIntrinsic(string name) => name == "length";
+
+    /// <summary>
+    /// Lean: evalIntrinsic?. Evaluate an intrinsic property on a resolved algorithm.
+    /// Returns a result if name is a recognized intrinsic, null otherwise.
+    /// Single source of truth for intrinsic semantics.
+    /// </summary>
+    private static EvalResult<Result>? EvalIntrinsic(Algorithm targetAlg, string name)
+    {
+        if (name == "length")
+            return EvalResult<Result>.Ok(new Result.Atom(targetAlg.Output.Count));
+        return null;
+    }
+
+    // ── Open resolution ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Algorithm resolution using only direct lexical lookup (no opens).
+    /// Used for resolving open expressions to avoid circularity.
+    /// Does NOT wire to parent — opens are isolated modules.
+    /// Only <c>Expr.openForm?</c> forms are permitted
+    /// (structural references to libraries only).
+    /// Builtins are rejected: they are not valid open targets.
+    /// Public-path policy: property access in open paths requires all
+    /// intermediate properties to be public.
+    /// Lean: resolveAlgForOpen → EvalM Algorithm.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveAlgForOpen(Expr expr, EvalCtx ctx)
+    {
+        switch (expr)
+        {
+            case Expr.Combine(var e1, var e2):
+            {
+                var aResult = ResolveAlgForOpen(e1, ctx);
+                if (aResult.IsError) return aResult.Error;
+                var bResult = ResolveAlgForOpen(e2, ctx);
+                if (bResult.IsError) return bResult.Error;
+                return EvalResult<Algorithm>.Ok(CombineAlgOpensClosed(aResult.Value, bResult.Value));
+            }
+
+            case Expr.Block(var alg):
+                return EvalResult<Algorithm>.Ok(alg); // no wiring for opens
+
+            case Expr.Resolve(var name):
+            {
+                // Lean: lookupLexicalDirectUnwiredPublic — public-only lookup for open targets.
+                // Then fallback to unfiltered lookup to distinguish private vs missing.
+                if (ctx.CallStack.Count > 0)
+                {
+                    var found = LookupLexicalDirectUnwiredPublic(ctx.CallStack[0], name);
+                    if (found is not null)
+                        return found is Algorithm.Builtin
+                            ? new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span }
+                            : EvalResult<Algorithm>.Ok(found); // unwired: preserves definition-site parent chain
+
+                    // Distinguish private vs missing
+                    var unfilteredFound = LookupLexicalDirectUnwired(ctx.CallStack[0], name);
+                    if (unfilteredFound is not null)
+                        return new EvalError.NotPublicProperty("(lexical)", name) { Span = expr.Span };
+                }
+                return new EvalError.UnknownName(name) { Span = expr.Span };
+            }
+
+            case Expr.Prop(var target, var propName):
+                return WithSpan(expr.Span, ResolveOpenPropAccess(target, propName, ctx));
+
+            default:
+                // Not an open form — reject with informative error
+                return new EvalError.BadOpenForm($"{ExprKind(expr)}: {OpenExprName(expr)}") { Span = expr.Span };
+        }
+    }
+
+    /// <summary>
+    /// Shared logic for resolving property access in open expressions.
+    /// Used by Expr.Prop in ResolveAlgForOpen.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveOpenPropAccess(
+        Expr target, string propName, EvalCtx ctx)
+    {
+        var targetResult = ResolveAlgForOpen(target, ctx);
+        if (targetResult.IsError) return targetResult.Error;
+
+        // First check if property exists at all (any visibility)
+        var prop = LookupProp(targetResult.Value, propName);
+        if (prop is not null)
+        {
+            if (prop is Algorithm.Builtin)
+                return new EvalError.IllegalInOpen(
+                    $"builtin not allowed in open: {OpenExprName(target)}.{propName}");
+
+            // Property exists; check if it's public
+            var publicProp = LookupPublicProp(targetResult.Value, propName);
+            if (publicProp is not null)
+                return EvalResult<Algorithm>.Ok(publicProp); // no wiring (pure resolution)
+
+            return new EvalError.NotPublicProperty(OpenExprName(target), propName);
+        }
+        return new EvalError.UnknownProperty(OpenExprName(target), propName);
+    }
+
+    // ── Algorithm resolution (full — with opens) ─────────────────────────────
+
+    /// <summary>Lean: resolveAlg → EvalM Algorithm.</summary>
+    private static EvalResult<Algorithm> ResolveAlg(Expr expr, EvalCtx ctx)
+    {
+        switch (expr)
+        {
+            case Expr.Combine(var e1, var e2):
+            {
+                var aResult = ResolveAlg(e1, ctx);
+                if (aResult.IsError) return aResult.Error;
+                var bResult = ResolveAlg(e2, ctx);
+                if (bResult.IsError) return bResult.Error;
+                return EvalResult<Algorithm>.Ok(
+                    WireToCaller(ctx, CombineAlg(aResult.Value, bResult.Value)));
+            }
+
+            case Expr.Block(var alg):
+                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
+
+            case Expr.Self:
+                return ctx.Head is { } head
+                    ? EvalResult<Algorithm>.Ok(head)
+                    : new EvalError.NotAnAlgorithm("self") { Span = expr.Span };
+
+            case Expr.Resolve(var name):
+            {
+                if (ctx.CallStack.Count > 0)
+                {
+                    var r = LookupLexical(ctx.CallStack[0], name, ctx);
+                    if (r.IsError && r.Error.Span is null)
+                        return r.Error with { Span = expr.Span };
+                    return r;
+                }
+                return new EvalError.UnknownName(name) { Span = expr.Span };
+            }
+
+            case Expr.Prop(var target, var propName) when IsIntrinsic(propName):
+            {
+                // Lean: lift intrinsic to wrapper so evalDotCall handles it
+                var wrapper = new Algorithm.User(
+                    Parent: null, Params: [], Opens: [],
+                    Properties: [], Output: [new Expr.DotCall(target, propName)]);
+                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
+            }
+
+            case Expr.Prop(var target, var propName):
+            {
+                var targetResult = ResolveAlg(target, ctx);
+                if (targetResult.IsError) return targetResult.Error;
+                var prop = LookupProp(targetResult.Value, propName);
+                if (prop is not null)
+                    return EvalResult<Algorithm>.Ok(ChildOf(targetResult.Value, prop));
+                return new EvalError.UnknownProperty(OpenExprName(target), propName) { Span = expr.Span };
+            }
+
+            case Expr.DotCall:
+            {
+                // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
+                // evalDotCall handles all semantics (length intrinsic, structural, lexical fallback)
+                var wrapper = new Algorithm.User(
+                    Parent: null, Params: [], Opens: [],
+                    Properties: [], Output: [expr]);
+                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
+            }
+
+            // Explicit errors for syntactic forms that cannot resolve to algorithms
+            case Expr.Param(var x):
+                return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
+            case Expr.NameLiteral(var s):
+                return new EvalError.NotAnAlgorithm($"nameLiteral({s})") { Span = expr.Span };
+            case Expr.Num(var n):
+                return new EvalError.NotAnAlgorithm($"num({n})") { Span = expr.Span };
+            case Expr.Unary:
+                return new EvalError.NotAnAlgorithm("unary expression") { Span = expr.Span };
+            case Expr.Binary:
+                return new EvalError.NotAnAlgorithm("binary expression") { Span = expr.Span };
+            case Expr.Index:
+                return new EvalError.NotAnAlgorithm("index expression") { Span = expr.Span };
+            case Expr.Call:
+                return new EvalError.NotAnAlgorithm("call expression") { Span = expr.Span };
+            case Expr.NativeCall:
+                return new EvalError.NotAnAlgorithm("native call") { Span = expr.Span };
+            case Expr.Grace:
+                return new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span };
+            case Expr.StringLiteral(var s):
+                return new EvalError.IllegalInEval($"stringLiteral not elaborated: {s}") { Span = expr.Span };
+
+            default:
+                throw new InvalidOperationException($"Unhandled Expr type in ResolveAlg: {expr.GetType().Name}");
+        }
+    }
+
+    // ── Algorithm output evaluation ─────────────────────────────────────────
+
+    /// <summary>
+    /// Evaluate an algorithm's output expressions and collect into a single Result.
+    /// Normalization invariant: outputs are always normalized at algorithm boundaries.
+    /// Lean: evalAlgOutput → EvalM Result.
+    /// </summary>
+    private static EvalResult<Result> EvalAlgOutput(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var innerCtx = ctx.Push(alg);
+        var results = new List<Result>();
+
+        foreach (var expr in alg.Output)
+        {
+            var r = Eval(expr, innerCtx, valEnv);
+            if (r.IsError) return r.Error;
+            results.Add(r.Value);
+        }
+
+        return EvalResult<Result>.Ok(Result.FromItems(results));
+    }
+
+    /// <summary>Evaluate an expression and coerce to decimal. Lean: evalInt.</summary>
+    private static EvalResult<decimal> EvalInt(
+        Expr expr, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv)
+    {
+        var r = Eval(expr, ctx, valEnv);
+        if (r.IsError) return r.Error;
+        return ExpectInt(r.Value);
+    }
+
+    /// <summary>Run a step algorithm with the given state bound to its params. Lean: runStep.</summary>
+    private static EvalResult<Result> RunStep(
+        Algorithm step, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv, Result state)
+    {
+        var boundR = BindParams(step.Params, UnpackArgs(state));
+        if (boundR.IsError) return boundR.Error;
+        return EvalAlgOutput(step, ctx, Concat(boundR.Value, valEnv));
+    }
+
+    // ── Builtins ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies a builtin operation to lazily-resolved argument algorithms.
+    /// Lean: applyBuiltin → EvalM Result.
+    /// </summary>
+    private static EvalResult<Result> ApplyBuiltin(
+        BuiltinId builtin,
+        IReadOnlyList<Algorithm> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (builtin, args.Count)
+        {
+            // if(cond, then, else)
+            case (BuiltinId.@if, 3):
+            {
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (condR.IsError) return condR.Error;
+                var condAtoms = condR.Value.ToAtoms();
+                if (condAtoms.Count == 0) return new EvalError.BadArity();
+                return condAtoms[0] == 0
+                    ? EvalAlgOutput(args[2], ctx, valEnv)
+                    : EvalAlgOutput(args[1], ctx, valEnv);
+            }
+
+            // while(step, init)
+            case (BuiltinId.@while, 2):
+            {
+                var initR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (initR.IsError) return initR.Error;
+                return WhileLoop(args[0], initR.Value, ctx, valEnv);
+            }
+
+            // repeat(step, count, init)
+            case (BuiltinId.@repeat, 3):
+            {
+                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (countR.IsError) return countR.Error;
+                var nR = ExpectInt(countR.Value);
+                if (nR.IsError) return nR.Error;
+                if (nR.Value != Math.Floor(nR.Value))
+                    return new EvalError.IllegalInEval("Repeat count must be an integer");
+                var n = (long)nR.Value;
+                if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                var repeatInitR = EvalAlgOutput(args[2], ctx, valEnv);
+                if (repeatInitR.IsError) return repeatInitR.Error;
+                return RepeatLoop(args[0], n, repeatInitR.Value, ctx, valEnv);
+            }
+
+            // atoms(alg) — flatten to atoms
+            case (BuiltinId.@atoms, 1):
+            {
+                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (atomsR.IsError) return atomsR.Error;
+                var atoms = atomsR.Value.ToAtoms();
+                return EvalResult<Result>.Ok(
+                    Result.FromItems(atoms.Select(n => new Result.Atom(n))));
+            }
+
+            default:
+            {
+                return new EvalError.ArityMismatch(BuiltinArity(builtin), args.Count);
+            }
+        }
+    }
+
+    /// <summary>Lean: While loop → EvalM Result.</summary>
+    private static EvalResult<Result> WhileLoop(
+        Algorithm step,
+        Result state,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        while (true)
+        {
+            var outR = RunStep(step, ctx, valEnv, state);
+            if (outR.IsError) return outR.Error;
+            var splitR = SplitCont(outR.Value);
+            if (splitR.IsError) return splitR.Error;
+            var (next, cont) = splitR.Value;
+            if (cont == 0) return EvalResult<Result>.Ok(state);
+            state = next;
+        }
+    }
+
+    /// <summary>Lean: Repeat loop → EvalM Result.</summary>
+    private static EvalResult<Result> RepeatLoop(
+        Algorithm step,
+        long count,
+        Result state,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        for (var k = 0; k < count; k++)
+        {
+            var outR = RunStep(step, ctx, valEnv, state);
+            if (outR.IsError) return outR.Error;
+            state = outR.Value;
+        }
+        return EvalResult<Result>.Ok(state);
+    }
+
+    // ── Property evaluation ─────────────────────────────────────────────────
+
+    /// <summary>Lean: evalProp → EvalM Result. Wrapped with withCtx for diagnostics.</summary>
+    private static EvalResult<Result> EvalProp(
+        Expr target,
+        string propName,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        return WithCtx(CtxProp(target, propName),
+            EvalPropInner(target, propName, ctx, valEnv));
+    }
+
+    private static EvalResult<Result> EvalPropInner(
+        Expr target,
+        string propName,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var targetR = ResolveAlg(target, ctx);
+        if (targetR.IsError) return targetR.Error;
+        var targetAlg = targetR.Value;
+
+        // Lean: evalIntrinsic? — single source of truth for intrinsic semantics
+        var intrinsic = EvalIntrinsic(targetAlg, propName);
+        if (intrinsic is { } r) return r;
+
+        var prop = LookupProp(targetAlg, propName);
+        if (prop is null)
+            return new EvalError.UnknownProperty(OpenExprName(target), propName) { Span = target.Span };
+
+        var wired = ChildOf(targetAlg, prop);
+        return EvalAlgOutput(wired, ctx, valEnv);
+    }
+
+    // ── Main eval ───────────────────────────────────────────────────────────
+
+    /// <summary>Lean: eval → EvalM Result.</summary>
+    private static EvalResult<Result> Eval(
+        Expr expr,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (expr)
+        {
+            case Expr.Num(var n):
+                return EvalResult<Result>.Ok(new Result.Atom(n));
+
+            case Expr.Param(var name):
+            {
+                var val = LookupVal(valEnv, name);
+                if (val is null) return new EvalError.UnknownName(name) { Span = expr.Span };
+                return EvalResult<Result>.Ok(val);
+            }
+
+            case Expr.Unary(var unaryOp, var operand):
+            {
+                var vR = EvalInt(operand, ctx, valEnv);
+                if (vR.IsError) return vR.Error;
+                var unaryResult = unaryOp switch
+                {
+                    UnaryOp.Minus => -vR.Value,
+                    UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
+                    _ => 0m,
+                };
+                return EvalResult<Result>.Ok(new Result.Atom(unaryResult));
+            }
+
+            case Expr.Binary(var op, var left, var right):
+            {
+                var xR = EvalInt(left, ctx, valEnv);
+                if (xR.IsError) return xR.Error;
+                var yR = EvalInt(right, ctx, valEnv);
+                if (yR.IsError) return yR.Error;
+                decimal x = xR.Value, y = yR.Value;
+                if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
+                    return new EvalError.DivByZero() { Span = expr.Span };
+                var result = op switch
+                {
+                    BinaryOp.Add => x + y,
+                    BinaryOp.Sub => x - y,
+                    BinaryOp.Mul => x * y,
+                    BinaryOp.Div => x / y,
+                    BinaryOp.IDiv => Math.Truncate(x / y),
+                    BinaryOp.Mod => x % y,
+                    BinaryOp.Pow => y < 0 ? 0 : DecimalPow(x, y),
+                    BinaryOp.Lt => x < y ? 1 : 0,
+                    BinaryOp.Gt => x > y ? 1 : 0,
+                    BinaryOp.Le => x <= y ? 1 : 0,
+                    BinaryOp.Ge => x >= y ? 1 : 0,
+                    BinaryOp.Eq => x == y ? 1 : 0,
+                    BinaryOp.Ne => x != y ? 1 : 0,
+                    BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
+                    BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
+                    BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+                    _ => 0,
+                };
+                return EvalResult<Result>.Ok(new Result.Atom(result));
+            }
+
+            case Expr.Block(var alg):
+            {
+                var wired = WireToCaller(ctx, alg);
+                return EvalAlgOutput(wired, ctx, valEnv);
+            }
+
+            case Expr.Resolve(var name):
+            {
+                var resolvedR = ResolveAlg(expr, ctx);
+                if (resolvedR.IsError)
+                {
+                    var err = resolvedR.Error;
+                    return err.Span is null ? err with { Span = expr.Span } : err;
+                }
+                return WithSpan(expr.Span, EvalAlgOutput(resolvedR.Value, ctx, valEnv));
+            }
+
+            case Expr.Prop(var target, var propName):
+                return WithSpan(expr.Span, EvalProp(target, propName, ctx, valEnv));
+
+            case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
+                // Lean: eval (.dotCall o n argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
+                return WithSpan(expr.Span, WithCtx(CtxDotCall(dotTarget, dotName),
+                    EvalDotCall(dotTarget, dotName, dotArgs, ctx, valEnv)));
+
+            case Expr.Call(var func, var argsAlg):
+                return WithSpan(expr.Span, WithCtx(CtxCall(func),
+                    EvalCall(func, argsAlg, ctx, valEnv)));
+
+            case Expr.Index(var target, var selector):
+            {
+                var targetR = Eval(target, ctx, valEnv);
+                if (targetR.IsError) return targetR.Error;
+                var nR = EvalInt(selector, ctx, valEnv);
+                if (nR.IsError) return nR.Error;
+                var n = nR.Value;
+                if (n < 0 || n != Math.Floor(n))
+                    return new EvalError.BadIndex() { Span = expr.Span };
+                var indexed = targetR.Value.Index((int)n);
+                if (indexed is null) return new EvalError.BadIndex() { Span = expr.Span };
+                return EvalResult<Result>.Ok(indexed);
+            }
+
+            case Expr.NativeCall(var fnName, var argNames):
+                return EvalNativeCall(fnName, argNames, valEnv);
+
+            // Catch-all: uses Expr.kind for clear diagnostics
+            default:
+                return new EvalError.IllegalInEval(ExprKind(expr)) { Span = expr.Span };
+        }
+    }
+
+    private static EvalResult<Result> EvalNativeCall(
+        string fnName,
+        IReadOnlyList<string> argNames,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var args = new decimal[argNames.Count];
+        for (var i = 0; i < argNames.Count; i++)
+        {
+            var val = LookupVal(valEnv, argNames[i]);
+            if (val is null) return new EvalError.UnknownName(argNames[i]);
+            var num = val.AsNum();
+            if (num is null) return new EvalError.BadArity();
+            args[i] = num.Value;
+        }
+
+        decimal result;
+        switch (fnName)
+        {
+            case "Abs": result = Math.Abs(args[0]); break;
+            case "Ceil": result = Math.Ceiling(args[0]); break;
+            case "Floor": result = Math.Floor(args[0]); break;
+            case "Round": result = Math.Round(args[0]); break;
+            case "Sign": result = (decimal)Math.Sign(args[0]); break;
+            case "Sqrt": result = (decimal)Math.Sqrt((double)args[0]); break;
+            case "Ln": result = (decimal)Math.Log((double)args[0]); break;
+            case "Lg": result = (decimal)Math.Log10((double)args[0]); break;
+            case "Sin": result = (decimal)Math.Sin((double)args[0]); break;
+            case "Asin": result = (decimal)Math.Asin((double)args[0]); break;
+            case "Cos": result = (decimal)Math.Cos((double)args[0]); break;
+            case "Acos": result = (decimal)Math.Acos((double)args[0]); break;
+            case "Tan": result = (decimal)Math.Tan((double)args[0]); break;
+            case "Atan": result = (decimal)Math.Atan((double)args[0]); break;
+            case "Pow": result = (decimal)Math.Pow((double)args[0], (double)args[1]); break;
+            case "Log": result = (decimal)Math.Log((double)args[0], (double)args[1]); break;
+            default:
+                return new EvalError.IllegalInEval($"unknown native function: {fnName}");
+        }
+
+        return EvalResult<Result>.Ok(new Result.Atom(result));
+    }
+
+    // ── Resolve argument expressions to algorithms (lazy) ───────────────────
+
+    /// <summary>
+    /// Resolve each output expression of args to sub-algorithms.
+    /// Lean: resolveArgAlgs — wraps only liftable errors (notAnAlgorithm,
+    /// illegalInEval) in trivial algorithms for lazy evaluation via evalAlgOutput.
+    /// All other errors (unknownName, unknownProperty, ambiguousOpen, etc.)
+    /// are propagated immediately to preserve precise diagnostics.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
+        Algorithm argsAlg, EvalCtx ctx)
+    {
+        var result = new List<Algorithm>(argsAlg.Output.Count);
+        foreach (var argExpr in argsAlg.Output)
+        {
+            var r = ResolveAlg(argExpr, ctx);
+            if (r.IsOk)
+            {
+                result.Add(r.Value);
+            }
+            else if (IsLiftableError(r.Error))
+            {
+                // Wrap liftable non-resolvable expressions in a trivial algorithm.
+                // evalAlgOutput will evaluate the expression lazily when needed.
+                var wrapper = new Algorithm.User(
+                    Parent: null, Params: [], Opens: [],
+                    Properties: [], Output: [argExpr]);
+                result.Add(WireToCaller(ctx, wrapper));
+            }
+            else
+            {
+                // Propagate genuine lookup/semantic failures immediately.
+                return r.Error;
+            }
+        }
+        return EvalResult<IReadOnlyList<Algorithm>>.Ok(result);
+    }
+
+    /// <summary>
+    /// Errors that indicate an expression simply isn't an algorithm form and can
+    /// safely be deferred to lazy evaluation (wrapping in Algorithm.ofExpr).
+    /// </summary>
+    private static bool IsLiftableError(EvalError error) => error switch
+    {
+        EvalError.NotAnAlgorithm => true,
+        EvalError.IllegalInEval => true,
+        EvalError.WithContext(_, var inner) => IsLiftableError(inner),
+        _ => false,
+    };
+
+    // ── Call evaluation ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Lean: eval (.call f args).
+    /// 1. Resolve callee.
+    /// 2. If builtin: resolve args lazily as algorithms, dispatch to applyBuiltin.
+    /// 3. If user-defined: evaluate args eagerly, bind params, eval output.
+    /// </summary>
+    private static EvalResult<Result> EvalCall(
+        Expr func,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        // 1. Resolve callee
+        var calleeR = ResolveAlg(func, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        var callee = calleeR.Value;
+
+        // 2. Dispatch on algorithm kind
+        if (callee is Algorithm.Builtin(var builtinId))
+        {
+            // Builtin: resolve args lazily as algorithms
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            if (argAlgsR.IsError) return argAlgsR.Error;
+            return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
+        }
+
+        // 3. User-defined: evaluate args eagerly, bind params
+        var wiredArgs = WireToCaller(ctx, argsAlg);
+        var argsR = EvalAlgOutput(wiredArgs, ctx, valEnv);
+        if (argsR.IsError) return argsR.Error;
+
+        var argValues = UnpackArgs(argsR.Value);
+        var boundR = BindParams(callee.Params, argValues);
+        if (boundR.IsError) return boundR.Error;
+
+        var newEnv = Concat(boundR.Value, valEnv);
+        return EvalAlgOutput(callee, ctx, newEnv);
+    }
+
+    // ── DotCall evaluation ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
+    /// Smart dispatch:
+    /// 1. Intrinsic (e.g. length) → handled by evalIntrinsic?
+    /// 2. Structural property found (navigation-only):
+    ///    - No args + 0-param → value access
+    ///    - No args + has params → arity mismatch error
+    ///    - Has args → direct argument binding (no receiver injection)
+    /// 3. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
+    /// Lean: evalDotCall.
+    /// </summary>
+    private static EvalResult<Result> EvalDotCall(
+        Expr target, string name, Algorithm? argsOpt,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        // Lean: let targetAlg <- resolveAlg target ctx (error propagates)
+        var targetResult = ResolveAlg(target, ctx);
+        if (targetResult.IsError) return targetResult.Error;
+        var targetAlg = targetResult.Value;
+
+        // Lean: evalIntrinsic? — single source of truth for intrinsic semantics
+        var intrinsic = EvalIntrinsic(targetAlg, name);
+        if (intrinsic is { } r) return r;
+
+        // Structural: property of target (any visibility — dot access sees private)
+        var prop = LookupProp(targetAlg, name);
+        if (prop is not null)
+        {
+            var wired = ChildOf(targetAlg, prop);
+            if (argsOpt is null)
+            {
+                // No args: 0-param → value access, has params → arity error
+                if (wired.Params.Count == 0)
+                    return EvalAlgOutput(wired, ctx, valEnv);
+                return new EvalError.ArityMismatch(wired.Params.Count, 0);
+            }
+            // Has args → direct argument binding (navigation only, no receiver)
+            var wiredArgs = WireToCaller(ctx, argsOpt);
+            var argsR = EvalAlgOutput(wiredArgs, ctx, valEnv);
+            if (argsR.IsError) return argsR.Error;
+            var argValues = UnpackArgs(argsR.Value);
+            var boundR = BindParams(wired.Params, argValues);
+            if (boundR.IsError) return boundR.Error;
+            return EvalAlgOutput(wired, ctx, Concat(boundR.Value, valEnv));
+        }
+
+        // Lexical fallback (receiver injection via callLexicalWithReceiver)
+        return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
+    }
+
+    /// <summary>
+    /// Resolves name lexically and calls with receiver prepended to args.
+    /// Delegates to EvalCall to get builtin dispatch for free.
+    /// Lean: callLexicalWithReceiver.
+    /// </summary>
+    private static EvalResult<Result> CallLexicalWithReceiver(
+        string name, Expr receiver, Algorithm? extraArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var outputExprs = new List<Expr> { receiver };
+        if (extraArgs is not null)
+            outputExprs.AddRange(extraArgs.Output);
+
+        var combinedArgs = new Algorithm.User(
+            Parent: null, Params: [], Opens: [],
+            Properties: [], Output: outputExprs);
+
+        return EvalCall(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
+    }
+
+    // ── Entry points ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Run evaluation on an expression with prelude in scope.
+    /// Lean: runResult → EvalM Result.
+    /// </summary>
+    public static EvalResult<Result> Run(Expr expr)
+        => Eval(expr, new EvalCtx([PreludeAlg]), []);
+
+    /// <summary>
+    /// Run evaluation and flatten to atoms.
+    /// Lean: runFlat → EvalM (List Int).
+    /// </summary>
+    public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr)
+    {
+        var r = Run(expr);
+        if (r.IsError) return r.Error;
+        return EvalResult<IReadOnlyList<decimal>>.Ok(r.Value.ToAtoms());
+    }
+
+    // ── Utility ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Exact decimal exponentiation for non-negative integer exponents.
+    /// Falls back to Math.Pow (via double) for fractional exponents.
+    /// Lean: intPow b n = b * intPow b (n-1), base case intPow _ 0 = 1.
+    /// </summary>
+    private static decimal DecimalPow(decimal b, decimal exp)
+    {
+        if (exp != Math.Floor(exp))
+            return (decimal)Math.Pow((double)b, (double)exp);
+
+        var n = (long)exp;
+        decimal result = 1;
+        var baseVal = b;
+        // Exponentiation by squaring
+        while (n > 0)
+        {
+            if ((n & 1) == 1)
+                result *= baseVal;
+            baseVal *= baseVal;
+            n >>= 1;
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<T> Prepend<T>(T item, IReadOnlyList<T> list)
+    {
+        var result = new List<T>(list.Count + 1) { item };
+        result.AddRange(list);
+        return result;
+    }
+
+    private static IReadOnlyList<T> Concat<T>(IReadOnlyList<T> a, IReadOnlyList<T> b)
+    {
+        var result = new List<T>(a.Count + b.Count);
+        result.AddRange(a);
+        result.AddRange(b);
+        return result;
+    }
+}

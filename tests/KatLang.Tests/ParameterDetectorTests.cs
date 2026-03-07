@@ -1,0 +1,440 @@
+namespace KatLang.Tests;
+
+public class ParameterDetectorTests
+{
+    private static Algorithm ParseAndDetect(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+        return ParameterDetector.Detect(result.Root);
+    }
+
+    [Fact]
+    public void Detect_NoParameters_EmptyParamList()
+    {
+        var ast = ParseAndDetect("1 + 2");
+        Assert.Empty(ast.Params);
+    }
+
+    [Fact]
+    public void Detect_SingleLowercaseIdentifier_BecomesParam()
+    {
+        var ast = ParseAndDetect("x + 1");
+
+        Assert.Single(ast.Params);
+        Assert.Equal("x", ast.Params[0]);
+        var binary = Assert.IsType<Expr.Binary>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left);
+    }
+
+    [Fact]
+    public void Detect_MultipleLowercaseIdentifiers_AllBecomeParams()
+    {
+        var ast = ParseAndDetect("x + y");
+
+        Assert.Equal(2, ast.Params.Count);
+        Assert.Contains("x", ast.Params);
+        Assert.Contains("y", ast.Params);
+    }
+
+    [Fact]
+    public void Detect_ParamsInOrderOfFirstAppearance()
+    {
+        var ast = ParseAndDetect("z + a + m");
+        Assert.Equal(["z", "a", "m"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_UppercaseIdentifier_BecomesParam()
+    {
+        var ast = ParseAndDetect("X + 1");
+
+        Assert.Equal(["X"], ast.Params);
+        var binary = Assert.IsType<Expr.Binary>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left);
+    }
+
+    [Fact]
+    public void Detect_LocalProperty_NotAParam()
+    {
+        var source = """
+            x = 5
+            x
+            """;
+        var ast = ParseAndDetect(source);
+
+        Assert.Empty(ast.Params);
+        var resolve = Assert.IsType<Expr.Resolve>(ast.Output[0]);
+        Assert.Equal("x", resolve.Name);
+    }
+
+    [Fact]
+    public void Detect_PropertyBody_HasOwnParams()
+    {
+        var ast = ParseAndDetect("Add = a + b");
+
+        Assert.Empty(ast.Params);
+        var propBody = ast.Properties[0].Value;
+        Assert.Equal(2, propBody.Params.Count);
+        Assert.Contains("a", propBody.Params);
+        Assert.Contains("b", propBody.Params);
+    }
+
+    [Fact]
+    public void Detect_PropertyBodySeesParentProperty()
+    {
+        var source = """
+            X = 5
+            Y = X + x
+            """;
+        var ast = ParseAndDetect(source);
+
+        var propY = ast.Properties[1].Value;
+        Assert.Single(propY.Params);
+        Assert.Equal("x", propY.Params[0]);
+
+        var binary = Assert.IsType<Expr.Binary>(propY.Output[0]);
+        Assert.IsType<Expr.Resolve>(binary.Left);
+        Assert.IsType<Expr.Param>(binary.Right);
+    }
+
+    [Fact]
+    public void Detect_NestedBlock_HasOwnScope()
+    {
+        var ast = ParseAndDetect("{x + 1}");
+
+        var block = Assert.IsType<Expr.Block>(ast.Output[0]);
+        Assert.Single(block.Algorithm.Params);
+        Assert.Equal("x", block.Algorithm.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_CallArgsInBraces_IsParametrized()
+    {
+        var ast = ParseAndDetect("F{x + 1}");
+
+        var call = Assert.IsType<Expr.Call>(ast.Output[0]);
+        Assert.Single(call.Args.Params);
+        Assert.Equal("x", call.Args.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_CallArgsInParens_NotParametrized()
+    {
+        var ast = ParseAndDetect("F(x + 1)");
+
+        // Both F and x are unknown → become params of the enclosing algorithm
+        // F appears first, x second. Parenthesized args are non-parametrized.
+        Assert.Equal(["F", "x"], ast.Params);
+        var call = Assert.IsType<Expr.Call>(ast.Output[0]);
+        Assert.Empty(call.Args.Params);
+        Assert.IsType<Expr.Param>(call.Function);
+        var binary = Assert.IsType<Expr.Binary>(call.Args.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left);
+    }
+
+    [Fact]
+    public void Detect_SameParamUsedMultipleTimes_OnlyOnceInList()
+    {
+        var ast = ParseAndDetect("x + x + x");
+
+        Assert.Single(ast.Params);
+        Assert.Equal("x", ast.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_UnaryOperand_ParamDetected()
+    {
+        var ast = ParseAndDetect("-x");
+
+        Assert.Single(ast.Params);
+        var unary = Assert.IsType<Expr.Unary>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(unary.Operand);
+    }
+
+    [Fact]
+    public void Detect_IndexTarget_ParamDetected()
+    {
+        var ast = ParseAndDetect("arr:i");
+
+        Assert.Equal(2, ast.Params.Count);
+        var index = Assert.IsType<Expr.Index>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(index.Target);
+        Assert.IsType<Expr.Param>(index.Selector);
+    }
+
+    [Fact]
+    public void Detect_DotCallTarget_ParamDetected()
+    {
+        var ast = ParseAndDetect("x.length");
+
+        Assert.Single(ast.Params);
+        var dotCall = Assert.IsType<Expr.DotCall>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(dotCall.Target);
+    }
+
+    [Fact]
+    public void Detect_CombineExpr_ParamsFromBothSides()
+    {
+        var ast = ParseAndDetect("a; b");
+
+        Assert.Equal(2, ast.Params.Count);
+        var combine = Assert.IsType<Expr.Combine>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(combine.Left);
+        Assert.IsType<Expr.Param>(combine.Right);
+    }
+
+    [Fact]
+    public void Detect_CallFunction_ParamDetected()
+    {
+        var ast = ParseAndDetect("f(1)");
+
+        Assert.Single(ast.Params);
+        var call = Assert.IsType<Expr.Call>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(call.Function);
+    }
+
+    [Fact]
+    public void Detect_SelfExpr_NotAParam()
+    {
+        var ast = ParseAndDetect("self");
+        Assert.Empty(ast.Params);
+    }
+
+    [Fact]
+    public void Detect_NumberExpr_NotAParam()
+    {
+        var ast = ParseAndDetect("42");
+        Assert.Empty(ast.Params);
+    }
+
+    [Fact]
+    public void Detect_MathResolve_NotAParam()
+    {
+        var ast = ParseAndDetect("Math.Pi + x");
+        Assert.Single(ast.Params);
+        Assert.Equal("x", ast.Params[0]);
+        var binary = Assert.IsType<Expr.Binary>(ast.Output[0]);
+        var dotCall = Assert.IsType<Expr.DotCall>(binary.Left);
+        Assert.IsType<Expr.Resolve>(dotCall.Target);
+        Assert.Equal("Math", ((Expr.Resolve)dotCall.Target).Name);
+        Assert.IsType<Expr.Param>(binary.Right);
+    }
+
+    [Fact]
+    public void Detect_ComplexExample_CorrectParams()
+    {
+        var source = """
+            Numbers = 3, 5, 9
+            Add = a + 1, sum + Numbers:a
+            Add
+            """;
+        var ast = ParseAndDetect(source);
+
+        Assert.Empty(ast.Params);
+
+        var addProp = ast.Properties[1].Value;
+        Assert.Equal(2, addProp.Params.Count);
+        Assert.Contains("a", addProp.Params);
+        Assert.Contains("sum", addProp.Params);
+    }
+
+    // â”€â”€ Grace operator parameter reordering tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    [Fact]
+    public void Detect_PrefixGrace_MovesParamLeft()
+    {
+        // Without grace: first-appearance order is [b, a]
+        // With ~a: a has weight -1, moves left â†’ [a, b]
+        var ast = ParseAndDetect("b + ~a");
+        Assert.Equal(["a", "b"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_PostfixGrace_MovesParamRight()
+    {
+        // Without grace: first-appearance order is [a, b]
+        // With a~: a has weight +1, moves right â†’ [b, a]
+        var ast = ParseAndDetect("a~ + b");
+        Assert.Equal(["b", "a"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_GraceAtBoundary_StaysInPlace()
+    {
+        // a is already first, ~a can't move further left
+        var ast = ParseAndDetect("~a + b");
+        Assert.Equal(["a", "b"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_DoublePrefixGrace_MovesTwoPositions()
+    {
+        // First-appearance order: [c, b, a]
+        // ~~a: weight -2, moves a two positions left â†’ [a, c, b]
+        var ast = ParseAndDetect("c + b + ~~a");
+        Assert.Equal(["a", "c", "b"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_AccumulatedGraceWeights_SumAcrossReferences()
+    {
+        // First-appearance order: [a, b]
+        // ~a appears once (weight -1), then a~ appears once (weight +1)
+        // Total weight for a: -1 + 1 = 0 â†’ no movement
+        var ast = ParseAndDetect("~a + b + a~");
+        Assert.Equal(["a", "b"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_GraceStrippedFromAST()
+    {
+        // After detection, Grace nodes should be stripped and replaced with Param
+        var ast = ParseAndDetect("~x + 1");
+        Assert.Single(ast.Params);
+        Assert.Equal("x", ast.Params[0]);
+
+        var binary = Assert.IsType<Expr.Binary>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left);
+    }
+
+    [Fact]
+    public void Detect_GraceInPropertyBody_ReordersPropertyParams()
+    {
+        var source = """
+            F = b + ~a * 10
+            F
+            """;
+        var ast = ParseAndDetect(source);
+
+        var fProp = ast.Properties[0].Value;
+        Assert.Equal(["a", "b"], fProp.Params);
+    }
+
+    [Fact]
+    public void Detect_ThreeParams_PostfixMovesMiddleToEnd()
+    {
+        // First-appearance order: [a, b, c]
+        // b~: weight +1, moves b right â†’ [a, c, b]
+        var ast = ParseAndDetect("a + b~ + c");
+        Assert.Equal(["a", "c", "b"], ast.Params);
+    }
+
+    [Fact]
+    public void Detect_NoGrace_PreservesFirstAppearanceOrder()
+    {
+        var ast = ParseAndDetect("a + b + c");
+        Assert.Equal(["a", "b", "c"], ast.Params);
+    }
+
+    // â”€â”€ Opens-aware parameter detection tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    [Fact]
+    public void Detect_OpenPublicProperty_NotAParam()
+    {
+        var source = """
+            Lib = (public inc = x + 1)
+            open = Lib
+            inc
+            """;
+        var ast = ParseAndDetect(source);
+
+        // "inc" is visible through opens (public property of Lib) â†’ not a param
+        Assert.Empty(ast.Params);
+        Assert.IsType<Expr.Resolve>(ast.Output[0]);
+    }
+
+    [Fact]
+    public void Detect_OpenPrivateProperty_StillAParam()
+    {
+        var source = """
+            Lib = (inc = x + 1)
+            open = Lib
+            inc + 1
+            """;
+        var ast = ParseAndDetect(source);
+
+        // "inc" is private in Lib â†’ not visible through opens â†’ becomes a param
+        Assert.Single(ast.Params);
+        Assert.Equal("inc", ast.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_OpenMultipleLibraries_CollectsFromAll()
+    {
+        var source = """
+            A = (public foo = 1)
+            B = (public bar = 2)
+            open = A, B
+            foo + bar + z
+            """;
+        var ast = ParseAndDetect(source);
+
+        // foo and bar visible through opens, only z is a param
+        Assert.Single(ast.Params);
+        Assert.Equal("z", ast.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_OpenCombine_CollectsFromBothSides()
+    {
+        var source = """
+            A = (public foo = 1)
+            B = (public bar = 2)
+            open = A; B
+            foo + bar + z
+            """;
+        var ast = ParseAndDetect(source);
+
+        // Combine(A, B) â†’ collects public props from both
+        Assert.Single(ast.Params);
+        Assert.Equal("z", ast.Params[0]);
+    }
+
+    [Fact]
+    public void Detect_OpenPropertyBody_InheritsOpenNames()
+    {
+        // Child property body should see names from parent's opens
+        var source = """
+            Lib = (public val = 42)
+            open = Lib
+            F = val + 1
+            F
+            """;
+        var ast = ParseAndDetect(source);
+
+        // F's body: "val" is visible (from parent's opens)
+        // F should have no params
+        var fProp = ast.Properties[1].Value; // Properties[0] = Lib, Properties[1] = F
+        Assert.Empty(fProp.Params);
+    }
+
+    [Fact]
+    public void Detect_OpenDotPath_ResolvesPublicIntermediate()
+    {
+        var source = """
+            Outer = (public Inner = (public val = 42))
+            open = Outer.Inner
+            val
+            """;
+        var ast = ParseAndDetect(source);
+
+        // val is visible through open = Outer.Inner â†’ not a param
+        Assert.Empty(ast.Params);
+        Assert.IsType<Expr.Resolve>(ast.Output[0]);
+    }
+
+    [Fact]
+    public void Detect_OpenDotPath_PrivateIntermediate_StillAParam()
+    {
+        var source = """
+            Outer = (Inner = (public val = 42))
+            open = Outer.Inner
+            val + 1
+            """;
+        var ast = ParseAndDetect(source);
+
+        // Inner is private â†’ Outer.Inner can't be resolved â†’ val not suppressed â†’ param
+        Assert.Single(ast.Params);
+        Assert.Equal("val", ast.Params[0]);
+    }
+}
