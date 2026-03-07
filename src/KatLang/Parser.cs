@@ -150,6 +150,7 @@ public sealed class Parser
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
         var opens = new List<Expr>();
+        var hasOpenDeclaration = false;
         var properties = new List<Property>();
         var output = new List<Expr>();
 
@@ -172,50 +173,46 @@ public sealed class Parser
                 // Fall through to normal property definition handling
             }
 
+            // Open declaration: open target1, target2, ...
+            if (Current.Kind == TokenKind.KeywordOpen)
+            {
+                if (hasOpenDeclaration)
+                {
+                    ReportError("Only one 'open' declaration is allowed per algorithm.");
+                }
+                hasOpenDeclaration = true;
+                Advance(); // consume 'open'
+                var openExprs = ParseOpenTargetList();
+                NormalizeAndValidateOpenForms(openExprs);
+                opens.AddRange(openExprs);
+            }
+            // public open ... → reject
+            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicOpen())
+            {
+                ReportError("'public' cannot be applied to open declarations.");
+                Advance(); // consume 'public'
+                // Fall through: next iteration will parse the open declaration normally
+            }
             // Check for public property definition: public Name = ...
-            if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
+            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
             {
                 Advance(); // consume 'public'
                 var name = Current.StringValue!;
 
-                if (name == "open")
-                {
-                    ReportError("'public' cannot be applied to open declarations.");
-                    Advance(); // consume 'open'
-                    Advance(); // consume '='
-                    var openExprs = ParseOutputLineExprs();
-                    NormalizeAndValidateOpenForms(openExprs);
-                    opens.AddRange(openExprs);
-                }
-                else
-                {
-                    Advance(); // consume identifier
-                    Advance(); // consume '='
-                    var body = ParseOutputLine();
-                    properties.Add(new Property(name, body, IsPublic: true));
-                }
+                Advance(); // consume identifier
+                Advance(); // consume '='
+                var body = ParseOutputLine();
+                properties.Add(new Property(name, body, IsPublic: true));
             }
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
             {
                 var name = Current.StringValue!;
 
-                // open declaration: open = expr1, expr2, ...
-                if (name == "open")
-                {
-                    Advance(); // consume 'open'
-                    Advance(); // consume '='
-                    var openExprs = ParseOutputLineExprs();
-                    NormalizeAndValidateOpenForms(openExprs);
-                    opens.AddRange(openExprs);
-                }
-                else
-                {
-                    Advance(); // consume identifier
-                    Advance(); // consume '='
-                    var body = ParseOutputLine();
-                    properties.Add(new Property(name, body));
-                }
+                Advance(); // consume identifier
+                Advance(); // consume '='
+                var body = ParseOutputLine();
+                properties.Add(new Property(name, body));
             }
             else
             {
@@ -234,6 +231,48 @@ public sealed class Parser
         {
             IsParametrized = isParametrized
         };
+    }
+
+    /// <summary>
+    /// Parses the comma-separated target list after the <c>open</c> keyword.
+    /// Each target is a combine item (expression with optional semicolons).
+    /// String literal targets are desugared to <c>load('url')</c> calls.
+    /// </summary>
+    private List<Expr> ParseOpenTargetList()
+    {
+        var targets = new List<Expr>();
+        targets.Add(ParseOpenTarget());
+
+        while (Current.Kind == TokenKind.Comma)
+        {
+            Advance(); // consume ','
+            targets.Add(ParseOpenTarget());
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// Parses a single open target (which may include semicolons for combine).
+    /// If the target is a string literal, desugars it to <c>load('url')</c>.
+    /// </summary>
+    private Expr ParseOpenTarget()
+    {
+        // String literal sugar: open 'url' → open load('url')
+        if (Current.Kind == TokenKind.StringLiteral)
+        {
+            var token = Advance();
+            var url = token.StringValue ?? "";
+            var urlExpr = new Expr.StringLiteral(url) { Span = TokenSpan(token) };
+            var loadArgs = new Algorithm.User(
+                Parent: null, Params: [], Opens: [],
+                Properties: [], Output: [urlExpr])
+            { IsParametrized = false };
+            var loadResolve = new Expr.Resolve("load") { Span = TokenSpan(token) };
+            return new Expr.Call(loadResolve, loadArgs) { Span = TokenSpan(token) };
+        }
+
+        return ParseCombineItem();
     }
 
     /// <summary>
@@ -267,6 +306,16 @@ public sealed class Parser
             && _tokens[next + 2].Kind == TokenKind.Equals)
             return true;
         return false;
+    }
+
+    /// <summary>
+    /// Checks if 'public' keyword is followed by 'open' keyword.
+    /// Used to detect and reject public open declarations.
+    /// </summary>
+    private bool LookaheadIsPublicOpen()
+    {
+        var next = _pos + 1; // skip 'public'
+        return next < _tokens.Count && _tokens[next].Kind == TokenKind.KeywordOpen;
     }
 
     /// <summary>
@@ -720,6 +769,14 @@ public sealed class Parser
                 var alg = ParseAlgorithm(isParametrized: true);
                 Expect(TokenKind.RBrace);
                 return new Expr.Block(alg) { Span = MakeSpan(start) };
+            }
+
+            case TokenKind.KeywordOpen:
+            {
+                var token = Current;
+                ReportError("'open' is a declaration and cannot be used in expression position.");
+                Advance(); // skip for recovery
+                return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
             }
 
             default:

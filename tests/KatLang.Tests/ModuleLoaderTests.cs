@@ -54,11 +54,11 @@ public class ModuleLoaderTests
     public void Load_BasicLibDefinition_EvaluatesRemoteValue()
     {
         // Lib2 = load("https://katlang.org/demo/lib2.kat")
-        // open = {Lib2}
+        // open Lib2
         // Val
         var source = """
             public Lib2 = load('https://katlang.org/demo/lib2.kat')
-            open = Lib2
+            open Lib2
             Val
             """;
 
@@ -80,7 +80,7 @@ public class ModuleLoaderTests
     public void Load_InOpenList_EvaluatesRemoteValue()
     {
         var source = """
-            open = load('https://katlang.org/demo/lib3.kat')
+            open load('https://katlang.org/demo/lib3.kat')
             Val2
             """;
 
@@ -238,7 +238,7 @@ public class ModuleLoaderTests
     {
         var source = """
             public Lib = load('https://cdn.katlang.org/demo/lib.kat')
-            open = Lib
+            open Lib
             X
             """;
 
@@ -265,7 +265,7 @@ public class ModuleLoaderTests
         var source = """
             Lib1 = load('https://katlang.org/demo/shared.kat')
             Lib2 = load('https://katlang.org/demo/shared.kat')
-            open = Lib1
+            open Lib1
             Val
             """;
 
@@ -314,7 +314,7 @@ public class ModuleLoaderTests
         // A loads B; main loads A Ã¢â€ â€™ transitive loading
         var source = """
             public LibA = load('https://katlang.org/demo/A.kat')
-            open = LibA
+            open LibA
             Val
             """;
 
@@ -322,7 +322,7 @@ public class ModuleLoaderTests
         {
             ["https://katlang.org/demo/A.kat"] = """
                 public LibB = load('https://katlang.org/demo/B.kat')
-                open = LibB
+                open LibB
                 public Val = Val2 + 10
                 """,
             ["https://katlang.org/demo/B.kat"] = """

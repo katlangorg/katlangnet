@@ -18,7 +18,8 @@
       "Bash(lake env:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(xxd)"
     ]
   }
 }

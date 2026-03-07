@@ -1,6 +1,31 @@
 -- KatLang v0.73 (core AST + semantics + double-parens grouping + load elaboration)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, double-parens grouping, load).
+--
+-- Open declarations:
+--   `open` is a DECLARATION keyword, not a property assignment.
+--   Exact syntax: `open target1, target2, ...` (no `=` sign).
+--   Each algorithm may contain at most ONE `open` declaration with a comma-separated
+--   list of targets. The opens list maps to `Algorithm.opens : List Expr`.
+--
+--   Valid open targets (post-elaboration / canonical forms):
+--     - identifier:     `open Math`            → Resolve("Math")
+--     - dotted path:    `open Lib.Sub`         → Prop(Resolve("Lib"), "Sub")
+--     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block
+--     - combine:        `open A; B`            → Combine(Resolve("A"), Resolve("B"))
+--     - inline block:   `open (public X = 1)`  → Block(...)
+--
+--   Exact-syntax sugar (parser-only, not in core model):
+--     - `open 'url'` desugars to `open load('url')` before elaboration.
+--     Raw string literals do NOT survive into the canonical open list.
+--
+--   Semantic rules (enforced by evaluator, not parser):
+--     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
+--     - Strict isolation: opening a library does NOT import its transitive opens
+--       (combineAlgOpensClosed closes opens).
+--     - Ambiguity: if multiple open targets provide the same public name, and no
+--       owned/local/parent property shadows it, `ambiguousOpen` is raised.
+--     - Owned/local/parent lookup takes precedence over opens (ownership-first).
 
 namespace KatLang
 
@@ -452,7 +477,12 @@ def combineAlgOpensClosed (a b : Algorithm) : Algorithm :=
     A parser-level normalization pass rewrites `DotCall(obj, name, none)` to
     `Prop(obj, name)` in open expressions, and rejects `DotCall(obj, name, some args)`
     as an invalid open form.  After normalization and load elaboration, opens
-    contain only the forms listed below. -/
+    contain only the forms listed below.
+
+    Additionally, the exact-syntax sugar `open 'url'` is desugared to
+    `open load('url')` at parse time, so raw string literals never appear
+    in the canonical open list.  The load elaboration pass then rewrites
+    `load('url')` into `Block(parsed module)` as usual. -/
 inductive OpenForm where
   | combine : Expr -> Expr -> OpenForm
   | block   : Algorithm -> OpenForm
@@ -545,10 +575,10 @@ mutual
         all intermediate properties to be public. `Algorithm.lookupPublicProp` enforces this.
 
       Examples:
-      - `Open = Lib` where `Lib` has `{ publicProp "Sub" ... }` → OK, exposes public properties of Sub
-      - `Open = Lib.PrivateSub` where `PrivateSub` has `isPublic = false` → Error (unknownProperty)
+      - `open Lib` where `Lib` has `{ publicProp "Sub" ... }` → OK, exposes public properties of Sub
+      - `open Lib.PrivateSub` where `PrivateSub` has `isPublic = false` → Error (unknownProperty)
       - Structural access `Lib.PrivateSub.X` in code → OK (uses Algorithm.lookupProp, sees private)
-      - `Open = Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
+      - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
   partial def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
     match Expr.openForm? e with
     | some (.combine e1 e2) => do
@@ -1267,7 +1297,7 @@ structure LoadCtx where
     load is a directive, not a runtime expression. -/
 inductive LoadPosition where
   | propertyDef : LoadPosition   -- RHS of Name = load('...')
-  | openList    : LoadPosition   -- inside open = load('...') or open = { ..., load('...') }
+  | openList    : LoadPosition   -- inside open load('...') or open target1, target2
   deriving Repr, BEq
 
 /- **load elaboration judgment**
@@ -1281,7 +1311,7 @@ inductive LoadPosition where
 
   2. **Allowed position**: load may only appear in:
      - Property definition RHS: `Lib = load('https://katlang.org/lib.kat')`
-     - Open declarations: `open = load('https://katlang.org/lib.kat')`
+     - Open declarations: `open load('https://katlang.org/lib.kat')`
      load in runtime positions (binary expressions, call arguments, if/while
      branches, etc.) is rejected.
 

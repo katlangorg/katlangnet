@@ -333,7 +333,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Lib = (public inc = x + 1)
-            open = Lib
+            open Lib
             inc
             """;
         var ast = ParseAndDetect(source);
@@ -348,7 +348,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Lib = (inc = x + 1)
-            open = Lib
+            open Lib
             inc + 1
             """;
         var ast = ParseAndDetect(source);
@@ -364,7 +364,7 @@ public class ParameterDetectorTests
         var source = """
             A = (public foo = 1)
             B = (public bar = 2)
-            open = A, B
+            open A, B
             foo + bar + z
             """;
         var ast = ParseAndDetect(source);
@@ -380,7 +380,7 @@ public class ParameterDetectorTests
         var source = """
             A = (public foo = 1)
             B = (public bar = 2)
-            open = A; B
+            open A; B
             foo + bar + z
             """;
         var ast = ParseAndDetect(source);
@@ -396,7 +396,7 @@ public class ParameterDetectorTests
         // Child property body should see names from parent's opens
         var source = """
             Lib = (public val = 42)
-            open = Lib
+            open Lib
             F = val + 1
             F
             """;
@@ -413,12 +413,12 @@ public class ParameterDetectorTests
     {
         var source = """
             Outer = (public Inner = (public val = 42))
-            open = Outer.Inner
+            open Outer.Inner
             val
             """;
         var ast = ParseAndDetect(source);
 
-        // val is visible through open = Outer.Inner â†’ not a param
+        // val is visible through open Outer.Inner -> not a param
         Assert.Empty(ast.Params);
         Assert.IsType<Expr.Resolve>(ast.Output[0]);
     }
@@ -428,7 +428,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Outer = (Inner = (public val = 42))
-            open = Outer.Inner
+            open Outer.Inner
             val + 1
             """;
         var ast = ParseAndDetect(source);

@@ -33,6 +33,7 @@ public enum TokenKind
     KeywordXor,
     KeywordNot,
     KeywordPublic,
+    KeywordOpen,
 
     // Delimiters
     LParen,

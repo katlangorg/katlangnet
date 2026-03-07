@@ -415,7 +415,7 @@ public class ParserTests
         Assert.True(result.HasErrors);
     }
 
-    // â”€â”€ New operators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ New operators â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     [Fact]
     public void Parse_Division_ReturnsBinaryExpr()
@@ -623,7 +623,7 @@ public class ParserTests
         Assert.Equal("X", result.Root.Properties[0].Name);
     }
 
-    // â”€â”€ Grace operator tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Grace operator tests â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     [Fact]
     public void Parse_PrefixGrace_ProducesGraceNode()
@@ -700,7 +700,7 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace operator cannot be applied to property names"));
     }
 
-    // â”€â”€ Public property parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Public property parsing â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     [Fact]
     public void Parse_PublicProperty_SetsIsPublic()
@@ -734,7 +734,7 @@ public class ParserTests
     [Fact]
     public void Parse_PublicOpen_ReportsError()
     {
-        var result = Parser.ParseSyntax("public open = Math\nPi");
+        var result = Parser.ParseSyntax("public open Math\nPi");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to open"));
     }
@@ -747,13 +747,13 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace operator cannot be applied to property names"));
     }
 
-    // â”€â”€ Open comma-separated list tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Open declaration tests -----------------------------------------------
 
     [Fact]
     public void Parse_Open_UnbracketedCommaList_TwoOpens()
     {
-        // open = Lib2, Lib3 â†’ two open entries
-        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nLib3 = (public Val3 = 30)\nopen = Lib2, Lib3\nVal3");
+        // open Lib2, Lib3 -> two open entries
+        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nLib3 = (public Val3 = 30)\nopen Lib2, Lib3\nVal3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Opens.Count);
         Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
@@ -765,8 +765,8 @@ public class ParserTests
     [Fact]
     public void Parse_Open_SingleItem_OneOpen()
     {
-        // open = Lib2 â†’ one open entry
-        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nopen = Lib2\nVal2");
+        // open Lib2 -> one open entry
+        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nopen Lib2\nVal2");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
@@ -776,20 +776,20 @@ public class ParserTests
     [Fact]
     public void Parse_Open_CallInOpenList_BadOpenForm()
     {
-        // open = F(1,2), Lib3 â†’ Call is not a valid open form; should report error.
+        // open F(1,2), Lib3 -> Call is not a valid open form; should report error.
         // The comma inside F(1,2) must NOT split the list.
-        var result = Parser.ParseSyntax("F = (X = 1)\nLib3 = (Y = 2)\nopen = F(1,2), Lib3\nY");
+        var result = Parser.ParseSyntax("F = (X = 1)\nLib3 = (Y = 2)\nopen F(1,2), Lib3\nY");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Invalid open form") && d.Message.Contains("call"));
     }
 
-    // â”€â”€ Open DotCall normalization tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Open DotCall normalization tests -------------------------------------
 
     [Fact]
     public void Parse_Open_DotPath_NormalizesToProp()
     {
-        // open = Lib.Sub â†’ parser produces Prop(Resolve("Lib"), "Sub"), NOT DotCall
-        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen = Lib.Sub\nX");
+        // open Lib.Sub -> parser produces Prop(Resolve("Lib"), "Sub"), NOT DotCall
+        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen Lib.Sub\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         var prop = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
@@ -800,8 +800,8 @@ public class ParserTests
     [Fact]
     public void Parse_Open_DotCallWithArgs_ReportsError()
     {
-        // open = Lib.Sub() â†’ DotCall with args â†’ rejected as invalid open form
-        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen = Lib.Sub()\nX");
+        // open Lib.Sub() -> DotCall with args -> rejected as invalid open form
+        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen Lib.Sub()\nX");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("not allowed in open"));
     }
@@ -809,8 +809,8 @@ public class ParserTests
     [Fact]
     public void Parse_Open_NestedDotPath_NormalizesToNestedProp()
     {
-        // open = A.B.C â†’ Prop(Prop(Resolve("A"), "B"), "C")
-        var result = Parser.ParseSyntax("A = (public B = (public C = (public X = 1)))\nopen = A.B.C\nX");
+        // open A.B.C -> Prop(Prop(Resolve("A"), "B"), "C")
+        var result = Parser.ParseSyntax("A = (public B = (public C = (public X = 1)))\nopen A.B.C\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         var outer = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
@@ -818,5 +818,102 @@ public class ParserTests
         var inner = Assert.IsType<Expr.Prop>(outer.Target);
         Assert.Equal("B", inner.Name);
         Assert.IsType<Expr.Resolve>(inner.Target);
+    }
+
+    // -- Open declaration: new syntax tests -----------------------------------
+
+    [Fact]
+    public void Parse_Open_ByIdentifier()
+    {
+        var result = Parser.ParseSyntax("open A\n1");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Opens);
+        var resolve = Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
+        Assert.Equal("A", resolve.Name);
+    }
+
+    [Fact]
+    public void Parse_Open_ByDottedPath()
+    {
+        var result = Parser.ParseSyntax("open Lib.Sub\n1");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Opens);
+        var prop = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
+        Assert.Equal("Sub", prop.Name);
+        Assert.IsType<Expr.Resolve>(prop.Target);
+    }
+
+    [Fact]
+    public void Parse_Open_ByLoadCall()
+    {
+        var source = "open load('https://katlang.org/algorithm.kat')\n1";
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Opens);
+        var call = Assert.IsType<Expr.Call>(result.Root.Opens[0]);
+        var fn = Assert.IsType<Expr.Resolve>(call.Function);
+        Assert.Equal("load", fn.Name);
+    }
+
+    [Fact]
+    public void Parse_Open_StringLiteralSugar_DesugarsToLoad()
+    {
+        var source = "open 'https://katlang.org/algorithm.kat'\n1";
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Opens);
+        var call = Assert.IsType<Expr.Call>(result.Root.Opens[0]);
+        var fn = Assert.IsType<Expr.Resolve>(call.Function);
+        Assert.Equal("load", fn.Name);
+        Assert.Single(call.Args.Output);
+        var strLit = Assert.IsType<Expr.StringLiteral>(call.Args.Output[0]);
+        Assert.Equal("https://katlang.org/algorithm.kat", strLit.Value);
+    }
+
+    [Fact]
+    public void Parse_Open_MultipleTargets()
+    {
+        var source = "open A, 'https://katlang.org/algorithm.kat', Lib.Sub\n1";
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        Assert.Equal(3, result.Root.Opens.Count);
+        Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
+        Assert.IsType<Expr.Call>(result.Root.Opens[1]);
+        Assert.IsType<Expr.Prop>(result.Root.Opens[2]);
+    }
+
+    [Fact]
+    public void Parse_Open_RepeatedDeclaration_ReportsError()
+    {
+        var result = Parser.ParseSyntax("open A\nopen B\n1");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Only one") && d.Message.Contains("open"));
+    }
+
+    [Fact]
+    public void Parse_Open_InExpressionPosition_ReportsError()
+    {
+        var result = Parser.ParseSyntax("1 + open A");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("declaration") && d.Message.Contains("expression"));
+    }
+
+    [Fact]
+    public void Parse_Open_InvalidTarget_NumericExpression_ReportsError()
+    {
+        var result = Parser.ParseSyntax("open 1 + 2\n3");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Invalid open form"));
+    }
+
+    [Fact]
+    public void Parse_Open_StringLiteralDoesNotSurviveElaboration()
+    {
+        var source = "open 'https://katlang.org/test.kat'\n1";
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Opens);
+        Assert.IsNotType<Expr.StringLiteral>(result.Root.Opens[0]);
+        Assert.IsType<Expr.Call>(result.Root.Opens[0]);
     }
 }

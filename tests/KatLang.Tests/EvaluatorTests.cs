@@ -763,7 +763,7 @@ public class EvaluatorTests
     public void Eval_MathFn_ViaOpen()
     {
         var source = """
-            open = Math
+            open Math
             Abs(-5)
             """;
         AssertEval(source, 5);
@@ -773,7 +773,7 @@ public class EvaluatorTests
     public void Eval_MathFn_ViaOpen_TwoParam()
     {
         var source = """
-            open = Math
+            open Math
             Pow(2, 8)
             """;
         AssertEval(source, 256);
@@ -785,7 +785,7 @@ public class EvaluatorTests
     public void Eval_Open_MathPi()
     {
         var source = """
-            open = Math
+            open Math
             Pi
             """;
         var result = Eval(source);
@@ -798,7 +798,7 @@ public class EvaluatorTests
     public void Eval_Open_MathE()
     {
         var source = """
-            open = Math
+            open Math
             E
             """;
         var result = Eval(source);
@@ -811,7 +811,7 @@ public class EvaluatorTests
     public void Eval_Open_MathInExpression()
     {
         var source = """
-            open = Math
+            open Math
             Pi * 2
             """;
         var result = Eval(source);
@@ -826,7 +826,7 @@ public class EvaluatorTests
         var source = """
             M = (public X = 42
             X)
-            open = M
+            open M
             X
             """;
         AssertEvalAllPublic(source, 42);
@@ -840,7 +840,7 @@ public class EvaluatorTests
             X)
             B = (public Y = 2
             Y)
-            open = A; B
+            open A; B
             X + Y
             """;
         AssertEvalAllPublic(source, 3);
@@ -850,7 +850,7 @@ public class EvaluatorTests
     public void Eval_Open_MissingProperty_Fails()
     {
         var source = """
-            open = Math
+            open Math
             Foo
             """;
         AssertEvalFails(source);
@@ -860,7 +860,7 @@ public class EvaluatorTests
     public void Eval_Open_InPropertyBody()
     {
         var source = """
-            open = Math
+            open Math
             Circumference = Pi * 2 * r
             Circumference(5)
             """;
@@ -875,7 +875,7 @@ public class EvaluatorTests
     {
         var source = """
             Lib = (public F = x + 1)
-            open = Lib
+            open Lib
             F(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -901,7 +901,7 @@ public class EvaluatorTests
             Lib = (public Helper = x + 1
               public UseHelper = Helper(x)
             )
-            open = Lib
+            open Lib
             UseHelper(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -916,7 +916,7 @@ public class EvaluatorTests
             Lib = (Apply = Fn(x))
             Wrapper = (
               Fn = x * 2
-              open = Lib
+              open Lib
               Apply(5)
             )
             Wrapper
@@ -933,7 +933,7 @@ public class EvaluatorTests
             Lib = (Calc = x * Factor)
             Main = (
               Factor = 3
-              open = Lib
+              open Lib
               Calc(5)
             )
             Main
@@ -950,7 +950,7 @@ public class EvaluatorTests
               public Helper = x + 1
               public UseHelper = Helper(x)
             )
-            open = Lib
+            open Lib
             UseHelper(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -1336,7 +1336,7 @@ public class EvaluatorTests
         var source = """
             A = (public X = 1)
             B = (public Y = 2)
-            open = A, B
+            open A, B
             X + Y
             """;
         AssertEvalAllPublic(source, 3);
@@ -1345,11 +1345,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Open_UnbracketedCommaList_ResolvesFromSecondLib()
     {
-        // open = Lib2, Lib3 â†’ two separate opens; Val3 resolves from Lib3
+        // open Lib2, Lib3 → two separate opens; Val3 resolves from Lib3
         var source = """
             Lib2 = (public Val2 = 20)
             Lib3 = (public Val3 = 30)
-            open = Lib2, Lib3
+            open Lib2, Lib3
             Val3
             """;
         AssertEvalAllPublic(source, 30);
@@ -1362,7 +1362,7 @@ public class EvaluatorTests
         var source = """
             A = (public X = 1)
             B = (public X = 2)
-            open = A, B
+            open A, B
             X
             """;
         AssertEvalAllPublicFails(source);
@@ -1374,7 +1374,7 @@ public class EvaluatorTests
         // Local property takes priority over imported name
         var source = """
             Lib = (public X = 99)
-            open = Lib
+            open Lib
             X = 1
             X
             """;
@@ -1388,7 +1388,7 @@ public class EvaluatorTests
         var source = """
             A = (public X = 1)
             B = (public Y = 2)
-            open = A; B
+            open A; B
             X + Y
             """;
         AssertEvalAllPublic(source, 3);
@@ -1401,10 +1401,10 @@ public class EvaluatorTests
         var source = """
             Inner = (public Z = 42)
             Lib1 = (
-                open = Inner
+                open Inner
                 W = Z
             )
-            open = Lib1
+            open Lib1
             Z
             """;
         // Z is not transitively visible â†’ fail
@@ -1423,7 +1423,7 @@ public class EvaluatorTests
         //   alg [] [prop self "HiddenLib"] [("HiddenLib", alg [] [] [("X", alg [] [] [] [num 42])] [])] [resolve "X"]
         var source = """
             HiddenLib = (X = 42)
-            open = self.HiddenLib
+            open self.HiddenLib
             X
             """;
         AssertEvalFails(source);
@@ -1438,7 +1438,7 @@ public class EvaluatorTests
         var source = """
             Lib = (public X = 42)
             Main = (
-                open = Lib
+                open Lib
                 Child = (X)
                 Child
             )
@@ -1464,7 +1464,7 @@ public class EvaluatorTests
             Val = 0
             Main = (
                 Lib = (public Val = 42)
-                open = Lib
+                open Lib
                 Wrapper = (
                     Val
                 )
@@ -1486,7 +1486,7 @@ public class EvaluatorTests
         var source = """
             public Lib = (public X = 42
             Y = 99)
-            open = Lib
+            open Lib
             X
             """;
         AssertEval(source, 42);
@@ -1495,7 +1495,7 @@ public class EvaluatorTests
         var sourceY = """
             public Lib = (public X = 42
             Y = 99)
-            open = Lib
+            open Lib
             Y
             """;
         AssertEvalFails(sourceY);
@@ -1504,13 +1504,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Visibility_NotPublicPropertyOnPrivateIntermediate()
     {
-        // open = Lib.Sub where Sub exists but is private â†’ NotPublicProperty.
+        // open Lib.Sub where Sub exists but is private → NotPublicProperty.
         // Lib doesn't need public (it's in the ownership chain), but Sub must
         // be public because it's an intermediate on the open path.
         var source = """
             Lib = (Sub = (public X = 42
             X))
-            open = Lib.Sub
+            open Lib.Sub
             X
             """;
         AssertEvalFails(source);
@@ -1524,7 +1524,7 @@ public class EvaluatorTests
         // Acceptance A: Lib.Sub in open â†’ prop-path resolves correctly
         var source = """
             public Lib = (public Sub = (public X = 1))
-            open = Lib.Sub
+            open Lib.Sub
             X
             """;
         AssertEval(source, 1);
@@ -1536,7 +1536,7 @@ public class EvaluatorTests
         // Acceptance B: Lib.Sub() â†’ call-like dot syntax in open â†’ parse error
         var source = """
             public Lib = (public Sub = (public X = 1))
-            open = Lib.Sub()
+            open Lib.Sub()
             X
             """;
         // Parser emits diagnostic for invalid open form
@@ -1551,7 +1551,7 @@ public class EvaluatorTests
         var source = """
             public Lib2 = (public Val = 2)
             public Lib3 = (public Val2 = 3)
-            open = Lib2, Lib3
+            open Lib2, Lib3
             Val2
             """;
         AssertEval(source, 3);
@@ -1563,7 +1563,7 @@ public class EvaluatorTests
         // Acceptance D: private intermediate on open path
         var source = """
             Lib = (Sub = (public X = 1))
-            open = Lib.Sub
+            open Lib.Sub
             X
             """;
         AssertEvalFails(source);
@@ -1579,7 +1579,7 @@ public class EvaluatorTests
             Val = 0
             Main = (
                 Lib = (Val = 42)
-                open = Lib
+                open Lib
                 Wrapper = (
                     Val
                 )
@@ -1598,7 +1598,7 @@ public class EvaluatorTests
         var source = """
             A = (public X = 1)
             B = (public X = 2)
-            open = A, B
+            open A, B
             X
             """;
         AssertEvalAllPublicFails(source);
@@ -1623,7 +1623,7 @@ public class EvaluatorTests
         // not expose any properties through opens.
         var source = """
             Lib = (X = 42)
-            open = Lib
+            open Lib
             X
             """;
         // Without MakeAllPublic, X should NOT be visible through opens
@@ -1637,7 +1637,7 @@ public class EvaluatorTests
     {
         var source = """
             Lib = (public Val = 42)
-            open = Lib
+            open Lib
             Val
             """;
         // Lib itself must also be public for open resolution to find it
@@ -1651,7 +1651,7 @@ public class EvaluatorTests
         // Lean: open target must also be public (lookupLexicalDirectUnwiredPublic).
         var source = """
             public Lib = (public Val = 42)
-            open = Lib
+            open Lib
             Val
             """;
         AssertEval(source, 42);
@@ -1665,7 +1665,7 @@ public class EvaluatorTests
         var source = """
             public Lib = (public X = 1
             Y = 2)
-            open = Lib
+            open Lib
             X
             """;
         AssertEval(source, 1);
@@ -1674,7 +1674,7 @@ public class EvaluatorTests
         var sourceY = """
             public Lib = (public X = 1
             Y = 2)
-            open = Lib
+            open Lib
             Y
             """;
         AssertEvalFails(sourceY);
@@ -1686,7 +1686,7 @@ public class EvaluatorTests
         // Lean: open target must be public
         var source = """
             public Lib = {public Val = 42}
-            open = Lib
+            open Lib
             Val
             """;
         AssertEval(source, 42);
@@ -1702,7 +1702,7 @@ public class EvaluatorTests
         // Lean: open target must also be public (lookupLexicalDirectUnwiredPublic).
         var source = """
             public Lib = (public val = 42)
-            open = Lib
+            open Lib
             val
             """;
         AssertEval(source, 42);
@@ -1715,7 +1715,7 @@ public class EvaluatorTests
         // Lean: open target must also be public.
         var source = """
             public Lib = (public inc = x + 1)
-            open = Lib
+            open Lib
             inc(5)
             """;
         AssertEval(source, 6);
@@ -1728,7 +1728,7 @@ public class EvaluatorTests
         // Lean: open target must also be public.
         var source = """
             public Lib = (public val = 42)
-            open = Lib
+            open Lib
             F = val + 1
             F
             """;
@@ -1743,7 +1743,7 @@ public class EvaluatorTests
         // Lean: lookupLexicalDirectUnwiredPublic rejects private open targets
         var source = """
             Lib = (public val = 42)
-            open = Lib
+            open Lib
             val
             """;
         // Lib is private â†’ open should fail with NotPublicProperty
@@ -1757,7 +1757,7 @@ public class EvaluatorTests
         // Public open target should work
         var source = """
             public Lib = (public val = 42)
-            open = Lib
+            open Lib
             val
             """;
         AssertEval(source, 42);

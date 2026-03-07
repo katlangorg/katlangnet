@@ -109,6 +109,7 @@ public static class Lexer
                     "xor"    => Token.Create(TokenKind.KeywordXor, start, i - start, startLine, startCol),
                     "not"    => Token.Create(TokenKind.KeywordNot, start, i - start, startLine, startCol),
                     "public" => Token.Create(TokenKind.KeywordPublic, start, i - start, startLine, startCol),
+                    "open"   => Token.Create(TokenKind.KeywordOpen, start, i - start, startLine, startCol),
                     _        => Token.CreateIdentifier(text, start, i - start, startLine, startCol),
                 };
                 tokens.Add(token);
