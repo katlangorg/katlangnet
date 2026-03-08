@@ -180,6 +180,10 @@ public sealed class Parser
                 {
                     ReportError("Only one 'open' declaration is allowed per algorithm.");
                 }
+                if (properties.Count > 0 || output.Count > 0)
+                {
+                    ReportError("'open' declaration must appear before any properties or output expressions.");
+                }
                 hasOpenDeclaration = true;
                 Advance(); // consume 'open'
                 var openExprs = ParseOpenTargetList();

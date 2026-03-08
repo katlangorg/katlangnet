@@ -753,7 +753,7 @@ public class ParserTests
     public void Parse_Open_UnbracketedCommaList_TwoOpens()
     {
         // open Lib2, Lib3 -> two open entries
-        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nLib3 = (public Val3 = 30)\nopen Lib2, Lib3\nVal3");
+        var result = Parser.ParseSyntax("open Lib2, Lib3\nLib2 = (public Val2 = 20)\nLib3 = (public Val3 = 30)\nVal3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Opens.Count);
         Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
@@ -766,7 +766,7 @@ public class ParserTests
     public void Parse_Open_SingleItem_OneOpen()
     {
         // open Lib2 -> one open entry
-        var result = Parser.ParseSyntax("Lib2 = (public Val2 = 20)\nopen Lib2\nVal2");
+        var result = Parser.ParseSyntax("open Lib2\nLib2 = (public Val2 = 20)\nVal2");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
@@ -778,7 +778,7 @@ public class ParserTests
     {
         // open F(1,2), Lib3 -> Call is not a valid open form; should report error.
         // The comma inside F(1,2) must NOT split the list.
-        var result = Parser.ParseSyntax("F = (X = 1)\nLib3 = (Y = 2)\nopen F(1,2), Lib3\nY");
+        var result = Parser.ParseSyntax("open F(1,2), Lib3\nF = (X = 1)\nLib3 = (Y = 2)\nY");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Invalid open form") && d.Message.Contains("call"));
     }
@@ -789,7 +789,7 @@ public class ParserTests
     public void Parse_Open_DotPath_NormalizesToProp()
     {
         // open Lib.Sub -> parser produces Prop(Resolve("Lib"), "Sub"), NOT DotCall
-        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen Lib.Sub\nX");
+        var result = Parser.ParseSyntax("open Lib.Sub\nLib = (public Sub = (public X = 1))\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         var prop = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
@@ -801,7 +801,7 @@ public class ParserTests
     public void Parse_Open_DotCallWithArgs_ReportsError()
     {
         // open Lib.Sub() -> DotCall with args -> rejected as invalid open form
-        var result = Parser.ParseSyntax("Lib = (public Sub = (public X = 1))\nopen Lib.Sub()\nX");
+        var result = Parser.ParseSyntax("open Lib.Sub()\nLib = (public Sub = (public X = 1))\nX");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("not allowed in open"));
     }
@@ -810,7 +810,7 @@ public class ParserTests
     public void Parse_Open_NestedDotPath_NormalizesToNestedProp()
     {
         // open A.B.C -> Prop(Prop(Resolve("A"), "B"), "C")
-        var result = Parser.ParseSyntax("A = (public B = (public C = (public X = 1)))\nopen A.B.C\nX");
+        var result = Parser.ParseSyntax("open A.B.C\nA = (public B = (public C = (public X = 1)))\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
         var outer = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
@@ -915,5 +915,21 @@ public class ParserTests
         Assert.Single(result.Root.Opens);
         Assert.IsNotType<Expr.StringLiteral>(result.Root.Opens[0]);
         Assert.IsType<Expr.Call>(result.Root.Opens[0]);
+    }
+
+    [Fact]
+    public void Parse_Open_AfterProperty_ReportsError()
+    {
+        var result = Parser.ParseSyntax("X = 1\nopen Math\n2");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("must appear before"));
+    }
+
+    [Fact]
+    public void Parse_Open_AfterOutput_ReportsError()
+    {
+        var result = Parser.ParseSyntax("1\nopen Math\n2");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("must appear before"));
     }
 }

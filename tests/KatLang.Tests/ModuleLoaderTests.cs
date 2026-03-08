@@ -57,8 +57,8 @@ public class ModuleLoaderTests
         // open Lib2
         // Val
         var source = """
-            public Lib2 = load('https://katlang.org/demo/lib2.kat')
             open Lib2
+            public Lib2 = load('https://katlang.org/demo/lib2.kat')
             Val
             """;
 
@@ -237,8 +237,8 @@ public class ModuleLoaderTests
     public void Load_SubdomainAllowed()
     {
         var source = """
-            public Lib = load('https://cdn.katlang.org/demo/lib.kat')
             open Lib
+            public Lib = load('https://cdn.katlang.org/demo/lib.kat')
             X
             """;
 
@@ -263,9 +263,9 @@ public class ModuleLoaderTests
         };
 
         var source = """
+            open Lib1
             Lib1 = load('https://katlang.org/demo/shared.kat')
             Lib2 = load('https://katlang.org/demo/shared.kat')
-            open Lib1
             Val
             """;
 
@@ -313,16 +313,16 @@ public class ModuleLoaderTests
     {
         // A loads B; main loads A Ã¢â€ â€™ transitive loading
         var source = """
-            public LibA = load('https://katlang.org/demo/A.kat')
             open LibA
+            public LibA = load('https://katlang.org/demo/A.kat')
             Val
             """;
 
         var remoteFiles = new Dictionary<string, string>
         {
             ["https://katlang.org/demo/A.kat"] = """
-                public LibB = load('https://katlang.org/demo/B.kat')
                 open LibB
+                public LibB = load('https://katlang.org/demo/B.kat')
                 public Val = Val2 + 10
                 """,
             ["https://katlang.org/demo/B.kat"] = """
