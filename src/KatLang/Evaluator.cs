@@ -494,6 +494,25 @@ public static class Evaluator
         _ => [],
     };
 
+    // ── Result helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Extract top-level items from a result into a list.
+    /// Atom → [Atom]; Group → its items. Lean: Result.toItems.
+    /// </summary>
+    private static void ResultItems(List<Result> into, Result r)
+    {
+        switch (r)
+        {
+            case Result.Atom:
+                into.Add(r);
+                break;
+            case Result.Group(var items):
+                into.AddRange(items);
+                break;
+        }
+    }
+
     // ── Combine algorithms ──────────────────────────────────────────────────
 
     /// <summary>Lean: combineAlg. Merges params, opens, properties, output.</summary>
@@ -1035,6 +1054,18 @@ public static class Evaluator
                     _ => 0,
                 };
                 return EvalResult<Result>.Ok(new Result.Atom(result));
+            }
+
+            case Expr.Combine(var e1, var e2):
+            {
+                var r1 = Eval(e1, ctx, valEnv);
+                if (r1.IsError) return r1.Error;
+                var r2 = Eval(e2, ctx, valEnv);
+                if (r2.IsError) return r2.Error;
+                var items = new List<Result>();
+                ResultItems(items, r1.Value);
+                ResultItems(items, r2.Value);
+                return EvalResult<Result>.Ok(Result.FromItems(items));
             }
 
             case Expr.Block(var alg):

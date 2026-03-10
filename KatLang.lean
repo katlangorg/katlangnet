@@ -164,6 +164,12 @@ namespace Result
         | atom n => some n
         | _      => none
 
+  /-- Extract top-level items from a result.
+      Atom → singleton list; Group → its items. -/
+  def toItems : Result -> List Result
+    | atom n   => [atom n]
+    | group rs => rs
+
   /-- Structural indexing (preserves grouping). -/
   def index? : Result -> Nat -> Option Result
     | atom n, 0   => some (atom n)
@@ -1005,6 +1011,11 @@ mutual
             | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
             | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
             | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
+
+    | .combine e1 e2 => do
+        let r1 <- eval e1 ctx env
+        let r2 <- eval e2 ctx env
+        pure (Result.normalize (Result.group (r1.toItems ++ r2.toItems)))
 
     | .block a =>
         evalAlgOutput (wireToCaller ctx a) ctx env

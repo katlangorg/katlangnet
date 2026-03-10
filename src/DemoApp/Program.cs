@@ -1,18 +1,8 @@
 using KatLang;
 
-var source = """
-    NetSalary = {
-        SocTax = grossSalary * 0.105
-        ChildCredit = numberOfChildren * 250
-        NonTaxMin = 550
-        TaxableIncome = grossSalary - SocTax - ChildCredit - NonTaxMin
-        IncomeTax = TaxableIncome * 0.255
-        grossSalary - SocTax - IncomeTax
-    }
-    NetSalary(1600, 2)
-    """;
+var source = "1 + 2; 2 + 3, 3 + 4";
 
-Console.WriteLine("=== KatLang 0.73 Parser Demo ===");
+Console.WriteLine("=== KatLang 0.75 Parser Demo ===");
 Console.WriteLine(source);
 Console.WriteLine();
 
@@ -38,8 +28,8 @@ Console.WriteLine("=== Evaluation ===");
 var evalResult = Evaluator.Run(new Expr.Block(ast));
 if (evalResult.IsOk)
 {
-    var atoms = evalResult.Value.ToAtoms();
-    Console.WriteLine($"Result: [{string.Join(", ", atoms)}]");
+    var output = ResultToString(evalResult.Value);
+    Console.WriteLine(output);
 }
 else
 {
@@ -194,4 +184,61 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write($"NativeCall(\"{fnName}\", [{string.Join(", ", argNames)}])");
             break;
     }
+}
+
+static string ResultToString(Result result)
+{
+    if (result is Result.Atom val)
+    {
+        return val.Value.ToString();
+    }
+    if (result is Result.Group group)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var item in group.Items)
+        {
+            text.Append(InlineResultToString(item));
+            text.Append("\n");
+        }
+
+        return text.ToString();
+    }
+
+    return string.Empty;
+}
+
+static string InlineResultToString(Result result)
+{
+    if (result is Result.Atom atom)
+        return atom.Value.ToString();
+
+    if (result is Result.Group group)
+        return string.Join(",", group.Items.Select(InlineResultToString));
+
+    return string.Empty;
+}
+
+static string GroupToString(Result.Group group)
+{
+    var text = new System.Text.StringBuilder();
+    text.Append("(");
+    foreach (var item in group.Items)
+    {
+        if (item is Result.Atom atom)
+        {
+            text.Append(atom.Value);
+        }
+        if (item is Result.Group subGroup)
+        {
+            text.Append(GroupToString(subGroup));
+        }
+        text.Append(",");
+    }
+    if (group.Items.Count() > 0)
+    {
+        text.Remove(text.Length - 1, 1);
+    }
+    text.Append(")");
+
+    return text.ToString();
 }

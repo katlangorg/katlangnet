@@ -339,6 +339,50 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_Semicolon_ChainedCombine()
+    {
+        // 1 + 2; 3 + 4; 5 + 6 → Combine(Combine(1+2, 3+4), 5+6) left-assoc
+        var result = Parser.ParseSyntax("1 + 2; 3 + 4; 5 + 6");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Output); // one combine item in output
+        var outer = Assert.IsType<Expr.Combine>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.Combine>(outer.Left);
+        Assert.IsType<Expr.Binary>(inner.Left);
+        Assert.IsType<Expr.Binary>(inner.Right);
+        Assert.IsType<Expr.Binary>(outer.Right);
+    }
+
+    [Fact]
+    public void Parse_CommaAndSemicolon_CorrectStructure()
+    {
+        // 1, 2; 3 → output list has two items: [Num(1), Combine(Num(2), Num(3))]
+        var result = Parser.ParseSyntax("1, 2; 3");
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Output.Count);
+        Assert.IsType<Expr.Num>(result.Root.Output[0]);
+        var combine = Assert.IsType<Expr.Combine>(result.Root.Output[1]);
+    }
+
+    [Fact]
+    public void Parse_PropertyDetectionWithSemicolon()
+    {
+        // A = 1; 2 B = 3 → two properties, A has output [Combine(1, 2)]
+        var result = Parser.ParseSyntax("A = 1; 2 B = 3");
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Properties.Count);
+    }
+
+    [Fact]
+    public void Parse_ArithmeticGroupingUnchanged()
+    {
+        // 1 + (2 * 3) → Binary with paren grouping
+        var result = Parser.ParseSyntax("1 + (2 * 3)");
+        Assert.False(result.HasErrors);
+        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
+        Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    [Fact]
     public void Parse_ChainedIndex_LeftAssociative()
     {
         var result = Parser.ParseSyntax("X:0:1");

@@ -1903,4 +1903,137 @@ public class EvaluatorTests
             """;
         AssertEval(source, 119.04m);
     }
+
+    // ── Semicolon: structural combining operator ────────────────────────────
+
+    // A. Existing property detection still works
+
+    [Fact]
+    public void Eval_PropertyDetection_TwoPrivateProperties()
+    {
+        AssertEval("A = 5 B = 10 A + B", 15);
+    }
+
+    [Fact]
+    public void Eval_PropertyDetection_PublicAndPrivateProperties()
+    {
+        AssertEval("public A = 5 B = 10 A + B", 15);
+    }
+
+    // B. Comma-only outputs still work
+
+    [Fact]
+    public void Eval_CommaOnly_MultipleOutputs()
+    {
+        AssertEval("1 + 2, 2 + 3", 3, 5);
+    }
+
+    // C. Structural combining flattens
+
+    [Fact]
+    public void Eval_Combine_TwoFragments()
+    {
+        AssertEval("1 + 2, 2 + 3; 3 + 4", 3, 5, 7);
+    }
+
+    [Fact]
+    public void Eval_Combine_MultipleFragments()
+    {
+        AssertEval("1 + 2, 2 + 3; 3 + 4; 4 + 5, 5 + 6, 6 + 7", 3, 5, 7, 9, 11, 13);
+    }
+
+    // D. Combining algorithms by reference
+
+    [Fact]
+    public void Eval_Combine_ByReference()
+    {
+        var source = """
+            Property1 = 1
+            Property2 = 2, 3
+            Property1; Property2
+            """;
+        AssertEval(source, 1, 2, 3);
+    }
+
+    // E. Structural extension of algorithm fragments
+
+    [Fact]
+    public void Eval_Combine_StructuralExtension()
+    {
+        // Simplified version of the motivating pattern:
+        // Combine calls with additional expressions
+        var source = """
+            Next = if(a > 5, (a - 1, b + 1), (b - 1, a + 1))
+            Result = Next(10, 0); 10 > 5
+            Result
+            """;
+        AssertEval(source, 9, 1, 1);
+    }
+
+    // F. Nested algorithm with semicolon
+
+    [Fact]
+    public void Eval_Combine_InParenAlgorithm()
+    {
+        // (1 + 2; 3 + 4) is a parameterless nested algorithm with semicolon
+        AssertEval("(1 + 2; 3 + 4)", 3, 7);
+    }
+
+    [Fact]
+    public void Eval_Combine_AsFunctionArg()
+    {
+        // Foo receives a multi-output argument via semicolon combining
+        var source = """
+            Foo = x, y
+            Foo(1 + 2; 3 + 4)
+            """;
+        AssertEval(source, 3, 7);
+    }
+
+    // G. Capturing algorithm with semicolon
+
+    [Fact]
+    public void Eval_Combine_InBraceAlgorithm()
+    {
+        var source = "{ X = 10 X + 1; X + 2 }";
+        AssertEval(source, 11, 12);
+    }
+
+    // H. Ordinary grouped arithmetic expression unchanged
+
+    [Fact]
+    public void Eval_ParenGrouping_ArithmeticUnchanged()
+    {
+        AssertEval("1 + (2 * 3)", 7);
+    }
+
+    // I. Multiline formatting remains irrelevant
+
+    [Fact]
+    public void Eval_Combine_MultilineEquivalentToOneline()
+    {
+        var multiline = """
+            1 + 2, 2 + 3;
+            3 + 4;
+            4 + 5, 5 + 6
+            """;
+        var oneline = "1 + 2, 2 + 3; 3 + 4; 4 + 5, 5 + 6";
+        var r1 = Eval(multiline);
+        var r2 = Eval(oneline);
+        Assert.Equal(r1.Value, r2.Value);
+    }
+
+    // Additional: simple combine of two literals
+
+    [Fact]
+    public void Eval_Combine_SimpleLiterals()
+    {
+        AssertEval("1; 2", 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Combine_PropertyBody()
+    {
+        AssertEval("A = 1; 2 A", 1, 2);
+    }
 }
