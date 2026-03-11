@@ -1,6 +1,9 @@
 using KatLang;
 
-var source = "1 + 2; 2 + 3, 3 + 4";
+var source = """
+    A = (Apply = func(x))
+    A.Apply({a + 1}, 5)
+    """;
 
 Console.WriteLine("=== KatLang 0.75 Parser Demo ===");
 Console.WriteLine(source);

@@ -266,13 +266,17 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_CallWithBraces_IsParametrized()
+    public void Parse_CallWithBraces_WrapsInBlock()
     {
+        // F{x + 1} desugars to F({x + 1}) — the brace content becomes an
+        // Expr.Block inside a non-parametrized outer args algorithm.
         var result = Parser.ParseSyntax("F{x + 1}");
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.True(call.Args.IsParametrized);
+        Assert.False(call.Args.IsParametrized);
+        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
+        Assert.True(block.Algorithm.IsParametrized);
     }
 
     [Fact]

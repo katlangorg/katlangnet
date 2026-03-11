@@ -110,11 +110,15 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_CallArgsInBraces_IsParametrized()
     {
+        // F{x + 1} desugars to F({x + 1}).  The brace content is an Expr.Block
+        // whose inner algorithm has params detected (x).
         var ast = ParseAndDetect("F{x + 1}");
 
         var call = Assert.IsType<Expr.Call>(ast.Output[0]);
-        Assert.Single(call.Args.Params);
-        Assert.Equal("x", call.Args.Params[0]);
+        Assert.Empty(call.Args.Params); // outer wrapper is non-parametrized
+        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
+        Assert.Single(block.Algorithm.Params);
+        Assert.Equal("x", block.Algorithm.Params[0]);
     }
 
     [Fact]

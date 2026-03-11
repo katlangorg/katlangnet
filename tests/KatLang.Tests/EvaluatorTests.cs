@@ -1205,27 +1205,29 @@ public class EvaluatorTests
         => AssertEvalFails("X");
 
     [Fact]
-    public void Eval_UnknownIdentifier_ReturnsUnknownNameError()
+    public void Eval_UnknownIdentifier_ReturnsArityMismatchError()
     {
+        // "Sum" is detected as a parameter by ParameterDetector, so the root
+        // block has params=["Sum"].  Block value-position semantics:
+        // 1+ params => arityMismatch.
         var err = GetEvalError("Sum");
         Assert.NotNull(err);
         while (err is EvalError.WithContext wc)
             err = wc.Inner;
-        Assert.IsType<EvalError.UnknownName>(err);
-        Assert.Equal("Sum", ((EvalError.UnknownName)err).Name);
+        var am = Assert.IsType<EvalError.ArityMismatch>(err);
+        Assert.Equal(1, am.Expected);
+        Assert.Equal(0, am.Actual);
     }
 
     [Fact]
-    public void Eval_UnknownIdentifier_HasCorrectSpan()
+    public void Eval_UnknownIdentifier_ReturnsArityMismatch()
     {
+        // "Sum" becomes a parameter → block has 1 param → ArityMismatch in value position.
         var err = GetEvalError("Sum");
         Assert.NotNull(err);
-        // The outermost error should carry the Span
-        Assert.NotNull(err.Span);
-        Assert.Equal(1, err.Span.StartLineNumber);
-        Assert.Equal(1, err.Span.StartColumn);
-        Assert.Equal(1, err.Span.EndLineNumber);
-        Assert.Equal(3, err.Span.EndColumn);
+        while (err is EvalError.WithContext wc)
+            err = wc.Inner;
+        Assert.IsType<EvalError.ArityMismatch>(err);
     }
 
     [Fact]
@@ -1242,16 +1244,18 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_UnknownIdentifier_MultiLine_HasCorrectSpan()
+    public void Eval_UnknownIdentifier_MultiLine_ReturnsArityMismatch()
     {
+        // Y is detected as a parameter → block has 1 param → ArityMismatch.
         var source = """
             X = 5
             Y
             """;
         var err = GetEvalError(source);
         Assert.NotNull(err);
-        Assert.NotNull(err.Span);
-        Assert.Equal(2, err.Span.StartLineNumber);
+        while (err is EvalError.WithContext wc)
+            err = wc.Inner;
+        Assert.IsType<EvalError.ArityMismatch>(err);
     }
 
     [Fact]
@@ -2035,5 +2039,143 @@ public class EvaluatorTests
     public void Eval_Combine_PropertyBody()
     {
         AssertEval("A = 1; 2 A", 1, 2);
+    }
+
+    // ── Higher-Order Algorithm Parameters ────────────────────────────────────
+
+    [Fact]
+    public void Eval_HigherOrder_AlgoCallsPassedAlgorithm()
+    {
+        // Algo = func(9); F = a + 1; Algo(F) → F(9) → 9+1 = 10
+        AssertEval("Algo = func(9)\nF = a + 1\nAlgo(F)", 10);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_PassAlgorithmWithArgs()
+    {
+        // Apply = func(x); F = a + 1; Apply(F, 5) → F(5) → 5+1 = 6
+        AssertEval("Apply = func(x)\nF = a + 1\nApply(F, 5)", 6);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_ZeroParamAlgorithmAsValue()
+    {
+        // Use = func; V = 42; Use(V) → V evaluates to 42
+        AssertEval("Use = func\nV = 42\nUse(V)", 42);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_MultiParamNeedsExplicitCall()
+    {
+        // Use = func; F = a + 1; Use(F) → F has params, used bare → arityMismatch
+        AssertEvalFails("Use = func\nF = a + 1\nUse(F)");
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_NonAlgorithmArg_NotAnAlgorithm()
+    {
+        // Algo = func(9); Algo(5) → 5 is not an algorithm → notAnAlgorithm
+        AssertEvalFails("Algo = func(9)\nAlgo(5)");
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_NestedAlgorithmPassing()
+    {
+        // Outer = func(10); Inner = func(a); F = a * 2; Inner(F, Outer(F))
+        // Outer(F) → F(10) → 20; Inner(F, 20) → F(20) → 40
+        AssertEval("Outer = func(10)\nInner = func(a)\nF = a * 2\nInner(F, Outer(F))", 40);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_AlgorithmWithMultipleParams()
+    {
+        // Algo = func(3, 4); F = a + b; Algo(F) → F(3, 4) → 7
+        AssertEval("Algo = func(3, 4)\nF = a + b\nAlgo(F)", 7);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_DualView_BothAlgAndValueMeaning()
+    {
+        // V = 42 is a 0-param algorithm that also evaluates to a value.
+        // When passed as argument, both AlgEnv and ValEnv bindings should be available.
+        // Use = func; V = 42; Use(V) → ValEnv has func=42, AlgEnv has func=V
+        // Param("func") checks ValEnv first → 42
+        AssertEval("Use = func\nV = 42\nUse(V)", 42);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_DotCall_StructuralPropertyWithHOF()
+    {
+        // Structural property Apply takes a higher-order func param + value param
+        // Must use same dual-view binding logic as normal user-defined calls
+        var source = """
+            A = (Apply = func(x)
+            0)
+            F = a + 1
+            A.Apply(F, 5)
+            """;
+        AssertEvalAllPublic(source, 6);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_DotCall_StructuralPropertyPassesAlgorithm()
+    {
+        // Structural property Algo calls a passed algorithm with fixed value
+        var source = """
+            A = (Algo = func(9)
+            0)
+            F = a + 1
+            A.Algo(F)
+            """;
+        AssertEvalAllPublic(source, 10);
+    }
+
+    // ── Inline block arguments (higher-order) ────────────────────────────────
+
+    [Fact]
+    public void Eval_InlineBlock_PassedInParens()
+    {
+        // Apply = func(x); Apply({a + 1}, 5) → {a+1}(5) → 6
+        AssertEval("Apply = func(x)\nApply({a + 1}, 5)", 6);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_DotCall_PassedInParens()
+    {
+        // A.Apply = func(x); A.Apply({a + 1}, 5) → 6
+        var source = """
+            A = (Apply = func(x)
+            0)
+            A.Apply({a + 1}, 5)
+            """;
+        AssertEvalAllPublic(source, 6);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_ZeroParamInParens()
+    {
+        // Use = func; Use({42}) → 42
+        AssertEval("Use = func\nUse({42})", 42);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_TrailingBrace_SingleArg()
+    {
+        // Algo = func(9); Algo{a + 1} → {a+1}(9) → 10
+        AssertEval("Algo = func(9)\nAlgo{a + 1}", 10);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_TrailingBrace_ZeroParam()
+    {
+        // Use = func; Use{42} → 42
+        AssertEval("Use = func\nUse{42}", 42);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_TrailingBrace_ArityMismatch()
+    {
+        // Use = func; Use{a + 1} → block has param a, bare usage → arityMismatch
+        AssertEvalFails("Use = func\nUse{a + 1}");
     }
 }

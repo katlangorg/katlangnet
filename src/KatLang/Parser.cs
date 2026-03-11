@@ -638,10 +638,18 @@ public sealed class Parser
         }
         else
         {
+            // Trailing brace-block: Algo{e} → Algo({e})
+            // The brace content is a parametrized algorithm that becomes a single
+            // Expr.Block argument inside a non-parametrized wrapper, so the block
+            // is resolvable as an algorithm by ResolveAlg(.block ...).
+            var start = Current;
             Advance(); // consume '{'
-            var alg = ParseAlgorithm(isParametrized: true);
+            var innerAlg = ParseAlgorithm(isParametrized: true);
             Expect(TokenKind.RBrace);
-            return alg;
+            var blockExpr = new Expr.Block(innerAlg) { Span = MakeSpan(start) };
+            return new Algorithm.User(
+                Parent: null, Params: [], Opens: [],
+                Properties: [], Output: [blockExpr]);
         }
     }
 

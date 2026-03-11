@@ -1,4 +1,4 @@
--- KatLang v0.73 (core AST + semantics + double-parens grouping + load elaboration)
+-- KatLang v0.75 (core AST + semantics + double-parens grouping + load elaboration + higher-order alg params)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, double-parens grouping, load).
 --
@@ -79,11 +79,11 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | «if» | «while» | «repeat» | «atoms»
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin
   deriving Repr, BEq, DecidableEq
 
 def builtinArity : Builtin -> Nat
-  | .«if» => 3 | .«while» => 2 | .«repeat» => 3 | .«atoms» => 1
+  | .ifBuiltin => 3 | .whileBuiltin => 2 | .repeatBuiltin => 3 | .atomsBuiltin => 1
 
 --------------------------------------------------------------------------------
 -- Syntax
@@ -181,26 +181,40 @@ end Result
 -- Environments
 --------------------------------------------------------------------------------
 
-abbrev ValEnv := Assoc Ident Result
-
-/-- Evaluation context threaded through resolution and evaluation.
-    Wraps the algorithm chain (current algorithm + enclosing callers) used for
-    both lexical resolution and runtime dispatch.  A single-field record today,
-    ready to split into separate lexical / runtime stacks for C# codegen. -/
-structure EvalCtx where
-  callStack : List Algorithm
-  deriving Repr
-
-namespace EvalCtx
-  def empty : EvalCtx := { callStack := [] }
-  def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := a :: ctx.callStack }
-  def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
-end EvalCtx
-
 def lookupAssoc {A} (k : Ident) : Assoc Ident A -> Option A
   | [] => none
   | (k',v)::xs => if k = k' then some v else lookupAssoc k xs
+
+abbrev ValEnv := Assoc Ident Result
+
+/-- Algorithm environment: maps parameter names to algorithms.
+    Used for higher-order algorithm parameters — when a caller passes an
+    algorithm as an argument, the callee can invoke it by name.
+    Parallel to ValEnv (which maps names to Results). -/
+abbrev AlgEnv := Assoc Ident Algorithm
+
+namespace AlgEnv
+  def lookup (env : AlgEnv) (x : Ident) : Option Algorithm :=
+    lookupAssoc x env
+end AlgEnv
+
+/-- Evaluation context threaded through resolution and evaluation.
+    Wraps the algorithm chain (current algorithm + enclosing callers) used for
+    both lexical resolution and runtime dispatch.
+    algEnv carries algorithm-typed parameter bindings for higher-order dispatch. -/
+structure EvalCtx where
+  callStack : List Algorithm
+  algEnv    : AlgEnv := []
+  deriving Repr
+
+namespace EvalCtx
+  def empty : EvalCtx := { callStack := [], algEnv := [] }
+  def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
+    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv }
+  def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
+  def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
+    { callStack := ctx.callStack, algEnv := env }
+end EvalCtx
 
 abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
   lookupAssoc x env
@@ -229,11 +243,11 @@ private def findPropPublic? := @lookupPropDefPublic?
 
 /-- Lookup Algorithm from PropDef list (any visibility). -/
 def lookupPropAny (ps : List PropDef) (k : Ident) : Option Algorithm :=
-  (lookupPropDefAny? ps k).map (·.alg)
+  (lookupPropDefAny? ps k).map (fun propDef => propDef.alg)
 
 /-- Lookup Algorithm from PropDef list (public only). -/
 def lookupPropPublic (ps : List PropDef) (k : Ident) : Option Algorithm :=
-  (lookupPropDefPublic? ps k).map (·.alg)
+  (lookupPropDefPublic? ps k).map (fun propDef => propDef.alg)
 
 /-- Check if PropDef list contains a property (any visibility). -/
 def hasPropAny (ps : List PropDef) (k : Ident) : Bool :=
@@ -443,6 +457,18 @@ def unpackArgs (r : Result) : List Result :=
   | .atom _ => [r]
   | .group rs => rs
 
+/-- Bind algorithm-typed parameters: zip parameter names with algorithms.
+    Only includes entries where the argument resolved to an algorithm.
+    Result entries are skipped (they go through bindParams / ValEnv). -/
+def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
+  match ps, algs with
+  | [], _ => []
+  | _, [] => []
+  | p::ps', a::as' =>
+    match a with
+    | some alg => (p, alg) :: bindAlgParams ps' as'
+    | none     => bindAlgParams ps' as'
+
 /-- Attach context to any error raised by `m`. -/
 def withCtx (ctx : String) (m : EvalM A) : EvalM A :=
   m.mapError (Error.withContext ctx)
@@ -536,7 +562,7 @@ def openExprName (e : Expr) : String :=
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
 namespace CtxMsg
-  def «open» (k : String)              := s!"while resolving open: {k}"
+  def openMsg (k : String)              := s!"while resolving open: {k}"
   def call   (f : Expr)               := s!"while evaluating call to {openExprName f}"
   def prop   (obj : Expr) (n : Ident) := s!"while evaluating property .{n} of {openExprName obj}"
   def dotCall (obj : Expr) (n : Ident) := s!"while evaluating dotCall .{n} of {openExprName obj}"
@@ -659,7 +685,7 @@ mutual
         pure ()
     -- Then resolve (each open wrapped with context using its dedup key)
     acc.mapM (fun (key, e) => do
-      let lib <- withCtx (CtxMsg.«open» key) (resolveOpen e ctx)
+      let lib <- withCtx (CtxMsg.openMsg key) (resolveOpen e ctx)
       pure { key := key, expr := e, lib := lib })
 
   /-- Lookup in opened namespaces with ambiguity error.
@@ -689,7 +715,7 @@ mutual
     | [h] =>
         pure <| some (Algorithm.childOf h.lib h.child)
     | hs =>
-        .error (Error.ambiguousOpen name (hs.map (·.provider)))
+      .error (Error.ambiguousOpen name (hs.map (fun hit => hit.provider)))
 
   --------------------------------------------------------------------------
   -- Lexical resolution
@@ -787,7 +813,11 @@ mutual
         -- (length intrinsic, structural property, receiver injection, lexical fallback)
         pure (wireToCaller ctx (Algorithm.ofExpr (.dotCall o n args)))
     -- Explicit errors for syntactic forms that cannot resolve to algorithms
-    | .param x => .error (Error.notAnAlgorithm s!"param({x})")
+    | .param x =>
+        -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm
+        match ctx.algEnv.lookup x with
+        | some alg => pure alg
+        | none     => .error (Error.notAnAlgorithm s!"param({x})")
     | .nameLiteral s  => .error (Error.notAnAlgorithm s!"nameLiteral({s})")
     | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
     | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
@@ -831,6 +861,27 @@ mutual
       | .withContext _ e   => isLiftableError e
       | _                  => false
 
+  /-- Try to resolve each argument expression to an algorithm.
+      Returns `some alg` for expressions that resolve, `none` for those that don't
+      (e.g., numeric literals, arithmetic).  Only liftable errors → none;
+      genuine lookup failures propagate.
+      Used by evalCall to build AlgEnv for higher-order algorithm parameters. -/
+  partial def tryResolveArgAlgs (args : Algorithm) (ctx : EvalCtx) : EvalM (List (Option Algorithm)) :=
+    (Algorithm.output args).mapM (fun e => do
+      match resolveAlg e ctx with
+      | .ok a    => pure (some a)
+      | .error err =>
+        if isLiftableError err then
+          pure none
+        else
+          .error err)
+  where
+    isLiftableError : Error → Bool
+      | .notAnAlgorithm _ => true
+      | .illegalInEval _  => true
+      | .withContext _ e   => isLiftableError e
+      | _                  => false
+
   --------------------------------------------------------------------------
   -- Evaluation
   --------------------------------------------------------------------------
@@ -859,14 +910,14 @@ mutual
       : EvalM Result :=
     match b, args with
 
-    | .«if», [c,t,e] => do
+    | .ifBuiltin, [c,t,e] => do
         let cr <- evalAlgOutput c ctx env
         match Result.atoms cr with
         | 0::_ => evalAlgOutput e ctx env
         | _::_ => evalAlgOutput t ctx env
         | _    => .error Error.badArity
 
-    | .«while», [step, init] => do
+    | .whileBuiltin, [step, init] => do
         let s0r <- evalAlgOutput init ctx env
         let rec loop (s : Result) : EvalM Result := do
           let out <- runStep step ctx env s
@@ -874,7 +925,7 @@ mutual
           if cont = 0 then pure s else loop next
         pure (<- loop s0r)
 
-    | .«repeat», [step, countAlg, init] => do
+    | .repeatBuiltin, [step, countAlg, init] => do
         let cr <- evalAlgOutput countAlg ctx env
         let n <- expectInt cr
         if n < 0 then
@@ -887,7 +938,7 @@ mutual
               repeatLoop (k-1) out
           repeatLoop n s0r
 
-    | .«atoms», [a] => do
+    | .atomsBuiltin, [a] => do
         let r <- evalAlgOutput a ctx env
         let xs := Result.atoms r
         pure (Result.normalize (Result.group (xs.map Result.atom)))
@@ -906,15 +957,82 @@ mutual
             evalAlgOutput (Algorithm.childOf a p) ctx env
         | none => .error (Error.unknownProperty (openExprName obj) name)
 
+  /-- Shared user-defined call binding logic.
+      Preserves the eager value ABI while layering AlgEnv for higher-order
+      arguments. Each original argument expression is interpreted independently
+      in two ways:
+      - structural algorithm resolution for AlgEnv
+      - ordinary eager value evaluation for ValEnv
+
+      If both succeed, the parameter gets both meanings. If only one succeeds,
+      only that view is bound. If both fail, the ordinary eager-evaluation
+      error is propagated.
+
+      Argument expressions may be fewer than parameters because a single eager
+      value can unpack to multiple positional results, but an explicit argument
+      list may not contain more expressions than the callee has parameters.
+      This prevents extra higher-order arguments from being silently ignored by
+      zipped AlgEnv binding. -/
+  partial def evalUserCall (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    let wiredArgs := wireToCaller ctx args
+    let argExprs := Algorithm.output wiredArgs
+    let paramCount := (Algorithm.params callee).length
+    if argExprs.length > paramCount then
+      .error (Error.arityMismatch paramCount argExprs.length)
+    else do
+      let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
+      let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
+      let argEvalCtx := EvalCtx.push wiredArgs ctx
+      -- For each (param, argExpr, maybeAlg) triple, independently try eval.
+      -- Collect (param, value) for args whose eval succeeds.
+      -- If eval fails but the arg resolved as algorithm, skip value binding.
+      -- If eval fails and no algorithm, propagate the error.
+      let rec collectValues
+          (ps : List Ident) (es : List Expr)
+          (mas : List (Option Algorithm))
+          : EvalM (List Ident × List Result) :=
+        match ps, es, mas with
+        | [], _, _ => pure ([], [])
+        | ps, [], _ => pure (ps, [])
+        | p :: ps', e :: es', ma :: mas' =>
+            match eval e argEvalCtx env with
+            | .ok value => do
+                let (rps, rvs) <- collectValues ps' es' mas'
+                pure (p :: rps, value :: rvs)
+            | .error err =>
+                match ma with
+                | some _ => collectValues ps' es' mas'
+                | none => .error err
+        | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+      let (valueParams, valueResults) <- collectValues
+          (Algorithm.params callee) argExprs maybeAlgs
+      let unpackedValueResults :=
+        match valueResults with
+        | [] => []
+        | rs => unpackArgs (Result.normalize (Result.group rs))
+      let argEnv <- bindParams valueParams unpackedValueResults
+      let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
+      evalAlgOutput callee newCtx (argEnv ++ env)
+
   /-- Core call dispatch: resolve callee, dispatch builtin vs user-defined.
-      Does NOT wrap with context — caller is responsible for withCtx.
+      Does NOT wrap with context - caller is responsible for withCtx.
 
       User-defined path: args are wired to the caller's scope via `wireToCaller`
       so that `Expr.resolve` nodes inside arg expressions can resolve names from
-      the calling scope (e.g., `F(G)` where G is a property).  Without wiring,
+      the calling scope (e.g., `F(G)` where G is a property). Without wiring,
       the args algorithm has no parent and resolution of uppercase identifiers
       (which stay as `Expr.resolve` after the surface pipeline) would fail.
-      Builtins already resolve in caller context via `resolveArgAlgs`. -/
+      Builtins already resolve in caller context via `resolveArgAlgs`.
+
+      Higher-order algorithm support layers AlgEnv on top of the existing eager
+      value ABI instead of introducing a separate call convention. Algorithm
+      bindings are computed from the original argument expressions with
+        `tryResolveArgAlgs`. Value bindings are computed independently by eager
+        evaluation of each original argument expression and then combined through
+        the existing `unpackArgs` ABI. If an argument supports both meanings, the
+        callee receives both: ValEnv first for ordinary reads, AlgEnv as fallback
+        for callable interpretation. -/
   partial def evalCall (f : Expr) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let callee <- resolveAlg f ctx
@@ -922,11 +1040,7 @@ mutual
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltin b argAlgs ctx env
-    | _ => do
-        let wiredArgs := wireToCaller ctx args
-        let ar <- evalAlgOutput wiredArgs ctx env
-        let argEnv <- bindParams (Algorithm.params callee) (unpackArgs ar)
-        evalAlgOutput callee ctx (argEnv ++ env)
+    | _ => evalUserCall callee args ctx env
 
   /-- Resolve name lexically and call with receiver prepended to args.
       Delegates to evalCall to get builtin dispatch for free. -/
@@ -962,12 +1076,9 @@ mutual
                 else
                   -- Navigation only: no receiver injection, need explicit args
                   .error (Error.arityMismatch (Algorithm.params wired).length 0)
-            | some args => do
+            | some args =>
                 -- Navigation only: direct argument binding, no receiver
-                let wiredArgs := wireToCaller ctx args
-                let ar <- evalAlgOutput wiredArgs ctx env
-                let argEnv <- bindParams (Algorithm.params wired) (unpackArgs ar)
-                evalAlgOutput wired ctx (argEnv ++ env)
+                evalUserCall wired args ctx env
         | none => callLexicalWithReceiver name target argsOpt ctx env
 
   partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
@@ -977,7 +1088,17 @@ mutual
     | .param x =>
         match env.lookup x with
         | some v => pure v
-        | none   => .error (Error.unknownName x)
+        | none   =>
+            -- Higher-order fallback: if x is bound in AlgEnv as a 0-param algorithm,
+            -- auto-evaluate it (thunk semantics).  Multi-param algorithms require
+            -- explicit call syntax and produce arityMismatch.
+            match ctx.algEnv.lookup x with
+            | some alg =>
+                if (Algorithm.params alg).length = 0 then
+                  evalAlgOutput alg ctx env
+                else
+                  .error (Error.arityMismatch (Algorithm.params alg).length 0)
+            | none => .error (Error.unknownName x)
 
     | .unary op e => do
         let v <- evalInt e ctx env
@@ -1018,7 +1139,11 @@ mutual
         pure (Result.normalize (Result.group (r1.toItems ++ r2.toItems)))
 
     | .block a =>
-        evalAlgOutput (wireToCaller ctx a) ctx env
+        let wired := wireToCaller ctx a
+        if (Algorithm.params wired).length = 0 then
+          evalAlgOutput wired ctx env
+        else
+          .error (Error.arityMismatch (Algorithm.params wired).length 0)
 
     | .resolve n => do
         let a <- resolveAlg (.resolve n) ctx
@@ -1205,6 +1330,89 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
    initial states to builtins like while and repeat via dotCall syntax. -/
 
 --------------------------------------------------------------------------------
+-- Surface syntax support: trailing brace-block call sugar
+--------------------------------------------------------------------------------
+
+/- **Trailing brace-block call** is a parser-level desugaring that allows
+   passing an inline anonymous algorithm to a call target using brace syntax
+   immediately following an identifier or dotCall target.
+
+   Triggering syntax
+   -----------------
+     Algo{e}              -- trailing block on resolve
+     A.Apply{e}           -- trailing block on dotCall
+
+   Desugaring
+   ----------
+   The parser constructs two layers:
+
+   1. **Inline algorithm** (`inlineAlg`): the parametrized algorithm inferred
+      from the brace body.  Free lowercase identifiers inside the body become
+      implicit parameters via ParameterDetector, exactly as for `func`-style
+      algorithms.  This is the algorithm that `{e}` denotes.
+
+   2. **Argument-wrapper algorithm** (`argsAlg`): a zero-parameter algorithm
+      whose single output expression is `Expr.block inlineAlg`.  This wrapper
+      is what the parser emits as the call/dotCall argument.
+
+   The trailing brace is therefore equivalent to parenthesised call syntax:
+
+     Algo{e}       ≡  Algo({e})
+     A.Apply{e}    ≡  A.Apply({e})
+
+   Lowered AST:
+
+     Algo{e}
+       =>  call(resolve("Algo"), argsAlg)
+           where  argsAlg = Algorithm.mk(none, [], [], [], [Expr.block inlineAlg])
+
+     A.Apply{e}
+       =>  dotCall(resolve("A"), "Apply", some argsAlg)
+           where  argsAlg = Algorithm.mk(none, [], [], [], [Expr.block inlineAlg])
+
+   Note: the parser does NOT pass `inlineAlg` as the args algorithm directly.
+   It always wraps it inside `Expr.block` within the zero-parameter `argsAlg`.
+   This allows `resolveAlg` to see the `Expr.block` node and return the inner
+   algorithm, which is essential for higher-order binding via AlgEnv.
+
+   Evaluation semantics of `Expr.block` in value position
+   ------------------------------------------------------
+   `Expr.block` represents an inline anonymous algorithm.  When evaluated
+   directly (not resolved as an algorithm via resolveAlg):
+   - 0-param block: auto-evaluates via evalAlgOutput (thunk semantics)
+   - parametrized block: returns arityMismatch (needs explicit arguments)
+
+   `resolveAlg(.block a)` always returns the algorithm (wired to caller scope),
+   regardless of parameter count.
+
+   Higher-order flow
+   -----------------
+   When a block is passed as an argument to a user-defined call:
+
+     Algo = func(9)
+     Algo{a + 1}
+
+   1. The parser emits `call(resolve("Algo"), argsAlg)` where
+      `argsAlg.output = [Expr.block inlineAlg]` and `inlineAlg.params = ["a"]`.
+   2. `evalCall` resolves `Algo` and enters `evalUserCall`.
+   3. `tryResolveArgAlgs` calls `resolveAlg(Expr.block inlineAlg)`, which
+      returns `inlineAlg` (wired to caller scope).
+   4. The callee's `func` parameter is bound in AlgEnv to `inlineAlg`.
+   5. When the callee evaluates `func(9)`, the value `9` is bound to `a` and
+      the output `a + 1` evaluates to `10`.
+
+   Examples
+   --------
+     Algo = func(9); Algo{a + 1}          -- => 10
+     Apply = func(x); Apply({a + 1}, 5)   -- => 6
+     Use = func; Use{42}                  -- => 42
+     Use = func; Use{a + 1}              -- => arityMismatch (block has param a)
+
+   The last example shows that `{a + 1}` in value position (not passed to a
+   caller that binds it) triggers arityMismatch because the block has an
+   unbound parameter. -/
+
+--------------------------------------------------------------------------------
 -- Entry points
 --------------------------------------------------------------------------------
 
@@ -1229,15 +1437,15 @@ def propsPublic (xs : List (Prod Ident Algorithm)) : List PropDef :=
     All builtins are public for use in opened contexts. -/
 def preludeAlg : Algorithm :=
   Algorithm.mk none [] []
-    [ publicProp "if" (Algorithm.builtin .«if»)
-    , publicProp "while" (Algorithm.builtin .«while»)
-    , publicProp "repeat" (Algorithm.builtin .«repeat»)
-    , publicProp "atoms" (Algorithm.builtin .«atoms»)
+    [ publicProp "if" (Algorithm.builtin .ifBuiltin)
+    , publicProp "while" (Algorithm.builtin .whileBuiltin)
+    , publicProp "repeat" (Algorithm.builtin .repeatBuiltin)
+    , publicProp "atoms" (Algorithm.builtin .atomsBuiltin)
     ]
     []
 
 def runResult (e : Expr) : EvalM Result :=
-  eval e { callStack := [preludeAlg] } []
+  eval e { callStack := [preludeAlg], algEnv := [] } []
 
 def runFlat (e : Expr) : EvalM (List Int) := do
   pure (Result.atoms (<- runResult e))

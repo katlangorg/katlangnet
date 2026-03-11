@@ -1,7 +1,7 @@
 namespace KatLang;
 
 /// <summary>
-/// KatLang 0.73 evaluator matching the Lean specification.
+/// KatLang 0.75 evaluator matching the Lean specification.
 /// Uses <see cref="EvalResult{T}"/> (<c>EvalM := Except Error</c>) for structured errors
 /// instead of nullable returns.
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
@@ -10,7 +10,14 @@ namespace KatLang;
 /// Builtins (If, While, Repeat, Atoms) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
-/// <c>Algorithm.User</c> → eager arg evaluation + <c>bindParams</c>.
+/// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
+///
+/// Higher-order algorithm parameters use dual-view semantics:
+/// - AlgEnv: algorithm meaning (callable/structural), resolved via <c>tryResolveArgAlgs</c>
+/// - ValEnv: value meaning, resolved via independent per-expression eager evaluation
+/// - <c>Eval(Param(x))</c>: checks ValEnv first, then AlgEnv as fallback
+///   (0-param algorithm → auto-evaluate; multi-param → arity mismatch)
+/// - <c>ResolveAlg(Param(x))</c>: checks AlgEnv before returning NotAnAlgorithm
 /// </summary>
 public static class Evaluator
 {
@@ -20,23 +27,37 @@ public static class Evaluator
     /// Evaluation context threaded through resolution and evaluation.
     /// Wraps the algorithm chain (current algorithm + enclosing callers) used for
     /// both lexical resolution and runtime dispatch.
-    /// Lean: structure EvalCtx where callStack : List Algorithm.
+    /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
+    /// Lean: structure EvalCtx where callStack : List Algorithm; algEnv : AlgEnv := [].
     /// </summary>
-    private readonly record struct EvalCtx(IReadOnlyList<Algorithm> CallStack)
+    private readonly record struct EvalCtx(
+        IReadOnlyList<Algorithm> CallStack,
+        IReadOnlyList<(string Name, Algorithm Value)> AlgEnv)
     {
-        public static readonly EvalCtx Empty = new([]);
+        public static readonly EvalCtx Empty = new([], []);
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
-        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack));
+        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
+
+        /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
 
     /// <summary>Value environment: maps parameter names to results. Lean: lookupVal (Option).</summary>
     private static Result? LookupVal(IReadOnlyList<(string Name, Result Value)> env, string name)
+    {
+        foreach (var (n, v) in env)
+            if (n == name) return v;
+        return null;
+    }
+
+    /// <summary>Algorithm environment: maps parameter names to algorithms. Lean: AlgEnv.lookup.</summary>
+    private static Algorithm? LookupAlg(IReadOnlyList<(string Name, Algorithm Value)> env, string name)
     {
         foreach (var (n, v) in env)
             if (n == name) return v;
@@ -783,9 +804,16 @@ public static class Evaluator
                 return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
             }
 
-            // Explicit errors for syntactic forms that cannot resolve to algorithms
+            // Algorithm resolution for parameters (Lean: resolveAlg Param(x)):
+            // Check AlgEnv first — if x is bound to an algorithm, return it.
+            // Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
             case Expr.Param(var x):
+            {
+                var algBound = LookupAlg(ctx.AlgEnv, x);
+                if (algBound is not null)
+                    return EvalResult<Algorithm>.Ok(algBound);
                 return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
+            }
             case Expr.NameLiteral(var s):
                 return new EvalError.NotAnAlgorithm($"nameLiteral({s})") { Span = expr.Span };
             case Expr.Num(var n):
@@ -1006,9 +1034,21 @@ public static class Evaluator
 
             case Expr.Param(var name):
             {
+                // Dual-view parameter evaluation (Lean: eval Param(x)):
+                // 1. ValEnv first (value meaning)
+                // 2. AlgEnv fallback (algorithm meaning):
+                //    - 0-param algorithm → auto-evaluate (thunk semantics)
+                //    - multi-param algorithm → arityMismatch (needs explicit call)
                 var val = LookupVal(valEnv, name);
-                if (val is null) return new EvalError.UnknownName(name) { Span = expr.Span };
-                return EvalResult<Result>.Ok(val);
+                if (val is not null) return EvalResult<Result>.Ok(val);
+                var algBound = LookupAlg(ctx.AlgEnv, name);
+                if (algBound is not null)
+                {
+                    if (algBound.Params.Count == 0)
+                        return EvalAlgOutput(algBound, ctx, valEnv);
+                    return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
+                }
+                return new EvalError.UnknownName(name) { Span = expr.Span };
             }
 
             case Expr.Unary(var unaryOp, var operand):
@@ -1071,7 +1111,9 @@ public static class Evaluator
             case Expr.Block(var alg):
             {
                 var wired = WireToCaller(ctx, alg);
-                return EvalAlgOutput(wired, ctx, valEnv);
+                if (wired.Params.Count == 0)
+                    return EvalAlgOutput(wired, ctx, valEnv);
+                return new EvalError.ArityMismatch(wired.Params.Count, 0) { Span = expr.Span };
             }
 
             case Expr.Resolve(var name):
@@ -1211,13 +1253,60 @@ public static class Evaluator
         _ => false,
     };
 
+    /// <summary>
+    /// Try to resolve each argument expression to an algorithm.
+    /// Returns Some(alg) for expressions that resolve, null for those that don't.
+    /// Lean: tryResolveArgAlgs.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Algorithm?>> TryResolveArgAlgs(
+        Algorithm argsAlg, EvalCtx ctx)
+    {
+        var result = new List<Algorithm?>(argsAlg.Output.Count);
+        foreach (var argExpr in argsAlg.Output)
+        {
+            var r = ResolveAlg(argExpr, ctx);
+            if (r.IsOk)
+            {
+                result.Add(r.Value);
+            }
+            else if (IsLiftableError(r.Error))
+            {
+                result.Add(null);
+            }
+            else
+            {
+                return r.Error;
+            }
+        }
+        return EvalResult<IReadOnlyList<Algorithm?>>.Ok(result);
+    }
+
+    /// <summary>
+    /// Bind algorithm-typed parameters: zip parameter names with algorithms.
+    /// Only includes entries where the argument resolved to an algorithm.
+    /// Lean: bindAlgParams.
+    /// </summary>
+    private static IReadOnlyList<(string, Algorithm)> BindAlgParams(
+        IReadOnlyList<string> paramNames,
+        IReadOnlyList<Algorithm?> algs)
+    {
+        var result = new List<(string, Algorithm)>();
+        var count = Math.Min(paramNames.Count, algs.Count);
+        for (var i = 0; i < count; i++)
+        {
+            if (algs[i] is { } alg)
+                result.Add((paramNames[i], alg));
+        }
+        return result;
+    }
+
     // ── Call evaluation ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Lean: eval (.call f args).
+    /// Lean: evalCall → EvalM Result.
     /// 1. Resolve callee.
     /// 2. If builtin: resolve args lazily as algorithms, dispatch to applyBuiltin.
-    /// 3. If user-defined: evaluate args eagerly, bind params, eval output.
+    /// 3. If user-defined: delegate to EvalUserCall (dual-view argument binding).
     /// </summary>
     private static EvalResult<Result> EvalCall(
         Expr func,
@@ -1239,17 +1328,103 @@ public static class Evaluator
             return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
         }
 
-        // 3. User-defined: evaluate args eagerly, bind params
-        var wiredArgs = WireToCaller(ctx, argsAlg);
-        var argsR = EvalAlgOutput(wiredArgs, ctx, valEnv);
-        if (argsR.IsError) return argsR.Error;
+        // 3. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
+        return EvalUserCall(callee, argsAlg, ctx, valEnv);
+    }
 
-        var argValues = UnpackArgs(argsR.Value);
-        var boundR = BindParams(callee.Params, argValues);
-        if (boundR.IsError) return boundR.Error;
+    // ── User-defined call (Lean: evalUserCall) ────────────────────────────
 
-        var newEnv = Concat(boundR.Value, valEnv);
-        return EvalAlgOutput(callee, ctx, newEnv);
+    /// <summary>
+    /// Shared user-defined call binding logic (Lean: evalUserCall).
+    /// Dual-view semantics: each original argument expression is independently
+    /// interpreted in two ways:
+    /// <list type="bullet">
+    ///   <item>Structural algorithm resolution → AlgEnv (callable meaning)</item>
+    ///   <item>Eager value evaluation → ValEnv (value meaning)</item>
+    /// </list>
+    /// If both succeed, the parameter gets both meanings (dual-view).
+    /// If only algorithm resolution succeeds, only AlgEnv is bound.
+    /// If only value evaluation succeeds, only ValEnv is bound.
+    /// If both fail, the eager-evaluation error is propagated.
+    ///
+    /// Argument expressions may be fewer than parameters because a single
+    /// eager value can unpack to multiple positional results, but an explicit
+    /// argument list may not contain more expressions than the callee has
+    /// parameters.
+    /// </summary>
+    private static EvalResult<Result> EvalUserCall(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var wiredArgs = WireToCaller(ctx, args);
+        var argExprs = wiredArgs.Output;
+        var paramCount = callee.Params.Count;
+
+        // Lean: if argExprs.length > paramCount then error (arityMismatch ...)
+        if (argExprs.Count > paramCount)
+            return new EvalError.ArityMismatch(paramCount, argExprs.Count);
+
+        // Try to resolve each arg as algorithm (for AlgEnv bindings)
+        var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
+        if (maybeAlgsR.IsError) return maybeAlgsR.Error;
+        var maybeAlgs = maybeAlgsR.Value;
+        var algBindings = BindAlgParams(callee.Params, maybeAlgs);
+
+        // Lean: let argEvalCtx := EvalCtx.push wiredArgs ctx
+        var argEvalCtx = ctx.Push(wiredArgs);
+
+        // Lean: collectValues — per-expression independent evaluation.
+        // For each (param, argExpr, maybeAlg) triple:
+        //   eval succeeds → include (param, value) in value bindings
+        //   eval fails + has algorithm → skip this param's value binding
+        //   eval fails + no algorithm → propagate error
+        var valueParams = new List<string>();
+        var valueResults = new List<Result>();
+
+        for (var i = 0; i < paramCount; i++)
+        {
+            if (i >= argExprs.Count)
+            {
+                // Lean: | ps, [], _ => pure (ps, []) — remaining params, no more exprs
+                valueParams.Add(callee.Params[i]);
+                continue;
+            }
+
+            var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
+            if (evalR.IsOk)
+            {
+                valueParams.Add(callee.Params[i]);
+                valueResults.Add(evalR.Value);
+            }
+            else if (i < maybeAlgs.Count && maybeAlgs[i] is not null)
+            {
+                // Has algorithm binding → skip value binding for this param
+            }
+            else
+            {
+                // No algorithm → propagate eval error
+                return evalR.Error;
+            }
+        }
+
+        // Lean: unpackArgs (Result.normalize (Result.group valueResults))
+        IReadOnlyList<Result> unpackedValueResults;
+        if (valueResults.Count == 0)
+        {
+            unpackedValueResults = [];
+        }
+        else
+        {
+            unpackedValueResults = UnpackArgs(Result.FromItems(valueResults));
+        }
+
+        var argEnvR = BindParams(valueParams, unpackedValueResults);
+        if (argEnvR.IsError) return argEnvR.Error;
+
+        var newCtx = ctx.WithAlgEnv(Concat(algBindings, ctx.AlgEnv));
+        var newEnv = Concat(argEnvR.Value, valEnv);
+        return EvalAlgOutput(callee, newCtx, newEnv);
     }
 
     // ── DotCall evaluation ────────────────────────────────────────────────
@@ -1261,8 +1436,10 @@ public static class Evaluator
     /// 2. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
     ///    - No args + has params → arity mismatch error
-    ///    - Has args → direct argument binding (no receiver injection)
+    ///    - Has args → delegate to EvalUserCall (dual-view binding, no receiver injection)
     /// 3. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
+    /// Structural property calls use the same higher-order binding logic as normal
+    /// user-defined calls (both delegate to EvalUserCall).
     /// Lean: evalDotCall.
     /// </summary>
     private static EvalResult<Result> EvalDotCall(
@@ -1291,14 +1468,9 @@ public static class Evaluator
                     return EvalAlgOutput(wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
-            // Has args → direct argument binding (navigation only, no receiver)
-            var wiredArgs = WireToCaller(ctx, argsOpt);
-            var argsR = EvalAlgOutput(wiredArgs, ctx, valEnv);
-            if (argsR.IsError) return argsR.Error;
-            var argValues = UnpackArgs(argsR.Value);
-            var boundR = BindParams(wired.Params, argValues);
-            if (boundR.IsError) return boundR.Error;
-            return EvalAlgOutput(wired, ctx, Concat(boundR.Value, valEnv));
+            // Has args → navigation only: direct argument binding, no receiver
+            // Lean: evalUserCall wired args ctx env
+            return EvalUserCall(wired, argsOpt, ctx, valEnv);
         }
 
         // Lexical fallback (receiver injection via callLexicalWithReceiver)
@@ -1333,7 +1505,7 @@ public static class Evaluator
     /// Lean: runResult → EvalM Result.
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
-        => Eval(expr, new EvalCtx([PreludeAlg]), []);
+        => Eval(expr, new EvalCtx([PreludeAlg], []), []);
 
     /// <summary>
     /// Run evaluation and flatten to atoms.
