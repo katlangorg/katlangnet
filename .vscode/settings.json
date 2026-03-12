@@ -11,6 +11,8 @@
         "/^Test-Path d:\\\\Projects\\\\katlangnet\\\\LICENSE, d:\\\\Projects\\\\katlangnet\\\\README\\.md, d:\\\\Projects\\\\katlangnet\\\\NOTICE, d:\\\\Projects\\\\katlangnet\\\\NOTICE\\.md$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "git add": true,
+        "git commit": true
     }
 }

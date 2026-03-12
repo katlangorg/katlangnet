@@ -441,7 +441,6 @@ public sealed class Parser
         Expr.Unary => "unary",
         Expr.Binary => "binary",
         Expr.Index => "index",
-        Expr.Self => "self",
         Expr.Call => "call",
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
@@ -752,12 +751,6 @@ public sealed class Parser
                 }
                 var resolve = new Expr.Resolve(graceToken.StringValue!) { Span = TokenSpan(graceToken) };
                 return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(startToken) };
-            }
-
-            case TokenKind.Self:
-            {
-                var token = Advance();
-                return new Expr.Self() { Span = TokenSpan(token) };
             }
 
             case TokenKind.LParen:

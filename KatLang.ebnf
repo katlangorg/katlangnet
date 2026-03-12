@@ -44,12 +44,10 @@ DoubleParenArgs = "((" Algorithm "))" ;
 Primary         = NumberLiteral
                 | StringLiteral
                 | GraceIdentifier
-                | SelfExpr
                 | ParenBundleExpr
                 | BraceAlgorithmExpr ;
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
-SelfExpr        = "self" ;
 ParenBundleExpr = "(" Algorithm ")" ;
 BraceAlgorithmExpr = "{" Algorithm "}" ;
 

@@ -131,7 +131,6 @@ public static class Evaluator
         Expr.Unary => "unary",
         Expr.Binary => "binary",
         Expr.Index => "index",
-        Expr.Self => "self",
         Expr.Combine => "combine",
         Expr.Resolve => "resolve",
         Expr.Prop => "prop",
@@ -757,11 +756,6 @@ public static class Evaluator
 
             case Expr.Block(var alg):
                 return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
-
-            case Expr.Self:
-                return ctx.Head is { } head
-                    ? EvalResult<Algorithm>.Ok(head)
-                    : new EvalError.NotAnAlgorithm("self") { Span = expr.Span };
 
             case Expr.Resolve(var name):
             {

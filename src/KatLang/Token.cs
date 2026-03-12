@@ -7,9 +7,6 @@ public enum TokenKind
     Identifier,
     StringLiteral,
 
-    // Keyword
-    Self,
-
     // Arithmetic operators
     Plus,
     Minus,
@@ -75,9 +72,6 @@ public sealed record Token(
 
     public static Token CreateStringLiteral(string value, int position, int length, int line, int column)
         => new(TokenKind.StringLiteral, position, length, line, column, StringValue: value);
-
-    public static Token CreateSelf(int position, int length, int line, int column)
-        => new(TokenKind.Self, position, length, line, column);
 
     public static Token CreateComment(string text, int position, int length, int line, int column)
         => new(TokenKind.Comment, position, length, line, column, StringValue: text);

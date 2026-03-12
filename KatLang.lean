@@ -98,7 +98,6 @@ mutual
     | unary   : UnaryOp -> Expr -> Expr
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
-    | self    : Expr
     | combine : Expr -> Expr -> Expr
     | resolve : Ident -> Expr
     | prop    : Expr -> Ident -> Expr
@@ -540,7 +539,6 @@ def Expr.kind : Expr -> String
   | .unary _ _    => "unary"
   | .binary _ _ _ => "binary"
   | .index _ _    => "index"
-  | .self         => "self"
   | .combine _ _  => "combine"
   | .resolve _    => "resolve"
   | .prop _ _     => "prop"
@@ -790,10 +788,6 @@ mutual
         let b <- resolveAlg e2 ctx
         pure (wireToCaller ctx (combineAlg a b))
     | .block a => pure (wireToCaller ctx a)
-    | .self =>
-        match ctx.head? with
-        | some a => pure a
-        | none   => .error (Error.notAnAlgorithm "self")
     | .resolve n =>
         match ctx.callStack with
         | a::_ => lookupLexical a n ctx
@@ -1465,7 +1459,6 @@ def prop (o : Expr) (n : Ident) : Expr := .prop o n
 def block (a : Algorithm) : Expr := .block a
 def call (f : Expr) (a : Algorithm) : Expr := .call f a
 def dotCall (o : Expr) (n : Ident) : Expr := .dotCall o n none
-def self : Expr := .self
 def combine (a b : Expr) : Expr := .combine a b
 
 /-- Convenience constructor for algorithms with private properties by default.
@@ -1572,7 +1565,7 @@ partial def loadInvariant_noLoad : Expr -> Bool
       | some alg => loadInvariant_noLoadAlg alg
       | none => true
   | .block alg       => loadInvariant_noLoadAlg alg
-  | _                => true  -- param, nameLiteral, num, self, resolve
+  | _                => true  -- param, nameLiteral, num, resolve
 
 partial def loadInvariant_noLoadAlg : Algorithm -> Bool
   | .builtin _ => true

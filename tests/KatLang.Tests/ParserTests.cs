@@ -66,12 +66,13 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Self_ReturnsSelfExpr()
+    public void Parse_Self_NowParsesAsResolve()
     {
         var result = Parser.ParseSyntax("self");
 
         Assert.False(result.HasErrors);
-        Assert.IsType<Expr.Self>(result.Root.Output[0]);
+        var resolve = Assert.IsType<Expr.Resolve>(result.Root.Output[0]);
+        Assert.Equal("self", resolve.Name);
     }
 
     [Fact]

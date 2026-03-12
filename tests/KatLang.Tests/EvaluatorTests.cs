@@ -1416,15 +1416,10 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_SelfInOpenExpression_Fails()
+    public void Eval_Open_SelfNameInOpenExpression_Fails()
     {
-        // Lean: resolveAlgDirect returns error for self (illegalInOpen "self").
-        // self.HiddenLib would allow the algorithm to open its own property,
-        // leaking names that should only be reachable via explicit property access.
-        // The open must fail, so X is unreachable.
-        //
-        // Lean equivalent:
-        //   alg [] [prop self "HiddenLib"] [("HiddenLib", alg [] [] [("X", alg [] [] [] [num 42])] [])] [resolve "X"]
+        // "self" is no longer a keyword — it's now just an identifier.
+        // Using it in open position fails because there's no algorithm named "self".
         var source = """
             HiddenLib = (X = 42)
             open self.HiddenLib

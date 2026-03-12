@@ -194,7 +194,6 @@ public sealed class ModuleLoader
             case Expr.Num:
             case Expr.StringLiteral:
             case Expr.NameLiteral:
-            case Expr.Self:
             case Expr.NativeCall:
                 return expr;
 

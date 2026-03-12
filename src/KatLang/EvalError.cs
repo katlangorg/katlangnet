@@ -45,7 +45,7 @@ public abstract record EvalError
     /// <summary>Syntactic form not allowed in open position.</summary>
     public sealed record BadOpenForm(string Reason) : EvalError;
 
-    /// <summary>Expression form not evaluable to a value (e.g. name literal, self, combine).</summary>
+    /// <summary>Expression form not evaluable to a value (e.g. name literal, combine).</summary>
     public sealed record IllegalInEval(string Reason) : EvalError;
 
     /// <summary>Multiple opens provide the same name publicly.</summary>

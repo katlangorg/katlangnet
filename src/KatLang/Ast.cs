@@ -53,9 +53,6 @@ public abstract record Expr
     /// <summary>Output selection. <c>Index(a, i)</c> selects element <c>i</c> from evaluated output of <c>a</c>.</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;
 
-    /// <summary>Resolves to the current (enclosing) algorithm during evaluation.</summary>
-    public sealed record Self() : Expr;
-
     /// <summary>Combines two algorithms into one (structural combination via <c>;</c>).</summary>
     public sealed record Combine(Expr Left, Expr Right) : Expr;
 

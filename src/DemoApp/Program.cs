@@ -111,10 +111,6 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write($"Resolve(\"{n}\")");
             break;
 
-        case Expr.Self:
-            Console.Write("Self");
-            break;
-
         case Expr.Unary(var op, var operand):
             Console.Write($"Unary({op}, ");
             PrintExpr(operand, indent);

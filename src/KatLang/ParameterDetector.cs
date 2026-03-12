@@ -201,7 +201,7 @@ public static class ParameterDetector
                     CollectFreeParams(args.Output, visibleNames, paramNames, paramOrder, graceWeights);
                 break;
 
-            // Num, Param, Self — no free names
+            // Num, Param — no free names
             default:
                 break;
         }

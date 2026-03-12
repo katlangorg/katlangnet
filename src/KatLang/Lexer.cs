@@ -101,7 +101,6 @@ public static class Lexer
                 var text = source[start..i];
                 var token = text switch
                 {
-                    "self"   => Token.CreateSelf(start, i - start, startLine, startCol),
                     "div"    => Token.Create(TokenKind.KeywordDiv, start, i - start, startLine, startCol),
                     "mod"    => Token.Create(TokenKind.KeywordMod, start, i - start, startLine, startCol),
                     "and"    => Token.Create(TokenKind.KeywordAnd, start, i - start, startLine, startCol),

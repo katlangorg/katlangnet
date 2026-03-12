@@ -60,10 +60,11 @@ public class LexerTests
     }
 
     [Fact]
-    public void Tokenize_SelfKeyword_ReturnsSelfToken()
+    public void Tokenize_SelfKeyword_NowParsesAsIdentifier()
     {
         var (tokens, _) = Lexer.Tokenize("self");
-        Assert.Equal(TokenKind.Self, tokens[0].Kind);
+        Assert.Equal(TokenKind.Identifier, tokens[0].Kind);
+        Assert.Equal("self", tokens[0].StringValue);
     }
 
     [Fact]

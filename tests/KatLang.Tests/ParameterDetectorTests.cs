@@ -198,10 +198,12 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_SelfExpr_NotAParam()
+    public void Detect_SelfIdentifier_IsAParam()
     {
+        // "self" is now just an ordinary identifier, so it becomes a parameter.
         var ast = ParseAndDetect("self");
-        Assert.Empty(ast.Params);
+        Assert.Single(ast.Params);
+        Assert.Equal("self", ast.Params[0]);
     }
 
     [Fact]
