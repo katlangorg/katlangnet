@@ -3,15 +3,13 @@ Program         = Algorithm ;
 Algorithm       = { AlgorithmItem } ;
 AlgorithmItem   = OpenDeclaration | PropertyDefinition | OutputLine ;
 
-OpenDeclaration = "open" "=" OpenList ;
-OpenList        = OpenCombine { "," OpenCombine } ;
-OpenCombine     = OpenAtom { ";" OpenAtom } ;
-OpenAtom        = OpenPath | BraceAlgorithmExpr | LoadExpr ;
-OpenPath        = Identifier { "." Identifier } ;
-LoadExpr        = "load" "(" StringLiteral ")" ;
+OpenDeclaration = "open" OpenTargetList ;
+OpenTargetList  = OpenTarget { "," OpenTarget } ;
+OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
+                | CombineItem ;              (* full expression with ; for combine *)
 
 PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
-PropertyBody       = OutputBundle ;
+PropertyBody       = Algorithm ;
 
 OutputLine      = OutputBundle ;
 OutputBundle    = OutputList ;
@@ -34,14 +32,14 @@ UnaryExpr       = "-" UnaryExpr
                 | PostfixExpr ;
 
 PostfixExpr     = Primary { PostfixOp } ;
-PostfixOp       = ":" Expression
+PostfixOp       = ":" Primary
                 | "." Identifier [ CallArgs ]
-                | CallArgs ;
+                | CallArgs ;    (* CallArgs only when LHS is Resolve, Prop, or DotCall *)
 
 CallArgs        = BraceArgs | ParenArgs | DoubleParenArgs ;
 BraceArgs       = "{" Algorithm "}" ;
-ParenArgs       = "(" OutputBundle ")" ;
-DoubleParenArgs = "((" OutputBundle "))" ;
+ParenArgs       = "(" Algorithm ")" ;
+DoubleParenArgs = "((" Algorithm "))" ;
 
 Primary         = NumberLiteral
                 | StringLiteral
@@ -52,7 +50,7 @@ Primary         = NumberLiteral
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
 SelfExpr        = "self" ;
-ParenBundleExpr = "(" OutputBundle ")" ;
+ParenBundleExpr = "(" Algorithm ")" ;
 BraceAlgorithmExpr = "{" Algorithm "}" ;
 
 NumberLiteral   = Number ;
