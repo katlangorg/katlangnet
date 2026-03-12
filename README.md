@@ -39,6 +39,8 @@ if (evalResult.IsOk)
 ## Nuget package
 https://www.nuget.org/packages/KatLang
 
+License and patent grant details are included in the repository and package files (`LICENSE`, `PATENTS`).
+
 ## Licensing
 
 This project is released under the MIT License with an additional patent grant provided by Logics Research Centre SIA.
@@ -63,6 +65,10 @@ Performance improvements.
 ## Co-funded by the European Union
 
 1.1.1.9 Research application No 1.1.1.9/LZP/3/25/353 of the Activity "Post-doctoral Research" "KatLang: Enhancing a Higher-Order Domain-Specific Language for Problem Solving and Educational Assessment in Mathematics and Physics".
+
+## Authorship and Contributions
+
+KatLang is created and authored by Mikus Vanags and published by Logics Research Centre SIA. Contributions from the community are very welcome — whether through ideas, discussions, bug reports, documentation improvements, or code.
 
 ## Feedback
 Contact Mikus Vanags: mikus.vanags@logicsresearchcentre.com

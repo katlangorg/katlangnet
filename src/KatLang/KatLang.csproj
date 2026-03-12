@@ -1,19 +1,58 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>preview</LangVersion>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <RootNamespace>KatLang</RootNamespace>
-    <Description>KatLang v0.73 — a programming language for calculations.</Description>
-    <Version>0.7.3</Version>
-    <Authors>KatLang Contributors</Authors>
-    <PackageLicenseFile>LICENSE</PackageLicenseFile>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>KatLang</RootNamespace>
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="KatLang.Tests" />
-  </ItemGroup>
+		<PackageId>KatLang</PackageId>
+		<Version>0.7.7</Version>
+		<Authors>Mikus Vanags</Authors>
+		<Company>Logics Research Centre SIA</Company>
+		<Copyright>Copyright © Logics Research Centre SIA</Copyright>
+
+		<Description>KatLang v0.7.7 — a domain-specific programming language for calculations. Community contributions are welcome.</Description>
+		<PackageTitle>KatLang</PackageTitle>
+		<PackageTags>katlang dsl calculations mathematics physics</PackageTags>
+
+		<PackageProjectUrl>https://katlang.org</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/katlangorg/katlangnet</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageLicenseFile>LICENSE</PackageLicenseFile>
+
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+		<PackageReleaseNotes>Core formalized in Lean 4. Algorithms separated from Results domain. Shifted to ownership-first resolution. Redesigned algorithm opening mechanism and other improvements.</PackageReleaseNotes>
+
+		<Title>KatLang</Title>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="KatLang.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="..\..\LICENSE">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\README.md">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\NOTICE">
+		<Pack>True</Pack>
+		<PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\PATENTS">
+		<Pack>True</Pack>
+		<PackagePath>\</PackagePath>
+	  </None>
+	</ItemGroup>
 
 </Project>
