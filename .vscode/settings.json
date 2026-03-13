@@ -13,6 +13,34 @@
             "matchCommandLine": true
         },
         "git add": true,
-        "git commit": true
+        "git commit": true,
+        "/^where\\.exe elan; where\\.exe lean; where\\.exe lake$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^lean --version$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^elan default$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^elan show$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^Push-Location d:\\\\Projects\\\\katlangnet\\\\lean; lake build$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^lake build$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^lake env lean CoreTests\\.lean 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
