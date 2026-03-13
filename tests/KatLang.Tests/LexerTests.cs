@@ -264,4 +264,27 @@ public class LexerTests
         var kinds = tokens.Select(t => t.Kind).ToList();
         Assert.Equal([TokenKind.Tilde, TokenKind.Tilde, TokenKind.Identifier, TokenKind.EndOfFile], kinds);
     }
+
+    [Fact]
+    public void Tokenize_OverflowingNumber_ReportsDiagnosticInsteadOfCrashing()
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize("999999999999999999999999999999");
+
+        Assert.Single(diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostics[0].Severity);
+        Assert.Contains("too large", diagnostics[0].Message);
+        // A placeholder token is still emitted so the parser can continue
+        Assert.Equal(TokenKind.Number, tokens[0].Kind);
+    }
+
+    [Fact]
+    public void Tokenize_OverflowingNumber_InExpression_DoesNotCrash()
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize("2/999999999999999999999999999999");
+
+        Assert.Single(diagnostics);
+        Assert.Contains("too large", diagnostics[0].Message);
+        // Tokens: Number(2), Slash, Number(0-placeholder), EOF
+        Assert.Equal(4, tokens.Count);
+    }
 }

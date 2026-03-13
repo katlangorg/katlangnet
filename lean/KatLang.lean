@@ -1,4 +1,4 @@
--- KatLang v0.75 (core AST + semantics + double-parens grouping + higher-order alg params)
+-- KatLang v0.7.8 (core AST + semantics + double-parens grouping + higher-order alg params)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, double-parens grouping).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;

@@ -60,8 +60,18 @@ public static class Lexer
                 }
 
                 var text = source[start..i];
-                var value = decimal.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
-                tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
+                if (decimal.TryParse(text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value))
+                {
+                    tokens.Add(Token.CreateNumber(value, start, i - start, startLine, startCol));
+                }
+                else
+                {
+                    diagnostics.Add(new Diagnostic(
+                        "Number literal is too large.",
+                        DiagnosticSeverity.Error,
+                        new SourceSpan(startLine, startCol, line, col)));
+                    tokens.Add(Token.CreateNumber(0, start, i - start, startLine, startCol));
+                }
                 continue;
             }
 

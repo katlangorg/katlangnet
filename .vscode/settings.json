@@ -41,6 +41,14 @@
         "/^lake env lean CoreTests\\.lean 2>&1$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^git -C d:\\\\Projects\\\\katlangnet add src/KatLang/Lexer\\.cs tests/KatLang\\.Tests/LexerTests\\.cs 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^git -C d:\\\\Projects\\\\katlangnet commit -m \"fix: handle number literal overflow in Lexer gracefully\n\nReplace decimal\\.Parse with TryParse in the Lexer to prevent\nOverflowException when a number literal exceeds the decimal range\\.\nOn overflow, a diagnostic error is emitted and a placeholder token\nis inserted so parsing can continue\\.\n\nAdd two lexer tests for the overflow case\\.\" 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

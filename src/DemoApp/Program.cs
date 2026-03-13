@@ -1,11 +1,10 @@
 using KatLang;
 
 var source = """
-    A = (Apply = func(x))
-    A.Apply({a + 1}, 5)
+    2/999999999999999999999999999999
     """;
 
-Console.WriteLine("=== KatLang 0.75 Parser Demo ===");
+Console.WriteLine("=== KatLang Parser Demo ===");
 Console.WriteLine(source);
 Console.WriteLine();
 
