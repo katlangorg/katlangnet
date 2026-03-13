@@ -1527,36 +1527,47 @@ inductive LoadPosition where
   7. **Size limit**: Fetched source must not exceed a reasonable limit.
 
   **Post-condition (invariant)**: After elaboration completes successfully,
-  the resulting AST contains NO unresolved load calls or `Expr.stringLiteral` nodes.
+  the resulting AST satisfies `postElabInvariant` / `postElabInvariantAlg`,
+  which guarantees:
+    1. No `Expr.stringLiteral` nodes remain (they only exist to carry load URLs).
+    2. No unresolved load calls remain (i.e., no `call (resolve "load") _` nodes).
   All load directives have been replaced with `Expr.block` containing the
   parsed and elaborated remote algorithm. The evaluator never sees load calls.
 
   Formally:
     elaborate(call(resolve("load"), [stringLiteral url])) = block(parseModule(fetch(url)))
     ∀ e ∈ elaborated AST, e ≠ Expr.stringLiteral _
+    ∀ e ∈ elaborated AST, e ≠ Expr.call (Expr.resolve "load") _
 -/
 mutual
-partial def loadInvariant_noLoad : Expr -> Bool
+/-- Post-elaboration invariant: returns true iff the expression tree contains
+    no `Expr.stringLiteral` nodes and no unresolved load calls
+    (`call (resolve "load") _`).  An AST satisfying this predicate is ready
+    for semantic evaluation. -/
+partial def postElabInvariant : Expr -> Bool
   | .stringLiteral _ => false
-  | .unary _ e       => loadInvariant_noLoad e
-  | .binary _ a b    => loadInvariant_noLoad a && loadInvariant_noLoad b
-  | .index a b       => loadInvariant_noLoad a && loadInvariant_noLoad b
-  | .combine a b     => loadInvariant_noLoad a && loadInvariant_noLoad b
-  | .call f args     => loadInvariant_noLoad f && loadInvariant_noLoadAlg args
+  | .unary _ e       => postElabInvariant e
+  | .binary _ a b    => postElabInvariant a && postElabInvariant b
+  | .index a b       => postElabInvariant a && postElabInvariant b
+  | .combine a b     => postElabInvariant a && postElabInvariant b
+  | .call (.resolve "load") _ => false  -- unresolved load call
+  | .call f args     => postElabInvariant f && postElabInvariantAlg args
   | .dotCall a _ args =>
-      loadInvariant_noLoad a &&
+      postElabInvariant a &&
       match args with
-      | some alg => loadInvariant_noLoadAlg alg
+      | some alg => postElabInvariantAlg alg
       | none => true
-  | .block alg       => loadInvariant_noLoadAlg alg
+  | .block alg       => postElabInvariantAlg alg
   | _                => true  -- param, num, resolve
 
-partial def loadInvariant_noLoadAlg : Algorithm -> Bool
+/-- Algorithm-level post-elaboration invariant: all contained expressions
+    satisfy `postElabInvariant`. -/
+partial def postElabInvariantAlg : Algorithm -> Bool
   | .builtin _ => true
   | .mk _ _ opens props output =>
-      opens.all loadInvariant_noLoad &&
-      props.all (fun p => loadInvariant_noLoadAlg p.alg) &&
-      output.all loadInvariant_noLoad
+      opens.all postElabInvariant &&
+      props.all (fun p => postElabInvariantAlg p.alg) &&
+      output.all postElabInvariant
 end
 
 end KatLang

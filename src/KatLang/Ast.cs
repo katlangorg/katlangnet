@@ -79,6 +79,7 @@ public abstract record Expr
     /// <summary>
     /// Native function call. Evaluates a C# function using parameter values from the environment.
     /// Used internally by built-in Math functions. Not produced by the parser.
+    /// Not part of the Lean specification.
     /// </summary>
     public sealed record NativeCall(string FnName, IReadOnlyList<string> ArgNames) : Expr;
 }

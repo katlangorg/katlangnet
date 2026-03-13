@@ -161,7 +161,7 @@ public static class Evaluator
         _ => $"({ExprKind(e)})",
     };
 
-    // ── Context string helpers (Lean: CtxMsg.open, CtxMsg.call, CtxMsg.prop) ─
+    // ── Context string helpers (Lean: CtxMsg.openMsg, CtxMsg.call, CtxMsg.dotCall) ─
 
     private static string CtxOpen(string key) => $"while resolving open: {key}";
     private static string CtxCall(Expr f) => $"while evaluating call to {OpenExprName(f)}";

@@ -106,6 +106,10 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write($"Resolve(\"{n}\")");
             break;
 
+        case Expr.StringLiteral(var s):
+            Console.Write($"StringLiteral(\"{s}\")");
+            break;
+
         case Expr.Unary(var op, var operand):
             Console.Write($"Unary({op}, ");
             PrintExpr(operand, indent);
