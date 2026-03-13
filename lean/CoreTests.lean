@@ -265,8 +265,8 @@ def test10 : Bool :=
     ])
 ]))
 
--- Test 11: .prop syntax for length in Repeat argument position
--- Repeat(Add, Numbers.length, (0,0)) where Numbers.length is encoded as .prop
+-- Test 11: dotCall none syntax for length in Repeat argument position
+-- Repeat(Add, Numbers.length, (0,0)) where Numbers.length is encoded as .dotCall
 -- Numbers = [3,5,9,1,0,6] → length = 6
 -- Add(a,sum) = (a+1, sum + Numbers[a])
 -- Result: sum of all Numbers = 3+5+9+1+0+6 = 24, extracted via index 1
@@ -285,7 +285,7 @@ def testAlg11 : Algorithm :=
       (.call (resolve "repeat")
         (alg [] [] [] [
           resolve "Add",
-          .prop (resolve "Numbers") "length",    -- ← .prop, NOT .dotCall
+          .dotCall (resolve "Numbers") "length" none,    -- ← no-arg dotCall
           .block (alg [] [] [] [.num 0, .num 0])
         ]))
       (.num 1)
@@ -300,8 +300,8 @@ def test11 : Bool :=
 -- EXPECTED: Except.ok [24]
 #eval runFlat (.block testAlg11)
 
--- Test 12: .prop length as Repeat count (simple increment)
--- Same as Test 7 but with .prop instead of .dotCall
+-- Test 12: dotCall length as Repeat count (simple increment)
+-- Same as Test 7 but with dotCall none syntax
 -- Numbers has 3 outputs → length = 3, step(x) = x + 1, init = 0 → 3
 def numbersAlg12 : Algorithm :=
   alg [] [] [] [.num 10, .num 20, .num 30]
@@ -311,7 +311,7 @@ def testAlg12 : Algorithm :=
     .call (resolve "repeat")
       (alg [] [] [] [
         .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step
-        .prop (resolve "Numbers") "length",                              -- ← .prop
+        .dotCall (resolve "Numbers") "length" none,                              -- ← no-arg dotCall
         .block (alg [] [] [] [.num 0])                                   -- init
       ])
   ]
@@ -325,14 +325,14 @@ def test12 : Bool :=
 -- EXPECTED: Except.ok [3]
 #eval runFlat (.block testAlg12)
 
--- Test 13: .prop length in value position (evalProp path)
+-- Test 13: dotCall none length in value position (evalDotCall path)
 def test13 : Bool :=
-  match runFlat (.prop (.block (alg [] [] [] [.num 1, .num 2])) "length") with
+  match runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none) with
   | Except.ok [2] => true
   | _ => false
 
 #eval test13  -- should be true
-#eval runFlat (.prop (.block (alg [] [] [] [.num 1, .num 2])) "length")
+#eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none)
 
 -- Test 14: .dotCall length in value position (evalDotCall path)
 def test14 : Bool :=

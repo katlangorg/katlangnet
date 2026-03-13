@@ -175,7 +175,7 @@ public static class ParameterDetector
                 CollectFreeParams(right, visibleNames, paramNames, paramOrder, graceWeights);
                 break;
 
-            case Expr.Prop(var target, _):
+            case Expr.DotCall(var target, _, null):
                 CollectFreeParams(target, visibleNames, paramNames, paramOrder, graceWeights);
                 break;
 
@@ -293,8 +293,8 @@ public static class ParameterDetector
                     RewriteParams(left, paramNames, visibleNames, propertyAlgs),
                     RewriteParams(right, paramNames, visibleNames, propertyAlgs)) { Span = expr.Span };
 
-            case Expr.Prop(var target, var name):
-                return new Expr.Prop(
+            case Expr.DotCall(var target, var name, null):
+                return new Expr.DotCall(
                     RewriteParams(target, paramNames, visibleNames, propertyAlgs),
                     name) { Span = expr.Span };
 
@@ -384,9 +384,6 @@ public static class ParameterDetector
             Expr.Combine(var l, var r) => new Expr.Combine(
                 ProcessExpr(l, visibleNames, propertyAlgs),
                 ProcessExpr(r, visibleNames, propertyAlgs)) { Span = expr.Span },
-            Expr.Prop(var t, var n) => new Expr.Prop(
-                ProcessExpr(t, visibleNames, propertyAlgs),
-                n) { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExpr(t, visibleNames, propertyAlgs),
                 n,
@@ -407,7 +404,7 @@ public static class ParameterDetector
             case Expr.Resolve(var name):
                 return knownProps.TryGetValue(name, out var alg) ? alg : null;
 
-            case Expr.Prop(var target, var name):
+            case Expr.DotCall(var target, var name, null):
             {
                 var targetAlg = ResolveOpenExprStatic(target, knownProps);
                 if (targetAlg is null) return null;

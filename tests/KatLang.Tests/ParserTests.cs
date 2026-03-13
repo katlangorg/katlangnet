@@ -835,15 +835,16 @@ public class ParserTests
     // -- Open DotCall normalization tests -------------------------------------
 
     [Fact]
-    public void Parse_Open_DotPath_NormalizesToProp()
+    public void Parse_Open_DotPath_NormalizesToDotCall()
     {
-        // open Lib.Sub -> parser produces Prop(Resolve("Lib"), "Sub"), NOT DotCall
+        // open Lib.Sub -> parser produces DotCall(Resolve("Lib"), "Sub", null)
         var result = Parser.ParseSyntax("open Lib.Sub\nLib = (public Sub = (public X = 1))\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
-        var prop = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
-        Assert.Equal("Sub", prop.Name);
-        Assert.IsType<Expr.Resolve>(prop.Target);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Opens[0]);
+        Assert.Equal("Sub", dotCall.Name);
+        Assert.Null(dotCall.Args);
+        Assert.IsType<Expr.Resolve>(dotCall.Target);
     }
 
     [Fact]
@@ -856,16 +857,18 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Open_NestedDotPath_NormalizesToNestedProp()
+    public void Parse_Open_NestedDotPath_NormalizesToNestedDotCall()
     {
-        // open A.B.C -> Prop(Prop(Resolve("A"), "B"), "C")
+        // open A.B.C -> DotCall(DotCall(Resolve("A"), "B", null), "C", null)
         var result = Parser.ParseSyntax("open A.B.C\nA = (public B = (public C = (public X = 1)))\nX");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
-        var outer = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
+        var outer = Assert.IsType<Expr.DotCall>(result.Root.Opens[0]);
         Assert.Equal("C", outer.Name);
-        var inner = Assert.IsType<Expr.Prop>(outer.Target);
+        Assert.Null(outer.Args);
+        var inner = Assert.IsType<Expr.DotCall>(outer.Target);
         Assert.Equal("B", inner.Name);
+        Assert.Null(inner.Args);
         Assert.IsType<Expr.Resolve>(inner.Target);
     }
 
@@ -887,9 +890,10 @@ public class ParserTests
         var result = Parser.ParseSyntax("open Lib.Sub\n1");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Opens);
-        var prop = Assert.IsType<Expr.Prop>(result.Root.Opens[0]);
-        Assert.Equal("Sub", prop.Name);
-        Assert.IsType<Expr.Resolve>(prop.Target);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Opens[0]);
+        Assert.Equal("Sub", dotCall.Name);
+        Assert.Null(dotCall.Args);
+        Assert.IsType<Expr.Resolve>(dotCall.Target);
     }
 
     [Fact]
@@ -928,7 +932,7 @@ public class ParserTests
         Assert.Equal(3, result.Root.Opens.Count);
         Assert.IsType<Expr.Resolve>(result.Root.Opens[0]);
         Assert.IsType<Expr.Call>(result.Root.Opens[1]);
-        Assert.IsType<Expr.Prop>(result.Root.Opens[2]);
+        Assert.IsType<Expr.DotCall>(result.Root.Opens[2]);
     }
 
     [Fact]

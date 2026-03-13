@@ -365,9 +365,9 @@ public sealed class Parser
 
     /// <summary>
     /// Normalizes and validates open expressions.
-    /// Rewrites DotCall(obj, name, null) → Prop(obj, name) to match Lean's open forms,
-    /// and rejects DotCall with args as invalid.
-    /// Lean: Expr.openForm? — only Resolve, Prop, Combine, Block are open forms.
+    /// DotCall(obj, name, null) is the canonical form for dotted paths in opens.
+    /// Rejects DotCall with args as invalid.
+    /// Lean: Expr.openForm? — only Resolve, DotCall(none), Combine, Block are open forms.
     /// </summary>
     private void NormalizeAndValidateOpenForms(List<Expr> exprs)
     {
@@ -386,16 +386,16 @@ public sealed class Parser
 
     /// <summary>
     /// Recursively normalizes an open expression:
-    /// - DotCall(obj, name, null) → Prop(obj, name)
+    /// - DotCall(obj, name, null) is the canonical no-arg form (kept as-is)
     /// - DotCall(obj, name, args) → report error (call-like syntax not allowed in opens)
-    /// - Recurse through Combine, Prop target, Block.
+    /// - Recurse through Combine, DotCall target, Block.
     /// </summary>
     private Expr NormalizeOpenExpr(Expr expr)
     {
         switch (expr)
         {
             case Expr.DotCall(var target, var name, null):
-                return new Expr.Prop(NormalizeOpenExpr(target), name) { Span = expr.Span };
+                return new Expr.DotCall(NormalizeOpenExpr(target), name) { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, _):
                 ReportError($"Invalid open form: call-like dotCall '.{name}(...)' is not allowed in open declarations.");
@@ -404,9 +404,6 @@ public sealed class Parser
 
             case Expr.Combine(var left, var right):
                 return new Expr.Combine(NormalizeOpenExpr(left), NormalizeOpenExpr(right)) { Span = expr.Span };
-
-            case Expr.Prop(var target, var name):
-                return new Expr.Prop(NormalizeOpenExpr(target), name) { Span = expr.Span };
 
             case Expr.Block(var alg):
                 // Block in open position: normalize opens within the block's own opens
@@ -419,14 +416,14 @@ public sealed class Parser
 
     /// <summary>
     /// Predicate for valid open forms at parse time.
-    /// Lean: Expr.openForm? — only Resolve, Prop, Combine, Block post-elaboration.
-    /// DotCall is NOT a valid open form (should be normalized to Prop before this check).
+    /// Lean: Expr.openForm? — only Resolve, DotCall(none), Combine, Block post-elaboration.
+    /// DotCall with args is NOT a valid open form.
     /// load calls (Call(Resolve("load"), _)) are allowed as *surface* open forms because
     /// the load elaboration pass will rewrite them to Block nodes before open resolution.
     /// After elaboration, no load nodes remain — see Lean loadInvariant_noLoad.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Resolve or Expr.Prop or Expr.Combine or Expr.Block
+        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.Combine or Expr.Block
         || e is Expr.Call(Expr.Resolve("load"), _);
 
     /// <summary>
@@ -601,7 +598,7 @@ public sealed class Parser
                     }
                     break;
 
-                case TokenKind.LParen or TokenKind.LBrace when lhs is Expr.Resolve or Expr.Prop or Expr.DotCall:
+                case TokenKind.LParen or TokenKind.LBrace when lhs is Expr.Resolve or Expr.DotCall:
                     // Direct call: Name(args) or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callArgs = ParseCallArgs();

@@ -141,12 +141,6 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write(')');
             break;
 
-        case Expr.Prop(var target, var name):
-            Console.Write("Prop(");
-            PrintExpr(target, indent);
-            Console.Write($", \"{name}\")");
-            break;
-
         case Expr.DotCall(var target, var name, var dotArgs):
             Console.Write("DotCall(");
             PrintExpr(target, indent);

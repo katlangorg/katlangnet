@@ -44,7 +44,6 @@ public class EvaluatorTests
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
         Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
         Expr.Combine(var l, var r) => new Expr.Combine(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
-        Expr.Prop(var t, var n) => new Expr.Prop(MakeAllPublicExpr(t), n) { Span = expr.Span },
         _ => expr,
     };
 

@@ -133,7 +133,6 @@ public static class Evaluator
         Expr.Index => "index",
         Expr.Combine => "combine",
         Expr.Resolve => "resolve",
-        Expr.Prop => "prop",
         Expr.Block => "block",
         Expr.Call => "call",
         Expr.DotCall => "dotCall",
@@ -148,7 +147,7 @@ public static class Evaluator
     /// Lean: Expr.isOpenForm.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Combine or Expr.Block or Expr.Resolve or Expr.Prop;
+        Expr.Combine or Expr.Block or Expr.Resolve or Expr.DotCall(_, _, null);
 
     /// <summary>
     /// Extract a descriptive name from an open expression for error messages.
@@ -157,7 +156,6 @@ public static class Evaluator
     private static string OpenExprName(Expr e) => e switch
     {
         Expr.Resolve(var n) => n,
-        Expr.Prop(var o, var n) => OpenExprName(o) + "." + n,
         Expr.DotCall(var o, var n, _) => OpenExprName(o) + "." + n,
         Expr.Block => "(inline library)",
         Expr.Combine(var a, var b) => OpenExprName(a) + " + " + OpenExprName(b),
@@ -169,7 +167,6 @@ public static class Evaluator
 
     private static string CtxOpen(string key) => $"while resolving open: {key}";
     private static string CtxCall(Expr f) => $"while evaluating call to {OpenExprName(f)}";
-    private static string CtxProp(Expr obj, string name) => $"while evaluating property .{name} of {OpenExprName(obj)}";
     private static string CtxDotCall(Expr obj, string name) => $"while evaluating dotCall .{name} of {OpenExprName(obj)}";
 
     // ── Error context helper ────────────────────────────────────────────────
@@ -635,7 +632,7 @@ public static class Evaluator
 
     /// <summary>
     /// Lean: isIntrinsic. Predicate for intrinsic (non-builtin) property names.
-    /// These are handled specially in resolveAlg / evalProp / evalDotCall.
+    /// These are handled specially in resolveAlg / evalDotCall.
     /// </summary>
     private static bool IsIntrinsic(string name) => name == "length";
 
@@ -700,7 +697,7 @@ public static class Evaluator
                 return new EvalError.UnknownName(name) { Span = expr.Span };
             }
 
-            case Expr.Prop(var target, var propName):
+            case Expr.DotCall(var target, var propName, null):
                 return WithSpan(expr.Span, ResolveOpenPropAccess(target, propName, ctx));
 
             default:
@@ -711,7 +708,7 @@ public static class Evaluator
 
     /// <summary>
     /// Shared logic for resolving property access in open expressions.
-    /// Used by Expr.Prop in ResolveAlgForOpen.
+    /// Used by DotCall(target, name, null) in ResolveAlgForOpen.
     /// </summary>
     private static EvalResult<Algorithm> ResolveOpenPropAccess(
         Expr target, string propName, EvalCtx ctx)
@@ -767,25 +764,6 @@ public static class Evaluator
                     return r;
                 }
                 return new EvalError.UnknownName(name) { Span = expr.Span };
-            }
-
-            case Expr.Prop(var target, var propName) when IsIntrinsic(propName):
-            {
-                // Lean: lift intrinsic to wrapper so evalDotCall handles it
-                var wrapper = new Algorithm.User(
-                    Parent: null, Params: [], Opens: [],
-                    Properties: [], Output: [new Expr.DotCall(target, propName)]);
-                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
-            }
-
-            case Expr.Prop(var target, var propName):
-            {
-                var targetResult = ResolveAlg(target, ctx);
-                if (targetResult.IsError) return targetResult.Error;
-                var prop = LookupProp(targetResult.Value, propName);
-                if (prop is not null)
-                    return EvalResult<Algorithm>.Ok(ChildOf(targetResult.Value, prop));
-                return new EvalError.UnknownProperty(OpenExprName(target), propName) { Span = expr.Span };
             }
 
             case Expr.DotCall:
@@ -978,41 +956,6 @@ public static class Evaluator
         return EvalResult<Result>.Ok(state);
     }
 
-    // ── Property evaluation ─────────────────────────────────────────────────
-
-    /// <summary>Lean: evalProp → EvalM Result. Wrapped with withCtx for diagnostics.</summary>
-    private static EvalResult<Result> EvalProp(
-        Expr target,
-        string propName,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        return WithCtx(CtxProp(target, propName),
-            EvalPropInner(target, propName, ctx, valEnv));
-    }
-
-    private static EvalResult<Result> EvalPropInner(
-        Expr target,
-        string propName,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var targetR = ResolveAlg(target, ctx);
-        if (targetR.IsError) return targetR.Error;
-        var targetAlg = targetR.Value;
-
-        // Lean: evalIntrinsic? — single source of truth for intrinsic semantics
-        var intrinsic = EvalIntrinsic(targetAlg, propName);
-        if (intrinsic is { } r) return r;
-
-        var prop = LookupProp(targetAlg, propName);
-        if (prop is null)
-            return new EvalError.UnknownProperty(OpenExprName(target), propName) { Span = target.Span };
-
-        var wired = ChildOf(targetAlg, prop);
-        return EvalAlgOutput(wired, ctx, valEnv);
-    }
-
     // ── Main eval ───────────────────────────────────────────────────────────
 
     /// <summary>Lean: eval → EvalM Result.</summary>
@@ -1120,9 +1063,6 @@ public static class Evaluator
                 }
                 return WithSpan(expr.Span, EvalAlgOutput(resolvedR.Value, ctx, valEnv));
             }
-
-            case Expr.Prop(var target, var propName):
-                return WithSpan(expr.Span, EvalProp(target, propName, ctx, valEnv));
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
                 // Lean: eval (.dotCall o n argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall

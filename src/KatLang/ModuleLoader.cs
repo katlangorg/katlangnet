@@ -177,13 +177,10 @@ public sealed class ModuleLoader
 
             case Expr.DotCall(var target, var name, var args):
                 return new Expr.DotCall(
-                    ProcessExpr(target, LoadContext.RuntimeExpr),
+                    ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr),
                     name,
                     args is not null ? ProcessAlgorithm(args, LoadContext.RuntimeExpr) : null)
                 { Span = expr.Span };
-
-            case Expr.Prop(var target, var name):
-                return new Expr.Prop(ProcessExpr(target, context), name) { Span = expr.Span };
 
             case Expr.Grace(var inner, var weight):
                 return new Expr.Grace(ProcessExpr(inner, context), weight) { Span = expr.Span };

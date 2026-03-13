@@ -40,7 +40,7 @@ def SumAlg : Algorithm :=
             []
             []
             [ KatLang.resolve "Add"
-            , KatLang.block (KatLang.alg [] [] [] [ KatLang.prop (KatLang.resolve "Numbers") "length" ])
+            , KatLang.block (KatLang.alg [] [] [] [ KatLang.dotCall (KatLang.resolve "Numbers") "length" ])
             , KatLang.block (KatLang.alg [] [] [] [ KatLang.num 0, KatLang.num 0 ])
             ]))
         (KatLang.num 1)

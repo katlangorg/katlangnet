@@ -10,7 +10,7 @@
 --
 --   Valid open targets (post-elaboration / canonical forms):
 --     - identifier:     `open Math`            → Resolve("Math")
---     - dotted path:    `open Lib.Sub`         → Prop(Resolve("Lib"), "Sub")
+--     - dotted path:    `open Lib.Sub`         → DotCall(Resolve("Lib"), "Sub", none)
 --     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block
 --     - combine:        `open A; B`            → Combine(Resolve("A"), Resolve("B"))
 --     - inline block:   `open (public X = 1)`  → Block(...)
@@ -100,7 +100,6 @@ mutual
     | index   : Expr -> Expr -> Expr
     | combine : Expr -> Expr -> Expr
     | resolve : Ident -> Expr
-    | prop    : Expr -> Ident -> Expr
     | block   : Algorithm -> Expr
     | call    : Expr -> Algorithm -> Expr
     | dotCall : Expr -> Ident -> Option Algorithm -> Expr    -- a.f or a.f(args)
@@ -400,7 +399,7 @@ def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
 --------------------------------------------------------------------------------
 
 /-- Predicate for intrinsic (non-builtin) property names.
-    These names are handled specially in resolveAlg / evalProp / evalDotCall
+    These names are handled specially in resolveAlg / evalDotCall
     rather than being looked up as structural properties. -/
 def isIntrinsic (name : Ident) : Bool :=
   name = "length"
@@ -505,10 +504,10 @@ def combineAlgOpensClosed (a b : Algorithm) : Algorithm :=
     `Expr.openForm?` and be rejected as `badOpenForm`.
 
     Note: the C# parser produces DotCall for all dot syntax (e.g. `Lib.Sub`).
-    A parser-level normalization pass rewrites `DotCall(obj, name, none)` to
-    `Prop(obj, name)` in open expressions, and rejects `DotCall(obj, name, some args)`
-    as an invalid open form.  After normalization and load elaboration, opens
-    contain only the forms listed below.
+    `DotCall(obj, name, none)` is the canonical form for open dot paths.
+    `DotCall(obj, name, some args)` is rejected as an invalid open form.
+    After normalization and load elaboration, opens contain only the forms
+    listed below.
 
     Additionally, the exact-syntax sugar `open 'url'` is desugared to
     `open load('url')` at parse time, so raw string literals never appear
@@ -518,14 +517,14 @@ inductive OpenForm where
   | combine : Expr -> Expr -> OpenForm
   | block   : Algorithm -> OpenForm
   | resolve : Ident -> OpenForm
-  | prop    : Expr -> Ident -> OpenForm
+  | dotCall : Expr -> Ident -> OpenForm     -- a.f (no-arg dotCall)
 
 def Expr.openForm? : Expr -> Option OpenForm
-  | .combine a b => some (.combine a b)
-  | .block a     => some (.block a)
-  | .resolve n   => some (.resolve n)
-  | .prop o n    => some (.prop o n)
-  | _            => none          -- Expr.load and all other forms are rejected
+  | .combine a b     => some (.combine a b)
+  | .block a         => some (.block a)
+  | .resolve n       => some (.resolve n)
+  | .dotCall o n none => some (.dotCall o n)
+  | _                => none          -- Expr.load, dotCall with args, and all other forms are rejected
 
 def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
@@ -541,7 +540,6 @@ def Expr.kind : Expr -> String
   | .index _ _    => "index"
   | .combine _ _  => "combine"
   | .resolve _    => "resolve"
-  | .prop _ _     => "prop"
   | .block _      => "block"
   | .call _ _     => "call"
   | .dotCall _ _ _  => "dotCall"
@@ -551,7 +549,6 @@ def Expr.kind : Expr -> String
 def openExprName (e : Expr) : String :=
   match e with
   | .resolve n => n
-  | .prop o n => openExprName o ++ "." ++ n
   | .dotCall o n _ => openExprName o ++ "." ++ n
   | .block _ => "(inline library)"
   | .combine a b => openExprName a ++ " + " ++ openExprName b
@@ -562,7 +559,6 @@ def openExprName (e : Expr) : String :=
 namespace CtxMsg
   def openMsg (k : String)              := s!"while resolving open: {k}"
   def call   (f : Expr)               := s!"while evaluating call to {openExprName f}"
-  def prop   (obj : Expr) (n : Ident) := s!"while evaluating property .{n} of {openExprName obj}"
   def dotCall (obj : Expr) (n : Ident) := s!"while evaluating dotCall .{n} of {openExprName obj}"
 end CtxMsg
 
@@ -629,7 +625,7 @@ mutual
             | some _ => .error (Error.notPublicProperty "(lexical)" n)
             | none   => .error (Error.unknownName n)
       | [] => .error (Error.unknownName n)
-    | some (.prop o n) => do
+    | some (.dotCall o n) => do
       let a <- resolveAlgForOpen o ctx
       -- First check if property exists at all to distinguish missing vs private
       match Algorithm.lookupProp a n with
@@ -792,16 +788,6 @@ mutual
         match ctx.callStack with
         | a::_ => lookupLexical a n ctx
         | []   => .error (Error.unknownName n)
-    | .prop o n =>
-        if isIntrinsic n then
-          -- Lift intrinsic to wrapper algorithm so it can be passed where Algorithm is expected
-          pure (wireToCaller ctx (Algorithm.ofExpr (.dotCall o n none)))
-        else do
-          let a <- resolveAlg o ctx
-          match Algorithm.lookupProp a n with
-          | some p =>
-            pure (Algorithm.childOf a p)
-          | none   => .error (Error.unknownProperty (openExprName o) n)
     | .dotCall o n args =>
         -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all semantics
         -- (length intrinsic, structural property, receiver injection, lexical fallback)
@@ -939,17 +925,6 @@ mutual
 
     | _, _ =>
         .error (Error.arityMismatch (builtinArity b) args.length)
-
-  partial def evalProp (obj : Expr) (name : Ident)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := withCtx (CtxMsg.prop obj name) do
-    let a <- resolveAlg obj ctx
-    match (<- evalIntrinsic? a name) with
-    | some r => pure r
-    | none =>
-        match Algorithm.lookupProp a name with
-        | some p =>
-            evalAlgOutput (Algorithm.childOf a p) ctx env
-        | none => .error (Error.unknownProperty (openExprName obj) name)
 
   /-- Shared user-defined call binding logic.
       Preserves the eager value ABI while layering AlgEnv for higher-order
@@ -1142,8 +1117,6 @@ mutual
     | .resolve n => do
         let a <- resolveAlg (.resolve n) ctx
         evalAlgOutput a ctx env
-
-    | .prop o n => evalProp o n ctx env
 
     | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCall o n argsOpt ctx env
@@ -1455,7 +1428,6 @@ def name (s : Sym) : Expr := .nameLiteral s
 def num (n : Int) : Expr := .num n
 def index (a i : Expr) : Expr := .index a i
 def resolve (n : Ident) : Expr := .resolve n
-def prop (o : Expr) (n : Ident) : Expr := .prop o n
 def block (a : Algorithm) : Expr := .block a
 def call (f : Expr) (a : Algorithm) : Expr := .call f a
 def dotCall (o : Expr) (n : Ident) : Expr := .dotCall o n none
@@ -1557,7 +1529,6 @@ partial def loadInvariant_noLoad : Expr -> Bool
   | .binary _ a b    => loadInvariant_noLoad a && loadInvariant_noLoad b
   | .index a b       => loadInvariant_noLoad a && loadInvariant_noLoad b
   | .combine a b     => loadInvariant_noLoad a && loadInvariant_noLoad b
-  | .prop a _        => loadInvariant_noLoad a
   | .call f args     => loadInvariant_noLoad f && loadInvariant_noLoadAlg args
   | .dotCall a _ args =>
       loadInvariant_noLoad a &&

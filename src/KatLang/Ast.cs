@@ -59,9 +59,6 @@ public abstract record Expr
     /// <summary>Resolves a named algorithm by lexical lookup.</summary>
     public sealed record Resolve(string Name) : Expr;
 
-    /// <summary>Direct property access. <c>Prop(a, n)</c> resolves property <c>n</c> inside algorithm <c>a</c>.</summary>
-    public sealed record Prop(Expr Target, string Name) : Expr;
-
     /// <summary>
     /// Extension call syntax. <c>DotCall(a, "f", args?)</c> represents <c>a.f</c> or <c>a.f(args)</c>
     /// with smart resolution: property access when f has 0 params, otherwise call with receiver.

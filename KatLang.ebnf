@@ -34,7 +34,7 @@ UnaryExpr       = "-" UnaryExpr
 PostfixExpr     = Primary { PostfixOp } ;
 PostfixOp       = ":" Primary
                 | "." Identifier [ CallArgs ]
-                | CallArgs ;    (* CallArgs only when LHS is Resolve, Prop, or DotCall *)
+                | CallArgs ;    (* CallArgs only when LHS is Resolve or DotCall *)
 
 CallArgs        = BraceArgs | ParenArgs | DoubleParenArgs ;
 BraceArgs       = "{" Algorithm "}" ;

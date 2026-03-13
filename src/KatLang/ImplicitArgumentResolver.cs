@@ -85,7 +85,7 @@ public static class ImplicitArgumentResolver
                 FindBareParametrizedRefs(right, localParamMap, refs, false);
                 break;
 
-            case Expr.Prop(var target, _):
+            case Expr.DotCall(var target, _, null):
                 FindBareParametrizedRefs(target, localParamMap, refs, false);
                 break;
 
@@ -161,7 +161,7 @@ public static class ImplicitArgumentResolver
                 FindBareSiblingRefs(right, siblingNames, refs, false);
                 break;
 
-            case Expr.Prop(var target, _):
+            case Expr.DotCall(var target, _, null):
                 FindBareSiblingRefs(target, siblingNames, refs, false);
                 break;
 
@@ -386,7 +386,7 @@ public static class ImplicitArgumentResolver
                 CollectImplicitDeps(right, paramMap, seen, deps, false);
                 break;
 
-            case Expr.Prop(var target, _):
+            case Expr.DotCall(var target, _, null):
                 CollectImplicitDeps(target, paramMap, seen, deps, false);
                 break;
 
@@ -469,11 +469,6 @@ public static class ImplicitArgumentResolver
                     RewriteImplicitCalls(left, paramMap, false),
                     RewriteImplicitCalls(right, paramMap, false)) { Span = expr.Span };
 
-            case Expr.Prop(var target, var name):
-                return new Expr.Prop(
-                    RewriteImplicitCalls(target, paramMap, false),
-                    name) { Span = expr.Span };
-
             case Expr.DotCall(var target, var name, var dotArgs):
                 // DotCall target is in algorithm position (resolveAlg, not eval)
                 return new Expr.DotCall(
@@ -518,9 +513,6 @@ public static class ImplicitArgumentResolver
             Expr.Combine(var l, var r) => new Expr.Combine(
                 ProcessExprNested(l, paramMap),
                 ProcessExprNested(r, paramMap)) { Span = expr.Span },
-            Expr.Prop(var t, var n) => new Expr.Prop(
-                ProcessExprNested(t, paramMap),
-                n) { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExprNested(t, paramMap),
                 n,
