@@ -532,28 +532,36 @@ public static class Evaluator
 
     // ── Combine algorithms ──────────────────────────────────────────────────
 
-    /// <summary>Lean: combineAlg. Merges params, opens, properties, output.</summary>
-    private static Algorithm CombineAlg(Algorithm a, Algorithm b)
+    /// <summary>
+    /// Policy controlling how opens are handled when combining two algorithms.
+    /// Lean: OpenPolicy inductive.
+    /// </summary>
+    private enum OpenPolicy
     {
-        return new Algorithm.User(
-            Parent: null, // wired later by ResolveAlg
-            Params: a.Params.Concat(b.Params).ToList(),
-            Opens: a.Opens.Concat(b.Opens).ToList(),
-            Properties: a.Properties.Concat(b.Properties).ToList(),
-            Output: [new Expr.Block(a), new Expr.Block(b)]);
+        /// <summary>Merge opens from both algorithms (a.opens ++ b.opens).</summary>
+        Merge,
+        /// <summary>Discard all opens (result has opens = []).
+        /// Enforces isolation: libraries cannot smuggle in transitive opens.</summary>
+        Closed
     }
 
     /// <summary>
-    /// Lean: combineAlgOpensClosed. Like CombineAlg but with opens set to empty.
-    /// Enforces isolation: libraries cannot smuggle in transitive opens.
-    /// Used by ResolveAlgForOpen for open resolution.
+    /// Lean: combineAlg. Merges params, properties, output.
+    /// Opens handling is controlled by <paramref name="openPolicy"/>:
+    /// <c>Merge</c> concatenates opens; <c>Closed</c> discards them.
     /// </summary>
-    private static Algorithm CombineAlgOpensClosed(Algorithm a, Algorithm b)
+    private static Algorithm CombineAlg(Algorithm a, Algorithm b, OpenPolicy openPolicy = OpenPolicy.Merge)
     {
+        var opens = openPolicy switch
+        {
+            OpenPolicy.Merge => a.Opens.Concat(b.Opens).ToList(),
+            OpenPolicy.Closed => new List<Expr>(),
+            _ => throw new InvalidOperationException($"Unknown OpenPolicy: {openPolicy}")
+        };
         return new Algorithm.User(
-            Parent: null,
+            Parent: null, // wired later by ResolveAlg
             Params: a.Params.Concat(b.Params).ToList(),
-            Opens: [],
+            Opens: opens,
             Properties: a.Properties.Concat(b.Properties).ToList(),
             Output: [new Expr.Block(a), new Expr.Block(b)]);
     }
@@ -671,7 +679,7 @@ public static class Evaluator
                 if (aResult.IsError) return aResult.Error;
                 var bResult = ResolveAlgForOpen(e2, ctx);
                 if (bResult.IsError) return bResult.Error;
-                return EvalResult<Algorithm>.Ok(CombineAlgOpensClosed(aResult.Value, bResult.Value));
+                return EvalResult<Algorithm>.Ok(CombineAlg(aResult.Value, bResult.Value, OpenPolicy.Closed));
             }
 
             case Expr.Block(var alg):

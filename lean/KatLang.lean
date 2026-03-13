@@ -24,7 +24,7 @@
 --   Semantic rules (enforced by evaluator, not parser):
 --     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
 --     - Strict isolation: opening a library does NOT import its transitive opens
---       (combineAlgOpensClosed closes opens).
+--       (combineAlg .closed closes opens).
 --     - Ambiguity: if multiple open targets provide the same public name, and no
 --       owned/local/parent property shadows it, `ambiguousOpen` is raised.
 --     - Owned/local/parent lookup takes precedence over opens (ownership-first).
@@ -479,21 +479,26 @@ def intPow (b : Int) : Nat -> Int
   | 0 => 1
   | n + 1 => b * intPow b n
 
-def combineAlg (a b : Algorithm) : Algorithm :=
-  Algorithm.mk
-    none
-    (a.params ++ b.params)           -- params merged
-    (a.opens ++ b.opens)             -- * opens merged
-    (a.props  ++ b.props)            -- properties merged
-    [ Expr.block a, Expr.block b ]   -- output preserves boundaries
+/-- Policy controlling how opens are handled when combining two algorithms. -/
+inductive OpenPolicy where
+  /-- Merge opens from both algorithms (`a.opens ++ b.opens`). -/
+  | merge
+  /-- Discard all opens (result has `opens = []`).
+      Enforces isolation: libraries cannot smuggle in transitive opens. -/
+  | closed
+  deriving Repr, BEq
 
-/-- Combine algorithms without merging opens (for open resolution).
-    Enforces isolation: libraries cannot smuggle in transitive opens. -/
-def combineAlgOpensClosed (a b : Algorithm) : Algorithm :=
+/-- Combine two algorithms, using `policy` to control open handling.
+    - `OpenPolicy.merge`:  opens are concatenated (normal combination).
+    - `OpenPolicy.closed`: opens are discarded (strict isolation for open resolution). -/
+def combineAlg (policy : OpenPolicy := .merge) (a b : Algorithm) : Algorithm :=
+  let opens := match policy with
+    | .merge  => a.opens ++ b.opens
+    | .closed => []
   Algorithm.mk
     none
     (a.params ++ b.params)           -- params merged
-    []                               -- * opens closed (no transitive open smuggling)
+    opens                            -- opens per policy
     (a.props  ++ b.props)            -- properties merged
     [ Expr.block a, Expr.block b ]   -- output preserves boundaries
 
@@ -610,7 +615,7 @@ mutual
     | some (.combine e1 e2) => do
       let a <- resolveAlgForOpen e1 ctx
       let b <- resolveAlgForOpen e2 ctx
-      pure (combineAlgOpensClosed a b)  -- * no wiring, no open merging (strict isolation)
+      pure (combineAlg .closed a b)  -- * no wiring, no open merging (strict isolation)
     | some (.block a) => pure a       -- * no wiring for opens
     | some (.resolve n) =>
       match ctx.callStack with
