@@ -49,6 +49,18 @@
         "/^git -C d:\\\\Projects\\\\katlangnet commit -m \"fix: handle number literal overflow in Lexer gracefully\n\nReplace decimal\\.Parse with TryParse in the Lexer to prevent\nOverflowException when a number literal exceeds the decimal range\\.\nOn overflow, a diagnostic error is emitted and a placeholder token\nis inserted so parsing can continue\\.\n\nAdd two lexer tests for the overflow case\\.\" 2>&1$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^cd d:\\\\Projects\\\\katlangnet\\\\lean; lake build CoreTests 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^Push-Location d:\\\\Projects\\\\katlangnet; git add lean/KatLang\\.lean src/KatLang/Ast\\.cs src/KatLang/Evaluator\\.cs src/KatLang/Parser\\.cs src/KatLang/ModuleLoader\\.cs src/DemoApp/Program\\.cs; git status --short; Pop-Location$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^Push-Location d:\\\\Projects\\\\katlangnet; git commit -m \"remove nameLiteral from Lean core AST and C# implementation\n\nRemove the Expr\\.nameLiteral constructor and all related code\\.\nAudit confirmed it was never produced by the parser, rejected by\nall core semantic functions \\(resolveAlg, eval, openForm\\?\\), had no\ntest coverage, and served no post-elaboration semantic purpose\\.\n\nLean changes:\n- Remove Sym type alias \\(only consumer was nameLiteral\\)\n- Remove Expr\\.nameLiteral constructor\n- Remove pattern-match branches in Expr\\.kind, openExprName, resolveAlg\n- Remove 'def name' convenience constructor\n- Fix combineAlg call in resolveAlg to pass explicit \\.merge policy\n- Update loadInvariant_noLoad wildcard comment\n\nC# changes:\n- Remove Expr\\.NameLiteral record from Ast\\.cs\n- Remove match arms in ExprKind, OpenExprName, OpenExprKind, ResolveAlg\n- Remove leaf-node case in ModuleLoader\\.ProcessExpr\n- Remove case in DemoApp PrintExpr\" 2>&1; Pop-Location$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

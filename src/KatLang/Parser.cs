@@ -482,7 +482,6 @@ public sealed class Parser
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
         Expr.Param => "param",
-        Expr.NameLiteral => "nameLiteral",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
         Expr.Index => "index",

@@ -102,10 +102,6 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write($"Param(\"{n}\")");
             break;
 
-        case Expr.NameLiteral(var s):
-            Console.Write($"Name(\"{s}\")");
-            break;
-
         case Expr.Resolve(var n):
             Console.Write($"Resolve(\"{n}\")");
             break;

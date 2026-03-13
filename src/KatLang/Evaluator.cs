@@ -125,7 +125,6 @@ public static class Evaluator
     private static string ExprKind(Expr e) => e switch
     {
         Expr.Param => "param",
-        Expr.NameLiteral => "nameLiteral",
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
         Expr.Unary => "unary",
@@ -159,7 +158,6 @@ public static class Evaluator
         Expr.DotCall(var o, var n, _) => OpenExprName(o) + "." + n,
         Expr.Block => "(inline library)",
         Expr.Combine(var a, var b) => OpenExprName(a) + " + " + OpenExprName(b),
-        Expr.NameLiteral(var s) => $"'{s}",
         _ => $"({ExprKind(e)})",
     };
 
@@ -794,8 +792,6 @@ public static class Evaluator
                     return EvalResult<Algorithm>.Ok(algBound);
                 return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
             }
-            case Expr.NameLiteral(var s):
-                return new EvalError.NotAnAlgorithm($"nameLiteral({s})") { Span = expr.Span };
             case Expr.Num(var n):
                 return new EvalError.NotAnAlgorithm($"num({n})") { Span = expr.Span };
             case Expr.Unary:

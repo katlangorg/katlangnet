@@ -1,4 +1,4 @@
--- KatLang v0.7.8 (core AST + semantics + double-parens grouping + higher-order alg params)
+-- KatLang v0.7.9 (core AST + semantics + double-parens grouping + higher-order alg params)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, double-parens grouping).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -55,7 +55,6 @@ namespace KatLang
 --------------------------------------------------------------------------------
 
 abbrev Ident := String    -- algorithm / property / parameter names
-abbrev Sym   := String    -- symbol literals (nameLiteral)
 abbrev Assoc (K V : Type) := List (Prod K V)  -- association list
 
 --------------------------------------------------------------------------------
@@ -113,7 +112,6 @@ def builtinArity : Builtin -> Nat
 mutual
   inductive Expr where
     | param   : Ident -> Expr
-    | nameLiteral : Sym -> Expr   -- * symbol literal, NOT runtime data
     | num     : Int -> Expr
     | stringLiteral : String -> Expr  -- * string literal, surface-only (load URLs etc.)
     | unary   : UnaryOp -> Expr -> Expr
@@ -558,7 +556,6 @@ def Expr.isOpenForm (e : Expr) : Bool :=
 /-- Human-readable constructor kind for diagnostics. -/
 def Expr.kind : Expr -> String
   | .param _      => "param"
-  | .nameLiteral _ => "nameLiteral"
   | .num _        => "num"
   | .stringLiteral _ => "stringLiteral"
   | .unary _ _    => "unary"
@@ -577,7 +574,6 @@ def openExprName (e : Expr) : String :=
   | .dotCall o n _ => openExprName o ++ "." ++ n
   | .block _ => "(inline library)"
   | .combine a b => openExprName a ++ " + " ++ openExprName b
-  | .nameLiteral s => s!"'{s}"          -- * render name literals as symbols
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
 namespace CtxMsg
@@ -804,7 +800,7 @@ mutual
     | .combine e1 e2 => do
         let a <- resolveAlg e1 ctx
         let b <- resolveAlg e2 ctx
-        pure (wireToCaller ctx (combineAlg a b))
+        pure (wireToCaller ctx (combineAlg .merge a b))
     | .block a => pure (wireToCaller ctx a)
     | .resolve n =>
         match ctx.callStack with
@@ -820,7 +816,6 @@ mutual
         match ctx.algEnv.lookup x with
         | some alg => pure alg
         | none     => .error (Error.notAnAlgorithm s!"param({x})")
-    | .nameLiteral s  => .error (Error.notAnAlgorithm s!"nameLiteral({s})")
     | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
     | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
     | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
@@ -1445,7 +1440,6 @@ def runFlat (e : Expr) : EvalM (List Int) := do
 open Expr
 
 def param (s : Ident) : Expr := .param s
-def name (s : Sym) : Expr := .nameLiteral s
 def num (n : Int) : Expr := .num n
 def index (a i : Expr) : Expr := .index a i
 def resolve (n : Ident) : Expr := .resolve n
@@ -1555,7 +1549,7 @@ partial def loadInvariant_noLoad : Expr -> Bool
       | some alg => loadInvariant_noLoadAlg alg
       | none => true
   | .block alg       => loadInvariant_noLoadAlg alg
-  | _                => true  -- param, nameLiteral, num, resolve
+  | _                => true  -- param, num, resolve
 
 partial def loadInvariant_noLoadAlg : Algorithm -> Bool
   | .builtin _ => true

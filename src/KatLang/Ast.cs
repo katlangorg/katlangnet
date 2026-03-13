@@ -35,9 +35,6 @@ public abstract record Expr
     /// <summary>Refers to a parameter declared in the enclosing algorithm.</summary>
     public sealed record Param(string Name) : Expr;
 
-    /// <summary>Name literal (symbol). NOT runtime data — used for meta-level references.</summary>
-    public sealed record NameLiteral(string Value) : Expr;
-
     /// <summary>Numeric literal.</summary>
     public sealed record Num(decimal Value) : Expr;
 
