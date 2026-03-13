@@ -2172,4 +2172,77 @@ public class EvaluatorTests
         // Use = func; Use{a + 1} → block has param a, bare usage → arityMismatch
         AssertEvalFails("Use = func\nUse{a + 1}");
     }
+
+    // ── Explicit output syntax ──────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_ExplicitOutput_BasicForm()
+    {
+        // Explicit: Output = A should work the same as implicit A
+        AssertEval("A = 6\nOutput = A", 6);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_NumericLiteral()
+    {
+        AssertEval("Output = 42", 42);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_Expression()
+    {
+        AssertEval("A = 3\nOutput = A + 1", 4);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_InMiddleOfProperties()
+    {
+        // Output defined between properties should still work
+        AssertEval("A = 1\nOutput = A + B\nB = 2", 3);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_MultipleValues()
+    {
+        AssertEval("Output = 1, 2, 3", 1, 2, 3);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_EquivalentToImplicit()
+    {
+        // Both forms should produce the same result
+        var implicitResult = Eval("A = 6\nA");
+        var explicitResult = Eval("A = 6\nOutput = A");
+        Assert.True(implicitResult.IsOk);
+        Assert.True(explicitResult.IsOk);
+        Assert.Equal(implicitResult.Value, explicitResult.Value);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_InsideBlock()
+    {
+        var source = """
+            X = {
+              A = 3
+              Output = A + 1
+              B = 2
+            }
+            X
+            """;
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_ExplicitOutput_WithParametrizedProperty()
+    {
+        // Explicit output with a property that has implicit params
+        AssertEval("Add = x + y\nOutput = Add(3, 4)", 7);
+    }
+
+    [Fact]
+    public void Eval_ImplicitOutput_StillWorks()
+    {
+        // Ensure implicit output is unaffected
+        AssertEval("A = 6\nA", 6);
+    }
 }

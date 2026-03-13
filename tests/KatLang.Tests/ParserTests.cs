@@ -985,4 +985,123 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("must appear before"));
     }
+
+    // ── Explicit output syntax ──────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_ExplicitOutput_BasicForm()
+    {
+        var result = Parser.ParseSyntax("A = 6\nOutput = A");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        Assert.Equal("A", result.Root.Properties[0].Name);
+        Assert.Single(result.Root.Output);
+        Assert.IsType<Expr.Resolve>(result.Root.Output[0]);
+        Assert.Equal("A", ((Expr.Resolve)result.Root.Output[0]).Name);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_NotAProperty()
+    {
+        // Output = expr must NOT create a property named "Output"
+        var result = Parser.ParseSyntax("Output = 42");
+        Assert.False(result.HasErrors);
+        Assert.Empty(result.Root.Properties);
+        Assert.Single(result.Root.Output);
+        Assert.IsType<Expr.Num>(result.Root.Output[0]);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_Expression()
+    {
+        var result = Parser.ParseSyntax("A = 1\nOutput = A + 1");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        Assert.Single(result.Root.Output);
+        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
+        Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_InMiddleOfProperties()
+    {
+        var result = Parser.ParseSyntax("A = 1\nOutput = A + 1\nB = 2");
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Properties.Count);
+        Assert.Equal("A", result.Root.Properties[0].Name);
+        Assert.Equal("B", result.Root.Properties[1].Name);
+        Assert.Single(result.Root.Output);
+        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
+        Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_MultipleValues()
+    {
+        var result = Parser.ParseSyntax("Output = 1, 2, 3");
+        Assert.False(result.HasErrors);
+        Assert.Equal(3, result.Root.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_DuplicateReportsError()
+    {
+        var result = Parser.ParseSyntax("Output = 1\nOutput = 2");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("output may be defined only once"));
+    }
+
+    [Fact]
+    public void Parse_ExplicitAndImplicitOutput_ReportsError()
+    {
+        var result = Parser.ParseSyntax("A = 1\nOutput = A\nA");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
+    }
+
+    [Fact]
+    public void Parse_ImplicitThenExplicitOutput_ReportsError()
+    {
+        var result = Parser.ParseSyntax("A = 1\nA\nOutput = A");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
+    }
+
+    [Fact]
+    public void Parse_PublicOutput_ReportsError()
+    {
+        var result = Parser.ParseSyntax("public Output = 42");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to output"));
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_ImplicitOutputSameAST()
+    {
+        // Both forms should produce equivalent Output lists
+        var implicit_ = Parser.ParseSyntax("A = 6\nA");
+        var explicit_ = Parser.ParseSyntax("A = 6\nOutput = A");
+
+        Assert.False(implicit_.HasErrors);
+        Assert.False(explicit_.HasErrors);
+
+        Assert.Single(implicit_.Root.Output);
+        Assert.Single(explicit_.Root.Output);
+
+        // Both should be Resolve("A")
+        var implicitOut = Assert.IsType<Expr.Resolve>(implicit_.Root.Output[0]);
+        var explicitOut = Assert.IsType<Expr.Resolve>(explicit_.Root.Output[0]);
+        Assert.Equal(implicitOut.Name, explicitOut.Name);
+    }
+
+    [Fact]
+    public void Parse_ExplicitOutput_InsideBlock()
+    {
+        var result = Parser.ParseSyntax("X = {A = 1\nOutput = A + 1\nB = 2}");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var block = result.Root.Properties[0].Value;
+        Assert.Equal(2, block.Properties.Count);
+        Assert.Single(block.Output);
+    }
 }

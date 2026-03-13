@@ -146,6 +146,8 @@ public sealed class Parser
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Corresponds to 0.6's ReadSecondOrderAlgorithm.
     // Reads property definitions (Name = ...) and output expression lines.
+    // Explicit output syntax: `Output = expr` is special output-definition syntax,
+    // NOT a property assignment. It lowers to the algorithm's Output list.
 
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
@@ -153,6 +155,8 @@ public sealed class Parser
         var hasOpenDeclaration = false;
         var properties = new List<Property>();
         var output = new List<Expr>();
+        var hasExplicitOutput = false;
+        var hasImplicitOutput = false;
 
         while (Current.Kind != TokenKind.EndOfFile
             && Current.Kind != TokenKind.RParen
@@ -197,6 +201,13 @@ public sealed class Parser
                 Advance(); // consume 'public'
                 // Fall through: next iteration will parse the open declaration normally
             }
+            // public Output = ... → reject (output cannot be public)
+            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicOutputDef())
+            {
+                ReportError("'public' cannot be applied to output definitions. Use 'Output = expr' without 'public'.");
+                Advance(); // consume 'public'
+                // Fall through: next iteration will parse as explicit output
+            }
             // Check for public property definition: public Name = ...
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
             {
@@ -207,6 +218,24 @@ public sealed class Parser
                 Advance(); // consume '='
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body, IsPublic: true));
+            }
+            // Explicit output definition: Output = expr
+            else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
+            {
+                if (hasExplicitOutput)
+                {
+                    ReportError("Algorithm output may be defined only once.");
+                }
+                if (hasImplicitOutput)
+                {
+                    ReportError("Cannot use both explicit 'Output = ...' and implicit trailing output in the same algorithm.");
+                }
+
+                hasExplicitOutput = true;
+                Advance(); // consume 'Output'
+                Advance(); // consume '='
+                var exprs = ParseOutputLineExprs();
+                output.AddRange(exprs);
             }
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
@@ -220,7 +249,12 @@ public sealed class Parser
             }
             else
             {
-                // Output expression line
+                // Implicit output expression line
+                if (hasExplicitOutput)
+                {
+                    ReportError("Cannot use both explicit 'Output = ...' and implicit trailing output in the same algorithm.");
+                }
+                hasImplicitOutput = true;
                 var exprs = ParseOutputLineExprs();
                 output.AddRange(exprs);
             }
@@ -320,6 +354,19 @@ public sealed class Parser
     {
         var next = _pos + 1; // skip 'public'
         return next < _tokens.Count && _tokens[next].Kind == TokenKind.KeywordOpen;
+    }
+
+    /// <summary>
+    /// Checks if 'public' keyword is followed by 'Output' '='.
+    /// Used to detect and reject public output definitions.
+    /// </summary>
+    private bool LookaheadIsPublicOutputDef()
+    {
+        var next = _pos + 1; // skip 'public'
+        return next + 1 < _tokens.Count
+            && _tokens[next].Kind == TokenKind.Identifier
+            && _tokens[next].StringValue == "Output"
+            && _tokens[next + 1].Kind == TokenKind.Equals;
     }
 
     /// <summary>

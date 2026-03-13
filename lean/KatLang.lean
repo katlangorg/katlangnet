@@ -21,6 +21,25 @@
 --     - `open 'url'` desugars to `open load('url')` before elaboration.
 --     Raw string literals do NOT survive into the canonical open list.
 --
+-- Explicit output syntax (exact-syntax sugar, parser-only):
+--   `Output = expr` inside an algorithm body is special output-definition syntax.
+--   It is NOT a normal property assignment — it lowers to the Algorithm's `output`
+--   field (the same representation used by implicit trailing output).
+--
+--   Equivalence:
+--     Implicit:  `A = 6\n A`           → Algorithm.mk ... output=[Resolve("A")]
+--     Explicit:  `A = 6\n Output = A`  → Algorithm.mk ... output=[Resolve("A")]
+--
+--   Rules:
+--     - Each algorithm may define output at most once.
+--     - The user may choose either implicit output OR explicit `Output = expr`,
+--       but not both in the same algorithm.
+--     - `Output = expr` may appear anywhere in the property list (not only at end).
+--     - The name `Output` in assignment position is reserved for this syntax;
+--       users cannot define a normal property named `Output`.
+--     - `Output` can still be used as a free identifier / parameter name in
+--       expressions (only the `Output = ...` assignment form is special).
+--
 --   Semantic rules (enforced by evaluator, not parser):
 --     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
 --     - Strict isolation: opening a library does NOT import its transitive opens
