@@ -41,7 +41,7 @@ public abstract record Expr
     /// <summary>Numeric literal.</summary>
     public sealed record Num(decimal Value) : Expr;
 
-    /// <summary>String literal. Used only for compile-time directives (e.g. load URLs).</summary>
+    /// <summary>String literal. Used only for compile-time directives (e.g. load URLs). Surface-only, eliminated by elaboration.</summary>
     public sealed record StringLiteral(string Value) : Expr;
 
     /// <summary>Unary expression (currently only minus).</summary>

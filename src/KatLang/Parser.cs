@@ -420,7 +420,8 @@ public sealed class Parser
     /// DotCall with args is NOT a valid open form.
     /// load calls (Call(Resolve("load"), _)) are allowed as *surface* open forms because
     /// the load elaboration pass will rewrite them to Block nodes before open resolution.
-    /// After elaboration, no load nodes remain — see Lean loadInvariant_noLoad.
+    /// After elaboration, no load calls remain — see Lean loadInvariant_noLoad.
+    /// load is NOT a core Expr constructor; it is surface syntax only.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
         Expr.Resolve or Expr.DotCall(_, _, null) or Expr.Combine or Expr.Block

@@ -1,6 +1,8 @@
--- KatLang v0.75 (core AST + semantics + double-parens grouping + load elaboration + higher-order alg params)
+-- KatLang v0.75 (core AST + semantics + double-parens grouping + higher-order alg params)
 -- Core semantics are authoritative. Surface syntax handled externally except
--- where noted (implicit parameter detection, double-parens grouping, load).
+-- where noted (implicit parameter detection, double-parens grouping).
+-- Load elaboration is handled entirely in the front-end / elaboration layer;
+-- the core AST never contains load nodes (see load elaboration section below).
 --
 -- Open declarations:
 --   `open` is a DECLARATION keyword, not a property assignment.
@@ -11,7 +13,7 @@
 --   Valid open targets (post-elaboration / canonical forms):
 --     - identifier:     `open Math`            → Resolve("Math")
 --     - dotted path:    `open Lib.Sub`         → DotCall(Resolve("Lib"), "Sub", none)
---     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block
+--     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block (surface-only, not in core Expr)
 --     - combine:        `open A; B`            → Combine(Resolve("A"), Resolve("B"))
 --     - inline block:   `open (public X = 1)`  → Block(...)
 --
@@ -103,7 +105,9 @@ mutual
     | block   : Algorithm -> Expr
     | call    : Expr -> Algorithm -> Expr
     | dotCall : Expr -> Ident -> Option Algorithm -> Expr    -- a.f or a.f(args)
-    | load    : String -> Expr   -- * surface-only: load('url'), eliminated by elaboration
+    -- NOTE: load('url') is surface-only syntax, represented as Call(Resolve("load"), ...)
+    -- in the parser and elaborated to Block(...) by the load elaboration pass.
+    -- It is NOT a core Expr constructor.  See load elaboration section below.
     deriving Repr
 
   /-- Property definition with visibility metadata. -/
@@ -497,11 +501,9 @@ def combineAlgOpensClosed (a b : Algorithm) : Algorithm :=
     **after elaboration**.  Only structural references to libraries are permitted.
 
     OpenForm is the *post-elaboration* set of permitted open expressions.
-    `Expr.load` may appear in source-level open lists, but the load elaboration
-    pass MUST rewrite every `Expr.load` into `Expr.block` before open resolution
-    or validation runs.  If a buggy caller runs open resolution before load
-    elaboration, the `Expr.load` node will fall through to the `none` branch of
-    `Expr.openForm?` and be rejected as `badOpenForm`.
+    Surface-level `load('url')` calls (represented as `Call(Resolve("load"), ...)`)
+    may appear in source open lists, but the load elaboration pass MUST rewrite
+    every such call into `Expr.block` before open resolution or validation runs.
 
     Note: the C# parser produces DotCall for all dot syntax (e.g. `Lib.Sub`).
     `DotCall(obj, name, none)` is the canonical form for open dot paths.
@@ -512,7 +514,7 @@ def combineAlgOpensClosed (a b : Algorithm) : Algorithm :=
     Additionally, the exact-syntax sugar `open 'url'` is desugared to
     `open load('url')` at parse time, so raw string literals never appear
     in the canonical open list.  The load elaboration pass then rewrites
-    `load('url')` into `Block(parsed module)` as usual. -/
+    `Call(Resolve("load"), ...)` into `Block(parsed module)` as usual. -/
 inductive OpenForm where
   | combine : Expr -> Expr -> OpenForm
   | block   : Algorithm -> OpenForm
@@ -524,7 +526,7 @@ def Expr.openForm? : Expr -> Option OpenForm
   | .block a         => some (.block a)
   | .resolve n       => some (.resolve n)
   | .dotCall o n none => some (.dotCall o n)
-  | _                => none          -- Expr.load, dotCall with args, and all other forms are rejected
+  | _                => none          -- dotCall with args, call, and all other forms are rejected
 
 def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
@@ -543,7 +545,6 @@ def Expr.kind : Expr -> String
   | .block _      => "block"
   | .call _ _     => "call"
   | .dotCall _ _ _  => "dotCall"
-  | .load _       => "load"
 
 /-- Extract a descriptive name from an open expression for error messages. -/
 def openExprName (e : Expr) : String :=
@@ -553,7 +554,6 @@ def openExprName (e : Expr) : String :=
   | .block _ => "(inline library)"
   | .combine a b => openExprName a ++ " + " ++ openExprName b
   | .nameLiteral s => s!"'{s}"          -- * render name literals as symbols
-  | .load url => s!"load('{url}')"
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
 namespace CtxMsg
@@ -638,14 +638,12 @@ mutual
             | some publicAlg => pure publicAlg  -- * no wiring (pure resolution) - return public algorithm
             | none   => .error (Error.notPublicProperty (openExprName o) n)
       | none => .error (Error.unknownProperty (openExprName o) n)
-    -- No `.load` case: load is not a valid OpenForm post-elaboration.
-    -- If Expr.load reaches here (elaboration was skipped), it falls through to
-    -- `none` and is rejected with a clear diagnostic.
+    -- load('url') is not a core Expr constructor; it is represented as
+    -- Call(Resolve("load"), ...) at parse time and elaborated to Block before
+    -- open resolution.  If it reaches here un-elaborated, it falls through to
+    -- the call/default case below.
     | none =>
-        -- Provide a specific message for Expr.load to aid debugging
-        match e with
-        | .load url => throw (Error.badOpenForm s!"internal error: load must be elaborated before open resolution: {url}")
-        | _ => throw (Error.badOpenForm s!"{Expr.kind e}: {openExprName e}")
+        throw (Error.badOpenForm s!"{Expr.kind e}: {openExprName e}")
 
   /-- Resolve an open expression to a library algorithm. -/
   partial def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
@@ -804,7 +802,6 @@ mutual
     | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
     | .index _ _ => .error (Error.notAnAlgorithm "index expression")
     | .call _ _ => .error (Error.notAnAlgorithm "call expression")
-    | .load url => .error (Error.illegalInEval s!"load not elaborated: {url}")
     | .stringLiteral s => .error (Error.illegalInEval s!"stringLiteral not elaborated: {s}")
 
   /-- Resolve argument expressions to algorithms for builtin dispatch.
@@ -1486,12 +1483,11 @@ inductive LoadPosition where
 
 /- **load elaboration judgment**
 
-  The elaboration pass transforms surface `Expr.load url` nodes into
-  `Expr.block (parseModule (fetch url))` nodes. It enforces:
-
-  1. **Literal URL**: The URL must be a compile-time string literal.
-     `call (resolve "load") (alg with output = [stringLiteral url])` is the
-     surface parse form; the elaborator extracts the URL from the stringLiteral.
+  The elaboration pass transforms surface `Call(Resolve("load"), ...)` nodes into
+  `Expr.block (parseModule (fetch url))` nodes.  `load` is NOT a core Expr
+  constructor — it exists only as surface syntax represented via
+  `call (resolve "load") (alg with output = [stringLiteral url])`.
+  The elaborator extracts the URL from the stringLiteral argument and enforces:
 
   2. **Allowed position**: load may only appear in:
      - Property definition RHS: `Lib = load('https://katlang.org/lib.kat')`
@@ -1513,17 +1509,16 @@ inductive LoadPosition where
   7. **Size limit**: Fetched source must not exceed a reasonable limit.
 
   **Post-condition (invariant)**: After elaboration completes successfully,
-  the resulting AST contains NO `Expr.load` or `Expr.stringLiteral` nodes.
+  the resulting AST contains NO unresolved load calls or `Expr.stringLiteral` nodes.
   All load directives have been replaced with `Expr.block` containing the
-  parsed and elaborated remote algorithm. The evaluator never sees load nodes.
+  parsed and elaborated remote algorithm. The evaluator never sees load calls.
 
   Formally:
-    elaborate(load(url)) = block(parseModule(fetch(url)))
-    ∀ e ∈ elaborated AST, e ≠ Expr.load _ ∧ e ≠ Expr.stringLiteral _
+    elaborate(call(resolve("load"), [stringLiteral url])) = block(parseModule(fetch(url)))
+    ∀ e ∈ elaborated AST, e ≠ Expr.stringLiteral _
 -/
 mutual
 partial def loadInvariant_noLoad : Expr -> Bool
-  | .load _          => false
   | .stringLiteral _ => false
   | .unary _ e       => loadInvariant_noLoad e
   | .binary _ a b    => loadInvariant_noLoad a && loadInvariant_noLoad b
