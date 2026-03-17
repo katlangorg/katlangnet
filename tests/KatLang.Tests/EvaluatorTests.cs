@@ -2,6 +2,10 @@ namespace KatLang.Tests;
 
 public class EvaluatorTests
 {
+    // Must match the high-precision literals in Evaluator.MathAlgorithm.
+    private const decimal KatPi = 3.1415926535897932384626433833m;
+    private const decimal KatE  = 2.7182818284590452353602874714m;
+
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
     {
         var ast = Parser.Parse(source).Root;
@@ -573,7 +577,7 @@ public class EvaluatorTests
         var result = Eval("Math.Pi");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI, result.Value[0]);
+        Assert.Equal(KatPi, result.Value[0]);
     }
 
     [Fact]
@@ -582,7 +586,7 @@ public class EvaluatorTests
         var result = Eval("Math.E");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.E, result.Value[0]);
+        Assert.Equal(KatE, result.Value[0]);
     }
 
     [Fact]
@@ -591,7 +595,7 @@ public class EvaluatorTests
         var result = Eval("Math.Pi * 2");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI * 2, result.Value[0]);
+        Assert.Equal(KatPi * 2, result.Value[0]);
     }
 
     [Fact]
@@ -600,7 +604,7 @@ public class EvaluatorTests
         var result = Eval("Math.E + 1");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.E + 1, result.Value[0]);
+        Assert.Equal(KatE + 1, result.Value[0]);
     }
 
     [Fact]
@@ -613,7 +617,7 @@ public class EvaluatorTests
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI * 2 * 5, result.Value[0]);
+        Assert.Equal(KatPi * 2 * 5, result.Value[0]);
     }
 
     [Fact]
@@ -746,6 +750,28 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_MathTan_NearSingularity_MatchesDoublePrecision()
+    {
+        // Regression: (decimal)Math.PI lost the 16th digit, causing Math.Tan(Math.Pi/2)
+        // to produce 618986325617924 instead of the correct ~1.633e16.
+        var result = Eval("Math.Tan(Math.Pi/2)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        var expected = (decimal)Math.Tan(Math.PI / 2);
+        Assert.Equal(expected, result.Value[0]);
+    }
+
+    [Fact]
+    public void Eval_MathSin_PiOverSix()
+    {
+        // Verify trig with Pi-derived args: sin(π/6) ≈ 0.5
+        var result = Eval("Math.Sin(Math.Pi/6)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        Assert.Equal(0.5m, result.Value[0], 10);
+    }
+
+    [Fact]
     public void Eval_MathAtan()
     {
         var result = Eval("Math.Atan(1)");
@@ -790,7 +816,7 @@ public class EvaluatorTests
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI, result.Value[0]);
+        Assert.Equal(KatPi, result.Value[0]);
     }
 
     [Fact]
@@ -803,7 +829,7 @@ public class EvaluatorTests
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.E, result.Value[0]);
+        Assert.Equal(KatE, result.Value[0]);
     }
 
     [Fact]
@@ -816,7 +842,7 @@ public class EvaluatorTests
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI * 2, result.Value[0]);
+        Assert.Equal(KatPi * 2, result.Value[0]);
     }
 
     [Fact]
@@ -866,7 +892,7 @@ public class EvaluatorTests
         var result = Eval(source);
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        Assert.Equal((decimal)Math.PI * 2 * 5, result.Value[0]);
+        Assert.Equal(KatPi * 2 * 5, result.Value[0]);
     }
 
     [Fact]

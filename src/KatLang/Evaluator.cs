@@ -584,8 +584,12 @@ public static class Evaluator
         Opens: [],
         Properties:
         [
-            MathConstant("Pi", (decimal)Math.PI),
-            MathConstant("E", (decimal)Math.E),
+            // Use high-precision decimal literals instead of (decimal)Math.PI/E
+            // to avoid double→decimal truncation (15 sig digits vs decimal's 28-29).
+            // This ensures decimal→double roundtrip in EvalNativeCall preserves full
+            // double precision, critical near singularities like tan(π/2).
+            MathConstant("Pi", 3.1415926535897932384626433833m),
+            MathConstant("E",  2.7182818284590452353602874714m),
             MathFn1("Abs"),
             MathFn1("Ceil"),
             MathFn1("Floor"),
