@@ -303,6 +303,35 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_DotCall_ReceiverIsLeftSide()
+    {
+        // Lean: A.B = dotCall(resolve("A"), "B", none) — receiver is left of dot
+        var result = Parser.ParseSyntax("A.B");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("B", dotCall.Name);
+        var target = Assert.IsType<Expr.Resolve>(dotCall.Target);
+        Assert.Equal("A", target.Name);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
+    public void Parse_DotCall_WithArgs_ReceiverIsLeftSide()
+    {
+        // Lean: A.B(args) = dotCall(resolve("A"), "B", some args)
+        var result = Parser.ParseSyntax("A.B(1, 2)");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("B", dotCall.Name);
+        var target = Assert.IsType<Expr.Resolve>(dotCall.Target);
+        Assert.Equal("A", target.Name);
+        Assert.NotNull(dotCall.Args);
+        Assert.Equal(2, dotCall.Args!.Output.Count);
+    }
+
+    [Fact]
     public void Parse_Block_ReturnsBlockExpr()
     {
         var result = Parser.ParseSyntax("{1}");

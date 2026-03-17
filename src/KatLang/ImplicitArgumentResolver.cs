@@ -85,10 +85,6 @@ public static class ImplicitArgumentResolver
                 FindBareParametrizedRefs(right, localParamMap, refs, false);
                 break;
 
-            case Expr.DotCall(var target, _, null):
-                FindBareParametrizedRefs(target, localParamMap, refs, false);
-                break;
-
             case Expr.DotCall(var target, _, _):
                 // DotCall target is in algorithm position (resolveAlg, not eval)
                 FindBareParametrizedRefs(target, localParamMap, refs, inCallPosition: true);
@@ -384,10 +380,6 @@ public static class ImplicitArgumentResolver
             case Expr.Combine(var left, var right):
                 CollectImplicitDeps(left, paramMap, seen, deps, false);
                 CollectImplicitDeps(right, paramMap, seen, deps, false);
-                break;
-
-            case Expr.DotCall(var target, _, null):
-                CollectImplicitDeps(target, paramMap, seen, deps, false);
                 break;
 
             case Expr.DotCall(var target, _, _):

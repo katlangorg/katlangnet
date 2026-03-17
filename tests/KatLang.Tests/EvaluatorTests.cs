@@ -1044,6 +1044,66 @@ public class EvaluatorTests
         AssertEval(source, 30);
     }
 
+    [Fact]
+    public void Eval_DotCall_LexicalFallback_ReceiverIsLeft()
+    {
+        // Num.Double: receiver=Num (left), name=Double (right)
+        // Lexical fallback: call Double(Num) -> x=3, x*2=6
+        var source = """
+            Num = 3
+            Double = x * 2
+            Num.Double
+            """;
+        AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReversedReceiver_ProducesError()
+    {
+        // Double.Num: receiver=Double (parameterised), name=Num (0-param)
+        // Lexical fallback: call Num(Double) -> Num has 0 params, 1 arg -> ArityMismatch
+        var source = """
+            Num = 3
+            Double = x * 2
+            Double.Num
+            """;
+        AssertEvalFails(source);
+        var err = GetEvalError(source);
+        Assert.IsType<EvalError.WithContext>(err);
+        var inner = ((EvalError.WithContext)err!).Inner;
+        Assert.IsType<EvalError.ArityMismatch>(inner);
+        var arity = (EvalError.ArityMismatch)inner;
+        Assert.Equal(0, arity.Expected); // Num has 0 params
+        Assert.Equal(1, arity.Actual);   // 1 arg (the receiver Double)
+    }
+
+    [Fact]
+    public void Eval_DotCall_WithArgs_LexicalFallback()
+    {
+        // V.Add(4): receiver=V, name=Add -> call Add(V, 4) -> a=3, b=4, a+b=7
+        var source = """
+            Add = a + b
+            V = 3
+            V.Add(4)
+            """;
+        AssertEval(source, 7);
+    }
+
+    [Fact]
+    public void Eval_DotCall_StructuralProperty_ArityMismatch_Propagated()
+    {
+        // X.Inc: Inc has params but no args -> ArityMismatch propagated through dotCall
+        var source = """
+            X = (Inc = x + 1
+            5)
+            X.Inc
+            """;
+        AssertEvalFails(source);
+        var err = GetEvalError(source);
+        Assert.IsType<EvalError.WithContext>(err);
+        var inner = ((EvalError.WithContext)err!).Inner;
+        Assert.IsType<EvalError.ArityMismatch>(inner);
+    }
     // â”€â”€ Division, mod, power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
