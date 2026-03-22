@@ -650,6 +650,13 @@ public sealed class Parser
                     // Direct call: Name(args) or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callArgs = ParseCallArgs();
+                    // Direct-call lowering for while/repeat: package multi-item init
+                    // into a block so that while(step, s1, s2) → while(step, block([s1,s2]))
+                    // and repeat(step, n, s1, s2) → repeat(step, n, block([s1,s2])).
+                    // This is safe to do in the parser for lexical calls because the callee
+                    // is a known name; dotCall lowering must wait until the evaluator confirms
+                    // no structural property shadows the name.
+                    callArgs = MaybeLowerBuiltinInitArgs(lhs, callArgs);
                     lhs = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
                     break;
 
@@ -660,21 +667,14 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses call arguments: <c>(algorithm)</c>, <c>((grouped))</c>, or <c>{algorithm}</c>.
-    /// <c>((e1, e2, ..., ek))</c> groups comma-separated expressions into ONE Algorithm argument
-    /// (desugars to a block algorithm with params=[], output=[e1..ek]).
-    /// Single parens <c>(a, b)</c> remain multiple separate arguments.
+    /// Parses call arguments: <c>(algorithm)</c> or <c>{algorithm}</c>.
+    /// Ordinary parentheses always mean ordinary grouping — <c>((expr))</c> is
+    /// just nested grouping, never special block construction.
     /// </summary>
     private Algorithm ParseCallArgs()
     {
         if (Current.Kind == TokenKind.LParen)
         {
-            // Detect double-parens: ((...))
-            if (_pos + 1 < _tokens.Count && _tokens[_pos + 1].Kind == TokenKind.LParen)
-            {
-                return ParseDoubleParensArgs();
-            }
-
             Advance(); // consume '('
             var alg = ParseAlgorithm(isParametrized: false);
             Expect(TokenKind.RParen);
@@ -695,44 +695,6 @@ public sealed class Parser
                 Parent: null, Params: [], Opens: [],
                 Properties: [], Output: [blockExpr]);
         }
-    }
-
-    /// <summary>
-    /// Parses double-parens grouping: <c>((e1, e2, ..., ek))</c>.
-    /// Produces an algorithm whose single output is a synthetic block with
-    /// params=[], output=[e1..ek]. Free identifiers inside remain in the
-    /// enclosing algorithm's parameter scope (the synthetic block is non-parametrized).
-    /// </summary>
-    private Algorithm ParseDoubleParensArgs()
-    {
-        Advance(); // consume outer '('
-        var innerStart = Current;
-        Advance(); // consume inner '('
-        var innerAlg = ParseAlgorithm(isParametrized: false);
-        Expect(TokenKind.RParen); // consume inner ')'
-
-        // The inner contents form a block with params=[] (non-parametrized).
-        // Wrap the inner expressions as a single Block output in the args algorithm.
-        Expr groupedExpr;
-        if (innerAlg.Properties.Count == 0 && innerAlg.Opens.Count == 0 && innerAlg.Output.Count == 1)
-        {
-            // Single expression: ((e)) → just (e), no grouping needed
-            groupedExpr = innerAlg.Output[0];
-        }
-        else
-        {
-            // Multiple expressions or has properties: wrap in a Block
-            groupedExpr = new Expr.Block(innerAlg) { Span = MakeSpan(innerStart) };
-        }
-
-        Expect(TokenKind.RParen); // consume outer ')'
-
-        return new Algorithm.User(
-            Parent: null, Params: [], Opens: [],
-            Properties: [], Output: [groupedExpr])
-        {
-            IsParametrized = false
-        };
     }
 
     // ── Primary expressions ─────────────────────────────────────────────────
@@ -837,6 +799,55 @@ public sealed class Parser
                 return new Expr.Num(0) { Span = TokenSpan(token) }; // error placeholder
             }
         }
+    }
+
+    // ── Direct-call lowering for while/repeat ─────────────────────────────
+    // When the parser sees a lexical call to "while" or "repeat" with more args
+    // than the builtin arity, it packages the trailing init-state arguments into
+    // a single Expr.Block argument. This allows:
+    //   while(Step, x, 0)       → while(Step, block([x, 0]))
+    //   repeat(Step, n, x, 0)   → repeat(Step, n, block([x, 0]))
+    // This rewriting is safe here because the callee is a known resolve name.
+    // For dotCall (e.g. Step.while(x, 0)) the packaging must happen later in
+    // the evaluator, after structural property lookup confirms no shadowing.
+
+    /// <summary>
+    /// Creates a zero-parameter block algorithm wrapping the given expressions.
+    /// Used to package multi-item init state for while/repeat lowering.
+    /// </summary>
+    private static Expr.Block MakeInitBlock(IReadOnlyList<Expr> exprs) =>
+        new(new Algorithm.User(
+            Parent: null, Params: [], Opens: [],
+            Properties: [], Output: exprs));
+
+    /// <summary>
+    /// If <paramref name="callee"/> is <c>resolve("while")</c> or <c>resolve("repeat")</c>
+    /// and <paramref name="args"/> has more outputs than the builtin arity, rewrite the
+    /// trailing init-state outputs into a single <see cref="Expr.Block"/> argument.
+    /// Otherwise returns <paramref name="args"/> unchanged.
+    /// </summary>
+    private static Algorithm MaybeLowerBuiltinInitArgs(Expr callee, Algorithm args)
+    {
+        if (callee is not Expr.Resolve(var name)) return args;
+        var count = args.Output.Count;
+
+        if (name == "while" && count >= 3)
+        {
+            // while(step, s1, s2, ..., sk) → while(step, block([s1..sk]))
+            var initExprs = args.Output.Skip(1).ToList();
+            var newOutput = new List<Expr> { args.Output[0], MakeInitBlock(initExprs) };
+            return args with { Output = newOutput };
+        }
+
+        if (name == "repeat" && count >= 4)
+        {
+            // repeat(step, count, s1, s2, ..., sk) → repeat(step, count, block([s1..sk]))
+            var initExprs = args.Output.Skip(2).ToList();
+            var newOutput = new List<Expr> { args.Output[0], args.Output[1], MakeInitBlock(initExprs) };
+            return args with { Output = newOutput };
+        }
+
+        return args;
     }
 
     // ── Tuple desugaring ────────────────────────────────────────────────────

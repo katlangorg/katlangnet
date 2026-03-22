@@ -401,24 +401,25 @@ public class EvaluatorTests
         AssertEval(source, 233168);
     }
 
-    // â”€â”€ While dotCall double-parens grouping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── While/repeat dotCall multi-item init lowering ──────────────────────────────────
 
     [Fact]
-    public void Eval_While_DotCall_BareComma_Fails()
+    public void Eval_While_DotCall_BareComma_Works()
     {
-        // Test B: Algo.while(x, 0) with single parens â†’ 2 separate args â†’ arity mismatch
+        // Algo.while(x, 0) with bare comma: evaluator packages multi-item init
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
             Sum = Algo.while(x, 0) : 1
             Sum(999)
             """;
-        AssertEvalFails(source);
+        AssertEval(source, 233168);
     }
 
     [Fact]
-    public void Eval_While_DotCall_DoubleParens()
+    public void Eval_While_DotCall_ParenGroupedInit()
     {
-        // Test A: Algo.while((x, 0)) double-parens groups (x, 0) as single init argument
+        // Algo.while((x, 0)): (x, 0) is ordinary grouping producing a block ─
+        // single arg, no packaging needed, works as before
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
             Sum = Algo.while((x, 0)) : 1
@@ -441,10 +442,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_While_DotCall_DoubleParens_NoParams()
+    public void Eval_While_DotCall_ParenGroupedInit_NoParams()
     {
-        // x inside ((x, 0)) must NOT become a param of the synthetic block;
-        // it resolves from the enclosing algorithm's scope
+        // x inside (x, 0) resolves from the enclosing algorithm's scope
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
             Sum = Algo.while((x, 0)) : 1
@@ -454,6 +454,158 @@ public class EvaluatorTests
     }
 
     // â”€â”€ Atoms builtin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    [Fact]
+    public void Eval_While_DirectCall_MultiInit()
+    {
+        // while(Step, s1, s2, ...) lowers to while(Step, block([s1, s2, ...]))
+        var source = """
+            Step = n - 1, acc + n, n > 1
+            while(Step, 5, 0) : 1
+            """;
+        // 5+4+3+2 = 14 (stops when n=1, cont=0, returns prior state)
+        AssertEval(source, 14);
+    }
+
+    [Fact]
+    public void Eval_Repeat_DirectCall_MultiInit()
+    {
+        // repeat(Step, n, s1, s2) lowers to repeat(Step, n, block([s1, s2]))
+        var source = """
+            Step = a + 1, b + a
+            repeat(Step, 3, 0, 0)
+            """;
+        AssertEval(source, 3, 3);
+    }
+
+    [Fact]
+    public void Eval_Repeat_DotCall_MultiInit()
+    {
+        // Step.repeat(n, s1, s2) fallback packages to repeat(Step, n, block([s1, s2]))
+        var source = """
+            Step = a + 1, b + a
+            Step.repeat(3, 0, 0)
+            """;
+        AssertEval(source, 3, 3);
+    }
+
+    [Fact]
+    public void Eval_While_DotCall_SingleInit_StillWorks()
+    {
+        var source = """
+            Step = x - 1, x - 1
+            Step.while(3)
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Repeat_DotCall_SingleInit_StillWorks()
+    {
+        var source = """
+            Step = x + 1
+            Step.repeat(3, 0)
+            """;
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_While_DirectCall_SingleInit_StillWorks()
+        => AssertEval("while({x - 1, x - 1}, 3)", 1);
+
+    [Fact]
+    public void Eval_Repeat_DirectCall_SingleInit_StillWorks()
+        => AssertEval("repeat({x + 1}, 3, 0)", 3);
+
+    [Fact]
+    public void Eval_DotCall_TrailingBrace_StillWorks()
+    {
+        var source = """
+            F = x + 1
+            F{3}
+            """;
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_DotCall_PropertyPrecedence_WhileShadow()
+    {
+        // If algorithm A has a real property named while, dotCall must
+        // resolve as property call, not lexical builtin fallback packaging
+        var source = """
+            A = {
+                while = x + 1
+            }
+            A.while(10)
+            """;
+        AssertEval(source, 11);
+    }
+
+    [Fact]
+    public void Eval_DotCall_PropertyPrecedence_RepeatShadow()
+    {
+        var source = """
+            A = {
+                repeat = x * 2
+            }
+            A.repeat(5)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_While_DotCall_NoArgs_Fails()
+    {
+        var source = """
+            Step = x - 1, x > 0
+            Step.while()
+            """;
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_Repeat_DotCall_NoArgs_Fails()
+    {
+        var source = """
+            Step = x + 1
+            Step.repeat()
+            """;
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_Repeat_DotCall_OneArg_Fails()
+    {
+        var source = """
+            Step = x + 1
+            Step.repeat(3)
+            """;
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_ParenSubExpr_FirstArg_Works()
+    {
+        var source = """
+            F = a + b
+            F((1 + 2) mod 2, 10)
+            """;
+        AssertEval(source, 11);
+    }
+
+    [Fact]
+    public void Eval_If_ParenSubExpr_FirstArg_Works()
+        => AssertEval("if((1 + 2) mod 2 == 0, 1, 0)", 0);
+
+    [Fact]
+    public void Eval_DoubleParens_IsOrdinaryGrouping()
+    {
+        var source = """
+            X = ((1 + 2))
+            X
+            """;
+        AssertEval(source, 3);
+    }
 
     [Fact]
     public void Eval_Atoms_FlattensGroups()

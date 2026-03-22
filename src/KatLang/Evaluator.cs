@@ -1422,6 +1422,18 @@ public static class Evaluator
     /// <summary>
     /// Resolves name lexically and calls with receiver prepended to args.
     /// Delegates to EvalCall to get builtin dispatch for free.
+    ///
+    /// For dotCall lexical fallback to "while" and "repeat", extra args beyond the
+    /// builtin's expected explicit-arg count are packaged into a single Expr.Block
+    /// init-state argument. This lowering cannot happen in the parser because dotCall
+    /// must first check for structural properties (which shadow builtins).
+    ///
+    /// Packaging rules (explicit args = extraArgs.Output, receiver already prepended):
+    ///   while:  0–1 explicit args → pass through (arity 2 already satisfied or error)
+    ///           ≥2 explicit args  → package all explicit args as one block init
+    ///   repeat: 0–2 explicit args → pass through (arity 3 already satisfied or error)
+    ///           ≥3 explicit args  → first explicit = count, rest = block init
+    ///
     /// Lean: callLexicalWithReceiver.
     /// </summary>
     private static EvalResult<Result> CallLexicalWithReceiver(
@@ -1433,12 +1445,39 @@ public static class Evaluator
         if (extraArgs is not null)
             outputExprs.AddRange(extraArgs.Output);
 
+        // Package multi-item init for while/repeat dotCall fallback.
+        // receiver is already at index 0 (the step algorithm).
+        var explicitCount = extraArgs?.Output.Count ?? 0;
+
+        if (name == "while" && explicitCount >= 2)
+        {
+            // Step.while(s1, s2, ...) → while(Step, block([s1, s2, ...]))
+            var initExprs = outputExprs.GetRange(1, outputExprs.Count - 1);
+            outputExprs = [receiver, MakeInitBlock(initExprs)];
+        }
+        else if (name == "repeat" && explicitCount >= 3)
+        {
+            // Step.repeat(n, s1, s2, ...) → repeat(Step, n, block([s1, s2, ...]))
+            var countExpr = outputExprs[1]; // first explicit arg = count
+            var initExprs = outputExprs.GetRange(2, outputExprs.Count - 2);
+            outputExprs = [receiver, countExpr, MakeInitBlock(initExprs)];
+        }
+
         var combinedArgs = new Algorithm.User(
             Parent: null, Params: [], Opens: [],
             Properties: [], Output: outputExprs);
 
         return EvalCall(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
     }
+
+    /// <summary>
+    /// Creates a zero-parameter block expression wrapping the given expressions.
+    /// Used to package multi-item init state for while/repeat lowering.
+    /// </summary>
+    private static Expr.Block MakeInitBlock(IReadOnlyList<Expr> exprs) =>
+        new(new Algorithm.User(
+            Parent: null, Params: [], Opens: [],
+            Properties: [], Output: exprs));
 
     // ── Entry points ────────────────────────────────────────────────────────
 

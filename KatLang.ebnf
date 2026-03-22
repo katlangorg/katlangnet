@@ -36,10 +36,9 @@ PostfixOp       = ":" Primary
                 | "." Identifier [ CallArgs ]
                 | CallArgs ;    (* CallArgs only when LHS is Resolve or DotCall *)
 
-CallArgs        = BraceArgs | ParenArgs | DoubleParenArgs ;
+CallArgs        = BraceArgs | ParenArgs ;
 BraceArgs       = "{" Algorithm "}" ;
 ParenArgs       = "(" Algorithm ")" ;
-DoubleParenArgs = "((" Algorithm "))" ;
 
 Primary         = NumberLiteral
                 | StringLiteral

@@ -1,6 +1,6 @@
--- KatLang v0.7.9 (core AST + semantics + double-parens grouping + higher-order alg params)
+-- KatLang v0.7.12 (core AST + semantics + while/repeat init lowering + higher-order alg params)
 -- Core semantics are authoritative. Surface syntax handled externally except
--- where noted (implicit parameter detection, double-parens grouping).
+-- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
 -- the core AST never contains load nodes (see load elaboration section below).
 --
@@ -1242,75 +1242,73 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
    argument lifting for properties involved in mutual recursion). -/
 
 --------------------------------------------------------------------------------
--- Surface syntax support: double-parens grouping
+-- Surface syntax support: while/repeat multi-item init lowering
 --------------------------------------------------------------------------------
 
-/- **Double-parens grouping** is a parser-only transformation that groups
-   multiple comma-separated expressions into a single algorithm argument.
+/- **Ordinary parentheses** always mean ordinary grouping.  There is no
+   special "double-parens" syntax.  `((expr))` in any position is equivalent
+   to `(expr)`.  `f((a + b) mod 2, c)` parses normally as two arguments.
 
-   Triggering syntax
-   -----------------
-   The token pattern `((` ... `))` triggers grouping IF AND ONLY IF it appears
-   **in call or dotCall argument position** — i.e., directly inside the
-   parenthesized argument list of a call expression:
+   **while/repeat multi-item init lowering** is a targeted transformation
+   that packages trailing arguments as a single `Expr.block` init-state
+   argument for the `while` and `repeat` builtins.  It occurs in two places:
 
-     f(( e1, e2, ..., ek ))      -- call with grouped arg
-     a.g(( e1, e2, ..., ek ))    -- dotCall with grouped arg
+   1. Parser-level lowering for lexical (direct) calls
+   --------------------------------------------------
+   When the callee is exactly `resolve("while")` or `resolve("repeat")`:
 
-   The parser detects this by observing two consecutive opening parentheses
-   where a call argument list begins, and two consecutive closing parentheses
-   at the end.  The inner parentheses (the second `(` and the first `)`) are
-   consumed as grouping delimiters.
+     while(step, s1, s2, ..., sk)   -- k ≥ 2
+       =>  while(step, block(Algorithm.mk(none, [], [], [], [s1, s2, ..., sk])))
 
-   What does NOT trigger double-parens grouping
-   ---------------------------------------------
-   - `(e1, e2)` in argument position: single parens produce multiple separate
-     arguments.  `f(a, b)` passes two arguments, not one grouped argument.
-   - `((expr))` outside argument position (e.g., in an output line or property
-     RHS): the double parentheses are parsed as redundant expression grouping,
-     NOT as a block.  `X = ((1 + 2))` is identical to `X = (1 + 2)` = `X = 3`.
-   - Brace blocks `{e1; e2}`: these create a scope boundary with potential
-     parameter inference; `((e1, e2))` does NOT create a scope boundary.
+     repeat(step, count, s1, s2, ..., sk)   -- k ≥ 2
+       =>  repeat(step, count, block(Algorithm.mk(none, [], [], [], [s1, ..., sk])))
 
-   Parser transformation
-   ---------------------
-   When the parser recognises `(( e1, e2, ..., ek ))` in argument position, it
-   emits a single `Expr.block` wrapping a zero-parameter algorithm whose output
-   list contains the comma-separated expressions:
+   When the arg count matches the builtin arity (2 for while, 3 for repeat),
+   no rewriting occurs — the arguments are passed through unchanged.
 
-     Expr.block(Algorithm.mk(parent: none, params: [], opens: [], props: [],
-                             output: [e1, e2, ..., ek]))
+   This rewriting is safe in the parser because the callee is a known name.
 
+   2. Evaluator-level packaging for dotCall lexical fallback
+   ---------------------------------------------------------
+   For dotCall (`a.f(args)`), structural property lookup must happen first.
+   Only when no structural property named "while" or "repeat" exists does
+   lexical fallback fire, and THEN the evaluator packages multi-item init:
+
+     Step.while(s1, s2, ...)      -- ≥2 explicit args
+       =>  while(Step, block([s1, s2, ...]))
+
+     Step.repeat(n, s1, s2, ...)  -- ≥3 explicit args
+       =>  repeat(Step, n, block([s1, s2, ...]))
+
+   When fewer explicit args are provided:
+     Step.while(init)             -- 1 explicit arg → pass through (2 builtin args)
+     Step.repeat(n, init)         -- 2 explicit args → pass through (3 builtin args)
+
+   This two-level design ensures that:
+   - Structural property precedence is preserved for dotCall
+   - If algorithm A has a real property named "while", A.while(x, 0)
+     resolves as a property call, not as lexical builtin fallback
+   - Direct calls get rewritten early (parser)
+   - DotCall gets rewritten late (evaluator), only after confirming
+     no structural property shadows the name
+
+   Expr.block semantics
+   --------------------
    No `tuple` constructor exists in the Lean core AST; grouping is expressed
-   purely via `Expr.block`.  No separate desugaring pass is required.
+   purely via `Expr.block`.  Free identifiers inside the block bubble up to
+   the enclosing algorithm through ParameterDetector, because the synthetic
+   block has no params of its own (non-parametrized).
 
-   Free identifiers inside the grouped block bubble up to the enclosing
-   algorithm through ParameterDetector (identical treatment to non-parametrized
-   call args in single-paren form), because the block has no params of its own.
-
-   Example: while with dotCall
-   ---------------------------
-   Surface:   `Algo.while((x, 0))`
-   Token seq: Algo . while ( ( x , 0 ) )
-                            ^-----------^ double-parens detected in arg position
-   Parsed AST:
-     dotCall(resolve("Algo"), "while",
-       argsAlg{ output: [
-         block(Algorithm.mk(none, [], [], [], [param(x), num(0)]))
-       ]})
-   At runtime, dotCall injects receiver:
-     while receives [resolve("Algo"), block(initAlg)] → 2 builtin args.
-
-   Contrast (NO grouping):
-   Surface:   `Algo.while(x, 0)`
-   Parsed AST:
-     dotCall(resolve("Algo"), "while",
-       argsAlg{ output: [param(x), num(0)] })
-   At runtime, dotCall injects receiver:
-     while receives [resolve("Algo"), param(x), num(0)] → 3 args → arity mismatch.
-
-   This is why double-parens grouping is essential for passing multi-element
-   initial states to builtins like while and repeat via dotCall syntax. -/
+   Examples
+   --------
+     while(Step, 5, 0)       -- parser lowers to while(Step, block([5, 0]))
+     repeat(Step, 3, 0, 0)   -- parser lowers to repeat(Step, 3, block([0, 0]))
+     Step.while(x, 0)        -- evaluator packages to while(Step, block([x, 0]))
+     Step.repeat(3, x, 0)    -- evaluator packages to repeat(Step, 3, block([x, 0]))
+     Step.while((x, 0))      -- (x, 0) is ordinary grouping producing a block;
+                              -- single arg, no packaging needed
+     while(Step, init)        -- 2 args, no lowering
+     repeat(Step, n, init)    -- 3 args, no lowering -/
 
 --------------------------------------------------------------------------------
 -- Surface syntax support: trailing brace-block call sugar

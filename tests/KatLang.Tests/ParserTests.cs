@@ -1133,4 +1133,105 @@ public class ParserTests
         Assert.Equal(2, block.Properties.Count);
         Assert.Single(block.Output);
     }
+
+    // -- Double-parens removal: ordinary grouping ---
+
+    [Fact]
+    public void Parse_ParenSubExpr_FirstCallArg_ParsesNormally()
+    {
+        // f((a + b) mod 2, c) must parse without error now that
+        // double-parens detection is removed
+        var result = Parser.ParseSyntax("F((a + b) mod 2, c)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(2, call.Args.Output.Count);
+        // First arg should be binary mod expression
+        var modExpr = Assert.IsType<Expr.Binary>(call.Args.Output[0]);
+        Assert.Equal(BinaryOp.Mod, modExpr.Op);
+    }
+
+    [Fact]
+    public void Parse_If_ParenSubExpr_FirstArg_ParsesNormally()
+    {
+        var result = Parser.ParseSyntax("if((a + b) mod 2 == 0, 1, 0)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(3, call.Args.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_DoubleParens_RemainsOrdinaryGrouping()
+    {
+        // X = ((1 + 2)) is ordinary nested grouping
+        var result = Parser.ParseSyntax("X = ((1 + 2))");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        // The inner (1 + 2) is just grouping, outer layer is also grouping
+        var output = result.Root.Properties[0].Value.Output;
+        Assert.Single(output);
+        var binary = Assert.IsType<Expr.Binary>(output[0]);
+        Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    // -- Direct-call lowering for while/repeat ---
+
+    [Fact]
+    public void Parse_While_DirectCall_MultiInit_ProducesBlock()
+    {
+        // while(Step, x, 0) should lower to while(Step, block([x, 0]))
+        var result = Parser.ParseSyntax("while(Step, x, 0)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(2, call.Args.Output.Count);
+        // Second arg should be a Block wrapping [x, 0]
+        var block = Assert.IsType<Expr.Block>(call.Args.Output[1]);
+        Assert.Equal(2, block.Algorithm.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_While_DirectCall_TwoArgs_NoLowering()
+    {
+        // while(Step, init) stays with 2 args, no lowering
+        var result = Parser.ParseSyntax("while(Step, init)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(2, call.Args.Output.Count);
+        Assert.IsType<Expr.Resolve>(call.Args.Output[1]);
+    }
+
+    [Fact]
+    public void Parse_Repeat_DirectCall_MultiInit_ProducesBlock()
+    {
+        // repeat(Step, n, x, 0) should lower to repeat(Step, n, block([x, 0]))
+        var result = Parser.ParseSyntax("repeat(Step, n, x, 0)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(3, call.Args.Output.Count);
+        var block = Assert.IsType<Expr.Block>(call.Args.Output[2]);
+        Assert.Equal(2, block.Algorithm.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_Repeat_DirectCall_ThreeArgs_NoLowering()
+    {
+        // repeat(Step, n, init) stays with 3 args, no lowering
+        var result = Parser.ParseSyntax("repeat(Step, n, init)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(3, call.Args.Output.Count);
+        Assert.IsType<Expr.Resolve>(call.Args.Output[2]);
+    }
+
+    [Fact]
+    public void Parse_DotCall_While_NoLowering_InParser()
+    {
+        // Step.while(x, 0) should NOT be lowered in the parser
+        // (lowering happens in the evaluator after structural property check)
+        var result = Parser.ParseSyntax("Step.while(x, 0)");
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("while", dotCall.Name);
+        Assert.NotNull(dotCall.Args);
+        Assert.Equal(2, dotCall.Args!.Output.Count);
+    }
 }
