@@ -183,6 +183,14 @@ public static class Evaluator
             ? (result.Error with { Span = span })
             : result;
 
+    /// <summary>Returns the <see cref="SourceSpan"/> of the first output expression that has one.</summary>
+    private static SourceSpan? FirstSpan(IReadOnlyList<Expr> output)
+    {
+        foreach (var e in output)
+            if (e.Span is { } s) return s;
+        return null;
+    }
+
     // ── Lexical lookup (direct — no opens, used for open resolution) ────────
 
     /// <summary>Lean: lookupInParentsDirect (Option).</summary>
@@ -1058,7 +1066,8 @@ public static class Evaluator
                 var wired = WireToCaller(ctx, alg);
                 if (wired.Params.Count == 0)
                     return EvalAlgOutput(wired, ctx, valEnv);
-                return new EvalError.ArityMismatch(wired.Params.Count, 0) { Span = expr.Span };
+                var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                return new EvalError.ArityMismatch(wired.Params.Count, 0) { Span = blockSpan };
             }
 
             case Expr.Resolve(var name):
