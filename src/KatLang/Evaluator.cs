@@ -1026,26 +1026,34 @@ public static class Evaluator
                 decimal x = xR.Value, y = yR.Value;
                 if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
                     return new EvalError.DivByZero() { Span = expr.Span };
-                var result = op switch
+                decimal result;
+                try
                 {
-                    BinaryOp.Add => x + y,
-                    BinaryOp.Sub => x - y,
-                    BinaryOp.Mul => x * y,
-                    BinaryOp.Div => x / y,
-                    BinaryOp.IDiv => Math.Truncate(x / y),
-                    BinaryOp.Mod => x % y,
-                    BinaryOp.Pow => y < 0 ? 0 : DecimalPow(x, y),
-                    BinaryOp.Lt => x < y ? 1 : 0,
-                    BinaryOp.Gt => x > y ? 1 : 0,
-                    BinaryOp.Le => x <= y ? 1 : 0,
-                    BinaryOp.Ge => x >= y ? 1 : 0,
-                    BinaryOp.Eq => x == y ? 1 : 0,
-                    BinaryOp.Ne => x != y ? 1 : 0,
-                    BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
-                    BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
-                    BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
-                    _ => 0,
-                };
+                    result = op switch
+                    {
+                        BinaryOp.Add => x + y,
+                        BinaryOp.Sub => x - y,
+                        BinaryOp.Mul => x * y,
+                        BinaryOp.Div => x / y,
+                        BinaryOp.IDiv => Math.Truncate(x / y),
+                        BinaryOp.Mod => x % y,
+                        BinaryOp.Pow => y < 0 ? 0 : DecimalPow(x, y),
+                        BinaryOp.Lt => x < y ? 1 : 0,
+                        BinaryOp.Gt => x > y ? 1 : 0,
+                        BinaryOp.Le => x <= y ? 1 : 0,
+                        BinaryOp.Ge => x >= y ? 1 : 0,
+                        BinaryOp.Eq => x == y ? 1 : 0,
+                        BinaryOp.Ne => x != y ? 1 : 0,
+                        BinaryOp.And => x != 0 && y != 0 ? 1 : 0,
+                        BinaryOp.Or => x != 0 || y != 0 ? 1 : 0,
+                        BinaryOp.Xor => (x != 0) != (y != 0) ? 1 : 0,
+                        _ => 0,
+                    };
+                }
+                catch (OverflowException)
+                {
+                    return new EvalError.NumericOverflow() { Span = expr.Span };
+                }
                 return EvalResult<Result>.Ok(new Result.Atom(result));
             }
 
@@ -1129,26 +1137,33 @@ public static class Evaluator
         }
 
         decimal result;
-        switch (fnName)
+        try
         {
-            case "Abs": result = Math.Abs(args[0]); break;
-            case "Ceil": result = Math.Ceiling(args[0]); break;
-            case "Floor": result = Math.Floor(args[0]); break;
-            case "Round": result = Math.Round(args[0]); break;
-            case "Sign": result = (decimal)Math.Sign(args[0]); break;
-            case "Sqrt": result = (decimal)Math.Sqrt((double)args[0]); break;
-            case "Ln": result = (decimal)Math.Log((double)args[0]); break;
-            case "Lg": result = (decimal)Math.Log10((double)args[0]); break;
-            case "Sin": result = (decimal)Math.Sin((double)args[0]); break;
-            case "Asin": result = (decimal)Math.Asin((double)args[0]); break;
-            case "Cos": result = (decimal)Math.Cos((double)args[0]); break;
-            case "Acos": result = (decimal)Math.Acos((double)args[0]); break;
-            case "Tan": result = (decimal)Math.Tan((double)args[0]); break;
-            case "Atan": result = (decimal)Math.Atan((double)args[0]); break;
-            case "Pow": result = (decimal)Math.Pow((double)args[0], (double)args[1]); break;
-            case "Log": result = (decimal)Math.Log((double)args[0], (double)args[1]); break;
-            default:
-                return new EvalError.IllegalInEval($"unknown native function: {fnName}");
+            switch (fnName)
+            {
+                case "Abs": result = Math.Abs(args[0]); break;
+                case "Ceil": result = Math.Ceiling(args[0]); break;
+                case "Floor": result = Math.Floor(args[0]); break;
+                case "Round": result = Math.Round(args[0]); break;
+                case "Sign": result = (decimal)Math.Sign(args[0]); break;
+                case "Sqrt": result = (decimal)Math.Sqrt((double)args[0]); break;
+                case "Ln": result = (decimal)Math.Log((double)args[0]); break;
+                case "Lg": result = (decimal)Math.Log10((double)args[0]); break;
+                case "Sin": result = (decimal)Math.Sin((double)args[0]); break;
+                case "Asin": result = (decimal)Math.Asin((double)args[0]); break;
+                case "Cos": result = (decimal)Math.Cos((double)args[0]); break;
+                case "Acos": result = (decimal)Math.Acos((double)args[0]); break;
+                case "Tan": result = (decimal)Math.Tan((double)args[0]); break;
+                case "Atan": result = (decimal)Math.Atan((double)args[0]); break;
+                case "Pow": result = (decimal)Math.Pow((double)args[0], (double)args[1]); break;
+                case "Log": result = (decimal)Math.Log((double)args[0], (double)args[1]); break;
+                default:
+                    return new EvalError.IllegalInEval($"unknown native function: {fnName}");
+            }
+        }
+        catch (OverflowException)
+        {
+            return new EvalError.NumericOverflow();
         }
 
         return EvalResult<Result>.Ok(new Result.Atom(result));

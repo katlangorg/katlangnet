@@ -2020,6 +2020,31 @@ public class EvaluatorTests
         AssertEval("2 ^ 10", 1024);
     }
 
+    // ── Numeric overflow ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Pow_Overflow_ReturnsNumericOverflow()
+    {
+        var err = GetEvalError("10 ^ 30");
+        Assert.NotNull(err);
+        Assert.IsType<EvalError.NumericOverflow>(err);
+    }
+
+    [Fact]
+    public void Eval_Pow_NormalRange_Succeeds()
+    {
+        AssertEval("10 ^ 2", 100);
+    }
+
+    [Fact]
+    public void Eval_Mul_Overflow_ReturnsNumericOverflow()
+    {
+        // decimal.MaxValue is ~7.9e28; multiplying two large values overflows
+        var err = GetEvalError("79228162514264337593543950335 * 2");
+        Assert.NotNull(err);
+        Assert.IsType<EvalError.NumericOverflow>(err);
+    }
+
     // â”€â”€ evalCall args wiring (Lean: wireToCaller in user-defined call path) â”€â”€
 
     [Fact]

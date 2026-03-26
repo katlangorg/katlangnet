@@ -1,7 +1,7 @@
-using KatLang;
+﻿using KatLang;
 
 var source = """
-    2/999999999999999999999999999999
+    10 ^ 30
     """;
 
 Console.WriteLine("=== KatLang Parser Demo ===");

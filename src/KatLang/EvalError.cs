@@ -63,6 +63,9 @@ public abstract record EvalError
     /// <summary>Division or modulo by zero.</summary>
     public sealed record DivByZero() : EvalError;
 
+    /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
+    public sealed record NumericOverflow() : EvalError;
+
     /// <summary>Contextual wrapper attaching a description to an inner error.</summary>
     public sealed record WithContext(string Context, EvalError Inner) : EvalError;
 }
