@@ -657,6 +657,8 @@ public sealed class Parser
                     // is a known name; dotCall lowering must wait until the evaluator confirms
                     // no structural property shadows the name.
                     callArgs = MaybeLowerBuiltinInitArgs(lhs, callArgs);
+                    // Validate if arity (2 or 3 args).
+                    ValidateIfArity(lhs, callArgs);
                     lhs = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
                     break;
 
@@ -848,6 +850,22 @@ public sealed class Parser
         }
 
         return args;
+    }
+
+    /// <summary>
+    /// Validates that <c>if(...)</c> has exactly 2 or 3 arguments.
+    /// For non-<c>if</c> callees, does nothing.
+    /// </summary>
+    private void ValidateIfArity(Expr callee, Algorithm args)
+    {
+        if (callee is Expr.Resolve("if"))
+        {
+            var argCount = args.Output.Count;
+            if (argCount != 2 && argCount != 3)
+            {
+                ReportError($"'if' requires 2 or 3 arguments, got {argCount}.");
+            }
+        }
     }
 
     // ── Tuple desugaring ────────────────────────────────────────────────────

@@ -1234,4 +1234,49 @@ public class ParserTests
         Assert.NotNull(dotCall.Args);
         Assert.Equal(2, dotCall.Args!.Output.Count);
     }
+
+    // ── if arity validation ─────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_If_TwoArgs_RemainsIf()
+    {
+        var result = Parser.ParseSyntax("if(1, 2)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        var resolve = Assert.IsType<Expr.Resolve>(call.Function);
+        Assert.Equal("if", resolve.Name);
+        Assert.Equal(2, call.Args.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_If_ThreeArgs_RemainsIf()
+    {
+        var result = Parser.ParseSyntax("if(1, 2, 3)");
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        var resolve = Assert.IsType<Expr.Resolve>(call.Function);
+        Assert.Equal("if", resolve.Name);
+        Assert.Equal(3, call.Args.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_If_ZeroArgs_ReportsError()
+    {
+        var result = Parser.ParseSyntax("if()");
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_If_OneArg_ReportsError()
+    {
+        var result = Parser.ParseSyntax("if(1)");
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_If_FourArgs_ReportsError()
+    {
+        var result = Parser.ParseSyntax("if(1, 2, 3, 4)");
+        Assert.True(result.HasErrors);
+    }
 }

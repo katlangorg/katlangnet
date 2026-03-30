@@ -102,8 +102,21 @@ inductive Builtin where
   | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin
   deriving Repr, BEq, DecidableEq
 
-def builtinArity : Builtin -> Nat
-  | .ifBuiltin => 3 | .whileBuiltin => 2 | .repeatBuiltin => 3 | .atomsBuiltin => 1
+/-- Check whether a builtin accepts a given argument count.
+    ifBuiltin accepts 2 (conditional output) or 3 (if-then-else). -/
+def builtinAcceptsArity : Builtin -> Nat -> Bool
+  | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
+  | .whileBuiltin, 2 => true
+  | .repeatBuiltin, 3 => true
+  | .atomsBuiltin, 1 => true
+  | _, _ => false
+
+/-- Human-readable expected arity string for error messages. -/
+def builtinArityDesc : Builtin -> String
+  | .ifBuiltin => "2 or 3"
+  | .whileBuiltin => "2"
+  | .repeatBuiltin => "3"
+  | .atomsBuiltin => "1"
 
 --------------------------------------------------------------------------------
 -- Syntax
@@ -906,11 +919,22 @@ mutual
       : EvalM Result :=
     match b, args with
 
+    -- if(cond, thenBranch, elseBranch): standard 3-arg conditional.
     | .ifBuiltin, [c,t,e] => do
         let cr <- evalAlgOutput c ctx env
         match Result.atoms cr with
         | 0::_ => evalAlgOutput e ctx env
         | _::_ => evalAlgOutput t ctx env
+        | _    => .error Error.badArity
+
+    -- if(cond, value): 2-arg conditional output / emit-on-true.
+    -- True → evaluate and return value.
+    -- False → produce no output (empty group).
+    | .ifBuiltin, [c,v] => do
+        let cr <- evalAlgOutput c ctx env
+        match Result.atoms cr with
+        | 0::_ => pure (Result.group [])   -- false: no output
+        | _::_ => evalAlgOutput v ctx env   -- true: produce value
         | _    => .error Error.badArity
 
     | .whileBuiltin, [step, init] => do
@@ -940,7 +964,7 @@ mutual
         pure (Result.normalize (Result.group (xs.map Result.atom)))
 
     | _, _ =>
-        .error (Error.arityMismatch (builtinArity b) args.length)
+        .error (Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 args.length))
 
   /-- Shared user-defined call binding logic.
       Preserves the eager value ABI while layering AlgEnv for higher-order
@@ -1086,37 +1110,49 @@ mutual
             | none => .error (Error.unknownName x)
 
     | .unary op e => do
-        let v <- evalInt e ctx env
-        pure (Result.atom <|
-          match op with
-          | .minus => -v
-          | .not   => if v = 0 then 1 else 0)
-
-    | .binary op a b => do
-        let x <- evalInt a ctx env
-        let y <- evalInt b ctx env
-        -- Check for division by zero
-        if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
-          .error Error.divByZero
-        else
+        let r <- eval e ctx env
+        match r with
+        | .group [] => pure (Result.group [])   -- empty propagates through unary
+        | _ => do
+          let v <- expectInt r
           pure (Result.atom <|
             match op with
-            | .add  => x + y
-            | .sub  => x - y
-            | .mul  => x * y
-            | .div  => x / y
-            | .idiv => x / y
-            | .mod  => x % y
-            | .pow  => if y < 0 then 0 else intPow x y.toNat
-            | .lt   => if x < y then 1 else 0
-            | .gt   => if x > y then 1 else 0
-            | .le   => if x <= y then 1 else 0
-            | .ge   => if x >= y then 1 else 0
-            | .eq   => if x = y then 1 else 0
-            | .ne   => if x != y then 1 else 0
-            | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
-            | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
-            | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
+            | .minus => -v
+            | .not   => if v = 0 then 1 else 0)
+
+    | .binary op a b => do
+        let lr <- eval a ctx env
+        let rr <- eval b ctx env
+        -- Empty result handling: if(false, v) produces group [] (2-arg form).
+        -- Empty results are transparent in binary expressions.
+        match lr, rr with
+        | .group [], _ => pure rr
+        | _, .group [] => pure lr
+        | _, _ => do
+          let x <- expectInt lr
+          let y <- expectInt rr
+          -- Check for division by zero
+          if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
+            .error Error.divByZero
+          else
+            pure (Result.atom <|
+              match op with
+              | .add  => x + y
+              | .sub  => x - y
+              | .mul  => x * y
+              | .div  => x / y
+              | .idiv => x / y
+              | .mod  => x % y
+              | .pow  => if y < 0 then 0 else intPow x y.toNat
+              | .lt   => if x < y then 1 else 0
+              | .gt   => if x > y then 1 else 0
+              | .le   => if x <= y then 1 else 0
+              | .ge   => if x >= y then 1 else 0
+              | .eq   => if x = y then 1 else 0
+              | .ne   => if x != y then 1 else 0
+              | .and  => if x != 0 then (if y != 0 then 1 else 0) else 0
+              | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
+              | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
 
     | .combine e1 e2 => do
         let r1 <- eval e1 ctx env

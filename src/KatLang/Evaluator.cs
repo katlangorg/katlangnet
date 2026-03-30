@@ -636,14 +636,25 @@ public static class Evaluator
         ],
         Output: []);
 
-    /// <summary>Lean: builtinArity.</summary>
-    private static int BuiltinArity(BuiltinId b) => b switch
+    /// <summary>Lean: builtinAcceptsArity. ifBuiltin accepts 2 or 3 args.</summary>
+    private static bool BuiltinAcceptsArity(BuiltinId b, int n) => (b, n) switch
     {
-        BuiltinId.@if => 3,
-        BuiltinId.@while => 2,
-        BuiltinId.@repeat => 3,
-        BuiltinId.@atoms => 1,
-        _ => 0,
+        (BuiltinId.@if, 2) => true,
+        (BuiltinId.@if, 3) => true,
+        (BuiltinId.@while, 2) => true,
+        (BuiltinId.@repeat, 3) => true,
+        (BuiltinId.@atoms, 1) => true,
+        _ => false,
+    };
+
+    /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
+    private static string BuiltinArityDesc(BuiltinId b) => b switch
+    {
+        BuiltinId.@if => "2 or 3",
+        BuiltinId.@while => "2",
+        BuiltinId.@repeat => "3",
+        BuiltinId.@atoms => "1",
+        _ => "?",
     };
 
     // ── Intrinsics ──────────────────────────────────────────────────────────
@@ -883,7 +894,7 @@ public static class Evaluator
     {
         switch (builtin, args.Count)
         {
-            // if(cond, then, else)
+            // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
             case (BuiltinId.@if, 3):
             {
                 var condR = EvalAlgOutput(args[0], ctx, valEnv);
@@ -892,6 +903,19 @@ public static class Evaluator
                 if (condAtoms.Count == 0) return new EvalError.BadArity();
                 return condAtoms[0] == 0
                     ? EvalAlgOutput(args[2], ctx, valEnv)
+                    : EvalAlgOutput(args[1], ctx, valEnv);
+            }
+
+            // if(cond, value): 2-arg conditional output / emit-on-true.
+            // True → evaluate and return value. False → no output (empty group).
+            case (BuiltinId.@if, 2):
+            {
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (condR.IsError) return condR.Error;
+                var condAtoms = condR.Value.ToAtoms();
+                if (condAtoms.Count == 0) return new EvalError.BadArity();
+                return condAtoms[0] == 0
+                    ? EvalResult<Result>.Ok(new Result.Group([]))
                     : EvalAlgOutput(args[1], ctx, valEnv);
             }
 
@@ -931,7 +955,9 @@ public static class Evaluator
 
             default:
             {
-                return new EvalError.ArityMismatch(BuiltinArity(builtin), args.Count);
+                return new EvalError.WithContext(
+                    $"expected {BuiltinArityDesc(builtin)} arguments",
+                    new EvalError.ArityMismatch(0, args.Count));
             }
         }
     }
@@ -1006,7 +1032,12 @@ public static class Evaluator
 
             case Expr.Unary(var unaryOp, var operand):
             {
-                var vR = EvalInt(operand, ctx, valEnv);
+                // Empty result propagation: if(false, v) produces Group([]) (2-arg form).
+                var operandR = Eval(operand, ctx, valEnv);
+                if (operandR.IsError) return operandR.Error;
+                if (operandR.Value is Result.Group(var uItems) && uItems.Count == 0)
+                    return EvalResult<Result>.Ok(new Result.Group([]));
+                var vR = ExpectInt(operandR.Value);
                 if (vR.IsError) return vR.Error;
                 var unaryResult = unaryOp switch
                 {
@@ -1019,9 +1050,22 @@ public static class Evaluator
 
             case Expr.Binary(var op, var left, var right):
             {
-                var xR = EvalInt(left, ctx, valEnv);
+                // Evaluate both sides as Result first to handle empty results from 2-arg if.
+                var lR = Eval(left, ctx, valEnv);
+                if (lR.IsError) return lR.Error;
+                var rR = Eval(right, ctx, valEnv);
+                if (rR.IsError) return rR.Error;
+                // Empty result handling: if(false, v) produces Group([]) (2-arg form).
+                // Empty results are transparent in binary expressions.
+                var lEmpty = lR.Value is Result.Group(var lItems) && lItems.Count == 0;
+                var rEmpty = rR.Value is Result.Group(var rItems) && rItems.Count == 0;
+                if (lEmpty && rEmpty) return EvalResult<Result>.Ok(new Result.Group([]));
+                if (lEmpty) return EvalResult<Result>.Ok(rR.Value);
+                if (rEmpty) return EvalResult<Result>.Ok(lR.Value);
+                // Normal arithmetic: coerce both to int.
+                var xR = ExpectInt(lR.Value);
                 if (xR.IsError) return xR.Error;
-                var yR = EvalInt(right, ctx, valEnv);
+                var yR = ExpectInt(rR.Value);
                 if (yR.IsError) return yR.Error;
                 decimal x = xR.Value, y = yR.Value;
                 if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)

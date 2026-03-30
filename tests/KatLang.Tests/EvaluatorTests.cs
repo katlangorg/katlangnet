@@ -2508,4 +2508,91 @@ public class EvaluatorTests
         // Ensure implicit output is unaffected
         AssertEval("A = 6\nA", 6);
     }
+
+    // ── 2-arg if (conditional output) ─────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_If2_TrueCondition_ReturnsValue()
+        => AssertEval("if(1 == 1, 5)", 5);
+
+    [Fact]
+    public void Eval_If2_FalseCondition_ReturnsEmptyOutput()
+    {
+        // 2-arg if false produces no output (empty atom list).
+        var result = Eval("if(1 == 2, 5)");
+        Assert.True(result.IsOk);
+        Assert.Empty(result.Value);
+    }
+
+    [Fact]
+    public void Eval_If2_TrueInAddition()
+        => AssertEval("10 + if(1 == 1, 5)", 15);
+
+    [Fact]
+    public void Eval_If2_FalseInAddition()
+        => AssertEval("10 + if(1 == 2, 5)", 10);
+
+    [Fact]
+    public void Eval_If2_FalseInSubtraction()
+        => AssertEval("10 - if(1 == 2, 3)", 10);
+
+    [Fact]
+    public void Eval_If2_FalseInMultiplication()
+        => AssertEval("10 * if(1 == 2, 3)", 10);
+
+    [Fact]
+    public void Eval_If2_CommaGroup_FalseOmitted()
+        => AssertEval("1, if(1 == 2, 2), 3", 1, 3);
+
+    [Fact]
+    public void Eval_If2_CommaGroup_TrueIncluded()
+        => AssertEval("1, if(1 == 1, 2), 3", 1, 2, 3);
+
+    [Fact]
+    public void Eval_If2_CompatibleWith3ArgIf_True()
+        => AssertEval("if(1 == 1, 5, 6)", 5);
+
+    [Fact]
+    public void Eval_If2_CompatibleWith3ArgIf_False()
+        => AssertEval("if(1 == 2, 5, 6)", 6);
+
+    [Fact]
+    public void Eval_If2_Nested()
+        => AssertEval("if(1, if(1, 5))", 5);
+
+    [Fact]
+    public void Eval_If2_NestedFalseOuter()
+    {
+        var result = Eval("if(0, if(1, 5))");
+        Assert.True(result.IsOk);
+        Assert.Empty(result.Value);
+    }
+
+    [Fact]
+    public void Eval_If2_NestedFalseInner()
+    {
+        var result = Eval("if(1, if(0, 5))");
+        Assert.True(result.IsOk);
+        Assert.Empty(result.Value);
+    }
+
+    [Fact]
+    public void Eval_If2_NonZeroCondition()
+        => AssertEval("if(42, 7)", 7);
+
+    [Fact]
+    public void Eval_If2_NegativeCondition()
+        => AssertEval("if(-1, 7)", 7);
+
+    [Fact]
+    public void Eval_If2_UnaryOnEmpty()
+        => AssertEval("10 + -if(0, 5)", 10);
+
+    [Fact]
+    public void Eval_If2_BothSidesEmpty()
+    {
+        var result = Eval("if(0, 1) + if(0, 2)");
+        Assert.True(result.IsOk);
+        Assert.Empty(result.Value);
+    }
 }

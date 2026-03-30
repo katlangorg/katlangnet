@@ -453,4 +453,141 @@ def test19 : Bool :=
   .call (resolve "DualUse") (alg [] [] [] [.block constSevenAlg19])
 ]))
 
+--------------------------------------------------------------------------------
+-- 2-arg if builtin tests (conditional output / emit-on-true)
+-- if(cond, value): true → value, false → group [] (no output).
+--------------------------------------------------------------------------------
+
+-- Test 20: 2-arg if true → produce value
+-- if(1, 5) → [5]
+def test20 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test20  -- should be true
+#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))
+
+-- Test 21: 2-arg if false → empty output
+-- if(0, 5) → []
+def test21 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test21  -- should be true
+#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))
+
+-- Test 22: 2-arg if false in addition → empty transparent, 10 + if(0, 5) → [10]
+def test22 : Bool :=
+  match runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test22  -- should be true
+#eval runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))
+
+-- Test 23: 2-arg if true in addition → 10 + if(1, 5) → [15]
+def test23 : Bool :=
+  match runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test23  -- should be true
+#eval runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])))
+
+-- Test 24: Combine with 2-arg if false → omitted from output
+-- 1, if(0, 2), 3 → [1, 3]
+def test24 : Bool :=
+  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2])) (.num 3))) with
+  | Except.ok [1, 3] => true
+  | _ => false
+
+#eval test24  -- should be true
+#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2])) (.num 3)))
+
+-- Test 25: Combine with 2-arg if true → included in output
+-- 1, if(1, 2), 3 → [1, 2, 3]
+def test25 : Bool :=
+  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 1, .num 2])) (.num 3))) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test25  -- should be true
+#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 1, .num 2])) (.num 3)))
+
+-- Test 26: Nested 2-arg if — if(1, if(1, 5)) → [5]
+def test26 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [
+    .num 1,
+    .call (resolve "if") (alg [] [] [] [.num 1, .num 5])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test26  -- should be true
+
+-- Test 27: Nested 2-arg if — outer false → empty
+-- if(0, if(1, 5)) → []
+def test27 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [
+    .num 0,
+    .call (resolve "if") (alg [] [] [] [.num 1, .num 5])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test27  -- should be true
+
+-- Test 28: 3-arg if still works — if(1, 10, 20) → [10]
+def test28 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 10, .num 20])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test28  -- should be true
+
+-- Test 29: 3-arg if false → if(0, 10, 20) → [20]
+def test29 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 10, .num 20])) with
+  | Except.ok [20] => true
+  | _ => false
+
+#eval test29  -- should be true
+
+-- Test 30: 2-arg if with non-zero condition → true
+-- if(42, 7) → [7]
+def test30 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 42, .num 7])) with
+  | Except.ok [7] => true
+  | _ => false
+
+#eval test30  -- should be true
+
+-- Test 31: 2-arg if with negative condition → true
+-- if(-1, 7) → [7]
+def test31 : Bool :=
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num (-1), .num 7])) with
+  | Except.ok [7] => true
+  | _ => false
+
+#eval test31  -- should be true
+
+-- Test 32: Unary on empty 2-arg if → transparent
+-- -(if(0, 5)) → empty, 10 + -(if(0, 5)) → [10]
+def test32 : Bool :=
+  match runFlat (.binary .add (.num 10) (.unary .minus (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test32  -- should be true
+
+-- Test 33: if arity mismatch — 1 arg → error
+def test33 : Bool :=
+  match runResult (.call (resolve "if") (alg [] [] [] [.num 1])) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval test33  -- should be true
+
 end KatLangTests
