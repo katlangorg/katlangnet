@@ -332,6 +332,63 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_DotCall_NumericLiteralReceiver()
+    {
+        // 5.Square → DotCall(Num(5), "Square", null)
+        // Lexer: 5 is integer token (dot not consumed as decimal since 'S' is not a digit)
+        var result = Parser.ParseSyntax("5.Square");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("Square", dotCall.Name);
+        var target = Assert.IsType<Expr.Num>(dotCall.Target);
+        Assert.Equal(5, target.Value);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
+    public void Parse_DotCall_NumericLiteralReceiver_WithArgs()
+    {
+        // 5.Add(3) → DotCall(Num(5), "Add", args([Num(3)]))
+        var result = Parser.ParseSyntax("5.Add(3)");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("Add", dotCall.Name);
+        Assert.IsType<Expr.Num>(dotCall.Target);
+        Assert.NotNull(dotCall.Args);
+        Assert.Equal(1, dotCall.Args!.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_DotCall_ParenExprReceiver()
+    {
+        // (2 + 3).Square → DotCall(Binary(Add, Num(2), Num(3)), "Square", null)
+        var result = Parser.ParseSyntax("(2 + 3).Square");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("Square", dotCall.Name);
+        Assert.IsType<Expr.Binary>(dotCall.Target);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
+    public void Parse_DotCall_DecimalLiteralReceiver()
+    {
+        // 5.0.Square → DotCall(Num(5.0), "Square", null)
+        // Lexer: 5.0 is decimal token, then dot, then identifier
+        var result = Parser.ParseSyntax("5.0.Square");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("Square", dotCall.Name);
+        var target = Assert.IsType<Expr.Num>(dotCall.Target);
+        Assert.Equal(5.0m, target.Value);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
     public void Parse_Block_ReturnsBlockExpr()
     {
         var result = Parser.ParseSyntax("{1}");

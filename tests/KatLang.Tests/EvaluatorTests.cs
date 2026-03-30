@@ -1284,6 +1284,75 @@ public class EvaluatorTests
     }
     // â”€â”€ Division, mod, power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    // ── Extension properties on arbitrary receiver expressions ───────────────
+
+    [Fact]
+    public void Eval_DotCall_IntegerLiteral_Receiver()
+    {
+        // 5.Square → Square(5) → n*n = 25
+        var source = """
+            Square = n * n
+            5.Square
+            """;
+        AssertEval(source, 25);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ParenExpr_Receiver()
+    {
+        // (2 + 3).Square → Square(5) → n*n = 25
+        var source = """
+            Square = n * n
+            (2 + 3).Square
+            """;
+        AssertEval(source, 25);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ArbitraryExprReceiver_AlgorithmReceiver_StillWorks()
+    {
+        // A = 5; A.Square → Square(5) → 25 (existing behavior preserved)
+        var source = """
+            Square = n * n
+            A = 5
+            A.Square
+            """;
+        AssertEval(source, 25);
+    }
+
+    [Fact]
+    public void Eval_DotCall_IntegerLiteral_Receiver_WithArgs()
+    {
+        // 5.Add(3) → Add(5, 3) → a+b = 8
+        var source = """
+            Add = a + b
+            5.Add(3)
+            """;
+        AssertEval(source, 8);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ParenExpr_Receiver_WithArgs()
+    {
+        // (2 + 3).Add(7) → Add(5, 7) → a+b = 12
+        var source = """
+            Add = a + b
+            (2 + 3).Add(7)
+            """;
+        AssertEval(source, 12);
+    }
+
+    [Fact]
+    public void Eval_DotCall_DecimalLiteral_Receiver()
+    {
+        // 2.0.Double → Double(2.0) → x*2 = 4.0
+        var source = """
+            Double = x * 2
+            2.0.Double
+            """;
+        AssertEval(source, 4.0m);
+    }
+
     [Fact]
     public void Eval_Division()
         => AssertEval("10 / 4", 2.5m);

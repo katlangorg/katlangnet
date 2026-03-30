@@ -1457,9 +1457,20 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // Lean: let targetAlg <- resolveAlg target ctx (error propagates)
+        // Lean: let targetAlg <- resolveAlg target ctx
+        // Extension-property rule: if target is a value-producing expression (not an algorithm),
+        // ResolveAlg returns NotAnAlgorithm — skip straight to lexical fallback so that
+        //   e.P      → P(e)
+        //   e.P(a,b) → P(e, a, b)
+        // works for any receiver expression, including literals and parenthesized expressions.
+        // Other errors (e.g. UnknownName) propagate as before.
         var targetResult = ResolveAlg(target, ctx);
-        if (targetResult.IsError) return targetResult.Error;
+        if (targetResult.IsError)
+        {
+            if (targetResult.Error is EvalError.NotAnAlgorithm)
+                return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
+            return targetResult.Error;
+        }
         var targetAlg = targetResult.Value;
 
         // Lean: evalIntrinsic? — single source of truth for intrinsic semantics
