@@ -30,8 +30,8 @@
    - [Fibonacci Sequence](#fibonacci-sequence)
 10. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
-    - [{} vs ()](#-vs-)
-11. [Structural Composition with ;](#structural-composition-with-)
+    - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
+11. [Structural Composition with semicolon operator](#structural-composition-with-semicolon-operator)
 12. [Atoms](#atoms)
 13. [Conditional Algorithms (`when`)](#conditional-algorithms-when)
     - [Basic Pattern Matching](#basic-pattern-matching)
@@ -330,7 +330,7 @@ You can mix commas and newlines freely:
 | `1, 2` | Single algorithm with 2 outputs |
 | `1; 2` | Two separate algorithms, structurally combined |
 
-For simple values the result looks the same, but the distinction matters when composing algorithms — see [Structural Composition with `;`](#structural-composition-with-).
+For simple values the result looks the same, but the distinction matters when composing algorithms — see [Structural Composition with `;`](#structural-composition-with-semicolon operator).
 
 ---
 
@@ -842,17 +842,17 @@ Apply(Increment)
 
 **Result:** `10`
 
-### {} vs ()
+### Parametrized vs non-parametrized algorithms
 
 The distinction between braces and parentheses is critical:
 
 | Syntax | Meaning |
 |---|---|
-| `( ... )` | Grouping — evaluated in the enclosing scope; no new parameter scope |
-| `{ ... }` | Algorithm value — creates a new scope with its own inferred parameters |
-| `{a + 1}` | Algorithm with parameter `a`, passable as an argument |
+| `( ... )` | Non-parametrized grouping — evaluated in the enclosing scope; no new parameter scope |
+| `{ ... }` | Parametrized algorithm value — creates a new scope with its own inferred parameters |
+| `{a + 1}` | Parametrized algorithm with parameter `a`, passable as an argument |
 
-`{}` braces mark the passed algorithm as **parametrized** — it owns its own parameters (`a` in the example above). Without `{}`, the parameters would be absorbed by the enclosing algorithm instead.
+`{}` braces mark the passed algorithm as **parametrized** — it owns its own parameters (`a` in the example above). A **non-parametrized** `()` expression has no parameter scope of its own — any free names are absorbed by the enclosing algorithm instead.
 
 When a block has no free parameters, `{}` and `()` produce the same result:
 
@@ -869,7 +869,7 @@ When a block has no free parameters, `{}` and `()` produce the same result:
 
 ---
 
-## Structural Composition with ;
+## Structural Composition with semicolon operator
 
 The `;` operator joins two algorithms into one, concatenating their output sequences. This is different from comma: comma separates outputs *within* a single algorithm, while `;` combines two *separate* algorithms into a composite.
 
