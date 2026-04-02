@@ -750,8 +750,13 @@ public static class Evaluator
     /// Only <c>Expr.openForm?</c> forms are permitted
     /// (structural references to libraries only).
     /// Builtins are rejected: they are not valid open targets.
-    /// Public-path policy: property access in open paths requires all
-    /// intermediate properties to be public.
+    /// <para>
+    /// Visibility rule: <c>open</c> never requires the opened algorithm itself to be public.
+    /// It only requires the algorithm to be available (resolvable) in the current context.
+    /// <c>open</c> imports only public members of that algorithm (enforced by <see cref="LookupOpens"/>).
+    /// </para>
+    /// Property access in open paths (<c>open A.B</c>) still requires intermediate
+    /// properties to be public (normal dot-access visibility).
     /// Lean: resolveAlgForOpen → EvalM Algorithm.
     /// </summary>
     private static EvalResult<Algorithm> ResolveAlgForOpen(Expr expr, EvalCtx ctx)
@@ -772,20 +777,16 @@ public static class Evaluator
 
             case Expr.Resolve(var name):
             {
-                // Lean: lookupLexicalDirectUnwiredPublic — public-only lookup for open targets.
-                // Then fallback to unfiltered lookup to distinguish private vs missing.
+                // open never requires the opened algorithm itself to be public.
+                // It only requires the algorithm to be available in the current context.
+                // open imports only public members (enforced later by LookupOpens).
                 if (ctx.CallStack.Count > 0)
                 {
-                    var found = LookupLexicalDirectUnwiredPublic(ctx.CallStack[0], name);
+                    var found = LookupLexicalDirectUnwired(ctx.CallStack[0], name);
                     if (found is not null)
                         return found is Algorithm.Builtin
                             ? new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span }
                             : EvalResult<Algorithm>.Ok(found); // unwired: preserves definition-site parent chain
-
-                    // Distinguish private vs missing
-                    var unfilteredFound = LookupLexicalDirectUnwired(ctx.CallStack[0], name);
-                    if (unfilteredFound is not null)
-                        return new EvalError.NotPublicProperty("(lexical)", name) { Span = expr.Span };
                 }
                 return new EvalError.UnknownName(name) { Span = expr.Span };
             }

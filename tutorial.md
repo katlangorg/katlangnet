@@ -210,13 +210,20 @@ not 0
 1
 ```
 
-Because comparisons return `1` or `0`, logical operators compose naturally with them.
+Because comparisons return `1` or `0`, logical operators compose naturally with them:
 
 ```
-x > 5 and x < 10
+InRange = x > 5 and x < 10
+
+InRange(7)
+InRange(3)
 ```
 
-When called with `x = 7` this produces `1`.
+**Results:**
+```
+1
+0
+```
 
 ### Math Constants and Functions
 
@@ -357,7 +364,6 @@ Properties can themselves produce multiple outputs:
 
 ```
 Coordinates = 10, 20
-
 Coordinates
 ```
 
@@ -477,40 +483,34 @@ When KatLang sees a name, it checks these places in order and stops at the first
 If the name is not found at any of these levels, KatLang treats it as an implicit parameter (see [Parameters](#parameters)).
 
 ```
-Outer = {
-    X = 1
-    Inner = {
-        Y = 2
-        // X is found at level 2 (parent chain)
-        // Y is found at level 1 (local)
-        X + Y
-    }
-    Inner
+X = 1
+Inner = {
+    Y = 2
+    // X is found at level 2 (parent chain)
+    // Y is found at level 1 (local)
+    X + Y
 }
-Outer
+Inner
 ```
 
 **Result:** `3`
 
-In this example, `Y` is found immediately in `Inner`, because it is local. `X` is not local to `Inner`, so KatLang continues to the parent chain and finds `X` in `Outer`.
+In this example, `Y` is found immediately in `Inner`, because it is local. `X` is not local to `Inner`, so KatLang continues to the parent chain and finds `X` in the enclosing algorithm.
 
 Local properties always win. If the same name exists both locally and in a parent, the local one is used:
 
 ```
-Outer = {
-    X = 10
-    Inner = {
-        X = 99
-        X
-    }
-    Inner
+X = 10
+Inner = {
+    X = 99
+    X
 }
-Outer
+Inner
 ```
 
 **Result:** `99`
 
-Here `Inner.X` hides `Outer.X`, so the result is `99`.
+Here `Inner.X` hides the outer `X`, so the result is `99`.
 
 Opens are checked only after local and parent-owned properties. This means a name introduced with `open` never overrides a name you already defined structurally.
 
@@ -576,7 +576,7 @@ WeightedSum(1, 2, 3)
 
 ### Reordering Parameters with Grace~ operator
 
-Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. The `~` operator (Grace) shifts a parameter's position.
+Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. The Grace`~` operator shifts a parameter's position.
 
 Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later.
 
@@ -718,8 +718,7 @@ Multi-output state works the same way — only the last output is the continue-f
 Algo = n - 1, total + if(n mod 3 == 0 or n mod 5 == 0, n, 0), n > 2
 
 // Start from (n=999, total=0), select total:
-Sum = Algo.while(999, 0) : 1
-Sum
+Algo.while(999, 0) : 1
 ```
 
 **Result:** `233168`
@@ -764,8 +763,7 @@ Circle(5) : 0
 
 **Results:**
 ```
-78.539816339744830961566084582
-31.415926535897932384626433833
+(78.539816339744830961566084582, 31.415926535897932384626433833)
 78.539816339744830961566084582
 ```
 
@@ -898,8 +896,7 @@ Inline combining works similarly:
 
 **Results:**
 ```
-1
-2
+(1, 2)
 3
 ```
 
@@ -915,7 +912,7 @@ Inline combining works similarly:
 Algorithms in KatLang can produce structured, nested outputs — for example, a group inside a group. The `atoms` builtin strips away all of that structure (tuples, groups, nesting) and returns a flat list of plain numeric values.
 
 ```
-A = 1, 2, 3
+A = 1; 2, 3
 atoms(A)
 ```
 
@@ -1096,11 +1093,11 @@ X + 3
 You can open a locally defined algorithm the same way:
 
 ```
+open Lib
 Lib = (
     public Pi = 3.14159
     public Double = x * 2
 )
-open Lib
 
 Pi
 Double(5)

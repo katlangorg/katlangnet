@@ -1,4 +1,4 @@
-namespace KatLang.Tests;
+﻿namespace KatLang.Tests;
 
 public class EvaluatorTests
 {
@@ -2056,32 +2056,84 @@ public class EvaluatorTests
         AssertEval(source, 43);
     }
 
-    // â”€â”€ Fix: resolveAlgForOpen public-only lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- open visibility: container does not need to be public ----------------
+    // Rule: open never requires the opened algorithm itself to be public.
+    //       It only requires the algorithm to be available in the current context.
+    //       open imports only public members of that algorithm.
 
     [Fact]
-    public void Eval_Open_PrivateAlgorithm_FailsWithNotPublicProperty()
+    public void Eval_Open_LocalNonPublicAlgorithm_CanBeOpened()
     {
-        // Lean: lookupLexicalDirectUnwiredPublic rejects private open targets
+        // open never requires the opened algorithm itself to be public.
+        // It only requires the algorithm to be available in the current context.
+        // open imports only public members of that algorithm.
         var source = """
-            Lib = (public val = 42)
             open Lib
-            val
+            Lib = {
+                public Pi = 3
+            }
+            Pi
             """;
-        // Lib is private â†’ open should fail with NotPublicProperty
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_Open_LocalPublicAlgorithm_CanStillBeOpened()
+    {
+        // Public open target also works (public is not required, but not harmful).
+        var source = """
+            open Lib
+            public Lib = {
+                public Pi = 3
+            }
+            Pi
+            """;
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_Open_NonPublicMember_NotImported()
+    {
+        // open imports only public members. Non-public members must not be visible.
+        var source = """
+            open Lib
+            Lib = {
+                Pi = 3
+            }
+            Pi
+            """;
         var result = Eval(source);
         Assert.True(result.IsError);
     }
 
     [Fact]
-    public void Eval_Open_PublicAlgorithm_Succeeds()
+    public void Eval_Open_QualifiedAccess_StillWorks()
     {
-        // Public open target should work
+        // Qualified dot-access should keep current intended behavior.
         var source = """
-            public Lib = (public val = 42)
-            open Lib
-            val
+            Lib = {
+                public Pi = 3
+            }
+            Lib.Pi
             """;
-        AssertEval(source, 42);
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_Open_NestedLocalOpen_Works()
+    {
+        // open inside a nested algorithm body can open a sibling definition.
+        var source = """
+            A = {
+                open Lib
+                Lib = {
+                    public Pi = 3
+                }
+                Pi
+            }
+            A
+            """;
+        AssertEval(source, 3);
     }
 
     // â”€â”€ Fix: BinaryOp.Pow negative exponent guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
