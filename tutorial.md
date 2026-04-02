@@ -1094,10 +1094,10 @@ You can open a locally defined algorithm the same way:
 
 ```
 open Lib
-Lib = (
+Lib = {
     public Pi = 3.14159
     public Double = x * 2
-)
+}
 
 Pi
 Double(5)
