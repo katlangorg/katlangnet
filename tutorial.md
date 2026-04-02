@@ -337,7 +337,7 @@ You can mix commas and newlines freely:
 | `1, 2` | Single algorithm with 2 outputs |
 | `1; 2` | Two separate algorithms, structurally combined |
 
-For simple values the result looks the same, but the distinction matters when composing algorithms — see [Structural Composition with `;`](#structural-composition-with-semicolon operator).
+For simple values the result looks the same, but the distinction matters when composing algorithms — see [Structural Composition with `;`](#structural-composition-with-semicolon-operator).
 
 ---
 
@@ -754,7 +754,7 @@ Computing both area and circumference of a circle:
 ```
 Circle = r * r * Math.Pi, 2 * r * Math.Pi
 
-// Call and get both outputs:
+// Call to get area and circumference as a group:
 Circle(5)
 
 // Pick just the area (index 0):
@@ -903,7 +903,7 @@ Inline combining works similarly:
 | Expression | Interpretation |
 |---|---|
 | `1, 2, 3` | Single algorithm producing 3 outputs |
-| `1; 2, 3` | Left algorithm (1 output) combined with right algorithm (2 outputs) |
+| `1; 2, 3` | Parsed as `(1; 2), 3` — the combine `1; 2` produces a group `(1, 2)`, followed by a separate output `3` |
 
 ---
 
