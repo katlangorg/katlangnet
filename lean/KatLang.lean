@@ -1,4 +1,4 @@
--- KatLang v0.7.12 (core AST + semantics + while/repeat init lowering + higher-order alg params)
+-- KatLang v0.7.13 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -74,6 +74,7 @@ inductive Error where
   | badArity         : Error                   -- shape / unpacking failure
   | badIndex         : Error
   | divByZero        : Error                   -- division or modulo by zero
+  | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
 
@@ -119,6 +120,37 @@ def builtinArityDesc : Builtin -> String
   | .atomsBuiltin => "1"
 
 --------------------------------------------------------------------------------
+-- Patterns (for conditional algorithms)
+--------------------------------------------------------------------------------
+
+/-- Pattern language for conditional algorithm branch matching.
+    Patterns match against Result values at call time.
+    - `bind x`: matches any Result and binds it to name `x`
+    - `litInt n`: matches only `Result.atom n`
+    - `group ps`: matches `Result.group rs` with same arity, each sub-pattern matching
+
+    Patterns are a separate semantic type, distinct from Expr.
+    They do not appear in executable expression positions. -/
+inductive Pattern where
+  | bind   : Ident -> Pattern
+  | litInt : Int -> Pattern
+  | group  : List Pattern -> Pattern
+  deriving Repr, BEq
+
+namespace Pattern
+  /-- Collect all binder names in a pattern (left-to-right). -/
+  def boundNames : Pattern -> List Ident
+    | .bind x    => [x]
+    | .litInt _  => []
+    | .group ps  => ps.flatMap boundNames
+
+  /-- Check whether a pattern contains duplicate binder names. -/
+  def hasDuplicateBinds (p : Pattern) : Bool :=
+    let names := boundNames p
+    names.length != names.eraseDups.length
+end Pattern
+
+--------------------------------------------------------------------------------
 -- Syntax
 --------------------------------------------------------------------------------
 
@@ -147,6 +179,12 @@ mutual
     isPublic : Bool
     deriving Repr
 
+  /-- A branch of a conditional algorithm: a pattern and a body algorithm. -/
+  structure CondBranch where
+    pattern : Pattern
+    body    : Algorithm
+    deriving Repr
+
   inductive Algorithm where
     | mk :
         (parent     : Option ScopeCtx) ->
@@ -156,6 +194,15 @@ mutual
         (output     : List Expr) ->
         Algorithm
     | builtin : Builtin -> Algorithm
+    /-- Conditional algorithm: ordered pattern branches tried at call time.
+        At call time, arguments are evaluated and matched against branch patterns
+        in source order.  The first matching branch body is evaluated.
+        If no branch matches, evaluation fails with noMatchingBranch. -/
+    | conditional :
+        (parent   : Option ScopeCtx) ->
+        (opens    : List Expr) ->
+        (branches : List CondBranch) ->
+        Algorithm
     deriving Repr
 
   inductive ScopeCtx where
@@ -293,22 +340,33 @@ namespace Algorithm
   def parent : Algorithm -> Option ScopeCtx
     | .mk p _ _ _ _ => p
     | .builtin _ => none
+    | .conditional p _ _ => p
   def params : Algorithm -> List Ident
     | .mk _ ps _ _ _ => ps
     | .builtin _ => []
+    | .conditional _ _ _ => []
   def opens : Algorithm -> List Expr
     | .mk _ _ op _ _ => op
     | .builtin _ => []
+    | .conditional _ op _ => op
   def props : Algorithm -> List PropDef
     | .mk _ _ _ pr _ => pr
     | .builtin _ => []
+    | .conditional _ _ _ => []
   def output : Algorithm -> List Expr
     | .mk _ _ _ _ out => out
     | .builtin _ => []
+    | .conditional _ _ _ => []
+
+  /-- Access branches for conditional algorithms. Returns [] for other forms. -/
+  def branches : Algorithm -> List CondBranch
+    | .conditional _ _ bs => bs
+    | _ => []
 
   def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
     | .mk _ ps op pr out => .mk p ps op pr out
     | .builtin b => .builtin b
+    | .conditional _ op bs => .conditional p op bs
 
   def asScopeCtx (a : Algorithm) : ScopeCtx :=
     ScopeCtx.mk (parent a) (opens a) (props a)
@@ -612,6 +670,48 @@ structure OpenHit where
   lib      : Algorithm
   child    : Algorithm
   deriving Repr
+
+--------------------------------------------------------------------------------
+-- Pattern matching (for conditional algorithms)
+--------------------------------------------------------------------------------
+
+/-- Match a pattern against a Result, returning accumulated bindings on success.
+    - `bind x` matches any Result, binding x → r
+    - `litInt n` matches only `Result.atom n`
+    - `group ps` matches `Result.group rs` with same length, recursively
+
+    Bindings accumulate left-to-right. Callers should reject duplicate binder
+    names at elaboration/parse time. -/
+def matchPattern (p : Pattern) (r : Result) : Option ValEnv :=
+  match p with
+  | .bind x    => some [(x, r)]
+  | .litInt n  =>
+      match r with
+      | .atom v => if v = n then some [] else none
+      | _       => none
+  | .group ps  =>
+      match r with
+      | .group rs =>
+          if ps.length != rs.length then none
+          else
+            let rec go : List Pattern -> List Result -> Option ValEnv
+              | [], []           => some []
+              | p::ps', r::rs'   => do
+                  let env1 <- matchPattern p r
+                  let env2 <- go ps' rs'
+                  pure (env1 ++ env2)
+              | _, _             => none
+            go ps rs
+      | _ => none
+
+/-- Try to match branches in order. Returns the first matching branch and its bindings. -/
+def matchBranches (bs : List CondBranch) (arg : Result) : Option (CondBranch × ValEnv) :=
+  match bs with
+  | []     => none
+  | b::bs' =>
+      match matchPattern b.pattern arg with
+      | some env => some (b, env)
+      | none     => matchBranches bs' arg
 
 mutual
 
@@ -1024,24 +1124,33 @@ mutual
       let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
       evalAlgOutput callee newCtx (argEnv ++ env)
 
-  /-- Core call dispatch: resolve callee, dispatch builtin vs user-defined.
-      Does NOT wrap with context - caller is responsible for withCtx.
+  /-- Evaluate a conditional algorithm call.
+      1. Evaluate argument expressions eagerly (same as normal call ABI).
+      2. Assemble full argument Result shape (preserving grouping for pattern matching).
+      3. Try branches in order; first match wins.
+      4. Evaluate selected branch body with pattern bindings prepended to env.
+      5. If no branch matches, raise noMatchingBranch error.
 
-      User-defined path: args are wired to the caller's scope via `wireToCaller`
-      so that `Expr.resolve` nodes inside arg expressions can resolve names from
-      the calling scope (e.g., `F(G)` where G is a property). Without wiring,
-      the args algorithm has no parent and resolution of uppercase identifiers
-      (which stay as `Expr.resolve` after the surface pipeline) would fail.
-      Builtins already resolve in caller context via `resolveArgAlgs`.
+      Unlike evalUserCall, conditional algorithms do NOT use params/unpackArgs.
+      The full argument shape is matched structurally against branch patterns. -/
+  partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+    let wiredArgs := wireToCaller ctx args
+    let argExprs := Algorithm.output wiredArgs
+    let argEvalCtx := EvalCtx.push wiredArgs ctx
+    -- Evaluate all argument expressions eagerly
+    let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
+    -- Assemble full argument shape: normalize group for pattern matching
+    let argShape := Result.normalize (Result.group argResults)
+    -- Try branches in order
+    match matchBranches (Algorithm.branches callee) argShape with
+    | some (branch, bindings) =>
+        -- Evaluate the matched branch body with bindings prepended
+        let newCtx := EvalCtx.push callee ctx
+        evalAlgOutput branch.body newCtx (bindings ++ env)
+    | none =>
+        .error (Error.noMatchingBranch calleeName)
 
-      Higher-order algorithm support layers AlgEnv on top of the existing eager
-      value ABI instead of introducing a separate call convention. Algorithm
-      bindings are computed from the original argument expressions with
-        `tryResolveArgAlgs`. Value bindings are computed independently by eager
-        evaluation of each original argument expression and then combined through
-        the existing `unpackArgs` ABI. If an argument supports both meanings, the
-        callee receives both: ValEnv first for ordinary reads, AlgEnv as fallback
-        for callable interpretation. -/
   partial def evalCall (f : Expr) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let callee <- resolveAlg f ctx
@@ -1049,6 +1158,7 @@ mutual
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltin b argAlgs ctx env
+    | .conditional _ _ _ => evalConditionalCall callee args ctx env (openExprName f)
     | _ => evalUserCall callee args ctx env
 
   /-- Resolve name lexically and call with receiver prepended to args.
@@ -1080,14 +1190,20 @@ mutual
             let wired := Algorithm.childOf targetAlg p
             match argsOpt with
             | none =>
-                if (Algorithm.params wired).length = 0 then
-                  evalAlgOutput wired ctx env
-                else
-                  -- Navigation only: no receiver injection, need explicit args
-                  .error (Error.arityMismatch (Algorithm.params wired).length 0)
+                match wired with
+                | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
+                | _ =>
+                  if (Algorithm.params wired).length = 0 then
+                    evalAlgOutput wired ctx env
+                  else
+                    -- Navigation only: no receiver injection, need explicit args
+                    .error (Error.arityMismatch (Algorithm.params wired).length 0)
             | some args =>
-                -- Navigation only: direct argument binding, no receiver
-                evalUserCall wired args ctx env
+                match wired with
+                | .conditional _ _ _ => evalConditionalCall wired args ctx env name
+                | _ =>
+                  -- Navigation only: direct argument binding, no receiver
+                  evalUserCall wired args ctx env
         | none => callLexicalWithReceiver name target argsOpt ctx env
 
   partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
@@ -1602,6 +1718,9 @@ partial def postElabInvariantAlg : Algorithm -> Bool
       opens.all postElabInvariant &&
       props.all (fun p => postElabInvariantAlg p.alg) &&
       output.all postElabInvariant
+  | .conditional _ opens branches =>
+      opens.all postElabInvariant &&
+      branches.all (fun b => postElabInvariantAlg b.body)
 end
 
 end KatLang

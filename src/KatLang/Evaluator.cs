@@ -536,6 +536,70 @@ public static class Evaluator
         }
     }
 
+    // ── Pattern matching (for conditional algorithms) ────────────────────────
+
+    /// <summary>
+    /// Match a pattern against a Result, returning accumulated bindings on success.
+    /// Lean: matchPattern.
+    /// </summary>
+    private static IReadOnlyList<(string, Result)>? MatchPattern(Pattern pattern, Result result)
+    {
+        switch (pattern)
+        {
+            case Pattern.Bind(var name):
+                return [(name, result)];
+
+            case Pattern.LitInt(var n):
+                return result is Result.Atom(var v) && v == n
+                    ? []
+                    : null;
+
+            case Pattern.Group(var items):
+                // Result.normalize collapses group [x] → x, so a singleton
+                // group pattern (e.g. "(b)") must also match a non-group result
+                // by treating it as if it were group [result].
+                if (result is Result.Group(var rs))
+                {
+                    if (rs.Count != items.Count) return null;
+                }
+                else if (items.Count == 1)
+                {
+                    rs = [result];
+                }
+                else
+                {
+                    return null;
+                }
+                var bindings = new List<(string, Result)>();
+                for (var i = 0; i < items.Count; i++)
+                {
+                    var sub = MatchPattern(items[i], rs[i]);
+                    if (sub is null) return null;
+                    bindings.AddRange(sub);
+                }
+                return bindings;
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Try branches in order. Returns the first matching branch and its bindings.
+    /// Lean: matchBranches.
+    /// </summary>
+    private static (CondBranch Branch, IReadOnlyList<(string, Result)> Bindings)? MatchBranches(
+        IReadOnlyList<CondBranch> branches, Result arg)
+    {
+        foreach (var branch in branches)
+        {
+            var bindings = MatchPattern(branch.Pattern, arg);
+            if (bindings is not null)
+                return (branch, bindings);
+        }
+        return null;
+    }
+
     // ── Combine algorithms ──────────────────────────────────────────────────
 
     /// <summary>
@@ -1338,8 +1402,60 @@ public static class Evaluator
             return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
         }
 
-        // 3. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
+        // 3. Conditional algorithm: dispatch to dedicated path (Lean: evalConditionalCall)
+        if (callee is Algorithm.Conditional)
+        {
+            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, OpenExprName(func));
+        }
+
+        // 4. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
         return EvalUserCall(callee, argsAlg, ctx, valEnv);
+    }
+
+    // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
+
+    /// <summary>
+    /// Evaluates a conditional algorithm call.
+    /// 1. Evaluate argument expressions eagerly.
+    /// 2. Assemble full argument Result shape (preserving grouping for pattern matching).
+    /// 3. Try branches in order; first match wins.
+    /// 4. Evaluate selected branch body with pattern bindings prepended to env.
+    /// 5. If no branch matches, raise NoMatchingBranch error.
+    /// Lean: evalConditionalCall.
+    /// </summary>
+    private static EvalResult<Result> EvalConditionalCall(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        var wiredArgs = WireToCaller(ctx, args);
+        var argExprs = wiredArgs.Output;
+        var argEvalCtx = ctx.Push(wiredArgs);
+
+        // Evaluate all argument expressions eagerly
+        var argResults = new List<Result>();
+        foreach (var expr in argExprs)
+        {
+            var r = Eval(expr, argEvalCtx, valEnv);
+            if (r.IsError) return r.Error;
+            argResults.Add(r.Value);
+        }
+
+        // Assemble full argument shape: normalize for pattern matching
+        var argShape = Result.FromItems(argResults);
+
+        // Try branches in order
+        var match = MatchBranches(callee.Branches, argShape);
+        if (match is null)
+            return new EvalError.NoMatchingBranch(calleeName);
+
+        var (branch, bindings) = match.Value;
+
+        // Evaluate the matched branch body with bindings prepended
+        var newCtx = ctx.Push(callee);
+        var newEnv = Concat(bindings, valEnv);
+        return EvalAlgOutput(branch.Body, newCtx, newEnv);
     }
 
     // ── User-defined call (Lean: evalUserCall) ────────────────────────────
@@ -1482,6 +1598,15 @@ public static class Evaluator
         if (prop is not null)
         {
             var wired = ChildOf(targetAlg, prop);
+
+            // Conditional algorithms: dedicated dispatch
+            if (wired is Algorithm.Conditional)
+            {
+                if (argsOpt is null)
+                    return new EvalError.NoMatchingBranch(name);
+                return EvalConditionalCall(wired, argsOpt, ctx, valEnv, name);
+            }
+
             if (argsOpt is null)
             {
                 // No args: 0-param → value access, has params → arity error

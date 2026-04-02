@@ -31,6 +31,7 @@ public enum TokenKind
     KeywordNot,
     KeywordPublic,
     KeywordOpen,
+    KeywordWhen,
 
     // Delimiters
     LParen,

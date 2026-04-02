@@ -89,6 +89,49 @@ public abstract record Expr
     public sealed record NativeCall(string FnName, IReadOnlyList<string> ArgNames) : Expr;
 }
 
+// ── Patterns (Lean: Pattern — for conditional algorithms) ──────────────────
+
+/// <summary>
+/// Pattern language for conditional algorithm branch matching.
+/// Patterns match against <see cref="Result"/> values at call time.
+/// Lean: <c>Pattern</c> inductive.
+/// </summary>
+public abstract record Pattern
+{
+    private Pattern() { }
+
+    /// <summary>Matches any Result and binds it to the given name.</summary>
+    public sealed record Bind(string Name) : Pattern;
+
+    /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
+    public sealed record LitInt(decimal Value) : Pattern;
+
+    /// <summary>Matches <c>Result.Group(items)</c> with same arity, each sub-pattern matching.</summary>
+    public sealed record Group(IReadOnlyList<Pattern> Items) : Pattern;
+
+    /// <summary>Collect all binder names in this pattern (left-to-right).</summary>
+    public IReadOnlyList<string> BoundNames() => this switch
+    {
+        Bind(var name) => [name],
+        LitInt _ => [],
+        Group(var items) => items.SelectMany(p => p.BoundNames()).ToList(),
+        _ => [],
+    };
+
+    /// <summary>Check whether this pattern contains duplicate binder names.</summary>
+    public bool HasDuplicateBinds()
+    {
+        var names = BoundNames();
+        return names.Count != names.Distinct().Count();
+    }
+}
+
+/// <summary>
+/// A branch of a conditional algorithm: a pattern and a body algorithm.
+/// Lean: <c>CondBranch</c> structure.
+/// </summary>
+public sealed record CondBranch(Pattern Pattern, Algorithm Body);
+
 // ── Algorithm (Lean: Algorithm — discriminated union) ───────────────────────
 
 /// <summary>
@@ -100,7 +143,8 @@ public sealed record Property(string Name, Algorithm Value, bool IsPublic = fals
 /// <summary>
 /// Represents a KatLang algorithm — the fundamental building block.
 /// Discriminated union matching the Lean specification:
-/// <c>Algorithm.mk</c> (user-defined) and <c>Algorithm.builtin</c> (built-in operation).
+/// <c>Algorithm.mk</c> (user-defined), <c>Algorithm.builtin</c> (built-in operation),
+/// and <c>Algorithm.conditional</c> (conditional algorithm with pattern branches).
 ///
 /// Virtual properties provide Lean-style accessors that return defaults for Builtin variant
 /// (null/[] as appropriate), matching Lean's Algorithm.parent, Algorithm.params, etc.
@@ -121,8 +165,11 @@ public abstract record Algorithm
     /// <summary>Lean: Algorithm.props. Returns [] for Builtin.</summary>
     public virtual IReadOnlyList<Property> Properties { get; init; } = [];
 
-    /// <summary>Lean: Algorithm.output. Returns [] for Builtin.</summary>
+    /// <summary>Lean: Algorithm.output. Returns [] for Builtin and Conditional.</summary>
     public virtual IReadOnlyList<Expr> Output { get; init; } = [];
+
+    /// <summary>Lean: Algorithm.branches. Returns [] for non-Conditional algorithms.</summary>
+    public virtual IReadOnlyList<CondBranch> Branches { get; init; } = [];
 
     /// <summary>
     /// Parser annotation: true when this algorithm should have parameters detected
@@ -162,6 +209,30 @@ public abstract record Algorithm
     /// Built-in algorithm. Corresponds to <c>Algorithm.builtin</c> in the Lean specification.
     /// </summary>
     public sealed record Builtin(BuiltinId Id) : Algorithm;
+
+    /// <summary>
+    /// Conditional algorithm with ordered pattern branches.
+    /// Corresponds to <c>Algorithm.conditional</c> in the Lean specification.
+    /// At call time, arguments are evaluated and matched against branch patterns
+    /// in source order. The first matching branch body is evaluated.
+    /// If no branch matches, evaluation fails with <c>NoMatchingBranch</c>.
+    /// </summary>
+    public sealed record Conditional : Algorithm
+    {
+        public Conditional(
+            ScopeCtx? Parent,
+            IReadOnlyList<Expr> Opens,
+            IReadOnlyList<CondBranch> Branches)
+        {
+            this.Parent = Parent;
+            this.Opens = Opens;
+            this.Branches = Branches;
+        }
+
+        public override ScopeCtx? Parent { get; init; }
+        public override IReadOnlyList<Expr> Opens { get; init; } = [];
+        public override IReadOnlyList<CondBranch> Branches { get; init; } = [];
+    }
 }
 
 // ── ScopeCtx (Lean: ScopeCtx) ─────────────────────────────────────────────

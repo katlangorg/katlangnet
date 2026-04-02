@@ -2664,4 +2664,231 @@ public class EvaluatorTests
         Assert.True(result.IsOk);
         Assert.Empty(result.Value);
     }
+
+    // ── Conditional algorithms ──────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Conditional_KCombinator()
+    {
+        // K when (a, b) = a  ⟹  K(10, 20) => 10
+        var source = """
+            K when (a, b) = a
+            K(10, 20)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Conditional_KCombinator_SecondElement()
+    {
+        // Verify we can return the second binding too
+        var source = """
+            Snd when (a, b) = b
+            Snd(10, 20)
+            """;
+        AssertEval(source, 20);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SingletonGroupPattern_MatchesSingleElementTuple()
+    {
+        // K when (a, (b)) = a  ⟹  K(1, (2, 3)) should fail
+        // because (b) is a 1-element group pattern that does not match (2, 3).
+        var source = """
+            K when (a, (b)) = a
+            K(1, (2, 3))
+            """;
+        var error = GetEvalError(source);
+        Assert.NotNull(error);
+        Assert.IsType<EvalError.WithContext>(error);
+        var inner = ((EvalError.WithContext)error!).Inner;
+        Assert.IsType<EvalError.NoMatchingBranch>(inner);
+    }
+
+    [Fact]
+    public void Eval_Conditional_BareBind_MatchesTuple()
+    {
+        // K when (a, b) = a  ⟹  K(1, (2, 3)) => 1
+        // b is a bare bind so it matches the nested tuple (2, 3) directly.
+        var source = """
+            K when (a, b) = a
+            K(1, (2, 3))
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SingletonGroupPattern_MatchesNormalizedSingleton()
+    {
+        // K when (a, (b)) = a  ⟹  K(1, (2)) => 1
+        // (2) normalizes to Atom(2); (b) is a 1-element group pattern
+        // that matches the normalized singleton.
+        var source = """
+            K when (a, (b)) = a
+            K(1, (2))
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Conditional_MultipleBranches_LiteralMatch()
+    {
+        // Else when (1, (a, b)) = a
+        // Else when (c, (a, b)) = b
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (c, (a, b)) = b
+            Else(1, (2, 3))
+            """;
+        AssertEval(source, 2);
+    }
+
+    [Fact]
+    public void Eval_Conditional_MultipleBranches_FallbackBranch()
+    {
+        // Same as above but first branch doesn't match (c != 1)
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (c, (a, b)) = b
+            Else(0, (2, 3))
+            """;
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_Conditional_NonExhaustive_NoMatch()
+    {
+        // Sign when (1) = 1
+        // Sign when (-1) = -1
+        // Sign(0) should fail with NoMatchingBranch
+        var source = """
+            Sign when (1) = 1
+            Sign when (-1) = -1
+            Sign(0)
+            """;
+        var error = GetEvalError(source);
+        Assert.NotNull(error);
+        Assert.IsType<EvalError.WithContext>(error);
+        var inner = ((EvalError.WithContext)error!).Inner;
+        Assert.IsType<EvalError.NoMatchingBranch>(inner);
+    }
+
+    [Fact]
+    public void Eval_Conditional_NonExhaustive_MatchExists()
+    {
+        var source = """
+            Sign when (1) = 100
+            Sign when (-1) = -100
+            Sign(1)
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_Conditional_FirstMatchWins()
+    {
+        // F when (x) = 1  (catch-all, always matches)
+        // F when (1) = 2  (never reached)
+        // F(1) => 1 (first branch wins)
+        var source = """
+            F when (x) = 1
+            F when (1) = 2
+            F(1)
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Conditional_NestedPatternShapeMismatch()
+    {
+        // Else expects (c, (a, b)) but we pass three flat args
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (c, (a, b)) = b
+            Else(1, 2, 3)
+            """;
+        var error = GetEvalError(source);
+        Assert.NotNull(error);
+        Assert.IsType<EvalError.WithContext>(error);
+        var inner = ((EvalError.WithContext)error!).Inner;
+        Assert.IsType<EvalError.NoMatchingBranch>(inner);
+    }
+
+    [Fact]
+    public void Eval_Conditional_OrdinaryAlgorithmUnchanged()
+    {
+        // Ordinary (non-conditional) algorithms should still work
+        var source = """
+            Add = a + b
+            Add(3, 4)
+            """;
+        AssertEval(source, 7);
+    }
+
+    [Fact]
+    public void Eval_Conditional_BinderUsedInExpression()
+    {
+        // Branch body can use binders in arithmetic
+        var source = """
+            Double when (x) = x + x
+            Double(5)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Conditional_NegativeLiteralPattern()
+    {
+        var source = """
+            F when (-1) = 100
+            F when (x) = 0
+            F(-1)
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_Conditional_NegativeLiteralPattern_NoMatch()
+    {
+        var source = """
+            F when (-1) = 100
+            F when (x) = 0
+            F(5)
+            """;
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_Conditional_MultipleOutputInBranch()
+    {
+        // Branch body returns multiple values
+        var source = """
+            Swap when (a, b) = b, a
+            Swap(1, 2)
+            """;
+        AssertEval(source, 2, 1);
+    }
+
+    [Fact]
+    public void Eval_Conditional_DotCallAccess()
+    {
+        // Access conditional property via dot syntax with args
+        var source = """
+            M = (F when (x) = x + 1
+            F)
+            M.F(10)
+            """;
+        AssertEval(source, 11);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SingleArg()
+    {
+        // Single argument pattern
+        var source = """
+            Inc when (x) = x + 1
+            Inc(5)
+            """;
+        AssertEval(source, 6);
+    }
 }

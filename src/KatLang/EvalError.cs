@@ -17,6 +17,7 @@ namespace KatLang;
 ///   | badArity          : Error
 ///   | badIndex          : Error
 ///   | divByZero         : Error
+///   | noMatchingBranch  : Ident → Error
 ///   | withContext        : String → Error → Error
 /// </code>
 /// </summary>
@@ -62,6 +63,9 @@ public abstract record EvalError
 
     /// <summary>Division or modulo by zero.</summary>
     public sealed record DivByZero() : EvalError;
+
+    /// <summary>Conditional algorithm: no branch pattern matched the call arguments.</summary>
+    public sealed record NoMatchingBranch(string AlgorithmName) : EvalError;
 
     /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
     public sealed record NumericOverflow() : EvalError;

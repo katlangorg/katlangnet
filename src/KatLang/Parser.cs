@@ -157,6 +157,7 @@ public sealed class Parser
         var output = new List<Expr>();
         var hasExplicitOutput = false;
         var hasImplicitOutput = false;
+        var conditionalBranches = new Dictionary<string, List<CondBranch>>();
 
         while (Current.Kind != TokenKind.EndOfFile
             && Current.Kind != TokenKind.RParen
@@ -219,6 +220,13 @@ public sealed class Parser
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body, IsPublic: true));
             }
+            // public conditional branch: public Name when ... → reject for first version
+            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicConditionalBranch())
+            {
+                ReportError("'public' cannot be applied to conditional algorithm branches in this version.");
+                Advance(); // consume 'public'
+                // Fall through: next iteration will parse the conditional branch normally
+            }
             // Explicit output definition: Output = expr
             else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
             {
@@ -242,10 +250,49 @@ public sealed class Parser
             {
                 var name = Current.StringValue!;
 
+                // Check for conflict: mixing conditional and normal definition
+                if (conditionalBranches.ContainsKey(name))
+                {
+                    ReportError($"Cannot mix conditional branch and normal property definition for '{name}'.");
+                }
+
                 Advance(); // consume identifier
                 Advance(); // consume '='
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body));
+            }
+            // Conditional algorithm branch: Name when (pattern) = body
+            else if (Current.Kind == TokenKind.Identifier && LookaheadIsWhen())
+            {
+                var name = Current.StringValue!;
+
+                // Check for conflict: mixing normal and conditional definition
+                if (properties.Any(p => p.Name == name))
+                {
+                    ReportError($"Cannot mix normal property definition and conditional branch for '{name}'.");
+                }
+
+                Advance(); // consume identifier
+                Advance(); // consume 'when'
+                Expect(TokenKind.LParen);
+                var pattern = ParsePattern();
+                Expect(TokenKind.RParen);
+
+                // Validate no duplicate binders in pattern
+                if (pattern.HasDuplicateBinds())
+                {
+                    ReportError($"Duplicate binder name in pattern for conditional branch '{name}'.");
+                }
+
+                Expect(TokenKind.Equals);
+                var body = ParseOutputLine();
+
+                if (!conditionalBranches.TryGetValue(name, out var branchList))
+                {
+                    branchList = [];
+                    conditionalBranches[name] = branchList;
+                }
+                branchList.Add(new CondBranch(pattern, body));
             }
             else
             {
@@ -258,6 +305,16 @@ public sealed class Parser
                 var exprs = ParseOutputLineExprs();
                 output.AddRange(exprs);
             }
+        }
+
+        // Convert conditional branches into Algorithm.Conditional properties
+        foreach (var (name, branches) in conditionalBranches)
+        {
+            var condAlg = new Algorithm.Conditional(
+                Parent: null,
+                Opens: [],
+                Branches: branches);
+            properties.Add(new Property(name, condAlg));
         }
 
         return new Algorithm.User(
@@ -379,6 +436,107 @@ public sealed class Parser
         return next + 1 < _tokens.Count
             && _tokens[next].Kind == TokenKind.Identifier
             && _tokens[next + 1].Kind == TokenKind.Equals;
+    }
+
+    /// <summary>
+    /// Checks if the token after the current identifier is 'when'.
+    /// Used to detect conditional algorithm branch definitions.
+    /// </summary>
+    private bool LookaheadIsWhen()
+    {
+        var next = _pos + 1;
+        return next < _tokens.Count && _tokens[next].Kind == TokenKind.KeywordWhen;
+    }
+
+    /// <summary>
+    /// Checks if 'public' keyword is followed by Identifier 'when'.
+    /// Used to detect and reject public conditional branch definitions.
+    /// </summary>
+    private bool LookaheadIsPublicConditionalBranch()
+    {
+        var next = _pos + 1; // skip 'public'
+        return next + 1 < _tokens.Count
+            && _tokens[next].Kind == TokenKind.Identifier
+            && _tokens[next + 1].Kind == TokenKind.KeywordWhen;
+    }
+
+    // ── Pattern parsing (for conditional algorithms) ────────────────────────
+
+    /// <summary>
+    /// Parses a pattern for conditional algorithm branches.
+    /// Patterns are comma-separated at the top level (creating a group pattern
+    /// when more than one element), with support for:
+    /// - integer literals (including negative)
+    /// - identifier binders
+    /// - nested parenthesized group patterns
+    /// </summary>
+    private Pattern ParsePattern()
+    {
+        var items = new List<Pattern>();
+        items.Add(ParsePatternAtom());
+
+        while (Current.Kind == TokenKind.Comma)
+        {
+            Advance(); // consume ','
+            items.Add(ParsePatternAtom());
+        }
+
+        return items.Count == 1 ? items[0] : new Pattern.Group(items);
+    }
+
+    /// <summary>
+    /// Parses a single atomic pattern element:
+    /// - number literal → Pattern.LitInt
+    /// - negative number → Pattern.LitInt with negated value
+    /// - identifier → Pattern.Bind
+    /// - ( pattern ) → nested group pattern
+    /// </summary>
+    private Pattern ParsePatternAtom()
+    {
+        switch (Current.Kind)
+        {
+            case TokenKind.Number:
+            {
+                var token = Advance();
+                return new Pattern.LitInt(token.NumValue);
+            }
+
+            case TokenKind.Minus:
+            {
+                Advance(); // consume '-'
+                if (Current.Kind != TokenKind.Number)
+                {
+                    ReportError("Expected number after '-' in pattern.");
+                    return new Pattern.Bind("_error_");
+                }
+                var token = Advance();
+                return new Pattern.LitInt(-token.NumValue);
+            }
+
+            case TokenKind.Identifier:
+            {
+                var token = Advance();
+                return new Pattern.Bind(token.StringValue!);
+            }
+
+            case TokenKind.LParen:
+            {
+                Advance(); // consume '('
+                var inner = ParsePattern();
+                Expect(TokenKind.RParen);
+                // Parentheses in patterns are structural: (a, b) → Group already;
+                // (b) → Group([Bind("b")]). A singleton (x) denotes a 1-element
+                // group pattern, enforcing arity on the matched result.
+                return inner is Pattern.Group ? inner : new Pattern.Group([inner]);
+            }
+
+            default:
+            {
+                ReportError($"Unexpected token in pattern: '{Current.Kind}'.");
+                Advance(); // skip for recovery
+                return new Pattern.Bind("_error_");
+            }
+        }
     }
 
     // ── Output line parsing ─────────────────────────────────────────────────

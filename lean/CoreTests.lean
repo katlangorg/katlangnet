@@ -478,6 +478,99 @@ def test21 : Bool :=
 #eval test21  -- should be true
 #eval runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))
 
+--------------------------------------------------------------------------------
+-- Conditional algorithm tests
+--------------------------------------------------------------------------------
+
+open KatLang (Pattern CondBranch)
+
+-- Test 22: K combinator via conditional algorithm
+-- K when (a, b) = a  →  K(10, 20) => 10
+def kAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.bind "a", .bind "b"],
+      alg [] [] [] [.param "a"] ⟩
+  ]
+
+def test34 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("K", kAlg)] [
+    .call (resolve "K") (alg [] [] [] [.num 10, .num 20])
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test34  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("K", kAlg)] [
+  .call (resolve "K") (alg [] [] [] [.num 10, .num 20])
+]))
+
+-- Test 35: Multiple branches with literal match
+-- Else when (1, (a, b)) = a
+-- Else when (c, (a, b)) = b
+def elseAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.litInt 1, .group [.bind "a", .bind "b"]],
+      alg [] [] [] [.param "a"] ⟩,
+    ⟨ .group [.bind "c", .group [.bind "a", .bind "b"]],
+      alg [] [] [] [.param "b"] ⟩
+  ]
+
+-- Else(1, (2, 3)) → first branch matches → a = 2
+def test35a : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Else", elseAlg)] [
+    .call (resolve "Else") (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#eval test35a  -- should be true
+
+-- Else(0, (2, 3)) → second branch matches → b = 3
+def test35b : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Else", elseAlg)] [
+    .call (resolve "Else") (alg [] [] [] [.num 0, .block (alg [] [] [] [.num 2, .num 3])])
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#eval test35b  -- should be true
+
+-- Test 36: Non-exhaustive — no match → error
+-- Sign when (1) = 1; Sign when (-1) = -1;  Sign(0) → noMatchingBranch
+def signAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .litInt 1,  alg [] [] [] [.num 1] ⟩,
+    ⟨ .litInt (-1), alg [] [] [] [.num (-1)] ⟩
+  ]
+
+def test36 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Sign", signAlg)] [
+    .call (resolve "Sign") (alg [] [] [] [.num 0])
+  ])) with
+  | Except.error _ => true    -- noMatchingBranch
+  | Except.ok _    => false
+
+#eval test36  -- should be true
+
+-- Test 37: First-match-wins
+-- F when (x) = 1  (catch-all, always matches)
+-- F when (1) = 2  (never reached)
+-- F(1) → 1
+def firstMatchAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .bind "x", alg [] [] [] [.num 1] ⟩,
+    ⟨ .litInt 1,  alg [] [] [] [.num 2] ⟩
+  ]
+
+def test37 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", firstMatchAlg)] [
+    .call (resolve "F") (alg [] [] [] [.num 1])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test37  -- should be true
+
 -- Test 22: 2-arg if false in addition → empty transparent, 10 + if(0, 5) → [10]
 def test22 : Bool :=
   match runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))) with

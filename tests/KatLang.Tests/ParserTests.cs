@@ -1336,4 +1336,78 @@ public class ParserTests
         var result = Parser.ParseSyntax("if(1, 2, 3, 4)");
         Assert.True(result.HasErrors);
     }
+
+    // ── Conditional algorithm parsing ───────────────────────────────────────
+
+    [Fact]
+    public void Parse_Conditional_SingleBranch()
+    {
+        var result = Parser.ParseSyntax("K when (a, b) = a");
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var prop = result.Root.Properties[0];
+        Assert.Equal("K", prop.Name);
+        Assert.IsType<Algorithm.Conditional>(prop.Value);
+        var cond = (Algorithm.Conditional)prop.Value;
+        Assert.Single(cond.Branches);
+        Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+    }
+
+    [Fact]
+    public void Parse_Conditional_MultipleBranches()
+    {
+        var source = """
+            F when (1) = 100
+            F when (x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_Conditional_DuplicateBinder_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a, a) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate binder"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_MixedWithNormalProperty_ReportsError()
+    {
+        var source = """
+            F = 1
+            F when (x) = x
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot mix"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_NegativeLiteralPattern()
+    {
+        var result = Parser.ParseSyntax("F when (-1) = 100");
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var pat = cond.Branches[0].Pattern;
+        // Single element pattern: outer parens consumed by algorithm parser,
+        // ParsePattern returns the atom directly (no group wrapper)
+        var lit = Assert.IsType<Pattern.LitInt>(pat);
+        Assert.Equal(-1m, lit.Value);
+    }
+
+    [Fact]
+    public void Parse_Conditional_NestedGroupPattern()
+    {
+        var result = Parser.ParseSyntax("F when (a, (b, c)) = a");
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var topGroup = Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+        Assert.Equal(2, topGroup.Items.Count);
+        Assert.IsType<Pattern.Bind>(topGroup.Items[0]);
+        Assert.IsType<Pattern.Group>(topGroup.Items[1]);
+    }
 }

@@ -67,8 +67,26 @@ public static class ParameterDetector
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
-            var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs);
-            newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic));
+            if (prop.Value is Algorithm.Conditional condAlg)
+            {
+                // Process each conditional branch body WITHOUT pattern binders in visibleNames.
+                // Binder names must be detected as implicit params (→ Expr.Param) so they
+                // resolve via valEnv at runtime, where EvalConditionalCall places the bindings.
+                var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
+                foreach (var branch in condAlg.Branches)
+                {
+                    var processedBody = ProcessAlgorithm(branch.Body, visibleNames, allPropertyAlgs);
+                    processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
+                }
+                var processedCond = new Algorithm.Conditional(
+                    condAlg.Parent, condAlg.Opens, processedBranches);
+                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic));
+            }
+            else
+            {
+                var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs);
+                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic));
+            }
         }
 
         if (!alg.IsParametrized)
