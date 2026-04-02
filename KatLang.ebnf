@@ -1,7 +1,7 @@
 Program         = Algorithm ;
 
 Algorithm       = { AlgorithmItem } ;
-AlgorithmItem   = OpenDeclaration | PropertyDefinition | OutputLine ;
+AlgorithmItem   = OpenDeclaration | PropertyDefinition | ConditionalBranch | OutputLine ;
 
 OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
@@ -10,6 +10,13 @@ OpenTarget      = StringLiteral              (* sugar: open 'url' → open load(
 
 PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
+
+ConditionalBranch  = Identifier "when" "(" Pattern ")" "=" OutputBundle ;
+
+Pattern            = PatternAtom { "," PatternAtom } ;
+PatternAtom        = Identifier                   (* bind   *)
+                   | [ "-" ] NumberLiteral         (* litInt *)
+                   | "(" Pattern ")" ;             (* group — always structural, even for singletons *)
 
 OutputLine      = OutputBundle ;
 OutputBundle    = OutputList ;
@@ -33,8 +40,8 @@ UnaryExpr       = "-" UnaryExpr
 
 PostfixExpr     = Primary { PostfixOp } ;
 PostfixOp       = ":" Primary
-                | "." Identifier [ CallArgs ]
-                | CallArgs ;    (* CallArgs only when LHS is Resolve or DotCall *)
+                | "." Identifier [ CallArgs ]   (* CallArgs only if adjacent: no whitespace before '(' *)
+                | CallArgs ;    (* CallArgs only when LHS is Resolve or DotCall and adjacent *)
 
 CallArgs        = BraceArgs | ParenArgs ;
 BraceArgs       = "{" Algorithm "}" ;

@@ -1,4 +1,4 @@
--- KatLang v0.7.13 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
+-- KatLang v0.8.0 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
