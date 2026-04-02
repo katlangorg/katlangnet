@@ -790,7 +790,8 @@ public sealed class Parser
                     var propName = Current.StringValue!;
                     Advance(); // consume identifier
 
-                    if (Current.Kind is TokenKind.LParen or TokenKind.LBrace)
+                    if (Current.Kind is TokenKind.LParen or TokenKind.LBrace
+                        && Current.Position == Previous.Position + Previous.Length)
                     {
                         // expr.Name(args) → DotCall(expr, Name, args)
                         // Lean: dotCall : Expr → Ident → Option Algorithm → Expr
@@ -804,7 +805,11 @@ public sealed class Parser
                     }
                     break;
 
-                case TokenKind.LParen or TokenKind.LBrace when lhs is Expr.Resolve or Expr.DotCall:
+                case TokenKind.LParen or TokenKind.LBrace
+                    when lhs is Expr.Resolve or Expr.DotCall
+                    // Only treat as call if '(' / '{' is immediately adjacent to the callee
+                    // (no whitespace). A space or newline before the paren starts a new expression.
+                    && Current.Position == Previous.Position + Previous.Length:
                     // Direct call: Name(args) or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callArgs = ParseCallArgs();

@@ -1343,6 +1343,22 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_DotCall_SameLineSpaceSeparated()
+    {
+        // "Add = a + b 2.Add(6)" → Add has body "a + b", then "2.Add(6)" is output
+        var source = "Add = a + b 2.Add(6)";
+        AssertEval(source, 8);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ParenExprReceiver_SameLineSpaceSeparated()
+    {
+        // "Add = a + b (2).Add(6)" → Add has body "a + b", then "(2).Add(6)" is output
+        var source = "Add = a + b (2).Add(6)";
+        AssertEval(source, 8);
+    }
+
+    [Fact]
     public void Eval_DotCall_DecimalLiteral_Receiver()
     {
         // 2.0.Double → Double(2.0) → x*2 = 4.0
