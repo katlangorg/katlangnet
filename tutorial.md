@@ -789,7 +789,7 @@ Compute the Nth Fibonacci number:
 
 ```
 // State: (a, b) — consecutive Fibonacci numbers
-Fib = b, a + b
+Fib = b~, a + b
 
 // 10 steps starting from (0, 1), take the first value:
 Fib.repeat(10, 0, 1) : 0
