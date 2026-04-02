@@ -18,7 +18,7 @@
    - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
    - [Name Resolution](#name-resolution)
 6. [Parameters](#parameters)
-   - [Reordering Parameters with Grace (`~`)](#reordering-parameters-with-grace-)
+   - [Reordering Parameters with Grace~ operator](#reordering-parameters-with-grace-operator)
 7. [Conditionals](#conditionals)
 8. [Repetition](#repetition)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
@@ -30,8 +30,8 @@
    - [Fibonacci Sequence](#fibonacci-sequence)
 10. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
-    - [`{}` vs `()`](#-vs-)
-11. [Structural Composition with `;`](#structural-composition-with-)
+    - [{} vs ()](#-vs-)
+11. [Structural Composition with ;](#structural-composition-with-)
 12. [Atoms](#atoms)
 13. [Conditional Algorithms (`when`)](#conditional-algorithms-when)
     - [Basic Pattern Matching](#basic-pattern-matching)
@@ -574,7 +574,7 @@ WeightedSum(1, 2, 3)
 
 **Result:** `23`
 
-### Reordering Parameters with Grace (`~`)
+### Reordering Parameters with Grace~ operator
 
 Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. The `~` operator (Grace) shifts a parameter's position.
 
@@ -842,7 +842,7 @@ Apply(Increment)
 
 **Result:** `10`
 
-### `{}` vs `()`
+### {} vs ()
 
 The distinction between braces and parentheses is critical:
 
@@ -869,7 +869,7 @@ When a block has no free parameters, `{}` and `()` produce the same result:
 
 ---
 
-## Structural Composition with `;`
+## Structural Composition with ;
 
 The `;` operator joins two algorithms into one, concatenating their output sequences. This is different from comma: comma separates outputs *within* a single algorithm, while `;` combines two *separate* algorithms into a composite.
 
