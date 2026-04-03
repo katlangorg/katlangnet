@@ -15,32 +15,36 @@ var source = """
 switch (KatLangEngine.Run(source))
 {
     case RunResult.Success s:
-        //Console.WriteLine("=== AST ===");
-        //PrintAlgorithm(s.Root, indent: 0);
-        //Console.WriteLine();
-        Console.WriteLine("=== Output ===");
-        foreach (var atom in s.Atoms)
-            Console.WriteLine(atom);
+        Console.WriteLine(s.ToDisplayString());
         break;
 
     case RunResult.ParseFailure p:
-        Console.WriteLine("=== Parse Errors ===");
         foreach (var error in p.Errors)
             Console.WriteLine(error);
         break;
 
     case RunResult.EvalFailure e:
-        //Console.WriteLine("=== AST ===");
-        //PrintAlgorithm(e.Root, indent: 0);
-        //Console.WriteLine();
-        Console.WriteLine("=== Eval Errors ===");
         foreach (var error in e.Errors)
             Console.WriteLine(error);
         break;
 }
 
-
 // ── Pretty-printer ──────────────────────────────────────────────────────────
+
+static void PrintAst(RunResult result)
+{
+    switch (result)
+    {
+        case RunResult.Success s:
+            Console.WriteLine("=== AST ===");
+            PrintAlgorithm(s.Root, indent: 0);
+            break;
+        case RunResult.EvalFailure p:
+            Console.WriteLine("=== AST ===");
+            PrintAlgorithm(p.Root, indent: 0);
+            break;
+    }
+}
 
 static void PrintAlgorithm(Algorithm alg, int indent)
 {

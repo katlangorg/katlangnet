@@ -25,8 +25,7 @@ var source = """
 switch (KatLangEngine.Run(source))
 {
     case RunResult.Success s:
-        foreach (var atom in s.Atoms)
-            Console.WriteLine(atom);
+        Console.WriteLine(s.ToDisplayString());
         break;
 
     case RunResult.ParseFailure p:

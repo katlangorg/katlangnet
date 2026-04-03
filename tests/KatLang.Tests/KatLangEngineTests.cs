@@ -172,7 +172,7 @@ public class KatLangEngineTests
         Assert.Contains("zero", text, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ── Parser.Parse with ParseOptions ───────────────────────────────────────
+    // ── Parser.Parse with RunOptions ─────────────────────────────────────────
 
     [Fact]
     public void Parser_Parse_WithoutOptions_Works()
@@ -185,7 +185,7 @@ public class KatLangEngineTests
     [Fact]
     public void Parser_Parse_WithNullParseOptions_Works()
     {
-        var result = Parser.Parse("42", (ParseOptions?)null);
+        var result = Parser.Parse("42", (RunOptions?)null);
         Assert.False(result.HasErrors);
         Assert.NotNull(result.Root);
     }
@@ -193,7 +193,7 @@ public class KatLangEngineTests
     [Fact]
     public void Parser_Parse_WithEmptyParseOptions_Works()
     {
-        var result = Parser.Parse("42", new ParseOptions());
+        var result = Parser.Parse("42", new RunOptions());
         Assert.False(result.HasErrors);
         Assert.NotNull(result.Root);
     }

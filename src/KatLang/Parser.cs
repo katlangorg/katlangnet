@@ -74,10 +74,10 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Full pipeline with optional configuration via <see cref="ParseOptions"/>.
+    /// Full pipeline with optional configuration via <see cref="RunOptions"/>.
     /// When <paramref name="options"/> is null, behaves identically to <see cref="Parse(string)"/>.
     /// </summary>
-    public static ParseResult Parse(string source, ParseOptions? options)
+    public static ParseResult Parse(string source, RunOptions? options)
     {
         if (options?.DownloadCode is not null)
             return Parse(source, options.DownloadCode, options.AllowedHosts);
