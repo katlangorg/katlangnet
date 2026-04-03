@@ -1,55 +1,44 @@
 ﻿using KatLang;
 
 var source = """
-    10 ^ 30
+    NetSalary = {
+        SocTax = grossSalary * 0.105
+        ChildCredit = numberOfChildren * 250
+        NonTaxMin = 550
+        TaxableIncome = grossSalary - SocTax - ChildCredit - NonTaxMin
+        IncomeTax = TaxableIncome * 0.255
+        grossSalary - SocTax - IncomeTax
+    }
+    NetSalary(1600, 2)
     """;
 
-Console.WriteLine("=== KatLang Parser Demo ===");
-Console.WriteLine(source);
-Console.WriteLine();
-
-// Parse
-var result = Parser.Parse(source, null);
-
-if (result.HasErrors)
+switch (KatLangEngine.Run(source))
 {
-    Console.WriteLine("Diagnostics:");
-    foreach (var diag in result.Diagnostics)
-        Console.WriteLine($"  [{diag.Severity}] at {diag.Span.StartLineNumber}:{diag.Span.StartColumn}: {diag.Message}");
-    Console.WriteLine();
+    case RunResult.Success s:
+        //Console.WriteLine("=== AST ===");
+        //PrintAlgorithm(s.Root, indent: 0);
+        //Console.WriteLine();
+        Console.WriteLine("=== Output ===");
+        foreach (var atom in s.Atoms)
+            Console.WriteLine(atom);
+        break;
+
+    case RunResult.ParseFailure p:
+        Console.WriteLine("=== Parse Errors ===");
+        foreach (var error in p.Errors)
+            Console.WriteLine(error);
+        break;
+
+    case RunResult.EvalFailure e:
+        //Console.WriteLine("=== AST ===");
+        //PrintAlgorithm(e.Root, indent: 0);
+        //Console.WriteLine();
+        Console.WriteLine("=== Eval Errors ===");
+        foreach (var error in e.Errors)
+            Console.WriteLine(error);
+        break;
 }
 
-var ast = result.Root;
-
-Console.WriteLine("=== AST ===");
-PrintAlgorithm(ast, indent: 0);
-
-// Evaluate
-Console.WriteLine();
-Console.WriteLine("=== Evaluation ===");
-var evalResult = Evaluator.Run(new Expr.Block(ast));
-if (evalResult.IsOk)
-{
-    var output = ResultToString(evalResult.Value);
-    Console.WriteLine(output);
-}
-else
-{
-    var err = evalResult.Error;
-    if (err.Span is { } span)
-        Console.WriteLine($"Evaluation failed at {span.StartLineNumber}:{span.StartColumn}-{span.EndLineNumber}:{span.EndColumn}: {err}");
-    else
-        Console.WriteLine($"Evaluation failed: {err}");
-}
-
-static void TestEval(string source, string expected)
-{
-    var ast = Parser.Parse(source).Root;
-    var evalResult = Evaluator.Run(new Expr.Block(ast));
-    var actual = evalResult.IsOk ? $"[{string.Join(", ", evalResult.Value.ToAtoms())}]" : $"failed: {evalResult.Error}";
-    var status = actual == expected ? "OK" : "FAIL";
-    Console.WriteLine($"{status}: {source.Replace("\n", "\\n")} => {actual} (expected {expected})");
-}
 
 // ── Pretty-printer ──────────────────────────────────────────────────────────
 

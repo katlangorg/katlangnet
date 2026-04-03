@@ -22,17 +22,22 @@ var source = """
     NetSalary(1600, 2)
     """;
 
-// Parse
-var result = Parser.Parse(source, null);
-
-// Evaluate
-var evalResult = Evaluator.Run(new Expr.Block(result.Root));
-if (evalResult.IsOk)
+switch (KatLangEngine.Run(source))
 {
-    foreach(var atom in evalResult.Value.ToAtoms())
-    {
-        Console.WriteLine(atom);
-    }
+    case RunResult.Success s:
+        foreach (var atom in s.Atoms)
+            Console.WriteLine(atom);
+        break;
+
+    case RunResult.ParseFailure p:
+        foreach (var error in p.Errors)
+            Console.WriteLine(error);
+        break;
+
+    case RunResult.EvalFailure e:
+        foreach (var error in e.Errors)
+            Console.WriteLine(error);
+        break;
 }
 ```
 

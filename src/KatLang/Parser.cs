@@ -73,6 +73,17 @@ public sealed class Parser
         return new ParseResult(resolved, diagnostics);
     }
 
+    /// <summary>
+    /// Full pipeline with optional configuration via <see cref="ParseOptions"/>.
+    /// When <paramref name="options"/> is null, behaves identically to <see cref="Parse(string)"/>.
+    /// </summary>
+    public static ParseResult Parse(string source, ParseOptions? options)
+    {
+        if (options?.DownloadCode is not null)
+            return Parse(source, options.DownloadCode, options.AllowedHosts);
+        return Parse(source);
+    }
+
     // ── Token access helpers ────────────────────────────────────────────────
 
     // Comment tokens are kept in the stream for consumers such as colorizers.
