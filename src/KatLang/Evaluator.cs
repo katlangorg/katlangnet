@@ -1453,10 +1453,15 @@ public static class Evaluator
 
         var (branch, bindings) = match.Value;
 
+        // Wire the branch body to the callee's scope so it can access the enclosing
+        // algorithm's properties (e.g. TomatoPrice, ApplePrice) via the parent chain.
+        // Mirrors Algorithm.childOf semantics used for normal property lookup.
+        var wiredBody = ChildOf(callee, branch.Body);
+
         // Evaluate the matched branch body with bindings prepended
         var newCtx = ctx.Push(callee);
         var newEnv = Concat(bindings, valEnv);
-        return EvalAlgOutput(branch.Body, newCtx, newEnv);
+        return EvalAlgOutput(wiredBody, newCtx, newEnv);
     }
 
     // ── User-defined call (Lean: evalUserCall) ────────────────────────────

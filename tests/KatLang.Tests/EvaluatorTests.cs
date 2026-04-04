@@ -2959,4 +2959,67 @@ public class EvaluatorTests
             """;
         AssertEval(source, 6);
     }
+
+    // ── Regression: conditional branch body accesses enclosing scope (issue #19) ──
+
+    [Fact]
+    public void Eval_Conditional_BranchBody_AccessesSiblingProperty()
+    {
+        // Branch bodies must be able to read sibling properties of the enclosing algorithm.
+        // Before the fix, branch.Body had no parent wiring → UnknownName for Price.
+        var source = """
+            Price = 0.80
+            Discount when (1) = Price * 0.9
+            Discount when (x) = Price
+            Discount(1)
+            """;
+        AssertEval(source, 0.72m);
+    }
+
+    [Fact]
+    public void Eval_Conditional_BranchBody_AccessesSiblingProperty_AllBranches()
+    {
+        // Verify every branch (not just the first) can access sibling properties.
+        var source = """
+            TomatoPrice = 1.20
+            ApplePrice = 0.80
+            CucumberPrice = 0.60
+            Expense when (1, qty) = TomatoPrice * qty
+            Expense when (2, qty) = ApplePrice * qty
+            Expense when (3, qty) = CucumberPrice * qty
+            Expense(1, 10), Expense(2, 10), Expense(3, 10)
+            """;
+        AssertEval(source, 12.0m, 8.0m, 6.0m);
+    }
+
+    [Fact]
+    public void Eval_Conditional_BranchBody_AccessesGrandparentProperty()
+    {
+        // Sibling properties defined one level higher than the conditional algorithm
+        // must also be reachable from branch bodies.
+        var source = """
+            Outer = {
+                Price = 2.50
+                Inner = {
+                    F when (x) = Price * x
+                    F(4)
+                }
+                Inner
+            }
+            Outer
+            """;
+        AssertEval(source, 10.0m);
+    }
+
+    [Fact]
+    public void Eval_Conditional_BranchBody_BinderAndSiblingCombined()
+    {
+        // Branch body uses both a pattern binder (qty) and a sibling property (Rate).
+        var source = """
+            Rate = 1.5
+            Scale when (qty) = Rate * qty
+            Scale(4)
+            """;
+        AssertEval(source, 6.0m);
+    }
 }

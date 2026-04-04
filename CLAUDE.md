@@ -60,6 +60,7 @@ C# must reproduce this logic exactly.
 ## Non-Negotiable Rules
 
 - Do not modify `KatLang.lean` unless explicitly instructed.
+- **Bug-fix exception**: When a bug is identified in both the Lean spec and the C# implementation, fix both simultaneously. The Lean model is the source of truth, so a bug in Lean must be corrected there first (or together with C#) to keep the spec accurate.
 - Do not invent syntax or semantics.
 - If intuition conflicts with Lean: Lean wins.
 - No placeholder logic or silent fallbacks.

@@ -1145,9 +1145,10 @@ mutual
     -- Try branches in order
     match matchBranches (Algorithm.branches callee) argShape with
     | some (branch, bindings) =>
-        -- Evaluate the matched branch body with bindings prepended
+        -- Wire branch body to callee so it can traverse the parent chain
+        let wiredBody := Algorithm.childOf callee branch.body
         let newCtx := EvalCtx.push callee ctx
-        evalAlgOutput branch.body newCtx (bindings ++ env)
+        evalAlgOutput wiredBody newCtx (bindings ++ env)
     | none =>
         .error (Error.noMatchingBranch calleeName)
 

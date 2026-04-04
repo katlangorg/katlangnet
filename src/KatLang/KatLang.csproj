@@ -7,12 +7,12 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.2</Version>
+		<Version>0.8.3</Version>
 		<Authors>Mikus Vanags</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA</Copyright>
 
-		<Description>KatLang v0.8.2 — a domain-specific programming language for calculations. Community contributions are welcome.</Description>
+		<Description>KatLang v0.8.3 — a domain-specific programming language for calculations. Community contributions are welcome.</Description>
 		<PackageTitle>KatLang</PackageTitle>
 		<PackageTags>katlang dsl calculations mathematics physics</PackageTags>
 
