@@ -2,7 +2,7 @@
 To learn more read the [KatLang tutorial](http://katlang.org/tutorial) or play with [KatLang online](http://katlang.org).
 
 ## Language Specification
-The authoritative KatLang specification is defined in [`KatLang.lean`](KatLang.lean) using the Lean theorem prover. It is the single source of truth for KatLang's syntax, semantics, and language rules. Independent implementations should conform to this specification.
+The authoritative KatLang specification is defined in [`KatLang.lean`](https://github.com/katlangorg/katlangnet/blob/main/lean/KatLang.lean) using the Lean theorem prover. It is the single source of truth for KatLang's syntax, semantics, and language rules. Independent implementations should conform to this specification.
 
 If you have ideas for improving or extending the KatLang language — new constructs, better semantics, or clearer language rules — you are warmly welcome to open a discussion or reach out directly. Good ideas are always worth a conversation.
 
