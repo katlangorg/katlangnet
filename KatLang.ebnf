@@ -11,7 +11,11 @@ OpenTarget      = StringLiteral              (* sugar: open 'url' → open load(
 PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
 
-ConditionalBranch  = Identifier "when" "(" Pattern ")" "=" OutputBundle ;
+ConditionalBranch  = Identifier "when" "(" Pattern ")" "=" OutputBundle
+                   | Identifier "(" Pattern ")" "=" OutputBundle ;
+                     (* The second form is sugar: Name(pattern) = body is equivalent to
+                        Name when (pattern) = body. Recognized only in definition position;
+                        in expression position Name(...) remains an ordinary call. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = Identifier                   (* bind   *)

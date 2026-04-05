@@ -954,6 +954,42 @@ Sign(42)
 
 A variable name in a pattern (like `x`) matches any value — it acts as a catch-all. Number literals match only that exact number. Place the catch-all branch last, since branches are tried in order.
 
+### Shorthand Clause Form
+
+Conditional algorithm branches may also be written without the `when` keyword, using a shorthand clause form:
+
+```
+F(1) = 100
+F(x) = 0
+
+F(1)
+F(999)
+```
+
+**Results:**
+```
+100
+0
+```
+
+The shorthand `Name(pattern) = body` is surface syntax sugar only — it is exactly equivalent to `Name when (pattern) = body`. Both forms elaborate to the same conditional-branch semantics. Call syntax is unchanged: in expression position (not followed by `=`), `F(1)` remains an ordinary call.
+
+You may freely mix both forms within the same conditional algorithm:
+
+```
+Else when (1, (a, b)) = a
+Else(c, (a, b)) = b
+
+Else(1, (20, 30))
+Else(0, (20, 30))
+```
+
+**Results:**
+```
+20
+30
+```
+
 ### The K Combinator: Ignoring a Parameter
 
 A classic problem in functional programming is the **K combinator** — an algorithm that accepts two arguments and returns only the first, discarding the second. In many languages this requires special syntax for unused parameters.

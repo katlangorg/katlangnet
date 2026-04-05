@@ -3157,4 +3157,189 @@ public class EvaluatorTests
             """;
         AssertEval(source, 10, 11, 12);
     }
+
+    // ── Conditional branch sugar: Name(pattern) = body ─────────────────────
+
+    [Fact]
+    public void Eval_ConditionalSugar_BasicLiteralMatch()
+    {
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            F(1)
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_FallbackBranch()
+    {
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            F(999)
+            """;
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_KCombinator()
+    {
+        var source = """
+            K(a, b) = a
+            K(10, 20)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_NestedGroupPattern()
+    {
+        var source = """
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
+            Else(1, (20, 30))
+            """;
+        AssertEval(source, 20);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_NestedGroupPattern_FallbackBranch()
+    {
+        var source = """
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
+            Else(0, (20, 30))
+            """;
+        AssertEval(source, 30);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_MixedWithExplicitWhen()
+    {
+        var source = """
+            F when (1) = 100
+            F(x) = 0
+            F(1)
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_MixedWithExplicitWhen_FallbackUsed()
+    {
+        var source = """
+            F when (1) = 100
+            F(x) = 0
+            F(42)
+            """;
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_DefinitionAndCallDisambiguated()
+    {
+        // First two lines: definitions (sugar); third line: call
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            F(1)
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_CallInExpressionContext()
+    {
+        // G = F(1) is a property definition where F(1) is a call expression
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            G = F(1)
+            G
+            """;
+        AssertEval(source, 100);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_MultipleOutput()
+    {
+        var source = """
+            F(1, x) = x, x + 1
+            F(2, x) = 0, x
+            F(1, 5)
+            """;
+        AssertEval(source, 5, 6);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_WithSiblingProperty()
+    {
+        var source = """
+            Price = 1.20
+            Expense(1, qty) = Price * qty
+            Expense(2, qty) = 0
+            Expense(1, 10)
+            """;
+        AssertEval(source, 12.0m);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_NonExhaustive_NoMatch()
+    {
+        var source = """
+            Sign(1) = 1
+            Sign(-1) = -1
+            Sign(0)
+            """;
+        var error = GetEvalError(source);
+        Assert.NotNull(error);
+        Assert.IsType<EvalError.WithContext>(error);
+        var inner = ((EvalError.WithContext)error!).Inner;
+        Assert.IsType<EvalError.NoMatchingBranch>(inner);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_FirstMatchWins()
+    {
+        var source = """
+            F(x) = 1
+            F(1) = 2
+            F(1)
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_ExtraImplicitParam_Rejected()
+    {
+        // b is not bound in the pattern; should be rejected
+        var source = """
+            F(1, a) = a + b
+            F(2, a) = a
+            F(1, 5)
+            """;
+        var parseResult = Parser.Parse(source);
+        Assert.True(parseResult.HasErrors);
+        Assert.Contains(parseResult.Diagnostics, d =>
+            d.Message.Contains("not defined in the branch pattern"));
+    }
+
+    [Fact]
+    public void Eval_ConditionalSugar_ProducesSameResultAsExplicitWhen()
+    {
+        // Both syntax forms should give the same result
+        var sugarSource = """
+            F(1) = 100
+            F(x) = 0
+            F(1), F(42)
+            """;
+        var explicitSource = """
+            F when (1) = 100
+            F when (x) = 0
+            F(1), F(42)
+            """;
+        AssertEval(sugarSource, 100, 0);
+        AssertEval(explicitSource, 100, 0);
+    }
 }

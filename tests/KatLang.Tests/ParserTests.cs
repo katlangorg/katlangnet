@@ -1667,4 +1667,191 @@ public class ParserTests
         // Error span should point to the third branch (line 3)
         Assert.Equal(3, diag.Span.StartLineNumber);
     }
+
+    // ── Conditional branch sugar: Name(pattern) = body ─────────────────────
+
+    [Fact]
+    public void Parse_ConditionalSugar_SingleBranch()
+    {
+        var result = Parser.ParseSyntax("K(a, b) = a");
+        Assert.False(result.HasErrors);
+        var prop = Assert.Single(result.Root.Properties);
+        Assert.Equal("K", prop.Name);
+        var cond = Assert.IsType<Algorithm.Conditional>(prop.Value);
+        Assert.Single(cond.Branches);
+        Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_MultipleBranches()
+    {
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_NestedGroupPattern()
+    {
+        var source = """
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+        // First branch pattern: group[litInt(1), group[bind(a), bind(b)]]
+        var pattern0 = Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+        Assert.Equal(2, pattern0.Items.Count);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_NegativeLiteralPattern()
+    {
+        var result = Parser.ParseSyntax("G(-1) = 100");
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var lit = Assert.IsType<Pattern.LitInt>(cond.Branches[0].Pattern);
+        Assert.Equal(-1m, lit.Value);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_MixedWithExplicitWhen()
+    {
+        // Mix both syntax forms within the same conditional algorithm
+        var source = """
+            F when (1) = 100
+            F(x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_MixedWithExplicitWhen_Reversed()
+    {
+        // Sugar first, then explicit when
+        var source = """
+            F(1) = 100
+            F when (x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_DuplicateBinder_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F(a, a) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate binder"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_GraceInPattern_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F(~a, b) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch patterns"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_GraceInBody_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F(a) = ~a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_MixedWithNormalProperty_ReportsError()
+    {
+        var source = """
+            F = 10
+            F(x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot mix"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_InputArityMismatch_ReportsError()
+    {
+        var source = """
+            F(1, a) = a
+            F(2, a, b) = b
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("same top-level pattern arity"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_OutputArityMismatch_ReportsError()
+    {
+        var source = """
+            F(1, a) = a, 1
+            F(2, a) = a
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("same top-level output arity"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_PublicRejected()
+    {
+        var source = "public F(x) = x";
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to conditional algorithm branches"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_DefinitionVsCall_Disambiguated()
+    {
+        // First two lines are definitions (followed by =), last line is a call (no =)
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            F(1)
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        // One property (conditional) + one output expression (the call)
+        Assert.Single(result.Root.Properties);
+        Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Single(result.Root.Output);
+    }
+
+    [Fact]
+    public void Parse_ConditionalSugar_CallInBodyRemainsCall()
+    {
+        // F(x) in the body of G is a call, not a branch definition
+        var source = """
+            F when (1) = 100
+            F when (x) = 0
+            G = F(1)
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Properties.Count);
+        // G is a regular property (added first), F is conditional (added after loop)
+        var gProp = result.Root.Properties.Single(p => p.Name == "G");
+        var fProp = result.Root.Properties.Single(p => p.Name == "F");
+        Assert.IsType<Algorithm.Conditional>(fProp.Value);
+        // G's body should be a User algorithm, not Conditional
+        Assert.IsType<Algorithm.User>(gProp.Value);
+    }
 }

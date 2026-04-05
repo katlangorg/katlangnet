@@ -184,7 +184,7 @@ public static class ParameterDetector
                 // Find the span for the first occurrence of this free identifier
                 var span = FindResolveSpan(body.Output, freeName);
                 diagnostics.Add(new Diagnostic(
-                    $"Identifier '{freeName}' in conditional branch '{branchName}' is not defined in the 'when' pattern. " +
+                    $"Identifier '{freeName}' in conditional branch '{branchName}' is not defined in the branch pattern. " +
                     $"All parameters of conditional branches must be declared in the pattern.",
                     DiagnosticSeverity.Error,
                     span ?? new SourceSpan(0, 0, 0, 0)));

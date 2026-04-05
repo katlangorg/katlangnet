@@ -21,6 +21,15 @@
 --     - `open 'url'` desugars to `open load('url')` before elaboration.
 --     Raw string literals do NOT survive into the canonical open list.
 --
+-- Conditional branch syntax sugar (parser-only, not in core model):
+--   Conditional algorithm branches have two equivalent surface syntaxes:
+--     1. Explicit:  `Name when (pattern) = body`  (primary form)
+--     2. Shorthand: `Name(pattern) = body`         (sugar)
+--   The shorthand form is recognized only in definition position.
+--   In expression position, `Name(args)` remains an ordinary call.
+--   Both forms elaborate to the same CondBranch semantic representation.
+--   The `when` keyword remains the primary explicit syntax; the shorthand is optional sugar.
+--
 -- Explicit output syntax (exact-syntax sugar, parser-only):
 --   `Output = expr` inside an algorithm body is special output-definition syntax.
 --   It is NOT a normal property assignment — it lowers to the Algorithm's `output`
