@@ -129,6 +129,10 @@ public abstract record Pattern
 /// <summary>
 /// A branch of a conditional algorithm: a pattern and a body algorithm.
 /// Lean: <c>CondBranch</c> structure.
+/// The pattern is the complete input specification of the branch.
+/// Branch bodies receive bindings only from the matched pattern (plus ordinary
+/// lexical resolution). No extra implicit parameters are inferred.
+/// Grace <c>~</c> is not permitted in branch patterns or bodies.
 /// </summary>
 public sealed record CondBranch(Pattern Pattern, Algorithm Body);
 
@@ -216,6 +220,12 @@ public abstract record Algorithm
     /// At call time, arguments are evaluated and matched against branch patterns
     /// in source order. The first matching branch body is evaluated.
     /// If no branch matches, evaluation fails with <c>NoMatchingBranch</c>.
+    ///
+    /// <para><b>Full-input-specification rule</b>: each branch pattern <c>when (...)</c>
+    /// is the complete input specification of that branch. Branch bodies do NOT
+    /// infer additional implicit parameters from free identifiers. All branch inputs
+    /// must appear in the pattern. Unused bound names are allowed. Grace <c>~</c> is
+    /// not permitted in branch patterns or bodies.</para>
     /// </summary>
     public sealed record Conditional : Algorithm
     {

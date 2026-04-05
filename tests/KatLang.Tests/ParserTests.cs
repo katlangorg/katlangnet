@@ -1410,4 +1410,56 @@ public class ParserTests
         Assert.IsType<Pattern.Bind>(topGroup.Items[0]);
         Assert.IsType<Pattern.Group>(topGroup.Items[1]);
     }
+
+    // ── Grace rejection in conditional branch patterns ──────────────────────
+
+    [Fact]
+    public void Parse_Conditional_PrefixGraceInPattern_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (~a, b) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch patterns"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_PostfixGraceInPattern_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a~, b) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch patterns"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_GraceInNestedPattern_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a, (~b, c)) = a");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch patterns"));
+    }
+
+    // ── Grace rejection in conditional branch bodies ────────────────────────
+
+    [Fact]
+    public void Parse_Conditional_PrefixGraceInBody_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a, b) = ~a + b");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_PostfixGraceInBody_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a, b) = a~ + b");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_GraceInNestedBodyExpr_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F when (a, b) = a * ~b");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+    }
 }

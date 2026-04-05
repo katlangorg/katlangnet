@@ -130,7 +130,23 @@ def builtinArityDesc : Builtin -> String
     - `group ps`: matches `Result.group rs` with same arity, each sub-pattern matching
 
     Patterns are a separate semantic type, distinct from Expr.
-    They do not appear in executable expression positions. -/
+    They do not appear in executable expression positions.
+
+    **Full-input-specification rule**: In a conditional algorithm, the branch
+    pattern `when (...)` is the COMPLETE INPUT SPECIFICATION of that branch.
+    - All branch inputs must appear in the pattern.
+    - Branch bodies do NOT infer additional implicit parameters from free
+      identifiers.  Only names bound by the pattern (plus ordinary lexical /
+      property / open / builtin resolution) are available in the body.
+    - Unused pattern-bound names are allowed.
+    - Grace `~` is NOT permitted in patterns or branch bodies.  Patterns
+      contain only matching constructs (binders, integer literals, nested
+      groups).  Branch bodies must not use Grace because conditional branches
+      have no implicit parameter inference or reordering to apply it to.
+
+    This keeps conditional algorithms self-contained: branch selection and
+    branch binding are the same operation, with no hidden remaining parameters
+    and no interaction with Grace-based parameter reordering. -/
 inductive Pattern where
   | bind   : Ident -> Pattern
   | litInt : Int -> Pattern
@@ -179,7 +195,12 @@ mutual
     isPublic : Bool
     deriving Repr
 
-  /-- A branch of a conditional algorithm: a pattern and a body algorithm. -/
+  /-- A branch of a conditional algorithm: a pattern and a body algorithm.
+      The pattern is the complete input specification of the branch.
+      Branch bodies receive bindings ONLY from the matched pattern (plus
+      ordinary lexical resolution).  No extra implicit parameters are inferred
+      from free identifiers in the body.  Grace `~` is not allowed in patterns
+      or branch bodies. -/
   structure CondBranch where
     pattern : Pattern
     body    : Algorithm
@@ -197,7 +218,14 @@ mutual
     /-- Conditional algorithm: ordered pattern branches tried at call time.
         At call time, arguments are evaluated and matched against branch patterns
         in source order.  The first matching branch body is evaluated.
-        If no branch matches, evaluation fails with noMatchingBranch. -/
+        If no branch matches, evaluation fails with noMatchingBranch.
+
+        **Full-input-specification invariant**: each branch pattern `when (...)`
+        declares the complete input interface of that branch.  Branch bodies do
+        NOT infer additional implicit parameters from free identifiers — only
+        names bound by the pattern and names resolvable through ordinary lexical /
+        property / open / builtin lookup are available.  Grace `~` is forbidden
+        in both patterns and branch bodies. -/
     | conditional :
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
@@ -1132,7 +1160,13 @@ mutual
       5. If no branch matches, raise noMatchingBranch error.
 
       Unlike evalUserCall, conditional algorithms do NOT use params/unpackArgs.
-      The full argument shape is matched structurally against branch patterns. -/
+      The full argument shape is matched structurally against branch patterns.
+
+      **Full-input-specification rule**: the branch body receives its input
+      bindings ONLY from the matched pattern.  No extra implicit parameters are
+      inferred from free identifiers in the body.  Free identifiers in the body
+      must resolve through ordinary lexical / property / open / builtin lookup,
+      or evaluation fails with unknownName. -/
   partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
     let wiredArgs := wireToCaller ctx args
@@ -1349,7 +1383,14 @@ end
     IMPORTANT: Opens CAN suppress implicit parameters. If an opened library
     provides `name`, the surface layer emits `Expr.resolve name`, not a param.
     This is intentional: opens have lexical precedence in the ownership-first model.
-    The trade-off is accepted: shadowing via opens is rare and explicit (listed in `opens:`). -/
+    The trade-off is accepted: shadowing via opens is rare and explicit (listed in `opens:`).
+
+    NOTE: This function is used only for ORDINARY algorithms.
+    Conditional algorithm branch bodies do NOT use implicit parameter inference.
+    In a conditional branch, the pattern `when (...)` is the complete input
+    specification; free identifiers in the body must resolve lexically or produce
+    an error.  Pattern-bound names are rewritten to `Expr.param` by the surface
+    layer directly, without using this function. -/
 def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Bool :=
   match lookupLexical a name ctx with
   | .ok _ => .ok false                      -- Name resolves → NOT a param

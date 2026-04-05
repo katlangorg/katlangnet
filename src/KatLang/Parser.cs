@@ -298,6 +298,12 @@ public sealed class Parser
                 Expect(TokenKind.Equals);
                 var body = ParseOutputLine();
 
+                // Validate no Grace operators in branch body
+                if (ContainsGrace(body.Output))
+                {
+                    ReportError($"Grace is not allowed in conditional branch bodies for '{name}'.");
+                }
+
                 if (!conditionalBranches.TryGetValue(name, out var branchList))
                 {
                     branchList = [];
@@ -474,6 +480,31 @@ public sealed class Parser
     // ── Pattern parsing (for conditional algorithms) ────────────────────────
 
     /// <summary>
+    /// Checks whether any expression in the list contains a <see cref="Expr.Grace"/> node.
+    /// Used to reject Grace in conditional branch bodies.
+    /// </summary>
+    private static bool ContainsGrace(IReadOnlyList<Expr> exprs)
+    {
+        foreach (var expr in exprs)
+            if (ContainsGrace(expr))
+                return true;
+        return false;
+    }
+
+    private static bool ContainsGrace(Expr expr) => expr switch
+    {
+        Expr.Grace => true,
+        Expr.Binary(_, var l, var r) => ContainsGrace(l) || ContainsGrace(r),
+        Expr.Unary(_, var o) => ContainsGrace(o),
+        Expr.Index(var t, var s) => ContainsGrace(t) || ContainsGrace(s),
+        Expr.Combine(var l, var r) => ContainsGrace(l) || ContainsGrace(r),
+        Expr.DotCall(var t, _, var a) => ContainsGrace(t) || (a is not null && ContainsGrace(a.Output)),
+        Expr.Call(var f, var a) => ContainsGrace(f) || ContainsGrace(a.Output),
+        Expr.Block(var alg) => ContainsGrace(alg.Output),
+        _ => false,
+    };
+
+    /// <summary>
     /// Parses a pattern for conditional algorithm branches.
     /// Patterns are comma-separated at the top level (creating a group pattern
     /// when more than one element), with support for:
@@ -501,11 +532,20 @@ public sealed class Parser
     /// - negative number → Pattern.LitInt with negated value
     /// - identifier → Pattern.Bind
     /// - ( pattern ) → nested group pattern
+    /// Grace `~` is rejected in patterns.
     /// </summary>
     private Pattern ParsePatternAtom()
     {
         switch (Current.Kind)
         {
+            case TokenKind.Tilde:
+            {
+                ReportError("Grace is not allowed in conditional branch patterns.");
+                while (Current.Kind == TokenKind.Tilde) Advance(); // skip tildes
+                // Try to parse remaining atom for recovery
+                return ParsePatternAtom();
+            }
+
             case TokenKind.Number:
             {
                 var token = Advance();
@@ -527,6 +567,11 @@ public sealed class Parser
             case TokenKind.Identifier:
             {
                 var token = Advance();
+                if (Current.Kind == TokenKind.Tilde)
+                {
+                    ReportError("Grace is not allowed in conditional branch patterns.");
+                    while (Current.Kind == TokenKind.Tilde) Advance(); // skip tildes
+                }
                 return new Pattern.Bind(token.StringValue!);
             }
 

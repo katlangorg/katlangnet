@@ -3022,4 +3022,87 @@ public class EvaluatorTests
             """;
         AssertEval(source, 6.0m);
     }
+
+    // ── Full-input-specification rule: conditional branch params ─────────
+
+    [Fact]
+    public void Eval_Conditional_FullPattern_IgnoredBinder()
+    {
+        // K when (a, b) = a — b is intentionally unused, no error
+        var source = """
+            K when (a, b) = a
+            K(10, 20)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Conditional_FullPattern_StructuredBranches()
+    {
+        // Each branch pattern fully describes accepted input shape
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (c, (a, b)) = b
+            Else(1, (20, 30))
+            """;
+        AssertEval(source, 20);
+    }
+
+    [Fact]
+    public void Eval_Conditional_FullPattern_CatchAllBranch()
+    {
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (c, (a, b)) = b
+            Else(0, (20, 30))
+            """;
+        AssertEval(source, 30);
+    }
+
+    [Fact]
+    public void Eval_Conditional_ExtraImplicitParam_Rejected()
+    {
+        // F when (1, a) = a + b — b is not bound by pattern and not a resolved name
+        // This must fail because b is not a pattern binder and not lexically resolvable.
+        var source = """
+            F when (1, a) = a + b
+            F(1, 5)
+            """;
+        var error = GetEvalError(source);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void Eval_Conditional_FreeIdResolvedLexically_Succeeds()
+    {
+        // Pattern binder + lexically resolvable name: Rate is a sibling property
+        var source = """
+            Rate = 2
+            F when (x) = x * Rate
+            F(5)
+            """;
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Conditional_OrdinaryAlgorithmStillInfersParams()
+    {
+        // Ordinary (non-conditional) algorithms still infer implicit parameters
+        var source = """
+            Add = a + b
+            Add(3, 4)
+            """;
+        AssertEval(source, 7);
+    }
+
+    [Fact]
+    public void Eval_Conditional_OrdinaryAlgorithmGraceStillWorks()
+    {
+        // Grace still works in ordinary algorithms
+        var source = """
+            Sub = a - ~b
+            Sub(3, 10)
+            """;
+        AssertEval(source, 7);
+    }
 }

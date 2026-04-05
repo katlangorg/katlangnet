@@ -1422,6 +1422,12 @@ public static class Evaluator
     /// 3. Try branches in order; first match wins.
     /// 4. Evaluate selected branch body with pattern bindings prepended to env.
     /// 5. If no branch matches, raise NoMatchingBranch error.
+    ///
+    /// <para><b>Full-input-specification rule</b>: the branch body receives input
+    /// bindings ONLY from the matched pattern. No extra implicit parameters are
+    /// inferred. Free identifiers in the body resolve through ordinary lexical /
+    /// property / open / builtin lookup, or produce unknownName at runtime.</para>
+    ///
     /// Lean: evalConditionalCall.
     /// </summary>
     private static EvalResult<Result> EvalConditionalCall(

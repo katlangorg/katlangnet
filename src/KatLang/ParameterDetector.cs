@@ -69,13 +69,15 @@ public static class ParameterDetector
         {
             if (prop.Value is Algorithm.Conditional condAlg)
             {
-                // Process each conditional branch body WITHOUT pattern binders in visibleNames.
-                // Binder names must be detected as implicit params (→ Expr.Param) so they
-                // resolve via valEnv at runtime, where EvalConditionalCall places the bindings.
+                // Process each conditional branch body with the full-input-specification rule:
+                // - Pattern binder names are rewritten to Expr.Param (resolved via valEnv at runtime)
+                // - NO other free identifiers become implicit parameters
+                // - The branch body's Params list is empty (bindings come from pattern matching)
                 var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
                 foreach (var branch in condAlg.Branches)
                 {
-                    var processedBody = ProcessAlgorithm(branch.Body, visibleNames, allPropertyAlgs);
+                    var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
+                    var processedBody = ProcessConditionalBranchBody(branch.Body, visibleNames, allPropertyAlgs, binderNames);
                     processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
                 }
                 var processedCond = new Algorithm.Conditional(
@@ -124,6 +126,167 @@ public static class ParameterDetector
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+    }
+
+    /// <summary>
+    /// Processes a conditional branch body under the full-input-specification rule:
+    /// - Pattern binder names are rewritten to <see cref="Expr.Param"/> (resolved via valEnv at runtime).
+    /// - No other free identifiers become implicit parameters.
+    /// - The branch body's <see cref="Algorithm.Params"/> list is empty.
+    /// - Nested algorithms within the body are processed normally.
+    ///
+    /// This enforces the invariant that conditional branch inputs come ONLY from the
+    /// branch pattern. Free identifiers in the body that are not pattern-bound must
+    /// resolve through ordinary lexical / property / open / builtin lookup.
+    /// </summary>
+    private static Algorithm ProcessConditionalBranchBody(
+        Algorithm body,
+        HashSet<string> visibleNames,
+        Dictionary<string, Algorithm> propertyAlgs,
+        HashSet<string> binderNames)
+    {
+        // Collect local property names
+        var localNames = new HashSet<string>();
+        var allPropertyAlgs = new Dictionary<string, Algorithm>(propertyAlgs);
+        foreach (var prop in body.Properties)
+        {
+            localNames.Add(prop.Name);
+            allPropertyAlgs[prop.Name] = prop.Value;
+        }
+
+        // Build visible names for nested processing (includes binder names so they
+        // are NOT detected as implicit params by nested ProcessAlgorithm calls)
+        var bodyVisibleNames = new HashSet<string>(visibleNames);
+        foreach (var name in localNames)
+            bodyVisibleNames.Add(name);
+        foreach (var name in binderNames)
+            bodyVisibleNames.Add(name);
+
+        CollectOpenVisibleNames(body.Opens, allPropertyAlgs, bodyVisibleNames);
+
+        // Process nested properties normally
+        var newProperties = new List<Property>(body.Properties.Count);
+        foreach (var prop in body.Properties)
+        {
+            var processedProp = ProcessAlgorithm(prop.Value, bodyVisibleNames, allPropertyAlgs);
+            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic));
+        }
+
+        // Rewrite only binder names Resolve → Param; leave all others as-is.
+        // Process nested blocks/calls normally for their own parameter detection.
+        var rewrittenOutput = new List<Expr>(body.Output.Count);
+        foreach (var expr in body.Output)
+            rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyVisibleNames, allPropertyAlgs));
+
+        return body with
+        {
+            Params = [],  // No implicit params — bindings come from pattern matching
+            Properties = newProperties,
+            Output = rewrittenOutput,
+        };
+    }
+
+    /// <summary>
+    /// Rewrites <see cref="Expr.Resolve"/> → <see cref="Expr.Param"/> ONLY for pattern binder names.
+    /// Other identifiers remain as <see cref="Expr.Resolve"/> (lexical lookup at runtime).
+    /// Grace wrappers are stripped (they should not appear in conditional bodies, but handle gracefully).
+    /// Nested algorithms are processed via <see cref="ProcessAlgorithm"/> for their own scope.
+    /// </summary>
+    private static Expr RewriteBinderRefs(
+        Expr expr,
+        HashSet<string> binderNames,
+        HashSet<string> visibleNames,
+        Dictionary<string, Algorithm> propertyAlgs)
+    {
+        switch (expr)
+        {
+            case Expr.Grace(var inner, _):
+                // Grace in conditional branch body is a parse error (already reported).
+                // Strip it here for error recovery so downstream processing doesn't crash.
+                return RewriteBinderRefs(inner, binderNames, visibleNames, propertyAlgs);
+
+            case Expr.Resolve(var name) when binderNames.Contains(name):
+                return new Expr.Param(name) { Span = expr.Span };
+
+            case Expr.Binary(var op, var left, var right):
+                return new Expr.Binary(op,
+                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs),
+                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+
+            case Expr.Unary(var op, var operand):
+                return new Expr.Unary(op, RewriteBinderRefs(operand, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+
+            case Expr.Index(var target, var selector):
+                return new Expr.Index(
+                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs),
+                    RewriteBinderRefs(selector, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+
+            case Expr.Combine(var left, var right):
+                return new Expr.Combine(
+                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs),
+                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+
+            case Expr.DotCall(var target, var name, null):
+                return new Expr.DotCall(
+                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs),
+                    name) { Span = expr.Span };
+
+            case Expr.DotCall(var target, var name, var dotArgs):
+            {
+                var rewrittenTarget = RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs);
+                if (dotArgs is null)
+                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span };
+                if (dotArgs.IsParametrized)
+                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs)) { Span = expr.Span };
+                var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
+                foreach (var argExpr in dotArgs.Output)
+                    rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                var processedProps = new List<Property>(dotArgs.Properties.Count);
+                foreach (var prop in dotArgs.Properties)
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                return new Expr.DotCall(rewrittenTarget, name,
+                    dotArgs with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+            }
+
+            case Expr.Block(var alg):
+                if (alg.IsParametrized)
+                {
+                    return new Expr.Block(ProcessAlgorithm(alg, visibleNames, propertyAlgs)) { Span = expr.Span };
+                }
+                else
+                {
+                    var rewrittenOutput = new List<Expr>(alg.Output.Count);
+                    foreach (var argExpr in alg.Output)
+                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                    var processedProps = new List<Property>(alg.Properties.Count);
+                    foreach (var prop in alg.Properties)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                    return new Expr.Block(alg with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                }
+
+            case Expr.Call(var func, var args):
+                if (args.IsParametrized)
+                {
+                    return new Expr.Call(
+                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs),
+                        ProcessAlgorithm(args, visibleNames, propertyAlgs)) { Span = expr.Span };
+                }
+                else
+                {
+                    var rewrittenOutput = new List<Expr>(args.Output.Count);
+                    foreach (var argExpr in args.Output)
+                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                    var processedProps = new List<Property>(args.Properties.Count);
+                    foreach (var prop in args.Properties)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                    return new Expr.Call(
+                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs),
+                        args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                }
+
+            default:
+                return expr;
+        }
     }
 
     /// <summary>

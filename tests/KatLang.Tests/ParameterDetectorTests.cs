@@ -443,4 +443,66 @@ public class ParameterDetectorTests
         Assert.Single(ast.Params);
         Assert.Equal("val", ast.Params[0]);
     }
-}
+    // ── Conditional branch: full-input-specification rule ──────────────────
+
+    [Fact]
+    public void Detect_ConditionalBranch_BindersBecomeParm_NoExtraParams()
+    {
+        // Pattern binders (a, b) become Expr.Param.
+        // The branch body's Algorithm.Params must be empty (no implicit params).
+        var source = "K when (a, b) = a + b";
+        var ast = ParseAndDetect(source);
+
+        var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
+        var branch = cond.Branches[0];
+
+        // Branch body has no implicit params
+        Assert.Empty(branch.Body.Params);
+
+        // Output contains Param nodes for pattern binders
+        var binary = Assert.IsType<Expr.Binary>(branch.Body.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left);
+        Assert.IsType<Expr.Param>(binary.Right);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_FreeIdNotBound_StaysResolve()
+    {
+        // Free identifier 'Rate' is a sibling property → stays as Expr.Resolve, not Expr.Param
+        var source = """
+            Rate = 2
+            F when (x) = x * Rate
+            """;
+        var ast = ParseAndDetect(source);
+
+        var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[1].Value);
+        var branch = cond.Branches[0];
+
+        // Branch body has no implicit params
+        Assert.Empty(branch.Body.Params);
+
+        var binary = Assert.IsType<Expr.Binary>(branch.Body.Output[0]);
+        var left = Assert.IsType<Expr.Param>(binary.Left); // x is a binder
+        Assert.Equal("x", left.Name);
+        var right = Assert.IsType<Expr.Resolve>(binary.Right); // Rate is a sibling
+        Assert.Equal("Rate", right.Name);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_UnresolvedFreeId_StaysResolve()
+    {
+        // Free identifier 'b' not bound by pattern and not a sibling → stays as Expr.Resolve
+        // (will fail at runtime, but ParameterDetector should NOT turn it into a param)
+        var source = "F when (a) = a + b";
+        var ast = ParseAndDetect(source);
+
+        var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
+        var branch = cond.Branches[0];
+
+        // Branch body has no implicit params
+        Assert.Empty(branch.Body.Params);
+
+        var binary = Assert.IsType<Expr.Binary>(branch.Body.Output[0]);
+        Assert.IsType<Expr.Param>(binary.Left); // a is a binder
+        Assert.IsType<Expr.Resolve>(binary.Right); // b stays as Resolve (will fail at runtime)
+    }}
