@@ -1,15 +1,15 @@
 ﻿using KatLang;
 
 var source = """
-    NetSalary = {
-        SocTax = grossSalary * 0.105
-        ChildCredit = numberOfChildren * 250
-        NonTaxMin = 550
-        TaxableIncome = grossSalary - SocTax - ChildCredit - NonTaxMin
-        IncomeTax = TaxableIncome * 0.255
-        grossSalary - SocTax - IncomeTax
-    }
-    NetSalary(1600, 2)
+    TomatoPrice = 1.20
+    ApplePrice = 0.80
+    CucumberPrice = 0.60
+
+    Expense when (1, qty) = TomatoPrice * qty
+    Expense when (2, a, qty) = ~a * qty //error should be in this line
+    Expense when (3, qty) = CucumberPrice * qty //but it is shown in this line
+
+    Expense(1, 0.80, 3)
     """;
 
 switch (KatLangEngine.Run(source))

@@ -1462,4 +1462,18 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
     }
+
+    [Fact]
+    public void Parse_Conditional_GraceInBody_ErrorSpanPointsToGraceLine()
+    {
+        var source = """
+            F when (1, qty) = qty
+            F when (2, a, qty) = ~a * qty
+            F when (3, qty) = qty
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+        Assert.Equal(2, diag.Span.StartLineNumber);
+    }
 }

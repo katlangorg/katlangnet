@@ -130,6 +130,14 @@ public sealed class Parser
                 Current.Column + Math.Max(Current.Length, 1) - 1)));
     }
 
+    private void ReportError(string message, SourceSpan span)
+    {
+        _diagnostics.Add(new Diagnostic(
+            message,
+            DiagnosticSeverity.Error,
+            span));
+    }
+
     private Token Previous
     {
         get
@@ -299,9 +307,10 @@ public sealed class Parser
                 var body = ParseOutputLine();
 
                 // Validate no Grace operators in branch body
-                if (ContainsGrace(body.Output))
+                var graceSpan = FindGraceSpan(body.Output);
+                if (graceSpan is not null)
                 {
-                    ReportError($"Grace is not allowed in conditional branch bodies for '{name}'.");
+                    ReportError($"Grace is not allowed in conditional branch bodies for '{name}'.", graceSpan);
                 }
 
                 if (!conditionalBranches.TryGetValue(name, out var branchList))
@@ -480,28 +489,31 @@ public sealed class Parser
     // ── Pattern parsing (for conditional algorithms) ────────────────────────
 
     /// <summary>
-    /// Checks whether any expression in the list contains a <see cref="Expr.Grace"/> node.
-    /// Used to reject Grace in conditional branch bodies.
+    /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Grace"/> node in the list.
+    /// Used to reject Grace in conditional branch bodies with accurate error location.
     /// </summary>
-    private static bool ContainsGrace(IReadOnlyList<Expr> exprs)
+    private static SourceSpan? FindGraceSpan(IReadOnlyList<Expr> exprs)
     {
         foreach (var expr in exprs)
-            if (ContainsGrace(expr))
-                return true;
-        return false;
+        {
+            var span = FindGraceSpan(expr);
+            if (span is not null)
+                return span;
+        }
+        return null;
     }
 
-    private static bool ContainsGrace(Expr expr) => expr switch
+    private static SourceSpan? FindGraceSpan(Expr expr) => expr switch
     {
-        Expr.Grace => true,
-        Expr.Binary(_, var l, var r) => ContainsGrace(l) || ContainsGrace(r),
-        Expr.Unary(_, var o) => ContainsGrace(o),
-        Expr.Index(var t, var s) => ContainsGrace(t) || ContainsGrace(s),
-        Expr.Combine(var l, var r) => ContainsGrace(l) || ContainsGrace(r),
-        Expr.DotCall(var t, _, var a) => ContainsGrace(t) || (a is not null && ContainsGrace(a.Output)),
-        Expr.Call(var f, var a) => ContainsGrace(f) || ContainsGrace(a.Output),
-        Expr.Block(var alg) => ContainsGrace(alg.Output),
-        _ => false,
+        Expr.Grace g => g.Span,
+        Expr.Binary(_, var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
+        Expr.Unary(_, var o) => FindGraceSpan(o),
+        Expr.Index(var t, var s) => FindGraceSpan(t) ?? FindGraceSpan(s),
+        Expr.Combine(var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
+        Expr.DotCall(var t, _, var a) => FindGraceSpan(t) ?? (a is not null ? FindGraceSpan(a.Output) : null),
+        Expr.Call(var f, var a) => FindGraceSpan(f) ?? FindGraceSpan(a.Output),
+        Expr.Block(var alg) => FindGraceSpan(alg.Output),
+        _ => null,
     };
 
     /// <summary>
