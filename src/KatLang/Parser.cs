@@ -181,6 +181,7 @@ public sealed class Parser
         var hasExplicitOutput = false;
         var hasImplicitOutput = false;
         var conditionalBranches = new Dictionary<string, List<CondBranch>>();
+        var conditionalBranchSpans = new Dictionary<string, List<SourceSpan>>();
 
         while (Current.Kind != TokenKind.EndOfFile
             && Current.Kind != TokenKind.RParen
@@ -288,6 +289,7 @@ public sealed class Parser
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsWhen())
             {
                 var name = Current.StringValue!;
+                var nameToken = Current;
 
                 // Check for conflict: mixing normal and conditional definition
                 if (properties.Any(p => p.Name == name))
@@ -321,8 +323,12 @@ public sealed class Parser
                 {
                     branchList = [];
                     conditionalBranches[name] = branchList;
+                    conditionalBranchSpans[name] = [];
                 }
                 branchList.Add(new CondBranch(pattern, body));
+                conditionalBranchSpans[name].Add(new SourceSpan(
+                    nameToken.Line, nameToken.Column,
+                    nameToken.Line, nameToken.Column + Math.Max(nameToken.Length, 1) - 1));
             }
             else
             {
@@ -342,8 +348,12 @@ public sealed class Parser
         // Conditional algorithms require a uniform top-level interface across branches:
         // all branches must have the same top-level pattern arity.
         // Nested internal pattern structure may vary.
+        // Also validate uniform top-level output arity across branches
+        // (Lean: validateBranchOutputArities). All branches must produce the same
+        // number of top-level outputs. Nested internal output structure may vary.
         foreach (var (name, branches) in conditionalBranches)
         {
+            var spans = conditionalBranchSpans[name];
             if (branches.Count > 1)
             {
                 var expectedArity = branches[0].Pattern.TopLevelArity();
@@ -354,7 +364,21 @@ public sealed class Parser
                     {
                         ReportError(
                             $"All branches of conditional algorithm '{name}' must have the same top-level pattern arity. " +
-                            $"Expected {expectedArity} (from first branch), but branch {i + 1} has arity {branchArity}.");
+                            $"Expected {expectedArity} (from first branch), but branch {i + 1} has arity {branchArity}.",
+                            spans[i]);
+                    }
+                }
+
+                var expectedOutputArity = branches[0].TopLevelOutputArity();
+                for (int i = 1; i < branches.Count; i++)
+                {
+                    var branchOutputArity = branches[i].TopLevelOutputArity();
+                    if (branchOutputArity != expectedOutputArity)
+                    {
+                        ReportError(
+                            $"All branches of conditional algorithm '{name}' must have the same top-level output arity. " +
+                            $"Expected {expectedOutputArity} (from first branch), but branch {i + 1} has output arity {branchOutputArity}.",
+                            spans[i]);
                     }
                 }
             }

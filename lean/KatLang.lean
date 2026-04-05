@@ -76,6 +76,7 @@ inductive Error where
   | divByZero        : Error                   -- division or modulo by zero
   | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
   | branchArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level arity mismatch (name, expected, actual)
+  | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual)
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
 
@@ -214,7 +215,12 @@ mutual
       Branch bodies receive bindings ONLY from the matched pattern (plus
       ordinary lexical resolution).  No extra implicit parameters are inferred
       from free identifiers in the body.  Grace `~` is not allowed in patterns
-      or branch bodies. -/
+      or branch bodies.
+
+      The top-level output arity of a branch is the number of top-level output
+      expressions in its body (`body.output.length`).  All branches of the same
+      conditional algorithm must have the same top-level output arity.
+      Nested internal output structure may vary. -/
   structure CondBranch where
     pattern : Pattern
     body    : Algorithm
@@ -247,7 +253,14 @@ mutual
         structure may vary, but the outer number of inputs must remain
         consistent.  This preserves a unified outer call interface and
         prevents conditional algorithms from acting as ad hoc overloading
-        by varying top-level argument count. -/
+        by varying top-level argument count.
+
+        **Uniform top-level output arity invariant**: all branches of the same
+        conditional algorithm must have the same top-level output arity
+        (the number of top-level output expressions in the branch body).
+        Nested internal output structure may vary, but the outer number of
+        outputs must remain consistent.  This preserves a unified output
+        interface across branches. -/
     | conditional :
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
@@ -460,6 +473,32 @@ namespace Algorithm
             then
               match rest.find? (fun br => br.pattern.topLevelArity != expected) with
               | some bad => some (expected, bad.pattern.topLevelArity)
+              | none     => none  -- unreachable
+            else none
+    | _ => none
+
+  /-- Compute the top-level output arity of an algorithm.
+      For user-defined algorithms (Algorithm.mk), this is the number of
+      top-level output expressions.  For other forms, returns 0. -/
+  def topLevelOutputArity (a : Algorithm) : Nat := a.output.length
+
+  /-- Validate that all branches of a conditional algorithm have the same
+      top-level output arity.  Returns `none` if valid (or non-conditional),
+      `some (expected, actual)` for the first mismatching branch.
+      This enforces the uniform top-level output arity invariant:
+      all branches of a conditional algorithm share one output interface.
+      Nested internal output structure may vary, but the outer number of
+      outputs must remain consistent. -/
+  def validateBranchOutputArities : Algorithm -> Option (Nat × Nat)
+    | .conditional _ _ bs =>
+        match bs with
+        | [] => none
+        | b :: rest =>
+            let expected := b.body.output.length
+            if rest.any (fun br => br.body.output.length != expected)
+            then
+              match rest.find? (fun br => br.body.output.length != expected) with
+              | some bad => some (expected, bad.body.output.length)
               | none     => none  -- unreachable
             else none
     | _ => none
@@ -1207,7 +1246,11 @@ mutual
       bindings ONLY from the matched pattern.  No extra implicit parameters are
       inferred from free identifiers in the body.  Free identifiers in the body
       must resolve through ordinary lexical / property / open / builtin lookup,
-      or evaluation fails with unknownName. -/
+      or evaluation fails with unknownName.
+
+      **Assumes uniform output arity**: after validation (validateBranchOutputArities),
+      all branches produce the same top-level output arity.  The evaluator does
+      not re-check this at runtime. -/
   partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
     let wiredArgs := wireToCaller ctx args

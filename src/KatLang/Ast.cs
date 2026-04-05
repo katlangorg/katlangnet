@@ -151,7 +151,17 @@ public abstract record Pattern
 /// lexical resolution). No extra implicit parameters are inferred.
 /// Grace <c>~</c> is not permitted in branch patterns or bodies.
 /// </summary>
-public sealed record CondBranch(Pattern Pattern, Algorithm Body);
+public sealed record CondBranch(Pattern Pattern, Algorithm Body)
+{
+    /// <summary>
+    /// Compute the top-level output arity of this branch body.
+    /// Lean: <c>Algorithm.topLevelOutputArity</c> / <c>body.output.length</c>.
+    /// This is the number of top-level output expressions in the branch body.
+    /// All branches of the same conditional algorithm must have the same
+    /// top-level output arity. Nested internal output structure may vary.
+    /// </summary>
+    public int TopLevelOutputArity() => Body.Output.Count;
+}
 
 // ── Algorithm (Lean: Algorithm — discriminated union) ───────────────────────
 
@@ -249,6 +259,14 @@ public abstract record Algorithm
     /// (as defined by <see cref="Pattern.TopLevelArity"/>). Nested internal
     /// pattern structure may vary, but the outer number of inputs must remain
     /// consistent. This preserves a unified outer call interface.</para>
+    ///
+    /// <para><b>Uniform top-level output arity invariant</b>: all branches of the
+    /// same conditional algorithm must have the same top-level output arity
+    /// (as defined by <see cref="CondBranch.TopLevelOutputArity"/>). Nested
+    /// internal output structure may vary, but the outer number of outputs must
+    /// remain consistent. This preserves a unified output interface across
+    /// branches. Conditional algorithms are not ad hoc overloading by varying
+    /// result shape.</para>
     /// </summary>
     public sealed record Conditional : Algorithm
     {

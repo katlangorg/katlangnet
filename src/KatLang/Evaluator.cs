@@ -1428,6 +1428,11 @@ public static class Evaluator
     /// inferred. Free identifiers in the body resolve through ordinary lexical /
     /// property / open / builtin lookup, or produce unknownName at runtime.</para>
     ///
+    /// <para><b>Assumes uniform output arity</b>: after validation
+    /// (<see cref="CondBranch.TopLevelOutputArity"/>), all branches produce the
+    /// same top-level output arity. The evaluator does not re-check this at
+    /// runtime.</para>
+    ///
     /// Lean: evalConditionalCall.
     /// </summary>
     private static EvalResult<Result> EvalConditionalCall(

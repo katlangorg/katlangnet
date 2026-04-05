@@ -1525,9 +1525,11 @@ public class ParserTests
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d =>
+        var diag = Assert.Single(result.Diagnostics, d =>
             d.Message.Contains("same top-level pattern arity") &&
             d.Message.Contains("Expense"));
+        // Error span should point to the second branch (line 2)
+        Assert.Equal(2, diag.Span.StartLineNumber);
     }
 
     [Fact]
@@ -1540,10 +1542,12 @@ public class ParserTests
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d =>
+        var diag = Assert.Single(result.Diagnostics, d =>
             d.Message.Contains("same top-level pattern arity") &&
             d.Message.Contains("Expected 1") &&
             d.Message.Contains("arity 2"));
+        // Error span should point to the second branch (line 2)
+        Assert.Equal(2, diag.Span.StartLineNumber);
     }
 
     [Fact]
@@ -1557,8 +1561,110 @@ public class ParserTests
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d =>
+        var diag = Assert.Single(result.Diagnostics, d =>
             d.Message.Contains("same top-level pattern arity") &&
             d.Message.Contains("G"));
+        // Error span should point to the third branch (line 3)
+        Assert.Equal(3, diag.Span.StartLineNumber);
+    }
+
+    // ── Uniform top-level output arity validation ─────────────────────────
+
+    [Fact]
+    public void Parse_Conditional_SameOutputArity1_Valid()
+    {
+        // Both branches return top-level output arity 1 — valid
+        var source = """
+            Expense when (1, qty) = qty * 2
+            Expense when (2, qty) = qty * 3
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_SameOutputArity2_Valid()
+    {
+        // Both branches return top-level output arity 2 — valid
+        var source = """
+            F when (1, x) = x, x + 1
+            F when (2, x) = 0, x
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_SameOutputArity_NestedDiffers_Valid()
+    {
+        // Both branches return top-level output arity 2;
+        // nested internal output structure differs — valid
+        var source = """
+            G when (1, x) = x, (x + 1, x + 2)
+            G when (2, x) = x, x * 2
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_SingleBranch_OutputArity_AlwaysValid()
+    {
+        // Single branch: no output arity conflict possible
+        var result = Parser.ParseSyntax("F when (x) = x, x + 1");
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_DifferentOutputArity_ReportsError()
+    {
+        // First branch output arity 2, second branch output arity 1
+        var source = """
+            Expense when (1, qty) = qty * 2, 2
+            Expense when (2, qty) = qty * 3
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diag = Assert.Single(result.Diagnostics, d =>
+            d.Message.Contains("same top-level output arity") &&
+            d.Message.Contains("Expense"));
+        // Error span should point to the second branch (line 2)
+        Assert.Equal(2, diag.Span.StartLineNumber);
+    }
+
+    [Fact]
+    public void Parse_Conditional_OutputArity1vs2_ReportsError()
+    {
+        // First branch output arity 1, second branch output arity 2
+        var source = """
+            F when (1, x) = x
+            F when (2, x) = x, x + 1
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diag = Assert.Single(result.Diagnostics, d =>
+            d.Message.Contains("same top-level output arity") &&
+            d.Message.Contains("Expected 1") &&
+            d.Message.Contains("output arity 2"));
+        // Error span should point to the second branch (line 2)
+        Assert.Equal(2, diag.Span.StartLineNumber);
+    }
+
+    [Fact]
+    public void Parse_Conditional_ThreeBranches_ThirdOutputMismatches_ReportsError()
+    {
+        // First two branches output arity 1, third branch output arity 2
+        var source = """
+            G when (1, x) = x
+            G when (2, x) = x + 1
+            G when (3, x) = x, x + 1
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diag = Assert.Single(result.Diagnostics, d =>
+            d.Message.Contains("same top-level output arity") &&
+            d.Message.Contains("G"));
+        // Error span should point to the third branch (line 3)
+        Assert.Equal(3, diag.Span.StartLineNumber);
     }
 }

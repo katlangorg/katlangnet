@@ -3105,4 +3105,56 @@ public class EvaluatorTests
             """;
         AssertEval(source, 7);
     }
+
+    // ── Uniform top-level output arity: valid multi-output branches ─────
+
+    [Fact]
+    public void Eval_Conditional_SameOutputArity2_BothBranches()
+    {
+        // Both branches return top-level arity 2 — valid
+        var source = """
+            F when (1, x) = x, x + 1
+            F when (2, x) = 0, x
+            F(1, 5)
+            """;
+        AssertEval(source, 5, 6);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SameOutputArity2_SecondBranch()
+    {
+        // Second branch matches, also returns arity 2
+        var source = """
+            F when (1, x) = x, x + 1
+            F when (2, x) = 0, x
+            F(2, 5)
+            """;
+        AssertEval(source, 0, 5);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SameOutputArity1_WithSiblingProperties()
+    {
+        // Classic example: same output arity 1 across branches with sibling properties
+        var source = """
+            TomatoPrice = 1.20
+            ApplePrice = 0.80
+            Expense when (1, qty) = TomatoPrice * qty
+            Expense when (2, qty) = ApplePrice * qty
+            Expense(1, 10)
+            """;
+        AssertEval(source, 12.0m);
+    }
+
+    [Fact]
+    public void Eval_Conditional_SameOutputArity2_NestedStructureDiffers()
+    {
+        // Both branches return top-level arity 2; nested internal structure differs — valid
+        var source = """
+            G when (1, x) = x, (x + 1, x + 2)
+            G when (2, x) = x, x * 2
+            G(1, 10)
+            """;
+        AssertEval(source, 10, 11, 12);
+    }
 }
