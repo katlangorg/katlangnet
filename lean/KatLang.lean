@@ -1,4 +1,4 @@
--- KatLang v0.8.0 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
+-- KatLang v0.8.12 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -21,14 +21,14 @@
 --     - `open 'url'` desugars to `open load('url')` before elaboration.
 --     Raw string literals do NOT survive into the canonical open list.
 --
--- Conditional branch syntax sugar (parser-only, not in core model):
---   Conditional algorithm branches have two equivalent surface syntaxes:
---     1. Explicit:  `Name when (pattern) = body`  (primary form)
---     2. Shorthand: `Name(pattern) = body`         (sugar)
---   The shorthand form is recognized only in definition position.
+-- Conditional branch syntax (parser-only, not in core model):
+--   Conditional algorithm branches use clause-style syntax:
+--     `Name(pattern) = body`
+--   This form is recognized only in definition position.
 --   In expression position, `Name(args)` remains an ordinary call.
---   Both forms elaborate to the same CondBranch semantic representation.
---   The `when` keyword remains the primary explicit syntax; the shorthand is optional sugar.
+--   On the left-hand side of `=` in definition context, `Name(...)` is not a
+--   call expression — it is pattern syntax for a conditional algorithm branch.
+--   All clause-style definitions elaborate to the same CondBranch semantic representation.
 --
 -- Explicit output syntax (exact-syntax sugar, parser-only):
 --   `Output = expr` inside an algorithm body is special output-definition syntax.
@@ -144,7 +144,7 @@ def builtinArityDesc : Builtin -> String
     They do not appear in executable expression positions.
 
     **Full-input-specification rule**: In a conditional algorithm, the branch
-    pattern `when (...)` is the COMPLETE INPUT SPECIFICATION of that branch.
+    pattern in `Name(...)` is the COMPLETE INPUT SPECIFICATION of that branch.
     - All branch inputs must appear in the pattern.
     - Branch bodies do NOT infer additional implicit parameters from free
       identifiers.  Only names bound by the pattern (plus ordinary lexical /
@@ -249,7 +249,7 @@ mutual
         in source order.  The first matching branch body is evaluated.
         If no branch matches, evaluation fails with noMatchingBranch.
 
-        **Full-input-specification invariant**: each branch pattern `when (...)`
+        **Full-input-specification invariant**: each branch pattern `Name(...)`
         declares the complete input interface of that branch.  Branch bodies do
         NOT infer additional implicit parameters from free identifiers — only
         names bound by the pattern and names resolvable through ordinary lexical /
@@ -1480,7 +1480,7 @@ end
 
     NOTE: This function is used only for ORDINARY algorithms.
     Conditional algorithm branch bodies do NOT use implicit parameter inference.
-    In a conditional branch, the pattern `when (...)` is the complete input
+    In a conditional branch, the pattern in `Name(...)` is the complete input
     specification; free identifiers in the body must resolve lexically or produce
     an error.  Pattern-bound names are rewritten to `Expr.param` by the surface
     layer directly, without using this function. -/

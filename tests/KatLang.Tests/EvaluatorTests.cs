@@ -2738,9 +2738,9 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_KCombinator()
     {
-        // K when (a, b) = a  ⟹  K(10, 20) => 10
+        // K(a, b) = a  ⟹  K(10, 20) => 10
         var source = """
-            K when (a, b) = a
+            K(a, b) = a
             K(10, 20)
             """;
         AssertEval(source, 10);
@@ -2751,7 +2751,7 @@ public class EvaluatorTests
     {
         // Verify we can return the second binding too
         var source = """
-            Snd when (a, b) = b
+            Snd(a, b) = b
             Snd(10, 20)
             """;
         AssertEval(source, 20);
@@ -2760,10 +2760,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_SingletonGroupPattern_MatchesSingleElementTuple()
     {
-        // K when (a, (b)) = a  ⟹  K(1, (2, 3)) should fail
+        // K(a, (b)) = a  ⟹  K(1, (2, 3)) should fail
         // because (b) is a 1-element group pattern that does not match (2, 3).
         var source = """
-            K when (a, (b)) = a
+            K(a, (b)) = a
             K(1, (2, 3))
             """;
         var error = GetEvalError(source);
@@ -2776,10 +2776,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_BareBind_MatchesTuple()
     {
-        // K when (a, b) = a  ⟹  K(1, (2, 3)) => 1
+        // K(a, b) = a  ⟹  K(1, (2, 3)) => 1
         // b is a bare bind so it matches the nested tuple (2, 3) directly.
         var source = """
-            K when (a, b) = a
+            K(a, b) = a
             K(1, (2, 3))
             """;
         AssertEval(source, 1);
@@ -2788,11 +2788,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_SingletonGroupPattern_MatchesNormalizedSingleton()
     {
-        // K when (a, (b)) = a  ⟹  K(1, (2)) => 1
+        // K(a, (b)) = a  ⟹  K(1, (2)) => 1
         // (2) normalizes to Atom(2); (b) is a 1-element group pattern
         // that matches the normalized singleton.
         var source = """
-            K when (a, (b)) = a
+            K(a, (b)) = a
             K(1, (2))
             """;
         AssertEval(source, 1);
@@ -2801,11 +2801,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_MultipleBranches_LiteralMatch()
     {
-        // Else when (1, (a, b)) = a
-        // Else when (c, (a, b)) = b
+        // Else(1, (a, b)) = a
+        // Else(c, (a, b)) = b
         var source = """
-            Else when (1, (a, b)) = a
-            Else when (c, (a, b)) = b
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
             Else(1, (2, 3))
             """;
         AssertEval(source, 2);
@@ -2816,8 +2816,8 @@ public class EvaluatorTests
     {
         // Same as above but first branch doesn't match (c != 1)
         var source = """
-            Else when (1, (a, b)) = a
-            Else when (c, (a, b)) = b
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
             Else(0, (2, 3))
             """;
         AssertEval(source, 3);
@@ -2826,12 +2826,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_NonExhaustive_NoMatch()
     {
-        // Sign when (1) = 1
-        // Sign when (-1) = -1
+        // Sign(1) = 1
+        // Sign(-1) = -1
         // Sign(0) should fail with NoMatchingBranch
         var source = """
-            Sign when (1) = 1
-            Sign when (-1) = -1
+            Sign(1) = 1
+            Sign(-1) = -1
             Sign(0)
             """;
         var error = GetEvalError(source);
@@ -2845,8 +2845,8 @@ public class EvaluatorTests
     public void Eval_Conditional_NonExhaustive_MatchExists()
     {
         var source = """
-            Sign when (1) = 100
-            Sign when (-1) = -100
+            Sign(1) = 100
+            Sign(-1) = -100
             Sign(1)
             """;
         AssertEval(source, 100);
@@ -2855,12 +2855,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_FirstMatchWins()
     {
-        // F when (x) = 1  (catch-all, always matches)
-        // F when (1) = 2  (never reached)
+        // F(x) = 1  (catch-all, always matches)
+        // F(1) = 2  (never reached)
         // F(1) => 1 (first branch wins)
         var source = """
-            F when (x) = 1
-            F when (1) = 2
+            F(x) = 1
+            F(1) = 2
             F(1)
             """;
         AssertEval(source, 1);
@@ -2871,8 +2871,8 @@ public class EvaluatorTests
     {
         // Else expects (c, (a, b)) but we pass three flat args
         var source = """
-            Else when (1, (a, b)) = a
-            Else when (c, (a, b)) = b
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
             Else(1, 2, 3)
             """;
         var error = GetEvalError(source);
@@ -2898,7 +2898,7 @@ public class EvaluatorTests
     {
         // Branch body can use binders in arithmetic
         var source = """
-            Double when (x) = x + x
+            Double(x) = x + x
             Double(5)
             """;
         AssertEval(source, 10);
@@ -2908,8 +2908,8 @@ public class EvaluatorTests
     public void Eval_Conditional_NegativeLiteralPattern()
     {
         var source = """
-            F when (-1) = 100
-            F when (x) = 0
+            F(-1) = 100
+            F(x) = 0
             F(-1)
             """;
         AssertEval(source, 100);
@@ -2919,8 +2919,8 @@ public class EvaluatorTests
     public void Eval_Conditional_NegativeLiteralPattern_NoMatch()
     {
         var source = """
-            F when (-1) = 100
-            F when (x) = 0
+            F(-1) = 100
+            F(x) = 0
             F(5)
             """;
         AssertEval(source, 0);
@@ -2931,7 +2931,7 @@ public class EvaluatorTests
     {
         // Branch body returns multiple values
         var source = """
-            Swap when (a, b) = b, a
+            Swap(a, b) = b, a
             Swap(1, 2)
             """;
         AssertEval(source, 2, 1);
@@ -2942,7 +2942,7 @@ public class EvaluatorTests
     {
         // Access conditional property via dot syntax with args
         var source = """
-            M = (F when (x) = x + 1
+            M = (F(x) = x + 1
             F)
             M.F(10)
             """;
@@ -2954,7 +2954,7 @@ public class EvaluatorTests
     {
         // Single argument pattern
         var source = """
-            Inc when (x) = x + 1
+            Inc(x) = x + 1
             Inc(5)
             """;
         AssertEval(source, 6);
@@ -2969,8 +2969,8 @@ public class EvaluatorTests
         // Before the fix, branch.Body had no parent wiring → UnknownName for Price.
         var source = """
             Price = 0.80
-            Discount when (1) = Price * 0.9
-            Discount when (x) = Price
+            Discount(1) = Price * 0.9
+            Discount(x) = Price
             Discount(1)
             """;
         AssertEval(source, 0.72m);
@@ -2984,9 +2984,9 @@ public class EvaluatorTests
             TomatoPrice = 1.20
             ApplePrice = 0.80
             CucumberPrice = 0.60
-            Expense when (1, qty) = TomatoPrice * qty
-            Expense when (2, qty) = ApplePrice * qty
-            Expense when (3, qty) = CucumberPrice * qty
+            Expense(1, qty) = TomatoPrice * qty
+            Expense(2, qty) = ApplePrice * qty
+            Expense(3, qty) = CucumberPrice * qty
             Expense(1, 10), Expense(2, 10), Expense(3, 10)
             """;
         AssertEval(source, 12.0m, 8.0m, 6.0m);
@@ -3001,7 +3001,7 @@ public class EvaluatorTests
             Outer = {
                 Price = 2.50
                 Inner = {
-                    F when (x) = Price * x
+                    F(x) = Price * x
                     F(4)
                 }
                 Inner
@@ -3017,7 +3017,7 @@ public class EvaluatorTests
         // Branch body uses both a pattern binder (qty) and a sibling property (Rate).
         var source = """
             Rate = 1.5
-            Scale when (qty) = Rate * qty
+            Scale(qty) = Rate * qty
             Scale(4)
             """;
         AssertEval(source, 6.0m);
@@ -3028,9 +3028,9 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_FullPattern_IgnoredBinder()
     {
-        // K when (a, b) = a — b is intentionally unused, no error
+        // K(a, b) = a — b is intentionally unused, no error
         var source = """
-            K when (a, b) = a
+            K(a, b) = a
             K(10, 20)
             """;
         AssertEval(source, 10);
@@ -3041,8 +3041,8 @@ public class EvaluatorTests
     {
         // Each branch pattern fully describes accepted input shape
         var source = """
-            Else when (1, (a, b)) = a
-            Else when (c, (a, b)) = b
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
             Else(1, (20, 30))
             """;
         AssertEval(source, 20);
@@ -3052,8 +3052,8 @@ public class EvaluatorTests
     public void Eval_Conditional_FullPattern_CatchAllBranch()
     {
         var source = """
-            Else when (1, (a, b)) = a
-            Else when (c, (a, b)) = b
+            Else(1, (a, b)) = a
+            Else(c, (a, b)) = b
             Else(0, (20, 30))
             """;
         AssertEval(source, 30);
@@ -3062,10 +3062,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_ExtraImplicitParam_Rejected()
     {
-        // F when (1, a) = a + b — b is not bound by pattern and not a resolved name
+        // F(1, a) = a + b — b is not bound by pattern and not a resolved name
         // This must fail because b is not a pattern binder and not lexically resolvable.
         var source = """
-            F when (1, a) = a + b
+            F(1, a) = a + b
             F(1, 5)
             """;
         var error = GetEvalError(source);
@@ -3078,7 +3078,7 @@ public class EvaluatorTests
         // Pattern binder + lexically resolvable name: Rate is a sibling property
         var source = """
             Rate = 2
-            F when (x) = x * Rate
+            F(x) = x * Rate
             F(5)
             """;
         AssertEval(source, 10);
@@ -3113,8 +3113,8 @@ public class EvaluatorTests
     {
         // Both branches return top-level arity 2 — valid
         var source = """
-            F when (1, x) = x, x + 1
-            F when (2, x) = 0, x
+            F(1, x) = x, x + 1
+            F(2, x) = 0, x
             F(1, 5)
             """;
         AssertEval(source, 5, 6);
@@ -3125,8 +3125,8 @@ public class EvaluatorTests
     {
         // Second branch matches, also returns arity 2
         var source = """
-            F when (1, x) = x, x + 1
-            F when (2, x) = 0, x
+            F(1, x) = x, x + 1
+            F(2, x) = 0, x
             F(2, 5)
             """;
         AssertEval(source, 0, 5);
@@ -3139,8 +3139,8 @@ public class EvaluatorTests
         var source = """
             TomatoPrice = 1.20
             ApplePrice = 0.80
-            Expense when (1, qty) = TomatoPrice * qty
-            Expense when (2, qty) = ApplePrice * qty
+            Expense(1, qty) = TomatoPrice * qty
+            Expense(2, qty) = ApplePrice * qty
             Expense(1, 10)
             """;
         AssertEval(source, 12.0m);
@@ -3151,18 +3151,19 @@ public class EvaluatorTests
     {
         // Both branches return top-level arity 2; nested internal structure differs — valid
         var source = """
-            G when (1, x) = x, (x + 1, x + 2)
-            G when (2, x) = x, x * 2
+            G(1, x) = x, (x + 1, x + 2)
+            G(2, x) = x, x * 2
             G(1, 10)
             """;
         AssertEval(source, 10, 11, 12);
     }
 
-    // ── Conditional branch sugar: Name(pattern) = body ─────────────────────
+    // ── Additional conditional algorithm tests ──────────────────────────────
 
     [Fact]
-    public void Eval_ConditionalSugar_BasicLiteralMatch()
+    public void Eval_Conditional_DefinitionAndCallDisambiguated()
     {
+        // First two lines: definitions; third line: call
         var source = """
             F(1) = 100
             F(x) = 0
@@ -3172,84 +3173,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ConditionalSugar_FallbackBranch()
-    {
-        var source = """
-            F(1) = 100
-            F(x) = 0
-            F(999)
-            """;
-        AssertEval(source, 0);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_KCombinator()
-    {
-        var source = """
-            K(a, b) = a
-            K(10, 20)
-            """;
-        AssertEval(source, 10);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_NestedGroupPattern()
-    {
-        var source = """
-            Else(1, (a, b)) = a
-            Else(c, (a, b)) = b
-            Else(1, (20, 30))
-            """;
-        AssertEval(source, 20);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_NestedGroupPattern_FallbackBranch()
-    {
-        var source = """
-            Else(1, (a, b)) = a
-            Else(c, (a, b)) = b
-            Else(0, (20, 30))
-            """;
-        AssertEval(source, 30);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_MixedWithExplicitWhen()
-    {
-        var source = """
-            F when (1) = 100
-            F(x) = 0
-            F(1)
-            """;
-        AssertEval(source, 100);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_MixedWithExplicitWhen_FallbackUsed()
-    {
-        var source = """
-            F when (1) = 100
-            F(x) = 0
-            F(42)
-            """;
-        AssertEval(source, 0);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_DefinitionAndCallDisambiguated()
-    {
-        // First two lines: definitions (sugar); third line: call
-        var source = """
-            F(1) = 100
-            F(x) = 0
-            F(1)
-            """;
-        AssertEval(source, 100);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_CallInExpressionContext()
+    public void Eval_Conditional_CallInExpressionContext()
     {
         // G = F(1) is a property definition where F(1) is a call expression
         var source = """
@@ -3259,44 +3183,6 @@ public class EvaluatorTests
             G
             """;
         AssertEval(source, 100);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_MultipleOutput()
-    {
-        var source = """
-            F(1, x) = x, x + 1
-            F(2, x) = 0, x
-            F(1, 5)
-            """;
-        AssertEval(source, 5, 6);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_WithSiblingProperty()
-    {
-        var source = """
-            Price = 1.20
-            Expense(1, qty) = Price * qty
-            Expense(2, qty) = 0
-            Expense(1, 10)
-            """;
-        AssertEval(source, 12.0m);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_NonExhaustive_NoMatch()
-    {
-        var source = """
-            Sign(1) = 1
-            Sign(-1) = -1
-            Sign(0)
-            """;
-        var error = GetEvalError(source);
-        Assert.NotNull(error);
-        Assert.IsType<EvalError.WithContext>(error);
-        var inner = ((EvalError.WithContext)error!).Inner;
-        Assert.IsType<EvalError.NoMatchingBranch>(inner);
     }
 
     [Fact]
@@ -3326,20 +3212,14 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ConditionalSugar_ProducesSameResultAsExplicitWhen()
+    public void Eval_Conditional_ClauseSyntax_MultipleCallResults()
     {
-        // Both syntax forms should give the same result
-        var sugarSource = """
+        // Clause-style branch syntax works for multiple calls
+        var source = """
             F(1) = 100
             F(x) = 0
             F(1), F(42)
             """;
-        var explicitSource = """
-            F when (1) = 100
-            F when (x) = 0
-            F(1), F(42)
-            """;
-        AssertEval(sugarSource, 100, 0);
-        AssertEval(explicitSource, 100, 0);
+        AssertEval(source, 100, 0);
     }
 }

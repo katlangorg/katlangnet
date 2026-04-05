@@ -485,7 +485,7 @@ def test21 : Bool :=
 open KatLang (Pattern CondBranch)
 
 -- Test 22: K combinator via conditional algorithm
--- K when (a, b) = a  →  K(10, 20) => 10
+-- K(a, b) = a  →  K(10, 20) => 10
 def kAlg : Algorithm :=
   .conditional none [] [
     ⟨ .group [.bind "a", .bind "b"],
@@ -505,8 +505,8 @@ def test34 : Bool :=
 ]))
 
 -- Test 35: Multiple branches with literal match
--- Else when (1, (a, b)) = a
--- Else when (c, (a, b)) = b
+-- Else(1, (a, b)) = a
+-- Else(c, (a, b)) = b
 def elseAlg : Algorithm :=
   .conditional none [] [
     ⟨ .group [.litInt 1, .group [.bind "a", .bind "b"]],
@@ -536,7 +536,7 @@ def test35b : Bool :=
 #eval test35b  -- should be true
 
 -- Test 36: Non-exhaustive — no match → error
--- Sign when (1) = 1; Sign when (-1) = -1;  Sign(0) → noMatchingBranch
+-- Sign(1) = 1; Sign(-1) = -1;  Sign(0) → noMatchingBranch
 def signAlg : Algorithm :=
   .conditional none [] [
     ⟨ .litInt 1,  alg [] [] [] [.num 1] ⟩,
@@ -553,8 +553,8 @@ def test36 : Bool :=
 #eval test36  -- should be true
 
 -- Test 37: First-match-wins
--- F when (x) = 1  (catch-all, always matches)
--- F when (1) = 2  (never reached)
+-- F(x) = 1  (catch-all, always matches)
+-- F(1) = 2  (never reached)
 -- F(1) → 1
 def firstMatchAlg : Algorithm :=
   .conditional none [] [

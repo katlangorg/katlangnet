@@ -33,11 +33,11 @@
     - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
 11. [Structural Composition with semicolon operator](#structural-composition-with-semicolon-operator)
 12. [Atoms](#atoms)
-13. [Conditional Algorithms (`when`)](#conditional-algorithms-when)
+13. [Conditional Algorithms](#conditional-algorithms)
     - [Basic Pattern Matching](#basic-pattern-matching)
+    - [Nested Group Patterns](#nested-group-patterns)
     - [The K Combinator: Ignoring a Parameter](#the-k-combinator-ignoring-a-parameter)
     - [Mixing Literals and Variables](#mixing-literals-and-variables)
-    - [Nested Group Patterns](#nested-group-patterns)
     - [Non-Exhaustive Patterns](#non-exhaustive-patterns)
 14. [Loading and `open`](#loading-and-open)
     - [Loading External Algorithms](#loading-external-algorithms)
@@ -642,7 +642,7 @@ DivBy3(10)
 0
 ```
 
-For multi-case dispatch based on patterns, see [Conditional Algorithms (`when`)](#conditional-algorithms-when).
+For multi-case dispatch based on patterns, see [Conditional Algorithms](#conditional-algorithms).
 
 ---
 
@@ -927,18 +927,18 @@ This is useful when you need to treat a complex algorithm's output as a simple s
 
 ---
 
-## Conditional Algorithms (`when`)
+## Conditional Algorithms
 
-The `if` builtin handles simple branching. For algorithms that need to dispatch based on structure or select from many cases, KatLang provides **conditional algorithms** — a form of pattern matching. A conditional algorithm is defined by writing multiple branches with the `when` keyword, each specifying a pattern to match against the arguments.
+The `if` builtin handles simple branching. For algorithms that need to dispatch based on structure or select from many cases, KatLang provides **conditional algorithms** — a form of pattern matching. A conditional algorithm is defined by writing multiple clause-style branches, each specifying a pattern to match against the arguments.
 
 ### Basic Pattern Matching
 
-Each branch is declared as `Name when (pattern) = body`. Branches are tried top to bottom — the first match wins.
+Each branch is declared as `Name(pattern) = body`. On the left-hand side of `=` in definition context, `Name(...)` is not a call expression — it is pattern syntax for a conditional algorithm branch. Branches are tried top to bottom — the first match wins.
 
 ```
-Sign when (1) = 100
-Sign when (-1) = -100
-Sign when (x) = 0
+Sign(1) = 100
+Sign(-1) = -100
+Sign(x) = 0
 
 Sign(1)
 Sign(-1)
@@ -954,30 +954,12 @@ Sign(42)
 
 A variable name in a pattern (like `x`) matches any value — it acts as a catch-all. Number literals match only that exact number. Place the catch-all branch last, since branches are tried in order.
 
-### Shorthand Clause Form
+### Nested Group Patterns
 
-Conditional algorithm branches may also be written without the `when` keyword, using a shorthand clause form:
-
-```
-F(1) = 100
-F(x) = 0
-
-F(1)
-F(999)
-```
-
-**Results:**
-```
-100
-0
-```
-
-The shorthand `Name(pattern) = body` is surface syntax sugar only — it is exactly equivalent to `Name when (pattern) = body`. Both forms elaborate to the same conditional-branch semantics. Call syntax is unchanged: in expression position (not followed by `=`), `F(1)` remains an ordinary call.
-
-You may freely mix both forms within the same conditional algorithm:
+Parentheses inside a pattern denote a **group** — a tuple of a specific length. This lets you match nested structure:
 
 ```
-Else when (1, (a, b)) = a
+Else(1, (a, b)) = a
 Else(c, (a, b)) = b
 
 Else(1, (20, 30))
@@ -997,7 +979,7 @@ A classic problem in functional programming is the **K combinator** — an algor
 In KatLang, a variable in a pattern binds the argument but does not need to be used in the body. This naturally solves the K combinator:
 
 ```
-K when (a, b) = a
+K(a, b) = a
 
 K(1, 2)
 K(42, 999)
@@ -1016,8 +998,8 @@ The parameter `b` is bound by the pattern but never referenced in the body — i
 Branches can combine literal matches with variable bindings to create dispatch tables:
 
 ```
-Else when (1, a, b) = a
-Else when (0, a, b) = b
+Else(1, a, b) = a
+Else(0, a, b) = b
 
 Else(5 < 6, 2, 3)
 Else(7 < 6, 2, 3)
@@ -1036,8 +1018,8 @@ The first argument is matched against `1` or `0`; the remaining arguments are bo
 Parentheses inside a pattern denote a **group** — a tuple of a specific length. This lets you match nested structure:
 
 ```
-Get when (1, (a, b)) = a
-Get when (2, (a, b)) = b
+Get(1, (a, b)) = a
+Get(2, (a, b)) = b
 
 Get(1, (10, 20))
 Get(2, (10, 20))
@@ -1052,7 +1034,7 @@ Get(2, (10, 20))
 A bare variable without parentheses matches anything, including a tuple:
 
 ```
-K when (a, b) = a
+K(a, b) = a
 
 // b binds to the entire tuple (2, 3):
 K(1, (2, 3))
@@ -1064,7 +1046,7 @@ But a parenthesized single variable `(b)` is a 1-element group pattern — it on
 
 ```
 // (b) does not match (2, 3) because arities differ:
-Strict when (a, (b)) = a
+Strict(a, (b)) = a
 Strict(1, (2, 3))
 ```
 
@@ -1075,8 +1057,8 @@ This fails with a "no matching branch" error because `(b)` expects exactly one e
 If no branch matches the provided arguments, evaluation fails with an error. There is no implicit default — add a catch-all branch if you want to handle all cases:
 
 ```
-F when (1) = 100
-F when (x) = 0
+F(1) = 100
+F(x) = 0
 
 F(1)
 F(999)
@@ -1193,7 +1175,7 @@ Only `public` properties are exposed through `load` and `open`.
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if(cond, value)` disappearing:** the two-argument `if` produces no output when the condition is false. If you expect a value in all cases, use the three-argument form `if(cond, a, b)`.
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope.
-- **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use a `when` pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
+- **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use a conditional algorithm branch. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 
   ```
   // Wrong — no way to declare 'b' to discard; calling with two args fails:
@@ -1201,7 +1183,7 @@ Only `public` properties are exposed through `load` and `open`.
   KeepFirst(42, 999)  // error: too many arguments
 
   // Right — 'b' is bound by the pattern but never used:
-  KeepFirst when (a, b) = a
+  KeepFirst(a, b) = a
   KeepFirst(42, 999) // Result: 42
   ```
 ---
@@ -1233,7 +1215,6 @@ Only `public` properties are exposed through `load` and `open`.
 | Keyword | Usage |
 |---|---|
 | `if` | `if(cond, a, b)` or `if(cond, a)` |
-| `when` | `Name when (pattern) = body` — conditional branch |
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `atoms` | `atoms(alg)` — flatten to individual values |

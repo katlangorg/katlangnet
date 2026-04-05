@@ -244,19 +244,12 @@ public sealed class Parser
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body, IsPublic: true));
             }
-            // public conditional branch: public Name when ... → reject for first version
+            // public conditional branch: public Name(...) = ... → reject
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicConditionalBranch())
             {
                 ReportError("'public' cannot be applied to conditional algorithm branches in this version.");
                 Advance(); // consume 'public'
                 // Fall through: next iteration will parse the conditional branch normally
-            }
-            // public conditional branch sugar: public Name(...) = ... → reject
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicConditionalBranchSugar())
-            {
-                ReportError("'public' cannot be applied to conditional algorithm branches in this version.");
-                Advance(); // consume 'public'
-                // Fall through: next iteration will parse the conditional branch sugar normally
             }
             // Explicit output definition: Output = expr
             else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
@@ -292,9 +285,8 @@ public sealed class Parser
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body));
             }
-            // Conditional algorithm branch: Name when (pattern) = body
-            // Also: Name(pattern) = body (sugar for the same)
-            else if (Current.Kind == TokenKind.Identifier && (LookaheadIsWhen() || LookaheadIsConditionalBranchSugar()))
+            // Conditional algorithm branch: Name(pattern) = body
+            else if (Current.Kind == TokenKind.Identifier && LookaheadIsConditionalBranch())
             {
                 var name = Current.StringValue!;
                 var nameToken = Current;
@@ -306,11 +298,6 @@ public sealed class Parser
                 }
 
                 Advance(); // consume identifier
-                if (Current.Kind == TokenKind.KeywordWhen)
-                {
-                    Advance(); // consume 'when'
-                }
-                // Both 'when (pattern)' and '(pattern)' lead here
                 Expect(TokenKind.LParen);
                 var pattern = ParsePattern();
                 Expect(TokenKind.RParen);
@@ -524,42 +511,20 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if the token after the current identifier is 'when'.
-    /// Used to detect conditional algorithm branch definitions.
-    /// </summary>
-    private bool LookaheadIsWhen()
-    {
-        var next = _pos + 1;
-        return next < _tokens.Count && _tokens[next].Kind == TokenKind.KeywordWhen;
-    }
-
-    /// <summary>
-    /// Checks if 'public' keyword is followed by Identifier 'when'.
-    /// Used to detect and reject public conditional branch definitions.
-    /// </summary>
-    private bool LookaheadIsPublicConditionalBranch()
-    {
-        var next = _pos + 1; // skip 'public'
-        return next + 1 < _tokens.Count
-            && _tokens[next].Kind == TokenKind.Identifier
-            && _tokens[next + 1].Kind == TokenKind.KeywordWhen;
-    }
-
-    /// <summary>
     /// Checks if the current identifier is followed by '(' ... ')' '='.
-    /// Used to detect conditional branch sugar: <c>Name(pattern) = body</c>.
+    /// Used to detect conditional algorithm branch definitions: <c>Name(pattern) = body</c>.
     /// Skips comment tokens during lookahead. Handles nested parentheses.
     /// </summary>
-    private bool LookaheadIsConditionalBranchSugar()
+    private bool LookaheadIsConditionalBranch()
     {
         return LookaheadIsParenEqualsFrom(_pos + 1);
     }
 
     /// <summary>
     /// Checks if 'public' is followed by Identifier '(' ... ')' '='.
-    /// Used to detect and reject public conditional branch sugar.
+    /// Used to detect and reject public conditional algorithm branches.
     /// </summary>
-    private bool LookaheadIsPublicConditionalBranchSugar()
+    private bool LookaheadIsPublicConditionalBranch()
     {
         var next = _pos + 1; // skip 'public'
         // Skip comments

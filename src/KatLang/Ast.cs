@@ -248,7 +248,7 @@ public abstract record Algorithm
     /// in source order. The first matching branch body is evaluated.
     /// If no branch matches, evaluation fails with <c>NoMatchingBranch</c>.
     ///
-    /// <para><b>Full-input-specification rule</b>: each branch pattern <c>when (...)</c>
+    /// <para><b>Full-input-specification rule</b>: each branch pattern <c>Name(...)</c>
     /// is the complete input specification of that branch. Branch bodies do NOT
     /// infer additional implicit parameters from free identifiers. All branch inputs
     /// must appear in the pattern. Unused bound names are allowed. Grace <c>~</c> is

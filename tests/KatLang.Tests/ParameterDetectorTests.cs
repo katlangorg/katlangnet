@@ -451,7 +451,7 @@ public class ParameterDetectorTests
     {
         // Pattern binders (a, b) become Expr.Param.
         // The branch body's Algorithm.Params must be empty (no implicit params).
-        var source = "K when (a, b) = a + b";
+        var source = "K(a, b) = a + b";
         var ast = ParseAndDetect(source);
 
         var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
@@ -472,7 +472,7 @@ public class ParameterDetectorTests
         // Free identifier 'Rate' is a sibling property → stays as Expr.Resolve, not Expr.Param
         var source = """
             Rate = 2
-            F when (x) = x * Rate
+            F(x) = x * Rate
             """;
         var ast = ParseAndDetect(source);
 
@@ -494,7 +494,7 @@ public class ParameterDetectorTests
     {
         // Free identifier 'b' not bound by pattern and not a sibling → stays as Expr.Resolve
         // (will fail at runtime, but ParameterDetector should NOT turn it into a param)
-        var source = "F when (a) = a + b";
+        var source = "F(a) = a + b";
         var ast = ParseAndDetect(source);
 
         var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
@@ -520,7 +520,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_FreeIdentifier_ReportsDiagnostic()
     {
-        var diags = ParseAndDetectDiagnostics("F when (a) = a + b");
+        var diags = ParseAndDetectDiagnostics("F(a) = a + b");
 
         var error = Assert.Single(diags);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
@@ -531,7 +531,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_MultipleFreeIdentifiers_ReportsAll()
     {
-        var diags = ParseAndDetectDiagnostics("F when (x) = a * x + b");
+        var diags = ParseAndDetectDiagnostics("F(x) = a * x + b");
 
         Assert.Equal(2, diags.Count);
         Assert.All(diags, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
@@ -542,7 +542,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_AllBindersBound_NoDiagnostic()
     {
-        var diags = ParseAndDetectDiagnostics("F when (a, b) = a + b");
+        var diags = ParseAndDetectDiagnostics("F(a, b) = a + b");
 
         Assert.Empty(diags);
     }
@@ -552,7 +552,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Rate = 2
-            F when (x) = x * Rate
+            F(x) = x * Rate
             """;
         var diags = ParseAndDetectDiagnostics(source);
 
@@ -564,8 +564,8 @@ public class ParameterDetectorTests
     {
         // Branch 1 has free identifier 'a', branch 2 is fine
         var source = """
-            Expense when (1, qty) = a * qty
-            Expense when (2, a, qty) = a * qty
+            Expense(1, qty) = a * qty
+            Expense(2, a, qty) = a * qty
             """;
         var diags = ParseAndDetectDiagnostics(source);
 

@@ -284,8 +284,8 @@ public class KatLangEngineTests
     public void Run_ConditionalBranch_FreeIdentifier_ReturnsParseFailure()
     {
         var source = """
-            Expense when (1, qty) = a * qty
-            Expense when (2, qty) = qty
+            Expense(1, qty) = a * qty
+            Expense(2, qty) = qty
             Expense(2, 3)
             """;
         var result = KatLangEngine.Run(source);
@@ -299,8 +299,8 @@ public class KatLangEngineTests
     public void Run_ConditionalBranch_AllBindersBound_Succeeds()
     {
         var source = """
-            Expense when (1, qty) = 1.20 * qty
-            Expense when (2, qty) = 0.80 * qty
+            Expense(1, qty) = 1.20 * qty
+            Expense(2, qty) = 0.80 * qty
             Expense(2, 3)
             """;
         var result = KatLangEngine.Run(source);
