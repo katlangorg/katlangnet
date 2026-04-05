@@ -1,4 +1,4 @@
-﻿namespace KatLang.Tests;
+namespace KatLang.Tests;
 
 public class EvaluatorTests
 {
@@ -1588,6 +1588,22 @@ public class EvaluatorTests
             F(1)
             """;
         AssertEvalFails(source);
+    }
+    [Fact]
+    public void Eval_ArityMismatch_InnerCall_SpanPointsToInnerCall()
+    {
+        // Inner has 0 params; calling Inner(param) inside Outer should produce
+        // an error whose span points to Inner(param), not the outer Outer(50000).
+        var source = """
+            Inner = 5
+            Outer = param - Inner(param)
+            Outer(50000)
+            """;
+        var err = GetEvalError(source);
+        Assert.NotNull(err);
+        Assert.NotNull(err.Span);
+        // Span should point to "Inner(param)" on line 2, NOT "Outer(50000)" on line 3.
+        Assert.Equal(2, err.Span.StartLineNumber);
     }
 
     // â”€â”€ Grace operator end-to-end tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

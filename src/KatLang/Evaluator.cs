@@ -175,7 +175,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result) =>
         result.IsError
-            ? new EvalError.WithContext(context, result.Error)
+            ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
 
     private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
