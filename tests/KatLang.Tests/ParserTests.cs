@@ -1468,12 +1468,97 @@ public class ParserTests
     {
         var source = """
             F when (1, qty) = qty
-            F when (2, a, qty) = ~a * qty
+            F when (2, qty) = ~qty
             F when (3, qty) = qty
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
         Assert.Equal(2, diag.Span.StartLineNumber);
+    }
+
+    // ── Uniform top-level pattern arity validation ──────────────────────────
+
+    [Fact]
+    public void Parse_Conditional_SameArity_NestedStructureDiffers_Valid()
+    {
+        // Both branches have top-level arity 2; nested structure differs
+        var source = """
+            Else when (1, (a, b)) = a
+            Else when (2, x) = x
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_Conditional_SameArity_FlatBranches_Valid()
+    {
+        // Both branches have top-level arity 3
+        var source = """
+            F when (1, a, b) = a
+            F when (2, a, b) = b
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+    }
+
+    [Fact]
+    public void Parse_Conditional_SingleBranch_AlwaysValid()
+    {
+        // Single branch: no arity conflict possible
+        var result = Parser.ParseSyntax("K when (a, b) = a");
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_DifferentArity_ReportsError()
+    {
+        // First branch arity 2, second branch arity 3
+        var source = """
+            Expense when (1, qty) = qty
+            Expense when (2, a, qty) = a * qty
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d =>
+            d.Message.Contains("same top-level pattern arity") &&
+            d.Message.Contains("Expense"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_Arity1vs2_ReportsError()
+    {
+        // First branch arity 1 (bare bind), second branch arity 2 (group)
+        var source = """
+            F when (x) = 1
+            F when (a, b) = a
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d =>
+            d.Message.Contains("same top-level pattern arity") &&
+            d.Message.Contains("Expected 1") &&
+            d.Message.Contains("arity 2"));
+    }
+
+    [Fact]
+    public void Parse_Conditional_ThreeBranches_ThirdMismatches_ReportsError()
+    {
+        // First two branches arity 2, third branch arity 3
+        var source = """
+            G when (1, x) = x
+            G when (2, x) = x + 1
+            G when (3, x, y) = x + y
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d =>
+            d.Message.Contains("same top-level pattern arity") &&
+            d.Message.Contains("G"));
     }
 }

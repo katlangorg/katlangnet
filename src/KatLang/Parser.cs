@@ -338,8 +338,27 @@ public sealed class Parser
         }
 
         // Convert conditional branches into Algorithm.Conditional properties
+        // Validate uniform top-level pattern arity across branches (Lean: validateBranchArities).
+        // Conditional algorithms require a uniform top-level interface across branches:
+        // all branches must have the same top-level pattern arity.
+        // Nested internal pattern structure may vary.
         foreach (var (name, branches) in conditionalBranches)
         {
+            if (branches.Count > 1)
+            {
+                var expectedArity = branches[0].Pattern.TopLevelArity();
+                for (int i = 1; i < branches.Count; i++)
+                {
+                    var branchArity = branches[i].Pattern.TopLevelArity();
+                    if (branchArity != expectedArity)
+                    {
+                        ReportError(
+                            $"All branches of conditional algorithm '{name}' must have the same top-level pattern arity. " +
+                            $"Expected {expectedArity} (from first branch), but branch {i + 1} has arity {branchArity}.");
+                    }
+                }
+            }
+
             var condAlg = new Algorithm.Conditional(
                 Parent: null,
                 Opens: [],

@@ -75,6 +75,7 @@ inductive Error where
   | badIndex         : Error
   | divByZero        : Error                   -- division or modulo by zero
   | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
+  | branchArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level arity mismatch (name, expected, actual)
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
 
@@ -164,6 +165,19 @@ namespace Pattern
   def hasDuplicateBinds (p : Pattern) : Bool :=
     let names := boundNames p
     names.length != names.eraseDups.length
+
+  /-- Compute the top-level arity of a pattern.
+      - `group [p1, ..., pn]` ⟹ n
+      - any non-group pattern  ⟹ 1
+
+      This defines the outer call interface of a conditional algorithm branch.
+      Conditional algorithms require a uniform top-level interface across branches:
+      all branches of the same conditional algorithm must have the same
+      top-level pattern arity.  Nested substructure may vary, but the outer
+      number of inputs must remain consistent. -/
+  def topLevelArity : Pattern -> Nat
+    | .group ps => ps.length
+    | _         => 1
 end Pattern
 
 --------------------------------------------------------------------------------
@@ -225,7 +239,15 @@ mutual
         NOT infer additional implicit parameters from free identifiers — only
         names bound by the pattern and names resolvable through ordinary lexical /
         property / open / builtin lookup are available.  Grace `~` is forbidden
-        in both patterns and branch bodies. -/
+        in both patterns and branch bodies.
+
+        **Uniform top-level arity invariant**: all branches of the same
+        conditional algorithm must have the same top-level pattern arity
+        (as defined by `Pattern.topLevelArity`).  Nested internal pattern
+        structure may vary, but the outer number of inputs must remain
+        consistent.  This preserves a unified outer call interface and
+        prevents conditional algorithms from acting as ad hoc overloading
+        by varying top-level argument count. -/
     | conditional :
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
@@ -422,6 +444,25 @@ namespace Algorithm
   /-- Wire a child algorithm to its parent's scope context. -/
   def childOf (a : Algorithm) (child : Algorithm) : Algorithm :=
     child.withParent (some (a.asScopeCtx))
+
+  /-- Validate that all branches of a conditional algorithm have the same
+      top-level pattern arity.  Returns `none` if valid (or non-conditional),
+      `some (expected, actual)` for the first mismatching branch.
+      This enforces the uniform top-level arity invariant:
+      conditional algorithms are "one algorithm, one outer interface, many branches". -/
+  def validateBranchArities : Algorithm -> Option (Nat × Nat)
+    | .conditional _ _ bs =>
+        match bs with
+        | [] => none
+        | b :: rest =>
+            let expected := b.pattern.topLevelArity
+            if rest.any (fun br => br.pattern.topLevelArity != expected)
+            then
+              match rest.find? (fun br => br.pattern.topLevelArity != expected) with
+              | some bad => some (expected, bad.pattern.topLevelArity)
+              | none     => none  -- unreachable
+            else none
+    | _ => none
 end Algorithm
 
 namespace ScopeCtx

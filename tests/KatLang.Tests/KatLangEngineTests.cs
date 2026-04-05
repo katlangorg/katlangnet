@@ -285,8 +285,8 @@ public class KatLangEngineTests
     {
         var source = """
             Expense when (1, qty) = a * qty
-            Expense when (2, a, qty) = a * qty
-            Expense(2, 0.80, 3)
+            Expense when (2, qty) = qty
+            Expense(2, 3)
             """;
         var result = KatLangEngine.Run(source);
 
@@ -300,8 +300,8 @@ public class KatLangEngineTests
     {
         var source = """
             Expense when (1, qty) = 1.20 * qty
-            Expense when (2, a, qty) = a * qty
-            Expense(2, 0.80, 3)
+            Expense when (2, qty) = 0.80 * qty
+            Expense(2, 3)
             """;
         var result = KatLangEngine.Run(source);
 

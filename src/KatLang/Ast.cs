@@ -124,6 +124,23 @@ public abstract record Pattern
         var names = BoundNames();
         return names.Count != names.Distinct().Count();
     }
+
+    /// <summary>
+    /// Compute the top-level arity of a pattern.
+    /// Lean: <c>Pattern.topLevelArity</c>.
+    /// <list type="bullet">
+    ///   <item><c>Group [p1, ..., pn]</c> → n</item>
+    ///   <item>Any non-group pattern → 1</item>
+    /// </list>
+    /// This defines the outer call interface of a conditional algorithm branch.
+    /// All branches of the same conditional algorithm must have the same
+    /// top-level pattern arity. Nested substructure may vary.
+    /// </summary>
+    public int TopLevelArity() => this switch
+    {
+        Group(var items) => items.Count,
+        _ => 1,
+    };
 }
 
 /// <summary>
@@ -226,6 +243,12 @@ public abstract record Algorithm
     /// infer additional implicit parameters from free identifiers. All branch inputs
     /// must appear in the pattern. Unused bound names are allowed. Grace <c>~</c> is
     /// not permitted in branch patterns or bodies.</para>
+    ///
+    /// <para><b>Uniform top-level arity invariant</b>: all branches of the same
+    /// conditional algorithm must have the same top-level pattern arity
+    /// (as defined by <see cref="Pattern.TopLevelArity"/>). Nested internal
+    /// pattern structure may vary, but the outer number of inputs must remain
+    /// consistent. This preserves a unified outer call interface.</para>
     /// </summary>
     public sealed record Conditional : Algorithm
     {
