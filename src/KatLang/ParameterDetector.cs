@@ -36,14 +36,17 @@ public static class ParameterDetector
     /// <summary>
     /// Processes a root algorithm, detecting and classifying parameters throughout the tree.
     /// Returns a new AST with correct <see cref="Expr.Param"/> nodes and populated
-    /// <see cref="Algorithm.Params"/> lists.
+    /// <see cref="Algorithm.Params"/> lists, along with any diagnostics (e.g. free
+    /// identifiers in conditional branch bodies that violate the full-input-specification rule).
     /// </summary>
-    public static Algorithm Detect(Algorithm root)
+    public static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) Detect(Algorithm root)
     {
-        return ProcessAlgorithm(root, parentPropertyNames: new(PreludeNames), propertyAlgs: new());
+        var diagnostics = new List<Diagnostic>();
+        var processed = ProcessAlgorithm(root, parentPropertyNames: new(PreludeNames), propertyAlgs: new(), diagnostics);
+        return (processed, diagnostics);
     }
 
-    private static Algorithm ProcessAlgorithm(Algorithm alg, HashSet<string> parentPropertyNames, Dictionary<string, Algorithm> propertyAlgs)
+    private static Algorithm ProcessAlgorithm(Algorithm alg, HashSet<string> parentPropertyNames, Dictionary<string, Algorithm> propertyAlgs, List<Diagnostic>? diagnostics = null)
     {
         // Collect local property names and build property algorithm map
         var localNames = new HashSet<string>();
@@ -77,7 +80,7 @@ public static class ParameterDetector
                 foreach (var branch in condAlg.Branches)
                 {
                     var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
-                    var processedBody = ProcessConditionalBranchBody(branch.Body, visibleNames, allPropertyAlgs, binderNames);
+                    var processedBody = ProcessConditionalBranchBody(branch.Body, visibleNames, allPropertyAlgs, binderNames, prop.Name, diagnostics);
                     processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
                 }
                 var processedCond = new Algorithm.Conditional(
@@ -86,7 +89,7 @@ public static class ParameterDetector
             }
             else
             {
-                var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs);
+                var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs, diagnostics);
                 newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic));
             }
         }
@@ -138,12 +141,16 @@ public static class ParameterDetector
     /// This enforces the invariant that conditional branch inputs come ONLY from the
     /// branch pattern. Free identifiers in the body that are not pattern-bound must
     /// resolve through ordinary lexical / property / open / builtin lookup.
+    /// Any free identifier that would be an implicit parameter (not visible in any scope)
+    /// is reported as a compile-time error.
     /// </summary>
     private static Algorithm ProcessConditionalBranchBody(
         Algorithm body,
         HashSet<string> visibleNames,
         Dictionary<string, Algorithm> propertyAlgs,
-        HashSet<string> binderNames)
+        HashSet<string> binderNames,
+        string branchName,
+        List<Diagnostic>? diagnostics)
     {
         // Collect local property names
         var localNames = new HashSet<string>();
@@ -164,11 +171,31 @@ public static class ParameterDetector
 
         CollectOpenVisibleNames(body.Opens, allPropertyAlgs, bodyVisibleNames);
 
+        // Detect free identifiers that would be implicit parameters — these are
+        // forbidden in conditional branch bodies (full-input-specification rule).
+        if (diagnostics is not null)
+        {
+            var freeNames = new HashSet<string>();
+            var freeOrder = new List<string>();
+            var dummyWeights = new Dictionary<string, int>();
+            CollectFreeParams(body.Output, bodyVisibleNames, freeNames, freeOrder, dummyWeights);
+            foreach (var freeName in freeOrder)
+            {
+                // Find the span for the first occurrence of this free identifier
+                var span = FindResolveSpan(body.Output, freeName);
+                diagnostics.Add(new Diagnostic(
+                    $"Identifier '{freeName}' in conditional branch '{branchName}' is not defined in the 'when' pattern. " +
+                    $"All parameters of conditional branches must be declared in the pattern.",
+                    DiagnosticSeverity.Error,
+                    span ?? new SourceSpan(0, 0, 0, 0)));
+            }
+        }
+
         // Process nested properties normally
         var newProperties = new List<Property>(body.Properties.Count);
         foreach (var prop in body.Properties)
         {
-            var processedProp = ProcessAlgorithm(prop.Value, bodyVisibleNames, allPropertyAlgs);
+            var processedProp = ProcessAlgorithm(prop.Value, bodyVisibleNames, allPropertyAlgs, diagnostics);
             newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic));
         }
 
@@ -646,5 +673,36 @@ public static class ParameterDetector
         foreach (var prop in alg.Properties)
             if (prop.IsPublic)
                 visibleNames.Add(prop.Name);
+    }
+
+    /// <summary>
+    /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Resolve"/> with the given name
+    /// in a list of expressions. Used for error reporting on free identifiers in conditional branches.
+    /// </summary>
+    private static SourceSpan? FindResolveSpan(IReadOnlyList<Expr> exprs, string name)
+    {
+        foreach (var expr in exprs)
+        {
+            var span = FindResolveSpan(expr, name);
+            if (span is not null) return span;
+        }
+        return null;
+    }
+
+    private static SourceSpan? FindResolveSpan(Expr expr, string name)
+    {
+        return expr switch
+        {
+            Expr.Resolve(var n) when n == name => expr.Span,
+            Expr.Grace(var inner, _) => FindResolveSpan(inner, name),
+            Expr.Binary(_, var l, var r) => FindResolveSpan(l, name) ?? FindResolveSpan(r, name),
+            Expr.Unary(_, var operand) => FindResolveSpan(operand, name),
+            Expr.Index(var t, var s) => FindResolveSpan(t, name) ?? FindResolveSpan(s, name),
+            Expr.Combine(var l, var r) => FindResolveSpan(l, name) ?? FindResolveSpan(r, name),
+            Expr.DotCall(var t, _, var da) => FindResolveSpan(t, name) ?? (da is not null ? FindResolveSpan(da.Output, name) : null),
+            Expr.Block(var alg) => FindResolveSpan(alg.Output, name),
+            Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args.Output, name),
+            _ => null,
+        };
     }
 }

@@ -5,7 +5,8 @@ public class ParameterDetectorTests
     private static Algorithm ParseAndDetect(string source)
     {
         var result = Parser.ParseSyntax(source);
-        return ParameterDetector.Detect(result.Root);
+        var (detected, _) = ParameterDetector.Detect(result.Root);
+        return detected;
     }
 
     [Fact]
@@ -505,4 +506,71 @@ public class ParameterDetectorTests
         var binary = Assert.IsType<Expr.Binary>(branch.Body.Output[0]);
         Assert.IsType<Expr.Param>(binary.Left); // a is a binder
         Assert.IsType<Expr.Resolve>(binary.Right); // b stays as Resolve (will fail at runtime)
-    }}
+    }
+
+    // ── Conditional branch: free identifier diagnostics ───────────────────
+
+    private static IReadOnlyList<Diagnostic> ParseAndDetectDiagnostics(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+        var (_, diagnostics) = ParameterDetector.Detect(result.Root);
+        return diagnostics;
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_FreeIdentifier_ReportsDiagnostic()
+    {
+        var diags = ParseAndDetectDiagnostics("F when (a) = a + b");
+
+        var error = Assert.Single(diags);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Contains("b", error.Message);
+        Assert.Contains("F", error.Message);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_MultipleFreeIdentifiers_ReportsAll()
+    {
+        var diags = ParseAndDetectDiagnostics("F when (x) = a * x + b");
+
+        Assert.Equal(2, diags.Count);
+        Assert.All(diags, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
+        Assert.Contains(diags, d => d.Message.Contains("a"));
+        Assert.Contains(diags, d => d.Message.Contains("b"));
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_AllBindersBound_NoDiagnostic()
+    {
+        var diags = ParseAndDetectDiagnostics("F when (a, b) = a + b");
+
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_SiblingPropertyVisible_NoDiagnostic()
+    {
+        var source = """
+            Rate = 2
+            F when (x) = x * Rate
+            """;
+        var diags = ParseAndDetectDiagnostics(source);
+
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_ErrorOnlyInOneBranch()
+    {
+        // Branch 1 has free identifier 'a', branch 2 is fine
+        var source = """
+            Expense when (1, qty) = a * qty
+            Expense when (2, a, qty) = a * qty
+            """;
+        var diags = ParseAndDetectDiagnostics(source);
+
+        var error = Assert.Single(diags);
+        Assert.Contains("a", error.Message);
+        Assert.Contains("Expense", error.Message);
+    }
+}

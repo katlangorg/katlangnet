@@ -39,9 +39,12 @@ public sealed class Parser
     public static ParseResult Parse(string source)
     {
         var result = ParseSyntax(source);
-        var detected = ParameterDetector.Detect(result.Root);
+        var (detected, paramDiags) = ParameterDetector.Detect(result.Root);
         var resolved = ImplicitArgumentResolver.Resolve(detected);
-        return result with { Root = resolved };
+        var allDiagnostics = paramDiags.Count > 0
+            ? result.Diagnostics.Concat(paramDiags).ToList()
+            : result.Diagnostics;
+        return new ParseResult(resolved, allDiagnostics);
     }
 
     /// <summary>
@@ -68,7 +71,8 @@ public sealed class Parser
         var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts);
         var elaborated = loader.Elaborate(result.Root);
 
-        var detected = ParameterDetector.Detect(elaborated);
+        var (detected, paramDiags) = ParameterDetector.Detect(elaborated);
+        diagnostics.AddRange(paramDiags);
         var resolved = ImplicitArgumentResolver.Resolve(detected);
         return new ParseResult(resolved, diagnostics);
     }

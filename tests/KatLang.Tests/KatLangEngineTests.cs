@@ -277,4 +277,35 @@ public class KatLangEngineTests
         var str = error.ToString();
         Assert.DoesNotContain("[", str);
     }
+
+    // ── Conditional branch: free identifier detection (end-to-end) ──────────
+
+    [Fact]
+    public void Run_ConditionalBranch_FreeIdentifier_ReturnsParseFailure()
+    {
+        var source = """
+            Expense when (1, qty) = a * qty
+            Expense when (2, a, qty) = a * qty
+            Expense(2, 0.80, 3)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        Assert.Contains(failure.Errors, e => e.ToString().Contains("a"));
+        Assert.Contains(failure.Errors, e => e.ToString().Contains("Expense"));
+    }
+
+    [Fact]
+    public void Run_ConditionalBranch_AllBindersBound_Succeeds()
+    {
+        var source = """
+            Expense when (1, qty) = 1.20 * qty
+            Expense when (2, a, qty) = a * qty
+            Expense(2, 0.80, 3)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([2.40m], success.Atoms);
+    }
 }
