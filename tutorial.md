@@ -1186,6 +1186,26 @@ Only `public` properties are exposed through `load` and `open`.
   KeepFirst(a, b) = a
   KeepFirst(42, 999) // Result: 42
   ```
+- **Property redefinition:** defining the same property name twice is an error — properties are immutable bindings, not reassignable variables:
+
+  ```
+  A = 5
+  A = 6  // error: Property 'A' is already defined
+  ```
+
+- **Duplicate branch patterns:** two conditional branches with match-equivalent patterns are rejected because the second branch would be unreachable under first-match semantics. Binder names don't matter — only the structure of the pattern:
+
+  ```
+  F(x) = x + 1
+  F(y) = y + 2  // error: duplicate branch pattern
+  ```
+
+  Use different literal values or different arities to distinguish branches:
+
+  ```
+  F(0) = 1
+  F(x) = x + 1  // OK — 0 and a variable are not equivalent
+  ```
 ---
 
 ## Full Reference

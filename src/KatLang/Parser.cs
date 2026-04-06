@@ -280,14 +280,8 @@ public sealed class Parser
             {
                 var name = Current.StringValue!;
 
-                // Check for conflict: mixing conditional and normal definition
-                if (conditionalBranches.ContainsKey(name))
-                {
-                    ReportError($"Cannot mix conditional branch and normal property definition for '{name}'.");
-                }
-
                 // Check for duplicate property definition
-                if (properties.Any(p => p.Name == name))
+                if (properties.Any(p => p.Name == name) || conditionalBranches.ContainsKey(name))
                 {
                     ReportError($"Property '{name}' is already defined.");
                 }
@@ -306,7 +300,7 @@ public sealed class Parser
                 // Check for conflict: mixing normal and conditional definition
                 if (properties.Any(p => p.Name == name))
                 {
-                    ReportError($"Cannot mix normal property definition and conditional branch for '{name}'.");
+                    ReportError($"Property '{name}' is already defined.");
                 }
 
                 Advance(); // consume identifier

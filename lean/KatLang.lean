@@ -196,7 +196,7 @@ namespace Pattern
       - `group ps` ≡ `group qs` iff same length and pairwise match-equivalent
 
       Used to detect duplicate branch patterns in conditional algorithms. -/
-  def isMatchEquivalent : Pattern -> Pattern -> Bool
+  partial def isMatchEquivalent : Pattern -> Pattern -> Bool
     | .bind _,   .bind _    => true
     | .litInt m, .litInt n  => m == n
     | .group ps, .group qs  =>
@@ -546,9 +546,12 @@ namespace Algorithm
   def findDuplicatePropName : Algorithm -> Option Ident
     | .mk _ _ _ ps _ =>
         let names := ps.map (·.name)
-        match names.find? (fun n => names.filter (· == n) |>.length > 1) with
-        | some n => some n
-        | none   => none
+        let rec go : List Ident -> List Ident -> Option Ident
+          | [],        _    => none
+          | n :: rest, seen =>
+              if seen.elem n then some n
+              else go rest (n :: seen)
+        go names []
     | _ => none
 
   /-- Check whether the branch list of an Algorithm.conditional contains
