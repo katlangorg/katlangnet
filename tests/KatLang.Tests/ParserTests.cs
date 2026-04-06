@@ -1746,4 +1746,123 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to conditional algorithm branches"));
     }
+
+    // ── Property redefinition detection ────────────────────────────────────────
+
+    [Fact]
+    public void Parse_DuplicateProperty_ReportsError()
+    {
+        var source = """
+            A = 5
+            A = 6
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'A' is already defined"));
+    }
+
+    [Fact]
+    public void Parse_DuplicateProperty_WithImplicitParams_ReportsError()
+    {
+        var source = """
+            B = x + 1
+            B = x + 2
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'B' is already defined"));
+    }
+
+    [Fact]
+    public void Parse_DuplicatePublicProperty_ReportsError()
+    {
+        var source = """
+            public A = 5
+            public A = 6
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'A' is already defined"));
+    }
+
+    [Fact]
+    public void Parse_DuplicateProperty_MixedVisibility_ReportsError()
+    {
+        var source = """
+            A = 5
+            public A = 6
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'A' is already defined"));
+    }
+
+    [Fact]
+    public void Parse_DuplicateProperty_PublicThenPrivate_ReportsError()
+    {
+        var source = """
+            public A = 5
+            A = 6
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'A' is already defined"));
+    }
+
+    [Fact]
+    public void Parse_DuplicateConditionalBranchPattern_LitInt_ReportsError()
+    {
+        var source = """
+            F(1) = 100
+            F(1) = 200
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+    }
+
+    [Fact]
+    public void Parse_DuplicateConditionalBranchPattern_Bind_ReportsError()
+    {
+        var source = """
+            F(x) = x + 1
+            F(y) = y + 2
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+    }
+
+    [Fact]
+    public void Parse_ConditionalBranchPattern_DifferentLiterals_IsValid()
+    {
+        var source = """
+            F(1) = 100
+            F(2) = 200
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_ConditionalBranchPattern_LitAndBind_IsValid()
+    {
+        var source = """
+            F(1) = 100
+            F(x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_DistinctProperties_NoError()
+    {
+        var source = """
+            A = 5
+            B = 6
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+    }
 }
