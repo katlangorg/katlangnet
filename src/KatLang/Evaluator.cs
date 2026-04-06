@@ -1215,7 +1215,7 @@ public static class Evaluator
                 if (wired.Params.Count == 0)
                     return EvalAlgOutput(wired, ctx, valEnv);
                 var blockSpan = expr.Span ?? FirstSpan(wired.Output);
-                return new EvalError.ArityMismatch(wired.Params.Count, 0) { Span = blockSpan };
+                return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
             }
 
             case Expr.Resolve(var name):

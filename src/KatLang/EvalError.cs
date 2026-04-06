@@ -23,6 +23,7 @@ namespace KatLang;
 ///   | branchOutputArityMismatch : Ident → Nat → Nat → Error
 ///   | duplicateProperty : Ident → Error
 ///   | duplicateBranchPattern : Error
+///   | unresolvedImplicitParams : List Ident → Error
 ///   | withContext        : String → Error → Error
 /// </code>
 /// </summary>
@@ -89,6 +90,9 @@ public abstract record EvalError
 
     /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
     public sealed record NumericOverflow() : EvalError;
+
+    /// <summary>Top-level program has unresolved implicit parameters (no arguments supplied).</summary>
+    public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError;
 
     /// <summary>Contextual wrapper attaching a description to an inner error.</summary>
     public sealed record WithContext(string Context, EvalError Inner) : EvalError;

@@ -811,4 +811,15 @@ def test50d : Bool := !Pattern.isMatchEquivalent (.litString "a") (.bind "x")
 #eval test50c  -- should be true
 #eval test50d  -- should be true
 
+-- Test 51: Block with unresolved implicit params → unresolvedImplicitParams error
+-- A block whose algorithm has params (unresolved names become params) should
+-- produce unresolvedImplicitParams, not arityMismatch.
+def test51 : Bool :=
+  -- param "x" makes the block have params=["x"]
+  match runResult (.block (alg ["x"] [] [] [.param "x"])) with
+  | Except.error (Error.unresolvedImplicitParams ["x"]) => true
+  | _ => false
+
+#eval test51  -- should be true
+
 end KatLangTests

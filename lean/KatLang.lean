@@ -89,6 +89,7 @@ inductive Error where
   | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual)
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
+  | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
 
@@ -1504,7 +1505,7 @@ mutual
         if (Algorithm.params wired).length = 0 then
           evalAlgOutput wired ctx env
         else
-          .error (Error.arityMismatch (Algorithm.params wired).length 0)
+          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
 
     | .resolve n => do
         let a <- resolveAlg (.resolve n) ctx

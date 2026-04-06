@@ -49,9 +49,22 @@ public sealed class KatLangError
         EvalError.DivByZero => "Division by zero",
         EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
         EvalError.NumericOverflow => "Numeric overflow",
+        EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
         EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
         _ => error.ToString()!,
     };
+
+    private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e)
+    {
+        var count = e.ParamNames.Count;
+        var paramWord = count == 1 ? "parameter" : "parameters";
+        var argPhrase = count == 1 ? "argument was" : "arguments were";
+        var argWord = count == 1 ? "argument" : "arguments";
+        var names = count == 1
+            ? $"`{e.ParamNames[0]}`"
+            : string.Join(", ", e.ParamNames.Take(count - 1).Select(n => $"`{n}`")) + $" and `{e.ParamNames[^1]}`";
+        return $"The program output depends on implicit {paramWord} {names}, but no {argPhrase} provided, so the program cannot be executed (expected {count} {argWord}, got 0)";
+    }
 
     public override string ToString()
     {

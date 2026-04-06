@@ -1555,29 +1555,28 @@ public class EvaluatorTests
         => AssertEvalFails("X");
 
     [Fact]
-    public void Eval_UnknownIdentifier_ReturnsArityMismatchError()
+    public void Eval_UnknownIdentifier_ReturnsUnresolvedImplicitParams()
     {
         // "Sum" is detected as a parameter by ParameterDetector, so the root
         // block has params=["Sum"].  Block value-position semantics:
-        // 1+ params => arityMismatch.
+        // 1+ params => UnresolvedImplicitParams.
         var err = GetEvalError("Sum");
         Assert.NotNull(err);
         while (err is EvalError.WithContext wc)
             err = wc.Inner;
-        var am = Assert.IsType<EvalError.ArityMismatch>(err);
-        Assert.Equal(1, am.Expected);
-        Assert.Equal(0, am.Actual);
+        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(err);
+        Assert.Equal(["Sum"], uip.ParamNames);
     }
 
     [Fact]
-    public void Eval_UnknownIdentifier_ReturnsArityMismatch()
+    public void Eval_UnknownIdentifier_ReturnsUnresolvedImplicitParamsType()
     {
-        // "Sum" becomes a parameter → block has 1 param → ArityMismatch in value position.
+        // "Sum" becomes a parameter → block has 1 param → UnresolvedImplicitParams in value position.
         var err = GetEvalError("Sum");
         Assert.NotNull(err);
         while (err is EvalError.WithContext wc)
             err = wc.Inner;
-        Assert.IsType<EvalError.ArityMismatch>(err);
+        Assert.IsType<EvalError.UnresolvedImplicitParams>(err);
     }
 
     [Fact]
@@ -1594,9 +1593,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_UnknownIdentifier_MultiLine_ReturnsArityMismatch()
+    public void Eval_UnknownIdentifier_MultiLine_ReturnsUnresolvedImplicitParams()
     {
-        // Y is detected as a parameter → block has 1 param → ArityMismatch.
+        // Y is detected as a parameter → block has 1 param → UnresolvedImplicitParams.
         var source = """
             X = 5
             Y
@@ -1605,7 +1604,7 @@ public class EvaluatorTests
         Assert.NotNull(err);
         while (err is EvalError.WithContext wc)
             err = wc.Inner;
-        Assert.IsType<EvalError.ArityMismatch>(err);
+        Assert.IsType<EvalError.UnresolvedImplicitParams>(err);
     }
 
     [Fact]
@@ -3484,5 +3483,54 @@ public class EvaluatorTests
     {
         // Math.Sin('a') should fail with type mismatch (builtin expects numeric argument)
         AssertEvalFailsWithTypeMismatch("Math.Sin('a')", "Expected a number, got a string");
+    }
+
+    // ── Top-level unresolved implicit parameters ──
+
+    [Fact]
+    public void Eval_TopLevel_SingleImplicitParam_ErrorMessage()
+    {
+        var result = EvalFull("a + 1");
+        if (result.IsOk)
+            Assert.Fail($"Expected error but got: {result.Value}");
+        var error = result.Error;
+        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
+        Assert.Equal(["a"], uip.ParamNames);
+        var formatted = KatLangError.FromEvalError(error).Message;
+        Assert.Contains("implicit parameter `a`", formatted);
+        Assert.Contains("no argument was provided", formatted);
+        Assert.Contains("expected 1 argument, got 0", formatted);
+    }
+
+    [Fact]
+    public void Eval_TopLevel_MultipleImplicitParams_ErrorMessage()
+    {
+        var result = EvalFull("a + b");
+        if (result.IsOk)
+            Assert.Fail($"Expected error but got: {result.Value}");
+        var error = result.Error;
+        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
+        Assert.Equal(2, uip.ParamNames.Count);
+        var formatted = KatLangError.FromEvalError(error).Message;
+        Assert.Contains("implicit parameters", formatted);
+        Assert.Contains("no arguments were provided", formatted);
+        Assert.Contains("expected 2 arguments, got 0", formatted);
+    }
+
+    [Fact]
+    public void Eval_InnerCall_ArityMismatch_StillGeneric()
+    {
+        // A normal arity mismatch inside a call (too many args) should NOT be UnresolvedImplicitParams
+        var source = """
+            G(x) = x + 1
+            G(1, 2)
+            """;
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected error but got: {result.Value}");
+        var error = result.Error;
+        while (error is EvalError.WithContext wc)
+            error = wc.Inner;
+        Assert.IsNotType<EvalError.UnresolvedImplicitParams>(error);
     }
 }
