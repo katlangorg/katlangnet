@@ -188,6 +188,21 @@ namespace Pattern
   def topLevelArity : Pattern -> Nat
     | .group ps => ps.length
     | _         => 1
+
+  /-- Check whether two patterns are match-equivalent, i.e., they match the
+      same set of inputs.  Binder names are irrelevant for matching:
+      - `bind _` ≡ `bind _` (any binder matches everything)
+      - `litInt m` ≡ `litInt n` iff `m = n`
+      - `group ps` ≡ `group qs` iff same length and pairwise match-equivalent
+
+      Used to detect duplicate branch patterns in conditional algorithms. -/
+  def isMatchEquivalent : Pattern -> Pattern -> Bool
+    | .bind _,   .bind _    => true
+    | .litInt m, .litInt n  => m == n
+    | .group ps, .group qs  =>
+        ps.length == qs.length &&
+        (ps.zip qs).all (fun (p, q) => isMatchEquivalent p q)
+    | _, _ => false
 end Pattern
 
 --------------------------------------------------------------------------------
@@ -236,6 +251,13 @@ mutual
     deriving Repr
 
   inductive Algorithm where
+    /-- User-defined algorithm with properties, parameters, opens, and output.
+
+        **Unique property name invariant**: the `properties` list must not
+        contain two entries with the same `name`.  Properties are immutable
+        bindings; redefining a property is a static error detected by the
+        front-end / parser.  This invariant ensures that `lookupPropDefAny?`
+        (which returns the first match) is unambiguous. -/
     | mk :
         (parent     : Option ScopeCtx) ->
         (params     : List Ident) ->
@@ -269,7 +291,13 @@ mutual
         (the number of top-level output expressions in the branch body).
         Nested internal output structure may vary, but the outer number of
         outputs must remain consistent.  This preserves a unified output
-        interface across branches. -/
+        interface across branches.
+
+        **Unique branch pattern invariant**: the `branches` list must not
+        contain two entries whose patterns are match-equivalent (as defined
+        by `Pattern.isMatchEquivalent`).  Duplicate patterns are unreachable
+        (first-match semantics) and indicate a static error detected by the
+        front-end / parser. -/
     | conditional :
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
@@ -511,6 +539,31 @@ namespace Algorithm
               | none     => none  -- unreachable
             else none
     | _ => none
+
+  /-- Check whether the property list of an Algorithm.mk contains duplicate
+      property names.  Returns the first duplicate name found, or `none`
+      if all names are unique.  This enforces the unique property name invariant. -/
+  def findDuplicatePropName : Algorithm -> Option Ident
+    | .mk _ _ _ ps _ =>
+        let names := ps.map (·.name)
+        match names.find? (fun n => names.filter (· == n) |>.length > 1) with
+        | some n => some n
+        | none   => none
+    | _ => none
+
+  /-- Check whether the branch list of an Algorithm.conditional contains
+      match-equivalent patterns.  Returns `true` if a duplicate is found.
+      This enforces the unique branch pattern invariant. -/
+  def hasDuplicateBranchPatterns : Algorithm -> Bool
+    | .conditional _ _ bs =>
+        let rec go : List CondBranch -> Bool
+          | [] => false
+          | b :: rest =>
+              if rest.any (fun br => b.pattern.isMatchEquivalent br.pattern)
+              then true
+              else go rest
+        go bs
+    | _ => false
 end Algorithm
 
 namespace ScopeCtx
