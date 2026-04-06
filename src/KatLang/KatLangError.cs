@@ -44,6 +44,7 @@ public sealed class KatLangError
         EvalError.AmbiguousOpen e => $"Ambiguous open '{e.Name}': provided by {string.Join(", ", e.Providers)}",
         EvalError.ArityMismatch e => $"Arity mismatch: expected {e.Expected}, got {e.Actual}",
         EvalError.BadArity => "Bad arity",
+        EvalError.TypeMismatch e => $"Type mismatch: {e.Message}",
         EvalError.BadIndex => "Bad index",
         EvalError.DivByZero => "Division by zero",
         EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",

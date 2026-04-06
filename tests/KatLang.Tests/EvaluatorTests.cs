@@ -74,6 +74,19 @@ public class EvaluatorTests
             Assert.Fail($"Expected evaluation failure but got: [{string.Join(", ", result.Value)}]");
     }
 
+    private static void AssertEvalFailsWithTypeMismatch(string source, string expectedSubstring)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected TypeMismatch error but got: {result.Value}");
+        var error = result.Error;
+        // Unwrap WithContext as needed
+        while (error is EvalError.WithContext wc)
+            error = wc.Inner;
+        var tm = Assert.IsType<EvalError.TypeMismatch>(error);
+        Assert.Contains(expectedSubstring, tm.Message);
+    }
+
     private static EvalResult<Result> EvalFull(string source)
     {
         var ast = Parser.Parse(source).Root;
@@ -3419,21 +3432,21 @@ public class EvaluatorTests
     public void Eval_String_MultiplyFails()
     {
         // 'a' * 3 should fail (strings don't support arithmetic)
-        AssertEvalFails("'a' * 3");
+        AssertEvalFailsWithTypeMismatch("'a' * 3", "string and non-string");
     }
 
     [Fact]
     public void Eval_String_AddNumberFails()
     {
         // 1 + 'a' should fail (mixed types)
-        AssertEvalFails("1 + 'a'");
+        AssertEvalFailsWithTypeMismatch("1 + 'a'", "string and non-string");
     }
 
     [Fact]
     public void Eval_String_AddStringsFails()
     {
         // 'a' + 'b' should fail (no string concatenation)
-        AssertEvalFails("'a' + 'b'");
+        AssertEvalFailsWithTypeMismatch("'a' + 'b'", "only support == and !=");
     }
 
     [Fact]
@@ -3446,26 +3459,30 @@ public class EvaluatorTests
             Properties: [], Output: [unaryExpr]);
         var result = Evaluator.Run(new Expr.Block(alg));
         Assert.True(result.IsError);
+        var error = result.Error;
+        while (error is EvalError.WithContext wc) error = wc.Inner;
+        var tm = Assert.IsType<EvalError.TypeMismatch>(error);
+        Assert.Contains("not supported for strings", tm.Message);
     }
 
     [Fact]
     public void Eval_String_ComparisonLtFails()
     {
         // 'a' < 'b' should fail (no string ordering)
-        AssertEvalFails("'a' < 'b'");
+        AssertEvalFailsWithTypeMismatch("'a' < 'b'", "only support == and !=");
     }
 
     [Fact]
     public void Eval_String_MixedEqualityFails()
     {
         // 1 == 'a' should fail (mixed types in equality)
-        AssertEvalFails("1 == 'a'");
+        AssertEvalFailsWithTypeMismatch("1 == 'a'", "string and non-string");
     }
 
     [Fact]
     public void Eval_String_SinFails()
     {
-        // Sin('a') should fail (builtin expects numeric argument)
-        AssertEvalFails("Sin('a')");
+        // Math.Sin('a') should fail with type mismatch (builtin expects numeric argument)
+        AssertEvalFailsWithTypeMismatch("Math.Sin('a')", "Expected a number, got a string");
     }
 }

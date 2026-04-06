@@ -10,41 +10,44 @@
    - [Comparison Operators](#comparison-operators)
    - [Logical Operators](#logical-operators)
    - [Math Constants and Functions](#math-constants-and-functions)
-4. [Multiple Outputs](#multiple-outputs)
-5. [Properties](#properties)
+4. [String Literals](#string-literals)
+   - [String Equality](#string-equality)
+5. [Multiple Outputs](#multiple-outputs)
+6. [Properties](#properties)
    - [Implicit and Explicit Output](#implicit-and-explicit-output)
    - [Algorithm Length](#algorithm-length)
    - [Output Selection](#output-selection)
    - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
    - [Name Resolution](#name-resolution)
-6. [Parameters](#parameters)
+7. [Parameters](#parameters)
    - [Reordering Parameters with Grace~ operator](#reordering-parameters-with-grace-operator)
-7. [Conditionals](#conditionals)
-8. [Repetition](#repetition)
+8. [Conditionals](#conditionals)
+9. [Repetition](#repetition)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
-9. [Practical Examples](#practical-examples)
-   - [Reusable Calculation with Parameters](#reusable-calculation-with-parameters)
-   - [Multi-Output Example](#multi-output-example)
-   - [Loop-Based Example: Sum of a List](#loop-based-example-sum-of-a-list)
-   - [Fibonacci Sequence](#fibonacci-sequence)
-10. [Higher-Order Algorithms](#higher-order-algorithms)
+10. [Practical Examples](#practical-examples)
+    - [Reusable Calculation with Parameters](#reusable-calculation-with-parameters)
+    - [Multi-Output Example](#multi-output-example)
+    - [Loop-Based Example: Sum of a List](#loop-based-example-sum-of-a-list)
+    - [Fibonacci Sequence](#fibonacci-sequence)
+11. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
     - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
-11. [Structural Composition with semicolon operator](#structural-composition-with-semicolon-operator)
-12. [Atoms](#atoms)
-13. [Conditional Algorithms](#conditional-algorithms)
+12. [Structural Composition with semicolon operator](#structural-composition-with-semicolon-operator)
+13. [Atoms](#atoms)
+14. [Conditional Algorithms](#conditional-algorithms)
     - [Basic Pattern Matching](#basic-pattern-matching)
     - [Nested Group Patterns](#nested-group-patterns)
     - [The K Combinator: Ignoring a Parameter](#the-k-combinator-ignoring-a-parameter)
     - [Mixing Literals and Variables](#mixing-literals-and-variables)
+    - [String Patterns](#string-patterns)
     - [Non-Exhaustive Patterns](#non-exhaustive-patterns)
-14. [Loading and `open`](#loading-and-open)
+15. [Loading and `open`](#loading-and-open)
     - [Loading External Algorithms](#loading-external-algorithms)
     - [`open`: Import Properties Directly](#open-import-properties-directly)
     - [Visibility](#visibility)
-15. [Pitfalls](#pitfalls)
-16. [Full Reference](#full-reference)
+16. [Pitfalls](#pitfalls)
+17. [Full Reference](#full-reference)
     - [Operators](#operators)
     - [Builtin Algorithms and Keywords](#builtin-algorithms-and-keywords)
 
@@ -330,40 +333,6 @@ Strings support `==` and `!=`. Two strings are equal if they have identical cont
 ```
 
 Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
-
-### Strings in Conditional Pattern Matching
-
-String literals can appear as patterns in conditional algorithm branches. A string pattern matches only the exact same string:
-
-```
-Price('tomatoes') = 1.20
-Price('apples')   = 0.80
-Price('cucumbers') = 0.60
-Price(item)       = 0
-
-Price('apples')
-Price('bananas')
-```
-
-**Results:**
-```
-0.80
-0
-```
-
-The catch-all variable `item` at the end handles any string (or other value) not matched by the earlier branches.
-
-### Strings as Algorithm Arguments
-
-You can call algorithms with string arguments directly:
-
-```
-Expense = Price(item) * quantity
-
-Expense('apples', 3)
-```
-
-**Result:** `2.4`
 
 ---
 
@@ -1132,6 +1101,30 @@ Strict(1, (2, 3))
 ```
 
 This fails with a "no matching branch" error because `(b)` expects exactly one element.
+
+### String Patterns
+
+String literals can be used as branch patterns in conditional algorithms. A string pattern matches only that exact string (case-sensitive). A variable catch-all handles any unmatched value. Algorithms that dispatch on string patterns can be called with string arguments directly and combined with other algorithms:
+
+```
+Price('tomatoes')  = 1.20
+Price('apples')    = 0.80
+Price('cucumbers') = 0.60
+Price(item)        = 0
+
+Expense = Price(item) * quantity
+
+Price('apples')
+Price('bananas')
+Expense('apples', 3)
+```
+
+**Results:**
+```
+0.80
+0
+2.4
+```
 
 ### Non-Exhaustive Patterns
 

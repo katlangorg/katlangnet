@@ -15,6 +15,7 @@ namespace KatLang;
 ///   | ambiguousOpen     : Ident → List String → Error
 ///   | arityMismatch     : Nat → Nat → Error
 ///   | badArity          : Error
+///   | typeMismatch      : String → Error
 ///   | badIndex          : Error
 ///   | divByZero         : Error
 ///   | noMatchingBranch  : Ident → Error
@@ -61,6 +62,9 @@ public abstract record EvalError
 
     /// <summary>Shape / unpacking failure.</summary>
     public sealed record BadArity() : EvalError;
+
+    /// <summary>Type error (e.g. string where number expected).</summary>
+    public sealed record TypeMismatch(string Message) : EvalError;
 
     /// <summary>Index is out of range or invalid.</summary>
     public sealed record BadIndex() : EvalError;

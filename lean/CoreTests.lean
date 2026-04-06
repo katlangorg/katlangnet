@@ -5,7 +5,7 @@ import KatLang
 --------------------------------------------------------------------------------
 
 namespace KatLangTests
-open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm)
+open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm Error)
 
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
@@ -727,27 +727,27 @@ def test42 : Bool :=
 
 #eval test42  -- should be true
 
--- Test 43: Unsupported binary operation on strings → error
+-- Test 43: Unsupported binary operation on strings → typeMismatch
 def test43 : Bool :=
   match runResult (.binary .add (.stringLiteral "a") (.stringLiteral "b")) with
-  | Except.error _ => true
-  | Except.ok _ => false
+  | Except.error (Error.typeMismatch _) => true
+  | _ => false
 
 #eval test43  -- should be true
 
--- Test 44: Mixed string/number in binary → error
+-- Test 44: Mixed string/number in binary → typeMismatch
 def test44 : Bool :=
   match runResult (.binary .add (.num 1) (.stringLiteral "a")) with
-  | Except.error _ => true
-  | Except.ok _ => false
+  | Except.error (Error.typeMismatch _) => true
+  | _ => false
 
 #eval test44  -- should be true
 
--- Test 45: Unary minus on string → error
+-- Test 45: Unary minus on string → typeMismatch
 def test45 : Bool :=
   match runResult (.unary .minus (.stringLiteral "hello")) with
-  | Except.error _ => true
-  | Except.ok _ => false
+  | Except.error (Error.typeMismatch _) => true
+  | _ => false
 
 #eval test45  -- should be true
 

@@ -458,9 +458,11 @@ public static class Evaluator
         return alg;
     }
 
-    /// <summary>Coerce a Result to decimal, or raise BadArity. Lean: expectInt.</summary>
+    /// <summary>Coerce a Result to decimal, or raise TypeMismatch for strings, BadArity otherwise. Lean: expectInt.</summary>
     private static EvalResult<decimal> ExpectInt(Result r)
     {
+        if (r is Result.Str)
+            return new EvalError.TypeMismatch("Expected a number, got a string");
         var v = r.AsNum();
         return v is not null
             ? EvalResult<decimal>.Ok(v.Value)
@@ -1117,7 +1119,7 @@ public static class Evaluator
                 if (operandR.Value is Result.Group(var uItems) && uItems.Count == 0)
                     return EvalResult<Result>.Ok(new Result.Group([]));
                 if (operandR.Value is Result.Str)
-                    return new EvalError.BadArity() { Span = expr.Span };
+                    return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = expr.Span };
                 var vR = ExpectInt(operandR.Value);
                 if (vR.IsError) return vR.Error;
                 var unaryResult = unaryOp switch
@@ -1150,12 +1152,12 @@ public static class Evaluator
                     {
                         BinaryOp.Eq => EvalResult<Result>.Ok(new Result.Atom(ls == rs2 ? 1 : 0)),
                         BinaryOp.Ne => EvalResult<Result>.Ok(new Result.Atom(ls != rs2 ? 1 : 0)),
-                        _ => new EvalError.BadArity() { Span = expr.Span },
+                        _ => new EvalError.TypeMismatch("Strings only support == and != operators") { Span = expr.Span },
                     };
                 }
                 // Mixed string/non-string: fail for any operator
                 if (lR.Value is Result.Str || rR.Value is Result.Str)
-                    return new EvalError.BadArity() { Span = expr.Span };
+                    return new EvalError.TypeMismatch("Cannot apply operator to string and non-string operands") { Span = expr.Span };
                 // Normal arithmetic: coerce both to int.
                 var xR = ExpectInt(lR.Value);
                 if (xR.IsError) return xR.Error;
@@ -1270,7 +1272,10 @@ public static class Evaluator
             var val = LookupVal(valEnv, argNames[i]);
             if (val is null) return new EvalError.UnknownName(argNames[i]);
             var num = val.AsNum();
-            if (num is null) return new EvalError.BadArity();
+            if (num is null)
+                return val is Result.Str
+                    ? new EvalError.TypeMismatch("Expected a number, got a string")
+                    : new EvalError.BadArity();
             args[i] = num.Value;
         }
 

@@ -81,6 +81,7 @@ inductive Error where
   | ambiguousOpen    : Ident -> List String -> Error   -- name, providers
   | arityMismatch    : Nat -> Nat -> Error     -- expected, actual
   | badArity         : Error                   -- shape / unpacking failure
+  | typeMismatch     : String -> Error          -- type error (e.g. string where number expected)
   | badIndex         : Error
   | divByZero        : Error                   -- division or modulo by zero
   | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
@@ -694,12 +695,13 @@ def evalIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result
 -- Semantics
 --------------------------------------------------------------------------------
 
-/-- Coerce a Result to Int, or raise badArity.
-    Strings are not numeric: `expectInt (str _)` fails with badArity. -/
+/-- Coerce a Result to Int, or raise typeMismatch for strings, badArity otherwise. -/
 def expectInt (r : Result) : EvalM Int :=
-  match Result.asInt? r with
-  | some n => pure n
-  | none   => .error Error.badArity
+  match r with
+  | .str _ => .error (Error.typeMismatch "Expected a number, got a string")
+  | _ => match Result.asInt? r with
+    | some n => pure n
+    | none   => .error Error.badArity
 
 /-- Step output: state and continuation flag. -/
 abbrev StepOut := Prod Result Int
@@ -1440,7 +1442,7 @@ mutual
         let r <- eval e ctx env
         match r with
         | .group [] => pure (Result.group [])   -- empty propagates through unary
-        | .str _ => .error Error.badArity        -- strings do not support unary ops
+        | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
         | _ => do
           let v <- expectInt r
           pure (Result.atom <|
@@ -1462,10 +1464,10 @@ mutual
             match op with
             | .eq => pure (Result.atom (if s = t then 1 else 0))
             | .ne => pure (Result.atom (if s != t then 1 else 0))
-            | _   => .error Error.badArity  -- unsupported operation on strings
+            | _   => .error (Error.typeMismatch "Strings only support == and != operators")
         -- Mixed string/number or string/group: fail for any operator
-        | .str _, _ => .error Error.badArity
-        | _, .str _ => .error Error.badArity
+        | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+        | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
         | _, _ => do
           let x <- expectInt lr
           let y <- expectInt rr
