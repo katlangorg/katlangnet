@@ -141,6 +141,19 @@ public abstract record Pattern
         Group(var items) => items.Count,
         _ => 1,
     };
+
+    /// <summary>
+    /// Check whether two patterns are match-equivalent, i.e., they match
+    /// the same set of inputs. Binder names are irrelevant for matching.
+    /// </summary>
+    internal bool IsMatchEquivalent(Pattern other) => (this, other) switch
+    {
+        (Bind, Bind) => true,
+        (LitInt a, LitInt b) => a.Value == b.Value,
+        (Group a, Group b) => a.Items.Count == b.Items.Count &&
+            a.Items.Zip(b.Items).All(pair => pair.First.IsMatchEquivalent(pair.Second)),
+        _ => false,
+    };
 }
 
 /// <summary>

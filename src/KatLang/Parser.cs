@@ -239,6 +239,12 @@ public sealed class Parser
                 Advance(); // consume 'public'
                 var name = Current.StringValue!;
 
+                // Check for duplicate property definition
+                if (properties.Any(p => p.Name == name) || conditionalBranches.ContainsKey(name))
+                {
+                    ReportError($"Property '{name}' is already defined.");
+                }
+
                 Advance(); // consume identifier
                 Advance(); // consume '='
                 var body = ParseOutputLine();
@@ -278,6 +284,12 @@ public sealed class Parser
                 if (conditionalBranches.ContainsKey(name))
                 {
                     ReportError($"Cannot mix conditional branch and normal property definition for '{name}'.");
+                }
+
+                // Check for duplicate property definition
+                if (properties.Any(p => p.Name == name))
+                {
+                    ReportError($"Property '{name}' is already defined.");
                 }
 
                 Advance(); // consume identifier
@@ -324,6 +336,13 @@ public sealed class Parser
                     conditionalBranches[name] = branchList;
                     conditionalBranchSpans[name] = [];
                 }
+
+                // Check for duplicate branch pattern (match-equivalent)
+                if (branchList.Any(b => b.Pattern.IsMatchEquivalent(pattern)))
+                {
+                    ReportError($"Duplicate branch pattern for conditional algorithm '{name}'.");
+                }
+
                 branchList.Add(new CondBranch(pattern, body));
                 conditionalBranchSpans[name].Add(new SourceSpan(
                     nameToken.Line, nameToken.Column,
