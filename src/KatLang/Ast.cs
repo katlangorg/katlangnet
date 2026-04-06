@@ -43,7 +43,8 @@ public abstract record Expr
     /// <summary>Numeric literal.</summary>
     public sealed record Num(decimal Value) : Expr;
 
-    /// <summary>String literal. Used only for compile-time directives (e.g. load URLs). Surface-only, eliminated by elaboration.</summary>
+    /// <summary>String literal. Evaluates to <c>Result.Str</c> (first-class string value).
+    /// Also used for compile-time directives (e.g. load URLs) which are eliminated by elaboration.</summary>
     public sealed record StringLiteral(string Value) : Expr;
 
     /// <summary>Unary expression (currently only minus).</summary>
@@ -106,6 +107,9 @@ public abstract record Pattern
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
     public sealed record LitInt(decimal Value) : Pattern;
 
+    /// <summary>Matches only <c>Result.Str(s)</c> where s equals <see cref="Value"/> (exact string equality).</summary>
+    public sealed record LitString(string Value) : Pattern;
+
     /// <summary>Matches <c>Result.Group(items)</c> with same arity, each sub-pattern matching.</summary>
     public sealed record Group(IReadOnlyList<Pattern> Items) : Pattern;
 
@@ -114,6 +118,7 @@ public abstract record Pattern
     {
         Bind(var name) => [name],
         LitInt _ => [],
+        LitString _ => [],
         Group(var items) => items.SelectMany(p => p.BoundNames()).ToList(),
         _ => [],
     };
@@ -150,6 +155,7 @@ public abstract record Pattern
     {
         (Bind, Bind) => true,
         (LitInt a, LitInt b) => a.Value == b.Value,
+        (LitString a, LitString b) => a.Value == b.Value,
         (Group a, Group b) => a.Items.Count == b.Items.Count &&
             a.Items.Zip(b.Items).All(pair => pair.First.IsMatchEquivalent(pair.Second)),
         _ => false,

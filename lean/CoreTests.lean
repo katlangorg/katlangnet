@@ -683,4 +683,132 @@ def test33 : Bool :=
 
 #eval test33  -- should be true
 
+--------------------------------------------------------------------------------
+-- String literal tests (first-class string values)
+--------------------------------------------------------------------------------
+
+-- Test 38: String literal evaluates to Result.str
+def test38 : Bool :=
+  match runResult (.stringLiteral "hello") with
+  | Except.ok (.str "hello") => true
+  | _ => false
+
+#eval test38  -- should be true
+
+-- Test 39: String equality — same values
+def test39 : Bool :=
+  match runFlat (.binary .eq (.stringLiteral "a") (.stringLiteral "a")) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test39  -- should be true
+
+-- Test 40: String equality — different values
+def test40 : Bool :=
+  match runFlat (.binary .eq (.stringLiteral "a") (.stringLiteral "b")) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test40  -- should be true
+
+-- Test 41: String inequality
+def test41 : Bool :=
+  match runFlat (.binary .ne (.stringLiteral "a") (.stringLiteral "b")) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test41  -- should be true
+
+-- Test 42: String equality is case-sensitive
+def test42 : Bool :=
+  match runFlat (.binary .eq (.stringLiteral "Apples") (.stringLiteral "apples")) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test42  -- should be true
+
+-- Test 43: Unsupported binary operation on strings → error
+def test43 : Bool :=
+  match runResult (.binary .add (.stringLiteral "a") (.stringLiteral "b")) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval test43  -- should be true
+
+-- Test 44: Mixed string/number in binary → error
+def test44 : Bool :=
+  match runResult (.binary .add (.num 1) (.stringLiteral "a")) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval test44  -- should be true
+
+-- Test 45: Unary minus on string → error
+def test45 : Bool :=
+  match runResult (.unary .minus (.stringLiteral "hello")) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval test45  -- should be true
+
+-- Test 46: Conditional algorithm with string literal pattern
+-- Price('apples') = 0.80  (using Int for simplicity: 80)
+def priceAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .litString "apples",  alg [] [] [] [.num 80] ⟩,
+    ⟨ .litString "tomatoes", alg [] [] [] [.num 120] ⟩
+  ]
+
+def test46 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Price", priceAlg)] [
+    .call (resolve "Price") (alg [] [] [] [.stringLiteral "apples"])
+  ])) with
+  | Except.ok [80] => true
+  | _ => false
+
+#eval test46  -- should be true
+
+-- Test 47: Conditional algorithm with string pattern — no match
+def test47 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Price", priceAlg)] [
+    .call (resolve "Price") (alg [] [] [] [.stringLiteral "bananas"])
+  ])) with
+  | Except.error _ => true   -- noMatchingBranch
+  | Except.ok _    => false
+
+#eval test47  -- should be true
+
+-- Test 48: String passed as algorithm argument
+-- Echo = x, Echo('hello') → 'hello'
+def echoAlg : Algorithm := alg ["x"] [] [] [.param "x"]
+def test48 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Echo", echoAlg)] [
+    .call (resolve "Echo") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.ok (.str "hello") => true
+  | _ => false
+
+#eval test48  -- should be true
+
+-- Test 49: String stored in property and returned
+-- Name = 'KatLang', output = Name
+def test49 : Bool :=
+  let nameAlg := alg [] [] [] [.stringLiteral "KatLang"]
+  match runResult (.block (algPrivate [] [] [("Name", nameAlg)] [resolve "Name"])) with
+  | Except.ok (.str "KatLang") => true
+  | _ => false
+
+#eval test49  -- should be true
+
+-- Test 50: Pattern matching — litString in isMatchEquivalent
+def test50a : Bool := Pattern.isMatchEquivalent (.litString "a") (.litString "a")
+def test50b : Bool := !Pattern.isMatchEquivalent (.litString "a") (.litString "b")
+def test50c : Bool := !Pattern.isMatchEquivalent (.litString "a") (.litInt 1)
+def test50d : Bool := !Pattern.isMatchEquivalent (.litString "a") (.bind "x")
+
+#eval test50a  -- should be true
+#eval test50b  -- should be true
+#eval test50c  -- should be true
+#eval test50d  -- should be true
+
 end KatLangTests

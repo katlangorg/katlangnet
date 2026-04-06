@@ -513,6 +513,7 @@ public static class Evaluator
     private static IReadOnlyList<Result> UnpackArgs(Result r) => r switch
     {
         Result.Atom(var n) => [new Result.Atom(n)],
+        Result.Str _ => [r],
         Result.Group(var items) => items,
         _ => [],
     };
@@ -528,6 +529,7 @@ public static class Evaluator
         switch (r)
         {
             case Result.Atom:
+            case Result.Str:
                 into.Add(r);
                 break;
             case Result.Group(var items):
@@ -551,6 +553,11 @@ public static class Evaluator
 
             case Pattern.LitInt(var n):
                 return result is Result.Atom(var v) && v == n
+                    ? []
+                    : null;
+
+            case Pattern.LitString(var s):
+                return result is Result.Str(var sv) && sv == s
                     ? []
                     : null;
 
@@ -894,8 +901,8 @@ public static class Evaluator
                 return new EvalError.NotAnAlgorithm("native call") { Span = expr.Span };
             case Expr.Grace:
                 return new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span };
-            case Expr.StringLiteral(var s):
-                return new EvalError.IllegalInEval($"stringLiteral not elaborated: {s}") { Span = expr.Span };
+            case Expr.StringLiteral:
+                return new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span };
 
             default:
                 throw new InvalidOperationException($"Unhandled Expr type in ResolveAlg: {expr.GetType().Name}");
@@ -1080,6 +1087,9 @@ public static class Evaluator
             case Expr.Num(var n):
                 return EvalResult<Result>.Ok(new Result.Atom(n));
 
+            case Expr.StringLiteral(var s):
+                return EvalResult<Result>.Ok(new Result.Str(s));
+
             case Expr.Param(var name):
             {
                 // Dual-view parameter evaluation (Lean: eval Param(x)):
@@ -1106,6 +1116,8 @@ public static class Evaluator
                 if (operandR.IsError) return operandR.Error;
                 if (operandR.Value is Result.Group(var uItems) && uItems.Count == 0)
                     return EvalResult<Result>.Ok(new Result.Group([]));
+                if (operandR.Value is Result.Str)
+                    return new EvalError.BadArity() { Span = expr.Span };
                 var vR = ExpectInt(operandR.Value);
                 if (vR.IsError) return vR.Error;
                 var unaryResult = unaryOp switch
@@ -1131,6 +1143,19 @@ public static class Evaluator
                 if (lEmpty && rEmpty) return EvalResult<Result>.Ok(new Result.Group([]));
                 if (lEmpty) return EvalResult<Result>.Ok(rR.Value);
                 if (rEmpty) return EvalResult<Result>.Ok(lR.Value);
+                // String equality/inequality: both operands must be strings.
+                if (lR.Value is Result.Str(var ls) && rR.Value is Result.Str(var rs2))
+                {
+                    return op switch
+                    {
+                        BinaryOp.Eq => EvalResult<Result>.Ok(new Result.Atom(ls == rs2 ? 1 : 0)),
+                        BinaryOp.Ne => EvalResult<Result>.Ok(new Result.Atom(ls != rs2 ? 1 : 0)),
+                        _ => new EvalError.BadArity() { Span = expr.Span },
+                    };
+                }
+                // Mixed string/non-string: fail for any operator
+                if (lR.Value is Result.Str || rR.Value is Result.Str)
+                    return new EvalError.BadArity() { Span = expr.Span };
                 // Normal arithmetic: coerce both to int.
                 var xR = ExpectInt(lR.Value);
                 if (xR.IsError) return xR.Error;

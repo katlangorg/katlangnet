@@ -667,6 +667,12 @@ public sealed class Parser
                 return new Pattern.LitInt(-token.NumValue);
             }
 
+            case TokenKind.StringLiteral:
+            {
+                var token = Advance();
+                return new Pattern.LitString(token.StringValue ?? "");
+            }
+
             case TokenKind.Identifier:
             {
                 var token = Advance();

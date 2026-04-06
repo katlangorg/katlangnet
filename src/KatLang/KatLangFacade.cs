@@ -46,6 +46,7 @@ public abstract record RunResult
     private static string Format(Result result) => result switch
     {
         Result.Atom a => a.Value.ToString(),
+        Result.Str s => s.Value,
         Result.Group g => $"({string.Join(", ", g.Items.Select(Format))})",
         _ => "",
     };

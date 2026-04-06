@@ -1,4 +1,4 @@
--- KatLang v0.8.12 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms)
+-- KatLang v0.8.13 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -161,17 +161,19 @@ def builtinArityDesc : Builtin -> String
     branch binding are the same operation, with no hidden remaining parameters
     and no interaction with Grace-based parameter reordering. -/
 inductive Pattern where
-  | bind   : Ident -> Pattern
-  | litInt : Int -> Pattern
-  | group  : List Pattern -> Pattern
+  | bind      : Ident -> Pattern
+  | litInt    : Int -> Pattern
+  | litString : String -> Pattern    -- matches only Result.str s (exact string equality)
+  | group     : List Pattern -> Pattern
   deriving Repr, BEq
 
 namespace Pattern
   /-- Collect all binder names in a pattern (left-to-right). -/
   def boundNames : Pattern -> List Ident
-    | .bind x    => [x]
-    | .litInt _  => []
-    | .group ps  => ps.flatMap boundNames
+    | .bind x      => [x]
+    | .litInt _    => []
+    | .litString _ => []
+    | .group ps    => ps.flatMap boundNames
 
   /-- Check whether a pattern contains duplicate binder names. -/
   def hasDuplicateBinds (p : Pattern) : Bool :=
@@ -201,6 +203,7 @@ namespace Pattern
   partial def isMatchEquivalent : Pattern -> Pattern -> Bool
     | .bind _,   .bind _    => true
     | .litInt m, .litInt n  => m == n
+    | .litString s, .litString t => s == t
     | .group ps, .group qs  =>
         ps.length == qs.length &&
         (ps.zip qs).all (fun (p, q) => isMatchEquivalent p q)
@@ -215,7 +218,7 @@ mutual
   inductive Expr where
     | param   : Ident -> Expr
     | num     : Int -> Expr
-    | stringLiteral : String -> Expr  -- * string literal, surface-only (load URLs etc.)
+    | stringLiteral : String -> Expr  -- * string literal: first-class value (evaluates to Result.str)
     | unary   : UnaryOp -> Expr -> Expr
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
@@ -322,12 +325,14 @@ end
 
 inductive Result where
   | atom  : Int -> Result
+  | str   : String -> Result     -- first-class string value (exact equality, no ordering/coercion)
   | group : List Result -> Result
   deriving Repr
 
 namespace Result
   def normalize : Result -> Result
     | atom n => atom n
+    | str s  => str s
     | group rs =>
         let rs' := rs.map normalize
         match rs' with
@@ -336,10 +341,12 @@ namespace Result
 
   def atoms : Result -> List Int
     | atom n    => [n]
+    | str _     => []       -- strings are not numeric; silently omitted from atom lists
     | group rs => rs.flatMap atoms
 
   def asInt? : Result -> Option Int
     | atom n => some n
+    | str _  => none
     | group rs =>
         match normalize (group rs) with
         | atom n => some n
@@ -349,12 +356,15 @@ namespace Result
       Atom → singleton list; Group → its items. -/
   def toItems : Result -> List Result
     | atom n   => [atom n]
+    | str s    => [str s]
     | group rs => rs
 
   /-- Structural indexing (preserves grouping). -/
   def index? : Result -> Nat -> Option Result
     | atom n, 0   => some (atom n)
     | atom _, _   => none
+    | str s, 0    => some (str s)
+    | str _, _    => none
     | group rs, i => rs[i]?
 end Result
 
@@ -684,7 +694,8 @@ def evalIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result
 -- Semantics
 --------------------------------------------------------------------------------
 
-/-- Coerce a Result to Int, or raise badArity. -/
+/-- Coerce a Result to Int, or raise badArity.
+    Strings are not numeric: `expectInt (str _)` fails with badArity. -/
 def expectInt (r : Result) : EvalM Int :=
   match Result.asInt? r with
   | some n => pure n
@@ -698,6 +709,7 @@ abbrev StepOut := Prod Result Int
 def splitCont (out : Result) : EvalM StepOut := do
   match out with
   | .atom n => pure (.atom n, n)
+  | .str _  => .error Error.badArity
   | .group rs =>
       match rs.getLast? with
       | some last =>
@@ -720,6 +732,7 @@ partial def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
 def unpackArgs (r : Result) : List Result :=
   match r with
   | .atom _ => [r]
+  | .str _  => [r]
   | .group rs => rs
 
 /-- Bind algorithm-typed parameters: zip parameter names with algorithms.
@@ -864,6 +877,10 @@ def matchPattern (p : Pattern) (r : Result) : Option ValEnv :=
       match r with
       | .atom v => if v = n then some [] else none
       | _       => none
+  | .litString s =>
+      match r with
+      | .str v => if v = s then some [] else none
+      | _      => none
   | .group ps  =>
       match r with
       | .group rs =>
@@ -1109,7 +1126,7 @@ mutual
     | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
     | .index _ _ => .error (Error.notAnAlgorithm "index expression")
     | .call _ _ => .error (Error.notAnAlgorithm "call expression")
-    | .stringLiteral s => .error (Error.illegalInEval s!"stringLiteral not elaborated: {s}")
+    | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
 
   /-- Resolve argument expressions to algorithms for builtin dispatch.
       Unlike the earlier strict formulation (`mapM resolveAlg`), this function
@@ -1402,6 +1419,8 @@ mutual
     match e with
     | .num n => pure (Result.atom n)
 
+    | .stringLiteral s => pure (Result.str s)
+
     | .param x =>
         match env.lookup x with
         | some v => pure v
@@ -1421,6 +1440,7 @@ mutual
         let r <- eval e ctx env
         match r with
         | .group [] => pure (Result.group [])   -- empty propagates through unary
+        | .str _ => .error Error.badArity        -- strings do not support unary ops
         | _ => do
           let v <- expectInt r
           pure (Result.atom <|
@@ -1436,6 +1456,16 @@ mutual
         match lr, rr with
         | .group [], _ => pure rr
         | _, .group [] => pure lr
+        -- String equality/inequality: both operands must be strings.
+        -- Other operations on strings fail via expectInt below.
+        | .str s, .str t =>
+            match op with
+            | .eq => pure (Result.atom (if s = t then 1 else 0))
+            | .ne => pure (Result.atom (if s != t then 1 else 0))
+            | _   => .error Error.badArity  -- unsupported operation on strings
+        -- Mixed string/number or string/group: fail for any operator
+        | .str _, _ => .error Error.badArity
+        | _, .str _ => .error Error.badArity
         | _, _ => do
           let x <- expectInt lr
           let y <- expectInt rr
@@ -1498,10 +1528,6 @@ mutual
           match Result.index? ar (Int.toNat n) with
           | some r => pure r
           | none   => .error Error.badIndex
-
-    -- * Catch-all: future-proofing for new Expr constructors.
-    -- Uses Expr.kind for clear diagnostics.
-    | _ => .error (Error.illegalInEval s!"{Expr.kind e}")
 
 end
 

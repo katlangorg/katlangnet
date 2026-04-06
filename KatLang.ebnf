@@ -17,8 +17,9 @@ ConditionalBranch  = Identifier "(" Pattern ")" "=" OutputBundle ;
                         in expression position Name(...) remains an ordinary call. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
-PatternAtom        = Identifier                   (* bind   *)
-                   | [ "-" ] NumberLiteral         (* litInt *)
+PatternAtom        = Identifier                   (* bind      *)
+                   | [ "-" ] NumberLiteral         (* litInt    *)
+                   | StringLiteral                 (* litString *)
                    | "(" Pattern ")" ;             (* group — always structural, even for singletons *)
 
 OutputLine      = OutputBundle ;

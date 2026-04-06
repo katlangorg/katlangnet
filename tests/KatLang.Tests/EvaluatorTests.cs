@@ -74,6 +74,21 @@ public class EvaluatorTests
             Assert.Fail($"Expected evaluation failure but got: [{string.Join(", ", result.Value)}]");
     }
 
+    private static EvalResult<Result> EvalFull(string source)
+    {
+        var ast = Parser.Parse(source).Root;
+        return Evaluator.Run(new Expr.Block(ast));
+    }
+
+    private static void AssertEvalString(string source, string expected)
+    {
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        var str = Assert.IsType<Result.Str>(result.Value);
+        Assert.Equal(expected, str.Value);
+    }
+
     private static void AssertEvalAllPublicFails(string source)
     {
         var result = EvalAllPublic(source);
@@ -3237,5 +3252,220 @@ public class EvaluatorTests
             F(1), F(42)
             """;
         AssertEval(source, 100, 0);
+    }
+
+    // ── String literals: first-class value tests ────────────────────────────
+
+    [Fact]
+    public void Eval_String_SimpleLiteral()
+    {
+        AssertEvalString("'hello'", "hello");
+    }
+
+    [Fact]
+    public void Eval_String_EmptyLiteral()
+    {
+        AssertEvalString("''", "");
+    }
+
+    [Fact]
+    public void Eval_String_PropertyBinding()
+    {
+        AssertEvalString("""
+            A = 'hello'
+            A
+            """, "hello");
+    }
+
+    [Fact]
+    public void Eval_String_EqualityTrue()
+    {
+        AssertEval("'a' == 'a'", 1);
+    }
+
+    [Fact]
+    public void Eval_String_EqualityFalse()
+    {
+        AssertEval("'a' == 'b'", 0);
+    }
+
+    [Fact]
+    public void Eval_String_EqualityCaseSensitive()
+    {
+        // 'Apples' != 'apples' — exact, case-sensitive comparison
+        AssertEval("'Apples' == 'apples'", 0);
+    }
+
+    [Fact]
+    public void Eval_String_Inequality()
+    {
+        AssertEval("'a' != 'b'", 1);
+    }
+
+    [Fact]
+    public void Eval_String_InequalitySame()
+    {
+        AssertEval("'a' != 'a'", 0);
+    }
+
+    [Fact]
+    public void Eval_String_ArgumentCall()
+    {
+        // Echo = x, Echo('hello') should return the string
+        AssertEvalString("""
+            Echo = x
+            Echo('hello')
+            """, "hello");
+    }
+
+    [Fact]
+    public void Eval_String_ConditionalDispatch()
+    {
+        AssertEval("""
+            Price('apples') = 0.80
+            Price('apples')
+            """, 0.80m);
+    }
+
+    [Fact]
+    public void Eval_String_ConditionalDispatch_MultiBranch()
+    {
+        AssertEval("""
+            Price('tomatoes') = 1.20
+            Price('apples') = 0.80
+            Price('cucumbers') = 0.60
+            Price('cucumbers')
+            """, 0.60m);
+    }
+
+    [Fact]
+    public void Eval_String_ConditionalDispatch_IndirectCall()
+    {
+        // Item = 'apples', Price('apples') = 0.80, Price(Item) should resolve
+        AssertEval("""
+            Item = 'apples'
+            Price('apples') = 0.80
+            Price(Item)
+            """, 0.80m);
+    }
+
+    [Fact]
+    public void Eval_String_ReturnFromAlgorithm()
+    {
+        AssertEvalString("""
+            Name = 'KatLang'
+            Name
+            """, "KatLang");
+    }
+
+    [Fact]
+    public void Eval_String_ConditionalExpense()
+    {
+        // Full example from spec: Price('apples') = 0.80, Expense = Price(item) * quantity
+        AssertEval("""
+            Price('tomatoes') = 1.20
+            Price('apples') = 0.80
+            Price('cucumbers') = 0.60
+            Expense = Price(item) * quantity
+            Expense('apples', 3)
+            """, 2.40m);
+    }
+
+    [Fact]
+    public void Eval_String_ConditionalNoMatch_Fails()
+    {
+        // Unmatched branch fails with NoMatchingBranch, not a crash
+        AssertEvalFails("""
+            Price('apples') = 0.80
+            Price('bananas')
+            """);
+    }
+
+    [Fact]
+    public void Eval_String_MixedBranches_NumericAndString()
+    {
+        // Conditional with both numeric and string literal patterns
+        AssertEval("""
+            F('a') = 1
+            F(0) = 2
+            F('a')
+            """, 1);
+    }
+
+    [Fact]
+    public void Eval_String_MixedBranches_NumericAndString_MatchNumeric()
+    {
+        AssertEval("""
+            F('a') = 1
+            F(0) = 2
+            F(0)
+            """, 2);
+    }
+
+    [Fact]
+    public void Eval_String_BinderFallbackAfterStringLiteral()
+    {
+        // Binder pattern as fallback after string literal patterns
+        AssertEval("""
+            F('a') = 1
+            F(x) = 0
+            F('b')
+            """, 0);
+    }
+
+    // ── String literals: negative/error tests ───────────────────────────────
+
+    [Fact]
+    public void Eval_String_MultiplyFails()
+    {
+        // 'a' * 3 should fail (strings don't support arithmetic)
+        AssertEvalFails("'a' * 3");
+    }
+
+    [Fact]
+    public void Eval_String_AddNumberFails()
+    {
+        // 1 + 'a' should fail (mixed types)
+        AssertEvalFails("1 + 'a'");
+    }
+
+    [Fact]
+    public void Eval_String_AddStringsFails()
+    {
+        // 'a' + 'b' should fail (no string concatenation)
+        AssertEvalFails("'a' + 'b'");
+    }
+
+    [Fact]
+    public void Eval_String_UnaryMinusFails()
+    {
+        // Unary minus on a string literal should fail
+        var strExpr = new Expr.StringLiteral("hello");
+        var unaryExpr = new Expr.Unary(UnaryOp.Minus, strExpr);
+        var alg = new Algorithm.User(Parent: null, Params: [], Opens: [],
+            Properties: [], Output: [unaryExpr]);
+        var result = Evaluator.Run(new Expr.Block(alg));
+        Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public void Eval_String_ComparisonLtFails()
+    {
+        // 'a' < 'b' should fail (no string ordering)
+        AssertEvalFails("'a' < 'b'");
+    }
+
+    [Fact]
+    public void Eval_String_MixedEqualityFails()
+    {
+        // 1 == 'a' should fail (mixed types in equality)
+        AssertEvalFails("1 == 'a'");
+    }
+
+    [Fact]
+    public void Eval_String_SinFails()
+    {
+        // Sin('a') should fail (builtin expects numeric argument)
+        AssertEvalFails("Sin('a')");
     }
 }

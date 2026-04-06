@@ -370,16 +370,17 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void StringLiteral_InEvaluator_ProducesError()
+    public void StringLiteral_InEvaluator_ReturnsStringResult()
     {
-        // If a StringLiteral somehow reaches the evaluator, it should produce
-        // an IllegalInEval error (not crash)
+        // String literals are first-class values and should evaluate to Result.Str
         var source = """
             'hello'
             """;
 
         var result = Parser.Parse(source);
-        var evalResult = Evaluator.RunFlat(new Expr.Block(result.Root));
-        Assert.True(evalResult.IsError);
+        var evalResult = Evaluator.Run(new Expr.Block(result.Root));
+        Assert.True(evalResult.IsOk);
+        Assert.IsType<Result.Str>(evalResult.Value);
+        Assert.Equal("hello", ((Result.Str)evalResult.Value).Value);
     }
 }

@@ -66,6 +66,37 @@ C# must reproduce this logic exactly.
 - No placeholder logic or silent fallbacks.
 - Prefer small, reviewable changes.
 
+### After Every Change to `KatLang.lean`
+
+After any modification to `lean/KatLang.lean`, you **must**:
+
+1. **Run CoreTests** — execute `lake build CoreTests` from the `lean/` directory and confirm all tests pass (every `#eval` line must print `true`; no `false` or errors).
+2. **Check AstDemo** — execute `lake build AstDemo` from the `lean/` directory and confirm it builds without errors. AstDemo exercises the AST constructors directly; a build failure there signals a breaking API change.
+
+Both checks must pass before the change is considered complete. If either fails, fix the failures before proceeding with C# changes.
+
+### After Significant Syntax Changes
+
+After any change to `Lexer.cs` or `Parser.cs` that affects the surface grammar — new expression forms, new pattern kinds, new operators, changes to precedence or associativity, or new token types — review `KatLang.ebnf` and update it to match. Specifically:
+
+- Added or removed a token recognized by the lexer → update terminal rules.
+- Added or removed a production in the parser → update the corresponding non-terminal.
+- Changed operator precedence or associativity → update the grammar hierarchy.
+- Renamed or restructured an AST node that maps to a grammar rule → update the rule and any associated comments.
+
+`KatLang.ebnf` tracks what the parser actually accepts. It is not derived from `KatLang.lean` — surface syntax details (tokenization, concrete notation, punctuation) live only in `Lexer.cs` and `Parser.cs`. Keep all three in sync: `KatLang.lean` (normative semantics), `Parser.cs` (implementation), `KatLang.ebnf` (grammar reference). Drift between any two is a documentation bug.
+
+### After Significant Syntax or Semantic Changes
+
+After any change that affects how KatLang programs are written or how they behave — new syntax forms, changed evaluation rules, new built-in operations, changed error conditions, or new language concepts — review `tutorial.md` and update any affected examples, explanations, or descriptions. Specifically:
+
+- New syntax available to users → add an illustrative example.
+- Syntax removed or renamed → remove or correct affected examples.
+- Changed evaluation behavior → update the corresponding explanation.
+- New error condition or changed error message → reflect it in the relevant section.
+
+`tutorial.md` is the primary user-facing documentation. It must accurately reflect the language as it actually works. Stale examples or incorrect descriptions are bugs.
+
 ---
 
 ## Required Spec-First Workflow

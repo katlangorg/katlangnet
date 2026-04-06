@@ -286,6 +286,87 @@ Math.Log(100, 10)
 
 ---
 
+## String Literals
+
+KatLang supports **string literals** as first-class values. A string is written with single quotes:
+
+```
+'hello'
+'world'
+```
+
+**Results:**
+```
+hello
+world
+```
+
+Strings can be stored as properties, passed as arguments, and returned as outputs:
+
+```
+Greeting = 'hello'
+Tag = x
+
+Tag('world')
+```
+
+**Result:** `world`
+
+### String Equality
+
+Strings support `==` and `!=`. Two strings are equal if they have identical content (case-sensitive):
+
+```
+'apple' == 'apple'
+'apple' == 'Apple'
+'cat' != 'dog'
+```
+
+**Results:**
+```
+1
+0
+1
+```
+
+Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
+
+### Strings in Conditional Pattern Matching
+
+String literals can appear as patterns in conditional algorithm branches. A string pattern matches only the exact same string:
+
+```
+Price('tomatoes') = 1.20
+Price('apples')   = 0.80
+Price('cucumbers') = 0.60
+Price(item)       = 0
+
+Price('apples')
+Price('bananas')
+```
+
+**Results:**
+```
+0.80
+0
+```
+
+The catch-all variable `item` at the end handles any string (or other value) not matched by the earlier branches.
+
+### Strings as Algorithm Arguments
+
+You can call algorithms with string arguments directly:
+
+```
+Expense = Price(item) * quantity
+
+Expense('apples', 3)
+```
+
+**Result:** `2.4`
+
+---
+
 ## Multiple Outputs
 
 A KatLang algorithm can produce more than one value. Use commas to list multiple outputs:
@@ -1218,7 +1299,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `*`, `/`, `div`, `mod` | Multiplication, division, integer division, modulo | |
 | `+`, `-` | Addition, subtraction | |
 | `<`, `>`, `<=`, `>=` | Comparison (returns 1 or 0) | |
-| `==`, `!=` | Equality, inequality | |
+| `==`, `!=` | Equality, inequality (numbers and strings) | |
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |

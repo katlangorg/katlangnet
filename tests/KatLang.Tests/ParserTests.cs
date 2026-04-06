@@ -1865,4 +1865,53 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);
     }
+
+    // ── String literal pattern tests ────────────────────────────────────────
+
+    [Fact]
+    public void Parse_StringLiteralPattern_InConditionalBranch()
+    {
+        var source = """
+            Price('apples') = 0.80
+            Price('tomatoes') = 1.20
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(
+            result.Root.Properties.Single(p => p.Name == "Price").Value);
+        Assert.Equal(2, cond.Branches.Count);
+        Assert.IsType<Pattern.LitString>(cond.Branches[0].Pattern);
+        Assert.Equal("apples", ((Pattern.LitString)cond.Branches[0].Pattern).Value);
+    }
+
+    [Fact]
+    public void Parse_StringLiteralExpression_Standalone()
+    {
+        var source = "'hello'";
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors);
+        var output = result.Root.Output;
+        Assert.Single(output);
+        Assert.IsType<Expr.StringLiteral>(output[0]);
+        Assert.Equal("hello", ((Expr.StringLiteral)output[0]).Value);
+    }
+
+    [Fact]
+    public void Parse_UnterminatedString_ProducesError()
+    {
+        var source = "'hello";
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_DuplicateStringPatterns_ProducesError()
+    {
+        var source = """
+            F('a') = 1
+            F('a') = 2
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+    }
 }
