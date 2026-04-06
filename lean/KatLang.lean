@@ -679,14 +679,27 @@ def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
 
 /-- Predicate for intrinsic (non-builtin) property names.
     These names are handled specially in resolveAlg / evalDotCall
-    rather than being looked up as structural properties. -/
-def isIntrinsic (name : Ident) : Bool :=
-  name = "length"
+    rather than being looked up as structural properties.
 
-/-- Evaluate an intrinsic property on a resolved algorithm.
-    Returns `some result` if `name` is a recognized intrinsic, `none` otherwise.
-    Single source of truth for intrinsic semantics. -/
-def evalIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result) :=
+    Intrinsic kinds:
+    - "length": structural — returns the count of output expressions (no evaluation needed)
+    - "string": value-based — evaluates the algorithm output, converts numeric result to string -/
+def isIntrinsic (name : Ident) : Bool :=
+  name = "length" || name = "string"
+
+/-- Convert a numeric Result to its canonical string representation.
+    Only atomic numeric values are supported; other forms raise typeMismatch.
+    Canonical representation: Int.repr (e.g., 123 → "123", -5 → "-5", 0 → "0"). -/
+def resultToString (r : Result) : EvalM Result :=
+  match r with
+  | .atom n => pure (Result.str (toString n))
+  | _ => .error (Error.typeMismatch "builtin property `string` expects a numeric receiver")
+
+/-- Evaluate a structural intrinsic property on a resolved algorithm.
+    Returns `some result` if `name` is a recognized structural intrinsic, `none` otherwise.
+    Value-based intrinsics (e.g. `string`) are handled inside evalDotCall
+    because they require evaluation context. -/
+def evalStructuralIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result) :=
   if name = "length" then
     pure (some (Result.atom (Int.ofNat (Algorithm.output targetAlg).length)))
   else
@@ -1385,38 +1398,56 @@ mutual
 
   /-- Evaluate dotCall: a.f or a.f(args)
       Smart dispatch:
-      - "length" intrinsic → output expression count of target
+      - "length" structural intrinsic → output expression count of target
+      - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):
         - If no args and 0-param → value access
         - If no args and has params → arity mismatch error
         - If args → direct argument binding (no receiver injection)
-      - No property → lexical fallback (receiver injection) -/
+      - No property → lexical fallback (receiver injection)
+
+      When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
+      value-based intrinsics are checked before lexical fallback. -/
   partial def evalDotCall (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let targetAlg <- resolveAlg target ctx
-    match (<- evalIntrinsic? targetAlg name) with
-    | some r => pure r
-    | none =>
-        match Algorithm.lookupProp targetAlg name with
-        | some p =>
-            let wired := Algorithm.childOf targetAlg p
-            match argsOpt with
-            | none =>
-                match wired with
-                | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
-                | _ =>
-                  if (Algorithm.params wired).length = 0 then
-                    evalAlgOutput wired ctx env
-                  else
-                    -- Navigation only: no receiver injection, need explicit args
-                    .error (Error.arityMismatch (Algorithm.params wired).length 0)
-            | some args =>
-                match wired with
-                | .conditional _ _ _ => evalConditionalCall wired args ctx env name
-                | _ =>
-                  -- Navigation only: direct argument binding, no receiver
-                  evalUserCall wired args ctx env
-        | none => callLexicalWithReceiver name target argsOpt ctx env
+    match resolveAlg target ctx with
+    | .ok targetAlg =>
+      match (<- evalStructuralIntrinsic? targetAlg name) with
+      | some r => pure r
+      | none =>
+        -- Value-based intrinsic: "string" — evaluate algorithm output and convert
+        if name = "string" then do
+          let val <- evalAlgOutput targetAlg ctx env
+          resultToString val
+        else
+          match Algorithm.lookupProp targetAlg name with
+          | some p =>
+              let wired := Algorithm.childOf targetAlg p
+              match argsOpt with
+              | none =>
+                  match wired with
+                  | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
+                  | _ =>
+                    if (Algorithm.params wired).length = 0 then
+                      evalAlgOutput wired ctx env
+                    else
+                      -- Navigation only: no receiver injection, need explicit args
+                      .error (Error.arityMismatch (Algorithm.params wired).length 0)
+              | some args =>
+                  match wired with
+                  | .conditional _ _ _ => evalConditionalCall wired args ctx env name
+                  | _ =>
+                    -- Navigation only: direct argument binding, no receiver
+                    evalUserCall wired args ctx env
+          | none => callLexicalWithReceiver name target argsOpt ctx env
+    | .error (.notAnAlgorithm _) =>
+      -- Value-only target (e.g. numeric literal): check value-based intrinsics
+      if name = "string" then do
+        let val <- eval target ctx env
+        resultToString val
+      else
+        callLexicalWithReceiver name target argsOpt ctx env
+    | .error e => .error e
 
   partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
     match e with

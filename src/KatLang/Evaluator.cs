@@ -735,19 +735,36 @@ public static class Evaluator
     /// <summary>
     /// Lean: isIntrinsic. Predicate for intrinsic (non-builtin) property names.
     /// These are handled specially in resolveAlg / evalDotCall.
+    /// Intrinsic kinds:
+    /// - "length": structural — returns the count of output expressions (no evaluation needed)
+    /// - "string": value-based — evaluates the algorithm output, converts numeric result to string
     /// </summary>
-    private static bool IsIntrinsic(string name) => name == "length";
+    private static bool IsIntrinsic(string name) => name is "length" or "string";
 
     /// <summary>
-    /// Lean: evalIntrinsic?. Evaluate an intrinsic property on a resolved algorithm.
-    /// Returns a result if name is a recognized intrinsic, null otherwise.
-    /// Single source of truth for intrinsic semantics.
+    /// Lean: evalStructuralIntrinsic?. Evaluate a structural intrinsic property on a resolved algorithm.
+    /// Returns a result if name is a recognized structural intrinsic, null otherwise.
+    /// Value-based intrinsics (e.g. "string") are handled inside EvalDotCall
+    /// because they require evaluation context.
     /// </summary>
-    private static EvalResult<Result>? EvalIntrinsic(Algorithm targetAlg, string name)
+    private static EvalResult<Result>? EvalStructuralIntrinsic(Algorithm targetAlg, string name)
     {
         if (name == "length")
             return EvalResult<Result>.Ok(new Result.Atom(targetAlg.Output.Count));
         return null;
+    }
+
+    /// <summary>
+    /// Lean: resultToString. Convert a numeric Result to its canonical string representation.
+    /// Only atomic numeric values are supported; other forms raise typeMismatch.
+    /// Canonical representation: culture-invariant decimal string.
+    /// Examples: 123 → "123", -5 → "-5", 0 → "0", 1.20 → "1.20".
+    /// </summary>
+    private static EvalResult<Result> ResultToString(Result r)
+    {
+        if (r is Result.Atom(var n))
+            return EvalResult<Result>.Ok(new Result.Str(n.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return new EvalError.TypeMismatch("builtin property `string` expects a numeric receiver");
     }
 
     // ── Open resolution ───────────────────────────────────────────────────
@@ -1612,12 +1629,15 @@ public static class Evaluator
     /// <summary>
     /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
     /// Smart dispatch:
-    /// 1. Intrinsic (e.g. length) → handled by evalIntrinsic?
-    /// 2. Structural property found (navigation-only):
+    /// 1. Structural intrinsic (length) → output expression count of target
+    /// 2. Value-based intrinsic (string) → evaluate target, convert numeric result to string
+    /// 3. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
     ///    - No args + has params → arity mismatch error
     ///    - Has args → delegate to EvalUserCall (dual-view binding, no receiver injection)
-    /// 3. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
+    /// 4. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
+    /// When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
+    /// value-based intrinsics are checked before lexical fallback.
     /// Structural property calls use the same higher-order binding logic as normal
     /// user-defined calls (both delegate to EvalUserCall).
     /// Lean: evalDotCall.
@@ -1629,7 +1649,8 @@ public static class Evaluator
     {
         // Lean: let targetAlg <- resolveAlg target ctx
         // Extension-property rule: if target is a value-producing expression (not an algorithm),
-        // ResolveAlg returns NotAnAlgorithm — skip straight to lexical fallback so that
+        // ResolveAlg returns NotAnAlgorithm — check value-based intrinsics first,
+        // then fall back to lexical lookup so that
         //   e.P      → P(e)
         //   e.P(a,b) → P(e, a, b)
         // works for any receiver expression, including literals and parenthesized expressions.
@@ -1638,14 +1659,31 @@ public static class Evaluator
         if (targetResult.IsError)
         {
             if (targetResult.Error is EvalError.NotAnAlgorithm)
+            {
+                // Value-only target (e.g. numeric literal): check value-based intrinsics
+                if (name == "string")
+                {
+                    var val = Eval(target, ctx, valEnv);
+                    if (val.IsError) return val.Error;
+                    return ResultToString(val.Value);
+                }
                 return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
+            }
             return targetResult.Error;
         }
         var targetAlg = targetResult.Value;
 
-        // Lean: evalIntrinsic? — single source of truth for intrinsic semantics
-        var intrinsic = EvalIntrinsic(targetAlg, name);
+        // Lean: evalStructuralIntrinsic? — structural intrinsics (length)
+        var intrinsic = EvalStructuralIntrinsic(targetAlg, name);
         if (intrinsic is { } r) return r;
+
+        // Value-based intrinsic: "string" — evaluate algorithm output and convert
+        if (name == "string")
+        {
+            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            if (val.IsError) return val.Error;
+            return ResultToString(val.Value);
+        }
 
         // Structural: property of target (any visibility — dot access sees private)
         var prop = LookupProp(targetAlg, name);

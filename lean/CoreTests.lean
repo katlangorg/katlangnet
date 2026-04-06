@@ -5,7 +5,7 @@ import KatLang
 --------------------------------------------------------------------------------
 
 namespace KatLangTests
-open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm Error)
+open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm Error Result)
 
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
@@ -665,6 +665,77 @@ def test31 : Bool :=
   | _ => false
 
 #eval test31  -- should be true
+
+--------------------------------------------------------------------------------
+-- string intrinsic tests
+--------------------------------------------------------------------------------
+
+-- Test 52: string intrinsic on positive integer via algorithm
+-- (block [123]).string → Result.str "123"
+def test52 : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [.num 123])) "string" none) with
+  | Except.ok (Result.str "123") => true
+  | _ => false
+
+#eval test52  -- should be true
+#eval runResult (.dotCall (.block (alg [] [] [] [.num 123])) "string" none)
+
+-- Test 53: string intrinsic on zero
+-- (block [0]).string → Result.str "0"
+def test53 : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [.num 0])) "string" none) with
+  | Except.ok (Result.str "0") => true
+  | _ => false
+
+#eval test53  -- should be true
+
+-- Test 54: string intrinsic on negative integer
+-- (block [-5]).string → Result.str "-5"
+def test54 : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [.num (-5)])) "string" none) with
+  | Except.ok (Result.str "-5") => true
+  | _ => false
+
+#eval test54  -- should be true
+
+-- Test 55: string intrinsic on a named property
+-- A = 123; A.string → Result.str "123"
+def test55 : Bool :=
+  let innerAlg := algPrivate [] [] [("A", alg [] [] [] [.num 123])] [
+    .dotCall (.resolve "A") "string" none
+  ]
+  match runResult (.block innerAlg) with
+  | Except.ok (Result.str "123") => true
+  | _ => false
+
+#eval test55  -- should be true
+
+-- Test 56: string intrinsic on numeric literal (notAnAlgorithm path)
+-- (.num 42).string → Result.str "42"
+def test56 : Bool :=
+  match runResult (.dotCall (.num 42) "string" none) with
+  | Except.ok (Result.str "42") => true
+  | _ => false
+
+#eval test56  -- should be true
+
+-- Test 57: string intrinsic on string literal → typeMismatch error
+-- ("hello").string → Error.typeMismatch
+def test57 : Bool :=
+  match runResult (.dotCall (.stringLiteral "hello") "string" none) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test57  -- should be true
+
+-- Test 58: string intrinsic on multi-output → typeMismatch error
+-- (1, 2).string → Error (group is not a numeric atom)
+def test58 : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "string" none) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test58  -- should be true
 
 -- Test 32: Unary on empty 2-arg if → transparent
 -- -(if(0, 5)) → empty, 10 + -(if(0, 5)) → [10]

@@ -322,6 +322,99 @@ public class EvaluatorTests
         AssertEval(source, 1);
     }
 
+    // ── string intrinsic tests ──────────────────────────────────────────
+
+    [Fact]
+    public void Eval_StringIntrinsic_SimpleInteger()
+    {
+        // 123.string → "123"
+        AssertEvalString("123.string", "123");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_Zero()
+    {
+        // 0.string → "0"
+        AssertEvalString("0.string", "0");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_NegativeNumber()
+    {
+        // (-5).string → "-5"
+        AssertEvalString("(-5).string", "-5");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_Decimal()
+    {
+        // 1.20.string → "1.20"
+        // Canonical representation preserves decimal trailing zeros (C# decimal behavior)
+        AssertEvalString("1.20.string", "1.20");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_PropertyBound()
+    {
+        // A = 123; A.string → "123"
+        var source = """
+            A = 123
+            A.string
+            """;
+        AssertEvalString(source, "123");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_ReturnsRealStringValue()
+    {
+        // Result must be a first-class string value usable in equality comparison
+        var source = """
+            A = 123
+            A.string == '123'
+            """;
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_WorksThroughDotCallPath()
+    {
+        // Works through ordinary dot-call builtin-property path, analogous to length
+        var source = """
+            X = 42
+            X.string
+            """;
+        AssertEvalString(source, "42");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_OnStringValue_Fails()
+    {
+        // Applying .string to a string value should fail with typeMismatch
+        AssertEvalFailsWithTypeMismatch("'hello'.string", "numeric receiver");
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_OnMultiOutput_Fails()
+    {
+        // Applying .string to a multi-output value should fail
+        var source = """
+            X = 1, 2
+            X.string
+            """;
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_StringIntrinsic_ExpressionResult()
+    {
+        // Works on computed expression results
+        var source = """
+            A = 10 + 5
+            A.string
+            """;
+        AssertEvalString(source, "15");
+    }
+
     [Fact]
     public void Eval_PropertyAccess_SubProperty()
     {

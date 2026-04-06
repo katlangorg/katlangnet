@@ -10,15 +10,16 @@
    - [Comparison Operators](#comparison-operators)
    - [Logical Operators](#logical-operators)
    - [Math Constants and Functions](#math-constants-and-functions)
-4. [String Literals](#string-literals)
-   - [String Equality](#string-equality)
-5. [Multiple Outputs](#multiple-outputs)
-6. [Properties](#properties)
+4. [Multiple Outputs](#multiple-outputs)
+5. [Properties](#properties)
    - [Implicit and Explicit Output](#implicit-and-explicit-output)
    - [Algorithm Length](#algorithm-length)
    - [Output Selection](#output-selection)
    - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
    - [Name Resolution](#name-resolution)
+6. [String Literals](#string-literals)
+   - [String Equality](#string-equality)
+   - [Number to String Conversion](#number-to-string-conversion)
 7. [Parameters](#parameters)
    - [Reordering Parameters with Grace~ operator](#reordering-parameters-with-grace-operator)
 8. [Conditionals](#conditionals)
@@ -289,53 +290,6 @@ Math.Log(100, 10)
 
 ---
 
-## String Literals
-
-KatLang supports **string literals** as first-class values. A string is written with single quotes:
-
-```
-'hello'
-'world'
-```
-
-**Results:**
-```
-hello
-world
-```
-
-Strings can be stored as properties, passed as arguments, and returned as outputs:
-
-```
-Greeting = 'hello'
-Tag = x
-
-Tag('world')
-```
-
-**Result:** `world`
-
-### String Equality
-
-Strings support `==` and `!=`. Two strings are equal if they have identical content (case-sensitive):
-
-```
-'apple' == 'apple'
-'apple' == 'Apple'
-'cat' != 'dog'
-```
-
-**Results:**
-```
-1
-0
-1
-```
-
-Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
-
----
-
 ## Multiple Outputs
 
 A KatLang algorithm can produce more than one value. Use commas to list multiple outputs:
@@ -579,6 +533,88 @@ X
 **Result:** `1`
 
 This ownership-first model makes name lookup more predictable in larger algorithms. In particular, adding an `open` does not silently change the meaning of names you already defined in the current algorithm or its parents.
+
+---
+
+## String Literals
+
+KatLang supports **string literals** as first-class values. A string is written with single quotes:
+
+```
+'hello'
+'world'
+```
+
+**Results:**
+```
+hello
+world
+```
+
+Strings can be stored as properties, passed as arguments, and returned as outputs:
+
+```
+Greeting = 'hello'
+Tag = x
+
+Tag('world')
+```
+
+**Result:** `world`
+
+### String Equality
+
+Strings support `==` and `!=`. Two strings are equal if they have identical content (case-sensitive):
+
+```
+'apple' == 'apple'
+'apple' == 'Apple'
+'cat' != 'dog'
+```
+
+**Results:**
+```
+1
+0
+1
+```
+
+Arithmetic operators (`+`, `-`, `*`, etc.) are not defined for strings.
+
+### Number to String Conversion
+
+Every numeric value exposes a `.string` property that converts it to a first-class string value.
+
+```
+123.string
+0.string
+(-5).string
+1.20.string
+```
+
+**Results:**
+```
+'123'
+'0'
+'-5'
+'1.20'
+```
+
+This also works on named properties:
+
+```
+A = 42
+A.string
+```
+
+**Result:**
+```
+'42'
+```
+
+The result is a real KatLang string value — identical to a single-quoted string literal. For example, `123.string == '123'` evaluates to `1` (true).
+
+Only numeric values are supported. Applying `.string` to a non-numeric value (such as a string or a multi-output group) produces an error.
 
 ---
 
