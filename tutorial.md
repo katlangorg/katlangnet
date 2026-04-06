@@ -271,6 +271,8 @@ Math.E
 | `Math.Pow(x, y)` | x raised to power y (floating-point) |
 | `Math.Log(x, y)` | Logarithm of x with base y |
 
+Functions that compute via floating-point internally (trig, logarithm, square root, power) normalize their results to 15 significant digits, eliminating insignificant floating-point artifacts. For example, `Math.Sin(Math.Pi)` returns exactly `0` rather than a tiny residual like `1.22e-16`.
+
 ```
 Math.Sqrt(144)
 Math.Abs(-7)

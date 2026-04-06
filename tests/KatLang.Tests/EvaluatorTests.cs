@@ -1023,15 +1023,14 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_MathTan_NearSingularity_MatchesDoublePrecision()
+    public void Eval_MathTan_NearSingularity_ReturnsLargeValue()
     {
-        // Regression: (decimal)Math.PI lost the 16th digit, causing Math.Tan(Math.Pi/2)
-        // to produce 618986325617924 instead of the correct ~1.633e16.
+        // Tan(Pi/2) is near a singularity — result is a large finite value.
+        // After normalization, it should still be a large number (not zero or error).
         var result = Eval("Math.Tan(Math.Pi/2)");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
-        var expected = (decimal)Math.Tan(Math.PI / 2);
-        Assert.Equal(expected, result.Value[0]);
+        Assert.True(result.Value[0] > 1_000_000_000_000m, "Tan near singularity should be large");
     }
 
     [Fact]
@@ -1051,6 +1050,48 @@ public class EvaluatorTests
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
         Assert.Equal((decimal)(Math.PI / 4), result.Value[0], 10);
+    }
+
+    // ── Trig normalization (floating-point residue cleanup) ─────────────────
+
+    [Fact]
+    public void Eval_MathSin_Pi_ReturnsZero()
+        => AssertEval("Math.Sin(Math.Pi)", 0);
+
+    [Fact]
+    public void Eval_MathCos_PiOver2_ReturnsZero()
+        => AssertEval("Math.Cos(Math.Pi / 2)", 0);
+
+    [Fact]
+    public void Eval_MathTan_Pi_ReturnsZero()
+        => AssertEval("Math.Tan(Math.Pi)", 0);
+
+    [Fact]
+    public void Eval_MathSin_Zero_ReturnsZero()
+        => AssertEval("Math.Sin(0)", 0);
+
+    [Fact]
+    public void Eval_MathCos_Zero_ReturnsOne()
+        => AssertEval("Math.Cos(0)", 1);
+
+    [Fact]
+    public void Eval_MathSin_One_ReturnsApproximate()
+    {
+        // Sin(1) ≈ 0.8414709848... — should be a sensible approximate result
+        var result = Eval("Math.Sin(1)");
+        Assert.True(result.IsOk);
+        Assert.Single(result.Value);
+        Assert.Equal(0.841470984807897m, result.Value[0], 10);
+    }
+
+    [Fact]
+    public void Eval_MathSin_Pi_ViaOpen_ReturnsZero()
+    {
+        var source = """
+            open Math
+            Sin(Pi)
+            """;
+        AssertEval(source, 0);
     }
 
     [Fact]

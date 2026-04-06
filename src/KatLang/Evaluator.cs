@@ -1306,17 +1306,17 @@ public static class Evaluator
                 case "Floor": result = Math.Floor(args[0]); break;
                 case "Round": result = Math.Round(args[0]); break;
                 case "Sign": result = (decimal)Math.Sign(args[0]); break;
-                case "Sqrt": result = (decimal)Math.Sqrt((double)args[0]); break;
-                case "Ln": result = (decimal)Math.Log((double)args[0]); break;
-                case "Lg": result = (decimal)Math.Log10((double)args[0]); break;
-                case "Sin": result = (decimal)Math.Sin((double)args[0]); break;
-                case "Asin": result = (decimal)Math.Asin((double)args[0]); break;
-                case "Cos": result = (decimal)Math.Cos((double)args[0]); break;
-                case "Acos": result = (decimal)Math.Acos((double)args[0]); break;
-                case "Tan": result = (decimal)Math.Tan((double)args[0]); break;
-                case "Atan": result = (decimal)Math.Atan((double)args[0]); break;
-                case "Pow": result = (decimal)Math.Pow((double)args[0], (double)args[1]); break;
-                case "Log": result = (decimal)Math.Log((double)args[0], (double)args[1]); break;
+                case "Sqrt": result = NormalizeDoubleResult(Math.Sqrt((double)args[0])); break;
+                case "Ln": result = NormalizeDoubleResult(Math.Log((double)args[0])); break;
+                case "Lg": result = NormalizeDoubleResult(Math.Log10((double)args[0])); break;
+                case "Sin": result = NormalizeDoubleResult(Math.Sin((double)args[0])); break;
+                case "Asin": result = NormalizeDoubleResult(Math.Asin((double)args[0])); break;
+                case "Cos": result = NormalizeDoubleResult(Math.Cos((double)args[0])); break;
+                case "Acos": result = NormalizeDoubleResult(Math.Acos((double)args[0])); break;
+                case "Tan": result = NormalizeDoubleResult(Math.Tan((double)args[0])); break;
+                case "Atan": result = NormalizeDoubleResult(Math.Atan((double)args[0])); break;
+                case "Pow": result = NormalizeDoubleResult(Math.Pow((double)args[0], (double)args[1])); break;
+                case "Log": result = NormalizeDoubleResult(Math.Log((double)args[0], (double)args[1])); break;
                 default:
                     return new EvalError.IllegalInEval($"unknown native function: {fnName}");
             }
@@ -1327,6 +1327,31 @@ public static class Evaluator
         }
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
+    }
+
+    /// <summary>
+    /// Normalize a double result from a native math function before converting to decimal.
+    /// Rounds to 15 significant digits and snaps near-zero values to exactly 0.
+    /// This eliminates floating-point residue (e.g. Sin(Pi) ≈ 1.2e-16 → 0).
+    /// </summary>
+    private static decimal NormalizeDoubleResult(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new OverflowException(); // caught by caller → NumericOverflow
+
+        if (value == 0.0)
+            return 0m;
+
+        int digits = 15 - 1 - (int)Math.Floor(Math.Log10(Math.Abs(value)));
+        if (digits < 0) digits = 0;
+        if (digits > 15) digits = 15;
+
+        var rounded = Math.Round(value, digits);
+
+        if (Math.Abs(rounded) < 1e-15)
+            return 0m;
+
+        return (decimal)rounded;
     }
 
     // ── Resolve argument expressions to algorithms (lazy) ───────────────────
