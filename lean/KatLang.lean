@@ -86,6 +86,8 @@ inductive Error where
   | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
   | branchArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level arity mismatch (name, expected, actual)
   | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual)
+  | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
+  | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
 
@@ -1174,8 +1176,11 @@ mutual
       never see `group [x]`.  Builtins that synthesize fresh groups (e.g. Atoms)
       must normalize their own output explicitly. -/
   partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let rs <- (Algorithm.output a).mapM (fun e => eval e (EvalCtx.push a ctx) env)
-    pure (Result.normalize (Result.group rs))
+    match a.findDuplicatePropName with
+    | some n => .error (Error.duplicateProperty n)
+    | none =>
+      let rs <- (Algorithm.output a).mapM (fun e => eval e (EvalCtx.push a ctx) env)
+      pure (Result.normalize (Result.group rs))
 
   /-- Evaluate an expression and coerce the result to Int. -/
   partial def evalInt (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Int := do
@@ -1318,6 +1323,9 @@ mutual
       not re-check this at runtime. -/
   partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
     let argEvalCtx := EvalCtx.push wiredArgs ctx

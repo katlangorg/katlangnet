@@ -216,6 +216,41 @@ public abstract record Algorithm
     public virtual IReadOnlyList<CondBranch> Branches { get; init; } = [];
 
     /// <summary>
+    /// Check whether the property list contains duplicate property names.
+    /// Returns the first duplicate name found, or null if all names are unique.
+    /// Lean: Algorithm.findDuplicatePropName.
+    /// </summary>
+    public string? FindDuplicatePropName()
+    {
+        var seen = new HashSet<string>();
+        foreach (var p in Properties)
+        {
+            if (!seen.Add(p.Name))
+                return p.Name;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Check whether the branch list contains match-equivalent patterns.
+    /// Returns true if a duplicate is found.
+    /// Lean: Algorithm.hasDuplicateBranchPatterns.
+    /// </summary>
+    public bool HasDuplicateBranchPatterns()
+    {
+        var branches = Branches;
+        for (int i = 0; i < branches.Count; i++)
+        {
+            for (int j = i + 1; j < branches.Count; j++)
+            {
+                if (branches[i].Pattern.IsMatchEquivalent(branches[j].Pattern))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Parser annotation: true when this algorithm should have parameters detected
     /// (property bodies, <c>{}</c> blocks, root algorithm).
     /// Not part of the Lean specification.

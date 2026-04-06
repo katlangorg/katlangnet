@@ -914,6 +914,10 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        var dupProp = alg.FindDuplicatePropName();
+        if (dupProp is not null)
+            return new EvalError.DuplicateProperty(dupProp);
+
         var innerCtx = ctx.Push(alg);
         var results = new List<Result>();
 
@@ -1441,6 +1445,9 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
     {
+        if (callee.HasDuplicateBranchPatterns())
+            return new EvalError.DuplicateBranchPattern();
+
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
         var argEvalCtx = ctx.Push(wiredArgs);

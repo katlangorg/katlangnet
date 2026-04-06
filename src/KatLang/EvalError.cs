@@ -18,6 +18,10 @@ namespace KatLang;
 ///   | badIndex          : Error
 ///   | divByZero         : Error
 ///   | noMatchingBranch  : Ident → Error
+///   | branchArityMismatch : Ident → Nat → Nat → Error
+///   | branchOutputArityMismatch : Ident → Nat → Nat → Error
+///   | duplicateProperty : Ident → Error
+///   | duplicateBranchPattern : Error
 ///   | withContext        : String → Error → Error
 /// </code>
 /// </summary>
@@ -66,6 +70,18 @@ public abstract record EvalError
 
     /// <summary>Conditional algorithm: no branch pattern matched the call arguments.</summary>
     public sealed record NoMatchingBranch(string AlgorithmName) : EvalError;
+
+    /// <summary>Conditional algorithm: branch top-level arity mismatch.</summary>
+    public sealed record BranchArityMismatch(string AlgorithmName, int Expected, int Actual) : EvalError;
+
+    /// <summary>Conditional algorithm: branch top-level output arity mismatch.</summary>
+    public sealed record BranchOutputArityMismatch(string AlgorithmName, int Expected, int Actual) : EvalError;
+
+    /// <summary>Algorithm defines the same property name more than once.</summary>
+    public sealed record DuplicateProperty(string Name) : EvalError;
+
+    /// <summary>Conditional algorithm has match-equivalent branch patterns.</summary>
+    public sealed record DuplicateBranchPattern() : EvalError;
 
     /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
     public sealed record NumericOverflow() : EvalError;
