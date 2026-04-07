@@ -2701,6 +2701,18 @@ public class EvaluatorTests
         AssertEvalAllPublic(source, 10);
     }
 
+    [Fact]
+    public void Eval_HigherOrder_GraceReordersCallableParameter()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            Filter = if(predicate~(x), x)
+            Filter(3, IsEven)
+            """;
+
+        AssertEval(source);
+    }
+
     // ── Inline block arguments (higher-order) ────────────────────────────────
 
     [Fact]

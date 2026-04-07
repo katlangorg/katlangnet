@@ -971,11 +971,11 @@ public sealed class Parser
                     break;
 
                 case TokenKind.LParen or TokenKind.LBrace
-                    when lhs is Expr.Resolve or Expr.DotCall
+                    when lhs is Expr.Resolve or Expr.DotCall or Expr.Grace
                     // Only treat as call if '(' / '{' is immediately adjacent to the callee
                     // (no whitespace). A space or newline before the paren starts a new expression.
                     && Current.Position == Previous.Position + Previous.Length:
-                    // Direct call: Name(args) or expr.Name(args) already handled above
+                    // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callArgs = ParseCallArgs();
                     // Direct-call lowering for while/repeat: package multi-item init

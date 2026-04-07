@@ -787,6 +787,21 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_PostfixGrace_CanBeDirectCallee()
+    {
+        var result = Parser.ParseSyntax("predicate~(x)");
+
+        Assert.False(result.HasErrors);
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        var grace = Assert.IsType<Expr.Grace>(call.Function);
+        Assert.Equal(1, grace.Weight);
+        var resolve = Assert.IsType<Expr.Resolve>(grace.Inner);
+        Assert.Equal("predicate", resolve.Name);
+        var arg = Assert.IsType<Expr.Resolve>(call.Args.Output[0]);
+        Assert.Equal("x", arg.Name);
+    }
+
+    [Fact]
     public void Parse_DoublePrefixGrace_WeightMinusTwo()
     {
         var result = Parser.ParseSyntax("~~x");
