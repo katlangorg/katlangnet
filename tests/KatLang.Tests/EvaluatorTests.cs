@@ -778,6 +778,134 @@ public class EvaluatorTests
     public void Eval_Range_Combine_PreservesOrdering()
         => AssertEval("range(3, 1); 0", 3, 2, 1, 0);
 
+    // ── Filter builtin ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Filter_AscendingRange_KeepsMatchingItems()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(range(1, 10), IsEven)
+            """;
+        AssertEval(source, 2, 4, 6, 8, 10);
+    }
+
+    [Fact]
+    public void Eval_Filter_DescendingRange_PreservesOriginalOrder()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(range(10, 1), IsEven)
+            """;
+        AssertEval(source, 10, 8, 6, 4, 2);
+    }
+
+    [Fact]
+    public void Eval_Filter_AllTrue_ReturnsSameCollection()
+    {
+        var source = """
+            IsPositive = x > 0
+            filter(range(1, 4), IsPositive)
+            """;
+        AssertEval(source, 1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void Eval_Filter_AllFalse_ReturnsEmptyCollection()
+    {
+        var source = """
+            IsNegative = x < 0
+            filter(range(1, 4), IsNegative)
+            """;
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Filter_EmptyCollection_ReturnsEmptyCollection()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(if(0, 1), IsEven)
+            """;
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Filter_GroupedElements_ArePreservedWhole()
+    {
+        var source = """
+            KeepPair(tag, value) = tag mod 2 == 0
+            filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var outer = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            outer.Items,
+            first =>
+            {
+                var pair = Assert.IsType<Result.Group>(first);
+                Assert.Collection(
+                    pair.Items,
+                    a => Assert.Equal(2m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(20m, Assert.IsType<Result.Atom>(b).Value));
+            },
+            second =>
+            {
+                var pair = Assert.IsType<Result.Group>(second);
+                Assert.Collection(
+                    pair.Items,
+                    a => Assert.Equal(4m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(40m, Assert.IsType<Result.Atom>(b).Value));
+            });
+    }
+
+    [Fact]
+    public void Eval_Filter_InvalidTruthResult_FailsWithContext()
+    {
+        var source = """
+            BadTruth = x.string
+            filter(range(1, 3), BadTruth)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("filter predicate must produce a numeric truth value"));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
+    [Fact]
+    public void Eval_Filter_ArityMismatch_FollowsBuiltinConvention()
+    {
+        var result = EvalFull("filter(range(1, 3))");
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("expected 2 arguments"));
+        Assert.IsType<EvalError.ArityMismatch>(error);
+    }
+
     // â”€â”€ User-defined functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]

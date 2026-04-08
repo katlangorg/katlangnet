@@ -115,18 +115,20 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
     ifBuiltin accepts 2 (conditional output) or 3 (if-then-else).
-    rangeBuiltin accepts 2 integer bounds: start and stop. -/
+    rangeBuiltin accepts 2 integer bounds: start and stop.
+    filterBuiltin accepts 2 arguments: a collection and a predicate. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
   | .whileBuiltin, 2 => true
   | .repeatBuiltin, 3 => true
   | .atomsBuiltin, 1 => true
   | .rangeBuiltin, 2 => true
+  | .filterBuiltin, 2 => true
   | _, _ => false
 
 /-- Human-readable expected arity string for error messages. -/
@@ -136,6 +138,7 @@ def builtinArityDesc : Builtin -> String
   | .repeatBuiltin => "3"
   | .atomsBuiltin => "1"
   | .rangeBuiltin => "2"
+  | .filterBuiltin => "2"
 
 --------------------------------------------------------------------------------
 -- Patterns (for conditional algorithms)
@@ -348,6 +351,18 @@ namespace Result
     | atom n    => [n]
     | str _     => []       -- strings are not numeric; silently omitted from atom lists
     | group rs => rs.flatMap atoms
+
+  /-- KatLang truth testing used by builtins like `if` and `filter`.
+      Zero is false, any other numeric atom is true.
+      Results with no numeric atoms are invalid for truth testing.
+
+      This intentionally follows the current builtin convention based on the
+      first numeric atom of the result. -/
+  def truthValue? (r : Result) : Option Bool :=
+    match atoms r with
+    | 0::_ => some false
+    | _::_ => some true
+    | _    => none
 
   def asInt? : Result -> Option Int
     | atom n => some n
@@ -782,6 +797,14 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
 /-- Attach context to any error raised by `m`. -/
 def withCtx (ctx : String) (m : EvalM A) : EvalM A :=
   m.mapError (Error.withContext ctx)
+
+/-- Reify a normalized Result as an expression that evaluates back to the same
+    value/shape. Grouped results become block expressions so nested structure is
+    preserved exactly. -/
+def resultToExpr : Result -> Expr
+  | .atom n => .num n
+  | .str s => .stringLiteral s
+  | .group rs => .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -1240,6 +1263,41 @@ mutual
     let argEnv <- bindParams (Algorithm.params step) (unpackArgs s)
     evalAlgOutput step ctx (argEnv ++ env)
 
+  /-- Evaluate a conditional algorithm against an already assembled argument
+      Result shape. Used by ordinary conditional calls and by builtins that
+      must pass one whole result value (for example `filter` elements) without
+      flattening grouped structure. -/
+  partial def evalConditionalShape (callee : Algorithm) (argShape : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM Result := do
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else
+      match matchBranches (Algorithm.branches callee) argShape with
+      | some (branch, bindings) =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          let newCtx := EvalCtx.push callee ctx
+          evalAlgOutput wiredBody newCtx (bindings ++ env)
+      | none =>
+          .error (Error.noMatchingBranch calleeName)
+
+  /-- Evaluate a resolved algorithm on one whole result value.
+      Unlike ordinary eager calls, grouped results are bound as a single input
+      value and are never unpacked into multiple positional arguments.
+      This is used by `filter`, whose predicate must see each collection element
+      as a whole unit. -/
+  partial def evalWholeArgCall (callee : Algorithm) (arg : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM Result := do
+    match callee with
+    | .builtin b =>
+        applyBuiltin b [Algorithm.ofExpr (resultToExpr arg)] ctx env
+    | .conditional _ _ _ =>
+        evalConditionalShape callee (Result.normalize arg) ctx env calleeName
+    | _ => do
+        let argEnv <- bindParams (Algorithm.params callee) [arg]
+        evalAlgOutput callee ctx (argEnv ++ env)
+
   partial def applyBuiltin
       (b : Builtin) (args : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv)
@@ -1249,20 +1307,20 @@ mutual
     -- if(cond, thenBranch, elseBranch): standard 3-arg conditional.
     | .ifBuiltin, [c,t,e] => do
         let cr <- evalAlgOutput c ctx env
-        match Result.atoms cr with
-        | 0::_ => evalAlgOutput e ctx env
-        | _::_ => evalAlgOutput t ctx env
-        | _    => .error Error.badArity
+        match Result.truthValue? cr with
+        | some false => evalAlgOutput e ctx env
+        | some true => evalAlgOutput t ctx env
+        | none => .error Error.badArity
 
     -- if(cond, value): 2-arg conditional output / emit-on-true.
     -- True → evaluate and return value.
     -- False → produce no output (empty group).
     | .ifBuiltin, [c,v] => do
         let cr <- evalAlgOutput c ctx env
-        match Result.atoms cr with
-        | 0::_ => pure (Result.group [])   -- false: no output
-        | _::_ => evalAlgOutput v ctx env   -- true: produce value
-        | _    => .error Error.badArity
+        match Result.truthValue? cr with
+        | some false => pure (Result.group [])   -- false: no output
+        | some true => evalAlgOutput v ctx env   -- true: produce value
+        | none => .error Error.badArity
 
     | .whileBuiltin, [step, init] => do
         let s0r <- evalAlgOutput init ctx env
@@ -1295,6 +1353,31 @@ mutual
       let stop <- expectInt (<- evalAlgOutput stopAlg ctx env)
       let xs := inclusiveRange start stop
       pure (Result.normalize (Result.group (xs.map Result.atom)))
+
+    -- filter(collection, predicate): evaluate the collection left-to-right,
+    -- applying predicate(element) to each top-level element as a whole unit.
+    -- Kept elements are preserved unchanged and in order; rejected elements are
+    -- omitted entirely. The output is compact and grouped elements are never
+    -- flattened or partially retained.
+    | .filterBuiltin, [collectionAlg, predicateAlg] => do
+      let collection <- evalAlgOutput collectionAlg ctx env
+      let rec filterLoop : List Result -> EvalM (List Result)
+        | [] => pure []
+        | item :: rest => do
+            let pr <- withCtx "while evaluating filter predicate" <|
+              evalWholeArgCall predicateAlg item ctx env "filter predicate"
+            match Result.truthValue? pr with
+            | some true => do
+                let kept <- filterLoop rest
+                pure (item :: kept)
+            | some false =>
+                filterLoop rest
+            | none =>
+                .error (Error.withContext
+                  "filter predicate must produce a numeric truth value"
+                  Error.badArity)
+      let kept <- filterLoop collection.toItems
+      pure (Result.normalize (Result.group kept))
 
     | _, _ =>
         .error (Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 args.length))
@@ -1378,9 +1461,6 @@ mutual
       not re-check this at runtime. -/
   partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
-    if callee.hasDuplicateBranchPatterns then
-      .error Error.duplicateBranchPattern
-    else do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
     let argEvalCtx := EvalCtx.push wiredArgs ctx
@@ -1388,15 +1468,7 @@ mutual
     let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
     -- Assemble full argument shape: normalize group for pattern matching
     let argShape := Result.normalize (Result.group argResults)
-    -- Try branches in order
-    match matchBranches (Algorithm.branches callee) argShape with
-    | some (branch, bindings) =>
-        -- Wire branch body to callee so it can traverse the parent chain
-        let wiredBody := Algorithm.childOf callee branch.body
-        let newCtx := EvalCtx.push callee ctx
-        evalAlgOutput wiredBody newCtx (bindings ++ env)
-    | none =>
-        .error (Error.noMatchingBranch calleeName)
+    evalConditionalShape callee argShape ctx env calleeName
 
   partial def evalCall (f : Expr) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
@@ -1856,6 +1928,7 @@ def preludeAlg : Algorithm :=
     , publicProp "repeat" (Algorithm.builtin .repeatBuiltin)
     , publicProp "atoms" (Algorithm.builtin .atomsBuiltin)
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
+    , publicProp "filter" (Algorithm.builtin .filterBuiltin)
     ]
     []
 

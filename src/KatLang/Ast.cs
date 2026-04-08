@@ -12,8 +12,11 @@ public enum UnaryOp { Minus, Not }
 /// <c>if</c> supports both 2-arg (conditional output) and 3-arg (if-then-else).
 /// 2-arg: <c>if(cond, value)</c> — true returns value, false returns empty output (<c>Result.Group([])</c>).
 /// 3-arg: <c>if(cond, then, else)</c> — standard conditional.
+/// <c>filter(collection, predicate)</c> keeps the original top-level collection
+/// elements whose predicate result is truthy; grouped elements are preserved
+/// whole and rejected elements are omitted entirely.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

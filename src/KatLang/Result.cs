@@ -53,6 +53,20 @@ public abstract record Result
     }
 
     /// <summary>
+    /// KatLang truth testing used by builtins like <c>if</c> and <c>filter</c>.
+    /// Zero is false, any other numeric atom is true.
+    /// Returns null when there is no numeric atom to truth-test.
+    /// Lean: <c>Result.truthValue?</c>.
+    /// </summary>
+    public bool? TruthValue()
+    {
+        var atoms = ToAtoms();
+        if (atoms.Count == 0)
+            return null;
+        return atoms[0] != 0;
+    }
+
+    /// <summary>
     /// Try to get as a single number.
     /// Returns null if the result is not a single atom (after normalization).
     /// Lean: Result.asInt?

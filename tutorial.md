@@ -25,6 +25,7 @@
 8. [Conditionals](#conditionals)
 9. [Repetition](#repetition)
     - [Inclusive Sequences: `range`](#inclusive-sequences-range)
+    - [Selection: `filter`](#selection-filter)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
 10. [Practical Examples](#practical-examples)
@@ -769,6 +770,36 @@ range(3, 3)
 3
 ```
 
+### Selection: `filter`
+
+`filter(collection, predicate)` walks the collection from left to right and keeps only the top-level elements whose predicate result is non-zero.
+
+- Kept elements stay in their original order
+- Rejected elements disappear completely; no placeholders are inserted
+- Grouped elements are passed to the predicate and preserved as whole elements
+
+```
+IsEven = x mod 2 == 0
+filter(range(1, 10), IsEven)
+
+KeepPair(tag, value) = tag mod 2 == 0
+filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
+```
+
+**Results:**
+```
+2
+4
+6
+8
+10
+
+(2, 20)
+(4, 40)
+```
+
+An empty input collection stays empty: `filter(if(0, 1), IsEven)` produces no output.
+
 ### Fixed Loop: `repeat`
 
 `repeat` is a builtin algorithm that takes three arguments: a step algorithm, a count, and an initial state. It runs the step algorithm the given number of times, feeding each output back as the next input.
@@ -1383,6 +1414,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
+| `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate is truthy; grouped elements stay whole |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |

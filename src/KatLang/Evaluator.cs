@@ -575,6 +575,36 @@ public static class Evaluator
         }
     }
 
+    /// <summary>
+    /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
+    /// evaluates back to the same shape.
+    /// </summary>
+    private static Expr ResultToExpr(Result result) => result switch
+    {
+        Result.Atom(var n) => new Expr.Num(n),
+        Result.Str(var s) => new Expr.StringLiteral(s),
+        Result.Group(var items) => new Expr.Block(new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [],
+            Output: items.Select(ResultToExpr).ToList())),
+        _ => new Expr.Block(new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [],
+            Output: [])),
+    };
+
+    /// <summary>Lean: <c>Algorithm.ofExpr</c>.</summary>
+    private static Algorithm AlgorithmOfExpr(Expr expr) => new Algorithm.User(
+        Parent: null,
+        Params: [],
+        Opens: [],
+        Properties: [],
+        Output: [expr]);
+
     // ── Pattern matching (for conditional algorithms) ────────────────────────
 
     /// <summary>
@@ -642,6 +672,68 @@ public static class Evaluator
                 return (branch, bindings);
         }
         return null;
+    }
+
+    /// <summary>
+    /// Evaluate a conditional algorithm against an already-assembled argument
+    /// shape. Used both for ordinary conditional calls and for builtins like
+    /// <c>filter</c> that must pass one whole result without flattening it.
+    /// Lean: <c>evalConditionalShape</c>.
+    /// </summary>
+    private static EvalResult<Result> EvalConditionalShape(
+        Algorithm callee,
+        Result argShape,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        if (callee.HasDuplicateBranchPatterns())
+            return new EvalError.DuplicateBranchPattern();
+
+        var match = MatchBranches(callee.Branches, argShape);
+        if (match is null)
+            return new EvalError.NoMatchingBranch(calleeName);
+
+        var (branch, bindings) = match.Value;
+        var wiredBody = ChildOf(callee, branch.Body);
+        var newCtx = ctx.Push(callee);
+        var newEnv = Concat(bindings, valEnv);
+        return EvalAlgOutput(wiredBody, newCtx, newEnv);
+    }
+
+    /// <summary>
+    /// Evaluate a resolved algorithm on one whole result value.
+    /// Grouped values are bound as a single input and are never unpacked into
+    /// multiple positional arguments. This is required by <c>filter</c>, whose
+    /// predicate must inspect each collection element as a whole unit.
+    /// Lean: <c>evalWholeArgCall</c>.
+    /// </summary>
+    private static EvalResult<Result> EvalWholeArgCall(
+        Algorithm callee,
+        Result arg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        switch (callee)
+        {
+            case Algorithm.Builtin(var builtin):
+                return ApplyBuiltin(
+                    builtin,
+                    [AlgorithmOfExpr(ResultToExpr(arg))],
+                    ctx,
+                    valEnv);
+
+            case Algorithm.Conditional:
+                return EvalConditionalShape(callee, arg.Normalize(), ctx, valEnv, calleeName);
+
+            default:
+            {
+                var argEnvR = BindParams(callee.Params, [arg]);
+                if (argEnvR.IsError) return argEnvR.Error;
+                return EvalAlgOutput(callee, ctx, Concat(argEnvR.Value, valEnv));
+            }
+        }
     }
 
     // ── Combine algorithms ──────────────────────────────────────────────────
@@ -741,6 +833,7 @@ public static class Evaluator
             new("repeat", new Algorithm.Builtin(BuiltinId.@repeat), IsPublic: true),
             new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
             new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
+            new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
         ],
         Output: []);
@@ -754,6 +847,7 @@ public static class Evaluator
         (BuiltinId.@repeat, 3) => true,
         (BuiltinId.@atoms, 1) => true,
         (BuiltinId.@range, 2) => true,
+        (BuiltinId.@filter, 2) => true,
         _ => false,
     };
 
@@ -765,6 +859,7 @@ public static class Evaluator
         BuiltinId.@repeat => "3",
         BuiltinId.@atoms => "1",
         BuiltinId.@range => "2",
+        BuiltinId.@filter => "2",
         _ => "?",
     };
 
@@ -1032,11 +1127,11 @@ public static class Evaluator
             {
                 var condR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
-                var condAtoms = condR.Value.ToAtoms();
-                if (condAtoms.Count == 0) return new EvalError.BadArity();
-                return condAtoms[0] == 0
-                    ? EvalAlgOutput(args[2], ctx, valEnv)
-                    : EvalAlgOutput(args[1], ctx, valEnv);
+                var truth = condR.Value.TruthValue();
+                if (truth is null) return new EvalError.BadArity();
+                return truth.Value
+                    ? EvalAlgOutput(args[1], ctx, valEnv)
+                    : EvalAlgOutput(args[2], ctx, valEnv);
             }
 
             // if(cond, value): 2-arg conditional output / emit-on-true.
@@ -1045,11 +1140,11 @@ public static class Evaluator
             {
                 var condR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
-                var condAtoms = condR.Value.ToAtoms();
-                if (condAtoms.Count == 0) return new EvalError.BadArity();
-                return condAtoms[0] == 0
-                    ? EvalResult<Result>.Ok(new Result.Group([]))
-                    : EvalAlgOutput(args[1], ctx, valEnv);
+                var truth = condR.Value.TruthValue();
+                if (truth is null) return new EvalError.BadArity();
+                return truth.Value
+                    ? EvalAlgOutput(args[1], ctx, valEnv)
+                    : EvalResult<Result>.Ok(new Result.Group([]));
             }
 
             // while(step, init)
@@ -1098,6 +1193,40 @@ public static class Evaluator
                 if (stopIntR.IsError) return stopIntR.Error;
 
                 return EvalResult<Result>.Ok(BuildInclusiveRange(startIntR.Value, stopIntR.Value));
+            }
+
+            // filter(collection, predicate) — left-to-right selection over top-level
+            // collection elements. Kept elements are preserved unchanged and in order;
+            // grouped elements remain grouped and rejected elements are omitted.
+            case (BuiltinId.@filter, 2):
+            {
+                var collectionR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (collectionR.IsError) return collectionR.Error;
+
+                var elements = new List<Result>();
+                ResultItems(elements, collectionR.Value);
+
+                var kept = new List<Result>();
+                foreach (var item in elements)
+                {
+                    var predicateR = WithCtx(
+                        "while evaluating filter predicate",
+                        EvalWholeArgCall(args[1], item, ctx, valEnv, "filter predicate"));
+                    if (predicateR.IsError) return predicateR.Error;
+
+                    var truth = predicateR.Value.TruthValue();
+                    if (truth is null)
+                    {
+                        return new EvalError.WithContext(
+                            "filter predicate must produce a numeric truth value",
+                            new EvalError.BadArity());
+                    }
+
+                    if (truth.Value)
+                        kept.Add(item);
+                }
+
+                return EvalResult<Result>.Ok(Result.FromItems(kept));
             }
 
             default:
@@ -1569,9 +1698,6 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
     {
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
         var argEvalCtx = ctx.Push(wiredArgs);
@@ -1587,23 +1713,7 @@ public static class Evaluator
 
         // Assemble full argument shape: normalize for pattern matching
         var argShape = Result.FromItems(argResults);
-
-        // Try branches in order
-        var match = MatchBranches(callee.Branches, argShape);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName);
-
-        var (branch, bindings) = match.Value;
-
-        // Wire the branch body to the callee's scope so it can access the enclosing
-        // algorithm's properties (e.g. TomatoPrice, ApplePrice) via the parent chain.
-        // Mirrors Algorithm.childOf semantics used for normal property lookup.
-        var wiredBody = ChildOf(callee, branch.Body);
-
-        // Evaluate the matched branch body with bindings prepended
-        var newCtx = ctx.Push(callee);
-        var newEnv = Concat(bindings, valEnv);
-        return EvalAlgOutput(wiredBody, newCtx, newEnv);
+        return EvalConditionalShape(callee, argShape, ctx, valEnv, calleeName);
     }
 
     // ── User-defined call (Lean: evalUserCall) ────────────────────────────

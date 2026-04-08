@@ -929,4 +929,133 @@ def test51 : Bool :=
 
 #eval test51  -- should be true
 
+--------------------------------------------------------------------------------
+-- filter builtin tests
+--------------------------------------------------------------------------------
+
+def isEvenAlg63 : Algorithm :=
+  alg ["x"] [] [] [.binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)]
+
+def isPositiveAlg64 : Algorithm :=
+  alg ["x"] [] [] [.binary .gt (.param "x") (.num 0)]
+
+def isNegativeAlg65 : Algorithm :=
+  alg ["x"] [] [] [.binary .lt (.param "x") (.num 0)]
+
+def badTruthAlg66 : Algorithm :=
+  alg ["x"] [] [] [.dotCall (.param "x") "string" none]
+
+def keepPairAlg67 : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.bind "tag", .bind "value"],
+      alg [] [] [] [.binary .eq (.binary .mod (.param "tag") (.num 2)) (.num 0)] ⟩
+  ]
+
+-- Test 63: filter(range(1, 10), IsEven) keeps even items in ascending order
+def test63 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 10]),
+      .resolve "IsEven"
+    ])
+  ])) with
+  | Except.ok [2, 4, 6, 8, 10] => true
+  | _ => false
+
+#eval test63  -- should be true
+
+-- Test 64: descending range preserves original order of kept items
+def test64 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 10, .num 1]),
+      .resolve "IsEven"
+    ])
+  ])) with
+  | Except.ok [10, 8, 6, 4, 2] => true
+  | _ => false
+
+#eval test64  -- should be true
+
+-- Test 65: all-true predicate returns the same collection in the same order
+def test65 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsPositive", isPositiveAlg64)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .resolve "IsPositive"
+    ])
+  ])) with
+  | Except.ok [1, 2, 3, 4] => true
+  | _ => false
+
+#eval test65  -- should be true
+
+-- Test 66: all-false predicate produces an empty result
+def test66 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .resolve "IsNegative"
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test66  -- should be true
+
+-- Test 67: empty input collection stays empty
+def test67 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .resolve "IsEven"
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test67  -- should be true
+
+-- Test 68: grouped elements are preserved whole and in order
+def test68 : Bool :=
+  let groupedItems := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 10]),
+    .block (alg [] [] [] [.num 2, .num 20]),
+    .block (alg [] [] [] [.num 3, .num 30]),
+    .block (alg [] [] [] [.num 4, .num 40])
+  ])
+  match runResult (.block (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
+    .call (resolve "filter") (alg [] [] [] [groupedItems, .resolve "KeepPair"])
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 2, .atom 20],
+      .group [.atom 4, .atom 40]
+    ]) => true
+  | _ => false
+
+#eval test68  -- should be true
+
+-- Test 69: predicate result invalid for truth testing → error
+def test69 : Bool :=
+  match runResult (.block (algPrivate [] [] [("BadTruth", badTruthAlg66)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "BadTruth"
+    ])
+  ])) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test69  -- should be true
+
+-- Test 70: builtin arity mismatch still follows normal conventions
+def test70 : Bool :=
+  match runResult (.call (resolve "filter") (alg [] [] [] [
+    .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
+  ])) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test70  -- should be true
+
 end KatLangTests
