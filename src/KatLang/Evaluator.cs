@@ -1196,8 +1196,11 @@ public static class Evaluator
             }
 
             // filter(collection, predicate) — left-to-right selection over top-level
-            // collection elements. Kept elements are preserved unchanged and in order;
-            // grouped elements remain grouped and rejected elements are omitted.
+            // collection elements. The predicate must return exactly one atomic
+            // numeric value: 0 rejects the item and any nonzero atom keeps it.
+            // Grouped, multi-output, empty, or string predicate results are invalid.
+            // Kept elements are preserved unchanged and in order; grouped elements
+            // remain grouped and rejected elements are omitted.
             case (BuiltinId.@filter, 2):
             {
                 var collectionR = EvalAlgOutput(args[0], ctx, valEnv);
@@ -1210,15 +1213,15 @@ public static class Evaluator
                 foreach (var item in elements)
                 {
                     var predicateR = WithCtx(
-                        "while evaluating filter predicate",
+                        "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
                         EvalWholeArgCall(args[1], item, ctx, valEnv, "filter predicate"));
                     if (predicateR.IsError) return predicateR.Error;
 
-                    var truth = predicateR.Value.TruthValue();
+                    var truth = predicateR.Value.SingleAtomicTruthValue();
                     if (truth is null)
                     {
                         return new EvalError.WithContext(
-                            "filter predicate must produce a numeric truth value",
+                            "filter predicate must return exactly one atomic numeric value",
                             new EvalError.BadArity());
                     }
 

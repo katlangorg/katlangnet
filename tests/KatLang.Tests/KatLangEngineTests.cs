@@ -75,6 +75,17 @@ public class KatLangEngineTests
     }
 
     [Fact]
+    public void Run_Filter_NonCallablePredicate_ExplainsImplicitItemArgument()
+    {
+        var result = KatLangEngine.Run("range(1, 5).filter(1)");
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("filter passes each collection item as one argument to the predicate", error.Message);
+        Assert.Contains("Arity mismatch: expected 0, got 1", error.Message);
+    }
+
+    [Fact]
     public void Run_HidesBlockWrapping_RootIsAlgorithm()
     {
         var result = KatLangEngine.Run("42");

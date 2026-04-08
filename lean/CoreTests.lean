@@ -7,6 +7,20 @@ import KatLang
 namespace KatLangTests
 open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm Error Result)
 
+def hasContext (target : String) : Error -> Bool
+  | .withContext msg inner => msg = target || hasContext target inner
+  | _ => false
+
+def innermostIsBadArity : Error -> Bool
+  | .withContext _ inner => innermostIsBadArity inner
+  | .badArity => true
+  | _ => false
+
+def innermostIsArityMismatch (expected actual : Nat) : Error -> Bool
+  | .withContext _ inner => innermostIsArityMismatch expected actual inner
+  | .arityMismatch e a => e = expected && a = actual
+  | _ => false
+
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
 def propAlg : Algorithm :=
@@ -951,6 +965,20 @@ def keepPairAlg67 : Algorithm :=
       alg [] [] [] [.binary .eq (.binary .mod (.param "tag") (.num 2)) (.num 0)] ⟩
   ]
 
+def badMultiFalseAlg68 : Algorithm :=
+  alg ["x"] [] [] [.num 0, .num 999]
+
+def badMultiTrueAlg69 : Algorithm :=
+  alg ["x"] [] [] [.num 5, .num 0]
+
+def badGroupedAlg70 : Algorithm :=
+  alg ["x"] [] [] [.block (alg [] [] [] [.num 1, .num 0])]
+
+def emptyTruthAlg71 : Algorithm :=
+  alg ["x"] [] [] [
+    .call (resolve "if") (alg [] [] [] [.num 0, .param "x"])
+  ]
+
 -- Test 63: filter(range(1, 10), IsEven) keeps even items in ascending order
 def test63 : Bool :=
   match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
@@ -1035,27 +1063,92 @@ def test68 : Bool :=
 
 #eval test68  -- should be true
 
--- Test 69: predicate result invalid for truth testing → error
+-- Test 69: multi-output predicate starting with 0 is rejected
 def test69 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", badMultiFalseAlg68)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test69  -- should be true
+
+-- Test 70: multi-output predicate starting with nonzero is also rejected
+def test70 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", badMultiTrueAlg69)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test70  -- should be true
+
+-- Test 71: grouped predicate result is rejected
+def test71 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", badGroupedAlg70)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test71  -- should be true
+
+-- Test 72: empty predicate result is rejected
+def test72 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", emptyTruthAlg71)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test72  -- should be true
+
+-- Test 73: string predicate result is rejected
+def test73 : Bool :=
   match runResult (.block (algPrivate [] [] [("BadTruth", badTruthAlg66)] [
     .call (resolve "filter") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
       .resolve "BadTruth"
     ])
   ])) with
-  | Except.error _ => true
+  | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
 
-#eval test69  -- should be true
+#eval test73  -- should be true
 
--- Test 70: builtin arity mismatch still follows normal conventions
-def test70 : Bool :=
+-- Test 74: builtin arity mismatch still follows normal conventions
+def test74 : Bool :=
   match runResult (.call (resolve "filter") (alg [] [] [] [
     .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
   ])) with
   | Except.error _ => true
   | _ => false
 
-#eval test70  -- should be true
+#eval test74  -- should be true
+
+-- Test 75: filter predicate arity mismatch explains the implicit item argument
+def test75 : Bool :=
+  match runResult (.dotCall
+    (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+    "filter"
+    (some (alg [] [] [] [.num 1]))) with
+  | Except.error err =>
+      hasContext "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)" err &&
+      innermostIsArityMismatch 0 1 err
+  | _ => false
+
+#eval test75  -- should be true
 
 end KatLangTests

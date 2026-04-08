@@ -772,11 +772,13 @@ range(3, 3)
 
 ### Selection: `filter`
 
-`filter(collection, predicate)` walks the collection from left to right and keeps only the top-level elements whose predicate result is non-zero.
+`filter(collection, predicate)` walks the collection from left to right and keeps only the top-level elements whose predicate result is exactly one atomic numeric value.
 
 - Kept elements stay in their original order
 - Rejected elements disappear completely; no placeholders are inserted
 - Grouped elements are passed to the predicate and preserved as whole elements
+- Predicate result must be exactly one atomic numeric value: `0` rejects, nonzero keeps
+- Grouped, multi-output, empty, or string predicate results are errors
 
 ```
 IsEven = x mod 2 == 0
@@ -799,6 +801,7 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 ```
 
 An empty input collection stays empty: `filter(if(0, 1), IsEven)` produces no output.
+Predicate results such as `0, 999`, `(1, 0)`, `if(0, x)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
 
 ### Fixed Loop: `repeat`
 
@@ -1414,7 +1417,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
-| `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate is truthy; grouped elements stay whole |
+| `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |

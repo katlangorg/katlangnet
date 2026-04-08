@@ -352,17 +352,30 @@ namespace Result
     | str _     => []       -- strings are not numeric; silently omitted from atom lists
     | group rs => rs.flatMap atoms
 
-  /-- KatLang truth testing used by builtins like `if` and `filter`.
+  /-- KatLang truth testing used by builtins like `if`.
       Zero is false, any other numeric atom is true.
       Results with no numeric atoms are invalid for truth testing.
 
       This intentionally follows the current builtin convention based on the
-      first numeric atom of the result. -/
+      first numeric atom of the flattened result. Builtins with stricter
+      contracts, such as `filter`, should use a dedicated helper instead. -/
   def truthValue? (r : Result) : Option Bool :=
     match atoms r with
     | 0::_ => some false
     | _::_ => some true
     | _    => none
+
+  /-- Strict truth testing for `filter` predicates.
+      Accepts exactly one atomic numeric result: `0` is false and any other
+      atom is true.
+
+      Grouped values, multi-output results, empty results, and strings are all
+      rejected. This is intentionally stricter than `truthValue?`, because
+      `filter` must not derive truth from flattened atoms. -/
+  def singleAtomicTruthValue? : Result -> Option Bool
+    | atom 0 => some false
+    | atom _ => some true
+    | _      => none
 
   def asInt? : Result -> Option Int
     | atom n => some n
@@ -1356,6 +1369,9 @@ mutual
 
     -- filter(collection, predicate): evaluate the collection left-to-right,
     -- applying predicate(element) to each top-level element as a whole unit.
+    -- The predicate must return exactly one atomic numeric value: 0 rejects the
+    -- item and any nonzero atom keeps it. Grouped, multi-output, empty, or
+    -- string predicate results are invalid.
     -- Kept elements are preserved unchanged and in order; rejected elements are
     -- omitted entirely. The output is compact and grouped elements are never
     -- flattened or partially retained.
@@ -1364,9 +1380,9 @@ mutual
       let rec filterLoop : List Result -> EvalM (List Result)
         | [] => pure []
         | item :: rest => do
-            let pr <- withCtx "while evaluating filter predicate" <|
+            let pr <- withCtx "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)" <|
               evalWholeArgCall predicateAlg item ctx env "filter predicate"
-            match Result.truthValue? pr with
+            match Result.singleAtomicTruthValue? pr with
             | some true => do
                 let kept <- filterLoop rest
                 pure (item :: kept)
@@ -1374,7 +1390,7 @@ mutual
                 filterLoop rest
             | none =>
                 .error (Error.withContext
-                  "filter predicate must produce a numeric truth value"
+                  "filter predicate must return exactly one atomic numeric value"
                   Error.badArity)
       let kept <- filterLoop collection.toItems
       pure (Result.normalize (Result.group kept))

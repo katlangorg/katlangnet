@@ -1,15 +1,7 @@
 ﻿using KatLang;
 
 var source = """
-    NetSalary = {
-        SocTax = grossSalary * 0.105
-        ChildCredit = numberOfChildren * 250
-        NonTaxMin = 550
-        TaxableIncome = grossSalary - SocTax - ChildCredit - NonTaxMin
-        IncomeTax = TaxableIncome * 0.255
-        grossSalary - SocTax - IncomeTax
-    }
-    NetSalary(1600, 2)
+    range(1, 5).filter(1)
     """;
 
 switch (KatLangEngine.Run(source))

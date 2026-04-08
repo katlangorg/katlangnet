@@ -127,6 +127,27 @@ public class EvaluatorTests
         return result.IsError ? result.Error : null;
     }
 
+    private static void AssertFilterPredicateShapeFails(string source)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("filter predicate must return exactly one atomic numeric value", formatted);
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("filter predicate must return exactly one atomic numeric value"));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -864,27 +885,58 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Filter_InvalidTruthResult_FailsWithContext()
+    public void Eval_Filter_MultiOutputFalseLikePredicate_FailsWithContext()
     {
         var source = """
-            BadTruth = x.string
-            filter(range(1, 3), BadTruth)
+            Bad(x) = 0, 999
+            filter(range(1, 3), Bad)
             """;
 
-        var result = EvalFull(source);
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+        AssertFilterPredicateShapeFails(source);
+    }
 
-        var error = result.Error;
-        var contexts = new List<string>();
-        while (error is EvalError.WithContext wc)
-        {
-            contexts.Add(wc.Context);
-            error = wc.Inner;
-        }
+    [Fact]
+    public void Eval_Filter_MultiOutputTrueLikePredicate_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = 5, 0
+            filter(range(1, 3), Bad)
+            """;
 
-        Assert.Contains(contexts, context => context.Contains("filter predicate must produce a numeric truth value"));
-        Assert.IsType<EvalError.BadArity>(error);
+        AssertFilterPredicateShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Filter_GroupedPredicateResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = (1, 0)
+            filter(range(1, 3), Bad)
+            """;
+
+        AssertFilterPredicateShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Filter_EmptyPredicateResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = if(0, x)
+            filter(range(1, 3), Bad)
+            """;
+
+        AssertFilterPredicateShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Filter_StringPredicateResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = x.string
+            filter(range(1, 3), Bad)
+            """;
+
+        AssertFilterPredicateShapeFails(source);
     }
 
     [Fact]

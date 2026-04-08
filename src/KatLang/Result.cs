@@ -53,9 +53,11 @@ public abstract record Result
     }
 
     /// <summary>
-    /// KatLang truth testing used by builtins like <c>if</c> and <c>filter</c>.
+    /// KatLang truth testing used by builtins like <c>if</c>.
     /// Zero is false, any other numeric atom is true.
     /// Returns null when there is no numeric atom to truth-test.
+    /// This follows the generic flattened-atoms convention; stricter builtins
+    /// such as <c>filter</c> should use <c>SingleAtomicTruthValue()</c>.
     /// Lean: <c>Result.truthValue?</c>.
     /// </summary>
     public bool? TruthValue()
@@ -64,6 +66,22 @@ public abstract record Result
         if (atoms.Count == 0)
             return null;
         return atoms[0] != 0;
+    }
+
+    /// <summary>
+    /// Strict truth testing for <c>filter</c> predicates.
+    /// Accepts exactly one atomic numeric value: <c>0</c> is false and any
+    /// other atomic number is true. Groups, multi-output values, strings, and
+    /// empty results are rejected.
+    /// Lean: <c>Result.singleAtomicTruthValue?</c>.
+    /// </summary>
+    public bool? SingleAtomicTruthValue()
+    {
+        return this switch
+        {
+            Atom(var n) => n != 0,
+            _ => null,
+        };
     }
 
     /// <summary>

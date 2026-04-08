@@ -13,8 +13,8 @@ public enum UnaryOp { Minus, Not }
 /// 2-arg: <c>if(cond, value)</c> — true returns value, false returns empty output (<c>Result.Group([])</c>).
 /// 3-arg: <c>if(cond, then, else)</c> — standard conditional.
 /// <c>filter(collection, predicate)</c> keeps the original top-level collection
-/// elements whose predicate result is truthy; grouped elements are preserved
-/// whole and rejected elements are omitted entirely.
+/// elements whose predicate returns exactly one atomic numeric truth value;
+/// grouped elements are preserved whole and rejected elements are omitted entirely.
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter }
 
