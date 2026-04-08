@@ -53,6 +53,23 @@ public abstract record Result
     }
 
     /// <summary>
+    /// Count emitted top-level values when this result is already in hand.
+    /// Empty results emit 0. Any non-empty atomic, string, or grouped value
+    /// counts as one value.
+    ///
+    /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> so grouped
+    /// accumulator values count as one value.
+    /// </summary>
+    public int ValueCount()
+    {
+        return this switch
+        {
+            Group(var items) when items.Count == 0 => 0,
+            _ => 1,
+        };
+    }
+
+    /// <summary>
     /// KatLang truth testing used by builtins like <c>if</c>.
     /// Zero is false, any other numeric atom is true.
     /// Returns null when there is no numeric atom to truth-test.

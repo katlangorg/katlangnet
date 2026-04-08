@@ -537,6 +537,18 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_PropertyBody_GroupedTuple_PreservedAsSingleValue()
+    {
+        var result = Parser.ParseSyntax("Pair = (1, 2)");
+
+        Assert.False(result.HasErrors);
+        var pair = result.Root.Properties[0].Value;
+        Assert.Single(pair.Output);
+        var block = Assert.IsType<Expr.Block>(pair.Output[0]);
+        Assert.Equal(2, block.Algorithm.Output.Count);
+    }
+
+    [Fact]
     public void Parse_UnexpectedToken_ReportsError()
     {
         var result = Parser.ParseSyntax("1 + + 2");
@@ -1628,6 +1640,22 @@ public class ParserTests
         // Single branch: no output arity conflict possible
         var result = Parser.ParseSyntax("F(x) = x, x + 1");
         Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Parse_Conditional_GroupedBody_PreservedAsSingleValue()
+    {
+        var source = """
+            Stats(x, (acc, counter)) = (x + acc, counter + 1)
+            """;
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var body = cond.Branches[0].Body;
+        Assert.Single(body.Output);
+        var block = Assert.IsType<Expr.Block>(body.Output[0]);
+        Assert.Equal(2, block.Algorithm.Output.Count);
     }
 
     [Fact]

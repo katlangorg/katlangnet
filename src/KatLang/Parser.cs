@@ -711,15 +711,22 @@ public sealed class Parser
     /// <summary>
     /// Parses a property body as an algorithm: the comma-separated expressions
     /// become the algorithm's output list.
-    /// If the body is a single block expression, return its algorithm directly
-    /// (enables nested property access like X.Y where X = (Y = ...)).
+    /// If the body is a single algorithm-valued block expression, return its
+    /// algorithm directly (enables nested property access like X.Y where
+    /// X = (Y = ...)). Plain grouped values such as <c>(a, b)</c> stay wrapped
+    /// as a single block output so callers can distinguish one grouped value
+    /// from multiple top-level outputs.
     /// </summary>
     private Algorithm ParseOutputLine()
     {
         var exprs = ParseOutputLineExprs();
 
-        // Unwrap single Block to allow nested property access
-        if (exprs.Count == 1 && exprs[0] is Expr.Block(var innerAlg))
+        // Unwrap only algorithm-valued blocks (brace blocks, blocks with
+        // declarations/opens, or elaborated module blocks). Preserve plain
+        // grouped tuple values like (a, b) as one top-level block value.
+        if (exprs.Count == 1
+            && exprs[0] is Expr.Block(var innerAlg)
+            && ShouldUnwrapPropertyBlock(innerAlg))
             return innerAlg with { IsParametrized = true };
 
         return new Algorithm.User(
@@ -732,6 +739,16 @@ public sealed class Parser
             IsParametrized = true
         };
     }
+
+    /// <summary>
+    /// Property bodies unwrap only when the single block clearly denotes an
+    /// algorithm value. Parenthesized grouped data like <c>(a, b)</c> must stay
+    /// wrapped so it remains distinguishable from top-level output arity 2.
+    /// </summary>
+    private static bool ShouldUnwrapPropertyBlock(Algorithm innerAlg)
+        => innerAlg.IsParametrized
+            || innerAlg.Properties.Count > 0
+            || innerAlg.Opens.Count > 0;
 
     /// <summary>
     /// Normalizes and validates open expressions.

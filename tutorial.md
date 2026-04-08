@@ -26,6 +26,7 @@
 9. [Repetition](#repetition)
     - [Inclusive Sequences: `range`](#inclusive-sequences-range)
     - [Selection: `filter`](#selection-filter)
+    - [Reduction: `reduce`](#reduction-reduce)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
 10. [Practical Examples](#practical-examples)
@@ -803,6 +804,36 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 An empty input collection stays empty: `filter(if(0, 1), IsEven)` produces no output.
 Predicate results such as `0, 999`, `(1, 0)`, `if(0, x)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
 
+### Reduction: `reduce`
+
+`reduce(collection, step, initial)` walks the collection from left to right and threads an accumulator through the top-level collection elements.
+
+- `step(element, accumulator)` receives each whole top-level element and the current accumulator
+- The step must return exactly one next accumulator value
+- Grouped input elements stay whole
+- Grouped accumulator values are allowed when they are returned as one grouped value
+- Empty collections return `initial` unchanged
+
+Both call styles are supported: `reduce(collection, step, initial)` and `collection.reduce(step, initial)`.
+
+```
+Add = x + total
+range(1, 5).reduce(Add, 0)
+
+Stats(x, acc) = (x + acc:0, acc:1 + 1)
+range(1, 4).reduce(Stats, (0, 0))
+```
+
+**Results:**
+```
+15
+
+(10, 4)
+```
+
+No wrapper helper is required for grouped accumulators: a parenthesized tuple such as `(a, b)` is one grouped accumulator value.
+Results such as `acc, x` or `if(0, acc)` are still invalid step outputs because `reduce` requires exactly one accumulator value at every step.
+
 ### Fixed Loop: `repeat`
 
 `repeat` is a builtin algorithm that takes three arguments: a step algorithm, a count, and an initial state. It runs the step algorithm the given number of times, feeding each output back as the next input.
@@ -1418,6 +1449,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
+| `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |

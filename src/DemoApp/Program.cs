@@ -1,7 +1,8 @@
 ﻿using KatLang;
 
 var source = """
-    range(1, 5).filter(1)
+    Stats(x, (acc, counter)) = (x + acc, counter + 1)
+    range(1, 4).reduce(Stats, (0, 0))
     """;
 
 switch (KatLangEngine.Run(source))

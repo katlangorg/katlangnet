@@ -148,6 +148,27 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
+    private static void AssertReduceStepShapeFails(string source)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("reduce step must return a single accumulator value", formatted);
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("reduce step must return a single accumulator value"));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -956,6 +977,162 @@ public class EvaluatorTests
 
         Assert.Contains(contexts, context => context.Contains("expected 2 arguments"));
         Assert.IsType<EvalError.ArityMismatch>(error);
+    }
+
+    // ── Reduce builtin ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Reduce_DotCall_AddsLeftToRight()
+    {
+        var source = """
+            Add = x + total
+            range(1, 5).reduce(Add, 0)
+            """;
+
+        AssertEval(source, 15);
+    }
+
+    [Fact]
+    public void Eval_Reduce_OrdinaryBuiltinCall_Multiplies()
+    {
+        var source = """
+            Mul = x * total
+            reduce(range(1, 4), Mul, 1)
+            """;
+
+        AssertEval(source, 24);
+    }
+
+    [Fact]
+    public void Eval_Reduce_IsLeftToRight()
+    {
+        var source = """
+            Digits = x + acc * 10
+            range(1, 4).reduce(Digits, 0)
+            """;
+
+        AssertEval(source, 1234);
+    }
+
+    [Fact]
+    public void Eval_Reduce_EmptyCollection_ReturnsNumericInitial()
+    {
+        var source = """
+            Add = x + total
+            reduce(if(0, 1), Add, 0)
+            """;
+
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_Reduce_EmptyCollection_ReturnsGroupedInitialUnchanged()
+    {
+        var source = """
+            Add = x + total
+            if(0, 1).reduce(Add, (7, 9))
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(7m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(9m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Reduce_GroupedElements_ArePassedWhole()
+    {
+        var source = """
+            TakeValue((tag, value), acc) = acc + value
+            reduce(((1, 10), (2, 20), (3, 30)), TakeValue, 0)
+            """;
+
+        AssertEval(source, 60);
+    }
+
+    [Fact]
+    public void Eval_Reduce_GroupedAccumulator_IsAccepted()
+    {
+        var source = """
+            Stats(x, acc) = (x + acc:0, acc:1 + 1)
+            range(1, 4).reduce(Stats, (0, 0))
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(10m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(4m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Reduce_GroupedAccumulator_WithWrapperHelper_StillWorks()
+    {
+        var source = """
+            Keep(x) = x
+            Stats(x, acc) = Keep((x + acc:0, acc:1 + 1))
+            range(1, 4).reduce(Stats, (0, 0))
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(10m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(4m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Reduce_GroupedElements_AndGroupedAccumulator_ArePassedWhole()
+    {
+        var source = """
+            TakeStats((tag, value), (sum, count)) = (sum + value, count + 1)
+            reduce(((1, 10), (2, 20), (3, 30)), TakeStats, (0, 0))
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(60m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(3m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Reduce_EmptyStepResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x, acc) = if(0, acc)
+            range(1, 3).reduce(Bad, 0)
+            """;
+
+        AssertReduceStepShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Reduce_MultiOutputStepResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x, acc) = acc, x
+            range(1, 3).reduce(Bad, 0)
+            """;
+
+        AssertReduceStepShapeFails(source);
     }
 
     // â”€â”€ User-defined functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

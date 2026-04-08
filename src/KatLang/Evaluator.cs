@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -605,6 +605,26 @@ public static class Evaluator
         Properties: [],
         Output: [expr]);
 
+    /// <summary>
+    /// Counted evaluation result: the normalized value paired with the number of
+    /// top-level values emitted at the current algorithm boundary.
+    /// Lean: <c>CountedResult</c>.
+    /// </summary>
+    private readonly record struct CountedResult(Result Value, int EmittedCount);
+
+    /// <summary>
+    /// Validate the output shape required by <c>reduce</c>.
+    /// The step must emit exactly one accumulator value. Non-empty grouped
+    /// values are valid; empty results and multiple top-level outputs are rejected.
+    /// Lean: <c>expectSingleAccumulator</c>.
+    /// </summary>
+    private static EvalResult<Result> ExpectSingleAccumulator(CountedResult output)
+        => output.EmittedCount == 1
+            ? EvalResult<Result>.Ok(output.Value)
+            : new EvalError.WithContext(
+                "reduce step must return a single accumulator value",
+                new EvalError.BadArity());
+
     // ── Pattern matching (for conditional algorithms) ────────────────────────
 
     /// <summary>
@@ -736,6 +756,268 @@ public static class Evaluator
         }
     }
 
+    /// <summary>
+    /// Evaluate an algorithm's output expressions and count how many top-level
+    /// values they emitted at the current algorithm boundary.
+    /// A grouped block expression counts as one value, while multiple top-level
+    /// output expressions count separately.
+    /// Lean: <c>evalAlgOutputCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalAlgOutputCounted(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var dupProp = alg.FindDuplicatePropName();
+        if (dupProp is not null)
+            return new EvalError.DuplicateProperty(dupProp);
+
+        var innerCtx = ctx.Push(alg);
+        var results = new List<Result>();
+        var emittedCount = 0;
+
+        foreach (var expr in alg.Output)
+        {
+            var countedR = EvalCounted(expr, innerCtx, valEnv);
+            if (countedR.IsError) return countedR.Error;
+            results.Add(countedR.Value.Value);
+            emittedCount += countedR.Value.EmittedCount;
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(results), emittedCount));
+    }
+
+    /// <summary>
+    /// Evaluate a conditional algorithm against an already-assembled argument
+    /// shape, preserving the selected branch's top-level emitted output count.
+    /// Lean: <c>evalConditionalShapeCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalConditionalShapeCounted(
+        Algorithm callee,
+        Result argShape,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        if (callee.HasDuplicateBranchPatterns())
+            return new EvalError.DuplicateBranchPattern();
+
+        var match = MatchBranches(callee.Branches, argShape);
+        if (match is null)
+            return new EvalError.NoMatchingBranch(calleeName);
+
+        var (branch, bindings) = match.Value;
+        var wiredBody = ChildOf(callee, branch.Body);
+        var newCtx = ctx.Push(callee);
+        var newEnv = Concat(bindings, valEnv);
+        return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
+    }
+
+    /// <summary>
+    /// Evaluate a resolved algorithm on two whole result values.
+    /// The collection element and current accumulator are each passed as a
+    /// whole argument so grouped values stay grouped.
+    /// Lean: <c>evalTwoWholeArgCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalTwoWholeArgCallCounted(
+        Algorithm callee,
+        Result element,
+        Result accumulator,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        switch (callee)
+        {
+            case Algorithm.Builtin(var builtin):
+                return ApplyBuiltinCounted(
+                    builtin,
+                    [AlgorithmOfExpr(ResultToExpr(element)), AlgorithmOfExpr(ResultToExpr(accumulator))],
+                    ctx,
+                    valEnv);
+
+            case Algorithm.Conditional:
+                return EvalConditionalShapeCounted(
+                    callee,
+                    Result.FromItems([element, accumulator]),
+                    ctx,
+                    valEnv,
+                    calleeName);
+
+            default:
+            {
+                var argEnvR = BindParams(callee.Params, [element, accumulator]);
+                if (argEnvR.IsError) return argEnvR.Error;
+                return EvalAlgOutputCounted(callee, ctx, Concat(argEnvR.Value, valEnv));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evaluate <c>reduce(collection, step, initial)</c> while preserving the
+    /// accumulator's emitted-value count for the empty-collection case.
+    /// Lean: <c>evalReduceCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalReduceCounted(
+        Algorithm collectionAlg,
+        Algorithm stepAlg,
+        Algorithm initialAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var initialR = EvalAlgOutputCounted(initialAlg, ctx, valEnv);
+        if (initialR.IsError) return initialR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        var accumulator = initialR.Value;
+        foreach (var item in elements)
+        {
+            var stepR = WithCtx(
+                "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)",
+                EvalTwoWholeArgCallCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
+            if (stepR.IsError) return stepR.Error;
+
+            var nextR = ExpectSingleAccumulator(stepR.Value);
+            if (nextR.IsError) return nextR.Error;
+
+            accumulator = new CountedResult(nextR.Value, 1);
+        }
+
+        return EvalResult<CountedResult>.Ok(accumulator);
+    }
+
+    /// <summary>
+    /// Builtin application with counted output shape.
+    /// Used by <c>reduce</c> so step validation can distinguish grouped
+    /// accumulator values from multiple top-level outputs.
+    /// Lean: <c>applyBuiltinCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> ApplyBuiltinCounted(
+        BuiltinId builtin,
+        IReadOnlyList<Algorithm> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (builtin, args.Count)
+        {
+            case (BuiltinId.@if, 3):
+            {
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (condR.IsError) return condR.Error;
+                var truth = condR.Value.TruthValue();
+                if (truth is null) return new EvalError.BadArity();
+                return truth.Value
+                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
+                    : EvalAlgOutputCounted(args[2], ctx, valEnv);
+            }
+
+            case (BuiltinId.@if, 2):
+            {
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (condR.IsError) return condR.Error;
+                var truth = condR.Value.TruthValue();
+                if (truth is null) return new EvalError.BadArity();
+                return truth.Value
+                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
+                    : EvalResult<CountedResult>.Ok(new CountedResult(new Result.Group([]), 0));
+            }
+
+            case (BuiltinId.@while, 2):
+            {
+                var initR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (initR.IsError) return initR.Error;
+                var loopR = WhileLoop(args[0], initR.Value, ctx, valEnv);
+                if (loopR.IsError) return loopR.Error;
+                return EvalResult<CountedResult>.Ok(new CountedResult(loopR.Value, loopR.Value.ValueCount()));
+            }
+
+            case (BuiltinId.@repeat, 3):
+            {
+                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (countR.IsError) return countR.Error;
+                var nR = ExpectWholeInt(countR.Value, "Repeat count");
+                if (nR.IsError) return nR.Error;
+                var n = (long)nR.Value;
+                if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+
+                var initR = EvalAlgOutput(args[2], ctx, valEnv);
+                if (initR.IsError) return initR.Error;
+                var loopR = RepeatLoop(args[0], n, initR.Value, ctx, valEnv);
+                if (loopR.IsError) return loopR.Error;
+                return EvalResult<CountedResult>.Ok(new CountedResult(loopR.Value, loopR.Value.ValueCount()));
+            }
+
+            case (BuiltinId.@atoms, 1):
+            {
+                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (atomsR.IsError) return atomsR.Error;
+                var atoms = atomsR.Value.ToAtoms();
+                var value = Result.FromItems(atoms.Select(n => new Result.Atom(n)));
+                return EvalResult<CountedResult>.Ok(new CountedResult(value, atoms.Count));
+            }
+
+            case (BuiltinId.@range, 2):
+            {
+                var startR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (startR.IsError) return startR.Error;
+                var startIntR = ExpectWholeInt(startR.Value, "range start");
+                if (startIntR.IsError) return startIntR.Error;
+
+                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (stopR.IsError) return stopR.Error;
+                var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
+                if (stopIntR.IsError) return stopIntR.Error;
+
+                var value = BuildInclusiveRange(startIntR.Value, stopIntR.Value);
+                return EvalResult<CountedResult>.Ok(new CountedResult(value, value.ToAtoms().Count));
+            }
+
+            case (BuiltinId.@filter, 2):
+            {
+                var collectionR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (collectionR.IsError) return collectionR.Error;
+
+                var elements = new List<Result>();
+                ResultItems(elements, collectionR.Value);
+
+                var kept = new List<Result>();
+                foreach (var item in elements)
+                {
+                    var predicateR = WithCtx(
+                        "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
+                        EvalWholeArgCall(args[1], item, ctx, valEnv, "filter predicate"));
+                    if (predicateR.IsError) return predicateR.Error;
+
+                    var truth = predicateR.Value.SingleAtomicTruthValue();
+                    if (truth is null)
+                    {
+                        return new EvalError.WithContext(
+                            "filter predicate must return exactly one atomic numeric value",
+                            new EvalError.BadArity());
+                    }
+
+                    if (truth.Value)
+                        kept.Add(item);
+                }
+
+                return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(kept), kept.Count));
+            }
+
+            case (BuiltinId.@reduce, 3):
+                return EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
+
+            default:
+                return new EvalError.WithContext(
+                    $"expected {BuiltinArityDesc(builtin)} arguments",
+                    new EvalError.ArityMismatch(0, args.Count));
+        }
+    }
+
     // ── Combine algorithms ──────────────────────────────────────────────────
 
     /// <summary>
@@ -834,6 +1116,7 @@ public static class Evaluator
             new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
             new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
             new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
+            new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
         ],
         Output: []);
@@ -848,6 +1131,7 @@ public static class Evaluator
         (BuiltinId.@atoms, 1) => true,
         (BuiltinId.@range, 2) => true,
         (BuiltinId.@filter, 2) => true,
+        (BuiltinId.@reduce, 3) => true,
         _ => false,
     };
 
@@ -860,6 +1144,7 @@ public static class Evaluator
         BuiltinId.@atoms => "1",
         BuiltinId.@range => "2",
         BuiltinId.@filter => "2",
+        BuiltinId.@reduce => "3",
         _ => "?",
     };
 
@@ -1232,6 +1517,19 @@ public static class Evaluator
                 return EvalResult<Result>.Ok(Result.FromItems(kept));
             }
 
+            // reduce(collection, step, initial) — left fold over the collection's
+            // top-level elements. step(element, accumulator) receives each whole
+            // element and current accumulator and must return exactly one next
+            // accumulator value. Grouped input elements stay grouped, grouped
+            // accumulator values are allowed, and empty collections return the
+            // initial accumulator unchanged.
+            case (BuiltinId.@reduce, 3):
+            {
+                var reduceR = EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
+                if (reduceR.IsError) return reduceR.Error;
+                return EvalResult<Result>.Ok(reduceR.Value.Value);
+            }
+
             default:
             {
                 return new EvalError.WithContext(
@@ -1462,6 +1760,97 @@ public static class Evaluator
         }
     }
 
+    /// <summary>
+    /// Evaluate an expression together with the number of top-level values it
+    /// emits at the current algorithm boundary.
+    /// Calls and name resolution propagate the callee's emitted output count.
+    /// Block expressions count as one grouped value when non-empty. Combine adds
+    /// both sides because it concatenates top-level outputs. All other value
+    /// expressions emit either zero values (empty result) or one value.
+    /// Lean: <c>evalCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalCounted(
+        Expr expr,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (expr)
+        {
+            case Expr.Param(var name):
+            {
+                var val = LookupVal(valEnv, name);
+                if (val is not null)
+                    return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
+
+                var algBound = LookupAlg(ctx.AlgEnv, name);
+                if (algBound is not null)
+                {
+                    if (algBound.Params.Count == 0)
+                        return EvalAlgOutputCounted(algBound, ctx, valEnv);
+                    return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
+                }
+
+                return new EvalError.UnknownName(name) { Span = expr.Span };
+            }
+
+            case Expr.Combine(var left, var right):
+            {
+                var leftR = EvalCounted(left, ctx, valEnv);
+                if (leftR.IsError) return leftR.Error;
+                var rightR = EvalCounted(right, ctx, valEnv);
+                if (rightR.IsError) return rightR.Error;
+
+                var items = new List<Result>();
+                ResultItems(items, leftR.Value.Value);
+                ResultItems(items, rightR.Value.Value);
+                return EvalResult<CountedResult>.Ok(new CountedResult(
+                    Result.FromItems(items),
+                    leftR.Value.EmittedCount + rightR.Value.EmittedCount));
+            }
+
+            case Expr.Block(var alg):
+            {
+                var wired = WireToCaller(ctx, alg);
+                if (wired.Params.Count == 0)
+                {
+                    var blockR = EvalAlgOutput(wired, ctx, valEnv);
+                    if (blockR.IsError) return blockR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
+                }
+
+                var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
+            }
+
+            case Expr.Resolve:
+            {
+                var resolvedR = ResolveAlg(expr, ctx);
+                if (resolvedR.IsError)
+                {
+                    var err = resolvedR.Error;
+                    return err.Span is null ? err with { Span = expr.Span } : err;
+                }
+
+                return EvalAlgOutputCounted(resolvedR.Value, ctx, valEnv);
+            }
+
+            case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
+                return WithSpan(expr.Span, WithCtx(CtxDotCall(dotTarget, dotName),
+                    EvalDotCallCounted(dotTarget, dotName, dotArgs, ctx, valEnv)));
+
+            case Expr.Call(var func, var argsAlg):
+                return WithSpan(expr.Span, WithCtx(CtxCall(func),
+                    EvalCallCounted(func, argsAlg, ctx, valEnv)));
+
+            default:
+            {
+                var resultR = Eval(expr, ctx, valEnv);
+                if (resultR.IsError) return resultR.Error;
+                return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
+            }
+        }
+    }
+
     private static EvalResult<Result> EvalNativeCall(
         string fnName,
         IReadOnlyList<string> argNames,
@@ -1673,6 +2062,33 @@ public static class Evaluator
         return EvalUserCall(callee, argsAlg, ctx, valEnv);
     }
 
+    /// <summary>
+    /// Counted call evaluation for <c>reduce</c> step validation.
+    /// Lean: <c>evalCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalCallCounted(
+        Expr func,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var calleeR = ResolveAlg(func, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        var callee = calleeR.Value;
+
+        if (callee is Algorithm.Builtin(var builtinId))
+        {
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            if (argAlgsR.IsError) return argAlgsR.Error;
+            return ApplyBuiltinCounted(builtinId, argAlgsR.Value, ctx, valEnv);
+        }
+
+        if (callee is Algorithm.Conditional)
+            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, OpenExprName(func));
+
+        return EvalUserCallCounted(callee, argsAlg, ctx, valEnv);
+    }
+
     // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
 
     /// <summary>
@@ -1717,6 +2133,34 @@ public static class Evaluator
         // Assemble full argument shape: normalize for pattern matching
         var argShape = Result.FromItems(argResults);
         return EvalConditionalShape(callee, argShape, ctx, valEnv, calleeName);
+    }
+
+    /// <summary>
+    /// Counted conditional call evaluation.
+    /// The argument matching semantics are unchanged; only the selected branch's
+    /// emitted top-level output count is preserved.
+    /// Lean: <c>evalConditionalCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalConditionalCallCounted(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        var wiredArgs = WireToCaller(ctx, args);
+        var argExprs = wiredArgs.Output;
+        var argEvalCtx = ctx.Push(wiredArgs);
+
+        var argResults = new List<Result>();
+        foreach (var expr in argExprs)
+        {
+            var r = Eval(expr, argEvalCtx, valEnv);
+            if (r.IsError) return r.Error;
+            argResults.Add(r.Value);
+        }
+
+        var argShape = Result.FromItems(argResults);
+        return EvalConditionalShapeCounted(callee, argShape, ctx, valEnv, calleeName);
     }
 
     // ── User-defined call (Lean: evalUserCall) ────────────────────────────
@@ -1812,6 +2256,74 @@ public static class Evaluator
         var newCtx = ctx.WithAlgEnv(Concat(algBindings, ctx.AlgEnv));
         var newEnv = Concat(argEnvR.Value, valEnv);
         return EvalAlgOutput(callee, newCtx, newEnv);
+    }
+
+    /// <summary>
+    /// Counted user-defined call evaluation.
+    /// Call semantics are unchanged; only the final emitted output count of the
+    /// callee is preserved.
+    /// Lean: <c>evalUserCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalUserCallCounted(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var wiredArgs = WireToCaller(ctx, args);
+        var argExprs = wiredArgs.Output;
+        var paramCount = callee.Params.Count;
+
+        if (argExprs.Count > paramCount)
+            return new EvalError.ArityMismatch(paramCount, argExprs.Count);
+
+        var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
+        if (maybeAlgsR.IsError) return maybeAlgsR.Error;
+        var maybeAlgs = maybeAlgsR.Value;
+        var algBindings = BindAlgParams(callee.Params, maybeAlgs);
+
+        var argEvalCtx = ctx.Push(wiredArgs);
+        var valueParams = new List<string>();
+        var valueResults = new List<Result>();
+
+        for (var i = 0; i < paramCount; i++)
+        {
+            if (i >= argExprs.Count)
+            {
+                valueParams.Add(callee.Params[i]);
+                continue;
+            }
+
+            var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
+            if (evalR.IsOk)
+            {
+                valueParams.Add(callee.Params[i]);
+                valueResults.Add(evalR.Value);
+            }
+            else if (i < maybeAlgs.Count && maybeAlgs[i] is not null)
+            {
+            }
+            else
+            {
+                return evalR.Error;
+            }
+        }
+
+        IReadOnlyList<Result> unpackedValueResults;
+        if (valueResults.Count == 0)
+        {
+            unpackedValueResults = [];
+        }
+        else
+        {
+            unpackedValueResults = UnpackArgs(Result.FromItems(valueResults));
+        }
+
+        var argEnvR = BindParams(valueParams, unpackedValueResults);
+        if (argEnvR.IsError) return argEnvR.Error;
+
+        var newCtx = ctx.WithAlgEnv(Concat(algBindings, ctx.AlgEnv));
+        var newEnv = Concat(argEnvR.Value, valEnv);
+        return EvalAlgOutputCounted(callee, newCtx, newEnv);
     }
 
     // ── DotCall evaluation ────────────────────────────────────────────────
@@ -1954,6 +2466,112 @@ public static class Evaluator
             Properties: [], Output: outputExprs);
 
         return EvalCall(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
+    }
+
+    /// <summary>
+    /// Counted dotCall evaluation for <c>reduce</c> step validation.
+    /// Lean: <c>evalDotCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalDotCallCounted(
+        Expr target, string name, Algorithm? argsOpt,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var targetResult = ResolveAlg(target, ctx);
+        if (targetResult.IsError)
+        {
+            if (targetResult.Error is EvalError.NotAnAlgorithm)
+            {
+                if (name == "string")
+                {
+                    var val = Eval(target, ctx, valEnv);
+                    if (val.IsError) return val.Error;
+                    var outR = ResultToString(val.Value);
+                    if (outR.IsError) return outR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+                }
+                return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);
+            }
+
+            return targetResult.Error;
+        }
+
+        var targetAlg = targetResult.Value;
+        var intrinsic = EvalStructuralIntrinsic(targetAlg, name);
+        if (intrinsic is { } r)
+        {
+            if (r.IsError) return r.Error;
+            return EvalResult<CountedResult>.Ok(new CountedResult(r.Value, r.Value.ValueCount()));
+        }
+
+        if (name == "string")
+        {
+            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            if (val.IsError) return val.Error;
+            var outR = ResultToString(val.Value);
+            if (outR.IsError) return outR.Error;
+            return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+        }
+
+        var prop = LookupProp(targetAlg, name);
+        if (prop is not null)
+        {
+            var wired = ChildOf(targetAlg, prop);
+
+            if (wired is Algorithm.Conditional)
+            {
+                if (argsOpt is null)
+                    return new EvalError.NoMatchingBranch(name);
+                return EvalConditionalCallCounted(wired, argsOpt, ctx, valEnv, name);
+            }
+
+            if (argsOpt is null)
+            {
+                if (wired.Params.Count == 0)
+                    return EvalAlgOutputCounted(wired, ctx, valEnv);
+                return new EvalError.ArityMismatch(wired.Params.Count, 0);
+            }
+
+            return EvalUserCallCounted(wired, argsOpt, ctx, valEnv);
+        }
+
+        return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);
+    }
+
+    /// <summary>
+    /// Counted lexical fallback with receiver injection.
+    /// Mirrors <see cref="CallLexicalWithReceiver"/>, including while/repeat
+    /// init packaging.
+    /// Lean: <c>callLexicalWithReceiverCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> CallLexicalWithReceiverCounted(
+        string name, Expr receiver, Algorithm? extraArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var outputExprs = new List<Expr> { receiver };
+        if (extraArgs is not null)
+            outputExprs.AddRange(extraArgs.Output);
+
+        var explicitCount = extraArgs?.Output.Count ?? 0;
+
+        if (name == "while" && explicitCount >= 2)
+        {
+            var initExprs = outputExprs.GetRange(1, outputExprs.Count - 1);
+            outputExprs = [receiver, MakeInitBlock(initExprs)];
+        }
+        else if (name == "repeat" && explicitCount >= 3)
+        {
+            var countExpr = outputExprs[1];
+            var initExprs = outputExprs.GetRange(2, outputExprs.Count - 2);
+            outputExprs = [receiver, countExpr, MakeInitBlock(initExprs)];
+        }
+
+        var combinedArgs = new Algorithm.User(
+            Parent: null, Params: [], Opens: [],
+            Properties: [], Output: outputExprs);
+
+        return EvalCallCounted(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
     }
 
     /// <summary>

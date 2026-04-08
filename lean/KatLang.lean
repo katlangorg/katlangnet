@@ -115,13 +115,14 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
     ifBuiltin accepts 2 (conditional output) or 3 (if-then-else).
     rangeBuiltin accepts 2 integer bounds: start and stop.
-    filterBuiltin accepts 2 arguments: a collection and a predicate. -/
+    filterBuiltin accepts 2 arguments: a collection and a predicate.
+    reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
   | .whileBuiltin, 2 => true
@@ -129,6 +130,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .atomsBuiltin, 1 => true
   | .rangeBuiltin, 2 => true
   | .filterBuiltin, 2 => true
+  | .reduceBuiltin, 3 => true
   | _, _ => false
 
 /-- Human-readable expected arity string for error messages. -/
@@ -139,6 +141,7 @@ def builtinArityDesc : Builtin -> String
   | .atomsBuiltin => "1"
   | .rangeBuiltin => "2"
   | .filterBuiltin => "2"
+  | .reduceBuiltin => "3"
 
 --------------------------------------------------------------------------------
 -- Patterns (for conditional algorithms)
@@ -391,6 +394,16 @@ namespace Result
     | atom n   => [atom n]
     | str s    => [str s]
     | group rs => rs
+
+  /-- Count emitted top-level values when a result is already in hand.
+      Empty results emit 0. Any non-empty atomic, string, or grouped value
+      counts as one value.
+
+      This is used by `reduce`, where grouped accumulator values are valid as
+      long as the step returns exactly one top-level accumulator value. -/
+  def valueCount : Result -> Nat
+    | group [] => 0
+    | _ => 1
 
   /-- Structural indexing (preserves grouping). -/
   def index? : Result -> Nat -> Option Result
@@ -764,6 +777,10 @@ def inclusiveRange (start stop : Int) : List Int :=
 /-- Step output: state and continuation flag. -/
 abbrev StepOut := Prod Result Int
 
+/-- Counted evaluation result: the normalized value paired with the number of
+  top-level values emitted at the current algorithm boundary. -/
+abbrev CountedResult := Prod Result Nat
+
 /-- Split a step result into (state, continue-flag).
     Convention: the last atom is the continue flag (nonzero = keep going). -/
 def splitCont (out : Result) : EvalM StepOut := do
@@ -818,6 +835,16 @@ def resultToExpr : Result -> Expr
   | .atom n => .num n
   | .str s => .stringLiteral s
   | .group rs => .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
+
+/-- Validate the output shape required by `reduce`.
+  The step must emit exactly one accumulator value. Non-empty grouped values
+  are valid; empty results and multiple top-level outputs are rejected. -/
+def expectSingleAccumulator (out : CountedResult) : EvalM Result :=
+  match out with
+  | (value, 1) => pure value
+  | _ => .error (Error.withContext
+    "reduce step must return a single accumulator value"
+    Error.badArity)
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -1311,6 +1338,170 @@ mutual
         let argEnv <- bindParams (Algorithm.params callee) [arg]
         evalAlgOutput callee ctx (argEnv ++ env)
 
+  /-- Evaluate an algorithm's output expressions and also count how many
+      top-level values they emitted at the current algorithm boundary.
+
+      A grouped block expression such as `(a, b)` counts as one emitted value,
+      while multiple top-level output expressions `a, b` count as two. `reduce`
+      uses this to distinguish grouped accumulator values from multi-output
+      step results. -/
+  partial def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    match a.findDuplicatePropName with
+    | some n => .error (Error.duplicateProperty n)
+    | none =>
+      let outs <- (Algorithm.output a).mapM (fun e => evalCounted e (EvalCtx.push a ctx) env)
+      let rs := outs.map (fun out => out.fst)
+      let emitted := outs.foldl (fun acc out => acc + out.snd) 0
+      pure (Result.normalize (Result.group rs), emitted)
+
+  /-- Evaluate a conditional algorithm against an already assembled argument
+      shape, preserving the emitted top-level output count of the selected
+      branch. -/
+  partial def evalConditionalShapeCounted (callee : Algorithm) (argShape : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM CountedResult := do
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else
+      match matchBranches (Algorithm.branches callee) argShape with
+      | some (branch, bindings) =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          let newCtx := EvalCtx.push callee ctx
+          evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
+      | none =>
+          .error (Error.noMatchingBranch calleeName)
+
+  /-- Evaluate a resolved algorithm on two whole result values.
+      The collection element and current accumulator are each passed as one
+      whole argument: grouped elements stay grouped, and grouped accumulators
+      stay grouped.
+
+      This is used by `reduce`, whose step has the contract
+      `step(element, accumulator)`. -/
+  partial def evalTwoWholeArgCallCounted (callee : Algorithm) (element accumulator : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM CountedResult := do
+    match callee with
+    | .builtin b =>
+        applyBuiltinCounted b
+          [ Algorithm.ofExpr (resultToExpr element)
+          , Algorithm.ofExpr (resultToExpr accumulator)
+          ]
+          ctx env
+    | .conditional _ _ _ =>
+        evalConditionalShapeCounted callee
+          (Result.normalize (Result.group [element, accumulator]))
+          ctx env calleeName
+    | _ => do
+        let argEnv <- bindParams (Algorithm.params callee) [element, accumulator]
+        evalAlgOutputCounted callee ctx (argEnv ++ env)
+
+  /-- Evaluate `reduce(collection, step, initial)`.
+      `reduce` processes top-level collection elements from left to right.
+      `step(element, accumulator)` receives each whole collection element and
+      the current accumulator as whole arguments. The step must return exactly
+      one accumulator value: one atom or one grouped value is valid, while
+      empty and multi-output results are rejected.
+
+      Empty collections return the initial accumulator unchanged. -/
+  partial def evalReduceCounted (collectionAlg stepAlg initialAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let initOut <- evalAlgOutputCounted initialAlg ctx env
+    let rec reduceLoop : List Result -> CountedResult -> EvalM CountedResult
+      | [], acc => pure acc
+      | item :: rest, (accValue, _) => do
+          let stepOut <- withCtx
+            "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)" <|
+            evalTwoWholeArgCallCounted stepAlg item accValue ctx env "reduce step"
+          let next <- expectSingleAccumulator stepOut
+          reduceLoop rest (next, 1)
+    reduceLoop collection.toItems initOut
+
+  /-- Builtin application with counted output shape.
+      Used by `reduce` to validate that the step emits exactly one accumulator
+      value without flattening grouped values. -/
+  partial def applyBuiltinCounted
+      (b : Builtin) (args : List Algorithm)
+      (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult :=
+    match b, args with
+
+    | .ifBuiltin, [c,t,e] => do
+        let cr <- evalAlgOutput c ctx env
+        match Result.truthValue? cr with
+        | some false => evalAlgOutputCounted e ctx env
+        | some true => evalAlgOutputCounted t ctx env
+        | none => .error Error.badArity
+
+    | .ifBuiltin, [c,v] => do
+        let cr <- evalAlgOutput c ctx env
+        match Result.truthValue? cr with
+        | some false => pure (Result.group [], 0)
+        | some true => evalAlgOutputCounted v ctx env
+        | none => .error Error.badArity
+
+    | .whileBuiltin, [step, init] => do
+        let s0r <- evalAlgOutput init ctx env
+        let rec loop (s : Result) : EvalM Result := do
+          let out <- runStep step ctx env s
+          let (next, cont) <- splitCont out
+          if cont = 0 then pure s else loop next
+        let final <- loop s0r
+        pure (final, Result.valueCount final)
+
+    | .repeatBuiltin, [step, countAlg, init] => do
+        let cr <- evalAlgOutput countAlg ctx env
+        let n <- expectInt cr
+        if n < 0 then
+          .error (Error.illegalInEval "Repeat count must be >= 0")
+        else
+          let s0r <- evalAlgOutput init ctx env
+          let rec repeatLoop (k : Int) (s : Result) : EvalM Result :=
+            if k = 0 then pure s else do
+              let out <- runStep step ctx env s
+              repeatLoop (k-1) out
+          let final <- repeatLoop n s0r
+          pure (final, Result.valueCount final)
+
+    | .atomsBuiltin, [a] => do
+        let r <- evalAlgOutput a ctx env
+        let xs := Result.atoms r
+        pure (Result.normalize (Result.group (xs.map Result.atom)), xs.length)
+
+    | .rangeBuiltin, [startAlg, stopAlg] => do
+      let start <- expectInt (<- evalAlgOutput startAlg ctx env)
+      let stop <- expectInt (<- evalAlgOutput stopAlg ctx env)
+      let xs := inclusiveRange start stop
+      pure (Result.normalize (Result.group (xs.map Result.atom)), xs.length)
+
+    | .filterBuiltin, [collectionAlg, predicateAlg] => do
+      let collection <- evalAlgOutput collectionAlg ctx env
+      let rec filterLoop : List Result -> EvalM (List Result)
+        | [] => pure []
+        | item :: rest => do
+            let pr <- withCtx "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)" <|
+              evalWholeArgCall predicateAlg item ctx env "filter predicate"
+            match Result.singleAtomicTruthValue? pr with
+            | some true => do
+                let kept <- filterLoop rest
+                pure (item :: kept)
+            | some false =>
+                filterLoop rest
+            | none =>
+                .error (Error.withContext
+                  "filter predicate must return exactly one atomic numeric value"
+                  Error.badArity)
+      let kept <- filterLoop collection.toItems
+      pure (Result.normalize (Result.group kept), kept.length)
+
+    | .reduceBuiltin, [collectionAlg, stepAlg, initialAlg] =>
+      evalReduceCounted collectionAlg stepAlg initialAlg ctx env
+
+    | _, _ =>
+        .error (Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 args.length))
+
   partial def applyBuiltin
       (b : Builtin) (args : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv)
@@ -1395,8 +1586,173 @@ mutual
       let kept <- filterLoop collection.toItems
       pure (Result.normalize (Result.group kept))
 
+    -- reduce(collection, step, initial): fold left over the collection's
+    -- top-level elements. `step(element, accumulator)` receives each whole
+    -- element and current accumulator as whole arguments and must return
+    -- exactly one next accumulator value. Grouped input elements stay grouped,
+    -- grouped accumulator values are valid, and empty collections return the
+    -- initial accumulator unchanged.
+    | .reduceBuiltin, [collectionAlg, stepAlg, initialAlg] => do
+      let out <- evalReduceCounted collectionAlg stepAlg initialAlg ctx env
+      pure out.fst
+
     | _, _ =>
         .error (Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 args.length))
+
+  /-- Counted user-defined call evaluation.
+      Call semantics are unchanged; only the final emitted output count of the
+      callee is preserved. -/
+  partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let wiredArgs := wireToCaller ctx args
+    let argExprs := Algorithm.output wiredArgs
+    let paramCount := (Algorithm.params callee).length
+    if argExprs.length > paramCount then
+      .error (Error.arityMismatch paramCount argExprs.length)
+    else do
+      let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
+      let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
+      let argEvalCtx := EvalCtx.push wiredArgs ctx
+      let rec collectValues
+          (ps : List Ident) (es : List Expr)
+          (mas : List (Option Algorithm))
+          : EvalM (List Ident × List Result) :=
+        match ps, es, mas with
+        | [], _, _ => pure ([], [])
+        | ps, [], _ => pure (ps, [])
+        | p :: ps', e :: es', ma :: mas' =>
+            match eval e argEvalCtx env with
+            | .ok value => do
+                let (rps, rvs) <- collectValues ps' es' mas'
+                pure (p :: rps, value :: rvs)
+            | .error err =>
+                match ma with
+                | some _ => collectValues ps' es' mas'
+                | none => .error err
+        | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+      let (valueParams, valueResults) <- collectValues
+          (Algorithm.params callee) argExprs maybeAlgs
+      let unpackedValueResults :=
+        match valueResults with
+        | [] => []
+        | rs => unpackArgs (Result.normalize (Result.group rs))
+      let argEnv <- bindParams valueParams unpackedValueResults
+      let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
+      evalAlgOutputCounted callee newCtx (argEnv ++ env)
+
+  /-- Counted conditional call evaluation.
+      The argument matching semantics are unchanged; only the selected branch's
+      emitted top-level output count is preserved. -/
+  partial def evalConditionalCallCounted (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
+    let wiredArgs := wireToCaller ctx args
+    let argExprs := Algorithm.output wiredArgs
+    let argEvalCtx := EvalCtx.push wiredArgs ctx
+    let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
+    let argShape := Result.normalize (Result.group argResults)
+    evalConditionalShapeCounted callee argShape ctx env calleeName
+
+  /-- Counted call evaluation for `reduce` step validation. -/
+  partial def evalCallCounted (f : Expr) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let callee <- resolveAlg f ctx
+    match callee with
+    | .builtin b => do
+        let argAlgs <- resolveArgAlgs args ctx
+        applyBuiltinCounted b argAlgs ctx env
+    | .conditional _ _ _ => evalConditionalCallCounted callee args ctx env (openExprName f)
+    | _ => evalUserCallCounted callee args ctx env
+
+  /-- Counted lexical fallback with receiver injection. -/
+  partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
+      (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let outputExprs := [receiver] ++ match extraArgs with
+      | some ea => Algorithm.output ea
+      | none => []
+    let combinedArgs := Algorithm.mk none [] [] [] outputExprs
+    evalCallCounted (.resolve name) combinedArgs ctx env
+
+  /-- Counted dotCall evaluation for `reduce` step validation. -/
+  partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    match resolveAlg target ctx with
+    | .ok targetAlg =>
+      match (<- evalStructuralIntrinsic? targetAlg name) with
+      | some r => pure (r, Result.valueCount r)
+      | none =>
+        if name = "string" then do
+          let val <- evalAlgOutput targetAlg ctx env
+          let out <- resultToString val
+          pure (out, Result.valueCount out)
+        else
+          match Algorithm.lookupProp targetAlg name with
+          | some p =>
+              let wired := Algorithm.childOf targetAlg p
+              match argsOpt with
+              | none =>
+                  match wired with
+                  | .conditional _ _ _ => .error (Error.noMatchingBranch name)
+                  | _ =>
+                    if (Algorithm.params wired).length = 0 then
+                      evalAlgOutputCounted wired ctx env
+                    else
+                      .error (Error.arityMismatch (Algorithm.params wired).length 0)
+              | some args =>
+                  match wired with
+                  | .conditional _ _ _ => evalConditionalCallCounted wired args ctx env name
+                  | _ => evalUserCallCounted wired args ctx env
+          | none => callLexicalWithReceiverCounted name target argsOpt ctx env
+    | .error (.notAnAlgorithm _) =>
+      if name = "string" then do
+        let val <- eval target ctx env
+        let out <- resultToString val
+        pure (out, Result.valueCount out)
+      else
+        callLexicalWithReceiverCounted name target argsOpt ctx env
+    | .error e => .error e
+
+  /-- Evaluate an expression together with the number of top-level values it
+      emits at the current algorithm boundary.
+
+      Calls and name resolution propagate the callee's emitted output count.
+      Block expressions count as one grouped value when non-empty. `combine`
+      adds the counts of both sides because it concatenates their top-level
+      outputs. All other value expressions emit either zero values (empty
+      result) or one value. -/
+  partial def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+    match e with
+    | .param x =>
+        match env.lookup x with
+        | some v => pure (v, Result.valueCount v)
+        | none =>
+            match ctx.algEnv.lookup x with
+            | some alg =>
+                if (Algorithm.params alg).length = 0 then
+                  evalAlgOutputCounted alg ctx env
+                else
+                  .error (Error.arityMismatch (Algorithm.params alg).length 0)
+            | none => .error (Error.unknownName x)
+    | .combine e1 e2 => do
+        let (r1, c1) <- evalCounted e1 ctx env
+        let (r2, c2) <- evalCounted e2 ctx env
+        pure (Result.normalize (Result.group (r1.toItems ++ r2.toItems)), c1 + c2)
+    | .block a => do
+        let wired := wireToCaller ctx a
+        if (Algorithm.params wired).length = 0 then
+          let r <- evalAlgOutput wired ctx env
+          pure (r, Result.valueCount r)
+        else
+          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+    | .resolve n => do
+        let a <- resolveAlg (.resolve n) ctx
+        evalAlgOutputCounted a ctx env
+    | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
+        evalDotCallCounted o n argsOpt ctx env
+    | .call f args => withCtx (CtxMsg.call f) do
+        evalCallCounted f args ctx env
+    | _ => do
+        let r <- eval e ctx env
+        pure (r, Result.valueCount r)
 
   /-- Shared user-defined call binding logic.
       Preserves the eager value ABI while layering AlgEnv for higher-order
@@ -1945,6 +2301,7 @@ def preludeAlg : Algorithm :=
     , publicProp "atoms" (Algorithm.builtin .atomsBuiltin)
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
+    , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]
     []
 

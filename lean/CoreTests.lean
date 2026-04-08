@@ -1151,4 +1151,171 @@ def test75 : Bool :=
 
 #eval test75  -- should be true
 
+--------------------------------------------------------------------------------
+-- reduce builtin tests
+--------------------------------------------------------------------------------
+
+def addAlg76 : Algorithm :=
+  alg ["x", "total"] [] [] [.binary .add (.param "x") (.param "total")]
+
+def mulAlg77 : Algorithm :=
+  alg ["x", "total"] [] [] [.binary .mul (.param "x") (.param "total")]
+
+def digitsAlg78 : Algorithm :=
+  alg ["x", "acc"] [] [] [
+    .binary .add (.binary .mul (.param "acc") (.num 10)) (.param "x")
+  ]
+
+def reduceGroupedItemAlg79 : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.group [.bind "tag", .bind "value"], .bind "acc"],
+      alg [] [] [] [.binary .add (.param "acc") (.param "value")] ⟩
+  ]
+
+def reduceStatsAlg80 : Algorithm :=
+  alg ["x", "acc"] [] [] [
+    .block (alg [] [] [] [
+      .binary .add (.param "x") (.index (.param "acc") (.num 0)),
+      .binary .add (.index (.param "acc") (.num 1)) (.num 1)
+    ])
+  ]
+
+def reduceEmptyAlg81 : Algorithm :=
+  alg ["x", "acc"] [] [] [
+    .call (resolve "if") (alg [] [] [] [.num 0, .param "acc"])
+  ]
+
+def reduceMultiAlg82 : Algorithm :=
+  alg ["x", "acc"] [] [] [.param "acc", .param "x"]
+
+-- Test 76: dot-call reduce over range with additive step
+def test76 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "reduce"
+      (some (alg [] [] [] [.resolve "Add", .num 0]))
+  ])) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test76  -- should be true
+
+-- Test 77: ordinary builtin-call reduce with multiplicative step
+def test77 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Mul", mulAlg77)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .resolve "Mul",
+      .num 1
+    ])
+  ])) with
+  | Except.ok [24] => true
+  | _ => false
+
+#eval test77  -- should be true
+
+-- Test 78: reduce folds left to right
+def test78 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Digits", digitsAlg78)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .resolve "Digits",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [1234] => true
+  | _ => false
+
+#eval test78  -- should be true
+
+-- Test 79: empty collection returns the numeric initial accumulator unchanged
+def test79 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .resolve "Add",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test79  -- should be true
+
+-- Test 80: empty collection returns a grouped initial accumulator unchanged
+def test80 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .resolve "Add",
+      .block (alg [] [] [] [.num 7, .num 9])
+    ])
+  ])) with
+  | Except.ok (.group [.atom 7, .atom 9]) => true
+  | _ => false
+
+#eval test80  -- should be true
+
+-- Test 81: grouped collection elements are passed to the step as whole values
+def test81 : Bool :=
+  let groupedItems := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 10]),
+    .block (alg [] [] [] [.num 2, .num 20]),
+    .block (alg [] [] [] [.num 3, .num 30])
+  ])
+  match runFlat (.block (algPrivate [] [] [("TakeValue", reduceGroupedItemAlg79)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      groupedItems,
+      .resolve "TakeValue",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [60] => true
+  | _ => false
+
+#eval test81  -- should be true
+
+-- Test 82: grouped accumulator values are accepted and returned unchanged in shape
+def test82 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Stats", reduceStatsAlg80)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .resolve "Stats",
+      .block (alg [] [] [] [.num 0, .num 0])
+    ])
+  ])) with
+  | Except.ok (.group [.atom 10, .atom 4]) => true
+  | _ => false
+
+#eval test82  -- should be true
+
+-- Test 83: reduce step must not return an empty result
+def test83 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", reduceEmptyAlg81)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad",
+      .num 0
+    ])
+  ])) with
+  | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test83  -- should be true
+
+-- Test 84: reduce step must not return multiple top-level outputs
+def test84 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", reduceMultiAlg82)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad",
+      .num 0
+    ])
+  ])) with
+  | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test84  -- should be true
+
 end KatLangTests

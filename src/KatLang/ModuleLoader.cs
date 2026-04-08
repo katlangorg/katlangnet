@@ -89,9 +89,9 @@ public sealed class ModuleLoader
         foreach (var prop in alg.Properties)
         {
             var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef);
-            // Unwrap single-Block output: if the entire property body is now just a Block
-            // (e.g. load was replaced with Block), unwrap it so the loaded algorithm
-            // becomes the property value directly — mirrors ParseOutputLine's unwrap logic.
+            // Unwrap only algorithm-valued single-block property bodies. This keeps
+            // plain grouped values such as (a, b) wrapped as one block value while
+            // still letting load-elaborated modules become direct property values.
             processedValue = UnwrapSingleBlock(processedValue);
             newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic));
         }
@@ -118,9 +118,9 @@ public sealed class ModuleLoader
     }
 
     /// <summary>
-    /// If an algorithm has no params, opens, or properties and its only output is a Block,
-    /// unwrap to use the block's algorithm directly. This mirrors ParseOutputLine's behavior:
-    /// <c>if (exprs.Count == 1 &amp;&amp; exprs[0] is Expr.Block(var innerAlg)) return innerAlg;</c>
+    /// If an algorithm has no params, opens, or properties and its only output is an
+    /// algorithm-valued Block, unwrap to use the block's algorithm directly. This mirrors
+    /// ParseOutputLine's behavior for property bodies while preserving plain grouped values.
     /// </summary>
     private static Algorithm UnwrapSingleBlock(Algorithm alg)
     {
@@ -128,12 +128,18 @@ public sealed class ModuleLoader
             {
                 Params.Count: 0, Opens.Count: 0, Properties.Count: 0,
                 Output: [Expr.Block(var innerAlg)]
-            })
+            }
+            && ShouldUnwrapPropertyBlock(innerAlg))
         {
             return innerAlg with { IsParametrized = alg.IsParametrized || innerAlg.IsParametrized };
         }
         return alg;
     }
+
+    private static bool ShouldUnwrapPropertyBlock(Algorithm innerAlg)
+        => innerAlg.IsParametrized
+            || innerAlg.Properties.Count > 0
+            || innerAlg.Opens.Count > 0;
 
     // ── Expression processing ────────────────────────────────────────────────
 
