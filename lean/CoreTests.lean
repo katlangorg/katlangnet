@@ -1318,4 +1318,154 @@ def test84 : Bool :=
 
 #eval test84  -- should be true
 
+--------------------------------------------------------------------------------
+-- map builtin tests
+--------------------------------------------------------------------------------
+
+def doubleAlg85 : Algorithm :=
+  alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)]
+
+def squareAlg86 : Algorithm :=
+  alg ["x"] [] [] [.binary .mul (.param "x") (.param "x")]
+
+def tagAlg87 : Algorithm :=
+  alg ["x"] [] [] [
+    .binary .add (.binary .mul (.param "x") (.num 10)) (.num 1)
+  ]
+
+def takePairValueAlg89 : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.bind "tag", .bind "value"],
+      alg [] [] [] [.param "value"] ⟩
+  ]
+
+def pairWithSquareAlg90 : Algorithm :=
+  alg ["x"] [] [] [
+    .block (alg [] [] [] [
+      .param "x",
+      .binary .mul (.param "x") (.param "x")
+    ])
+  ]
+
+def mapEmptyAlg91 : Algorithm :=
+  alg ["x"] [] [] [
+    .call (resolve "if") (alg [] [] [] [.num 0, .param "x"])
+  ]
+
+def mapMultiAlg92 : Algorithm :=
+  alg ["x"] [] [] [
+    .param "x",
+    .binary .mul (.param "x") (.param "x")
+  ]
+
+-- Test 85: dot-call map doubles each range element left-to-right
+def test85 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "map"
+      (some (alg [] [] [] [.resolve "Double"]))
+  ])) with
+  | Except.ok [2, 4, 6, 8, 10] => true
+  | _ => false
+
+#eval test85  -- should be true
+
+-- Test 86: ordinary builtin-call map squares each range element
+def test86 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Square", squareAlg86)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+      .resolve "Square"
+    ])
+  ])) with
+  | Except.ok [1, 4, 9, 16, 25] => true
+  | _ => false
+
+#eval test86  -- should be true
+
+-- Test 87: map preserves the original left-to-right element order
+def test87 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Tag", tagAlg87)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1]),
+      .resolve "Tag"
+    ])
+  ])) with
+  | Except.ok [51, 41, 31, 21, 11] => true
+  | _ => false
+
+#eval test87  -- should be true
+
+-- Test 88: empty input collection stays empty
+def test88 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .resolve "Double"
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test88  -- should be true
+
+-- Test 89: grouped collection elements are passed to the transform as whole values
+def test89 : Bool :=
+  let groupedItems := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 10]),
+    .block (alg [] [] [] [.num 2, .num 20]),
+    .block (alg [] [] [] [.num 3, .num 30])
+  ])
+  match runFlat (.block (algPrivate [] [] [("TakeValue", takePairValueAlg89)] [
+    .call (resolve "map") (alg [] [] [] [groupedItems, .resolve "TakeValue"])
+  ])) with
+  | Except.ok [10, 20, 30] => true
+  | _ => false
+
+#eval test89  -- should be true
+
+-- Test 90: grouped mapped results are accepted as one mapped element each
+def test90 : Bool :=
+  match runResult (.block (algPrivate [] [] [("PairWithSquare", pairWithSquareAlg90)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "PairWithSquare"
+    ])
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 1, .atom 1],
+      .group [.atom 2, .atom 4],
+      .group [.atom 3, .atom 9]
+    ]) => true
+  | _ => false
+
+#eval test90  -- should be true
+
+-- Test 91: map transform must not return an empty result
+def test91 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", mapEmptyAlg91)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
+  | _ => false
+
+#eval test91  -- should be true
+
+-- Test 92: map transform must not return multiple top-level outputs
+def test92 : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", mapMultiAlg92)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "Bad"
+    ])
+  ])) with
+  | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
+  | _ => false
+
+#eval test92  -- should be true
+
 end KatLangTests

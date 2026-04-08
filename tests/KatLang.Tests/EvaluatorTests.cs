@@ -169,6 +169,27 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
+    private static void AssertMapTransformShapeFails(string source)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("map transform must return a single element", formatted);
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("map transform must return a single element"));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -977,6 +998,126 @@ public class EvaluatorTests
 
         Assert.Contains(contexts, context => context.Contains("expected 2 arguments"));
         Assert.IsType<EvalError.ArityMismatch>(error);
+    }
+
+    // ── Map builtin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Map_DotCall_DoublesEachElement()
+    {
+        var source = """
+            Double = x * 2
+            range(1, 5).map(Double)
+            """;
+
+        AssertEval(source, 2, 4, 6, 8, 10);
+    }
+
+    [Fact]
+    public void Eval_Map_OrdinaryBuiltinCall_SquaresEachElement()
+    {
+        var source = """
+            Square = x * x
+            map(range(1, 5), Square)
+            """;
+
+        AssertEval(source, 1, 4, 9, 16, 25);
+    }
+
+    [Fact]
+    public void Eval_Map_PreservesOriginalOrder()
+    {
+        var source = """
+            Tag = x * 10 + 1
+            map(range(5, 1), Tag)
+            """;
+
+        AssertEval(source, 51, 41, 31, 21, 11);
+    }
+
+    [Fact]
+    public void Eval_Map_EmptyCollection_ReturnsEmptyCollection()
+    {
+        var source = """
+            Double = x * 2
+            map(if(0, 1), Double)
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Map_GroupedElements_ArePassedWhole()
+    {
+        var source = """
+            TakeValue((tag, value)) = value
+            map(((1, 10), (2, 20), (3, 30)), TakeValue)
+            """;
+
+        AssertEval(source, 10, 20, 30);
+    }
+
+    [Fact]
+    public void Eval_Map_GroupedTransformResult_IsAccepted()
+    {
+        var source = """
+            PairWithSquare(x) = (x, x * x)
+            range(1, 3).map(PairWithSquare)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var outer = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            outer.Items,
+            first =>
+            {
+                var pair = Assert.IsType<Result.Group>(first);
+                Assert.Collection(
+                    pair.Items,
+                    a => Assert.Equal(1m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(1m, Assert.IsType<Result.Atom>(b).Value));
+            },
+            second =>
+            {
+                var pair = Assert.IsType<Result.Group>(second);
+                Assert.Collection(
+                    pair.Items,
+                    a => Assert.Equal(2m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(4m, Assert.IsType<Result.Atom>(b).Value));
+            },
+            third =>
+            {
+                var pair = Assert.IsType<Result.Group>(third);
+                Assert.Collection(
+                    pair.Items,
+                    a => Assert.Equal(3m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(9m, Assert.IsType<Result.Atom>(b).Value));
+            });
+    }
+
+    [Fact]
+    public void Eval_Map_EmptyTransformResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = if(0, x)
+            range(1, 3).map(Bad)
+            """;
+
+        AssertMapTransformShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Map_MultiOutputTransformResult_FailsWithContext()
+    {
+        var source = """
+            Bad(x) = x, x * x
+            range(1, 3).map(Bad)
+            """;
+
+        AssertMapTransformShapeFails(source);
     }
 
     // ── Reduce builtin ───────────────────────────────────────────────────────

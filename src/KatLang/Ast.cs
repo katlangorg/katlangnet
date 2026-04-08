@@ -15,11 +15,14 @@ public enum UnaryOp { Minus, Not }
 /// <c>filter(collection, predicate)</c> keeps the original top-level collection
 /// elements whose predicate returns exactly one atomic numeric truth value;
 /// grouped elements are preserved whole and rejected elements are omitted entirely.
+/// <c>map(collection, transform)</c> maps top-level collection elements left to
+/// right; <c>transform(element)</c> must return exactly one mapped element, and
+/// grouped input/output elements are preserved whole.
 /// <c>reduce(collection, step, initial)</c> folds top-level collection elements
 /// left to right; <c>step(element, accumulator)</c> must return exactly one
 /// next accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

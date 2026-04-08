@@ -115,13 +115,14 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
     ifBuiltin accepts 2 (conditional output) or 3 (if-then-else).
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
+    mapBuiltin accepts 2 arguments: a collection and a transform.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
@@ -130,6 +131,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .atomsBuiltin, 1 => true
   | .rangeBuiltin, 2 => true
   | .filterBuiltin, 2 => true
+  | .mapBuiltin, 2 => true
   | .reduceBuiltin, 3 => true
   | _, _ => false
 
@@ -141,6 +143,7 @@ def builtinArityDesc : Builtin -> String
   | .atomsBuiltin => "1"
   | .rangeBuiltin => "2"
   | .filterBuiltin => "2"
+  | .mapBuiltin => "2"
   | .reduceBuiltin => "3"
 
 --------------------------------------------------------------------------------
@@ -399,8 +402,9 @@ namespace Result
       Empty results emit 0. Any non-empty atomic, string, or grouped value
       counts as one value.
 
-      This is used by `reduce`, where grouped accumulator values are valid as
-      long as the step returns exactly one top-level accumulator value. -/
+      This is used by `reduce` and `map`, where grouped accumulator / mapped
+      values are valid as long as the step / transform returns exactly one
+      top-level value. -/
   def valueCount : Result -> Nat
     | group [] => 0
     | _ => 1
@@ -836,15 +840,32 @@ def resultToExpr : Result -> Expr
   | .str s => .stringLiteral s
   | .group rs => .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
 
-/-- Validate the output shape required by `reduce`.
-  The step must emit exactly one accumulator value. Non-empty grouped values
-  are valid; empty results and multiple top-level outputs are rejected. -/
-def expectSingleAccumulator (out : CountedResult) : EvalM Result :=
+/-- Validate the output shape required by counted builtins that must emit
+    exactly one top-level value.
+
+    Non-empty grouped values are valid; empty results and multiple top-level
+    outputs are rejected. -/
+def expectSingleValueWith (msg : String) (out : CountedResult) : EvalM Result :=
   match out with
   | (value, 1) => pure value
   | _ => .error (Error.withContext
-    "reduce step must return a single accumulator value"
+    msg
     Error.badArity)
+
+/-- Validate the output shape required by `reduce`.
+    The step must emit exactly one accumulator value. -/
+def expectSingleAccumulator (out : CountedResult) : EvalM Result :=
+  expectSingleValueWith
+    "reduce step must return a single accumulator value"
+    out
+
+/-- Validate the output shape required by `map`.
+    The transform must emit exactly one mapped element: one atom or one grouped
+    value is valid, while empty and multi-output results are rejected. -/
+def expectSingleMappedElement (out : CountedResult) : EvalM Result :=
+  expectSingleValueWith
+    "map transform must return a single element"
+    out
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -1305,7 +1326,8 @@ mutual
 
   /-- Evaluate a conditional algorithm against an already assembled argument
       Result shape. Used by ordinary conditional calls and by builtins that
-      must pass one whole result value (for example `filter` elements) without
+      must pass one whole result value (for example `filter` / `map` elements)
+      without
       flattening grouped structure. -/
   partial def evalConditionalShape (callee : Algorithm) (argShape : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
@@ -1324,8 +1346,8 @@ mutual
   /-- Evaluate a resolved algorithm on one whole result value.
       Unlike ordinary eager calls, grouped results are bound as a single input
       value and are never unpacked into multiple positional arguments.
-      This is used by `filter`, whose predicate must see each collection element
-      as a whole unit. -/
+      This is used by `filter` and `map`, whose predicate / transform must see
+      each collection element as a whole unit. -/
   partial def evalWholeArgCall (callee : Algorithm) (arg : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM Result := do
@@ -1337,6 +1359,24 @@ mutual
     | _ => do
         let argEnv <- bindParams (Algorithm.params callee) [arg]
         evalAlgOutput callee ctx (argEnv ++ env)
+
+    /-- Evaluate a resolved algorithm on one whole result value, preserving the
+      number of top-level values emitted by the callee.
+
+      This is used by `map`, whose transform must receive each collection
+      element as one whole argument while still being validated to return
+      exactly one mapped element. -/
+    partial def evalWholeArgCallCounted (callee : Algorithm) (arg : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM CountedResult := do
+    match callee with
+    | .builtin b =>
+      applyBuiltinCounted b [Algorithm.ofExpr (resultToExpr arg)] ctx env
+    | .conditional _ _ _ =>
+      evalConditionalShapeCounted callee (Result.normalize arg) ctx env calleeName
+    | _ => do
+      let argEnv <- bindParams (Algorithm.params callee) [arg]
+      evalAlgOutputCounted callee ctx (argEnv ++ env)
 
   /-- Evaluate an algorithm's output expressions and also count how many
       top-level values they emitted at the current algorithm boundary.
@@ -1419,6 +1459,31 @@ mutual
           reduceLoop rest (next, 1)
     reduceLoop collection.toItems initOut
 
+  /-- Evaluate `map(collection, transform)`.
+      `map` processes top-level collection elements from left to right.
+      `transform(element)` receives each whole collection element as one
+      argument and must return exactly one mapped element: one atom or one
+      grouped value is valid, while empty and multi-output results are
+      rejected.
+
+      Grouped input elements are passed whole, grouped mapped elements are
+      accepted as single output elements, empty collections stay empty, and the
+      output preserves the original element order and element count. -/
+  partial def evalMapCounted (collectionAlg transformAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec mapLoop : List Result -> EvalM (List Result)
+      | [] => pure []
+      | item :: rest => do
+          let mappedOut <- withCtx
+            "while evaluating map transform (map passes each collection item as one argument to the transform)" <|
+            evalWholeArgCallCounted transformAlg item ctx env "map transform"
+          let mapped <- expectSingleMappedElement mappedOut
+          let restMapped <- mapLoop rest
+          pure (mapped :: restMapped)
+    let mapped <- mapLoop collection.toItems
+    pure (Result.normalize (Result.group mapped), mapped.length)
+
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
       value without flattening grouped values. -/
@@ -1495,6 +1560,9 @@ mutual
                   Error.badArity)
       let kept <- filterLoop collection.toItems
       pure (Result.normalize (Result.group kept), kept.length)
+
+    | .mapBuiltin, [collectionAlg, transformAlg] =>
+      evalMapCounted collectionAlg transformAlg ctx env
 
     | .reduceBuiltin, [collectionAlg, stepAlg, initialAlg] =>
       evalReduceCounted collectionAlg stepAlg initialAlg ctx env
@@ -1585,6 +1653,17 @@ mutual
                   Error.badArity)
       let kept <- filterLoop collection.toItems
       pure (Result.normalize (Result.group kept))
+
+    -- map(collection, transform): evaluate the collection left-to-right,
+    -- applying transform(element) to each top-level element as one whole unit.
+    -- The transform must return exactly one mapped element: one atom or one
+    -- grouped value is valid, while empty and multi-output results are invalid.
+    -- Grouped input elements are passed whole, grouped mapped elements are
+    -- preserved as single top-level outputs, and the final collection keeps the
+    -- original order and element count.
+    | .mapBuiltin, [collectionAlg, transformAlg] => do
+      let out <- evalMapCounted collectionAlg transformAlg ctx env
+      pure out.fst
 
     -- reduce(collection, step, initial): fold left over the collection's
     -- top-level elements. `step(element, accumulator)` receives each whole
@@ -2301,6 +2380,7 @@ def preludeAlg : Algorithm :=
     , publicProp "atoms" (Algorithm.builtin .atomsBuiltin)
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
+    , publicProp "map" (Algorithm.builtin .mapBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]
     []

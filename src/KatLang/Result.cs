@@ -57,8 +57,8 @@ public abstract record Result
     /// Empty results emit 0. Any non-empty atomic, string, or grouped value
     /// counts as one value.
     ///
-    /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> so grouped
-    /// accumulator values count as one value.
+    /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> and <c>map</c>
+    /// so grouped accumulator / mapped values count as one value.
     /// </summary>
     public int ValueCount()
     {

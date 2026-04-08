@@ -26,6 +26,7 @@
 9. [Repetition](#repetition)
     - [Inclusive Sequences: `range`](#inclusive-sequences-range)
     - [Selection: `filter`](#selection-filter)
+    - [Mapping: `map`](#mapping-map)
     - [Reduction: `reduce`](#reduction-reduce)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
@@ -804,6 +805,43 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 An empty input collection stays empty: `filter(if(0, 1), IsEven)` produces no output.
 Predicate results such as `0, 999`, `(1, 0)`, `if(0, x)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
 
+### Mapping: `map`
+
+`map(collection, transform)` walks the collection from left to right and replaces each top-level element with `transform(element)`.
+
+- The transform receives each whole top-level element
+- The transform must return exactly one mapped element
+- One atomic value is valid
+- One grouped value such as `(x, x * x)` is also valid
+- Empty or multi-output transform results are errors
+- Output order and element count are preserved
+- Empty collections stay empty
+
+Both call styles are supported: `map(collection, transform)` and `collection.map(transform)`.
+
+```
+Double = x * 2
+range(1, 5).map(Double)
+
+PairWithSquare(x) = (x, x * x)
+map(range(1, 3), PairWithSquare)
+```
+
+**Results:**
+```
+2
+4
+6
+8
+10
+
+(1, 1)
+(2, 4)
+(3, 9)
+```
+
+Grouped input elements are passed to the transform as whole values, so `Swap((a, b)) = (b, a)` works on grouped pairs without flattening them.
+
 ### Reduction: `reduce`
 
 `reduce(collection, step, initial)` walks the collection from left to right and threads an accumulator through the top-level collection elements.
@@ -1449,6 +1487,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
+| `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
 | `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |

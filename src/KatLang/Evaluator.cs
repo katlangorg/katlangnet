@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -613,17 +613,31 @@ public static class Evaluator
     private readonly record struct CountedResult(Result Value, int EmittedCount);
 
     /// <summary>
-    /// Validate the output shape required by <c>reduce</c>.
-    /// The step must emit exactly one accumulator value. Non-empty grouped
-    /// values are valid; empty results and multiple top-level outputs are rejected.
-    /// Lean: <c>expectSingleAccumulator</c>.
+    /// Validate the output shape required by counted builtins that must emit
+    /// exactly one top-level value. Non-empty grouped values are valid; empty
+    /// results and multiple top-level outputs are rejected.
+    /// Lean: <c>expectSingleValueWith</c>.
     /// </summary>
-    private static EvalResult<Result> ExpectSingleAccumulator(CountedResult output)
+    private static EvalResult<Result> ExpectSingleEmittedValue(CountedResult output, string errorMessage)
         => output.EmittedCount == 1
             ? EvalResult<Result>.Ok(output.Value)
             : new EvalError.WithContext(
-                "reduce step must return a single accumulator value",
+                errorMessage,
                 new EvalError.BadArity());
+
+    /// <summary>
+    /// Validate the output shape required by <c>reduce</c>.
+    /// Lean: <c>expectSingleAccumulator</c>.
+    /// </summary>
+    private static EvalResult<Result> ExpectSingleAccumulator(CountedResult output)
+        => ExpectSingleEmittedValue(output, "reduce step must return a single accumulator value");
+
+    /// <summary>
+    /// Validate the output shape required by <c>map</c>.
+    /// Lean: <c>expectSingleMappedElement</c>.
+    /// </summary>
+    private static EvalResult<Result> ExpectSingleMappedElement(CountedResult output)
+        => ExpectSingleEmittedValue(output, "map transform must return a single element");
 
     // ── Pattern matching (for conditional algorithms) ────────────────────────
 
@@ -697,7 +711,8 @@ public static class Evaluator
     /// <summary>
     /// Evaluate a conditional algorithm against an already-assembled argument
     /// shape. Used both for ordinary conditional calls and for builtins like
-    /// <c>filter</c> that must pass one whole result without flattening it.
+    /// <c>filter</c> and <c>map</c> that must pass one whole result without
+    /// flattening it.
     /// Lean: <c>evalConditionalShape</c>.
     /// </summary>
     private static EvalResult<Result> EvalConditionalShape(
@@ -724,8 +739,9 @@ public static class Evaluator
     /// <summary>
     /// Evaluate a resolved algorithm on one whole result value.
     /// Grouped values are bound as a single input and are never unpacked into
-    /// multiple positional arguments. This is required by <c>filter</c>, whose
-    /// predicate must inspect each collection element as a whole unit.
+    /// multiple positional arguments. This is required by <c>filter</c> and
+    /// <c>map</c>, whose predicate / transform must inspect each collection
+    /// element as a whole unit.
     /// Lean: <c>evalWholeArgCall</c>.
     /// </summary>
     private static EvalResult<Result> EvalWholeArgCall(
@@ -752,6 +768,39 @@ public static class Evaluator
                 var argEnvR = BindParams(callee.Params, [arg]);
                 if (argEnvR.IsError) return argEnvR.Error;
                 return EvalAlgOutput(callee, ctx, Concat(argEnvR.Value, valEnv));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evaluate a resolved algorithm on one whole result value while preserving
+    /// the number of top-level values emitted by the callee.
+    /// Lean: <c>evalWholeArgCallCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalWholeArgCallCounted(
+        Algorithm callee,
+        Result arg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        switch (callee)
+        {
+            case Algorithm.Builtin(var builtin):
+                return ApplyBuiltinCounted(
+                    builtin,
+                    [AlgorithmOfExpr(ResultToExpr(arg))],
+                    ctx,
+                    valEnv);
+
+            case Algorithm.Conditional:
+                return EvalConditionalShapeCounted(callee, arg.Normalize(), ctx, valEnv, calleeName);
+
+            default:
+            {
+                var argEnvR = BindParams(callee.Params, [arg]);
+                if (argEnvR.IsError) return argEnvR.Error;
+                return EvalAlgOutputCounted(callee, ctx, Concat(argEnvR.Value, valEnv));
             }
         }
     }
@@ -892,6 +941,40 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>map(collection, transform)</c> while preserving the number of
+    /// top-level mapped elements.
+    /// Lean: <c>evalMapCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalMapCounted(
+        Algorithm collectionAlg,
+        Algorithm transformAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        var mapped = new List<Result>(elements.Count);
+        foreach (var item in elements)
+        {
+            var transformR = WithCtx(
+                "while evaluating map transform (map passes each collection item as one argument to the transform)",
+                EvalWholeArgCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
+            if (transformR.IsError) return transformR.Error;
+
+            var mappedElementR = ExpectSingleMappedElement(transformR.Value);
+            if (mappedElementR.IsError) return mappedElementR.Error;
+
+            mapped.Add(mappedElementR.Value);
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(mapped), mapped.Count));
+    }
+
+    /// <summary>
     /// Builtin application with counted output shape.
     /// Used by <c>reduce</c> so step validation can distinguish grouped
     /// accumulator values from multiple top-level outputs.
@@ -1008,6 +1091,9 @@ public static class Evaluator
                 return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(kept), kept.Count));
             }
 
+            case (BuiltinId.@map, 2):
+                return EvalMapCounted(args[0], args[1], ctx, valEnv);
+
             case (BuiltinId.@reduce, 3):
                 return EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
 
@@ -1116,6 +1202,7 @@ public static class Evaluator
             new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
             new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
             new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
+            new("map",    new Algorithm.Builtin(BuiltinId.@map),    IsPublic: true),
             new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
         ],
@@ -1131,6 +1218,7 @@ public static class Evaluator
         (BuiltinId.@atoms, 1) => true,
         (BuiltinId.@range, 2) => true,
         (BuiltinId.@filter, 2) => true,
+        (BuiltinId.@map, 2) => true,
         (BuiltinId.@reduce, 3) => true,
         _ => false,
     };
@@ -1144,6 +1232,7 @@ public static class Evaluator
         BuiltinId.@atoms => "1",
         BuiltinId.@range => "2",
         BuiltinId.@filter => "2",
+        BuiltinId.@map => "2",
         BuiltinId.@reduce => "3",
         _ => "?",
     };
@@ -1515,6 +1604,17 @@ public static class Evaluator
                 }
 
                 return EvalResult<Result>.Ok(Result.FromItems(kept));
+            }
+
+            // map(collection, transform) — left-to-right transformation over
+            // top-level collection elements. transform(element) receives each
+            // element as one whole value and must return exactly one mapped
+            // element. Grouped input/output elements stay whole.
+            case (BuiltinId.@map, 2):
+            {
+                var mapR = EvalMapCounted(args[0], args[1], ctx, valEnv);
+                if (mapR.IsError) return mapR.Error;
+                return EvalResult<Result>.Ok(mapR.Value.Value);
             }
 
             // reduce(collection, step, initial) — left fold over the collection's
