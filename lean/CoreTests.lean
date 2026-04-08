@@ -737,6 +737,42 @@ def test58 : Bool :=
 
 #eval test58  -- should be true
 
+--------------------------------------------------------------------------------
+-- range builtin tests
+--------------------------------------------------------------------------------
+
+-- Test 59: ascending inclusive range
+def test59 : Bool :=
+  match runFlat (.call (resolve "range") (alg [] [] [] [.num 1, .num 10])) with
+  | Except.ok [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] => true
+  | _ => false
+
+#eval test59  -- should be true
+
+-- Test 60: descending inclusive range
+def test60 : Bool :=
+  match runFlat (.call (resolve "range") (alg [] [] [] [.num 10, .num 1])) with
+  | Except.ok [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] => true
+  | _ => false
+
+#eval test60  -- should be true
+
+-- Test 61: equal bounds produce a singleton
+def test61 : Bool :=
+  match runFlat (.call (resolve "range") (alg [] [] [] [.num 5, .num 5])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test61  -- should be true
+
+-- Test 62: negative to positive bounds remain inclusive and ordered
+def test62 : Bool :=
+  match runFlat (.call (resolve "range") (alg [] [] [] [.num (-2), .num 2])) with
+  | Except.ok [-2, -1, 0, 1, 2] => true
+  | _ => false
+
+#eval test62  -- should be true
+
 -- Test 32: Unary on empty 2-arg if → transparent
 -- -(if(0, 5)) → empty, 10 + -(if(0, 5)) → [10]
 def test32 : Bool :=

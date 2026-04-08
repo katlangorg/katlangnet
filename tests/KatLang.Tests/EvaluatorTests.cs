@@ -87,6 +87,18 @@ public class EvaluatorTests
         Assert.Contains(expectedSubstring, tm.Message);
     }
 
+    private static void AssertEvalFailsWithIllegalInEval(string source, string expectedSubstring)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected IllegalInEval error but got: {result.Value}");
+        var error = result.Error;
+        while (error is EvalError.WithContext wc)
+            error = wc.Inner;
+        var illegal = Assert.IsType<EvalError.IllegalInEval>(error);
+        Assert.Contains(expectedSubstring, illegal.Reason);
+    }
+
     private static EvalResult<Result> EvalFull(string source)
     {
         var ast = Parser.Parse(source).Root;
@@ -735,6 +747,36 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Atoms_SingleValue()
         => AssertEval("atoms((5))", 5);
+
+    // ── Range builtin ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Range_AscendingInclusive()
+        => AssertEval("range(1, 10)", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+
+    [Fact]
+    public void Eval_Range_DescendingInclusive()
+        => AssertEval("range(10, 1)", 10, 9, 8, 7, 6, 5, 4, 3, 2, 1);
+
+    [Fact]
+    public void Eval_Range_SingletonWhenEqual()
+        => AssertEval("range(5, 5)", 5);
+
+    [Fact]
+    public void Eval_Range_NegativeToPositive()
+        => AssertEval("range(-2, 2)", -2, -1, 0, 1, 2);
+
+    [Fact]
+    public void Eval_Range_NonIntegerStart_Fails()
+        => AssertEvalFailsWithIllegalInEval("range(1.5, 5)", "range start must be an integer");
+
+    [Fact]
+    public void Eval_Range_NonIntegerStop_Fails()
+        => AssertEvalFailsWithIllegalInEval("range(1, 5.2)", "range stop must be an integer");
+
+    [Fact]
+    public void Eval_Range_Combine_PreservesOrdering()
+        => AssertEval("range(3, 1); 0", 3, 2, 1, 0);
 
     // â”€â”€ User-defined functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

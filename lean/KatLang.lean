@@ -115,16 +115,18 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
-    ifBuiltin accepts 2 (conditional output) or 3 (if-then-else). -/
+    ifBuiltin accepts 2 (conditional output) or 3 (if-then-else).
+    rangeBuiltin accepts 2 integer bounds: start and stop. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
   | .whileBuiltin, 2 => true
   | .repeatBuiltin, 3 => true
   | .atomsBuiltin, 1 => true
+  | .rangeBuiltin, 2 => true
   | _, _ => false
 
 /-- Human-readable expected arity string for error messages. -/
@@ -133,6 +135,7 @@ def builtinArityDesc : Builtin -> String
   | .whileBuiltin => "2"
   | .repeatBuiltin => "3"
   | .atomsBuiltin => "1"
+  | .rangeBuiltin => "2"
 
 --------------------------------------------------------------------------------
 -- Patterns (for conditional algorithms)
@@ -717,6 +720,19 @@ def expectInt (r : Result) : EvalM Int :=
     | some n => pure n
     | none   => .error Error.badArity
 
+/-- Build the inclusive integer sequence for `range(start, stop)`.
+    The direction is inferred automatically:
+    - ascending when `start <= stop`
+    - descending when `start > stop`
+
+    Because KatLang's Lean core represents numeric values as `Int`, the
+    `range` builtin is integer-only by construction at the specification level. -/
+def inclusiveRange (start stop : Int) : List Int :=
+  if start <= stop then
+    (List.range (Int.toNat (stop - start + 1))).map (fun i => start + Int.ofNat i)
+  else
+    (List.range (Int.toNat (start - stop + 1))).map (fun i => start - Int.ofNat i)
+
 /-- Step output: state and continuation flag. -/
 abbrev StepOut := Prod Result Int
 
@@ -1273,6 +1289,12 @@ mutual
         let r <- evalAlgOutput a ctx env
         let xs := Result.atoms r
         pure (Result.normalize (Result.group (xs.map Result.atom)))
+
+    | .rangeBuiltin, [startAlg, stopAlg] => do
+      let start <- expectInt (<- evalAlgOutput startAlg ctx env)
+      let stop <- expectInt (<- evalAlgOutput stopAlg ctx env)
+      let xs := inclusiveRange start stop
+      pure (Result.normalize (Result.group (xs.map Result.atom)))
 
     | _, _ =>
         .error (Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 args.length))
@@ -1833,6 +1855,7 @@ def preludeAlg : Algorithm :=
     , publicProp "while" (Algorithm.builtin .whileBuiltin)
     , publicProp "repeat" (Algorithm.builtin .repeatBuiltin)
     , publicProp "atoms" (Algorithm.builtin .atomsBuiltin)
+    , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     ]
     []
 

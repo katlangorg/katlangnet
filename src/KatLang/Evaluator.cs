@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
 ///
-/// Builtins (If, While, Repeat, Atoms) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -470,6 +470,41 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Require an exact integer-valued number for integer-only builtins.
+    /// Lean's core uses <c>Int</c> directly, while C# allows decimals and must reject fractional values explicitly.
+    /// </summary>
+    private static EvalResult<decimal> ExpectWholeInt(Result r, string description)
+    {
+        var valueR = ExpectInt(r);
+        if (valueR.IsError) return valueR.Error;
+        if (valueR.Value != Math.Truncate(valueR.Value))
+            return new EvalError.IllegalInEval($"{description} must be an integer");
+        return valueR;
+    }
+
+    /// <summary>
+    /// Build the inclusive integer result for <c>range(start, stop)</c>.
+    /// Counts upward when <c>start &lt;= stop</c> and downward otherwise.
+    /// </summary>
+    private static Result BuildInclusiveRange(decimal start, decimal stop)
+    {
+        var items = new List<Result>();
+
+        if (start <= stop)
+        {
+            for (var current = start; current <= stop; current += 1m)
+                items.Add(new Result.Atom(current));
+        }
+        else
+        {
+            for (var current = start; current >= stop; current -= 1m)
+                items.Add(new Result.Atom(current));
+        }
+
+        return Result.FromItems(items);
+    }
+
+    /// <summary>
     /// Split a step result into (state, continue-flag).
     /// Convention: the last atom is the continue flag (nonzero = keep going).
     /// Lean: splitCont.
@@ -705,6 +740,7 @@ public static class Evaluator
             new("while",  new Algorithm.Builtin(BuiltinId.@while),  IsPublic: true),
             new("repeat", new Algorithm.Builtin(BuiltinId.@repeat), IsPublic: true),
             new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
+            new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
         ],
         Output: []);
@@ -717,6 +753,7 @@ public static class Evaluator
         (BuiltinId.@while, 2) => true,
         (BuiltinId.@repeat, 3) => true,
         (BuiltinId.@atoms, 1) => true,
+        (BuiltinId.@range, 2) => true,
         _ => false,
     };
 
@@ -727,6 +764,7 @@ public static class Evaluator
         BuiltinId.@while => "2",
         BuiltinId.@repeat => "3",
         BuiltinId.@atoms => "1",
+        BuiltinId.@range => "2",
         _ => "?",
     };
 
@@ -1027,10 +1065,8 @@ public static class Evaluator
             {
                 var countR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
-                var nR = ExpectInt(countR.Value);
+                var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
-                if (nR.Value != Math.Floor(nR.Value))
-                    return new EvalError.IllegalInEval("Repeat count must be an integer");
                 var n = (long)nR.Value;
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
                 var repeatInitR = EvalAlgOutput(args[2], ctx, valEnv);
@@ -1046,6 +1082,22 @@ public static class Evaluator
                 var atoms = atomsR.Value.ToAtoms();
                 return EvalResult<Result>.Ok(
                     Result.FromItems(atoms.Select(n => new Result.Atom(n))));
+            }
+
+            // range(start, stop) — inclusive integer sequence, ascending or descending.
+            case (BuiltinId.@range, 2):
+            {
+                var startR = EvalAlgOutput(args[0], ctx, valEnv);
+                if (startR.IsError) return startR.Error;
+                var startIntR = ExpectWholeInt(startR.Value, "range start");
+                if (startIntR.IsError) return startIntR.Error;
+
+                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
+                if (stopR.IsError) return stopR.Error;
+                var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
+                if (stopIntR.IsError) return stopIntR.Error;
+
+                return EvalResult<Result>.Ok(BuildInclusiveRange(startIntR.Value, stopIntR.Value));
             }
 
             default:

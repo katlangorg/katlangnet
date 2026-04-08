@@ -24,6 +24,7 @@
    - [Reordering Parameters with Grace~ operator](#reordering-parameters-with-grace-operator)
 8. [Conditionals](#conditionals)
 9. [Repetition](#repetition)
+    - [Inclusive Sequences: `range`](#inclusive-sequences-range)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
 10. [Practical Examples](#practical-examples)
@@ -736,6 +737,38 @@ For multi-case dispatch based on patterns, see [Conditional Algorithms](#conditi
 
 ## Repetition
 
+### Inclusive Sequences: `range`
+
+`range(start, stop)` is a builtin algorithm that returns every integer from `start` to `stop`, inclusive.
+
+- If `start < stop`, it counts upward by `1`
+- If `start > stop`, it counts downward by `1`
+- If `start == stop`, it returns a single value
+- Both arguments must be integers
+
+```
+range(1, 5)
+range(5, 1)
+range(3, 3)
+```
+
+**Results:**
+```
+1
+2
+3
+4
+5
+
+5
+4
+3
+2
+1
+
+3
+```
+
 ### Fixed Loop: `repeat`
 
 `repeat` is a builtin algorithm that takes three arguments: a step algorithm, a count, and an initial state. It runs the step algorithm the given number of times, feeding each output back as the next input.
@@ -1349,6 +1382,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `if` | `if(cond, a, b)` or `if(cond, a)` |
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
+| `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |
