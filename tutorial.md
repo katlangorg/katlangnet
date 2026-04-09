@@ -1002,7 +1002,7 @@ Both call styles are supported: `reduce(collection, step, initial)` and `collect
 Add = x + total
 range(1, 5).reduce(Add, 0)
 
-Stats(x, acc) = (x + acc:0, acc:1 + 1)
+Stats(x, (acc, counter)) = (x + acc, counter + 1)
 range(1, 4).reduce(Stats, (0, 0))
 ```
 
