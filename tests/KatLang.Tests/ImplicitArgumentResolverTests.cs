@@ -201,7 +201,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
-            Add = a + 1, sum + Numbers:a
+            Add = a + 1, total + Numbers:a
             Sum = repeat(Add, (Numbers.length), (0, 0)) : 1
             Sum
             """;

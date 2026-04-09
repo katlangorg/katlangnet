@@ -115,7 +115,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | sumBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -123,6 +123,7 @@ inductive Builtin where
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
     mapBuiltin accepts 2 arguments: a collection and a transform.
+    sumBuiltin accepts 1 argument: a collection of top-level numeric elements.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
@@ -132,6 +133,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .rangeBuiltin, 2 => true
   | .filterBuiltin, 2 => true
   | .mapBuiltin, 2 => true
+  | .sumBuiltin, 1 => true
   | .reduceBuiltin, 3 => true
   | _, _ => false
 
@@ -144,6 +146,7 @@ def builtinArityDesc : Builtin -> String
   | .rangeBuiltin => "2"
   | .filterBuiltin => "2"
   | .mapBuiltin => "2"
+  | .sumBuiltin => "1"
   | .reduceBuiltin => "3"
 
 --------------------------------------------------------------------------------
@@ -381,6 +384,15 @@ namespace Result
   def singleAtomicTruthValue? : Result -> Option Bool
     | atom 0 => some false
     | atom _ => some true
+    | _      => none
+
+  /-- Strict numeric extraction for `sum`.
+      Accepts exactly one atomic numeric value.
+
+      Grouped values are not flattened or recursively inspected, and strings
+      are rejected. -/
+  def singleAtomicNumber? : Result -> Option Int
+    | atom n => some n
     | _      => none
 
   def asInt? : Result -> Option Int
@@ -1484,6 +1496,29 @@ mutual
     let mapped <- mapLoop collection.toItems
     pure (Result.normalize (Result.group mapped), mapped.length)
 
+  /-- Evaluate `sum(collection)`.
+      `sum` processes top-level collection elements from left to right and adds
+      them into one numeric total.
+
+      Each top-level collection element must be exactly one atomic numeric
+      value. Grouped values are not flattened or recursively summed, strings
+      are rejected, and empty collections return `0`. -/
+  partial def evalSumCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec sumLoop : List Result -> Int -> EvalM Int
+      | [], total => pure total
+      | item :: rest, total =>
+          match Result.singleAtomicNumber? item with
+          | some n =>
+              sumLoop rest (total + n)
+          | none =>
+              .error (Error.withContext
+                "sum expects each collection element to be a single numeric value"
+                Error.badArity)
+    let total <- sumLoop collection.toItems 0
+    pure (Result.atom total, 1)
+
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
       value without flattening grouped values. -/
@@ -1563,6 +1598,9 @@ mutual
 
     | .mapBuiltin, [collectionAlg, transformAlg] =>
       evalMapCounted collectionAlg transformAlg ctx env
+
+    | .sumBuiltin, [collectionAlg] =>
+      evalSumCounted collectionAlg ctx env
 
     | .reduceBuiltin, [collectionAlg, stepAlg, initialAlg] =>
       evalReduceCounted collectionAlg stepAlg initialAlg ctx env
@@ -1663,6 +1701,13 @@ mutual
     -- original order and element count.
     | .mapBuiltin, [collectionAlg, transformAlg] => do
       let out <- evalMapCounted collectionAlg transformAlg ctx env
+      pure out.fst
+
+    -- sum(collection): add top-level collection elements left to right.
+    -- Each element must be exactly one atomic numeric value; grouped values are
+    -- not flattened, strings are invalid, and empty collections return 0.
+    | .sumBuiltin, [collectionAlg] => do
+      let out <- evalSumCounted collectionAlg ctx env
       pure out.fst
 
     -- reduce(collection, step, initial): fold left over the collection's
@@ -2381,6 +2426,7 @@ def preludeAlg : Algorithm :=
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
     , publicProp "map" (Algorithm.builtin .mapBuiltin)
+    , publicProp "sum" (Algorithm.builtin .sumBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]
     []

@@ -1468,4 +1468,128 @@ def test92 : Bool :=
 
 #eval test92  -- should be true
 
+--------------------------------------------------------------------------------
+-- sum builtin tests
+--------------------------------------------------------------------------------
+
+def isEvenAlg93 : Algorithm :=
+  alg ["x"] [] [] [
+    .binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)
+  ]
+
+-- Test 93: ordinary builtin-call sum adds an ascending range
+def test93 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test93  -- should be true
+
+-- Test 94: dot-call sum uses receiver injection with no explicit args
+def test94 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "sum"
+      none
+  ])) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test94  -- should be true
+
+-- Test 95: descending ranges are summed in their original top-level order
+def test95 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
+    ])
+  ])) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test95  -- should be true
+
+-- Test 96: sum composes with filter and preserves strict top-level semantics
+def test96 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        "filter"
+        (some (alg [] [] [] [.resolve "IsEven"])))
+      "sum"
+      none
+  ])) with
+  | Except.ok [30] => true
+  | _ => false
+
+#eval test96  -- should be true
+
+-- Test 97: sum composes with map and sums the mapped top-level elements
+def test97 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Square", squareAlg86)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        "map"
+        (some (alg [] [] [] [.resolve "Square"])))
+      "sum"
+      none
+  ])) with
+  | Except.ok [30] => true
+  | _ => false
+
+#eval test97  -- should be true
+
+-- Test 98: empty collections sum to zero
+def test98 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+    ])
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test98  -- should be true
+
+-- Test 99: a single atomic value is treated as a one-element collection
+def test99 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [.num 5])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test99  -- should be true
+
+-- Test 100: grouped top-level elements are rejected rather than flattened
+def test100 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test100  -- should be true
+
+-- Test 101: string elements are rejected by sum
+def test101 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test101  -- should be true
+
 end KatLangTests

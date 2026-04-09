@@ -18,11 +18,14 @@ public enum UnaryOp { Minus, Not }
 /// <c>map(collection, transform)</c> maps top-level collection elements left to
 /// right; <c>transform(element)</c> must return exactly one mapped element, and
 /// grouped input/output elements are preserved whole.
+/// <c>sum(collection)</c> adds top-level collection elements left to right;
+/// each element must be exactly one atomic numeric value, grouped values are
+/// not flattened, and empty collections return <c>0</c>.
 /// <c>reduce(collection, step, initial)</c> folds top-level collection elements
 /// left to right; <c>step(element, accumulator)</c> must return exactly one
 /// next accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @sum, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

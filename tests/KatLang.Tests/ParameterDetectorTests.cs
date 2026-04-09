@@ -232,7 +232,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Numbers = 3, 5, 9
-            Add = a + 1, sum + Numbers:a
+            Add = a + 1, total + Numbers:a
             Add
             """;
         var ast = ParseAndDetect(source);
@@ -242,7 +242,7 @@ public class ParameterDetectorTests
         var addProp = ast.Properties[1].Value;
         Assert.Equal(2, addProp.Params.Count);
         Assert.Contains("a", addProp.Params);
-        Assert.Contains("sum", addProp.Params);
+        Assert.Contains("total", addProp.Params);
     }
 
     // â”€â”€ Grace operator parameter reordering tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

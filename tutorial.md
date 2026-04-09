@@ -27,6 +27,7 @@
     - [Inclusive Sequences: `range`](#inclusive-sequences-range)
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
+    - [Summation: `sum`](#summation-sum)
     - [Reduction: `reduce`](#reduction-reduce)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
    - [Conditional Loop: `while`](#conditional-loop-while)
@@ -842,6 +843,34 @@ map(range(1, 3), PairWithSquare)
 
 Grouped input elements are passed to the transform as whole values, so `Swap((a, b)) = (b, a)` works on grouped pairs without flattening them.
 
+### Summation: `sum`
+
+`sum(collection)` adds the top-level numeric elements of a collection from left to right and returns one numeric result.
+
+- Each top-level element must be exactly one atomic numeric value
+- Empty collections return `0`
+- A single numeric value is treated as a one-element collection
+- Grouped values are invalid and are not flattened
+- Strings are invalid
+
+Both call styles are supported: `sum(collection)` and `collection.sum`.
+
+```
+sum(range(1, 5))
+
+IsEven = x mod 2 == 0
+range(1, 10).filter(IsEven).sum
+```
+
+**Results:**
+```
+15
+
+30
+```
+
+`sum(if(0, 1))` returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding.
+
 ### Reduction: `reduce`
 
 `reduce(collection, step, initial)` walks the collection from left to right and threads an accumulator through the top-level collection elements.
@@ -999,7 +1028,7 @@ Compute the sum of all numbers in a multi-value property using `repeat`:
 Numbers = 3, 5, 9, 1, 0, 6
 
 // Step: advance index, accumulate Numbers[index]
-Step = a + 1, sum + Numbers:a
+Step = a + 1, total + Numbers:a
 
 // Repeat once per element, then select the accumulated sum:
 repeat(Step, Numbers.length, 0, 0) : 1
@@ -1488,6 +1517,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
+| `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
 | `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |

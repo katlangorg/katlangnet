@@ -190,6 +190,27 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
+    private static void AssertSumElementShapeFails(string source)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("sum expects each collection element to be a single numeric value", formatted);
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains("sum expects each collection element to be a single numeric value"));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -569,12 +590,12 @@ public class EvaluatorTests
     public void Eval_While_EvenFibonacciSum()
     {
         // Sums even Fibonacci numbers <= 100: 2 + 8 + 34 = 44.
-        // Grace (~a) reorders detected params [b, a, sum] -> [a, b, sum].
-        // Initial state (1, 2, 0): a=1, b=2, sum=0.
+        // Grace (~a) reorders detected params [b, a, total] -> [a, b, total].
+        // Initial state (1, 2, 0): a=1, b=2, total=0.
         // The step with b=144 (first even Fibonacci > 100) triggers cont=0;
-        // pre-check semantics return the prior state (sum=44), not the updated one.
+        // pre-check semantics return the prior state (total=44), not the updated one.
         var source = """
-            Algo = b, ~a + b, sum + if(b mod 2 == 0, b, 0), b <= 100
+            Algo = b, ~a + b, total + if(b mod 2 == 0, b, 0), b <= 100
             Sum = Algo.while((1, 2, 0)) : 2
             Sum
             """;
@@ -1120,6 +1141,58 @@ public class EvaluatorTests
         AssertMapTransformShapeFails(source);
     }
 
+    // ── Sum builtin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Sum_OrdinaryBuiltinCall_AddsAscendingRange()
+        => AssertEval("sum(range(1, 5))", 15);
+
+    [Fact]
+    public void Eval_Sum_DotCall_AddsAscendingRange()
+        => AssertEval("range(1, 5).sum", 15);
+
+    [Fact]
+    public void Eval_Sum_DescendingRange_ReturnsTotal()
+        => AssertEval("sum(range(5, 1))", 15);
+
+    [Fact]
+    public void Eval_Sum_FilterComposition_ReturnsTotal()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            range(1, 10).filter(IsEven).sum
+            """;
+
+        AssertEval(source, 30);
+    }
+
+    [Fact]
+    public void Eval_Sum_MapComposition_ReturnsTotal()
+    {
+        var source = """
+            Square = x * x
+            range(1, 4).map(Square).sum
+            """;
+
+        AssertEval(source, 30);
+    }
+
+    [Fact]
+    public void Eval_Sum_EmptyCollection_ReturnsZero()
+        => AssertEval("sum(if(0, 1))", 0);
+
+    [Fact]
+    public void Eval_Sum_SingleAtomicInput_ReturnsSameValue()
+        => AssertEval("sum(5)", 5);
+
+    [Fact]
+    public void Eval_Sum_GroupedElements_FailWithContext()
+        => AssertSumElementShapeFails("sum(((1, 2), (3, 4)))");
+
+    [Fact]
+    public void Eval_Sum_StringElement_FailsWithContext()
+        => AssertSumElementShapeFails("sum('hello')");
+
     // ── Reduce builtin ───────────────────────────────────────────────────────
 
     [Fact]
@@ -1345,7 +1418,7 @@ public class EvaluatorTests
     {
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
-            Add = a + 1, sum + Numbers:a
+            Add = a + 1, total + Numbers:a
             Sum = repeat(Add, (Numbers.length), (0, 0)) : 1
             Sum
             """;

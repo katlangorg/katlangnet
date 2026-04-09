@@ -102,6 +102,20 @@ public abstract record Result
     }
 
     /// <summary>
+    /// Strict numeric extraction for <c>sum</c>.
+    /// Accepts exactly one atomic numeric value and rejects groups and strings.
+    /// Lean: <c>Result.singleAtomicNumber?</c>.
+    /// </summary>
+    public decimal? SingleAtomicNumber()
+    {
+        return this switch
+        {
+            Atom(var n) => n,
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Try to get as a single number.
     /// Returns null if the result is not a single atom (after normalization).
     /// Lean: Result.asInt?
