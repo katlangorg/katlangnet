@@ -1592,4 +1592,123 @@ def test101 : Bool :=
 
 #eval test101  -- should be true
 
+--------------------------------------------------------------------------------
+-- count builtin tests
+--------------------------------------------------------------------------------
+
+-- Test 102: ordinary builtin-call count counts an ascending range
+def test102 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test102  -- should be true
+
+-- Test 103: dot-call count uses receiver injection with no explicit args
+def test103 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "count"
+      none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test103  -- should be true
+
+-- Test 104: descending ranges keep their top-level element count
+def test104 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
+    ])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test104  -- should be true
+
+-- Test 105: count composes with filter over kept top-level elements
+def test105 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        "filter"
+        (some (alg [] [] [] [.resolve "IsEven"])))
+      "count"
+      none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test105  -- should be true
+
+-- Test 106: count composes with map and counts mapped top-level elements
+def test106 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Square", squareAlg86)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        "map"
+        (some (alg [] [] [] [.resolve "Square"])))
+      "count"
+      none
+  ])) with
+  | Except.ok [4] => true
+  | _ => false
+
+#eval test106  -- should be true
+
+-- Test 107: empty collections count as zero
+def test107 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+    ])
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test107  -- should be true
+
+-- Test 108: grouped top-level elements count as one each and are not flattened
+def test108 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#eval test108  -- should be true
+
+-- Test 109: a single atomic value is treated as a one-element collection
+def test109 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [.num 5])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test109  -- should be true
+
+-- Test 110: string elements are valid top-level elements for count
+def test110 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test110  -- should be true
+
 end KatLangTests

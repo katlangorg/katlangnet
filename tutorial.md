@@ -27,6 +27,7 @@
     - [Inclusive Sequences: `range`](#inclusive-sequences-range)
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
+    - [Counting: `count`](#counting-count)
     - [Summation: `sum`](#summation-sum)
     - [Reduction: `reduce`](#reduction-reduce)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
@@ -843,6 +844,36 @@ map(range(1, 3), PairWithSquare)
 
 Grouped input elements are passed to the transform as whole values, so `Swap((a, b)) = (b, a)` works on grouped pairs without flattening them.
 
+### Counting: `count`
+
+`count(collection)` returns the number of top-level elements in a collection.
+
+- Each atom, string, or grouped value counts as one top-level element
+- Grouped values are not flattened or inspected recursively
+- Empty collections return `0`
+
+Both call styles are supported: `count(collection)` and `collection.count`.
+
+```
+count(range(1, 5))
+
+IsEven = x mod 2 == 0
+range(1, 10).filter(IsEven).count
+
+count(((1, 2), (3, 4)))
+```
+
+**Results:**
+```
+5
+
+5
+
+2
+```
+
+`count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
+
 ### Summation: `sum`
 
 `sum(collection)` adds the top-level numeric elements of a collection from left to right and returns one numeric result.
@@ -1517,6 +1548,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
+| `count` | `count(collection)` or `collection.count` — count top-level elements without flattening grouped values |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
 | `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |

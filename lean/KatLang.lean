@@ -115,7 +115,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | sumBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | sumBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -123,6 +123,7 @@ inductive Builtin where
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
     mapBuiltin accepts 2 arguments: a collection and a transform.
+  countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
     sumBuiltin accepts 1 argument: a collection of top-level numeric elements.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
@@ -133,6 +134,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .rangeBuiltin, 2 => true
   | .filterBuiltin, 2 => true
   | .mapBuiltin, 2 => true
+  | .countBuiltin, 1 => true
   | .sumBuiltin, 1 => true
   | .reduceBuiltin, 3 => true
   | _, _ => false
@@ -146,6 +148,7 @@ def builtinArityDesc : Builtin -> String
   | .rangeBuiltin => "2"
   | .filterBuiltin => "2"
   | .mapBuiltin => "2"
+  | .countBuiltin => "1"
   | .sumBuiltin => "1"
   | .reduceBuiltin => "3"
 
@@ -1496,6 +1499,23 @@ mutual
     let mapped <- mapLoop collection.toItems
     pure (Result.normalize (Result.group mapped), mapped.length)
 
+  /-- Evaluate `count(collection)`.
+      `count` processes top-level collection elements from left to right and
+      increments once per element.
+
+      Each atom, string, or grouped value counts as one top-level element.
+      Grouped values are not flattened or recursively inspected, and empty
+      collections return `0`. -/
+  partial def evalCountCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec countLoop : List Result -> Int -> EvalM Int
+      | [], total => pure total
+      | _ :: rest, total =>
+          countLoop rest (total + 1)
+    let total <- countLoop collection.toItems 0
+    pure (Result.atom total, 1)
+
   /-- Evaluate `sum(collection)`.
       `sum` processes top-level collection elements from left to right and adds
       them into one numeric total.
@@ -1599,6 +1619,9 @@ mutual
     | .mapBuiltin, [collectionAlg, transformAlg] =>
       evalMapCounted collectionAlg transformAlg ctx env
 
+    | .countBuiltin, [collectionAlg] =>
+      evalCountCounted collectionAlg ctx env
+
     | .sumBuiltin, [collectionAlg] =>
       evalSumCounted collectionAlg ctx env
 
@@ -1701,6 +1724,13 @@ mutual
     -- original order and element count.
     | .mapBuiltin, [collectionAlg, transformAlg] => do
       let out <- evalMapCounted collectionAlg transformAlg ctx env
+      pure out.fst
+
+    -- count(collection): count top-level collection elements from left to right.
+    -- Atoms, strings, and grouped values each count as one element; grouped
+    -- values are not flattened, and empty collections return 0.
+    | .countBuiltin, [collectionAlg] => do
+      let out <- evalCountCounted collectionAlg ctx env
       pure out.fst
 
     -- sum(collection): add top-level collection elements left to right.
@@ -2426,6 +2456,7 @@ def preludeAlg : Algorithm :=
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
     , publicProp "map" (Algorithm.builtin .mapBuiltin)
+    , publicProp "count" (Algorithm.builtin .countBuiltin)
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]

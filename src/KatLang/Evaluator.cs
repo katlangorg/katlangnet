@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Sum, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Sum, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -975,6 +975,28 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>count(collection)</c> by counting the top-level collection
+    /// elements from left to right.
+    /// Each atom, string, or grouped value counts as one top-level element;
+    /// groups are not flattened or inspected recursively, and empty collections
+    /// return <c>0</c>.
+    /// Lean: <c>evalCountCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalCountCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(elements.Count), 1));
+    }
+
+    /// <summary>
     /// Evaluate <c>sum(collection)</c> by adding the top-level collection
     /// elements from left to right.
     /// Each element must be exactly one atomic numeric value; groups are not
@@ -1136,6 +1158,9 @@ public static class Evaluator
             case (BuiltinId.@map, 2):
                 return EvalMapCounted(args[0], args[1], ctx, valEnv);
 
+            case (BuiltinId.@count, 1):
+                return EvalCountCounted(args[0], ctx, valEnv);
+
             case (BuiltinId.@sum, 1):
                 return EvalSumCounted(args[0], ctx, valEnv);
 
@@ -1248,6 +1273,7 @@ public static class Evaluator
             new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
             new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
             new("map",    new Algorithm.Builtin(BuiltinId.@map),    IsPublic: true),
+            new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
             new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
             new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
@@ -1265,6 +1291,7 @@ public static class Evaluator
         (BuiltinId.@range, 2) => true,
         (BuiltinId.@filter, 2) => true,
         (BuiltinId.@map, 2) => true,
+        (BuiltinId.@count, 1) => true,
         (BuiltinId.@sum, 1) => true,
         (BuiltinId.@reduce, 3) => true,
         _ => false,
@@ -1280,6 +1307,7 @@ public static class Evaluator
         BuiltinId.@range => "2",
         BuiltinId.@filter => "2",
         BuiltinId.@map => "2",
+        BuiltinId.@count => "1",
         BuiltinId.@sum => "1",
         BuiltinId.@reduce => "3",
         _ => "?",
@@ -1663,6 +1691,17 @@ public static class Evaluator
                 var mapR = EvalMapCounted(args[0], args[1], ctx, valEnv);
                 if (mapR.IsError) return mapR.Error;
                 return EvalResult<Result>.Ok(mapR.Value.Value);
+            }
+
+            // count(collection) — count top-level collection elements from
+            // left to right. Atoms, strings, and grouped values each count as
+            // one element; groups are not flattened, and empty collections
+            // return 0.
+            case (BuiltinId.@count, 1):
+            {
+                var countR = EvalCountCounted(args[0], ctx, valEnv);
+                if (countR.IsError) return countR.Error;
+                return EvalResult<Result>.Ok(countR.Value.Value);
             }
 
             // sum(collection) — left-to-right numeric aggregation over top-level

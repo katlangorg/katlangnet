@@ -1141,6 +1141,58 @@ public class EvaluatorTests
         AssertMapTransformShapeFails(source);
     }
 
+    // ── Count builtin ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Count_OrdinaryBuiltinCall_CountsAscendingRange()
+        => AssertEval("count(range(1, 5))", 5);
+
+    [Fact]
+    public void Eval_Count_DotCall_CountsAscendingRange()
+        => AssertEval("range(1, 5).count", 5);
+
+    [Fact]
+    public void Eval_Count_DescendingRange_ReturnsElementCount()
+        => AssertEval("count(range(5, 1))", 5);
+
+    [Fact]
+    public void Eval_Count_FilterComposition_ReturnsKeptCount()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            range(1, 10).filter(IsEven).count
+            """;
+
+        AssertEval(source, 5);
+    }
+
+    [Fact]
+    public void Eval_Count_MapComposition_ReturnsMappedCount()
+    {
+        var source = """
+            Square = x * x
+            range(1, 4).map(Square).count
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_Count_EmptyCollection_ReturnsZero()
+        => AssertEval("count(if(0, 1))", 0);
+
+    [Fact]
+    public void Eval_Count_GroupedElements_CountsTopLevelGroups()
+        => AssertEval("count(((1, 2), (3, 4)))", 2);
+
+    [Fact]
+    public void Eval_Count_SingleAtomicInput_ReturnsOne()
+        => AssertEval("count(5)", 1);
+
+    [Fact]
+    public void Eval_Count_StringInput_ReturnsOne()
+        => AssertEval("count('hello')", 1);
+
     // ── Sum builtin ──────────────────────────────────────────────────────────
 
     [Fact]
