@@ -21,14 +21,25 @@
 --     - `open 'url'` desugars to `open load('url')` before elaboration.
 --     Raw string literals do NOT survive into the canonical open list.
 --
--- Conditional branch syntax (parser-only, not in core model):
---   Conditional algorithm branches use clause-style syntax:
+-- Clause-definition syntax (parser-only, not in core model):
+--   Clause-style definitions use syntax:
 --     `Name(pattern) = body`
 --   This form is recognized only in definition position.
 --   In expression position, `Name(args)` remains an ordinary call.
 --   On the left-hand side of `=` in definition context, `Name(...)` is not a
---   call expression — it is pattern syntax for a conditional algorithm branch.
---   All clause-style definitions elaborate to the same CondBranch semantic representation.
+--   call expression — it is clause-pattern syntax.
+--
+--   Elaboration / classification rule:
+--     - a same-name clause group elaborates to ordinary `Algorithm.mk` only
+--       when the group contains exactly one clause and that sole head is only
+--       top-level plain binders (for example `Apply(f) = f(4)` or
+--       `Filter(x, predicate) = if(predicate(x), x)`)
+--     - multi-clause families and clause heads that require structural /
+--       whole-argument matching elaborate to `Algorithm.conditional`
+--
+--   This split is intentional: ordinary elaboration preserves dual-view call
+--   binding for higher-order arguments, while true conditional algorithms keep
+--   their full-input-specification and whole-argument matching semantics.
 --
 -- Explicit output syntax (exact-syntax sugar, parser-only):
 --   `Output = expr` inside an algorithm body is special output-definition syntax.
@@ -222,6 +233,54 @@ namespace Pattern
     | .group ps => ps.length
     | _         => 1
 
+  /-- Return positional parameter names only for the strict flat multi-binder
+      core subset: a top-level flat group of multiple plain binders.
+
+      This helper is intentionally narrower than the surface clause
+      elaboration rule. It is kept for compatibility with manually constructed
+      core `.conditional` values handled by evaluator fallback.
+
+      Rejected on purpose:
+      - bare single binders (`.bind x`)
+      - any group containing non-binders
+      - any top-level arity-1 group, including singleton grouped-binder forms
+
+      Surface clause elaboration uses `plainClauseParamNames?` below, which
+      additionally accepts bare single binders like `F(x) = ...`. -/
+  def flatBinderParamNames? : Pattern -> Option (List Ident)
+    | .group ps =>
+        if ps.length <= 1 then
+          none
+        else
+          ps.mapM (fun
+            | .bind x => some x
+            | _ => none)
+    | _ => none
+
+    /-- Return positional parameter names when a sole surface clause head
+      consists only of top-level plain binders.
+
+      This is only an eligibility helper for the whole same-name clause-group
+      rule. Front-ends must still classify at the family level: a same-name
+      clause group elaborates as ordinary only if it contains exactly one
+      clause and that sole head qualifies here. Later clauses may force the
+      whole family to remain conditional.
+
+      Accepted shapes:
+      - `.bind x` (surface `F(x) = ...`)
+      - `.group [.bind x, .bind y, ...]` with length > 1
+
+      Rejected on purpose:
+      - `.group [.bind x]` (surface grouped singleton `F((x)) = ...`)
+      - any nested / grouped / literal / mixed pattern structure
+
+      This is the ordinary clause-elaboration boundary: plain top-level
+      binders elaborate as ordinary algorithms, while grouped or structured
+      patterns stay conditional. -/
+  def plainClauseParamNames? : Pattern -> Option (List Ident)
+    | .bind x => some [x]
+    | p => flatBinderParamNames? p
+
   /-- Check whether two patterns are match-equivalent, i.e., they match the
       same set of inputs.  Binder names are irrelevant for matching:
       - `bind _` ≡ `bind _` (any binder matches everything)
@@ -284,6 +343,7 @@ mutual
     body    : Algorithm
     deriving Repr
 
+
   inductive Algorithm where
     /-- User-defined algorithm with properties, parameters, opens, and output.
 
@@ -331,7 +391,26 @@ mutual
         contain two entries whose patterns are match-equivalent (as defined
         by `Pattern.isMatchEquivalent`).  Duplicate patterns are unreachable
         (first-match semantics) and indicate a static error detected by the
-        front-end / parser. -/
+        front-end / parser.
+
+        **Clause elaboration rule**: front-ends should use
+        `Algorithm.elaborateClauseGroup` when lowering surface syntax
+        `Name(pattern) = body`. The ordinary-vs-conditional split is decided
+        for the whole same-name clause group, not per clause. A group
+        elaborates to `Algorithm.mk` only when it contains exactly one clause
+        and that sole head is a plain binder list such as `Apply(f) = f(4)` or
+        `Filter(x, predicate) = if(predicate(x), x)`. Multi-clause families,
+        grouped heads, and literal heads such as
+
+          F(0) = 0
+          F(x) = 1
+
+        or `F((x)) = ...` still lower to `Algorithm.conditional`.
+
+        The evaluator still recognizes the equivalent single-branch flat
+        multi-binder core shape as a compatibility fallback for manually
+        constructed `.conditional` ASTs, but clause elaboration must not rely
+        on that fallback. -/
     | conditional :
         (parent   : Option ScopeCtx) ->
         (opens    : List Expr) ->
@@ -347,6 +426,29 @@ mutual
         ScopeCtx
     deriving Repr
 end
+
+/-- Surface same-name clause-group classification.
+  Front-ends must decide ordinary-vs-conditional elaboration only after
+  collecting the entire same-name clause family, not while looking at the
+  first clause in isolation.
+
+  A same-name clause group elaborates as ordinary only when:
+  - the group contains exactly one clause, and
+  - that sole clause head is a plain top-level binder list
+
+  This is intentional. Later clauses may force the whole family to remain
+  conditional, for example:
+
+      F(0) = 0
+      F(x) = 1
+
+  Even though `F(x) = 1` alone would qualify for ordinary elaboration, the
+  full family must stay conditional because branch selection is defined at the
+  whole-group level. -/
+inductive ClauseGroupDefinitionKind where
+  | ordinary : List Ident -> ClauseGroupDefinitionKind
+  | conditional : ClauseGroupDefinitionKind
+  deriving Repr
 
 --------------------------------------------------------------------------------
 -- Result (structured evaluation artifact)
@@ -554,6 +656,68 @@ namespace Algorithm
     | .mk _ ps op pr out => .mk p ps op pr out
     | .builtin b => .builtin b
     | .conditional _ op bs => .conditional p op bs
+
+  /-- Replace the explicit parameter list of a user-defined algorithm.
+      This is used by clause elaboration to preserve ignored binders such as
+      `K(a, b) = a`, where `b` must remain part of the ordinary call interface
+      even though it is not referenced in the body. -/
+  def withParams (ps : List Ident) : Algorithm -> Algorithm
+    | .mk p _ op pr out => .mk p ps op pr out
+    | .builtin b => .builtin b
+    | .conditional p op bs => .conditional p op bs
+
+  /-- Classify a same-name clause family after all of its clauses are known.
+      This is the real ordinary-vs-conditional decision boundary.
+
+      A same-name clause group is ordinary only when it contains exactly one
+      clause and that sole head is a plain top-level binder list. Otherwise
+      the whole group remains conditional. This prevents regressions where an
+      early flat-looking clause is committed as ordinary before later clauses
+      reveal true pattern semantics, such as:
+
+          F(0) = 0
+          F(x) = 1 -/
+  def clauseGroupDefinitionKind : List CondBranch -> ClauseGroupDefinitionKind
+    | [branch] =>
+        match Pattern.plainClauseParamNames? branch.pattern with
+        | some ps => .ordinary ps
+        | none => .conditional
+    | _ => .conditional
+
+  /-- Elaborate a whole same-name clause family.
+      Front-ends should collect all clauses of a same-name family first, then
+      call this helper exactly once. A family elaborates as ordinary only when
+      it has exactly one clause and that sole head is a plain binder list;
+      otherwise the whole family elaborates as `Algorithm.conditional`.
+
+      This preserves higher-order ordinary call semantics for single-clause
+      families such as `Apply(f) = f(4)` and
+      `Filter(x, predicate) = if(predicate(x), x)`, while keeping multi-clause,
+      grouped, literal, and nested families conditional. -/
+  def elaborateClauseGroup : List CondBranch -> Algorithm
+    | [branch] =>
+        match clauseGroupDefinitionKind [branch] with
+        | .ordinary ps => branch.body.withParams ps
+        | .conditional =>
+            .conditional (parent branch.body) (opens branch.body) [{
+              pattern := branch.pattern
+              body := branch.body.withParams []
+            }]
+    | branches =>
+        .conditional
+          (branches.head?.map (fun branch => parent branch.body) |>.join)
+          (branches.head?.map (fun branch => opens branch.body) |>.getD [])
+          (branches.map (fun branch => {
+            pattern := branch.pattern
+            body := branch.body.withParams []
+          }))
+
+  /-- Convenience wrapper for an already-known single-clause group.
+      Front-ends must not use this while parsing a clause family incrementally;
+      they should first collect the full same-name group and then call
+      `elaborateClauseGroup`. -/
+  def elaborateClauseDefinition (pattern : Pattern) (body : Algorithm) : Algorithm :=
+    elaborateClauseGroup [{ pattern := pattern, body := body }]
 
   def asScopeCtx (a : Algorithm) : ScopeCtx :=
     ScopeCtx.mk (parent a) (opens a) (props a)
@@ -852,6 +1016,28 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
     match a with
     | some alg => (p, alg) :: bindAlgParams ps' as'
     | none     => bindAlgParams ps' as'
+
+/-- Compatibility fallback for manually constructed core conditionals.
+  Surface clause elaboration should already route plain-binder single-branch
+  clause groups through `Algorithm.elaborateClauseGroup`, producing
+  `Algorithm.mk` directly. This helper intentionally keeps only the stricter
+  flat multi-binder `.conditional` core shape call-compatible with ordinary
+  user algorithms, so evaluator fallback semantics do not silently broaden to
+  bare single-binder conditionals. -/
+def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
+  match callee with
+  | .conditional _ _ [branch] =>
+      match Pattern.flatBinderParamNames? branch.pattern with
+      | some ps =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          some (Algorithm.mk
+            (Algorithm.parent wiredBody)
+            ps
+            (Algorithm.opens wiredBody)
+            (Algorithm.props wiredBody)
+            (Algorithm.output wiredBody))
+      | none => none
+  | _ => none
 
 /-- Attach context to any error raised by `m`. -/
 def withCtx (ctx : String) (m : EvalM A) : EvalM A :=
@@ -1956,7 +2142,10 @@ mutual
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltinCounted b argAlgs ctx env
-    | .conditional _ _ _ => evalConditionalCallCounted callee args ctx env (openExprName f)
+    | .conditional _ _ _ =>
+      match flatBinderUserEquivalent? callee with
+      | some simple => evalUserCallCounted simple args ctx env
+      | none => evalConditionalCallCounted callee args ctx env (openExprName f)
     | _ => evalUserCallCounted callee args ctx env
 
   /-- Counted lexical fallback with receiver injection. -/
@@ -1986,17 +2175,27 @@ mutual
               let wired := Algorithm.childOf targetAlg p
               match argsOpt with
               | none =>
-                  match wired with
-                  | .conditional _ _ _ => .error (Error.noMatchingBranch name)
-                  | _ =>
-                    if (Algorithm.params wired).length = 0 then
-                      evalAlgOutputCounted wired ctx env
-                    else
-                      .error (Error.arityMismatch (Algorithm.params wired).length 0)
+                  match flatBinderUserEquivalent? wired with
+                  | some simple =>
+                      if (Algorithm.params simple).length = 0 then
+                        evalAlgOutputCounted simple ctx env
+                      else
+                        .error (Error.arityMismatch (Algorithm.params simple).length 0)
+                  | none =>
+                      match wired with
+                      | .conditional _ _ _ => .error (Error.noMatchingBranch name)
+                      | _ =>
+                        if (Algorithm.params wired).length = 0 then
+                          evalAlgOutputCounted wired ctx env
+                        else
+                          .error (Error.arityMismatch (Algorithm.params wired).length 0)
               | some args =>
-                  match wired with
-                  | .conditional _ _ _ => evalConditionalCallCounted wired args ctx env name
-                  | _ => evalUserCallCounted wired args ctx env
+                  match flatBinderUserEquivalent? wired with
+                  | some simple => evalUserCallCounted simple args ctx env
+                  | none =>
+                      match wired with
+                      | .conditional _ _ _ => evalConditionalCallCounted wired args ctx env name
+                      | _ => evalUserCallCounted wired args ctx env
           | none => callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
@@ -2145,7 +2344,10 @@ mutual
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltin b argAlgs ctx env
-    | .conditional _ _ _ => evalConditionalCall callee args ctx env (openExprName f)
+    | .conditional _ _ _ =>
+      match flatBinderUserEquivalent? callee with
+      | some simple => evalUserCall simple args ctx env
+      | none => evalConditionalCall callee args ctx env (openExprName f)
     | _ => evalUserCall callee args ctx env
 
   /-- Resolve name lexically and call with receiver prepended to args.
@@ -2185,25 +2387,35 @@ mutual
           match Algorithm.lookupProp targetAlg name with
           | some p =>
               let wired := Algorithm.childOf targetAlg p
-              match argsOpt with
+              match flatBinderUserEquivalent? wired with
+              | some simple =>
+                  match argsOpt with
+                  | none =>
+                      if (Algorithm.params simple).length = 0 then
+                        evalAlgOutput simple ctx env
+                      else
+                        .error (Error.arityMismatch (Algorithm.params simple).length 0)
+                  | some args =>
+                      evalUserCall simple args ctx env
               | none =>
-                  match wired with
-                  | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
-                  | _ =>
-                    if (Algorithm.params wired).length = 0 then
-                      evalAlgOutput wired ctx env
-                    else
-                      -- Navigation only: no receiver injection, need explicit args
-                      .error (Error.arityMismatch (Algorithm.params wired).length 0)
-              | some args =>
-                  match wired with
-                  | .conditional _ _ _ => evalConditionalCall wired args ctx env name
-                  | _ =>
-                    -- Navigation only: direct argument binding, no receiver
-                    evalUserCall wired args ctx env
+                  match argsOpt with
+                  | none =>
+                      match wired with
+                      | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
+                      | _ =>
+                          if (Algorithm.params wired).length = 0 then
+                            evalAlgOutput wired ctx env
+                          else
+                            -- Navigation only: no receiver injection, need explicit args
+                            .error (Error.arityMismatch (Algorithm.params wired).length 0)
+                  | some args =>
+                      match wired with
+                      | .conditional _ _ _ => evalConditionalCall wired args ctx env name
+                      | _ =>
+                          -- Navigation only: direct argument binding, no receiver
+                          evalUserCall wired args ctx env
           | none => callLexicalWithReceiver name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
-      -- Value-only target (e.g. numeric literal): check value-based intrinsics
       if name = "string" then do
         let val <- eval target ctx env
         resultToString val

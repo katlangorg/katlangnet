@@ -1364,20 +1364,71 @@ public class ParserTests
         Assert.True(result.HasErrors);
     }
 
-    // ── Conditional algorithm parsing ───────────────────────────────────────
+    // ── Clause definition classification ────────────────────────────────────
 
     [Fact]
-    public void Parse_Conditional_SingleBranch()
+    public void Parse_Clause_FlatMultiBinderSingleBranch_ElaboratesToOrdinaryAlgorithm()
     {
         var result = Parser.ParseSyntax("K(a, b) = a");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Properties);
         var prop = result.Root.Properties[0];
         Assert.Equal("K", prop.Name);
-        Assert.IsType<Algorithm.Conditional>(prop.Value);
-        var cond = (Algorithm.Conditional)prop.Value;
+        var user = Assert.IsType<Algorithm.User>(prop.Value);
+        Assert.Equal(["a", "b"], user.Params);
+        Assert.Single(user.Output);
+    }
+
+    [Fact]
+    public void Parse_Clause_SingleBinder_ElaboratesToOrdinaryAlgorithm()
+    {
+        var result = Parser.ParseSyntax("Id(x) = x");
+
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var user = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Equal(["x"], user.Params);
+        Assert.Single(user.Output);
+    }
+
+    [Fact]
+    public void Parse_Clause_GroupedPattern_RemainsConditionalAlgorithm()
+    {
+        var result = Parser.ParseSyntax("Stats(x, (acc, counter)) = (x + acc, counter + 1)");
+
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
         Assert.Single(cond.Branches);
-        Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+        var topGroup = Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+        Assert.Equal(2, topGroup.Items.Count);
+    }
+
+    [Fact]
+    public void Parse_Clause_LiteralPattern_RemainsConditionalAlgorithm()
+    {
+        var result = Parser.ParseSyntax("F(1) = 100");
+
+        Assert.False(result.HasErrors);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Single(cond.Branches);
+        Assert.IsType<Pattern.LitInt>(cond.Branches[0].Pattern);
+    }
+
+    [Fact]
+    public void Parse_ClauseGroup_LiteralThenPlainBinder_RemainsConditionalAlgorithm()
+    {
+        var source = """
+            F(0) = 0
+            F(x) = 1
+            """;
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+        Assert.IsType<Pattern.LitInt>(cond.Branches[0].Pattern);
+        Assert.IsType<Pattern.Bind>(cond.Branches[1].Pattern);
     }
 
     [Fact]
@@ -1385,7 +1436,7 @@ public class ParserTests
     {
         var source = """
             F(1) = 100
-            F(x) = 0
+            F((x)) = 0
             """;
         var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);
@@ -1394,7 +1445,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Conditional_DuplicateBinder_ReportsError()
+    public void Parse_Clause_DuplicateBinder_ReportsError()
     {
         var result = Parser.ParseSyntax("F(a, a) = a");
         Assert.True(result.HasErrors);
@@ -1406,7 +1457,7 @@ public class ParserTests
     {
         var source = """
             F = 1
-            F(x) = x
+            F((x)) = x
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -1469,7 +1520,7 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_PrefixGraceInBody_ReportsError()
     {
-        var result = Parser.ParseSyntax("F(a, b) = ~a + b");
+        var result = Parser.ParseSyntax("F((x)) = ~x");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
     }
@@ -1477,7 +1528,7 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_PostfixGraceInBody_ReportsError()
     {
-        var result = Parser.ParseSyntax("F(a, b) = a~ + b");
+        var result = Parser.ParseSyntax("F((x)) = x~");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
     }
@@ -1485,7 +1536,7 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_GraceInNestedBodyExpr_ReportsError()
     {
-        var result = Parser.ParseSyntax("F(a, b) = a * ~b");
+        var result = Parser.ParseSyntax("F((x)) = 1 * ~x");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
     }
@@ -1538,7 +1589,7 @@ public class ParserTests
     public void Parse_Conditional_SingleBranch_AlwaysValid()
     {
         // Single branch: no arity conflict possible
-        var result = Parser.ParseSyntax("K(a, b) = a");
+        var result = Parser.ParseSyntax("K((x)) = x");
         Assert.False(result.HasErrors);
     }
 
@@ -1562,10 +1613,10 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_Arity1vs2_ReportsError()
     {
-        // First branch arity 1 (bare bind), second branch arity 2 (group)
+        // First branch arity 1 (grouped singleton), second branch arity 2 (group)
         var source = """
-            F(x) = 1
-            F(a, b) = a
+            F((x)) = 1
+            F(a, (b)) = a
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -1638,7 +1689,7 @@ public class ParserTests
     public void Parse_Conditional_SingleBranch_OutputArity_AlwaysValid()
     {
         // Single branch: no output arity conflict possible
-        var result = Parser.ParseSyntax("F(x) = x, x + 1");
+        var result = Parser.ParseSyntax("F((x)) = x, x + 1");
         Assert.False(result.HasErrors);
     }
 
@@ -1721,7 +1772,7 @@ public class ParserTests
         // This is semantically different from the old meaning but NOT a parse error.
         var source = """
             F when (1) = 100
-            F when (x) = 0
+            F when ((x)) = 0
             """;
         var result = Parser.ParseSyntax(source);
         // F is output, when(1)=100 and when(x)=0 are branches of conditional "when"
@@ -1735,8 +1786,8 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_WhenSyntax_SingleBranch_NotRecognized()
     {
-        // K when (a, b) = a → parses as K (output), when(a,b)=a (conditional branch named "when")
-        var result = Parser.ParseSyntax("K when (a, b) = a");
+        // K when ((a, b)) = a → parses as K (output), when((a,b))=a (conditional branch named "when")
+        var result = Parser.ParseSyntax("K when ((a, b)) = a");
         Assert.False(result.HasErrors);
         Assert.Contains(result.Root.Properties, p => p.Name == "when");
         Assert.Single(result.Root.Output); // K is output
@@ -1750,7 +1801,7 @@ public class ParserTests
         // First two lines are definitions (followed by =), last line is a call (no =)
         var source = """
             F(1) = 100
-            F(x) = 0
+            F((x)) = 0
             F(1)
             """;
         var result = Parser.ParseSyntax(source);
@@ -1767,7 +1818,7 @@ public class ParserTests
         // F(x) in the body of G is a call, not a branch definition
         var source = """
             F(1) = 100
-            F(x) = 0
+            F((x)) = 0
             G = F(1)
             """;
         var result = Parser.ParseSyntax(source);
@@ -1787,7 +1838,7 @@ public class ParserTests
         var source = "public F(x) = x";
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to conditional algorithm branches"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to clause-style definitions"));
     }
 
     // ── Property redefinition detection ────────────────────────────────────────
@@ -1868,8 +1919,8 @@ public class ParserTests
     public void Parse_DuplicateConditionalBranchPattern_Bind_ReportsError()
     {
         var source = """
-            F(x) = x + 1
-            F(y) = y + 2
+            F((x)) = x + 1
+            F((x)) = x + 2
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -1892,7 +1943,7 @@ public class ParserTests
     {
         var source = """
             F(1) = 100
-            F(x) = 0
+            F((x)) = 0
             """;
         var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);

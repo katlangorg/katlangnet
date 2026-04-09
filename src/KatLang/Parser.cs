@@ -4,6 +4,12 @@ namespace KatLang;
 /// Recursive-descent parser with precedence climbing for KatLang 0.7.
 /// Produces a raw AST where all identifiers are <see cref="Expr.Resolve"/> nodes.
 /// Use <see cref="ParameterDetector"/> afterwards to classify parameters.
+/// Clause definitions <c>Name(pattern) = body</c> are collected by same-name
+/// family during parsing and classified only after the whole family is known.
+/// A family elaborates to ordinary <see cref="Algorithm.User"/> only when it
+/// contains exactly one clause and that sole head is a plain top-level binder
+/// list. Multi-clause families, grouped heads, and literal heads elaborate to
+/// <see cref="Algorithm.Conditional"/>.
 /// </summary>
 public sealed class Parser
 {
@@ -180,8 +186,8 @@ public sealed class Parser
         var output = new List<Expr>();
         var hasExplicitOutput = false;
         var hasImplicitOutput = false;
-        var conditionalBranches = new Dictionary<string, List<CondBranch>>();
-        var conditionalBranchSpans = new Dictionary<string, List<SourceSpan>>();
+        var clauseGroups = new Dictionary<string, List<CondBranch>>();
+        var clauseGroupSpans = new Dictionary<string, List<SourceSpan>>();
 
         while (Current.Kind != TokenKind.EndOfFile
             && Current.Kind != TokenKind.RParen
@@ -240,7 +246,7 @@ public sealed class Parser
                 var name = Current.StringValue!;
 
                 // Check for duplicate property definition
-                if (properties.Any(p => p.Name == name) || conditionalBranches.ContainsKey(name))
+                if (properties.Any(p => p.Name == name) || clauseGroups.ContainsKey(name))
                 {
                     ReportError($"Property '{name}' is already defined.");
                 }
@@ -250,12 +256,12 @@ public sealed class Parser
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body, IsPublic: true));
             }
-            // public conditional branch: public Name(...) = ... → reject
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicConditionalBranch())
+            // public clause definition: public Name(...) = ... → reject
+            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
             {
-                ReportError("'public' cannot be applied to conditional algorithm branches in this version.");
+                ReportError("'public' cannot be applied to clause-style definitions in this version.");
                 Advance(); // consume 'public'
-                // Fall through: next iteration will parse the conditional branch normally
+                // Fall through: next iteration will parse the clause definition normally
             }
             // Explicit output definition: Output = expr
             else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
@@ -281,7 +287,7 @@ public sealed class Parser
                 var name = Current.StringValue!;
 
                 // Check for duplicate property definition
-                if (properties.Any(p => p.Name == name) || conditionalBranches.ContainsKey(name))
+                if (properties.Any(p => p.Name == name) || clauseGroups.ContainsKey(name))
                 {
                     ReportError($"Property '{name}' is already defined.");
                 }
@@ -291,8 +297,8 @@ public sealed class Parser
                 var body = ParseOutputLine();
                 properties.Add(new Property(name, body));
             }
-            // Conditional algorithm branch: Name(pattern) = body
-            else if (Current.Kind == TokenKind.Identifier && LookaheadIsConditionalBranch())
+            // Clause definition: Name(pattern) = body
+            else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
             {
                 var name = Current.StringValue!;
                 var nameToken = Current;
@@ -311,24 +317,17 @@ public sealed class Parser
                 // Validate no duplicate binders in pattern
                 if (pattern.HasDuplicateBinds())
                 {
-                    ReportError($"Duplicate binder name in pattern for conditional branch '{name}'.");
+                    ReportError($"Duplicate binder name in clause definition '{name}'.");
                 }
 
                 Expect(TokenKind.Equals);
                 var body = ParseOutputLine();
 
-                // Validate no Grace operators in branch body
-                var graceSpan = FindGraceSpan(body.Output);
-                if (graceSpan is not null)
-                {
-                    ReportError($"Grace is not allowed in conditional branch bodies for '{name}'.", graceSpan);
-                }
-
-                if (!conditionalBranches.TryGetValue(name, out var branchList))
+                if (!clauseGroups.TryGetValue(name, out var branchList))
                 {
                     branchList = [];
-                    conditionalBranches[name] = branchList;
-                    conditionalBranchSpans[name] = [];
+                    clauseGroups[name] = branchList;
+                    clauseGroupSpans[name] = [];
                 }
 
                 // Check for duplicate branch pattern (match-equivalent)
@@ -338,7 +337,7 @@ public sealed class Parser
                 }
 
                 branchList.Add(new CondBranch(pattern, body));
-                conditionalBranchSpans[name].Add(new SourceSpan(
+                clauseGroupSpans[name].Add(new SourceSpan(
                     nameToken.Line, nameToken.Column,
                     nameToken.Line, nameToken.Column + Math.Max(nameToken.Length, 1) - 1));
             }
@@ -355,23 +354,46 @@ public sealed class Parser
             }
         }
 
-        // Convert conditional branches into Algorithm.Conditional properties
-        // Validate uniform top-level pattern arity across branches (Lean: validateBranchArities).
-        // Conditional algorithms require a uniform top-level interface across branches:
-        // all branches must have the same top-level pattern arity.
-        // Nested internal pattern structure may vary.
-        // Also validate uniform top-level output arity across branches
-        // (Lean: validateBranchOutputArities). All branches must produce the same
-        // number of top-level outputs. Nested internal output structure may vary.
-        foreach (var (name, branches) in conditionalBranches)
+        // Elaborate same-name clause groups only after the full family is known.
+        // This is the real ordinary-vs-conditional decision boundary: a group
+        // is ordinary only when it contains exactly one clause and that sole
+        // head is a plain binder list. For example,
+        //   F(0) = 0
+        //   F(x) = 1
+        // must stay conditional for the whole family even though the second
+        // clause would qualify in isolation.
+        foreach (var (name, branches) in clauseGroups)
         {
-            var spans = conditionalBranchSpans[name];
-            if (branches.Count > 1)
+            var spans = clauseGroupSpans[name];
+            var elaboratedClauseGroup = Algorithm.ElaborateClauseGroup(branches);
+
+            if (elaboratedClauseGroup is Algorithm.User ordinaryAlg)
             {
-                var expectedArity = branches[0].Pattern.TopLevelArity();
-                for (int i = 1; i < branches.Count; i++)
+                properties.Add(new Property(name, ordinaryAlg));
+                continue;
+            }
+
+            var condAlg = (Algorithm.Conditional)elaboratedClauseGroup;
+
+            // Validate no Grace operators in true conditional branch bodies.
+            foreach (var branch in condAlg.Branches)
+            {
+                var graceSpan = FindGraceSpan(branch.Body.Output);
+                if (graceSpan is not null)
                 {
-                    var branchArity = branches[i].Pattern.TopLevelArity();
+                    ReportError($"Grace is not allowed in conditional branch bodies for '{name}'.", graceSpan);
+                }
+            }
+
+            // Validate uniform top-level pattern arity across conditional branches.
+            // Nested internal pattern structure may vary.
+            // Also validate uniform top-level output arity across branches.
+            if (condAlg.Branches.Count > 1)
+            {
+                var expectedArity = condAlg.Branches[0].Pattern.TopLevelArity();
+                for (int i = 1; i < condAlg.Branches.Count; i++)
+                {
+                    var branchArity = condAlg.Branches[i].Pattern.TopLevelArity();
                     if (branchArity != expectedArity)
                     {
                         ReportError(
@@ -381,10 +403,10 @@ public sealed class Parser
                     }
                 }
 
-                var expectedOutputArity = branches[0].TopLevelOutputArity();
-                for (int i = 1; i < branches.Count; i++)
+                var expectedOutputArity = condAlg.Branches[0].TopLevelOutputArity();
+                for (int i = 1; i < condAlg.Branches.Count; i++)
                 {
-                    var branchOutputArity = branches[i].TopLevelOutputArity();
+                    var branchOutputArity = condAlg.Branches[i].TopLevelOutputArity();
                     if (branchOutputArity != expectedOutputArity)
                     {
                         ReportError(
@@ -395,10 +417,6 @@ public sealed class Parser
                 }
             }
 
-            var condAlg = new Algorithm.Conditional(
-                Parent: null,
-                Opens: [],
-                Branches: branches);
             properties.Add(new Property(name, condAlg));
         }
 
@@ -525,19 +543,19 @@ public sealed class Parser
 
     /// <summary>
     /// Checks if the current identifier is followed by '(' ... ')' '='.
-    /// Used to detect conditional algorithm branch definitions: <c>Name(pattern) = body</c>.
+    /// Used to detect clause definitions: <c>Name(pattern) = body</c>.
     /// Skips comment tokens during lookahead. Handles nested parentheses.
     /// </summary>
-    private bool LookaheadIsConditionalBranch()
+    private bool LookaheadIsClauseDefinition()
     {
         return LookaheadIsParenEqualsFrom(_pos + 1);
     }
 
     /// <summary>
     /// Checks if 'public' is followed by Identifier '(' ... ')' '='.
-    /// Used to detect and reject public conditional algorithm branches.
+    /// Used to detect and reject public clause definitions.
     /// </summary>
-    private bool LookaheadIsPublicConditionalBranch()
+    private bool LookaheadIsPublicClauseDefinition()
     {
         var next = _pos + 1; // skip 'public'
         // Skip comments
@@ -577,7 +595,7 @@ public sealed class Parser
         return next < _tokens.Count && _tokens[next].Kind == TokenKind.Equals;
     }
 
-    // ── Pattern parsing (for conditional algorithms) ────────────────────────
+    // ── Pattern parsing (for clause definitions) ────────────────────────────
 
     /// <summary>
     /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Grace"/> node in the list.

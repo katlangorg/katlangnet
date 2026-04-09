@@ -319,4 +319,86 @@ public class KatLangEngineTests
         var success = Assert.IsType<RunResult.Success>(result);
         Assert.Equal([2.40m], success.Atoms);
     }
+
+    [Fact]
+    public void Run_FlatMultiBinderClause_HigherOrderBinding_Succeeds()
+    {
+        var source = """
+            IsEven = y mod 2 == 0
+            Filter(x, predicate) = if(predicate(x), x)
+            Filter(4, IsEven)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([4m], success.Atoms);
+    }
+
+    [Fact]
+    public void Run_FlatMultiBinderClause_FalsePredicate_ProducesEmptyOutput()
+    {
+        var source = """
+            IsEven = y mod 2 == 0
+            Filter(x, predicate) = if(predicate(x), x)
+            Filter(3, IsEven)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Empty(success.Atoms);
+    }
+
+    [Fact]
+    public void Run_ClauseDefinition_SingleBinder_ElaboratesToOrdinaryAlgorithm()
+    {
+        var source = """
+            Id(x) = x
+            Id(7)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([7m], success.Atoms);
+    }
+
+    [Fact]
+    public void Run_ClauseGroup_LiteralThenPlainBinder_RemainsConditional()
+    {
+        var source = """
+            F(0) = 0
+            F(x) = 1
+            F(2)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([1m], success.Atoms);
+    }
+
+    [Fact]
+    public void Run_ClauseDefinition_SingleBinder_HigherOrderCallUsesOrdinaryBinding()
+    {
+        var source = """
+            Apply(f) = f(4)
+            Double(x) = x * 2
+            Apply(Double)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([8m], success.Atoms);
+    }
+
+    [Fact]
+    public void Run_ClauseDefinition_SingleBinder_RejectsExtraArguments()
+    {
+        var source = """
+            Id(x) = x
+            Id(1, 2)
+            """;
+        var result = KatLangEngine.Run(source);
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(result);
+        Assert.Contains("Arity mismatch: expected 1, got 2", failure.ToDisplayString(), StringComparison.Ordinal);
+    }
 }

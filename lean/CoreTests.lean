@@ -467,6 +467,149 @@ def test19 : Bool :=
   .call (resolve "DualUse") (alg [] [] [] [.block constSevenAlg19])
 ]))
 
+-- Test 19a: same-name clause-group elaboration classifies a sole plain-binder
+-- clause as an ordinary algorithm, not a conditional.
+def applyClauseBody19a : Algorithm :=
+  alg [] [] [] [
+    .call (.param "f") (alg [] [] [] [.param "x"])
+  ]
+
+def applyClauseAlg19a : Algorithm :=
+  Algorithm.elaborateClauseGroup [{
+    pattern := KatLang.Pattern.group [KatLang.Pattern.bind "x", KatLang.Pattern.bind "f"]
+    body := applyClauseBody19a
+  }]
+
+def test19aShape : Bool :=
+  match applyClauseAlg19a with
+  | .mk _ ["x", "f"] _ _ _ => true
+  | _ => false
+
+#eval test19aShape  -- should be true
+
+def test19aRun : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyClauseAlg19a)] [
+    .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test19aRun  -- should be true
+
+def idClauseAlg19a : Algorithm :=
+  Algorithm.elaborateClauseGroup [{
+    pattern := KatLang.Pattern.bind "x"
+    body := alg [] [] [] [.param "x"]
+  }]
+
+def test19aSingleBinderShape : Bool :=
+  match Algorithm.elaborateClauseGroup [{
+      pattern := KatLang.Pattern.bind "x"
+      body := alg [] [] [] [.param "x"]
+    }] with
+  | .mk _ ["x"] _ _ _ => true
+  | _ => false
+
+#eval test19aSingleBinderShape  -- should be true
+
+def test19aSingleBinderRun : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Id", idClauseAlg19a)] [
+    .call (resolve "Id") (alg [] [] [] [.num 7])
+  ])) with
+  | Except.ok [7] => true
+  | _ => false
+
+#eval test19aSingleBinderRun  -- should be true
+
+def fallbackClauseAlg19a : Algorithm :=
+  Algorithm.elaborateClauseGroup [
+    {
+      pattern := KatLang.Pattern.litInt 0
+      body := alg [] [] [] [.num 0]
+    },
+    {
+      pattern := KatLang.Pattern.bind "x"
+      body := alg [] [] [] [.num 1]
+    }
+  ]
+
+def test19aMultiClauseShape : Bool :=
+  match fallbackClauseAlg19a with
+  | .conditional _ _ [_, _] => true
+  | _ => false
+
+#eval test19aMultiClauseShape  -- should be true
+
+def test19aMultiClauseRun : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", fallbackClauseAlg19a)] [
+    .call (resolve "F") (alg [] [] [] [.num 2])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test19aMultiClauseRun  -- should be true
+
+def test19aLiteralPatternIsConditional : Bool :=
+  match Algorithm.elaborateClauseGroup [{
+      pattern := KatLang.Pattern.litInt 1
+      body := alg [] [] [] [.num 42]
+    }] with
+  | .conditional _ _ [_] => true
+  | _ => false
+
+#eval test19aLiteralPatternIsConditional  -- should be true
+
+def test19aGroupedPatternIsConditional : Bool :=
+  match Algorithm.elaborateClauseGroup [{
+      pattern := KatLang.Pattern.group [
+        KatLang.Pattern.bind "x",
+        KatLang.Pattern.group [KatLang.Pattern.bind "acc", KatLang.Pattern.bind "counter"]
+      ]
+      body := alg [] [] [] [.param "x"]
+    }] with
+  | .conditional _ _ [_] => true
+  | _ => false
+
+#eval test19aGroupedPatternIsConditional  -- should be true
+
+-- Test 19b: compatibility fallback for a manually constructed single-branch
+-- flat-binder conditional still preserves higher-order args in the core AST.
+def applyCondAlg19b : Algorithm :=
+  .conditional none [] [
+    ⟨ KatLang.Pattern.group [KatLang.Pattern.bind "x", KatLang.Pattern.bind "f"],
+      alg [] [] [] [
+        .call (.param "f") (alg [] [] [] [.param "x"])
+      ] ⟩
+  ]
+
+def test19b : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
+    .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test19b  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
+  .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+]))
+
+-- Test 19c: structural property call preserves higher-order args for the same subset
+def receiver19c : Algorithm :=
+  algPrivate [] [] [("Apply", applyCondAlg19b)] []
+
+def test19c : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
+    .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test19c  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
+  .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
+]))
+
 --------------------------------------------------------------------------------
 -- 2-arg if builtin tests (conditional output / emit-on-true)
 -- if(cond, value): true → value, false → group [] (no output).

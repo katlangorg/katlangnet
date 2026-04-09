@@ -939,7 +939,7 @@ public class EvaluatorTests
     public void Eval_Filter_GroupedElements_ArePreservedWhole()
     {
         var source = """
-            KeepPair(tag, value) = tag mod 2 == 0
+            KeepPair = pair:0 mod 2 == 0
             filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
             """;
 
@@ -1092,7 +1092,7 @@ public class EvaluatorTests
     public void Eval_Map_GroupedElements_ArePassedWhole()
     {
         var source = """
-            TakeValue((tag, value)) = value
+            TakeValue = pair:1
             map(((1, 10), (2, 20), (3, 30)), TakeValue)
             """;
 
@@ -1518,11 +1518,11 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Reduce_GroupedAccumulator_WithWrapperHelper_StillWorks()
+    public void Eval_Reduce_GroupedAccumulator_WithOrdinaryWrapperHelper_StillWorks()
     {
         var source = """
-            Keep(x) = x
-            Stats(x, acc) = Keep((x + acc:0, acc:1 + 1))
+            Keep(sum, count) = (sum, count)
+            Stats(x, acc) = Keep(x + acc:0, acc:1 + 1)
             range(1, 4).reduce(Stats, (0, 0))
             """;
 
@@ -3555,6 +3555,108 @@ public class EvaluatorTests
         AssertEval(source);
     }
 
+    [Fact]
+    public void Eval_HigherOrder_FlatMultiBinderClause_UsesOrdinaryBinding()
+    {
+        var source = """
+            IsEven = y mod 2 == 0
+            Filter(x, predicate) = if(predicate(x), x)
+            Filter(4, IsEven)
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_FlatMultiBinderClause_FalsePredicate_EmitsNoValue()
+    {
+        var source = """
+            IsEven = y mod 2 == 0
+            Filter(x, predicate) = if(predicate(x), x)
+            Filter(3, IsEven)
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_FlatMultiBinderClause_DotCallUsesOrdinaryBinding()
+    {
+        var source = """
+            Holder = (
+                Apply(x, transform) = transform(x)
+                Apply
+            )
+            Increment = y + 1
+            Holder.Apply(9, Increment)
+            """;
+
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_ClauseDefinition_SingleBinder_ElaboratesToOrdinaryAlgorithm()
+    {
+        var source = """
+            Id(x) = x
+            Id(7)
+            """;
+
+        AssertEval(source, 7);
+    }
+
+    [Fact]
+    public void Eval_ClauseDefinition_SingleBinder_HigherOrderCallUsesOrdinaryBinding()
+    {
+        var source = """
+            Apply(f) = f(4)
+            Double(x) = x * 2
+            Apply(Double)
+            """;
+
+        AssertEval(source, 8);
+    }
+
+    [Fact]
+    public void Eval_ClauseDefinition_SingleBinder_RejectsExtraArguments()
+    {
+        var error = GetEvalError("""
+            Id(x) = x
+            Id(1, 2)
+            """);
+
+        Assert.NotNull(error);
+        while (error is EvalError.WithContext withContext)
+            error = withContext.Inner;
+
+        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(2, arity.Actual);
+    }
+
+    [Fact]
+    public void Eval_ClauseDefinition_GroupedPattern_RemainsConditionalWholeArgument()
+    {
+        var source = """
+            Stats(x, (acc, counter)) = (x + acc, counter + 1)
+            Stats(3, (0, 0))
+            """;
+
+        AssertEval(source, 3, 1);
+    }
+
+    [Fact]
+    public void Eval_ClauseGroup_LiteralThenPlainBinder_RemainsConditional()
+    {
+        var source = """
+            F(0) = 0
+            F(x) = 1
+            F(2)
+            """;
+
+        AssertEval(source, 1);
+    }
+
     // ── Inline block arguments (higher-order) ────────────────────────────────
 
     [Fact]
@@ -3764,10 +3866,10 @@ public class EvaluatorTests
         Assert.Empty(result.Value);
     }
 
-    // ── Conditional algorithms ──────────────────────────────────────────────
+    // ── Clause definitions and conditional algorithms ───────────────────────
 
     [Fact]
-    public void Eval_Conditional_KCombinator()
+    public void Eval_ClauseDefinition_KCombinator_OrdinarySingleClause()
     {
         // K(a, b) = a  ⟹  K(10, 20) => 10
         var source = """
@@ -3778,7 +3880,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Conditional_KCombinator_SecondElement()
+    public void Eval_ClauseDefinition_SecondProjection_OrdinarySingleClause()
     {
         // Verify we can return the second binding too
         var source = """
@@ -3805,10 +3907,10 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Conditional_BareBind_MatchesTuple()
+    public void Eval_ClauseDefinition_OrdinarySingleClause_AcceptsGroupedSecondArgument()
     {
         // K(a, b) = a  ⟹  K(1, (2, 3)) => 1
-        // b is a bare bind so it matches the nested tuple (2, 3) directly.
+        // Ordinary call binding still accepts a grouped second argument as one value.
         var source = """
             K(a, b) = a
             K(1, (2, 3))
@@ -4057,7 +4159,7 @@ public class EvaluatorTests
     // ── Full-input-specification rule: conditional branch params ─────────
 
     [Fact]
-    public void Eval_Conditional_FullPattern_IgnoredBinder()
+    public void Eval_ClauseDefinition_OrdinarySingleClause_IgnoredBinderPreserved()
     {
         // K(a, b) = a — b is intentionally unused, no error
         var source = """

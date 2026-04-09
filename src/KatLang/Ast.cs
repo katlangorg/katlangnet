@@ -120,6 +120,12 @@ public abstract record Expr
 /// Pattern language for conditional algorithm branch matching.
 /// Patterns match against <see cref="Result"/> values at call time.
 /// Lean: <c>Pattern</c> inductive.
+///
+/// Surface clause-definition elaboration uses these patterns too:
+/// a same-name clause group elaborates as ordinary
+/// <see cref="Algorithm.User"/> only when it contains exactly one clause and
+/// that sole head is a top-level plain binder list; multi-clause families and
+/// structured heads elaborate as <see cref="Algorithm.Conditional"/>.
 /// </summary>
 public abstract record Pattern
 {
@@ -170,6 +176,68 @@ public abstract record Pattern
         Group(var items) => items.Count,
         _ => 1,
     };
+
+    /// <summary>
+    /// Returns declared parameter names only for the strict flat multi-binder
+    /// core subset: a top-level flat group of multiple plain binders.
+    ///
+    /// This is intentionally narrower than the full surface clause
+    /// elaboration rule. It is kept for evaluator compatibility fallback over
+    /// manually constructed conditional ASTs.
+    /// </summary>
+    internal IReadOnlyList<string>? TryGetFlatMultiBinderParams()
+    {
+        if (this is not Group(var items) || items.Count <= 1)
+            return null;
+
+        var names = new List<string>(items.Count);
+        foreach (var item in items)
+        {
+            if (item is not Bind(var name))
+                return null;
+            names.Add(name);
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// Returns declared parameter names when a sole surface clause head
+    /// consists only of top-level plain binders.
+    ///
+    /// This is only an eligibility helper for the whole same-name
+    /// clause-group rule. Front-ends must still classify at the family level:
+    /// a same-name clause group elaborates as ordinary only if it contains
+    /// exactly one clause and that sole head qualifies here.
+    ///
+    /// Accepted shapes:
+    /// <list type="bullet">
+    ///   <item><c>Bind(x)</c>, corresponding to <c>F(x) = ...</c></item>
+    ///   <item><c>Group [Bind(x), Bind(y), ...]</c> with arity greater than 1</item>
+    /// </list>
+    ///
+    /// Rejected on purpose:
+    /// <list type="bullet">
+    ///   <item><c>Group [Bind(x)]</c>, corresponding to grouped singleton <c>F((x)) = ...</c></item>
+    ///   <item>Nested, literal, or mixed pattern structure</item>
+    /// </list>
+    /// </summary>
+    public IReadOnlyList<string>? TryGetOrdinaryClauseParams()
+        => this switch
+        {
+            Bind(var name) => [name],
+            _ => TryGetFlatMultiBinderParams(),
+        };
+
+    /// <summary>
+    /// True when a sole clause head requires conditional whole-argument
+    /// semantics instead of ordinary user-call binding. Front-ends must still
+    /// classify at the whole same-name clause-group level, because a plain
+    /// binder head can still belong to a multi-clause family that remains
+    /// conditional.
+    /// </summary>
+    public bool RequiresConditionalClauseSemantics()
+        => TryGetOrdinaryClauseParams() is null;
 
     /// <summary>
     /// Check whether two patterns are match-equivalent, i.e., they match
@@ -288,7 +356,61 @@ public abstract record Algorithm
     internal virtual bool IsParametrized { get; init; }
 
     /// <summary>
+    /// Replace the explicit parameter list of a user-defined algorithm.
+    /// Clause elaboration uses this to preserve ignored binders such as
+    /// <c>K(a, b) = a</c>, where <c>b</c> must remain part of the ordinary call
+    /// interface even though it is unused in the body.
+    /// </summary>
+    public Algorithm WithParams(IReadOnlyList<string> parameters) => this switch
+    {
+        User user => user with { Params = parameters },
+        _ => this,
+    };
+
+    /// <summary>
+    /// Elaborate a whole same-name clause family after all of its clauses are
+    /// known. This is the real ordinary-vs-conditional decision boundary.
+    ///
+    /// A same-name clause group elaborates as ordinary only when it contains
+    /// exactly one clause and that sole head is a plain top-level binder list.
+    /// Otherwise the whole family remains conditional. This is intentional:
+    /// later clauses may force the entire family to stay conditional, for
+    /// example <c>F(0) = 0</c> followed by <c>F(x) = 1</c>.
+    /// </summary>
+    public static Algorithm ElaborateClauseGroup(IReadOnlyList<CondBranch> clauses)
+    {
+        if (clauses.Count == 1 && clauses[0].Pattern.TryGetOrdinaryClauseParams() is { } paramNames)
+            return clauses[0].Body.WithParams(paramNames);
+
+        if (clauses.Count == 0)
+            return new Conditional(Parent: null, Opens: [], Branches: []);
+
+        var parent = clauses[0].Body.Parent;
+        var opens = clauses[0].Body.Opens;
+        var conditionalBranches = clauses
+            .Select(branch => new CondBranch(branch.Pattern, branch.Body.WithParams([])))
+            .ToList();
+
+        return new Conditional(
+            parent,
+            opens,
+            conditionalBranches);
+    }
+
+    /// <summary>
+    /// Convenience wrapper for an already-known single-clause group.
+    /// Front-ends must not use this while parsing a same-name clause family
+    /// incrementally; they should first collect the full group and then call
+    /// <see cref="ElaborateClauseGroup(IReadOnlyList{CondBranch})"/>.
+    /// </summary>
+    public static Algorithm ElaborateClauseDefinition(Pattern pattern, Algorithm body)
+        => ElaborateClauseGroup([new CondBranch(pattern, body)]);
+
+    /// <summary>
     /// User-defined algorithm. Corresponds to <c>Algorithm.mk</c> in the Lean specification.
+    /// Parser elaboration may also predeclare params here for plain-binder
+    /// clause syntax such as <c>Apply(f) = f(4)</c> or
+    /// <c>Filter(x, predicate) = if(predicate(x), x)</c>.
     /// </summary>
     public sealed record User : Algorithm
     {
@@ -345,6 +467,15 @@ public abstract record Algorithm
     /// remain consistent. This preserves a unified output interface across
     /// branches. Conditional algorithms are not ad hoc overloading by varying
     /// result shape.</para>
+    ///
+    /// <para><b>Clause elaboration rule</b>: front-ends should call
+    /// <see cref="ElaborateClauseGroup(IReadOnlyList{CondBranch})"/> when
+    /// lowering <c>Name(pattern) = body</c>. The ordinary-vs-conditional split
+    /// is decided for the whole same-name clause group, not per clause. A
+    /// group elaborates to <see cref="User"/> only when it contains exactly
+    /// one clause and that sole head is a plain binder list. Multi-clause
+    /// families, grouped heads, and literal heads such as
+    /// <c>F(0) = 0</c> / <c>F(x) = 1</c> remain <see cref="Conditional"/>.</para>
     /// </summary>
     public sealed record Conditional : Algorithm
     {

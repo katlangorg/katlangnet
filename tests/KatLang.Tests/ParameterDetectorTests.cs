@@ -444,6 +444,68 @@ public class ParameterDetectorTests
         Assert.Single(ast.Params);
         Assert.Equal("val", ast.Params[0]);
     }
+    // ── Ordinary clause elaboration ────────────────────────────────────────
+
+    [Fact]
+    public void Detect_OrdinaryClause_DeclaredParamsPreserveIgnoredBinder()
+    {
+        var source = "K(a, b) = a";
+        var ast = ParseAndDetect(source);
+
+        var user = Assert.IsType<Algorithm.User>(ast.Properties[0].Value);
+        Assert.Equal(["a", "b"], user.Params);
+
+        var param = Assert.IsType<Expr.Param>(user.Output[0]);
+        Assert.Equal("a", param.Name);
+    }
+
+    [Fact]
+    public void Detect_OrdinaryClause_SingleBinderDeclaresParam()
+    {
+        var source = "Id(x) = x";
+        var ast = ParseAndDetect(source);
+
+        var user = Assert.IsType<Algorithm.User>(ast.Properties[0].Value);
+        Assert.Equal(["x"], user.Params);
+
+        var param = Assert.IsType<Expr.Param>(user.Output[0]);
+        Assert.Equal("x", param.Name);
+    }
+
+    [Fact]
+    public void Detect_OrdinaryClause_SingleHigherOrderBinderRemainsDeclaredParam()
+    {
+        var source = "Apply(f) = f(4)";
+        var ast = ParseAndDetect(source);
+
+        var user = Assert.IsType<Algorithm.User>(ast.Properties[0].Value);
+        Assert.Equal(["f"], user.Params);
+
+        var call = Assert.IsType<Expr.Call>(user.Output[0]);
+        var function = Assert.IsType<Expr.Param>(call.Function);
+        Assert.Equal("f", function.Name);
+        Assert.IsType<Expr.Num>(call.Args.Output[0]);
+    }
+
+    [Fact]
+    public void Detect_OrdinaryClause_HigherOrderBinderRemainsDeclaredParam()
+    {
+        var source = "Filter(x, predicate) = if(predicate(x), x)";
+        var ast = ParseAndDetect(source);
+
+        var user = Assert.IsType<Algorithm.User>(ast.Properties[0].Value);
+        Assert.Equal(["x", "predicate"], user.Params);
+
+        var ifCall = Assert.IsType<Expr.Call>(user.Output[0]);
+        Assert.IsType<Expr.Resolve>(ifCall.Function);
+
+        var predicateCall = Assert.IsType<Expr.Call>(ifCall.Args.Output[0]);
+        var predicateParam = Assert.IsType<Expr.Param>(predicateCall.Function);
+        Assert.Equal("predicate", predicateParam.Name);
+        Assert.IsType<Expr.Param>(predicateCall.Args.Output[0]);
+        Assert.IsType<Expr.Param>(ifCall.Args.Output[1]);
+    }
+
     // ── Conditional branch: full-input-specification rule ──────────────────
 
     [Fact]
@@ -451,7 +513,7 @@ public class ParameterDetectorTests
     {
         // Pattern binders (a, b) become Expr.Param.
         // The branch body's Algorithm.Params must be empty (no implicit params).
-        var source = "K(a, b) = a + b";
+        var source = "K((a), b) = a + b";
         var ast = ParseAndDetect(source);
 
         var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
@@ -472,7 +534,7 @@ public class ParameterDetectorTests
         // Free identifier 'Rate' is a sibling property → stays as Expr.Resolve, not Expr.Param
         var source = """
             Rate = 2
-            F(x) = x * Rate
+            F((x)) = x * Rate
             """;
         var ast = ParseAndDetect(source);
 
@@ -494,7 +556,7 @@ public class ParameterDetectorTests
     {
         // Free identifier 'b' not bound by pattern and not a sibling → stays as Expr.Resolve
         // (will fail at runtime, but ParameterDetector should NOT turn it into a param)
-        var source = "F(a) = a + b";
+        var source = "F((a)) = a + b";
         var ast = ParseAndDetect(source);
 
         var cond = Assert.IsType<Algorithm.Conditional>(ast.Properties[0].Value);
@@ -520,7 +582,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_FreeIdentifier_ReportsDiagnostic()
     {
-        var diags = ParseAndDetectDiagnostics("F(a) = a + b");
+        var diags = ParseAndDetectDiagnostics("F((a)) = a + b");
 
         var error = Assert.Single(diags);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
@@ -531,7 +593,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_MultipleFreeIdentifiers_ReportsAll()
     {
-        var diags = ParseAndDetectDiagnostics("F(x) = a * x + b");
+        var diags = ParseAndDetectDiagnostics("F((x)) = a * x + b");
 
         Assert.Equal(2, diags.Count);
         Assert.All(diags, d => Assert.Equal(DiagnosticSeverity.Error, d.Severity));
@@ -542,7 +604,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_AllBindersBound_NoDiagnostic()
     {
-        var diags = ParseAndDetectDiagnostics("F(a, b) = a + b");
+        var diags = ParseAndDetectDiagnostics("F((a), b) = a + b");
 
         Assert.Empty(diags);
     }

@@ -709,6 +709,29 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Compatibility fallback for manually constructed core conditionals.
+    /// Surface clause elaboration should already classify whole same-name
+    /// plain-binder clause groups as ordinary <see cref="Algorithm.User"/>
+    /// values in the parser. This helper intentionally keeps only the stricter
+    /// flat multi-binder raw <see cref="Algorithm.Conditional"/> core shape
+    /// call-compatible with ordinary user-call semantics so evaluator fallback
+    /// does not silently broaden to bare single-binder conditionals.
+    /// </summary>
+    private static Algorithm.User? TryGetFlatBinderUserEquivalent(Algorithm callee)
+    {
+        if (callee is not Algorithm.Conditional cond || cond.Branches.Count != 1)
+            return null;
+
+        var paramNames = cond.Branches[0].Pattern.TryGetFlatMultiBinderParams();
+        if (paramNames is null)
+            return null;
+
+        return ChildOf(callee, cond.Branches[0].Body) is Algorithm.User body
+            ? body with { Params = paramNames }
+            : null;
+    }
+
+    /// <summary>
     /// Evaluate a conditional algorithm against an already-assembled argument
     /// shape. Used both for ordinary conditional calls and for builtins like
     /// <c>filter</c> and <c>map</c> that must pass one whole result without
@@ -2456,13 +2479,18 @@ public static class Evaluator
             return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
         }
 
-        // 3. Conditional algorithm: dispatch to dedicated path (Lean: evalConditionalCall)
+        // 3. Conditional algorithm: flat single-branch binder clauses are
+        // call-equivalent to ordinary user algorithms for higher-order binding.
+        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
+            return EvalUserCall(simpleCallee, argsAlg, ctx, valEnv);
+
+        // 4. Other conditional algorithms use structural pattern matching.
         if (callee is Algorithm.Conditional)
         {
             return EvalConditionalCall(callee, argsAlg, ctx, valEnv, OpenExprName(func));
         }
 
-        // 4. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
+        // 5. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
         return EvalUserCall(callee, argsAlg, ctx, valEnv);
     }
 
@@ -2486,6 +2514,9 @@ public static class Evaluator
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinCounted(builtinId, argAlgsR.Value, ctx, valEnv);
         }
+
+        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
+            return EvalUserCallCounted(simpleCallee, argsAlg, ctx, valEnv);
 
         if (callee is Algorithm.Conditional)
             return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, OpenExprName(func));
@@ -2796,8 +2827,17 @@ public static class Evaluator
         if (prop is not null)
         {
             var wired = ChildOf(targetAlg, prop);
+            var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
 
-            // Conditional algorithms: dedicated dispatch
+            // Flat single-branch binder clauses behave like ordinary user calls.
+            if (simpleCallee is not null)
+            {
+                if (argsOpt is null)
+                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+                return EvalUserCall(simpleCallee, argsOpt, ctx, valEnv);
+            }
+
+            // Other conditional algorithms: dedicated dispatch
             if (wired is Algorithm.Conditional)
             {
                 if (argsOpt is null)
@@ -2921,6 +2961,14 @@ public static class Evaluator
         if (prop is not null)
         {
             var wired = ChildOf(targetAlg, prop);
+            var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
+
+            if (simpleCallee is not null)
+            {
+                if (argsOpt is null)
+                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+                return EvalUserCallCounted(simpleCallee, argsOpt, ctx, valEnv);
+            }
 
             if (wired is Algorithm.Conditional)
             {

@@ -1361,6 +1361,28 @@ K(42, 999)
 
 The parameter `b` is bound by the pattern but never referenced in the body — it is simply ignored. This is the idiomatic way to accept and discard arguments in KatLang.
 
+Single-branch clauses whose top-level pattern is a plain binder list elaborate as ordinary algorithms, even at arity 1, so higher-order arguments stay callable just like ordinary parameters. For example:
+
+```
+Apply(f) = f(4)
+Double(x) = x * 2
+
+Apply(Double)
+```
+
+**Result:** `8`
+
+The same rule applies to larger plain binder lists:
+
+```
+Apply(x, f) = f(x)
+Increment = y + 1
+
+Apply(9, Increment)
+```
+
+**Result:** `10`
+
 ### Mixing Literals and Variables
 
 Branches can combine literal matches with variable bindings to create dispatch tables:

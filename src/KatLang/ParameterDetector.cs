@@ -108,11 +108,16 @@ public static class ParameterDetector
             };
         }
 
-        // Parametrized: find free lowercase identifiers → params (in order of first appearance)
-        var paramNames = new HashSet<string>();
-        var paramOrder = new List<string>();
+        // Parametrized: start with any parser-declared params (used by plain-
+        // binder clause elaboration), then infer additional implicit
+        // params from free identifiers in order of first appearance.
+        var paramNames = new HashSet<string>(alg.Params);
+        var paramOrder = new List<string>(alg.Params);
         var graceWeights = new Dictionary<string, int>();
-        CollectFreeParams(alg.Output, visibleNames, paramNames, paramOrder, graceWeights);
+        var boundNames = new HashSet<string>(visibleNames);
+        foreach (var param in alg.Params)
+            boundNames.Add(param);
+        CollectFreeParams(alg.Output, boundNames, paramNames, paramOrder, graceWeights);
 
         // Apply grace reordering
         if (graceWeights.Count > 0)
