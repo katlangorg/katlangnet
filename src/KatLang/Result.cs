@@ -102,7 +102,8 @@ public abstract record Result
     }
 
     /// <summary>
-    /// Strict numeric extraction for <c>sum</c>.
+    /// Strict numeric extraction for numeric collection builtins such as
+    /// <c>min</c>, <c>max</c>, and <c>sum</c>.
     /// Accepts exactly one atomic numeric value and rejects groups and strings.
     /// Lean: <c>Result.singleAtomicNumber?</c>.
     /// </summary>

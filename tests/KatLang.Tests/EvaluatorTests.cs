@@ -211,6 +211,27 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
+    private static void AssertBuiltinFailureWithContext(string source, string expectedContext)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains(expectedContext, formatted);
+
+        var error = result.Error;
+        var contexts = new List<string>();
+        while (error is EvalError.WithContext wc)
+        {
+            contexts.Add(wc.Context);
+            error = wc.Inner;
+        }
+
+        Assert.Contains(contexts, context => context.Contains(expectedContext));
+        Assert.IsType<EvalError.BadArity>(error);
+    }
+
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -1192,6 +1213,110 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Count_StringInput_ReturnsOne()
         => AssertEval("count('hello')", 1);
+
+    // ── Min builtin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Min_OrdinaryBuiltinCall_FindsAscendingRangeMinimum()
+        => AssertEval("min(range(1, 5))", 1);
+
+    [Fact]
+    public void Eval_Min_DotCall_FindsAscendingRangeMinimum()
+        => AssertEval("range(1, 5).min", 1);
+
+    [Fact]
+    public void Eval_Min_DescendingRange_ReturnsLowestValue()
+        => AssertEval("min(range(5, 1))", 1);
+
+    [Fact]
+    public void Eval_Min_FilterComposition_ReturnsKeptMinimum()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            range(1, 10).filter(IsEven).min
+            """;
+
+        AssertEval(source, 2);
+    }
+
+    [Fact]
+    public void Eval_Min_MapComposition_ReturnsMappedMinimum()
+    {
+        var source = """
+            Negate = -x
+            range(1, 4).map(Negate).min
+            """;
+
+        AssertEval(source, -4);
+    }
+
+    [Fact]
+    public void Eval_Min_EmptyCollection_FailsWithContext()
+        => AssertBuiltinFailureWithContext("min(if(0, 1))", "min requires a non-empty collection");
+
+    [Fact]
+    public void Eval_Min_SingleAtomicInput_ReturnsSameValue()
+        => AssertEval("min(5)", 5);
+
+    [Fact]
+    public void Eval_Min_GroupedElements_FailWithContext()
+        => AssertBuiltinFailureWithContext("min(((1, 2), (3, 4)))", "min expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Min_StringElement_FailsWithContext()
+        => AssertBuiltinFailureWithContext("min('hello')", "min expects each collection element to be a single numeric value");
+
+    // ── Max builtin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Max_OrdinaryBuiltinCall_FindsAscendingRangeMaximum()
+        => AssertEval("max(range(1, 5))", 5);
+
+    [Fact]
+    public void Eval_Max_DotCall_FindsAscendingRangeMaximum()
+        => AssertEval("range(1, 5).max", 5);
+
+    [Fact]
+    public void Eval_Max_DescendingRange_ReturnsHighestValue()
+        => AssertEval("max(range(5, 1))", 5);
+
+    [Fact]
+    public void Eval_Max_FilterComposition_ReturnsKeptMaximum()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            range(1, 10).filter(IsEven).max
+            """;
+
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Max_MapComposition_ReturnsMappedMaximum()
+    {
+        var source = """
+            Negate = -x
+            range(1, 4).map(Negate).max
+            """;
+
+        AssertEval(source, -1);
+    }
+
+    [Fact]
+    public void Eval_Max_EmptyCollection_FailsWithContext()
+        => AssertBuiltinFailureWithContext("max(if(0, 1))", "max requires a non-empty collection");
+
+    [Fact]
+    public void Eval_Max_SingleAtomicInput_ReturnsSameValue()
+        => AssertEval("max(5)", 5);
+
+    [Fact]
+    public void Eval_Max_GroupedElements_FailWithContext()
+        => AssertBuiltinFailureWithContext("max(((1, 2), (3, 4)))", "max expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Max_StringElement_FailsWithContext()
+        => AssertBuiltinFailureWithContext("max('hello')", "max expects each collection element to be a single numeric value");
 
     // ── Sum builtin ──────────────────────────────────────────────────────────
 

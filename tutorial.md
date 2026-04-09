@@ -28,6 +28,8 @@
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
     - [Counting: `count`](#counting-count)
+    - [Minimum: `min`](#minimum-min)
+    - [Maximum: `max`](#maximum-max)
     - [Summation: `sum`](#summation-sum)
     - [Reduction: `reduce`](#reduction-reduce)
    - [Fixed Loop: `repeat`](#fixed-loop-repeat)
@@ -874,6 +876,60 @@ count(((1, 2), (3, 4)))
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
 
+### Minimum: `min`
+
+`min(collection)` returns the smallest top-level numeric element in a collection.
+
+- The collection must be non-empty
+- Each top-level element must be exactly one atomic numeric value
+- Grouped values are not flattened or inspected recursively
+- Strings are invalid
+
+Both call styles are supported: `min(collection)` and `collection.min`.
+
+```
+min(range(1, 5))
+
+IsEven = x mod 2 == 0
+range(1, 10).filter(IsEven).min
+```
+
+**Results:**
+```
+1
+
+2
+```
+
+`min(if(0, 1))` is invalid because `min` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+
+### Maximum: `max`
+
+`max(collection)` returns the largest top-level numeric element in a collection.
+
+- The collection must be non-empty
+- Each top-level element must be exactly one atomic numeric value
+- Grouped values are not flattened or inspected recursively
+- Strings are invalid
+
+Both call styles are supported: `max(collection)` and `collection.max`.
+
+```
+max(range(1, 5))
+
+IsEven = x mod 2 == 0
+range(1, 10).filter(IsEven).max
+```
+
+**Results:**
+```
+5
+
+10
+```
+
+`max(if(0, 1))` is invalid because `max` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+
 ### Summation: `sum`
 
 `sum(collection)` adds the top-level numeric elements of a collection from left to right and returns one numeric result.
@@ -1549,6 +1605,8 @@ Only `public` properties are exposed through `load` and `open`.
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
 | `count` | `count(collection)` or `collection.count` — count top-level elements without flattening grouped values |
+| `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
+| `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
 | `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |

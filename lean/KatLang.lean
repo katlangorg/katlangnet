@@ -115,7 +115,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | sumBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -123,7 +123,9 @@ inductive Builtin where
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
     mapBuiltin accepts 2 arguments: a collection and a transform.
-  countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
+    countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
+    minBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
+  maxBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     sumBuiltin accepts 1 argument: a collection of top-level numeric elements.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
@@ -135,6 +137,8 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .filterBuiltin, 2 => true
   | .mapBuiltin, 2 => true
   | .countBuiltin, 1 => true
+  | .minBuiltin, 1 => true
+  | .maxBuiltin, 1 => true
   | .sumBuiltin, 1 => true
   | .reduceBuiltin, 3 => true
   | _, _ => false
@@ -149,6 +153,8 @@ def builtinArityDesc : Builtin -> String
   | .filterBuiltin => "2"
   | .mapBuiltin => "2"
   | .countBuiltin => "1"
+  | .minBuiltin => "1"
+  | .maxBuiltin => "1"
   | .sumBuiltin => "1"
   | .reduceBuiltin => "3"
 
@@ -389,7 +395,8 @@ namespace Result
     | atom _ => some true
     | _      => none
 
-  /-- Strict numeric extraction for `sum`.
+    /-- Strict numeric extraction for numeric collection builtins such as `min`
+      and `sum`.
       Accepts exactly one atomic numeric value.
 
       Grouped values are not flattened or recursively inspected, and strings
@@ -1516,6 +1523,76 @@ mutual
     let total <- countLoop collection.toItems 0
     pure (Result.atom total, 1)
 
+  /-- Evaluate `min(collection)`.
+      `min` compares top-level collection elements from left to right and
+      returns the smallest numeric element.
+
+      The collection must be non-empty. Each top-level collection element must
+      be exactly one atomic numeric value. Grouped values are not flattened or
+      recursively inspected, and strings are rejected. -/
+  partial def evalMinCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec minLoop : List Result -> Int -> EvalM Int
+      | [], currentMin => pure currentMin
+      | item :: rest, currentMin =>
+          match Result.singleAtomicNumber? item with
+          | some n =>
+              minLoop rest (if n < currentMin then n else currentMin)
+          | none =>
+              .error (Error.withContext
+                "min expects each collection element to be a single numeric value"
+                Error.badArity)
+    match collection.toItems with
+    | [] =>
+        .error (Error.withContext
+          "min requires a non-empty collection"
+          Error.badArity)
+    | first :: rest =>
+        match Result.singleAtomicNumber? first with
+        | some n =>
+            let minimum <- minLoop rest n
+            pure (Result.atom minimum, 1)
+        | none =>
+            .error (Error.withContext
+              "min expects each collection element to be a single numeric value"
+              Error.badArity)
+
+  /-- Evaluate `max(collection)`.
+      `max` compares top-level collection elements from left to right and
+      returns the largest numeric element.
+
+      The collection must be non-empty. Each top-level collection element must
+      be exactly one atomic numeric value. Grouped values are not flattened or
+      recursively inspected, and strings are rejected. -/
+  partial def evalMaxCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec maxLoop : List Result -> Int -> EvalM Int
+      | [], currentMax => pure currentMax
+      | item :: rest, currentMax =>
+          match Result.singleAtomicNumber? item with
+          | some n =>
+              maxLoop rest (if n > currentMax then n else currentMax)
+          | none =>
+              .error (Error.withContext
+                "max expects each collection element to be a single numeric value"
+                Error.badArity)
+    match collection.toItems with
+    | [] =>
+        .error (Error.withContext
+          "max requires a non-empty collection"
+          Error.badArity)
+    | first :: rest =>
+        match Result.singleAtomicNumber? first with
+        | some n =>
+            let maximum <- maxLoop rest n
+            pure (Result.atom maximum, 1)
+        | none =>
+            .error (Error.withContext
+              "max expects each collection element to be a single numeric value"
+              Error.badArity)
+
   /-- Evaluate `sum(collection)`.
       `sum` processes top-level collection elements from left to right and adds
       them into one numeric total.
@@ -1621,6 +1698,12 @@ mutual
 
     | .countBuiltin, [collectionAlg] =>
       evalCountCounted collectionAlg ctx env
+
+    | .minBuiltin, [collectionAlg] =>
+      evalMinCounted collectionAlg ctx env
+
+    | .maxBuiltin, [collectionAlg] =>
+      evalMaxCounted collectionAlg ctx env
 
     | .sumBuiltin, [collectionAlg] =>
       evalSumCounted collectionAlg ctx env
@@ -1731,6 +1814,22 @@ mutual
     -- values are not flattened, and empty collections return 0.
     | .countBuiltin, [collectionAlg] => do
       let out <- evalCountCounted collectionAlg ctx env
+      pure out.fst
+
+    -- min(collection): compare top-level collection elements left to right.
+    -- The collection must be non-empty and each element must be exactly one
+    -- atomic numeric value; grouped values are not flattened and strings are
+    -- invalid.
+    | .minBuiltin, [collectionAlg] => do
+      let out <- evalMinCounted collectionAlg ctx env
+      pure out.fst
+
+    -- max(collection): compare top-level collection elements left to right.
+    -- The collection must be non-empty and each element must be exactly one
+    -- atomic numeric value; grouped values are not flattened and strings are
+    -- invalid.
+    | .maxBuiltin, [collectionAlg] => do
+      let out <- evalMaxCounted collectionAlg ctx env
       pure out.fst
 
     -- sum(collection): add top-level collection elements left to right.
@@ -2457,6 +2556,8 @@ def preludeAlg : Algorithm :=
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
     , publicProp "map" (Algorithm.builtin .mapBuiltin)
     , publicProp "count" (Algorithm.builtin .countBuiltin)
+    , publicProp "min" (Algorithm.builtin .minBuiltin)
+    , publicProp "max" (Algorithm.builtin .maxBuiltin)
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]

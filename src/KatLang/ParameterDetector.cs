@@ -19,7 +19,7 @@ public static class ParameterDetector
     /// Lean: preludeAlg properties are on the initial call stack.
     /// </summary>
     private static readonly HashSet<string> PreludeNames =
-        ["if", "while", "repeat", "atoms", "range", "filter", "map", "count", "sum", "reduce", "load", "Math"];
+        ["if", "while", "repeat", "atoms", "range", "filter", "map", "count", "min", "max", "sum", "reduce", "load", "Math"];
 
     /// <summary>
     /// Property names provided by the Math builtin algorithm.

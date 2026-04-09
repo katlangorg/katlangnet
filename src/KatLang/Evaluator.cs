@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Sum, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Min, Max, Sum, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -997,6 +997,110 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>min(collection)</c> by comparing top-level collection
+    /// elements from left to right and returning the smallest numeric element.
+    /// The collection must be non-empty, and each top-level element must be
+    /// exactly one atomic numeric value; groups are not flattened and strings
+    /// are rejected.
+    /// Lean: <c>evalMinCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalMinCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        if (elements.Count == 0)
+        {
+            return new EvalError.WithContext(
+                "min requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        var firstNumeric = elements[0].SingleAtomicNumber();
+        if (firstNumeric is null)
+        {
+            return new EvalError.WithContext(
+                "min expects each collection element to be a single numeric value",
+                new EvalError.BadArity());
+        }
+
+        var minimum = firstNumeric.Value;
+        for (var i = 1; i < elements.Count; i++)
+        {
+            var numeric = elements[i].SingleAtomicNumber();
+            if (numeric is null)
+            {
+                return new EvalError.WithContext(
+                    "min expects each collection element to be a single numeric value",
+                    new EvalError.BadArity());
+            }
+
+            if (numeric.Value < minimum)
+                minimum = numeric.Value;
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(minimum), 1));
+    }
+
+    /// <summary>
+    /// Evaluate <c>max(collection)</c> by comparing top-level collection
+    /// elements from left to right and returning the largest numeric element.
+    /// The collection must be non-empty, and each top-level element must be
+    /// exactly one atomic numeric value; groups are not flattened and strings
+    /// are rejected.
+    /// Lean: <c>evalMaxCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalMaxCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        if (elements.Count == 0)
+        {
+            return new EvalError.WithContext(
+                "max requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        var firstNumeric = elements[0].SingleAtomicNumber();
+        if (firstNumeric is null)
+        {
+            return new EvalError.WithContext(
+                "max expects each collection element to be a single numeric value",
+                new EvalError.BadArity());
+        }
+
+        var maximum = firstNumeric.Value;
+        for (var i = 1; i < elements.Count; i++)
+        {
+            var numeric = elements[i].SingleAtomicNumber();
+            if (numeric is null)
+            {
+                return new EvalError.WithContext(
+                    "max expects each collection element to be a single numeric value",
+                    new EvalError.BadArity());
+            }
+
+            if (numeric.Value > maximum)
+                maximum = numeric.Value;
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(maximum), 1));
+    }
+
+    /// <summary>
     /// Evaluate <c>sum(collection)</c> by adding the top-level collection
     /// elements from left to right.
     /// Each element must be exactly one atomic numeric value; groups are not
@@ -1161,6 +1265,12 @@ public static class Evaluator
             case (BuiltinId.@count, 1):
                 return EvalCountCounted(args[0], ctx, valEnv);
 
+            case (BuiltinId.@min, 1):
+                return EvalMinCounted(args[0], ctx, valEnv);
+
+            case (BuiltinId.@max, 1):
+                return EvalMaxCounted(args[0], ctx, valEnv);
+
             case (BuiltinId.@sum, 1):
                 return EvalSumCounted(args[0], ctx, valEnv);
 
@@ -1274,6 +1384,8 @@ public static class Evaluator
             new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
             new("map",    new Algorithm.Builtin(BuiltinId.@map),    IsPublic: true),
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
+            new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
+            new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
             new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
             new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
@@ -1292,6 +1404,8 @@ public static class Evaluator
         (BuiltinId.@filter, 2) => true,
         (BuiltinId.@map, 2) => true,
         (BuiltinId.@count, 1) => true,
+        (BuiltinId.@min, 1) => true,
+        (BuiltinId.@max, 1) => true,
         (BuiltinId.@sum, 1) => true,
         (BuiltinId.@reduce, 3) => true,
         _ => false,
@@ -1308,6 +1422,8 @@ public static class Evaluator
         BuiltinId.@filter => "2",
         BuiltinId.@map => "2",
         BuiltinId.@count => "1",
+        BuiltinId.@min => "1",
+        BuiltinId.@max => "1",
         BuiltinId.@sum => "1",
         BuiltinId.@reduce => "3",
         _ => "?",
@@ -1702,6 +1818,28 @@ public static class Evaluator
                 var countR = EvalCountCounted(args[0], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 return EvalResult<Result>.Ok(countR.Value.Value);
+            }
+
+            // min(collection) — compare top-level collection elements from
+            // left to right. The collection must be non-empty and each element
+            // must be one atomic numeric value; groups are not flattened and
+            // strings are invalid.
+            case (BuiltinId.@min, 1):
+            {
+                var minR = EvalMinCounted(args[0], ctx, valEnv);
+                if (minR.IsError) return minR.Error;
+                return EvalResult<Result>.Ok(minR.Value.Value);
+            }
+
+            // max(collection) — compare top-level collection elements from
+            // left to right. The collection must be non-empty and each element
+            // must be one atomic numeric value; groups are not flattened and
+            // strings are invalid.
+            case (BuiltinId.@max, 1):
+            {
+                var maxR = EvalMaxCounted(args[0], ctx, valEnv);
+                if (maxR.IsError) return maxR.Error;
+                return EvalResult<Result>.Ok(maxR.Value.Value);
             }
 
             // sum(collection) — left-to-right numeric aggregation over top-level

@@ -1711,4 +1711,247 @@ def test110 : Bool :=
 
 #eval test110  -- should be true
 
+--------------------------------------------------------------------------------
+-- min builtin tests
+--------------------------------------------------------------------------------
+
+def negateAlg111 : Algorithm :=
+  alg ["x"] [] [] [
+    .unary .minus (.param "x")
+  ]
+
+-- Test 111: ordinary builtin-call min finds the minimum in an ascending range
+def test111 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test111  -- should be true
+
+-- Test 112: dot-call min uses receiver injection with no explicit args
+def test112 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "min"
+      none
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test112  -- should be true
+
+-- Test 113: descending ranges still compare top-level elements correctly
+def test113 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test113  -- should be true
+
+-- Test 114: min composes with filter over kept top-level elements
+def test114 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        "filter"
+        (some (alg [] [] [] [.resolve "IsEven"])))
+      "min"
+      none
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#eval test114  -- should be true
+
+-- Test 115: min composes with map and compares mapped top-level elements
+def test115 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Negate", negateAlg111)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        "map"
+        (some (alg [] [] [] [.resolve "Negate"])))
+      "min"
+      none
+  ])) with
+  | Except.ok [-4] => true
+  | _ => false
+
+#eval test115  -- should be true
+
+-- Test 116: empty collections are rejected by min
+def test116 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+    ])
+  ])) with
+  | Except.error err => hasContext "min requires a non-empty collection" err && innermostIsBadArity err
+  | _ => false
+
+#eval test116  -- should be true
+
+-- Test 117: a single atomic value is treated as a one-element collection
+def test117 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [.num 5])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test117  -- should be true
+
+-- Test 118: grouped top-level elements are rejected rather than flattened
+def test118 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test118  -- should be true
+
+-- Test 119: string elements are rejected by min
+def test119 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test119  -- should be true
+
+--------------------------------------------------------------------------------
+-- max builtin tests
+--------------------------------------------------------------------------------
+
+-- Test 120: ordinary builtin-call max finds the maximum in an ascending range
+def test120 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test120  -- should be true
+
+-- Test 121: dot-call max uses receiver injection with no explicit args
+def test121 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "max"
+      none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test121  -- should be true
+
+-- Test 122: descending ranges still compare top-level elements correctly
+def test122 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
+    ])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test122  -- should be true
+
+-- Test 123: max composes with filter over kept top-level elements
+def test123 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        "filter"
+        (some (alg [] [] [] [.resolve "IsEven"])))
+      "max"
+      none
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test123  -- should be true
+
+-- Test 124: max composes with map and compares mapped top-level elements
+def test124 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Negate", negateAlg111)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        "map"
+        (some (alg [] [] [] [.resolve "Negate"])))
+      "max"
+      none
+  ])) with
+  | Except.ok [-1] => true
+  | _ => false
+
+#eval test124  -- should be true
+
+-- Test 125: empty collections are rejected by max
+def test125 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+    ])
+  ])) with
+  | Except.error err => hasContext "max requires a non-empty collection" err && innermostIsBadArity err
+  | _ => false
+
+#eval test125  -- should be true
+
+-- Test 126: a single atomic value is treated as a one-element collection
+def test126 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [.num 5])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test126  -- should be true
+
+-- Test 127: grouped top-level elements are rejected rather than flattened
+def test127 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test127  -- should be true
+
+-- Test 128: string elements are rejected by max
+def test128 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test128  -- should be true
+
 end KatLangTests

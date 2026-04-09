@@ -21,6 +21,12 @@ public enum UnaryOp { Minus, Not }
 /// <c>count(collection)</c> counts top-level collection elements left to right;
 /// each atom, string, or grouped value counts as one element, grouped values
 /// are not flattened, and empty collections return <c>0</c>.
+/// <c>min(collection)</c> compares top-level numeric collection elements left
+/// to right; the collection must be non-empty, each element must be exactly one
+/// atomic numeric value, and grouped values are not flattened.
+/// <c>max(collection)</c> compares top-level numeric collection elements left
+/// to right; the collection must be non-empty, each element must be exactly one
+/// atomic numeric value, and grouped values are not flattened.
 /// <c>sum(collection)</c> adds top-level collection elements left to right;
 /// each element must be exactly one atomic numeric value, grouped values are
 /// not flattened, and empty collections return <c>0</c>.
@@ -28,7 +34,7 @@ public enum UnaryOp { Minus, Not }
 /// left to right; <c>step(element, accumulator)</c> must return exactly one
 /// next accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @count, @sum, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @count, @min, @max, @sum, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 
