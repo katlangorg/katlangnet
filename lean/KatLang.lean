@@ -115,7 +115,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -125,8 +125,9 @@ inductive Builtin where
     mapBuiltin accepts 2 arguments: a collection and a transform.
     countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
     minBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
-  maxBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
+    maxBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     sumBuiltin accepts 1 argument: a collection of top-level numeric elements.
+    avgBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
@@ -140,6 +141,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .minBuiltin, 1 => true
   | .maxBuiltin, 1 => true
   | .sumBuiltin, 1 => true
+  | .avgBuiltin, 1 => true
   | .reduceBuiltin, 3 => true
   | _, _ => false
 
@@ -156,6 +158,7 @@ def builtinArityDesc : Builtin -> String
   | .minBuiltin => "1"
   | .maxBuiltin => "1"
   | .sumBuiltin => "1"
+  | .avgBuiltin => "1"
   | .reduceBuiltin => "3"
 
 --------------------------------------------------------------------------------
@@ -395,8 +398,8 @@ namespace Result
     | atom _ => some true
     | _      => none
 
-    /-- Strict numeric extraction for numeric collection builtins such as `min`
-      and `sum`.
+    /-- Strict numeric extraction for numeric collection builtins such as `min`,
+      `max`, `sum`, and `avg`.
       Accepts exactly one atomic numeric value.
 
       Grouped values are not flattened or recursively inspected, and strings
@@ -1616,6 +1619,35 @@ mutual
     let total <- sumLoop collection.toItems 0
     pure (Result.atom total, 1)
 
+  /-- Evaluate `avg(collection)`.
+      `avg` processes top-level collection elements from left to right,
+      accumulates their numeric total, and divides by the element count.
+
+      The collection must be non-empty. Each top-level collection element must
+      be exactly one atomic numeric value. Grouped values are not flattened or
+      recursively inspected, and strings are rejected. -/
+  partial def evalAvgCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let rec avgLoop : List Result -> Int -> Int -> EvalM (Int × Int)
+      | [], total, count => pure (total, count)
+      | item :: rest, total, count =>
+          match Result.singleAtomicNumber? item with
+          | some n =>
+              avgLoop rest (total + n) (count + 1)
+          | none =>
+              .error (Error.withContext
+                "avg expects each collection element to be a single numeric value"
+                Error.badArity)
+    match collection.toItems with
+    | [] =>
+        .error (Error.withContext
+          "avg requires a non-empty collection"
+          Error.badArity)
+    | items => do
+        let (total, count) <- avgLoop items 0 0
+        pure (Result.atom (total / count), 1)
+
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
       value without flattening grouped values. -/
@@ -1707,6 +1739,9 @@ mutual
 
     | .sumBuiltin, [collectionAlg] =>
       evalSumCounted collectionAlg ctx env
+
+    | .avgBuiltin, [collectionAlg] =>
+      evalAvgCounted collectionAlg ctx env
 
     | .reduceBuiltin, [collectionAlg, stepAlg, initialAlg] =>
       evalReduceCounted collectionAlg stepAlg initialAlg ctx env
@@ -1837,6 +1872,14 @@ mutual
     -- not flattened, strings are invalid, and empty collections return 0.
     | .sumBuiltin, [collectionAlg] => do
       let out <- evalSumCounted collectionAlg ctx env
+      pure out.fst
+
+    -- avg(collection): average top-level collection elements left to right.
+    -- The collection must be non-empty and each element must be exactly one
+    -- atomic numeric value; grouped values are not flattened and strings are
+    -- invalid.
+    | .avgBuiltin, [collectionAlg] => do
+      let out <- evalAvgCounted collectionAlg ctx env
       pure out.fst
 
     -- reduce(collection, step, initial): fold left over the collection's
@@ -2559,6 +2602,7 @@ def preludeAlg : Algorithm :=
     , publicProp "min" (Algorithm.builtin .minBuiltin)
     , publicProp "max" (Algorithm.builtin .maxBuiltin)
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)
+    , publicProp "avg" (Algorithm.builtin .avgBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
     ]
     []

@@ -1370,6 +1370,58 @@ public class EvaluatorTests
     public void Eval_Sum_StringElement_FailsWithContext()
         => AssertSumElementShapeFails("sum('hello')");
 
+    // ── Avg builtin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Avg_OrdinaryBuiltinCall_FindsAscendingRangeMean()
+        => AssertEval("avg(range(1, 5))", 3);
+
+    [Fact]
+    public void Eval_Avg_DotCall_FindsAscendingRangeMean()
+        => AssertEval("range(1, 5).avg", 3);
+
+    [Fact]
+    public void Eval_Avg_DescendingRange_ReturnsMean()
+        => AssertEval("avg(range(5, 1))", 3);
+
+    [Fact]
+    public void Eval_Avg_FilterComposition_ReturnsKeptMean()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            range(1, 10).filter(IsEven).avg
+            """;
+
+        AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_Avg_MapComposition_ReturnsFractionalMean()
+    {
+        var source = """
+            Square = x * x
+            range(1, 4).map(Square).avg
+            """;
+
+        AssertEval(source, 7.5m);
+    }
+
+    [Fact]
+    public void Eval_Avg_EmptyCollection_FailsWithContext()
+        => AssertBuiltinFailureWithContext("avg(if(0, 1))", "avg requires a non-empty collection");
+
+    [Fact]
+    public void Eval_Avg_SingleAtomicInput_ReturnsSameValue()
+        => AssertEval("avg(5)", 5);
+
+    [Fact]
+    public void Eval_Avg_GroupedElements_FailWithContext()
+        => AssertBuiltinFailureWithContext("avg(((1, 2), (3, 4)))", "avg expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Avg_StringElement_FailsWithContext()
+        => AssertBuiltinFailureWithContext("avg('hello')", "avg expects each collection element to be a single numeric value");
+
     // ── Reduce builtin ───────────────────────────────────────────────────────
 
     [Fact]

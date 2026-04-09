@@ -1143,6 +1143,57 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>avg(collection)</c> by averaging the top-level collection
+    /// elements from left to right.
+    /// The collection must be non-empty, and each top-level element must be
+    /// exactly one atomic numeric value; groups are not flattened and strings
+    /// are rejected.
+    /// Lean: <c>evalAvgCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalAvgCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        if (elements.Count == 0)
+        {
+            return new EvalError.WithContext(
+                "avg requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        decimal total = 0;
+        try
+        {
+            foreach (var item in elements)
+            {
+                var numeric = item.SingleAtomicNumber();
+                if (numeric is null)
+                {
+                    return new EvalError.WithContext(
+                        "avg expects each collection element to be a single numeric value",
+                        new EvalError.BadArity());
+                }
+
+                total = checked(total + numeric.Value);
+            }
+
+            var average = total / elements.Count;
+            return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
+        }
+        catch (OverflowException)
+        {
+            return new EvalError.NumericOverflow();
+        }
+    }
+
+    /// <summary>
     /// Builtin application with counted output shape.
     /// Used by <c>reduce</c> so step validation can distinguish grouped
     /// accumulator values from multiple top-level outputs.
@@ -1274,6 +1325,9 @@ public static class Evaluator
             case (BuiltinId.@sum, 1):
                 return EvalSumCounted(args[0], ctx, valEnv);
 
+            case (BuiltinId.@avg, 1):
+                return EvalAvgCounted(args[0], ctx, valEnv);
+
             case (BuiltinId.@reduce, 3):
                 return EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
 
@@ -1387,6 +1441,7 @@ public static class Evaluator
             new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
             new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
             new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
+            new("avg",    new Algorithm.Builtin(BuiltinId.@avg),    IsPublic: true),
             new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
             new("Math",   MathAlgorithm,                           IsPublic: true),
         ],
@@ -1407,6 +1462,7 @@ public static class Evaluator
         (BuiltinId.@min, 1) => true,
         (BuiltinId.@max, 1) => true,
         (BuiltinId.@sum, 1) => true,
+        (BuiltinId.@avg, 1) => true,
         (BuiltinId.@reduce, 3) => true,
         _ => false,
     };
@@ -1425,6 +1481,7 @@ public static class Evaluator
         BuiltinId.@min => "1",
         BuiltinId.@max => "1",
         BuiltinId.@sum => "1",
+        BuiltinId.@avg => "1",
         BuiltinId.@reduce => "3",
         _ => "?",
     };
@@ -1851,6 +1908,17 @@ public static class Evaluator
                 var sumR = EvalSumCounted(args[0], ctx, valEnv);
                 if (sumR.IsError) return sumR.Error;
                 return EvalResult<Result>.Ok(sumR.Value.Value);
+            }
+
+            // avg(collection) — left-to-right numeric averaging over top-level
+            // collection elements. The collection must be non-empty and each
+            // element must be one atomic numeric value; groups are not flattened
+            // and strings are invalid.
+            case (BuiltinId.@avg, 1):
+            {
+                var avgR = EvalAvgCounted(args[0], ctx, valEnv);
+                if (avgR.IsError) return avgR.Error;
+                return EvalResult<Result>.Ok(avgR.Value.Value);
             }
 
             // reduce(collection, step, initial) — left fold over the collection's

@@ -958,6 +958,34 @@ range(1, 10).filter(IsEven).sum
 
 `sum(if(0, 1))` returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding.
 
+### Average: `avg`
+
+`avg(collection)` averages the top-level numeric elements of a collection and returns one numeric result.
+
+- The collection must be non-empty
+- Each top-level element must be exactly one atomic numeric value
+- A single numeric value is treated as a one-element collection
+- Grouped values are invalid and are not flattened
+- Strings are invalid
+
+Both call styles are supported: `avg(collection)` and `collection.avg`.
+
+```
+avg(range(1, 5))
+
+Square = x * x
+range(1, 4).map(Square).avg
+```
+
+**Results:**
+```
+3
+
+7.5
+```
+
+`avg(if(0, 1))` is invalid because `avg` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging.
+
 ### Reduction: `reduce`
 
 `reduce(collection, step, initial)` walks the collection from left to right and threads an accumulator through the top-level collection elements.
@@ -1608,6 +1636,7 @@ Only `public` properties are exposed through `load` and `open`.
 | `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
+| `avg` | `avg(collection)` or `collection.avg` — average top-level numeric elements; the collection must be non-empty, each element must be a single atomic numeric value, and grouped values are not flattened |
 | `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |

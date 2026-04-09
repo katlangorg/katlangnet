@@ -1954,4 +1954,119 @@ def test128 : Bool :=
 
 #eval test128  -- should be true
 
+-- Test 129: ordinary builtin-call avg finds the mean in an ascending range
+def test129 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#eval test129  -- should be true
+
+-- Test 130: dot-call avg uses receiver injection with no explicit args
+def test130 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "avg"
+      none
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#eval test130  -- should be true
+
+-- Test 131: descending ranges still average top-level elements correctly
+def test131 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
+    ])
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#eval test131  -- should be true
+
+-- Test 132: avg composes with filter over kept top-level elements
+def test132 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        "filter"
+        (some (alg [] [] [] [.resolve "IsEven"])))
+      "avg"
+      none
+  ])) with
+  | Except.ok [6] => true
+  | _ => false
+
+#eval test132  -- should be true
+
+-- Test 133: avg composes with map and averages mapped top-level elements
+def test133 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+    .dotCall
+      (.dotCall
+        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        "map"
+        (some (alg [] [] [] [.resolve "Double"])))
+      "avg"
+      none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test133  -- should be true
+
+-- Test 134: empty collections are rejected by avg
+def test134 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [
+      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+    ])
+  ])) with
+  | Except.error err => hasContext "avg requires a non-empty collection" err && innermostIsBadArity err
+  | _ => false
+
+#eval test134  -- should be true
+
+-- Test 135: a single atomic value is treated as a one-element collection
+def test135 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [.num 5])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test135  -- should be true
+
+-- Test 136: grouped top-level elements are rejected rather than flattened
+def test136 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test136  -- should be true
+
+-- Test 137: string elements are rejected by avg
+def test137 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [.stringLiteral "hello"])
+  ])) with
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test137  -- should be true
+
 end KatLangTests
