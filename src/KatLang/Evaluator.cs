@@ -2658,6 +2658,10 @@ public static class Evaluator
                 decimal x = xR.Value, y = yR.Value;
                 if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
                     return new EvalError.DivByZero() { Span = expr.Span };
+
+                if (op == BinaryOp.Pow)
+                    return EvalPow(expr.Span, x, y);
+
                 decimal result;
                 try
                 {
@@ -2669,7 +2673,6 @@ public static class Evaluator
                         BinaryOp.Div => x / y,
                         BinaryOp.IDiv => Math.Truncate(x / y),
                         BinaryOp.Mod => x % y,
-                        BinaryOp.Pow => y < 0 ? 0 : DecimalPow(x, y),
                         BinaryOp.Lt => x < y ? 1 : 0,
                         BinaryOp.Gt => x > y ? 1 : 0,
                         BinaryOp.Le => x <= y ? 1 : 0,
@@ -3631,26 +3634,66 @@ public static class Evaluator
     // ── Utility ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Exact decimal exponentiation for non-negative integer exponents.
-    /// Falls back to Math.Pow (via double) for fractional exponents.
-    /// Lean: intPow b n = b * intPow b (n-1), base case intPow _ 0 = 1.
+    /// Integer exponents use exact decimal exponentiation by squaring.
+    /// Negative integers are handled as a decimal reciprocal of the positive power.
+    /// Non-integer exponents use approximate <see cref="Math.Pow(double, double)"/> via double,
+    /// then normalize the result using the evaluator's standard floating-point cleanup.
     /// </summary>
-    private static decimal DecimalPow(decimal b, decimal exp)
+    private static EvalResult<Result> EvalPow(SourceSpan? span, decimal b, decimal exp)
     {
-        if (exp != Math.Floor(exp))
-            return (decimal)Math.Pow((double)b, (double)exp);
-
-        var n = (long)exp;
-        decimal result = 1;
-        var baseVal = b;
-        // Exponentiation by squaring
-        while (n > 0)
+        try
         {
-            if ((n & 1) == 1)
-                result *= baseVal;
-            baseVal *= baseVal;
-            n >>= 1;
+            var powR = DecimalPow(b, exp);
+            if (powR.IsError)
+                return powR.Error with { Span = span };
+            return EvalResult<Result>.Ok(new Result.Atom(powR.Value));
         }
+        catch (OverflowException)
+        {
+            return new EvalError.NumericOverflow() { Span = span };
+        }
+    }
+
+    private static EvalResult<decimal> DecimalPow(decimal b, decimal exp)
+    {
+        if (exp != decimal.Truncate(exp))
+            return EvalResult<decimal>.Ok(NormalizeDoubleResult(Math.Pow((double)b, (double)exp)));
+
+        var exponent = decimal.ToInt64(exp);
+        if (exponent < 0)
+        {
+            if (b == 0)
+                return new EvalError.IllegalInEval("zero cannot be raised to a negative integer exponent");
+
+            var absExponent = exponent == long.MinValue
+                ? (ulong)long.MaxValue + 1UL
+                : (ulong)(-exponent);
+
+            var positivePower = DecimalPowNonNegative(b, absExponent);
+            if (positivePower == 0)
+                throw new OverflowException();
+            return EvalResult<decimal>.Ok(1m / positivePower);
+        }
+
+        return EvalResult<decimal>.Ok(DecimalPowNonNegative(b, (ulong)exponent));
+    }
+
+    private static decimal DecimalPowNonNegative(decimal b, ulong exponent)
+    {
+        decimal result = 1m;
+        var baseVal = b;
+        var remainingExponent = exponent;
+
+        while (remainingExponent > 0)
+        {
+            if ((remainingExponent & 1UL) == 1UL)
+                result = checked(result * baseVal);
+
+            remainingExponent >>= 1;
+            if (remainingExponent > 0)
+                baseVal = checked(baseVal * baseVal);
+        }
+
         return result;
     }
 

@@ -59,6 +59,15 @@ public class EvaluatorTests
         Assert.Equal(expected, result.Value);
     }
 
+    private static void AssertEvalApprox(string source, decimal expected, int precision = 10)
+    {
+        var result = Eval(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        Assert.Single(result.Value);
+        Assert.Equal(expected, result.Value[0], precision);
+    }
+
     private static void AssertEvalAllPublic(string source, params decimal[] expected)
     {
         var result = EvalAllPublic(source);
@@ -2752,7 +2761,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Power_NegativeExponent()
-        => AssertEval("2 ^ -1", 0);  // Lean: if y < 0 then 0
+        => AssertEval("2 ^ -3", 0.125m);
 
     // â”€â”€ Comparison operators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -3496,25 +3505,53 @@ public class EvaluatorTests
         AssertEval(source, 3);
     }
 
-    // â”€â”€ Fix: BinaryOp.Pow negative exponent guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ BinaryOp.Pow evaluator coverage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_Pow_NegativeExponent_ReturnsZero()
+    public void Eval_Pow_IntegerExponentCases_Work()
     {
-        // Lean: if y < 0 then 0 else intPow x y.toNat
-        AssertEval("2 ^ -1", 0);
+        AssertEval("2 ^ 0", 1);
+        AssertEval("2 ^ 3", 8);
+        AssertEval("5 ^ 4", 625);
+        AssertEval("(-2) ^ 3", -8);
+        AssertEval("(-2) ^ 4", 16);
+        AssertEval("0 ^ 5", 0);
+        AssertEval("0 ^ 0", 1);
+        AssertEval("1 ^ 25", 1);
     }
 
     [Fact]
-    public void Eval_Pow_ZeroExponent_ReturnsOne()
+    public void Eval_Pow_NegativeIntegerExponentCases_Work()
     {
-        AssertEval("5 ^ 0", 1);
+        AssertEval("2 ^ -3", 0.125m);
+        AssertEval("10 ^ -2", 0.01m);
+        AssertEval("(-2) ^ -3", -0.125m);
+        AssertEval("1 ^ -25", 1);
     }
 
     [Fact]
-    public void Eval_Pow_PositiveExponent_Works()
+    public void Eval_Pow_FractionalExponentCases_UseMathPow()
     {
-        AssertEval("2 ^ 10", 1024);
+        AssertEvalApprox("9 ^ 0.5", 3m, precision: 10);
+        AssertEvalApprox("27 ^ 1.5", 140.2961154131m, precision: 10);
+    }
+
+    [Fact]
+    public void Eval_Pow_FractionalExponent_MatchesMathPowNormalization()
+    {
+        AssertEval("0.0000000000000001 ^ 1.5 == Math.Pow(0.0000000000000001, 1.5)", 1);
+    }
+
+    [Fact]
+    public void Eval_Pow_ZeroToNegativeInteger_FailsClearly()
+    {
+        AssertEvalFailsWithIllegalInEval("0 ^ -1", "zero cannot be raised to a negative integer exponent");
+    }
+
+    [Fact]
+    public void Eval_Pow_ExponentOne_DoesNotOverflowFromFinalSquaring()
+    {
+        AssertEval("79228162514264337593543950335 ^ 1", 79228162514264337593543950335m);
     }
 
     // ── Numeric overflow ─────────────────────────────────────────────────────
