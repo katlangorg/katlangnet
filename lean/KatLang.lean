@@ -569,7 +569,14 @@ end AlgEnv
 /-- Evaluation context threaded through resolution and evaluation.
     Wraps the algorithm chain (current algorithm + enclosing callers) used for
     both lexical resolution and runtime dispatch.
-    algEnv carries algorithm-typed parameter bindings for higher-order dispatch. -/
+  algEnv carries algorithm-typed parameter bindings for higher-order dispatch.
+
+  Implementation note: an executable evaluator may thread additional per-run
+  state alongside this core context, for example a cache of already-computed,
+  fully wired zero-parameter property results keyed by the current call stack
+  and binding environment. Such caching is an optimization only. It does NOT
+  change the eager core semantics below into global memoization, call-by-need,
+  or memoization of arbitrary calls. -/
 structure EvalCtx where
   callStack : List Algorithm
   algEnv    : AlgEnv := []
@@ -2371,7 +2378,14 @@ mutual
       - No property → lexical fallback (receiver injection)
 
       When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
-      value-based intrinsics are checked before lexical fallback. -/
+    value-based intrinsics are checked before lexical fallback.
+
+    Optimization note for executable evaluators: repeated references to the
+    same eligible structural or lexical property may be reused within one
+    top-level run when the property is fully wired and requires no further
+    arguments in the current evaluation context. This is intentionally local
+    to one run and must not be interpreted as memoizing arbitrary calls or as
+    changing the semantic behavior of dotCall itself. -/
   partial def evalDotCall (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     match resolveAlg target ctx with

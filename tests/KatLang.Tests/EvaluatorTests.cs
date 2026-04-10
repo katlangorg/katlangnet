@@ -105,6 +105,25 @@ public class EvaluatorTests
         return Evaluator.Run(new Expr.Block(ast));
     }
 
+    private static (EvalResult<Result> Result, Evaluator.MemoizationStats Stats) EvalFullWithMemoizationStats(string source)
+    {
+        var ast = Parser.Parse(source).Root;
+        return Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
+    }
+
+    private static void AssertMemoizationStats(
+        Evaluator.MemoizationStats stats,
+        int expectedHits,
+        int expectedStores,
+        int expectedMisses,
+        int expectedBypasses = 0)
+    {
+        Assert.Equal(expectedHits, stats.PropertyCacheHitCount);
+        Assert.Equal(expectedStores, stats.PropertyCacheStoreCount);
+        Assert.Equal(expectedMisses, stats.PropertyCacheMissCount);
+        Assert.Equal(expectedBypasses, stats.PropertyCacheBypassCount);
+    }
+
     private static void AssertEvalString(string source, string expected)
     {
         var result = EvalFull(source);
@@ -230,6 +249,124 @@ public class EvaluatorTests
 
         Assert.Contains(contexts, context => context.Contains(expectedContext));
         Assert.IsType<EvalError.BadArity>(error);
+    }
+
+    [Fact]
+    public void Eval_Memoizes_RepeatedEligiblePropertyWithinSingleRun()
+    {
+        var source = """
+            Values = range(1, 5)
+            Values.sum + Values.sum
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([30m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
+    }
+
+    [Fact]
+        public void Eval_Memoization_Distinguishes_SamePropertyTextAcrossReceiverContexts()
+    {
+        var source = """
+                        Left = {
+                            Value = 1
+                        }
+                        Right = {
+                            Value = 2
+                        }
+                        Left.Value + Left.Value + Right.Value + Right.Value
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([6m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
+    }
+
+    [Fact]
+    public void Eval_Memoization_DoesNotCache_ParameterizedCallResults()
+    {
+        var source = """
+            Inc = x + 1
+            Inc(1) + Inc(2)
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([5m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 0, expectedStores: 0, expectedMisses: 0);
+    }
+
+    [Fact]
+    public void Eval_Memoization_CacheIsIsolatedPerRun()
+    {
+        var source = """
+            Values = range(1, 5)
+            Values.sum + Values.sum
+            """;
+
+        var ast = Parser.Parse(source).Root;
+
+        var first = Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
+        var second = Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
+
+        if (first.Result.IsError)
+            Assert.Fail($"Expected first run success but got error: {first.Result.Error}");
+        if (second.Result.IsError)
+            Assert.Fail($"Expected second run success but got error: {second.Result.Error}");
+
+        Assert.Equal(first.Result.Value.ToAtoms(), second.Result.Value.ToAtoms());
+        AssertMemoizationStats(first.Stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
+        AssertMemoizationStats(second.Stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
+    }
+
+    [Fact]
+    public void Eval_Memoization_PreservesRecursivePropertyBehavior()
+    {
+        var source = """
+            Recursive = {
+              Step = if(n == 0, 0, Step(n - 1))
+              Step(4)
+            }
+            Recursive + Recursive
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([0m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
+    }
+
+    [Fact]
+    public void Eval_Memoization_Distinguishes_HigherOrderAlgorithmContexts()
+    {
+        var source = """
+                        Left = {
+                            Step = x + 1
+                            Value = Step(10)
+            }
+                        Right = {
+                            Step = x + 2
+                            Value = Step(10)
+                        }
+                        Left.Value + Left.Value + Right.Value + Right.Value
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([46m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
     }
 
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

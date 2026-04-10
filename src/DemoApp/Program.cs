@@ -1,8 +1,9 @@
 ﻿using KatLang;
 
 var source = """
-    Stats(x, (acc, counter)) = (x + acc, counter + 1)
-    range(1, 4).reduce(Stats, (0, 0))
+    Values = range(1, 100)
+    SquaresTotal = Values.map{x*x}.sum
+    Values.sum ^ 2 - SquaresTotal
     """;
 
 switch (KatLangEngine.Run(source))

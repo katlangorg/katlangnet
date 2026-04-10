@@ -9,6 +9,13 @@ Claude must treat the Lean file as the single source of truth for KatLang’s la
 
 Correctness and fidelity to the Lean specification take precedence over convenience, performance, or stylistic preferences.
 
+### Memoization Boundary
+
+- Conservative per-run memoization of repeated eligible property evaluation is implemented in the **C# evaluator**, not as a core semantic mechanism in `KatLang.lean`.
+- `KatLang.lean` may document this optimization boundary in comments, but it does **not** define KatLang as a memoized, lazy, or call-by-need language.
+- Do not describe memoization as a Lean-level language feature unless the Lean spec is explicitly extended to make it one.
+- When working on memoization behavior, treat it as C# implementation logic first; Lean changes should be limited to clarifying comments unless explicitly instructed otherwise.
+
 ---
 
 ## Architectural Overview

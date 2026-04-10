@@ -21,6 +21,134 @@ namespace KatLang;
 /// </summary>
 public static class Evaluator
 {
+    internal readonly record struct MemoizationStats(
+        int PropertyCacheHitCount,
+        int PropertyCacheStoreCount,
+        int PropertyCacheMissCount,
+        int PropertyCacheBypassCount);
+
+    private readonly record struct MemoizedPropertyResult(Result Value, int EmittedCount);
+
+    private enum PropertyMemoLookup
+    {
+        Hit,
+        Miss,
+        InProgress,
+    }
+
+    private enum PropertyMemoKind
+    {
+        LexicalResolve,
+        StructuralDot,
+    }
+
+    private readonly record struct PropertyMemoKey(
+        PropertyMemoKind Kind,
+        string Name,
+        object CallStackToken,
+        object AlgEnvToken,
+        object ValEnvToken,
+        object? BindingToken);
+
+    private sealed class PropertyMemoKeyComparer : IEqualityComparer<PropertyMemoKey>
+    {
+        public static readonly PropertyMemoKeyComparer Instance = new();
+
+        public bool Equals(PropertyMemoKey x, PropertyMemoKey y)
+            => x.Kind == y.Kind
+                && StringComparer.Ordinal.Equals(x.Name, y.Name)
+                && ReferenceEquals(x.CallStackToken, y.CallStackToken)
+                && ReferenceEquals(x.AlgEnvToken, y.AlgEnvToken)
+                && ReferenceEquals(x.ValEnvToken, y.ValEnvToken)
+                && ReferenceEquals(x.BindingToken, y.BindingToken);
+
+        public int GetHashCode(PropertyMemoKey key)
+        {
+            var hash = new HashCode();
+            hash.Add((int)key.Kind);
+            hash.Add(key.Name, StringComparer.Ordinal);
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.CallStackToken));
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.AlgEnvToken));
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.ValEnvToken));
+            hash.Add(key.BindingToken is null
+                ? 0
+                : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.BindingToken));
+            return hash.ToHashCode();
+        }
+    }
+
+    private readonly record struct LexicalPropertyBinding(string Name);
+
+    private sealed class EvaluatorRunState
+    {
+        private readonly Dictionary<PropertyMemoKey, MemoizedPropertyResult> _memoizedPropertyResults =
+            new(PropertyMemoKeyComparer.Instance);
+
+        private readonly HashSet<PropertyMemoKey> _memoizedPropertyResultsInProgress =
+            new(PropertyMemoKeyComparer.Instance);
+
+        private readonly Dictionary<Algorithm, LexicalPropertyBinding> _resolvedLexicalPropertyBindings =
+            new(ReferenceEqualityComparer.Instance);
+
+        private int _propertyCacheHitCount;
+        private int _propertyCacheStoreCount;
+        private int _propertyCacheMissCount;
+        private int _propertyCacheBypassCount;
+
+        public MemoizationStats SnapshotStats()
+            => new(
+                _propertyCacheHitCount,
+                _propertyCacheStoreCount,
+                _propertyCacheMissCount,
+                _propertyCacheBypassCount);
+
+        public void RegisterResolvedLexicalPropertyBinding(Algorithm resolvedAlgorithm, string name)
+        {
+            if (resolvedAlgorithm is Algorithm.Builtin)
+                return;
+
+            _resolvedLexicalPropertyBindings[resolvedAlgorithm] = new LexicalPropertyBinding(name);
+        }
+
+        public bool TryGetResolvedLexicalPropertyBinding(
+            Algorithm resolvedAlgorithm,
+            out LexicalPropertyBinding binding)
+            => _resolvedLexicalPropertyBindings.TryGetValue(resolvedAlgorithm, out binding);
+
+        public PropertyMemoLookup TryGetMemoizedPropertyResult(
+            PropertyMemoKey key,
+            out MemoizedPropertyResult result)
+        {
+            if (_memoizedPropertyResults.TryGetValue(key, out result))
+            {
+                _propertyCacheHitCount++;
+                return PropertyMemoLookup.Hit;
+            }
+
+            if (_memoizedPropertyResultsInProgress.Contains(key))
+            {
+                _propertyCacheBypassCount++;
+                result = default;
+                return PropertyMemoLookup.InProgress;
+            }
+
+            _propertyCacheMissCount++;
+            _memoizedPropertyResultsInProgress.Add(key);
+            result = default;
+            return PropertyMemoLookup.Miss;
+        }
+
+        public void StoreMemoizedPropertyResult(PropertyMemoKey key, MemoizedPropertyResult result)
+        {
+            _memoizedPropertyResultsInProgress.Remove(key);
+            _memoizedPropertyResults[key] = result;
+            _propertyCacheStoreCount++;
+        }
+
+        public void ClearMemoizedPropertyResult(PropertyMemoKey key)
+            => _memoizedPropertyResultsInProgress.Remove(key);
+    }
+
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
     /// <summary>
@@ -32,18 +160,19 @@ public static class Evaluator
     /// </summary>
     private readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
-        IReadOnlyList<(string Name, Algorithm Value)> AlgEnv)
+        IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
+        EvaluatorRunState RunState)
     {
-        public static readonly EvalCtx Empty = new([], []);
+        public static readonly EvalCtx Empty = new([], [], new EvaluatorRunState());
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
-        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv);
+        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, RunState);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv);
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, RunState);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -937,10 +1066,10 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
-        var initialR = EvalAlgOutputCounted(initialAlg, ctx, valEnv);
+        var initialR = EvalMaybeMemoizedPropertyOutputCounted(initialAlg, ctx, valEnv);
         if (initialR.IsError) return initialR.Error;
 
         var elements = new List<Result>();
@@ -974,7 +1103,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1010,7 +1139,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1032,7 +1161,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1084,7 +1213,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1135,7 +1264,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1178,7 +1307,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalAlgOutput(collectionAlg, ctx, valEnv);
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
         if (collectionR.IsError) return collectionR.Error;
 
         var elements = new List<Result>();
@@ -1232,29 +1361,29 @@ public static class Evaluator
         {
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
-                    : EvalAlgOutputCounted(args[2], ctx, valEnv);
+                    ? EvalMaybeMemoizedPropertyOutputCounted(args[1], ctx, valEnv)
+                    : EvalMaybeMemoizedPropertyOutputCounted(args[2], ctx, valEnv);
             }
 
             case (BuiltinId.@if, 2):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
+                    ? EvalMaybeMemoizedPropertyOutputCounted(args[1], ctx, valEnv)
                     : EvalResult<CountedResult>.Ok(new CountedResult(new Result.Group([]), 0));
             }
 
             case (BuiltinId.@while, 2):
             {
-                var initR = EvalAlgOutput(args[1], ctx, valEnv);
+                var initR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 var loopR = WhileLoop(args[0], initR.Value, ctx, valEnv);
                 if (loopR.IsError) return loopR.Error;
@@ -1263,14 +1392,14 @@ public static class Evaluator
 
             case (BuiltinId.@repeat, 3):
             {
-                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                var countR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
                 var n = (long)nR.Value;
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
 
-                var initR = EvalAlgOutput(args[2], ctx, valEnv);
+                var initR = EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 var loopR = RepeatLoop(args[0], n, initR.Value, ctx, valEnv);
                 if (loopR.IsError) return loopR.Error;
@@ -1279,7 +1408,7 @@ public static class Evaluator
 
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                var atomsR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 var atoms = atomsR.Value.ToAtoms();
                 var value = Result.FromItems(atoms.Select(n => new Result.Atom(n)));
@@ -1288,12 +1417,12 @@ public static class Evaluator
 
             case (BuiltinId.@range, 2):
             {
-                var startR = EvalAlgOutput(args[0], ctx, valEnv);
+                var startR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (startR.IsError) return startR.Error;
                 var startIntR = ExpectWholeInt(startR.Value, "range start");
                 if (startIntR.IsError) return startIntR.Error;
 
-                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
+                var stopR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (stopR.IsError) return stopR.Error;
                 var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
                 if (stopIntR.IsError) return stopIntR.Error;
@@ -1304,7 +1433,7 @@ public static class Evaluator
 
             case (BuiltinId.@filter, 2):
             {
-                var collectionR = EvalAlgOutput(args[0], ctx, valEnv);
+                var collectionR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (collectionR.IsError) return collectionR.Error;
 
                 var elements = new List<Result>();
@@ -1658,6 +1787,8 @@ public static class Evaluator
                 if (ctx.CallStack.Count > 0)
                 {
                     var r = LookupLexical(ctx.CallStack[0], name, ctx);
+                    if (r.IsOk)
+                        ctx.RunState.RegisterResolvedLexicalPropertyBinding(r.Value, name);
                     if (r.IsError && r.Error.Span is null)
                         return r.Error with { Span = expr.Span };
                     return r;
@@ -1736,6 +1867,163 @@ public static class Evaluator
         return EvalResult<Result>.Ok(Result.FromItems(results));
     }
 
+    private static bool IsMemoizablePropertyResult(Algorithm alg)
+        => alg is not Algorithm.Builtin && alg.Params.Count == 0;
+
+    private static PropertyMemoLookup TryGetMemoizedPropertyResult(
+        EvalCtx ctx,
+        PropertyMemoKey key,
+        out MemoizedPropertyResult result)
+        => ctx.RunState.TryGetMemoizedPropertyResult(key, out result);
+
+    private static void StoreMemoizedPropertyResult(
+        EvalCtx ctx,
+        PropertyMemoKey key,
+        MemoizedPropertyResult result)
+        => ctx.RunState.StoreMemoizedPropertyResult(key, result);
+
+    private static bool TryCreateLexicalPropertyMemoKey(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        out PropertyMemoKey key)
+    {
+        key = default;
+
+        if (!IsMemoizablePropertyResult(alg))
+            return false;
+
+        if (!ctx.RunState.TryGetResolvedLexicalPropertyBinding(alg, out var binding))
+            return false;
+
+        key = new(
+            PropertyMemoKind.LexicalResolve,
+            binding.Name,
+            ctx.CallStack,
+            ctx.AlgEnv,
+            valEnv,
+            BindingToken: null);
+        return true;
+    }
+
+    private static bool TryCreateStructuralPropertyMemoKey(
+        Algorithm propertyBinding,
+        string name,
+        Algorithm wiredProperty,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        out PropertyMemoKey key)
+    {
+        key = default;
+
+        if (!IsMemoizablePropertyResult(wiredProperty))
+            return false;
+
+        key = new(
+            PropertyMemoKind.StructuralDot,
+            name,
+            ctx.CallStack,
+            ctx.AlgEnv,
+            valEnv,
+            propertyBinding);
+        return true;
+    }
+
+    private static EvalResult<MemoizedPropertyResult> EvalAlgOutputAsMemoizedPropertyResult(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var countedR = EvalAlgOutputCounted(alg, ctx, valEnv);
+        if (countedR.IsError) return countedR.Error;
+        return EvalResult<MemoizedPropertyResult>.Ok(
+            new MemoizedPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
+    }
+
+    private static EvalResult<MemoizedPropertyResult> EvalMemoizedPropertyResult(
+        PropertyMemoKey key,
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var lookup = TryGetMemoizedPropertyResult(ctx, key, out var memoizedResult);
+        if (lookup == PropertyMemoLookup.Hit)
+            return EvalResult<MemoizedPropertyResult>.Ok(memoizedResult);
+
+        if (lookup == PropertyMemoLookup.InProgress)
+            return EvalAlgOutputAsMemoizedPropertyResult(alg, ctx, valEnv);
+
+        var evaluatedResult = EvalAlgOutputAsMemoizedPropertyResult(alg, ctx, valEnv);
+        if (evaluatedResult.IsOk)
+            StoreMemoizedPropertyResult(ctx, key, evaluatedResult.Value);
+        else
+            ctx.RunState.ClearMemoizedPropertyResult(key);
+
+        return evaluatedResult;
+    }
+
+    private static EvalResult<Result> EvalMaybeMemoizedPropertyOutput(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (!TryCreateLexicalPropertyMemoKey(alg, ctx, valEnv, out var key))
+            return EvalAlgOutput(alg, ctx, valEnv);
+
+        var memoizedResult = EvalMemoizedPropertyResult(key, alg, ctx, valEnv);
+        return memoizedResult.IsError
+            ? memoizedResult.Error
+            : EvalResult<Result>.Ok(memoizedResult.Value.Value);
+    }
+
+    private static EvalResult<CountedResult> EvalMaybeMemoizedPropertyOutputCounted(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (!TryCreateLexicalPropertyMemoKey(alg, ctx, valEnv, out var key))
+            return EvalAlgOutputCounted(alg, ctx, valEnv);
+
+        var memoizedResult = EvalMemoizedPropertyResult(key, alg, ctx, valEnv);
+        return memoizedResult.IsError
+            ? memoizedResult.Error
+            : EvalResult<CountedResult>.Ok(
+                new CountedResult(memoizedResult.Value.Value, memoizedResult.Value.EmittedCount));
+    }
+
+    private static EvalResult<Result> EvalMaybeMemoizedStructuralPropertyOutput(
+        Algorithm propertyBinding,
+        string name,
+        Algorithm wiredProperty,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (!TryCreateStructuralPropertyMemoKey(propertyBinding, name, wiredProperty, ctx, valEnv, out var key))
+            return EvalAlgOutput(wiredProperty, ctx, valEnv);
+
+        var memoizedResult = EvalMemoizedPropertyResult(key, wiredProperty, ctx, valEnv);
+        return memoizedResult.IsError
+            ? memoizedResult.Error
+            : EvalResult<Result>.Ok(memoizedResult.Value.Value);
+    }
+
+    private static EvalResult<CountedResult> EvalMaybeMemoizedStructuralPropertyOutputCounted(
+        Algorithm propertyBinding,
+        string name,
+        Algorithm wiredProperty,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (!TryCreateStructuralPropertyMemoKey(propertyBinding, name, wiredProperty, ctx, valEnv, out var key))
+            return EvalAlgOutputCounted(wiredProperty, ctx, valEnv);
+
+        var memoizedResult = EvalMemoizedPropertyResult(key, wiredProperty, ctx, valEnv);
+        return memoizedResult.IsError
+            ? memoizedResult.Error
+            : EvalResult<CountedResult>.Ok(
+                new CountedResult(memoizedResult.Value.Value, memoizedResult.Value.EmittedCount));
+    }
+
     /// <summary>Evaluate an expression and coerce to decimal. Lean: evalInt.</summary>
     private static EvalResult<decimal> EvalInt(
         Expr expr, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv)
@@ -1771,32 +2059,32 @@ public static class Evaluator
             // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalAlgOutput(args[1], ctx, valEnv)
-                    : EvalAlgOutput(args[2], ctx, valEnv);
+                    ? EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv)
+                    : EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
             }
 
             // if(cond, value): 2-arg conditional output / emit-on-true.
             // True → evaluate and return value. False → no output (empty group).
             case (BuiltinId.@if, 2):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalAlgOutput(args[1], ctx, valEnv)
+                    ? EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv)
                     : EvalResult<Result>.Ok(new Result.Group([]));
             }
 
             // while(step, init)
             case (BuiltinId.@while, 2):
             {
-                var initR = EvalAlgOutput(args[1], ctx, valEnv);
+                var initR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 return WhileLoop(args[0], initR.Value, ctx, valEnv);
             }
@@ -1804,13 +2092,13 @@ public static class Evaluator
             // repeat(step, count, init)
             case (BuiltinId.@repeat, 3):
             {
-                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                var countR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
                 var n = (long)nR.Value;
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                var repeatInitR = EvalAlgOutput(args[2], ctx, valEnv);
+                var repeatInitR = EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
                 if (repeatInitR.IsError) return repeatInitR.Error;
                 return RepeatLoop(args[0], n, repeatInitR.Value, ctx, valEnv);
             }
@@ -1818,7 +2106,7 @@ public static class Evaluator
             // atoms(alg) — flatten to atoms
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                var atomsR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 var atoms = atomsR.Value.ToAtoms();
                 return EvalResult<Result>.Ok(
@@ -1828,12 +2116,12 @@ public static class Evaluator
             // range(start, stop) — inclusive integer sequence, ascending or descending.
             case (BuiltinId.@range, 2):
             {
-                var startR = EvalAlgOutput(args[0], ctx, valEnv);
+                var startR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (startR.IsError) return startR.Error;
                 var startIntR = ExpectWholeInt(startR.Value, "range start");
                 if (startIntR.IsError) return startIntR.Error;
 
-                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
+                var stopR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
                 if (stopR.IsError) return stopR.Error;
                 var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
                 if (stopIntR.IsError) return stopIntR.Error;
@@ -1849,7 +2137,7 @@ public static class Evaluator
             // remain grouped and rejected elements are omitted.
             case (BuiltinId.@filter, 2):
             {
-                var collectionR = EvalAlgOutput(args[0], ctx, valEnv);
+                var collectionR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
                 if (collectionR.IsError) return collectionR.Error;
 
                 var elements = new List<Result>();
@@ -2152,7 +2440,7 @@ public static class Evaluator
                     var err = resolvedR.Error;
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
-                return WithSpan(expr.Span, EvalAlgOutput(resolvedR.Value, ctx, valEnv));
+                return WithSpan(expr.Span, EvalMaybeMemoizedPropertyOutput(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -2258,7 +2546,7 @@ public static class Evaluator
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
 
-                return EvalAlgOutputCounted(resolvedR.Value, ctx, valEnv);
+                return EvalMaybeMemoizedPropertyOutputCounted(resolvedR.Value, ctx, valEnv);
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -2817,7 +3105,7 @@ public static class Evaluator
         // Value-based intrinsic: "string" — evaluate algorithm output and convert
         if (name == "string")
         {
-            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            var val = EvalMaybeMemoizedPropertyOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             return ResultToString(val.Value);
         }
@@ -2849,7 +3137,7 @@ public static class Evaluator
             {
                 // No args: 0-param → value access, has params → arity error
                 if (wired.Params.Count == 0)
-                    return EvalAlgOutput(wired, ctx, valEnv);
+                    return EvalMaybeMemoizedStructuralPropertyOutput(prop, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
             // Has args → navigation only: direct argument binding, no receiver
@@ -2950,7 +3238,7 @@ public static class Evaluator
 
         if (name == "string")
         {
-            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            var val = EvalMaybeMemoizedPropertyOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(val.Value);
             if (outR.IsError) return outR.Error;
@@ -2980,7 +3268,7 @@ public static class Evaluator
             if (argsOpt is null)
             {
                 if (wired.Params.Count == 0)
-                    return EvalAlgOutputCounted(wired, ctx, valEnv);
+                    return EvalMaybeMemoizedStructuralPropertyOutputCounted(prop, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
@@ -3042,7 +3330,14 @@ public static class Evaluator
     /// Lean: runResult → EvalM Result.
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
-        => Eval(expr, new EvalCtx([PreludeAlg], []), []);
+        => RunWithMemoizationStats(expr).Result;
+
+    internal static (EvalResult<Result> Result, MemoizationStats Stats) RunWithMemoizationStats(Expr expr)
+    {
+        var runState = new EvaluatorRunState();
+        var result = Eval(expr, new EvalCtx([PreludeAlg], [], runState), []);
+        return (result, runState.SnapshotStats());
+    }
 
     /// <summary>
     /// Run evaluation and flatten to atoms.
