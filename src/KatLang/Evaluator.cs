@@ -38,9 +38,12 @@ public static class Evaluator
 
     private enum PropertyMemoKind
     {
-        LexicalResolve,
+        LexicalClosedResolve,
+        LexicalContextualResolve,
         StructuralDot,
     }
+
+    private static readonly object ClosedLexicalPropertyMemoContextToken = new();
 
     private readonly record struct PropertyMemoKey(
         PropertyMemoKind Kind,
@@ -77,7 +80,18 @@ public static class Evaluator
         }
     }
 
-    private readonly record struct LexicalPropertyBinding(string Name);
+    private readonly record struct LexicalPropertyReference(
+        Property Binding,
+        ScopeCtx DefinitionScope);
+
+    private readonly record struct ResolvedLexicalProperty(
+        Algorithm ResolvedAlgorithm,
+        LexicalPropertyReference Reference);
+
+    private readonly record struct LexicalPropertyBinding(
+        string Name,
+        object BindingToken,
+        bool IsClosedForMemoization);
 
     private sealed class EvaluatorRunState
     {
@@ -89,6 +103,9 @@ public static class Evaluator
 
         private readonly Dictionary<Algorithm, LexicalPropertyBinding> _resolvedLexicalPropertyBindings =
             new(ReferenceEqualityComparer.Instance);
+
+        private readonly Dictionary<LexicalPropertyReference, bool> _contextIndependentLexicalBindings =
+            [];
 
         private int _propertyCacheHitCount;
         private int _propertyCacheStoreCount;
@@ -102,18 +119,30 @@ public static class Evaluator
                 _propertyCacheMissCount,
                 _propertyCacheBypassCount);
 
-        public void RegisterResolvedLexicalPropertyBinding(Algorithm resolvedAlgorithm, string name)
+        public void RegisterResolvedLexicalPropertyBinding(
+            Algorithm resolvedAlgorithm,
+            LexicalPropertyBinding binding)
         {
             if (resolvedAlgorithm is Algorithm.Builtin)
                 return;
 
-            _resolvedLexicalPropertyBindings[resolvedAlgorithm] = new LexicalPropertyBinding(name);
+            _resolvedLexicalPropertyBindings[resolvedAlgorithm] = binding;
         }
 
         public bool TryGetResolvedLexicalPropertyBinding(
             Algorithm resolvedAlgorithm,
             out LexicalPropertyBinding binding)
             => _resolvedLexicalPropertyBindings.TryGetValue(resolvedAlgorithm, out binding);
+
+        public bool TryGetContextIndependentLexicalBinding(
+            LexicalPropertyReference reference,
+            out bool isContextIndependent)
+            => _contextIndependentLexicalBindings.TryGetValue(reference, out isContextIndependent);
+
+        public void StoreContextIndependentLexicalBinding(
+            LexicalPropertyReference reference,
+            bool isContextIndependent)
+            => _contextIndependentLexicalBindings[reference] = isContextIndependent;
 
         public PropertyMemoLookup TryGetMemoizedPropertyResult(
             PropertyMemoKey key,
@@ -228,11 +257,25 @@ public static class Evaluator
         return null;
     }
 
+    private static Property? LookupPropBinding(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+            if (prop.Name == name) return prop;
+        return null;
+    }
+
     /// <summary>Lean: Algorithm.lookupPublicProp (public only).</summary>
     private static Algorithm? LookupPublicProp(Algorithm alg, string name)
     {
         foreach (var prop in alg.Properties)
             if (prop.Name == name && prop.IsPublic) return prop.Value;
+        return null;
+    }
+
+    private static Property? LookupPublicPropBinding(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+            if (prop.Name == name && prop.IsPublic) return prop;
         return null;
     }
 
@@ -334,6 +377,17 @@ public static class Evaluator
         return sc.Parent is { } parent ? LookupInParentsDirect(parent, name) : null;
     }
 
+    private static LexicalPropertyReference? LookupInParentsDirectBinding(ScopeCtx sc, string name)
+    {
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name)
+                return new LexicalPropertyReference(prop, sc);
+        }
+
+        return sc.Parent is { } parent ? LookupInParentsDirectBinding(parent, name) : null;
+    }
+
     /// <summary>
     /// Direct lexical lookup: local properties + parent chain only (no opens).
     /// Lean: lookupLexicalDirect (Option).
@@ -421,7 +475,7 @@ public static class Evaluator
     /// A single hit from open lookup: which provider supplied it, the library, and the child algorithm.
     /// Lean: OpenHit (provider, lib, child).
     /// </summary>
-    private readonly record struct OpenHit(string Provider, Algorithm Lib, Algorithm Child);
+    private readonly record struct OpenHit(string Provider, Algorithm Lib, Property Binding);
 
     /// <summary>
     /// Resolve all opens of an algorithm upfront.
@@ -477,10 +531,10 @@ public static class Evaluator
     /// Returns Err(AmbiguousOpen) if multiple opens provide it publicly.
     /// Lean: lookupOpens → EvalM (Option Algorithm).
     /// </summary>
-    private static EvalResult<Algorithm?> LookupOpens(
+    private static EvalResult<ResolvedLexicalProperty?> LookupOpens(
         Algorithm alg, string name, EvalCtx ctx)
     {
-        if (alg.Opens.Count == 0) return EvalResult<Algorithm?>.Ok(null);
+        if (alg.Opens.Count == 0) return EvalResult<ResolvedLexicalProperty?>.Ok(null);
 
         var innerCtx = ctx.Push(alg);
         var resolvedResult = ResolveAllOpens(alg, innerCtx);
@@ -491,15 +545,21 @@ public static class Evaluator
         // Public-only filtering: only public properties visible through opens
         foreach (var ri in resolvedResult.Value)
         {
-            var child = LookupPublicProp(ri.Lib, name);
-            if (child is not null)
-                hits.Add(new OpenHit(ri.Key, ri.Lib, child));
+            var binding = LookupPublicPropBinding(ri.Lib, name);
+            if (binding is not null)
+                hits.Add(new OpenHit(ri.Key, ri.Lib, binding));
         }
 
         if (hits.Count == 0)
-            return EvalResult<Algorithm?>.Ok(null);
+            return EvalResult<ResolvedLexicalProperty?>.Ok(null);
         if (hits.Count == 1)
-            return EvalResult<Algorithm?>.Ok(ChildOf(hits[0].Lib, hits[0].Child));
+        {
+            var hit = hits[0];
+            return EvalResult<ResolvedLexicalProperty?>.Ok(
+                new ResolvedLexicalProperty(
+                    ChildOf(hit.Lib, hit.Binding.Value),
+                    new LexicalPropertyReference(hit.Binding, AsScopeCtx(hit.Lib))));
+        }
         return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
     }
 
@@ -510,18 +570,18 @@ public static class Evaluator
     /// Checks opens at each level of the parent chain as fallback.
     /// Lean: lookupOpensInParentChain → EvalM (Option Algorithm).
     /// </summary>
-    private static EvalResult<Algorithm?> LookupOpensInParentChain(
+    private static EvalResult<ResolvedLexicalProperty?> LookupOpensInParentChain(
         ScopeCtx sc, string name, EvalCtx ctx)
     {
         var tempAlg = ForOpens(sc);
         var openResult = LookupOpens(tempAlg, name, ctx);
         if (openResult.IsError) return openResult.Error;
         if (openResult.Value is not null)
-            return EvalResult<Algorithm?>.Ok(openResult.Value);
+            return EvalResult<ResolvedLexicalProperty?>.Ok(openResult.Value);
 
         return sc.Parent is { } parent
             ? LookupOpensInParentChain(parent, name, ctx)
-            : EvalResult<Algorithm?>.Ok(null);
+            : EvalResult<ResolvedLexicalProperty?>.Ok(null);
     }
 
     /// <summary>
@@ -529,19 +589,19 @@ public static class Evaluator
     /// Checks opens at each level of the parent chain as fallback.
     /// Lean: lookupOpensInChain → EvalM (Option Algorithm).
     /// </summary>
-    private static EvalResult<Algorithm?> LookupOpensInChain(
+    private static EvalResult<ResolvedLexicalProperty?> LookupOpensInChain(
         Algorithm alg, string name, EvalCtx ctx)
     {
         // Try opens at current level
         var openResult = LookupOpens(alg, name, ctx);
         if (openResult.IsError) return openResult.Error;
         if (openResult.Value is not null)
-            return EvalResult<Algorithm?>.Ok(openResult.Value);
+            return EvalResult<ResolvedLexicalProperty?>.Ok(openResult.Value);
 
         // Try parent chain
         return alg.Parent is { } sc
             ? LookupOpensInParentChain(sc, name, ctx)
-            : EvalResult<Algorithm?>.Ok(null);
+            : EvalResult<ResolvedLexicalProperty?>.Ok(null);
     }
 
     /// <summary>
@@ -552,27 +612,37 @@ public static class Evaluator
     /// Structural ownership always takes precedence over opens.
     /// Lean: lookupLexical → EvalM Algorithm.
     /// </summary>
-    private static EvalResult<Algorithm> LookupLexical(
+    private static EvalResult<ResolvedLexicalProperty> LookupLexical(
         Algorithm alg, string name, EvalCtx ctx)
     {
         // 1. Local properties (any visibility)
-        var local = LookupProp(alg, name);
+        var local = LookupPropBinding(alg, name);
         if (local is not null)
-            return EvalResult<Algorithm>.Ok(ChildOf(alg, local));
+        {
+            return EvalResult<ResolvedLexicalProperty>.Ok(
+                new ResolvedLexicalProperty(
+                    ChildOf(alg, local.Value),
+                    new LexicalPropertyReference(local, AsScopeCtx(alg))));
+        }
 
         // 2. Parent chain structural only (any visibility, no opens)
         if (alg.Parent is { } sc)
         {
-            var structural = LookupInParentsDirect(sc, name);
+            var structural = LookupInParentsDirectBinding(sc, name);
             if (structural is not null)
-                return EvalResult<Algorithm>.Ok(structural);
+            {
+                return EvalResult<ResolvedLexicalProperty>.Ok(
+                    new ResolvedLexicalProperty(
+                        WithParent(structural.Value.Binding.Value, structural.Value.DefinitionScope),
+                        structural.Value));
+            }
         }
 
         // 3. Opens fallback across the entire chain (public only)
         var opensResult = LookupOpensInChain(alg, name, ctx);
         if (opensResult.IsError) return opensResult.Error;
-        if (opensResult.Value is not null)
-            return EvalResult<Algorithm>.Ok(opensResult.Value);
+        if (opensResult.Value is { } openBinding)
+            return EvalResult<ResolvedLexicalProperty>.Ok(openBinding);
 
         return new EvalError.UnknownName(name);
     }
@@ -1788,10 +1858,17 @@ public static class Evaluator
                 {
                     var r = LookupLexical(ctx.CallStack[0], name, ctx);
                     if (r.IsOk)
-                        ctx.RunState.RegisterResolvedLexicalPropertyBinding(r.Value, name);
+                    {
+                        var binding = CreateLexicalPropertyBinding(r.Value.Reference, ctx.RunState);
+                        ctx.RunState.RegisterResolvedLexicalPropertyBinding(
+                            r.Value.ResolvedAlgorithm,
+                            binding);
+                    }
                     if (r.IsError && r.Error.Span is null)
                         return r.Error with { Span = expr.Span };
-                    return r;
+                    return r.IsError
+                        ? r.Error
+                        : EvalResult<Algorithm>.Ok(r.Value.ResolvedAlgorithm);
                 }
                 return new EvalError.UnknownName(name) { Span = expr.Span };
             }
@@ -1882,6 +1959,195 @@ public static class Evaluator
         MemoizedPropertyResult result)
         => ctx.RunState.StoreMemoizedPropertyResult(key, result);
 
+    private static ScopeCtx CreateLexicalScope(Algorithm alg, ScopeCtx? parentScope)
+        => new(parentScope, alg.Opens, alg.Properties);
+
+    private static bool HasOpenSensitiveLexicalScope(Algorithm alg, ScopeCtx? parentScope)
+    {
+        if (alg.Opens.Count > 0)
+            return true;
+
+        for (var scope = parentScope; scope is not null; scope = scope.Parent)
+        {
+            if (scope.Opens.Count > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryLookupLexicalBindingWithoutOpens(
+        Algorithm alg,
+        ScopeCtx? parentScope,
+        string name,
+        out LexicalPropertyReference reference)
+    {
+        var local = LookupPropBinding(alg, name);
+        if (local is not null)
+        {
+            reference = new LexicalPropertyReference(local, CreateLexicalScope(alg, parentScope));
+            return true;
+        }
+
+        if (parentScope is not null)
+        {
+            var structural = LookupInParentsDirectBinding(parentScope, name);
+            if (structural is not null)
+            {
+                reference = structural.Value;
+                return true;
+            }
+        }
+
+        reference = default;
+        return false;
+    }
+
+    private static LexicalPropertyBinding CreateLexicalPropertyBinding(
+        LexicalPropertyReference reference,
+        EvaluatorRunState runState)
+        => new(
+            reference.Binding.Name,
+            reference.Binding,
+            IsClosedLexicalPropertyForMemoization(reference, runState));
+
+    private static bool IsClosedLexicalPropertyForMemoization(
+        LexicalPropertyReference reference,
+        EvaluatorRunState runState)
+    {
+        if (reference.Binding.Value is Algorithm.Builtin)
+            return false;
+
+        if (reference.Binding.Value.Params.Count != 0)
+            return false;
+
+        return IsContextIndependentLexicalBinding(
+            reference,
+            runState,
+            new HashSet<object>(ReferenceEqualityComparer.Instance));
+    }
+
+    private static bool IsContextIndependentLexicalBinding(
+        LexicalPropertyReference reference,
+        EvaluatorRunState runState,
+        HashSet<object> activeBindings)
+    {
+        if (runState.TryGetContextIndependentLexicalBinding(reference, out var cached))
+            return cached;
+
+        if (!activeBindings.Add(reference.Binding))
+            return false;
+
+        var isContextIndependent = IsContextIndependentAlgorithm(
+            reference.Binding.Value,
+            reference.DefinitionScope,
+            runState,
+            activeBindings);
+
+        activeBindings.Remove(reference.Binding);
+        runState.StoreContextIndependentLexicalBinding(reference, isContextIndependent);
+        return isContextIndependent;
+    }
+
+    private static bool IsContextIndependentAlgorithm(
+        Algorithm alg,
+        ScopeCtx? parentScope,
+        EvaluatorRunState runState,
+        HashSet<object> activeBindings)
+    {
+        if (alg is Algorithm.Builtin)
+            return true;
+
+        if (alg is Algorithm.Conditional)
+            return false;
+
+        if (HasOpenSensitiveLexicalScope(alg, parentScope))
+            return false;
+
+        foreach (var expr in alg.Output)
+        {
+            if (!IsContextIndependentExpression(expr, alg, parentScope, runState, activeBindings))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsContextIndependentExpression(
+        Expr expr,
+        Algorithm currentAlg,
+        ScopeCtx? parentScope,
+        EvaluatorRunState runState,
+        HashSet<object> activeBindings)
+    {
+        switch (expr)
+        {
+            case Expr.Num:
+            case Expr.StringLiteral:
+                return true;
+
+            case Expr.Param(var name):
+                return currentAlg.Params.Contains(name);
+
+            case Expr.Grace(var inner, _):
+                return IsContextIndependentExpression(inner, currentAlg, parentScope, runState, activeBindings);
+
+            case Expr.Unary(_, var operand):
+                return IsContextIndependentExpression(operand, currentAlg, parentScope, runState, activeBindings);
+
+            case Expr.Binary(_, var left, var right):
+                return IsContextIndependentExpression(left, currentAlg, parentScope, runState, activeBindings)
+                    && IsContextIndependentExpression(right, currentAlg, parentScope, runState, activeBindings);
+
+            case Expr.Combine(var left, var right):
+                return IsContextIndependentExpression(left, currentAlg, parentScope, runState, activeBindings)
+                    && IsContextIndependentExpression(right, currentAlg, parentScope, runState, activeBindings);
+
+            case Expr.Index(var target, var selector):
+                return IsContextIndependentExpression(target, currentAlg, parentScope, runState, activeBindings)
+                    && IsContextIndependentExpression(selector, currentAlg, parentScope, runState, activeBindings);
+
+            case Expr.Resolve(var name):
+            {
+                if (!TryLookupLexicalBindingWithoutOpens(currentAlg, parentScope, name, out var reference))
+                    return false;
+
+                return reference.Binding.Value is Algorithm.Builtin
+                    || IsContextIndependentLexicalBinding(reference, runState, activeBindings);
+            }
+
+            case Expr.Block(var alg):
+                return IsContextIndependentAlgorithm(
+                    alg,
+                    CreateLexicalScope(currentAlg, parentScope),
+                    runState,
+                    activeBindings);
+
+            case Expr.Call(var func, var args):
+                return IsContextIndependentExpression(func, currentAlg, parentScope, runState, activeBindings)
+                    && IsContextIndependentAlgorithm(
+                        args,
+                        CreateLexicalScope(currentAlg, parentScope),
+                        runState,
+                        activeBindings);
+
+            case Expr.DotCall(var target, _, var argsOpt):
+                return IsContextIndependentExpression(target, currentAlg, parentScope, runState, activeBindings)
+                    && (argsOpt is null
+                        || IsContextIndependentAlgorithm(
+                            argsOpt,
+                            CreateLexicalScope(currentAlg, parentScope),
+                            runState,
+                            activeBindings));
+
+            case Expr.NativeCall(_, var argNames):
+                return argNames.All(currentAlg.Params.Contains);
+
+            default:
+                return false;
+        }
+    }
+
     private static bool TryCreateLexicalPropertyMemoKey(
         Algorithm alg,
         EvalCtx ctx,
@@ -1896,8 +2162,20 @@ public static class Evaluator
         if (!ctx.RunState.TryGetResolvedLexicalPropertyBinding(alg, out var binding))
             return false;
 
+        if (binding.IsClosedForMemoization && ctx.AlgEnv.Count == 0 && valEnv.Count == 0)
+        {
+            key = new(
+                PropertyMemoKind.LexicalClosedResolve,
+                binding.Name,
+                ClosedLexicalPropertyMemoContextToken,
+                ClosedLexicalPropertyMemoContextToken,
+                ClosedLexicalPropertyMemoContextToken,
+                binding.BindingToken);
+            return true;
+        }
+
         key = new(
-            PropertyMemoKind.LexicalResolve,
+            PropertyMemoKind.LexicalContextualResolve,
             binding.Name,
             ctx.CallStack,
             ctx.AlgEnv,

@@ -268,6 +268,26 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Memoization_Reuses_ClosedLexicalPropertyAcrossCallerContexts()
+    {
+        var source = """
+            Values = range(1, 100)
+            Square = x * x
+            SquaresTotal = Values.map(Square).sum
+            Values.sum ^ 2 - SquaresTotal
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([25164150m], result.Value.ToAtoms());
+        Assert.True(
+            stats.PropertyCacheHitCount > 0,
+            $"Expected at least one memoization hit, but saw stats: {stats}");
+    }
+
+    [Fact]
         public void Eval_Memoization_Distinguishes_SamePropertyTextAcrossReceiverContexts()
     {
         var source = """
@@ -367,6 +387,190 @@ public class EvaluatorTests
 
         Assert.Equal([46m], result.Value.ToAtoms());
         AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
+    }
+
+    [Fact]
+    public void Eval_Memoization_Distinguishes_SameLexicalPropertyTextAcrossNestedBindings()
+    {
+        var source = """
+            Outer = {
+                Left = {
+                    Value = 10
+                    Value + Value
+                }
+                Right = {
+                    Value = 20
+                    Value + Value
+                }
+                Left + Right
+            }
+            Outer
+            """;
+
+        var (result, stats) = EvalFullWithMemoizationStats(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([60m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 5, expectedMisses: 5);
+    }
+
+    [Fact]
+    public void Eval_Memoization_Keeps_CallerBoundZeroParamLexicalPropertyOnContextualKey()
+    {
+        var shared = new Property(
+            "Shared",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Param("x")]));
+
+        var caller = new Property(
+            "Caller",
+            new Algorithm.User(
+                Parent: null,
+                Params: ["x"],
+                Opens: [],
+                Properties: [shared],
+                Output:
+                [
+                    new Expr.Binary(
+                        BinaryOp.Add,
+                        new Expr.Resolve("Shared"),
+                        new Expr.Resolve("Shared"))
+                ]));
+
+        var oneArg = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [],
+            Output: [new Expr.Num(1)]);
+
+        var twoArg = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [],
+            Output: [new Expr.Num(2)]);
+
+        var root = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [caller],
+            Output:
+            [
+                new Expr.Binary(
+                    BinaryOp.Add,
+                    new Expr.Call(new Expr.Resolve("Caller"), oneArg),
+                    new Expr.Call(new Expr.Resolve("Caller"), twoArg))
+            ]);
+
+        var (result, stats) = Evaluator.RunWithMemoizationStats(new Expr.Block(root));
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([6m], result.Value.ToAtoms());
+        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
+    }
+
+    [Fact]
+    public void Eval_Memoization_SharedBindingAcrossDefinitionScopes_DoesNotContaminateOpenDependentMeaning()
+    {
+        var sharedClosedBinding = new Property(
+            "Shared",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Resolve("Base")])) ;
+
+        var localBaseBinding = new Property(
+            "Base",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Num(1)]));
+
+        var openBaseBinding = new Property(
+            "Base",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Num(2)]),
+            IsPublic: true);
+
+        var libraryBinding = new Property(
+            "Lib",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [openBaseBinding],
+                Output: []),
+            IsPublic: true);
+
+        var structuralWrapperBinding = new Property(
+            "StructuralWrapper",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [localBaseBinding, sharedClosedBinding],
+                Output:
+                [
+                    new Expr.Binary(
+                        BinaryOp.Add,
+                        new Expr.Resolve("Shared"),
+                        new Expr.Resolve("Shared"))
+                ]));
+
+        var openWrapperBinding = new Property(
+            "OpenWrapper",
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [new Expr.Resolve("Lib")],
+                Properties: [sharedClosedBinding],
+                Output:
+                [
+                    new Expr.Binary(
+                        BinaryOp.Add,
+                        new Expr.Resolve("Shared"),
+                        new Expr.Resolve("Shared"))
+                ]));
+
+        var root = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [libraryBinding, structuralWrapperBinding, openWrapperBinding],
+            Output:
+            [
+                new Expr.Binary(
+                    BinaryOp.Add,
+                    new Expr.Resolve("StructuralWrapper"),
+                    new Expr.Resolve("OpenWrapper"))
+            ]);
+
+        var (result, stats) = Evaluator.RunWithMemoizationStats(new Expr.Block(root));
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal(
+            [6m],
+            result.Value.ToAtoms());
+        Assert.True(
+            stats.PropertyCacheHitCount >= 2,
+            $"Expected memoization to remain active within each wrapper without cross-scope contamination, but saw stats: {stats}");
     }
 
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
