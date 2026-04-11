@@ -14,7 +14,7 @@ public static class ImplicitArgumentResolver
     /// </summary>
     public static Algorithm Resolve(Algorithm root)
     {
-        return ProcessAlgorithm(root, parentParamMap: new Dictionary<string, IReadOnlyList<string>>());
+        return ProcessAlgorithm(root, parentParamMap: new Dictionary<string, IReadOnlyList<string>>(), isRoot: true);
     }
 
     /// <summary>
@@ -256,7 +256,8 @@ public static class ImplicitArgumentResolver
     /// </summary>
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
-        Dictionary<string, IReadOnlyList<string>> parentParamMap)
+        Dictionary<string, IReadOnlyList<string>> parentParamMap,
+        bool isRoot = false)
     {
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
@@ -320,7 +321,12 @@ public static class ImplicitArgumentResolver
         var deps = new List<(string Name, IReadOnlyList<string> Params)>();
         var seen = new HashSet<string>();
         foreach (var expr in alg.Output)
+        {
+            if (ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot))
+                continue;
+
             CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false);
+        }
 
         // Compute lifted params: existing first, then new ones from deps
         var existingParams = new HashSet<string>(alg.Params);
@@ -337,7 +343,12 @@ public static class ImplicitArgumentResolver
         // Rewrite output expressions
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
-            rewrittenOutput.Add(RewriteImplicitCalls(expr, visibleParamMap, inCallPosition: false));
+        {
+            rewrittenOutput.Add(
+                ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot)
+                    ? expr
+                    : RewriteImplicitCalls(expr, visibleParamMap, inCallPosition: false));
+        }
 
         return alg with
         {
@@ -346,6 +357,15 @@ public static class ImplicitArgumentResolver
             Output = rewrittenOutput,
         };
     }
+
+    private static bool ShouldPreserveBareRootResolve(
+        Expr expr,
+        Dictionary<string, IReadOnlyList<string>> paramMap,
+        bool isRoot)
+        => isRoot
+            && expr is Expr.Resolve(var name)
+            && paramMap.TryGetValue(name, out var ps)
+            && ps.Count > 0;
 
     /// <summary>
     /// Collects implicit dependencies from an expression: bare <see cref="Expr.Resolve"/> nodes

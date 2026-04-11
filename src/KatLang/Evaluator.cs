@@ -327,16 +327,62 @@ public static class Evaluator
     private static string OpenExprName(Expr e) => e switch
     {
         Expr.Resolve(var n) => n,
-        Expr.DotCall(var o, var n, _) => OpenExprName(o) + "." + n,
+        Expr.Param(var n) => n,
+        Expr.Num(var n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Expr.StringLiteral(var s) => $"'{s}'",
+        Expr.Unary(var op, var operand) => op switch
+        {
+            UnaryOp.Minus => $"-{OpenExprUnaryOperandName(operand)}",
+            UnaryOp.Not => $"not {OpenExprUnaryOperandName(operand)}",
+            _ => $"({ExprKind(e)})",
+        },
+        Expr.Binary(var op, var left, var right) => $"({OpenExprName(left)} {OpenExprBinaryOp(op)} {OpenExprName(right)})",
+        Expr.Index(var target, var selector) => $"{OpenExprName(target)}[{OpenExprName(selector)}]",
+        Expr.DotCall(var o, var n, var argsOpt) => argsOpt is null
+            ? OpenExprName(o) + "." + n
+            : OpenExprName(o) + "." + n + "(...)",
+        Expr.Call(var f, _) => OpenExprName(f) + "(...)",
+        Expr.Grace(var inner, var weight) => weight < 0
+            ? "~" + OpenExprName(inner)
+            : OpenExprName(inner) + "~",
         Expr.Block => "(inline library)",
         Expr.Combine(var a, var b) => OpenExprName(a) + " + " + OpenExprName(b),
         _ => $"({ExprKind(e)})",
+    };
+
+    private static string OpenExprUnaryOperandName(Expr expr) => expr switch
+    {
+        Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.DotCall or Expr.Index
+            => OpenExprName(expr),
+        _ => $"({OpenExprName(expr)})",
+    };
+
+    private static string OpenExprBinaryOp(BinaryOp op) => op switch
+    {
+        BinaryOp.Add => "+",
+        BinaryOp.Sub => "-",
+        BinaryOp.Mul => "*",
+        BinaryOp.Div => "/",
+        BinaryOp.IDiv => "div",
+        BinaryOp.Mod => "mod",
+        BinaryOp.Pow => "^",
+        BinaryOp.Lt => "<",
+        BinaryOp.Gt => ">",
+        BinaryOp.Le => "<=",
+        BinaryOp.Ge => ">=",
+        BinaryOp.Eq => "==",
+        BinaryOp.Ne => "!=",
+        BinaryOp.And => "and",
+        BinaryOp.Or => "or",
+        BinaryOp.Xor => "xor",
+        _ => "?",
     };
 
     // ── Context string helpers (Lean: CtxMsg.openMsg, CtxMsg.call, CtxMsg.dotCall) ─
 
     private static string CtxOpen(string key) => $"while resolving open: {key}";
     private static string CtxCall(Expr f) => $"while evaluating call to {OpenExprName(f)}";
+    private static string CtxProperty(string name) => $"while evaluating property {name}";
     private static string CtxDotCall(Expr obj, string name) => $"while evaluating dotCall .{name} of {OpenExprName(obj)}";
 
     // ── Error context helper ────────────────────────────────────────────────
@@ -354,6 +400,14 @@ public static class Evaluator
         result.IsError && result.Error.Span is null
             ? (result.Error with { Span = span })
             : result;
+
+    private static EvalResult<T> WithPropertyContextOnMissingOutput<T>(string name, SourceSpan? span, EvalResult<T> result)
+    {
+        if (result.IsError && result.Error is EvalError.MissingOutput)
+            return WithSpan<T>(span, new EvalError.WithContext(CtxProperty(name), result.Error));
+
+        return WithSpan(span, result);
+    }
 
     /// <summary>Returns the <see cref="SourceSpan"/> of the first output expression that has one.</summary>
     private static SourceSpan? FirstSpan(IReadOnlyList<Expr> output)
@@ -778,22 +832,28 @@ public static class Evaluator
     /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
     /// evaluates back to the same shape.
     /// </summary>
+    private static Expr EmptyResultExpr()
+        => new Expr.Call(
+            new Expr.Block(new Algorithm.Builtin(BuiltinId.@if)),
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Num(0), new Expr.Num(0)]));
+
     private static Expr ResultToExpr(Result result) => result switch
     {
         Result.Atom(var n) => new Expr.Num(n),
         Result.Str(var s) => new Expr.StringLiteral(s),
+        Result.Group(var items) when items.Count == 0 => EmptyResultExpr(),
         Result.Group(var items) => new Expr.Block(new Algorithm.User(
             Parent: null,
             Params: [],
             Opens: [],
             Properties: [],
             Output: items.Select(ResultToExpr).ToList())),
-        _ => new Expr.Block(new Algorithm.User(
-            Parent: null,
-            Params: [],
-            Opens: [],
-            Properties: [],
-            Output: [])),
+        _ => EmptyResultExpr(),
     };
 
     /// <summary>Lean: <c>Algorithm.ofExpr</c>.</summary>
@@ -1034,14 +1094,18 @@ public static class Evaluator
     /// output expressions count separately.
     /// Lean: <c>evalAlgOutputCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalAlgOutputCounted(
+    private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<(string, Result)> valEnv,
+        bool allowEmptyUserOutput)
     {
         var dupProp = alg.FindDuplicatePropName();
         if (dupProp is not null)
             return new EvalError.DuplicateProperty(dupProp);
+
+        if (!allowEmptyUserOutput && alg is Algorithm.User { Output: { Count: 0 } })
+            return new EvalError.MissingOutput();
 
         var innerCtx = ctx.Push(alg);
         var results = new List<Result>();
@@ -1057,6 +1121,12 @@ public static class Evaluator
 
         return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(results), emittedCount));
     }
+
+    private static EvalResult<CountedResult> EvalAlgOutputCounted(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalAlgOutputCountedCore(alg, ctx, valEnv, allowEmptyUserOutput: false);
 
     /// <summary>
     /// Evaluate a conditional algorithm against an already-assembled argument
@@ -1920,16 +1990,22 @@ public static class Evaluator
     /// <summary>
     /// Evaluate an algorithm's output expressions and collect into a single Result.
     /// Normalization invariant: outputs are always normalized at algorithm boundaries.
+    /// User-defined algorithms may exist structurally without output, but forcing
+    /// them in value position raises <see cref="EvalError.MissingOutput"/>.
     /// Lean: evalAlgOutput → EvalM Result.
     /// </summary>
-    private static EvalResult<Result> EvalAlgOutput(
+    private static EvalResult<Result> EvalAlgOutputCore(
         Algorithm alg,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<(string, Result)> valEnv,
+        bool allowEmptyUserOutput)
     {
         var dupProp = alg.FindDuplicatePropName();
         if (dupProp is not null)
             return new EvalError.DuplicateProperty(dupProp);
+
+        if (!allowEmptyUserOutput && alg is Algorithm.User { Output: { Count: 0 } })
+            return new EvalError.MissingOutput();
 
         var innerCtx = ctx.Push(alg);
         var results = new List<Result>();
@@ -1943,6 +2019,18 @@ public static class Evaluator
 
         return EvalResult<Result>.Ok(Result.FromItems(results));
     }
+
+    private static EvalResult<Result> EvalAlgOutput(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalAlgOutputCore(alg, ctx, valEnv, allowEmptyUserOutput: false);
+
+    private static EvalResult<Result> EvalProgramOutput(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalAlgOutputCore(alg, ctx, valEnv, allowEmptyUserOutput: true);
 
     private static bool IsMemoizablePropertyResult(Algorithm alg)
         => alg is not Algorithm.Builtin && alg.Params.Count == 0;
@@ -2597,7 +2685,7 @@ public static class Evaluator
                 if (algBound is not null)
                 {
                     if (algBound.Params.Count == 0)
-                        return EvalAlgOutput(algBound, ctx, valEnv);
+                        return WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
                     return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
                 }
                 return new EvalError.UnknownName(name) { Span = expr.Span };
@@ -2708,7 +2796,7 @@ public static class Evaluator
             {
                 var wired = WireToCaller(ctx, alg);
                 if (wired.Params.Count == 0)
-                    return EvalAlgOutput(wired, ctx, valEnv);
+                    return WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
                 var blockSpan = expr.Span ?? FirstSpan(wired.Output);
                 return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
             }
@@ -2721,7 +2809,18 @@ public static class Evaluator
                     var err = resolvedR.Error;
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
-                return WithSpan(expr.Span, EvalMaybeMemoizedPropertyOutput(resolvedR.Value, ctx, valEnv));
+
+                if (resolvedR.Value.Params.Count != 0)
+                {
+                    return WithSpan<Result>(
+                        expr.Span,
+                        new EvalError.WithContext(
+                            CtxProperty(name),
+                            new EvalError.ArityMismatch(resolvedR.Value.Params.Count, 0)));
+                }
+
+                return WithPropertyContextOnMissingOutput(name, expr.Span,
+                    EvalMaybeMemoizedPropertyOutput(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -2782,7 +2881,7 @@ public static class Evaluator
                 if (algBound is not null)
                 {
                     if (algBound.Params.Count == 0)
-                        return EvalAlgOutputCounted(algBound, ctx, valEnv);
+                        return WithSpan(expr.Span, EvalAlgOutputCounted(algBound, ctx, valEnv));
                     return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
                 }
 
@@ -2809,7 +2908,7 @@ public static class Evaluator
                 var wired = WireToCaller(ctx, alg);
                 if (wired.Params.Count == 0)
                 {
-                    var blockR = EvalAlgOutput(wired, ctx, valEnv);
+                    var blockR = WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
                     if (blockR.IsError) return blockR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
                 }
@@ -2818,7 +2917,7 @@ public static class Evaluator
                 return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
             }
 
-            case Expr.Resolve:
+            case Expr.Resolve(var name):
             {
                 var resolvedR = ResolveAlg(expr, ctx);
                 if (resolvedR.IsError)
@@ -2827,7 +2926,17 @@ public static class Evaluator
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
 
-                return EvalMaybeMemoizedPropertyOutputCounted(resolvedR.Value, ctx, valEnv);
+                if (resolvedR.Value.Params.Count != 0)
+                {
+                    return WithSpan<CountedResult>(
+                        expr.Span,
+                        new EvalError.WithContext(
+                            CtxProperty(name),
+                            new EvalError.ArityMismatch(resolvedR.Value.Params.Count, 0)));
+                }
+
+                return WithPropertyContextOnMissingOutput(name, expr.Span,
+                    EvalMaybeMemoizedPropertyOutputCounted(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -3616,8 +3725,21 @@ public static class Evaluator
     internal static (EvalResult<Result> Result, MemoizationStats Stats) RunWithMemoizationStats(Expr expr)
     {
         var runState = new EvaluatorRunState();
-        var result = Eval(expr, new EvalCtx([PreludeAlg], [], runState), []);
+        var ctx = new EvalCtx([PreludeAlg], [], runState);
+        var result = expr is Expr.Block(var alg)
+            ? EvalRootProgram(alg, expr.Span, ctx)
+            : Eval(expr, ctx, []);
         return (result, runState.SnapshotStats());
+    }
+
+    private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
+    {
+        var wired = WireToCaller(ctx, alg);
+        if (wired.Params.Count == 0)
+            return EvalProgramOutput(wired, ctx, []);
+
+        var blockSpan = span ?? FirstSpan(wired.Output);
+        return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
     }
 
     /// <summary>

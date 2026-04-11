@@ -100,6 +100,7 @@ inductive Error where
   | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual)
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
+  | missingOutput    : Error                   -- forced user-defined algorithm does not define output
   | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
@@ -1050,12 +1051,24 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
 def withCtx (ctx : String) (m : EvalM A) : EvalM A :=
   m.mapError (Error.withContext ctx)
 
+/-- Attach property context specifically to a missing-output failure.
+    Other errors are preserved unchanged. -/
+def withMissingOutputCtx (ctx : String) : EvalM A -> EvalM A
+  | .error .missingOutput => .error (.withContext ctx .missingOutput)
+  | result => result
+
 /-- Reify a normalized Result as an expression that evaluates back to the same
     value/shape. Grouped results become block expressions so nested structure is
     preserved exactly. -/
+def emptyResultExpr : Expr :=
+  .call
+    (.block (Algorithm.builtin .ifBuiltin))
+    (Algorithm.mk none [] [] [] [.num 0, .num 0])
+
 def resultToExpr : Result -> Expr
   | .atom n => .num n
   | .str s => .stringLiteral s
+  | .group [] => emptyResultExpr
   | .group rs => .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
 
 /-- Validate the output shape required by counted builtins that must emit
@@ -1172,6 +1185,7 @@ def openExprName (e : Expr) : String :=
 namespace CtxMsg
   def openMsg (k : String)              := s!"while resolving open: {k}"
   def call   (f : Expr)               := s!"while evaluating call to {openExprName f}"
+  def property (n : Ident)            := s!"while evaluating property {n}"
   def dotCall (obj : Expr) (n : Ident) := s!"while evaluating dotCall .{n} of {openExprName obj}"
 end CtxMsg
 
@@ -1525,13 +1539,30 @@ mutual
       Normalization invariant: outputs are always normalized at algorithm boundaries.
       Singleton groups are collapsed here (and only here) so downstream consumers
       never see `group [x]`.  Builtins that synthesize fresh groups (e.g. Atoms)
-      must normalize their own output explicitly. -/
-  partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+      must normalize their own output explicitly.
+
+      A user-defined algorithm value may exist structurally without output, but
+      forcing it in value position raises `missingOutput`. The root program is
+      handled separately and may legitimately produce an empty result. -/
+  partial def evalAlgOutputCore (allowEmptyUserOutput : Bool)
+      (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     match a.findDuplicatePropName with
     | some n => .error (Error.duplicateProperty n)
     | none =>
+      if !allowEmptyUserOutput then
+        match a with
+        | .mk _ _ _ _ [] => .error Error.missingOutput
+        | _ => pure ()
       let rs <- (Algorithm.output a).mapM (fun e => eval e (EvalCtx.push a ctx) env)
       pure (Result.normalize (Result.group rs))
+
+  /-- Force a user-defined algorithm value to produce output. -/
+  partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+    evalAlgOutputCore false a ctx env
+
+  /-- Evaluate a root program algorithm, allowing it to have no output. -/
+  partial def evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+    evalAlgOutputCore true a ctx env
 
   /-- Evaluate an expression and coerce the result to Int. -/
   partial def evalInt (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Int := do
@@ -1603,15 +1634,25 @@ mutual
       while multiple top-level output expressions `a, b` count as two. `reduce`
       uses this to distinguish grouped accumulator values from multi-output
       step results. -/
-  partial def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+  partial def evalAlgOutputCountedCore (allowEmptyUserOutput : Bool)
+      (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     match a.findDuplicatePropName with
     | some n => .error (Error.duplicateProperty n)
     | none =>
+      if !allowEmptyUserOutput then
+        match a with
+        | .mk _ _ _ _ [] => .error Error.missingOutput
+        | _ => pure ()
       let outs <- (Algorithm.output a).mapM (fun e => evalCounted e (EvalCtx.push a ctx) env)
       let rs := outs.map (fun out => out.fst)
       let emitted := outs.foldl (fun acc out => acc + out.snd) 0
       pure (Result.normalize (Result.group rs), emitted)
+
+  /-- Counted forcing variant of `evalAlgOutput`. -/
+  partial def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult :=
+    evalAlgOutputCountedCore false a ctx env
 
   /-- Evaluate a conditional algorithm against an already assembled argument
       shape, preserving the emitted top-level output count of the selected
@@ -2247,7 +2288,10 @@ mutual
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | .resolve n => do
         let a <- resolveAlg (.resolve n) ctx
-        evalAlgOutputCounted a ctx env
+        if (Algorithm.params a).length = 0 then
+          withMissingOutputCtx (CtxMsg.property n) <| evalAlgOutputCounted a ctx env
+        else
+          .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params a).length 0))
     | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCallCounted o n argsOpt ctx env
     | .call f args => withCtx (CtxMsg.call f) do
@@ -2528,7 +2572,10 @@ mutual
 
     | .resolve n => do
         let a <- resolveAlg (.resolve n) ctx
-        evalAlgOutput a ctx env
+        if (Algorithm.params a).length = 0 then
+          withMissingOutputCtx (CtxMsg.property n) <| evalAlgOutput a ctx env
+        else
+          .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params a).length 0))
 
     | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCall o n argsOpt ctx env
@@ -2834,7 +2881,15 @@ def preludeAlg : Algorithm :=
     []
 
 def runResult (e : Expr) : EvalM Result :=
-  eval e { callStack := [preludeAlg], algEnv := [] } []
+  let ctx := { callStack := [preludeAlg], algEnv := [] }
+  match e with
+  | .block a =>
+      let wired := wireToCaller ctx a
+      if (Algorithm.params wired).length = 0 then
+        evalProgramOutput wired ctx []
+      else
+        .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+  | _ => eval e ctx []
 
 def runFlat (e : Expr) : EvalM (List Int) := do
   pure (Result.atoms (<- runResult e))

@@ -23,6 +23,7 @@ namespace KatLang;
 ///   | branchOutputArityMismatch : Ident → Nat → Nat → Error
 ///   | duplicateProperty : Ident → Error
 ///   | duplicateBranchPattern : Error
+///   | missingOutput      : Error
 ///   | unresolvedImplicitParams : List Ident → Error
 ///   | withContext        : String → Error → Error
 /// </code>
@@ -87,6 +88,9 @@ public abstract record EvalError
 
     /// <summary>Conditional algorithm has match-equivalent branch patterns.</summary>
     public sealed record DuplicateBranchPattern() : EvalError;
+
+    /// <summary>Forced user-defined algorithm value does not define an output.</summary>
+    public sealed record MissingOutput() : EvalError;
 
     /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
     public sealed record NumericOverflow() : EvalError;

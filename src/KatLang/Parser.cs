@@ -159,6 +159,9 @@ public sealed class Parser
         }
     }
 
+    private bool HasSkippedCommentBeforeCurrent()
+        => _pos > 0 && _tokens[_pos - 1].Kind == TokenKind.Comment;
+
     private SourceSpan MakeSpan(Token start) => new(
         start.Line, start.Column,
         Previous.Line, Previous.Column + Math.Max(Previous.Length, 1) - 1);
@@ -322,6 +325,7 @@ public sealed class Parser
 
                 Expect(TokenKind.Equals);
                 var body = ParseOutputLine();
+                var clauseSpan = MakeSpan(nameToken);
 
                 if (!clauseGroups.TryGetValue(name, out var branchList))
                 {
@@ -333,13 +337,11 @@ public sealed class Parser
                 // Check for duplicate branch pattern (match-equivalent)
                 if (branchList.Any(b => b.Pattern.IsMatchEquivalent(pattern)))
                 {
-                    ReportError($"Duplicate branch pattern for conditional algorithm '{name}'.");
+                    ReportError($"Duplicate branch pattern for conditional algorithm '{name}'.", clauseSpan);
                 }
 
                 branchList.Add(new CondBranch(pattern, body));
-                clauseGroupSpans[name].Add(new SourceSpan(
-                    nameToken.Line, nameToken.Column,
-                    nameToken.Line, nameToken.Column + Math.Max(nameToken.Length, 1) - 1));
+                clauseGroupSpans[name].Add(clauseSpan);
             }
             else
             {
@@ -910,6 +912,7 @@ public sealed class Parser
         {
             var (prec, op) = GetBinaryOpInfo(Current.Kind);
             if (prec < minPrecedence) break;
+            if (Current.Line > Previous.Line && !HasSkippedCommentBeforeCurrent()) break;
 
             Advance(); // consume operator token
 

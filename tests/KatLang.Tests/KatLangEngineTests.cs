@@ -82,7 +82,7 @@ public class KatLangEngineTests
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
         Assert.Contains("filter passes each collection item as one argument to the predicate", error.Message);
-        Assert.Contains("Arity mismatch: expected 0, got 1", error.Message);
+        Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 
     [Fact]
@@ -118,6 +118,7 @@ public class KatLangEngineTests
             RunResult.Success s => string.Join(" ", s.Atoms),
             RunResult.ParseFailure p => $"parse: {p.Errors.Count}",
             RunResult.EvalFailure e => $"eval: {e.Errors.Count}",
+            _ => throw new InvalidOperationException("Unknown RunResult variant."),
         };
         Assert.Equal("25", text);
     }
@@ -295,15 +296,15 @@ public class KatLangEngineTests
     public void Run_ConditionalBranch_FreeIdentifier_ReturnsParseFailure()
     {
         var source = """
-            Expense(1, qty) = a * qty
-            Expense(2, qty) = qty
-            Expense(2, 3)
+            A(2) = x
+            A(2)
             """;
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
-        Assert.Contains(failure.Errors, e => e.ToString().Contains("a"));
-        Assert.Contains(failure.Errors, e => e.ToString().Contains("Expense"));
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("Identifier 'x' is used in conditional branch 'A'", error.Message);
+        Assert.Contains("A(y) = y", error.Message);
     }
 
     [Fact]
@@ -399,6 +400,19 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
-        Assert.Contains("Arity mismatch: expected 1, got 2", failure.ToDisplayString(), StringComparison.Ordinal);
+        Assert.Contains("Property 'Id' expects 1 parameter, but was called with 2 arguments.", failure.ToDisplayString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_TopLevel_ImplicitParameter_UsesKatLangFacingMessage()
+    {
+        var result = KatLangEngine.Run("x + 1");
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("Identifier 'x' does not resolve to a property or other visible name here", error.Message);
+        Assert.Contains("KatLang interprets it as an implicit parameter", error.Message);
+        Assert.Contains("Its value is provided by the caller", error.Message);
+        Assert.DoesNotContain("not defined in the current scope", error.Message);
     }
 }

@@ -214,6 +214,29 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_UnaryOutputAfterBraceProperty_StaysAtRootLevel()
+    {
+        var source = """
+            A = {
+                X = 1
+            }
+            -A
+            """;
+
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("A", property.Name);
+        Assert.Empty(property.Value.Output);
+
+        var unary = Assert.IsType<Expr.Unary>(Assert.Single(result.Root.Output));
+        Assert.Equal(UnaryOp.Minus, unary.Op);
+        var operand = Assert.IsType<Expr.Resolve>(unary.Operand);
+        Assert.Equal("A", operand.Name);
+    }
+
+    [Fact]
     public void Parse_MultipleProperties_AllParsed()
     {
         var source = """
@@ -1912,7 +1935,10 @@ public class ParserTests
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(1, diag.Span.StartColumn);
+        Assert.Equal(2, diag.Span.EndLineNumber);
     }
 
     [Fact]
@@ -1924,7 +1950,26 @@ public class ParserTests
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(1, diag.Span.StartColumn);
+        Assert.Equal(2, diag.Span.EndLineNumber);
+    }
+
+    [Fact]
+    public void Parse_DuplicateConditionalBranchPattern_WithFinalCall_SpanPointsToDuplicateBranch()
+    {
+        var source = """
+            F(1) = 10
+            F(1) = 20
+            F(1)
+            """;
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Duplicate branch pattern"));
+        Assert.Equal(2, diag.Span.StartLineNumber);
+        Assert.Equal(1, diag.Span.StartColumn);
+        Assert.Equal(2, diag.Span.EndLineNumber);
     }
 
     [Fact]

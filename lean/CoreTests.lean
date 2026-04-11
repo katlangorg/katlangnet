@@ -21,6 +21,11 @@ def innermostIsArityMismatch (expected actual : Nat) : Error -> Bool
   | .arityMismatch e a => e = expected && a = actual
   | _ => false
 
+def innermostIsMissingOutput : Error -> Bool
+  | .withContext _ inner => innermostIsMissingOutput inner
+  | .missingOutput => true
+  | _ => false
+
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
 def propAlg : Algorithm :=
@@ -65,6 +70,169 @@ def test2b : Bool :=
 #eval test2b  -- should be true
 -- EXPECTED: Except.ok [11]
 #eval runFlat (.dotCall (.block receiver2) "F" (some (alg [] [] [] [.num 10])))
+
+-- Test 2c: Bare use of a parameterized property → arity mismatch with property context
+def receiver2c : Algorithm :=
+  algPrivate [] [] [("A", alg ["x"] [] [] [.param "x"])] [.resolve "A"]
+
+def test2c : Bool :=
+  match runResult (.block receiver2c) with
+  | Except.error err =>
+      hasContext "while evaluating property A" err
+      && innermostIsArityMismatch 1 0 err
+  | Except.ok _ => false
+
+#eval test2c  -- should be true
+-- EXPECTED: Except.error (withContext "while evaluating property A" (arityMismatch 1 0))
+#eval runResult (.block receiver2c)
+
+--------------------------------------------------------------------------------
+-- missingOutput semantics tests
+--------------------------------------------------------------------------------
+
+def noOutputGroupAlg : Algorithm :=
+  algPrivate [] [] [("X", alg [] [] [] [.num 1])] []
+
+def missingOutputValid1Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] []
+
+def missingOutputValid1 : Bool :=
+  match runFlat (.block missingOutputValid1Root) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval missingOutputValid1  -- should be true
+
+def missingOutputValid2Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [
+    .dotCall (.resolve "A") "X" none
+  ]
+
+def missingOutputValid2 : Bool :=
+  match runFlat (.block missingOutputValid2Root) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval missingOutputValid2  -- should be true
+
+def applyMissingOutputAlg : Algorithm :=
+  alg ["f"] [] [] [
+    .call (.param "f") (alg [] [] [] [.num 4])
+  ]
+
+def incMissingOutputAlg : Algorithm :=
+  alg ["x"] [] [] [
+    .binary .add (.param "x") (.num 1)
+  ]
+
+def missingOutputValid3Root : Algorithm :=
+  algPrivate [] [] [("Apply", applyMissingOutputAlg), ("Inc", incMissingOutputAlg)] [
+    .call (.resolve "Apply") (alg [] [] [] [.resolve "Inc"])
+  ]
+
+def missingOutputValid3 : Bool :=
+  match runFlat (.block missingOutputValid3Root) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval missingOutputValid3  -- should be true
+
+def holderMissingOutputAlg : Algorithm :=
+  algPrivate [] [] [("F", noOutputGroupAlg)] [.num 0]
+
+def missingOutputValid4Root : Algorithm :=
+  algPrivate [] [] [("Holder", holderMissingOutputAlg)] [.resolve "Holder"]
+
+def missingOutputValid4 : Bool :=
+  match runFlat (.block missingOutputValid4Root) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval missingOutputValid4  -- should be true
+
+def missingOutputError5Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [.resolve "A"]
+
+def missingOutputError5 : Bool :=
+  match runResult (.block missingOutputError5Root) with
+  | Except.error err =>
+      hasContext "while evaluating property A" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError5  -- should be true
+
+def missingOutputError6Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [
+    .call (.resolve "A") (alg [] [] [] [])
+  ]
+
+def missingOutputError6 : Bool :=
+  match runResult (.block missingOutputError6Root) with
+  | Except.error err =>
+      hasContext "while evaluating call to A" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError6  -- should be true
+
+def missingOutputError7Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [
+    .binary .add (.resolve "A") (.num 1)
+  ]
+
+def missingOutputError7 : Bool :=
+  match runResult (.block missingOutputError7Root) with
+  | Except.error err =>
+      hasContext "while evaluating property A" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError7  -- should be true
+
+def missingOutputError8Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [
+    .unary .minus (.resolve "A")
+  ]
+
+def missingOutputError8 : Bool :=
+  match runResult (.block missingOutputError8Root) with
+  | Except.error err =>
+      hasContext "while evaluating property A" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError8  -- should be true
+
+def missingOutputError9Root : Algorithm :=
+  algPrivate [] [] [
+    ("A", noOutputGroupAlg),
+    ("B", alg [] [] [] [.resolve "A"])
+  ] [
+    .resolve "B"
+  ]
+
+def missingOutputError9 : Bool :=
+  match runResult (.block missingOutputError9Root) with
+  | Except.error err => innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError9  -- should be true
+
+def useMissingOutputAlg : Algorithm :=
+  alg ["f"] [] [] [.num 0]
+
+def missingOutputValid10Root : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg), ("Use", useMissingOutputAlg)] [
+    .call (.resolve "Use") (alg [] [] [] [.resolve "A"])
+  ]
+
+def missingOutputValid10 : Bool :=
+  match runFlat (.block missingOutputValid10Root) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval missingOutputValid10  -- should be true
 
 -- Test 3: Extension property call (lexical fallback)
 -- Receiver has no G, but lexical scope defines G(x) = x * 2

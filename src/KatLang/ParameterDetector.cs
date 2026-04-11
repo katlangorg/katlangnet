@@ -189,8 +189,7 @@ public static class ParameterDetector
                 // Find the span for the first occurrence of this free identifier
                 var span = FindResolveSpan(body.Output, freeName);
                 diagnostics.Add(new Diagnostic(
-                    $"Identifier '{freeName}' in conditional branch '{branchName}' is not defined in the branch pattern. " +
-                    $"All parameters of conditional branches must be declared in the pattern.",
+                    FormatConditionalBranchUndeclaredIdentifier(freeName, branchName),
                     DiagnosticSeverity.Error,
                     span ?? new SourceSpan(0, 0, 0, 0)));
             }
@@ -217,6 +216,12 @@ public static class ParameterDetector
             Output = rewrittenOutput,
         };
     }
+
+    private static string FormatConditionalBranchUndeclaredIdentifier(string identifierName, string branchName)
+        => string.Join(
+            Environment.NewLine,
+            $"Identifier '{identifierName}' is used in conditional branch '{branchName}', but it is not declared in the branch pattern.",
+            "If you want to use a parameter, declare it in the pattern, for example: `A(y) = y`.");
 
     /// <summary>
     /// Rewrites <see cref="Expr.Resolve"/> → <see cref="Expr.Param"/> ONLY for pattern binder names.

@@ -591,6 +591,28 @@ public class ParameterDetectorTests
     }
 
     [Fact]
+    public void Detect_ConditionalBranch_ConstantPatternFreeIdentifier_MessageIncludesExample()
+    {
+        var diags = ParseAndDetectDiagnostics("A(2) = x");
+
+        var error = Assert.Single(diags);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Contains("Identifier 'x' is used in conditional branch 'A'", error.Message);
+        Assert.Contains("not declared in the branch pattern", error.Message);
+        Assert.Contains("A(y) = y", error.Message);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_MixedPatternFreeIdentifier_MessageIncludesIdentifierName()
+    {
+        var diags = ParseAndDetectDiagnostics("A(1, y) = x");
+
+        var error = Assert.Single(diags);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Contains("Identifier 'x' is used in conditional branch 'A'", error.Message);
+    }
+
+    [Fact]
     public void Detect_ConditionalBranch_MultipleFreeIdentifiers_ReportsAll()
     {
         var diags = ParseAndDetectDiagnostics("F((x)) = a * x + b");
@@ -605,6 +627,22 @@ public class ParameterDetectorTests
     public void Detect_ConditionalBranch_AllBindersBound_NoDiagnostic()
     {
         var diags = ParseAndDetectDiagnostics("F((a), b) = a + b");
+
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_SingleBinderBody_NoDiagnostic()
+    {
+        var diags = ParseAndDetectDiagnostics("A(y) = y");
+
+        Assert.Empty(diags);
+    }
+
+    [Fact]
+    public void Detect_ConditionalBranch_TwoBindersBody_NoDiagnostic()
+    {
+        var diags = ParseAndDetectDiagnostics("A(x, y) = x + y");
 
         Assert.Empty(diags);
     }

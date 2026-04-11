@@ -155,6 +155,47 @@ public class EvaluatorTests
         return result.IsError ? result.Error : null;
     }
 
+    private static void AssertArityMismatchMessage(string source, string expectedMessage)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Equal(expectedMessage, formatted);
+        Assert.DoesNotContain("while evaluating", formatted);
+    }
+
+    private static void AssertInnermostMissingOutput(EvalError error)
+    {
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        Assert.IsType<EvalError.MissingOutput>(error);
+    }
+
+    private static void AssertMissingOutputMessage(
+        string source,
+        string expectedMessage,
+        int? expectedLine = null,
+        int? expectedColumn = null)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        AssertInnermostMissingOutput(result.Error);
+
+        var formatted = KatLangError.FromEvalError(result.Error);
+        Assert.Equal(expectedMessage, formatted.Message);
+        Assert.DoesNotContain("while evaluating", formatted.Message);
+
+        if (expectedLine is not null)
+            Assert.Equal(expectedLine, formatted.StartLine);
+        if (expectedColumn is not null)
+            Assert.Equal(expectedColumn, formatted.StartColumn);
+    }
+
     private static void AssertFilterPredicateShapeFails(string source)
     {
         var result = EvalFull(source);
@@ -2590,6 +2631,182 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_DotCall_MissingProperty_UsesKatLangFacingMessage()
+    {
+        var source = """
+            Lib = {
+                A = 1
+            }
+            Lib.B
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        var unresolved = Assert.IsType<EvalError.UnknownName>(contextual.Inner);
+        Assert.Equal("B", unresolved.Name);
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.DoesNotContain("dotCall", formatted);
+        Assert.DoesNotContain("Unknown name: B", formatted);
+        Assert.Contains("Property 'B' was not found on `Lib`", formatted);
+        Assert.Contains("visible algorithm or property named 'B'", formatted);
+        Assert.Contains("`Lib` as the first argument", formatted);
+    }
+
+    [Fact]
+    public void Eval_DotCall_MissingProperty_OnExpression_RendersReceiver()
+    {
+        var result = EvalFull("(2 + 3).B");
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("`(2 + 3)`", formatted);
+        Assert.Contains("Property 'B' was not found", formatted);
+    }
+
+    [Fact]
+    public void Eval_DotCall_LexicalFallback_WithVisibleName_StillWorks()
+    {
+        var source = """
+            B = x + 1
+            5.B
+            """;
+
+        AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_UnknownName_OutsideDotCall_RemainsPlain()
+    {
+        var formatted = KatLangError.FromEvalError(new EvalError.UnknownName("B")).Message;
+        Assert.Equal("Unknown name: B", formatted);
+    }
+
+    [Fact]
+    public void Eval_MissingOutput_DefinitionOnlyProgram_RemainsValid()
+        => AssertEval(
+            """
+            A = {
+                X = 1
+            }
+            """);
+
+    [Fact]
+    public void Eval_MissingOutput_PropertyAccess_RemainsValid()
+        => AssertEval(
+            """
+            A = {
+                X = 1
+            }
+            A.X
+            """,
+            1);
+
+    [Fact]
+    public void Eval_MissingOutput_HigherOrderArgument_RemainsValid()
+        => AssertEval(
+            """
+            Apply(f) = f(4)
+            Inc(x) = x + 1
+            Apply(Inc)
+            """,
+            5);
+
+    [Fact]
+    public void Eval_MissingOutput_NestedNoOutputProperty_RemainsValidWhenNotForced()
+        => AssertEval(
+            """
+            Holder = {
+                F = {
+                    X = 1
+                }
+                0
+            }
+            Holder
+            """,
+            0);
+
+    [Fact]
+    public void Eval_MissingOutput_FinalPropertyUse_UsesKatLangFacingMessage()
+        => AssertMissingOutputMessage(
+            """
+            A = {
+                X = 1
+            }
+            A
+            """,
+            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.",
+            expectedLine: 4,
+            expectedColumn: 1);
+
+    [Fact]
+    public void Eval_MissingOutput_CallUse_UsesKatLangFacingMessage()
+        => AssertMissingOutputMessage(
+            """
+            A = {
+                X = 1
+            }
+            A()
+            """,
+            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.",
+            expectedLine: 4,
+            expectedColumn: 1);
+
+    [Fact]
+    public void Eval_MissingOutput_BinaryUse_UsesKatLangFacingMessage()
+        => AssertMissingOutputMessage(
+            """
+            A = {
+                X = 1
+            }
+            A + 1
+            """,
+            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.",
+            expectedLine: 4,
+            expectedColumn: 1);
+
+    [Fact]
+    public void Eval_MissingOutput_UnaryUse_UsesKatLangFacingMessage()
+        => AssertMissingOutputMessage(
+            """
+            A = {
+                X = 1
+            }
+            -A
+            """,
+            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.",
+            expectedLine: 4,
+            expectedColumn: 2);
+
+    [Fact]
+    public void Eval_MissingOutput_AssignmentOnlyFailsWhenForcedLater()
+        => AssertMissingOutputMessage(
+            """
+            A = {
+                X = 1
+            }
+            B = A
+            B
+            """,
+            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.");
+
+    [Fact]
+    public void Eval_MissingOutput_StructuralArgumentUse_CanStillSucceed()
+        => AssertEval(
+            """
+            A = {
+                X = 1
+            }
+            Use(f) = 0
+            Use(A)
+            """,
+            0);
+
+    [Fact]
     public void Eval_DotCall_ReversedReceiver_ProducesError()
     {
         // Double.Num: receiver=Double (parameterised), name=Num (0-param)
@@ -2942,6 +3159,61 @@ public class EvaluatorTests
             """;
         AssertEvalFails(source);
     }
+
+        [Fact]
+        public void Eval_ArityMismatch_TooManyArguments_UsesUserFacingMessage()
+        {
+            AssertArityMismatchMessage(
+                """
+                A = x
+                A(1, 2)
+                """,
+                "Property 'A' expects 1 parameter, but was called with 2 arguments.");
+        }
+
+        [Fact]
+        public void Eval_ArityMismatch_TooFewArguments_UsesUserFacingMessage()
+        {
+            AssertArityMismatchMessage(
+                """
+                Add = a + b
+                Add(1)
+                """,
+                "Property 'Add' expects 2 parameters, but was called with 1 argument.");
+        }
+
+        [Fact]
+        public void Eval_ArityMismatch_NoArgumentsProvided_UsesUserFacingMessage()
+        {
+            var source = """
+                A = x
+                A
+                """;
+
+            var result = EvalFull(source);
+            if (result.IsOk)
+                Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+            var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+            Assert.Equal("while evaluating property A", contextual.Context);
+            var arity = Assert.IsType<EvalError.ArityMismatch>(contextual.Inner);
+            Assert.Equal(1, arity.Expected);
+            Assert.Equal(0, arity.Actual);
+
+            var formatted = KatLangError.FromEvalError(result.Error).Message;
+            Assert.Equal("Property 'A' expects 1 parameter, but was called with 0 arguments.", formatted);
+        }
+
+        [Fact]
+        public void Eval_ArityMismatch_ZeroParameterPropertyCalledWithArguments_UsesUserFacingMessage()
+        {
+            AssertArityMismatchMessage(
+                """
+                A = 1
+                A(1)
+                """,
+                "Property 'A' expects 0 parameters, but was called with 1 argument.");
+        }
     [Fact]
     public void Eval_ArityMismatch_InnerCall_SpanPointsToInnerCall()
     {
@@ -4719,7 +4991,9 @@ public class EvaluatorTests
         var parseResult = Parser.Parse(source);
         Assert.True(parseResult.HasErrors);
         Assert.Contains(parseResult.Diagnostics, d =>
-            d.Message.Contains("not defined in the branch pattern"));
+            d.Message.Contains("Identifier 'b' is used in conditional branch 'F'") &&
+            d.Message.Contains("not declared in the branch pattern") &&
+            d.Message.Contains("A(y) = y"));
     }
 
     [Fact]
@@ -4965,9 +5239,12 @@ public class EvaluatorTests
         var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
         Assert.Equal(["a"], uip.ParamNames);
         var formatted = KatLangError.FromEvalError(error).Message;
-        Assert.Contains("implicit parameter `a`", formatted);
-        Assert.Contains("no argument was provided", formatted);
+        Assert.Contains("Identifier 'a' does not resolve to a property or other visible name here", formatted);
+        Assert.Contains("KatLang interprets it as an implicit parameter", formatted);
+        Assert.Contains("Its value is provided by the caller", formatted);
+        Assert.Contains("No argument was provided", formatted);
         Assert.Contains("expected 1 argument, got 0", formatted);
+        Assert.DoesNotContain("not defined in the current scope", formatted);
     }
 
     [Fact]
@@ -4980,9 +5257,12 @@ public class EvaluatorTests
         var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
         Assert.Equal(2, uip.ParamNames.Count);
         var formatted = KatLangError.FromEvalError(error).Message;
-        Assert.Contains("implicit parameters", formatted);
-        Assert.Contains("no arguments were provided", formatted);
+        Assert.Contains("Identifiers 'a' and 'b' do not resolve to properties or other visible names here", formatted);
+        Assert.Contains("KatLang interprets them as implicit parameters", formatted);
+        Assert.Contains("Their values are provided by the caller", formatted);
+        Assert.Contains("No arguments were provided", formatted);
         Assert.Contains("expected 2 arguments, got 0", formatted);
+        Assert.DoesNotContain("not defined in the current scope", formatted);
     }
 
     [Fact]

@@ -389,7 +389,7 @@ Coordinates
 
 ### Implicit and Explicit Output
 
-Every algorithm produces its output in one of two ways.
+An algorithm may define output in one of two ways, and it may also define no output at all.
 
 **Implicit output (preferred):** any expression that appears after all property definitions becomes the algorithm's output. This is the concise, idiomatic style.
 
@@ -414,6 +414,20 @@ B = 2
 **Result:** `5`
 
 `Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm. The name `Output` in assignment position is reserved — you cannot define a property named `Output`.
+
+An algorithm with no output is still valid when you use it structurally, for example as a namespace-like group or as a higher-order value:
+
+```
+A = {
+    X = 1
+}
+
+A.X
+```
+
+**Result:** `1`
+
+Using `A` itself where a concrete value is required is an error, because `A` does not define output.
 
 ### Algorithm Length
 
