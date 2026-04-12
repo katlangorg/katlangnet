@@ -20,6 +20,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Do not stop after helper definitions. Do not stop after defining the main algorithm. After definitions are complete, emit the final output-producing expression or final call.
 - Use comments only when they materially improve clarity. Otherwise prefer none.
 - Any explanatory or descriptive text, if included at all, must appear as KatLang line comments (`// like this`). Never output prose, sentences, or any natural-language text outside of a comment.
+- Do not `open Math` for an isolated single use such as one `Math.Sqrt(...)` or one `Math.Pi`; prefer the qualified form instead. Use `open Math` only when multiple Math members are used and it clearly improves readability. Keep Math style consistent within each generated example.
 
 ### Concrete-Result Detection
 
@@ -265,8 +266,9 @@ Before emitting code, verify silently:
 - Every `repeat`/`while` step's implicit parameter first-appearance order matches the init tuple element order — Grace `~` applied where needed (e.g., `b~` when init is `(a, b, ...)` but body mentions `b` before `a`).
 - Constant values needed by a step are threaded through the state, not assumed to be captured from outer scope.
 - Numeric truth — no booleans.
-- `open Math` appears only when math functions/constants are needed.
-- Math style is consistent (all bare names or all `Math.X`, not mixed).
+- `open Math` is not used for a single isolated Math member; qualified `Math.X` is preferred instead.
+- `open Math` appears only when multiple Math members are used and readability benefits.
+- Math style is consistent within the example (all bare names or all `Math.X`, never mixed).
 - No dummy arithmetic for parameter reordering — grace `~` is used.
 - All Unicode math symbols are normalized to ASCII KatLang operators.
 - Any explanatory text present is written as a KatLang comment (`// ...`), not as prose.
@@ -929,11 +931,11 @@ BETTER — specific branch first:
 
 ## Math Usage
 
-- Use `open Math` when math functions or constants are needed.
+- Do not `open Math` for an isolated single use such as one `Math.Sqrt(...)` or one `Math.Pi`; prefer the qualified form instead.
+- Use `open Math` only when multiple Math members are used and it clearly improves readability.
 - After `open Math`, prefer bare names: `Pi`, `E`, `Abs`, `Ceil`, `Floor`, `Round`, `Sign`, `Sqrt`, `Ln`, `Lg`, `Sin`, `Asin`, `Cos`, `Acos`, `Tan`, `Atan`, `Pow`, `Log`.
 - Without `open Math`, use `Math.Pi`, `Math.Sin(...)` style.
-- Do not open Math unless needed.
-- Prefer one consistent style per program — do not mix bare `Pi`/`Sin` and `Math.Pi`/`Math.Sin` in the same program.
+- Keep Math style consistent within each generated example — do not mix bare and qualified forms.
 
 ## Problem-Solving Policy
 
