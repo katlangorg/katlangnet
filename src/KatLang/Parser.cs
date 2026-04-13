@@ -1023,7 +1023,7 @@ public sealed class Parser
                     // is a known name; dotCall lowering must wait until the evaluator confirms
                     // no structural property shadows the name.
                     callArgs = MaybeLowerBuiltinInitArgs(lhs, callArgs);
-                    // Validate if arity (2 or 3 args).
+                    // Validate if arity.
                     ValidateIfArity(lhs, callArgs);
                     lhs = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
                     break;
@@ -1219,7 +1219,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Validates that <c>if(...)</c> has exactly 2 or 3 arguments.
+    /// Validates that <c>if(...)</c> has exactly 3 arguments.
     /// For non-<c>if</c> callees, does nothing.
     /// </summary>
     private void ValidateIfArity(Expr callee, Algorithm args)
@@ -1227,9 +1227,9 @@ public sealed class Parser
         if (callee is Expr.Resolve("if"))
         {
             var argCount = args.Output.Count;
-            if (argCount != 2 && argCount != 3)
+            if (argCount != 3)
             {
-                ReportError($"'if' requires 2 or 3 arguments, got {argCount}.");
+                ReportError($"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {argCount}.");
             }
         }
     }

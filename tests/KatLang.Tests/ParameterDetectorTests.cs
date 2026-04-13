@@ -490,7 +490,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_OrdinaryClause_HigherOrderBinderRemainsDeclaredParam()
     {
-        var source = "Filter(x, predicate) = if(predicate(x), x)";
+        var source = "Choose(x, predicate) = if(predicate(x), x, 0)";
         var ast = ParseAndDetect(source);
 
         var user = Assert.IsType<Algorithm.User>(ast.Properties[0].Value);
@@ -504,6 +504,7 @@ public class ParameterDetectorTests
         Assert.Equal("predicate", predicateParam.Name);
         Assert.IsType<Expr.Param>(predicateCall.Args.Output[0]);
         Assert.IsType<Expr.Param>(ifCall.Args.Output[1]);
+        Assert.IsType<Expr.Num>(ifCall.Args.Output[2]);
     }
 
     // ── Conditional branch: full-input-specification rule ──────────────────

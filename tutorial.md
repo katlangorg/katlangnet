@@ -704,37 +704,26 @@ Divide(2, 10)
 
 ## Conditionals
 
-`if` is a builtin algorithm that comes in two forms.
+`if` is a builtin algorithm and always takes exactly three arguments: `if(condition, whenTrue, whenFalse)`.
 
-**Three-argument form** — `if(condition, whenTrue, whenFalse)` — always returns a value:
+The condition is numeric: `0` is false and any nonzero number is true.
+
+Examples:
 
 ```
 if(3 > 2, 1, 0)
 if(1 > 2, 1, 0)
+10 + if(1 == 1, 5, 0)
+10 + if(1 == 2, 5, 0)
 ```
 
 **Results:**
 ```
 1
 0
-```
-
-**Two-argument form** — `if(condition, value)` — returns `value` when true. When the condition is false, the expression **produces no value** — it simply disappears from the output.
-
-This is not an error. If a binary operator like `+` loses its right operand this way, it returns the left operand unchanged:
-
-```
-10 + if(1 == 1, 5)
-10 + if(1 == 2, 5)
-```
-
-**Results:**
-```
 15
 10
 ```
-
-In the second line, `if(1 == 2, 5)` vanishes, so `10 +` has no right operand and returns `10`.
 
 Combining `if` with properties:
 
@@ -820,8 +809,8 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 (4, 40)
 ```
 
-An empty input collection stays empty: `filter(if(0, 1), IsEven)` produces no output.
-Predicate results such as `0, 999`, `(1, 0)`, `if(0, x)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
+If every predicate result is `0`, `filter` returns an empty collection.
+Predicate results such as `0, 999`, `(1, 0)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
 
 ### Mapping: `map`
 
@@ -915,7 +904,7 @@ range(1, 10).filter(IsEven).min
 2
 ```
 
-`min(if(0, 1))` is invalid because `min` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
 
 ### Maximum: `max`
 
@@ -942,7 +931,7 @@ range(1, 10).filter(IsEven).max
 10
 ```
 
-`max(if(0, 1))` is invalid because `max` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
 
 ### Summation: `sum`
 
@@ -970,7 +959,7 @@ range(1, 10).filter(IsEven).sum
 30
 ```
 
-`sum(if(0, 1))` returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding.
+Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding.
 
 ### Average: `avg`
 
@@ -998,7 +987,7 @@ range(1, 4).map(Square).avg
 7.5
 ```
 
-`avg(if(0, 1))` is invalid because `avg` requires a non-empty collection. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging.
+Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging.
 
 ### Reduction: `reduce`
 
@@ -1028,7 +1017,7 @@ range(1, 4).reduce(Stats, (0, 0))
 ```
 
 No wrapper helper is required for grouped accumulators: a parenthesized tuple such as `(a, b)` is one grouped accumulator value.
-Results such as `acc, x` or `if(0, acc)` are still invalid step outputs because `reduce` requires exactly one accumulator value at every step.
+Results such as `acc, x` or any empty result are still invalid step outputs because `reduce` requires exactly one accumulator value at every step.
 
 ### Fixed Loop: `repeat`
 
@@ -1601,7 +1590,7 @@ Only `public` properties are exposed through `load` and `open`.
 - **Decimal precision limits:** KatLang uses fixed-precision decimal arithmetic. Extremely large numbers or deeply nested calculations may hit precision boundaries.
 - **Trigonometric precision:** `Math.Sin(Math.Pi)` does not produce exact `0` — it returns a very small number close to zero. This is inherent to decimal approximation of π.
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
-- **`if(cond, value)` disappearing:** the two-argument `if` produces no output when the condition is false. If you expect a value in all cases, use the three-argument form `if(cond, a, b)`.
+- **`if` arity:** builtin `if` always requires three arguments: `if(cond, a, b)`. There is no two-argument form.
 - **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope.
 - **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use a conditional algorithm branch. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 
@@ -1662,7 +1651,7 @@ Only `public` properties are exposed through `load` and `open`.
 
 | Keyword | Usage |
 |---|---|
-| `if` | `if(cond, a, b)` or `if(cond, a)` |
+| `if` | `if(cond, a, b)` |
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |

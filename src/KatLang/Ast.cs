@@ -9,9 +9,7 @@ public enum UnaryOp { Minus, Not }
 // ── Built-in identifiers (Lean: Builtin) ────────────────────────────────────
 
 /// <summary>
-/// <c>if</c> supports both 2-arg (conditional output) and 3-arg (if-then-else).
-/// 2-arg: <c>if(cond, value)</c> — true returns value, false returns empty output (<c>Result.Group([])</c>).
-/// 3-arg: <c>if(cond, then, else)</c> — standard conditional.
+/// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
 /// <c>filter(collection, predicate)</c> keeps the original top-level collection
 /// elements whose predicate returns exactly one atomic numeric truth value;
 /// grouped elements are preserved whole and rejected elements are omitted entirely.
@@ -410,7 +408,7 @@ public abstract record Algorithm
     /// User-defined algorithm. Corresponds to <c>Algorithm.mk</c> in the Lean specification.
     /// Parser elaboration may also predeclare params here for plain-binder
     /// clause syntax such as <c>Apply(f) = f(4)</c> or
-    /// <c>Filter(x, predicate) = if(predicate(x), x)</c>.
+    /// <c>Choose(x, predicate) = if(predicate(x), x, 0)</c>.
     /// </summary>
     public sealed record User : Algorithm
     {

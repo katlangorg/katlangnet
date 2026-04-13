@@ -132,6 +132,12 @@ public sealed class KatLangError
         if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.ArityMismatch inner })
             return false;
 
+        if (context.StartsWith("Builtin '", StringComparison.Ordinal))
+        {
+            message = context;
+            return true;
+        }
+
         if (TryParsePropertyContext(context, out var propertyName))
         {
             message = FormatNamedArityMismatch(propertyName, inner.Expected, inner.Actual, preferPropertyName: true);

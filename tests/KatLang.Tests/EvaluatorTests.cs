@@ -1321,7 +1321,8 @@ public class EvaluatorTests
     {
         var source = """
             IsEven = x mod 2 == 0
-            filter(if(0, 1), IsEven)
+            IsNegative = x < 0
+            range(1, 4).filter(IsNegative).filter(IsEven)
             """;
         AssertEval(source);
     }
@@ -1396,7 +1397,8 @@ public class EvaluatorTests
     public void Eval_Filter_EmptyPredicateResult_FailsWithContext()
     {
         var source = """
-            Bad(x) = if(0, x)
+            IsNegative = y < 0
+            Bad(x) = range(1, 3).filter(IsNegative)
             filter(range(1, 3), Bad)
             """;
 
@@ -1473,7 +1475,8 @@ public class EvaluatorTests
     {
         var source = """
             Double = x * 2
-            map(if(0, 1), Double)
+            IsNegative = x < 0
+            map(range(1, 4).filter(IsNegative), Double)
             """;
 
         AssertEval(source);
@@ -1535,7 +1538,8 @@ public class EvaluatorTests
     public void Eval_Map_EmptyTransformResult_FailsWithContext()
     {
         var source = """
-            Bad(x) = if(0, x)
+            IsNegative = y < 0
+            Bad(x) = range(1, 3).filter(IsNegative)
             range(1, 3).map(Bad)
             """;
 
@@ -1591,7 +1595,14 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Count_EmptyCollection_ReturnsZero()
-        => AssertEval("count(if(0, 1))", 0);
+    {
+        var source = """
+            IsNegative = x < 0
+            count(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertEval(source, 0);
+    }
 
     [Fact]
     public void Eval_Count_GroupedElements_CountsTopLevelGroups()
@@ -1643,7 +1654,14 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Min_EmptyCollection_FailsWithContext()
-        => AssertBuiltinFailureWithContext("min(if(0, 1))", "min requires a non-empty collection");
+    {
+        var source = """
+            IsNegative = x < 0
+            min(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertBuiltinFailureWithContext(source, "min requires a non-empty collection");
+    }
 
     [Fact]
     public void Eval_Min_SingleAtomicInput_ReturnsSameValue()
@@ -1695,7 +1713,14 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Max_EmptyCollection_FailsWithContext()
-        => AssertBuiltinFailureWithContext("max(if(0, 1))", "max requires a non-empty collection");
+    {
+        var source = """
+            IsNegative = x < 0
+            max(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertBuiltinFailureWithContext(source, "max requires a non-empty collection");
+    }
 
     [Fact]
     public void Eval_Max_SingleAtomicInput_ReturnsSameValue()
@@ -1747,7 +1772,14 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Sum_EmptyCollection_ReturnsZero()
-        => AssertEval("sum(if(0, 1))", 0);
+    {
+        var source = """
+            IsNegative = x < 0
+            sum(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertEval(source, 0);
+    }
 
     [Fact]
     public void Eval_Sum_SingleAtomicInput_ReturnsSameValue()
@@ -1799,7 +1831,14 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Avg_EmptyCollection_FailsWithContext()
-        => AssertBuiltinFailureWithContext("avg(if(0, 1))", "avg requires a non-empty collection");
+    {
+        var source = """
+            IsNegative = x < 0
+            avg(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertBuiltinFailureWithContext(source, "avg requires a non-empty collection");
+    }
 
     [Fact]
     public void Eval_Avg_SingleAtomicInput_ReturnsSameValue()
@@ -1853,7 +1892,8 @@ public class EvaluatorTests
     {
         var source = """
             Add = x + total
-            reduce(if(0, 1), Add, 0)
+            IsNegative = x < 0
+            reduce(range(1, 4).filter(IsNegative), Add, 0)
             """;
 
         AssertEval(source, 0);
@@ -1864,7 +1904,8 @@ public class EvaluatorTests
     {
         var source = """
             Add = x + total
-            if(0, 1).reduce(Add, (7, 9))
+            IsNegative = x < 0
+            range(1, 4).filter(IsNegative).reduce(Add, (7, 9))
             """;
 
         var result = EvalFull(source);
@@ -1951,7 +1992,8 @@ public class EvaluatorTests
     public void Eval_Reduce_EmptyStepResult_FailsWithContext()
     {
         var source = """
-            Bad(x, acc) = if(0, acc)
+            IsNegative = y < 0
+            Bad(x, acc) = range(1, 3).filter(IsNegative)
             range(1, 3).reduce(Bad, 0)
             """;
 
@@ -4198,11 +4240,11 @@ public class EvaluatorTests
     {
         var source = """
             IsEven = x mod 2 == 0
-            Filter = if(predicate~(x), x)
-            Filter(3, IsEven)
+            Choose = if(predicate~(x), x, 0)
+            Choose(3, IsEven)
             """;
 
-        AssertEval(source);
+        AssertEval(source, 0);
     }
 
     [Fact]
@@ -4210,23 +4252,23 @@ public class EvaluatorTests
     {
         var source = """
             IsEven = y mod 2 == 0
-            Filter(x, predicate) = if(predicate(x), x)
-            Filter(4, IsEven)
+            Choose(x, predicate) = if(predicate(x), x, 0)
+            Choose(4, IsEven)
             """;
 
         AssertEval(source, 4);
     }
 
     [Fact]
-    public void Eval_HigherOrder_FlatMultiBinderClause_FalsePredicate_EmitsNoValue()
+    public void Eval_HigherOrder_FlatMultiBinderClause_FalsePredicate_UsesElseBranch()
     {
         var source = """
             IsEven = y mod 2 == 0
-            Filter(x, predicate) = if(predicate(x), x)
-            Filter(3, IsEven)
+            Choose(x, predicate) = if(predicate(x), x, 0)
+            Choose(3, IsEven)
             """;
 
-        AssertEval(source);
+        AssertEval(source, 0);
     }
 
     [Fact]
@@ -4429,91 +4471,77 @@ public class EvaluatorTests
         AssertEval("A = 6\nA", 6);
     }
 
-    // ── 2-arg if (conditional output) ─────────────────────────────────────────────
+    // ── if builtin ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_If2_TrueCondition_ReturnsValue()
-        => AssertEval("if(1 == 1, 5)", 5);
-
-    [Fact]
-    public void Eval_If2_FalseCondition_ReturnsEmptyOutput()
-    {
-        // 2-arg if false produces no output (empty atom list).
-        var result = Eval("if(1 == 2, 5)");
-        Assert.True(result.IsOk);
-        Assert.Empty(result.Value);
-    }
-
-    [Fact]
-    public void Eval_If2_TrueInAddition()
-        => AssertEval("10 + if(1 == 1, 5)", 15);
-
-    [Fact]
-    public void Eval_If2_FalseInAddition()
-        => AssertEval("10 + if(1 == 2, 5)", 10);
-
-    [Fact]
-    public void Eval_If2_FalseInSubtraction()
-        => AssertEval("10 - if(1 == 2, 3)", 10);
-
-    [Fact]
-    public void Eval_If2_FalseInMultiplication()
-        => AssertEval("10 * if(1 == 2, 3)", 10);
-
-    [Fact]
-    public void Eval_If2_CommaGroup_FalseOmitted()
-        => AssertEval("1, if(1 == 2, 2), 3", 1, 3);
-
-    [Fact]
-    public void Eval_If2_CommaGroup_TrueIncluded()
-        => AssertEval("1, if(1 == 1, 2), 3", 1, 2, 3);
-
-    [Fact]
-    public void Eval_If2_CompatibleWith3ArgIf_True()
+    public void Eval_If3_TrueCondition_ReturnsThenBranch()
         => AssertEval("if(1 == 1, 5, 6)", 5);
 
     [Fact]
-    public void Eval_If2_CompatibleWith3ArgIf_False()
+    public void Eval_If3_FalseCondition_ReturnsElseBranch()
         => AssertEval("if(1 == 2, 5, 6)", 6);
 
     [Fact]
-    public void Eval_If2_Nested()
-        => AssertEval("if(1, if(1, 5))", 5);
+    public void Eval_If3_TrueInAddition()
+        => AssertEval("10 + if(1 == 1, 5, 0)", 15);
 
     [Fact]
-    public void Eval_If2_NestedFalseOuter()
+    public void Eval_If3_FalseInAddition()
+        => AssertEval("10 + if(1 == 2, 5, 0)", 10);
+
+    [Fact]
+    public void Eval_If3_CompatibleWithEarlierCoverage_True()
+        => AssertEval("if(1 == 1, 5, 6)", 5);
+
+    [Fact]
+    public void Eval_If3_CompatibleWithEarlierCoverage_False()
+        => AssertEval("if(1 == 2, 5, 6)", 6);
+
+    [Fact]
+    public void Eval_If2_RuntimeBuiltinCall_FailsWithExplicitArityMessage()
     {
-        var result = Eval("if(0, if(1, 5))");
-        Assert.True(result.IsOk);
-        Assert.Empty(result.Value);
+        var expr = new Expr.Call(
+            new Expr.Resolve("if"),
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Num(1), new Expr.Num(5)]));
+
+        var result = Evaluator.Run(expr);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse.", formatted);
     }
 
     [Fact]
-    public void Eval_If2_NestedFalseInner()
+    public void Eval_If2_RuntimeBuiltinCallInBinary_FailsInsteadOfPropagatingEmptyResult()
     {
-        var result = Eval("if(1, if(0, 5))");
-        Assert.True(result.IsOk);
-        Assert.Empty(result.Value);
-    }
+        var expr = new Expr.Binary(
+            BinaryOp.Mul,
+            new Expr.Num(10),
+            new Expr.Call(
+                new Expr.Resolve("if"),
+                new Algorithm.User(
+                    Parent: null,
+                    Params: [],
+                    Opens: [],
+                    Properties: [],
+                    Output:
+                    [
+                        new Expr.Binary(BinaryOp.Lt, new Expr.Num(7), new Expr.Num(6)),
+                        new Expr.Num(1),
+                    ])));
 
-    [Fact]
-    public void Eval_If2_NonZeroCondition()
-        => AssertEval("if(42, 7)", 7);
+        var result = Evaluator.Run(expr);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-    [Fact]
-    public void Eval_If2_NegativeCondition()
-        => AssertEval("if(-1, 7)", 7);
-
-    [Fact]
-    public void Eval_If2_UnaryOnEmpty()
-        => AssertEval("10 + -if(0, 5)", 10);
-
-    [Fact]
-    public void Eval_If2_BothSidesEmpty()
-    {
-        var result = Eval("if(0, 1) + if(0, 2)");
-        Assert.True(result.IsOk);
-        Assert.Empty(result.Value);
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse.", formatted);
     }
 
     // ── Clause definitions and conditional algorithms ───────────────────────

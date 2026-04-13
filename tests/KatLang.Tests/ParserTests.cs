@@ -1345,14 +1345,12 @@ public class ParserTests
     // ── if arity validation ─────────────────────────────────────────────────
 
     [Fact]
-    public void Parse_If_TwoArgs_RemainsIf()
+    public void Parse_If_TwoArgs_ReportsBuiltinArityError()
     {
         var result = Parser.ParseSyntax("if(1, 2)");
-        Assert.False(result.HasErrors);
-        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        var resolve = Assert.IsType<Expr.Resolve>(call.Function);
-        Assert.Equal("if", resolve.Name);
-        Assert.Equal(2, call.Args.Output.Count);
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
     }
 
     [Fact]
@@ -1364,6 +1362,15 @@ public class ParserTests
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("if", resolve.Name);
         Assert.Equal(3, call.Args.Output.Count);
+    }
+
+    [Fact]
+    public void Parse_If_TwoArgs_InsideExpression_ReportsBuiltinArityError()
+    {
+        var result = Parser.ParseSyntax("10 * if(7 < 6, 1)");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
     }
 
     [Fact]

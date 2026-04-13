@@ -1510,17 +1510,6 @@ public static class Evaluator
                     : EvalMaybeMemoizedPropertyOutputCounted(args[2], ctx, valEnv);
             }
 
-            case (BuiltinId.@if, 2):
-            {
-                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
-                if (condR.IsError) return condR.Error;
-                var truth = condR.Value.TruthValue();
-                if (truth is null) return new EvalError.BadArity();
-                return truth.Value
-                    ? EvalMaybeMemoizedPropertyOutputCounted(args[1], ctx, valEnv)
-                    : EvalResult<CountedResult>.Ok(new CountedResult(new Result.Group([]), 0));
-            }
-
             case (BuiltinId.@while, 2):
             {
                 var initR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
@@ -1624,9 +1613,7 @@ public static class Evaluator
                 return EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
 
             default:
-                return new EvalError.WithContext(
-                    $"expected {BuiltinArityDesc(builtin)} arguments",
-                    new EvalError.ArityMismatch(0, args.Count));
+                return WrongBuiltinArity(builtin, args.Count);
         }
     }
 
@@ -1739,10 +1726,9 @@ public static class Evaluator
         ],
         Output: []);
 
-    /// <summary>Lean: builtinAcceptsArity. ifBuiltin accepts 2 or 3 args.</summary>
+    /// <summary>Lean: builtinAcceptsArity. ifBuiltin accepts exactly 3 args.</summary>
     private static bool BuiltinAcceptsArity(BuiltinId b, int n) => (b, n) switch
     {
-        (BuiltinId.@if, 2) => true,
         (BuiltinId.@if, 3) => true,
         (BuiltinId.@while, 2) => true,
         (BuiltinId.@repeat, 3) => true,
@@ -1762,7 +1748,7 @@ public static class Evaluator
     /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
     private static string BuiltinArityDesc(BuiltinId b) => b switch
     {
-        BuiltinId.@if => "2 or 3",
+        BuiltinId.@if => "3",
         BuiltinId.@while => "2",
         BuiltinId.@repeat => "3",
         BuiltinId.@atoms => "1",
@@ -1777,6 +1763,17 @@ public static class Evaluator
         BuiltinId.@reduce => "3",
         _ => "?",
     };
+
+    private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
+        => builtin switch
+        {
+            BuiltinId.@if => new EvalError.WithContext(
+                $"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {actualCount}.",
+                new EvalError.ArityMismatch(3, actualCount)),
+            _ => new EvalError.WithContext(
+                $"expected {BuiltinArityDesc(builtin)} arguments",
+                new EvalError.ArityMismatch(0, actualCount)),
+        };
 
     // ── Intrinsics ──────────────────────────────────────────────────────────
 
@@ -2434,19 +2431,6 @@ public static class Evaluator
                     : EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
             }
 
-            // if(cond, value): 2-arg conditional output / emit-on-true.
-            // True → evaluate and return value. False → no output (empty group).
-            case (BuiltinId.@if, 2):
-            {
-                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
-                if (condR.IsError) return condR.Error;
-                var truth = condR.Value.TruthValue();
-                if (truth is null) return new EvalError.BadArity();
-                return truth.Value
-                    ? EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv)
-                    : EvalResult<Result>.Ok(new Result.Group([]));
-            }
-
             // while(step, init)
             case (BuiltinId.@while, 2):
             {
@@ -2613,9 +2597,7 @@ public static class Evaluator
 
             default:
             {
-                return new EvalError.WithContext(
-                    $"expected {BuiltinArityDesc(builtin)} arguments",
-                    new EvalError.ArityMismatch(0, args.Count));
+                return WrongBuiltinArity(builtin, args.Count);
             }
         }
     }
@@ -2693,7 +2675,7 @@ public static class Evaluator
 
             case Expr.Unary(var unaryOp, var operand):
             {
-                // Empty result propagation: if(false, v) produces Group([]) (2-arg form).
+                // Empty result propagation through unary operators.
                 var operandR = Eval(operand, ctx, valEnv);
                 if (operandR.IsError) return operandR.Error;
                 if (operandR.Value is Result.Group(var uItems) && uItems.Count == 0)
@@ -2713,12 +2695,11 @@ public static class Evaluator
 
             case Expr.Binary(var op, var left, var right):
             {
-                // Evaluate both sides as Result first to handle empty results from 2-arg if.
+                // Evaluate both sides as Result first so empty results can propagate.
                 var lR = Eval(left, ctx, valEnv);
                 if (lR.IsError) return lR.Error;
                 var rR = Eval(right, ctx, valEnv);
                 if (rR.IsError) return rR.Error;
-                // Empty result handling: if(false, v) produces Group([]) (2-arg form).
                 // Empty results are transparent in binary expressions.
                 var lEmpty = lR.Value is Result.Group(var lItems) && lItems.Count == 0;
                 var rEmpty = rR.Value is Result.Group(var rItems) && rItems.Count == 0;

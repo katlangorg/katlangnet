@@ -75,6 +75,16 @@ public class KatLangEngineTests
     }
 
     [Fact]
+    public void Run_If_TwoArgs_ReturnsParseFailure()
+    {
+        var result = KatLangEngine.Run("10 * if(7 < 6, 1)");
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse.", error.Message);
+    }
+
+    [Fact]
     public void Run_Filter_NonCallablePredicate_ExplainsImplicitItemArgument()
     {
         var result = KatLangEngine.Run("range(1, 5).filter(1)");
@@ -326,8 +336,8 @@ public class KatLangEngineTests
     {
         var source = """
             IsEven = y mod 2 == 0
-            Filter(x, predicate) = if(predicate(x), x)
-            Filter(4, IsEven)
+            Choose(x, predicate) = if(predicate(x), x, 0)
+            Choose(4, IsEven)
             """;
         var result = KatLangEngine.Run(source);
 
@@ -336,17 +346,17 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_FlatMultiBinderClause_FalsePredicate_ProducesEmptyOutput()
+    public void Run_FlatMultiBinderClause_FalsePredicate_UsesElseBranch()
     {
         var source = """
             IsEven = y mod 2 == 0
-            Filter(x, predicate) = if(predicate(x), x)
-            Filter(3, IsEven)
+            Choose(x, predicate) = if(predicate(x), x, 0)
+            Choose(3, IsEven)
             """;
         var result = KatLangEngine.Run(source);
 
         var success = Assert.IsType<RunResult.Success>(result);
-        Assert.Empty(success.Atoms);
+        Assert.Equal([0m], success.Atoms);
     }
 
     [Fact]

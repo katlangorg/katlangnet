@@ -778,30 +778,29 @@ def test19c : Bool :=
   .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
 ]))
 
---------------------------------------------------------------------------------
--- 2-arg if builtin tests (conditional output / emit-on-true)
--- if(cond, value): true → value, false → group [] (no output).
+-- if builtin tests
+-- if(cond, whenTrue, whenFalse): the only supported form.
 --------------------------------------------------------------------------------
 
--- Test 20: 2-arg if true → produce value
--- if(1, 5) → [5]
+-- Test 20: 3-arg if true → produce then-branch value
+-- if(1, 5, 6) → [5]
 def test20 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])) with
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6])) with
   | Except.ok [5] => true
   | _ => false
 
 #eval test20  -- should be true
-#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))
+#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]))
 
--- Test 21: 2-arg if false → empty output
--- if(0, 5) → []
+-- Test 21: 3-arg if false → produce else-branch value
+-- if(0, 5, 6) → [6]
 def test21 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])) with
-  | Except.ok [] => true
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5, .num 6])) with
+  | Except.ok [6] => true
   | _ => false
 
 #eval test21  -- should be true
-#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))
+#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5, .num 6]))
 
 --------------------------------------------------------------------------------
 -- Conditional algorithm tests
@@ -896,63 +895,71 @@ def test37 : Bool :=
 
 #eval test37  -- should be true
 
--- Test 22: 2-arg if false in addition → empty transparent, 10 + if(0, 5) → [10]
+-- Test 22: 2-arg if is rejected
 def test22 : Bool :=
-  match runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 0, .num 5]))) with
-  | Except.ok [10] => true
-  | _ => false
+  match runResult (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])) with
+  | Except.error _ => true
+  | Except.ok _ => false
 
 #eval test22  -- should be true
-#eval runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))
+#eval runResult (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))
 
--- Test 23: 2-arg if true in addition → 10 + if(1, 5) → [15]
+-- Test 23: 2-arg if in addition is rejected
 def test23 : Bool :=
-  match runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))) with
-  | Except.ok [15] => true
-  | _ => false
+  match runResult (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))) with
+  | Except.error _ => true
+  | Except.ok _ => false
 
 #eval test23  -- should be true
-#eval runFlat (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])))
+#eval runResult (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])))
 
--- Test 24: Combine with 2-arg if false → omitted from output
--- 1, if(0, 2), 3 → [1, 3]
+-- Test 24: 2-arg if in multiplication is rejected
 def test24 : Bool :=
-  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2])) (.num 3))) with
-  | Except.ok [1, 3] => true
-  | _ => false
+  match runResult (.binary .mul (.num 10) (.call (resolve "if") (alg [] [] [] [
+    .binary .lt (.num 7) (.num 6),
+    .num 1
+  ]))) with
+  | Except.error _ => true
+  | Except.ok _ => false
 
 #eval test24  -- should be true
-#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2])) (.num 3)))
+#eval runResult (.binary .mul (.num 10) (.call (resolve "if") (alg [] [] [] [
+  .binary .lt (.num 7) (.num 6),
+  .num 1
+])))
 
--- Test 25: Combine with 2-arg if true → included in output
--- 1, if(1, 2), 3 → [1, 2, 3]
+-- Test 25: Combine with 3-arg if selects the else branch
+-- 1, if(0, 2, 9), 3 → [1, 9, 3]
 def test25 : Bool :=
-  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 1, .num 2])) (.num 3))) with
-  | Except.ok [1, 2, 3] => true
+  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3))) with
+  | Except.ok [1, 9, 3] => true
   | _ => false
 
 #eval test25  -- should be true
-#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 1, .num 2])) (.num 3)))
+#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3)))
 
--- Test 26: Nested 2-arg if — if(1, if(1, 5)) → [5]
+-- Test 26: Nested 3-arg if uses the selected inner branch
+-- if(1, if(1, 5, 6), 9) → [5]
 def test26 : Bool :=
   match runFlat (.call (resolve "if") (alg [] [] [] [
     .num 1,
-    .call (resolve "if") (alg [] [] [] [.num 1, .num 5])
+    .call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]),
+    .num 9
   ])) with
   | Except.ok [5] => true
   | _ => false
 
 #eval test26  -- should be true
 
--- Test 27: Nested 2-arg if — outer false → empty
--- if(0, if(1, 5)) → []
+-- Test 27: Nested 3-arg if uses the outer else branch
+-- if(0, if(1, 5, 6), 9) → [9]
 def test27 : Bool :=
   match runFlat (.call (resolve "if") (alg [] [] [] [
     .num 0,
-    .call (resolve "if") (alg [] [] [] [.num 1, .num 5])
+    .call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]),
+    .num 9
   ])) with
-  | Except.ok [] => true
+  | Except.ok [9] => true
   | _ => false
 
 #eval test27  -- should be true
@@ -973,19 +980,19 @@ def test29 : Bool :=
 
 #eval test29  -- should be true
 
--- Test 30: 2-arg if with non-zero condition → true
--- if(42, 7) → [7]
+-- Test 30: 3-arg if with non-zero condition → true
+-- if(42, 7, 9) → [7]
 def test30 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 42, .num 7])) with
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num 42, .num 7, .num 9])) with
   | Except.ok [7] => true
   | _ => false
 
 #eval test30  -- should be true
 
--- Test 31: 2-arg if with negative condition → true
--- if(-1, 7) → [7]
+-- Test 31: 3-arg if with negative condition → true
+-- if(-1, 7, 9) → [7]
 def test31 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num (-1), .num 7])) with
+  match runFlat (.call (resolve "if") (alg [] [] [] [.num (-1), .num 7, .num 9])) with
   | Except.ok [7] => true
   | _ => false
 
@@ -1098,12 +1105,11 @@ def test62 : Bool :=
 
 #eval test62  -- should be true
 
--- Test 32: Unary on empty 2-arg if → transparent
--- -(if(0, 5)) → empty, 10 + -(if(0, 5)) → [10]
+-- Test 32: Unary / binary composition with 2-arg if is rejected
 def test32 : Bool :=
-  match runFlat (.binary .add (.num 10) (.unary .minus (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))) with
-  | Except.ok [10] => true
-  | _ => false
+  match runResult (.binary .add (.num 10) (.unary .minus (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))) with
+  | Except.error _ => true
+  | Except.ok _ => false
 
 #eval test32  -- should be true
 
@@ -1287,7 +1293,10 @@ def badGroupedAlg70 : Algorithm :=
 
 def emptyTruthAlg71 : Algorithm :=
   alg ["x"] [] [] [
-    .call (resolve "if") (alg [] [] [] [.num 0, .param "x"])
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "IsNegative"
+    ])
   ]
 
 -- Test 63: filter(range(1, 10), IsEven) keeps even items in ascending order
@@ -1344,9 +1353,12 @@ def test66 : Bool :=
 
 -- Test 67: empty input collection stays empty
 def test67 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63), ("IsNegative", isNegativeAlg65)] [
     .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
       .resolve "IsEven"
     ])
   ])) with
@@ -1415,7 +1427,7 @@ def test71 : Bool :=
 
 -- Test 72: empty predicate result is rejected
 def test72 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", emptyTruthAlg71)] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65), ("Bad", emptyTruthAlg71)] [
     .call (resolve "filter") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
       .resolve "Bad"
@@ -1493,7 +1505,10 @@ def reduceStatsAlg80 : Algorithm :=
 
 def reduceEmptyAlg81 : Algorithm :=
   alg ["x", "acc"] [] [] [
-    .call (resolve "if") (alg [] [] [] [.num 0, .param "acc"])
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "IsNegative"
+    ])
   ]
 
 def reduceMultiAlg82 : Algorithm :=
@@ -1542,9 +1557,12 @@ def test78 : Bool :=
 
 -- Test 79: empty collection returns the numeric initial accumulator unchanged
 def test79 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
+  match runFlat (.block (algPrivate [] [] [("Add", addAlg76), ("IsNegative", isNegativeAlg65)] [
     .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
       .resolve "Add",
       .num 0
     ])
@@ -1556,9 +1574,12 @@ def test79 : Bool :=
 
 -- Test 80: empty collection returns a grouped initial accumulator unchanged
 def test80 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
+  match runResult (.block (algPrivate [] [] [("Add", addAlg76), ("IsNegative", isNegativeAlg65)] [
     .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
       .resolve "Add",
       .block (alg [] [] [] [.num 7, .num 9])
     ])
@@ -1603,7 +1624,7 @@ def test82 : Bool :=
 
 -- Test 83: reduce step must not return an empty result
 def test83 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", reduceEmptyAlg81)] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65), ("Bad", reduceEmptyAlg81)] [
     .call (resolve "reduce") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
       .resolve "Bad",
@@ -1660,7 +1681,10 @@ def pairWithSquareAlg90 : Algorithm :=
 
 def mapEmptyAlg91 : Algorithm :=
   alg ["x"] [] [] [
-    .call (resolve "if") (alg [] [] [] [.num 0, .param "x"])
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+      .resolve "IsNegative"
+    ])
   ]
 
 def mapMultiAlg92 : Algorithm :=
@@ -1710,9 +1734,12 @@ def test87 : Bool :=
 
 -- Test 88: empty input collection stays empty
 def test88 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85), ("IsNegative", isNegativeAlg65)] [
     .call (resolve "map") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1]),
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
       .resolve "Double"
     ])
   ])) with
@@ -1755,7 +1782,7 @@ def test90 : Bool :=
 
 -- Test 91: map transform must not return an empty result
 def test91 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", mapEmptyAlg91)] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65), ("Bad", mapEmptyAlg91)] [
     .call (resolve "map") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
       .resolve "Bad"
@@ -1859,9 +1886,12 @@ def test97 : Bool :=
 
 -- Test 98: empty collections sum to zero
 def test98 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
     .call (resolve "sum") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
     ])
   ])) with
   | Except.ok [0] => true
@@ -1978,9 +2008,12 @@ def test106 : Bool :=
 
 -- Test 107: empty collections count as zero
 def test107 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
     .call (resolve "count") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
     ])
   ])) with
   | Except.ok [0] => true
@@ -2102,9 +2135,12 @@ def test115 : Bool :=
 
 -- Test 116: empty collections are rejected by min
 def test116 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
     .call (resolve "min") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
     ])
   ])) with
   | Except.error err => hasContext "min requires a non-empty collection" err && innermostIsBadArity err
@@ -2221,9 +2257,12 @@ def test124 : Bool :=
 
 -- Test 125: empty collections are rejected by max
 def test125 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
     .call (resolve "max") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
     ])
   ])) with
   | Except.error err => hasContext "max requires a non-empty collection" err && innermostIsBadArity err
@@ -2336,9 +2375,12 @@ def test133 : Bool :=
 
 -- Test 134: empty collections are rejected by avg
 def test134 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
     .call (resolve "avg") (alg [] [] [] [
-      .call (resolve "if") (alg [] [] [] [.num 0, .num 1])
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
     ])
   ])) with
   | Except.error err => hasContext "avg requires a non-empty collection" err && innermostIsBadArity err

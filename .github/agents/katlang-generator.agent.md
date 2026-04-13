@@ -235,6 +235,7 @@ GOOD — assumed values in final call:
 - Do not bake task-specific cutoff constants into helper predicates when the problem defines a reusable concept.
 - Do not specialize a predicate to one requested limit unless the user explicitly asks for a bounded shortcut.
 - Do not invent hidden default values inside algorithm definitions.
+- Builtin `if` always has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Never generate a 2-argument `if`.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `// assumed annual salary = 50000`.
 - Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. If a concept is naturally named `sum`, `min`, `max`, `avg`, `count`, `map`, `filter`, `reduce`, or `range`, rename it to a non-builtin alternative such as `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `transform`, `predicate`, `reducer`, or `span`.
@@ -260,6 +261,7 @@ Before emitting code, verify silently:
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
 - Nested property bodies use `( ... )` or `{ ... }` correctly; simple property bodies are not wrapped.
+- Builtin `if` always has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Never generate a 2-argument `if`.
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step's implicit parameter count matches the state tuple element count.
@@ -287,7 +289,7 @@ Before emitting code, verify silently:
 - The presence of helper properties does not satisfy the requirement for a concrete answer.
 - The code must not stop after defining the main algorithm.
 - A same-name clause family with exactly one plain binder head elaborates as an ordinary algorithm, even though the surface syntax is `Name(pattern) = body`.
-- In those sole plain-binder clause families, higher-order parameters remain callable: `Apply(f) = f(4)` and `Filter(x, predicate) = if(predicate(x), x)` are valid ordinary interfaces.
+- In those sole plain-binder clause families, higher-order parameters remain callable: `Apply(f) = f(4)` and `Choose(x, predicate) = if(predicate(x), x, 0)` are valid ordinary interfaces.
 - If conditional algorithms are used, their syntax is `Name(pattern) = body`.
 - If conditional algorithms are used, branch order is meaningful and intentional.
 - If fallback behavior is needed, it is expressed as a final catch-all branch, not by invalid implicit default syntax.
@@ -591,7 +593,7 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-`if(condition, thenExpr, elseExpr)` — condition is numeric. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`.
+Builtin `if` always has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`.
 
 ### `repeat`
 
@@ -724,10 +726,10 @@ Conditional algorithms match the full grouped argument structure of a call again
 Not every clause-style definition is a true conditional algorithm. A same-name clause family with exactly one clause and a plain top-level binder list elaborates as an ordinary algorithm instead:
 
     Apply(f) = f(4)
-    Filter(x, predicate) = if(predicate(x), x)
+    Choose(x, predicate) = if(predicate(x), x, 0)
     K(a, b) = a
 
-These sole plain-binder clause families keep ordinary call semantics, so higher-order parameters remain callable. For example, `Apply(IsEven)` works, and `Filter(4, IsEven)` works.
+These sole plain-binder clause families keep ordinary call semantics, so higher-order parameters remain callable. For example, `Apply(IsEven)` works, and `Choose(4, IsEven)` works.
 
 True conditional algorithms are the grouped, literal, nested, or multi-clause families such as:
 
@@ -783,7 +785,7 @@ A catch-all branch must still match the expected grouped shape — it is not a f
 A same-name clause family with exactly one clause and a plain top-level binder list elaborates as an ordinary algorithm, even though the surface syntax is `Name(pattern) = body`.
 
     Apply(f) = f(4)
-    Filter(x, predicate) = if(predicate(x), x)
+    Choose(x, predicate) = if(predicate(x), x, 0)
     K(a, b) = a
 
 Because these elaborate as ordinary algorithms, higher-order arguments remain callable. This is the right surface form for plain higher-order interfaces and for ignored parameters without grouped pattern semantics.

@@ -33,7 +33,7 @@
 --     - a same-name clause group elaborates to ordinary `Algorithm.mk` only
 --       when the group contains exactly one clause and that sole head is only
 --       top-level plain binders (for example `Apply(f) = f(4)` or
---       `Filter(x, predicate) = if(predicate(x), x)`)
+--       `Choose(x, predicate) = if(predicate(x), x, 0)`)
 --     - multi-clause families and clause heads that require structural /
 --       whole-argument matching elaborate to `Algorithm.conditional`
 --
@@ -131,7 +131,7 @@ inductive Builtin where
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
-    ifBuiltin accepts 2 (conditional output) or 3 (if-then-else).
+  ifBuiltin accepts 3 arguments: condition, whenTrue, and whenFalse.
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
     mapBuiltin accepts 2 arguments: a collection and a transform.
@@ -142,7 +142,7 @@ inductive Builtin where
     avgBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     reduceBuiltin accepts 3 arguments: a collection, a step, and an initial accumulator. -/
 def builtinAcceptsArity : Builtin -> Nat -> Bool
-  | .ifBuiltin, 2 => true | .ifBuiltin, 3 => true
+  | .ifBuiltin, 3 => true
   | .whileBuiltin, 2 => true
   | .repeatBuiltin, 3 => true
   | .atomsBuiltin, 1 => true
@@ -159,7 +159,7 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
 
 /-- Human-readable expected arity string for error messages. -/
 def builtinArityDesc : Builtin -> String
-  | .ifBuiltin => "2 or 3"
+  | .ifBuiltin => "3"
   | .whileBuiltin => "2"
   | .repeatBuiltin => "3"
   | .atomsBuiltin => "1"
@@ -400,7 +400,7 @@ mutual
         for the whole same-name clause group, not per clause. A group
         elaborates to `Algorithm.mk` only when it contains exactly one clause
         and that sole head is a plain binder list such as `Apply(f) = f(4)` or
-        `Filter(x, predicate) = if(predicate(x), x)`. Multi-clause families,
+        `Choose(x, predicate) = if(predicate(x), x, 0)`. Multi-clause families,
         grouped heads, and literal heads such as
 
           F(0) = 0
@@ -700,7 +700,7 @@ namespace Algorithm
 
       This preserves higher-order ordinary call semantics for single-clause
       families such as `Apply(f) = f(4)` and
-      `Filter(x, predicate) = if(predicate(x), x)`, while keeping multi-clause,
+      `Choose(x, predicate) = if(predicate(x), x, 0)`, while keeping multi-clause,
       grouped, literal, and nested families conditional. -/
   def elaborateClauseGroup : List CondBranch -> Algorithm
     | [branch] =>
@@ -1898,13 +1898,6 @@ mutual
         | some true => evalAlgOutputCounted t ctx env
         | none => .error Error.badArity
 
-    | .ifBuiltin, [c,v] => do
-        let cr <- evalAlgOutput c ctx env
-        match Result.truthValue? cr with
-        | some false => pure (Result.group [], 0)
-        | some true => evalAlgOutputCounted v ctx env
-        | none => .error Error.badArity
-
     | .whileBuiltin, [step, init] => do
         let s0r <- evalAlgOutput init ctx env
         let rec loop (s : Result) : EvalM Result := do
@@ -1995,16 +1988,6 @@ mutual
         match Result.truthValue? cr with
         | some false => evalAlgOutput e ctx env
         | some true => evalAlgOutput t ctx env
-        | none => .error Error.badArity
-
-    -- if(cond, value): 2-arg conditional output / emit-on-true.
-    -- True → evaluate and return value.
-    -- False → produce no output (empty group).
-    | .ifBuiltin, [c,v] => do
-        let cr <- evalAlgOutput c ctx env
-        match Result.truthValue? cr with
-        | some false => pure (Result.group [])   -- false: no output
-        | some true => evalAlgOutput v ctx env   -- true: produce value
         | none => .error Error.badArity
 
     | .whileBuiltin, [step, init] => do
@@ -2517,7 +2500,6 @@ mutual
     | .binary op a b => do
         let lr <- eval a ctx env
         let rr <- eval b ctx env
-        -- Empty result handling: if(false, v) produces group [] (2-arg form).
         -- Empty results are transparent in binary expressions.
         match lr, rr with
         | .group [], _ => pure rr
