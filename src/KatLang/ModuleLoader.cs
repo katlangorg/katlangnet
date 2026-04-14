@@ -93,7 +93,10 @@ public sealed class ModuleLoader
             // plain grouped values such as (a, b) wrapped as one block value while
             // still letting load-elaborated modules become direct property values.
             processedValue = UnwrapSingleBlock(processedValue);
-            newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic));
+            newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic)
+            {
+                DeclarationSpans = prop.DeclarationSpans
+            });
         }
 
         var newOutput = new List<Expr>(alg.Output.Count);
@@ -186,7 +189,10 @@ public sealed class ModuleLoader
                     ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr),
                     name,
                     args is not null ? ProcessAlgorithm(args, LoadContext.RuntimeExpr) : null)
-                { Span = expr.Span };
+                {
+                    Span = expr.Span,
+                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                };
 
             case Expr.Grace(var inner, var weight):
                 return new Expr.Grace(ProcessExpr(inner, context), weight) { Span = expr.Span };

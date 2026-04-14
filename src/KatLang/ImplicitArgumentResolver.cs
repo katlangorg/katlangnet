@@ -287,7 +287,10 @@ public static class ImplicitArgumentResolver
                 }
                 var processedCond = new Algorithm.Conditional(
                     condAlg.Parent, condAlg.Opens, processedBranches);
-                processedProperties[idx] = new Property(prop.Name, processedCond, prop.IsPublic);
+                processedProperties[idx] = new Property(prop.Name, processedCond, prop.IsPublic)
+                {
+                    DeclarationSpans = prop.DeclarationSpans
+                };
             }
             else
             {
@@ -297,7 +300,10 @@ public static class ImplicitArgumentResolver
                 localParamMap[prop.Name] = processedBody.Params;
                 visibleParamMap[prop.Name] = processedBody.Params;
 
-                processedProperties[idx] = new Property(prop.Name, processedBody, prop.IsPublic);
+                processedProperties[idx] = new Property(prop.Name, processedBody, prop.IsPublic)
+                {
+                    DeclarationSpans = prop.DeclarationSpans
+                };
             }
         }
 
@@ -503,7 +509,11 @@ public static class ImplicitArgumentResolver
                 return new Expr.DotCall(
                     RewriteImplicitCalls(target, paramMap, inCallPosition: true),
                     name,
-                    dotArgs is not null ? ProcessAlgorithm(dotArgs, paramMap) : null) { Span = expr.Span };
+                    dotArgs is not null ? ProcessAlgorithm(dotArgs, paramMap) : null)
+                {
+                    Span = expr.Span,
+                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                };
 
             case Expr.Grace(var inner, _):
                 return RewriteImplicitCalls(inner, paramMap, inCallPosition);
@@ -545,7 +555,11 @@ public static class ImplicitArgumentResolver
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExprNested(t, paramMap),
                 n,
-                da is not null ? ProcessAlgorithm(da, paramMap) : null) { Span = expr.Span },
+                da is not null ? ProcessAlgorithm(da, paramMap) : null)
+            {
+                Span = expr.Span,
+                MemberSpan = ((Expr.DotCall)expr).MemberSpan
+            },
             Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap),
             _ => expr,
         };

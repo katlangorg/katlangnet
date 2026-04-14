@@ -85,12 +85,18 @@ public static class ParameterDetector
                 }
                 var processedCond = new Algorithm.Conditional(
                     condAlg.Parent, condAlg.Opens, processedBranches);
-                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic));
+                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic)
+                {
+                    DeclarationSpans = prop.DeclarationSpans
+                });
             }
             else
             {
                 var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs, diagnostics);
-                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic));
+                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic)
+                {
+                    DeclarationSpans = prop.DeclarationSpans
+                });
             }
         }
 
@@ -200,7 +206,10 @@ public static class ParameterDetector
         foreach (var prop in body.Properties)
         {
             var processedProp = ProcessAlgorithm(prop.Value, bodyVisibleNames, allPropertyAlgs, diagnostics);
-            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic));
+            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic)
+            {
+                DeclarationSpans = prop.DeclarationSpans
+            });
         }
 
         // Rewrite only binder names Resolve → Param; leave all others as-is.
@@ -266,23 +275,34 @@ public static class ParameterDetector
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
                     RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs),
-                    name) { Span = expr.Span };
+                    name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
 
             case Expr.DotCall(var target, var name, var dotArgs):
             {
                 var rewrittenTarget = RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs);
                 if (dotArgs is null)
-                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span };
+                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
                 if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs))
+                    {
+                        Span = expr.Span,
+                        MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    };
                 var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
                 foreach (var argExpr in dotArgs.Output)
                     rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                    {
+                        DeclarationSpans = prop.DeclarationSpans
+                    });
                 return new Expr.DotCall(rewrittenTarget, name,
-                    dotArgs with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                    dotArgs with { Output = rewrittenOutput, Properties = processedProps })
+                {
+                    Span = expr.Span,
+                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                };
             }
 
             case Expr.Block(var alg):
@@ -297,7 +317,10 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        {
+                            DeclarationSpans = prop.DeclarationSpans
+                        });
                     return new Expr.Block(alg with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
                 }
 
@@ -315,7 +338,10 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        {
+                            DeclarationSpans = prop.DeclarationSpans
+                        });
                     return new Expr.Call(
                         RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs),
                         args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
@@ -514,23 +540,34 @@ public static class ParameterDetector
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
                     RewriteParams(target, paramNames, visibleNames, propertyAlgs),
-                    name) { Span = expr.Span };
+                    name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
 
             case Expr.DotCall(var target, var name, var dotArgs):
             {
                 var rewrittenTarget = RewriteParams(target, paramNames, visibleNames, propertyAlgs);
                 if (dotArgs is null)
-                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span };
+                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
                 if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs))
+                    {
+                        Span = expr.Span,
+                        MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    };
                 var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
                 foreach (var argExpr in dotArgs.Output)
                     rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                    {
+                        DeclarationSpans = prop.DeclarationSpans
+                    });
                 return new Expr.DotCall(rewrittenTarget, name,
-                    dotArgs with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                    dotArgs with { Output = rewrittenOutput, Properties = processedProps })
+                {
+                    Span = expr.Span,
+                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                };
             }
 
             case Expr.Block(var alg):
@@ -546,7 +583,10 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        {
+                            DeclarationSpans = prop.DeclarationSpans
+                        });
                     return new Expr.Block(alg with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
                 }
 
@@ -567,7 +607,10 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic));
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        {
+                            DeclarationSpans = prop.DeclarationSpans
+                        });
                     return new Expr.Call(
                         RewriteParams(func, paramNames, visibleNames, propertyAlgs),
                         args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
@@ -605,7 +648,11 @@ public static class ParameterDetector
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExpr(t, visibleNames, propertyAlgs),
                 n,
-                da is not null ? ProcessAlgorithm(da, visibleNames, propertyAlgs) : null) { Span = expr.Span },
+                da is not null ? ProcessAlgorithm(da, visibleNames, propertyAlgs) : null)
+            {
+                Span = expr.Span,
+                MemberSpan = ((Expr.DotCall)expr).MemberSpan
+            },
             _ => expr,
         };
     }

@@ -189,8 +189,10 @@ public sealed class Parser
         var output = new List<Expr>();
         var hasExplicitOutput = false;
         var hasImplicitOutput = false;
+        SourceSpan? explicitOutputSpan = null;
         var clauseGroups = new Dictionary<string, List<CondBranch>>();
         var clauseGroupSpans = new Dictionary<string, List<SourceSpan>>();
+        var clauseGroupNameSpans = new Dictionary<string, List<SourceSpan>>();
 
         while (Current.Kind != TokenKind.EndOfFile
             && Current.Kind != TokenKind.RParen
@@ -246,7 +248,8 @@ public sealed class Parser
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
             {
                 Advance(); // consume 'public'
-                var name = Current.StringValue!;
+                var nameToken = Current;
+                var name = nameToken.StringValue!;
 
                 // Check for duplicate property definition
                 if (properties.Any(p => p.Name == name) || clauseGroups.ContainsKey(name))
@@ -257,7 +260,10 @@ public sealed class Parser
                 Advance(); // consume identifier
                 Advance(); // consume '='
                 var body = ParseOutputLine();
-                properties.Add(new Property(name, body, IsPublic: true));
+                properties.Add(new Property(name, body, IsPublic: true)
+                {
+                    DeclarationSpans = [TokenSpan(nameToken)]
+                });
             }
             // public clause definition: public Name(...) = ... → reject
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
@@ -269,6 +275,7 @@ public sealed class Parser
             // Explicit output definition: Output = expr
             else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
             {
+                var outputToken = Current;
                 if (hasExplicitOutput)
                 {
                     ReportError("Algorithm output may be defined only once.");
@@ -279,6 +286,7 @@ public sealed class Parser
                 }
 
                 hasExplicitOutput = true;
+                explicitOutputSpan ??= TokenSpan(outputToken);
                 Advance(); // consume 'Output'
                 Advance(); // consume '='
                 var exprs = ParseOutputLineExprs();
@@ -287,7 +295,8 @@ public sealed class Parser
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
             {
-                var name = Current.StringValue!;
+                var nameToken = Current;
+                var name = nameToken.StringValue!;
 
                 // Check for duplicate property definition
                 if (properties.Any(p => p.Name == name) || clauseGroups.ContainsKey(name))
@@ -298,7 +307,10 @@ public sealed class Parser
                 Advance(); // consume identifier
                 Advance(); // consume '='
                 var body = ParseOutputLine();
-                properties.Add(new Property(name, body));
+                properties.Add(new Property(name, body)
+                {
+                    DeclarationSpans = [TokenSpan(nameToken)]
+                });
             }
             // Clause definition: Name(pattern) = body
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
@@ -332,6 +344,7 @@ public sealed class Parser
                     branchList = [];
                     clauseGroups[name] = branchList;
                     clauseGroupSpans[name] = [];
+                    clauseGroupNameSpans[name] = [];
                 }
 
                 // Check for duplicate branch pattern (match-equivalent)
@@ -342,6 +355,7 @@ public sealed class Parser
 
                 branchList.Add(new CondBranch(pattern, body));
                 clauseGroupSpans[name].Add(clauseSpan);
+                clauseGroupNameSpans[name].Add(TokenSpan(nameToken));
             }
             else
             {
@@ -367,11 +381,15 @@ public sealed class Parser
         foreach (var (name, branches) in clauseGroups)
         {
             var spans = clauseGroupSpans[name];
+            var nameSpans = clauseGroupNameSpans[name];
             var elaboratedClauseGroup = Algorithm.ElaborateClauseGroup(branches);
 
             if (elaboratedClauseGroup is Algorithm.User ordinaryAlg)
             {
-                properties.Add(new Property(name, ordinaryAlg));
+                properties.Add(new Property(name, ordinaryAlg)
+                {
+                    DeclarationSpans = nameSpans
+                });
                 continue;
             }
 
@@ -419,7 +437,10 @@ public sealed class Parser
                 }
             }
 
-            properties.Add(new Property(name, condAlg));
+            properties.Add(new Property(name, condAlg)
+            {
+                DeclarationSpans = nameSpans
+            });
         }
 
         return new Algorithm.User(
@@ -429,7 +450,8 @@ public sealed class Parser
             Properties: properties,
             Output: output)
         {
-            IsParametrized = isParametrized
+            IsParametrized = isParametrized,
+            ExplicitOutputSpan = explicitOutputSpan
         };
     }
 
@@ -701,7 +723,7 @@ public sealed class Parser
                     ReportError("Grace is not allowed in conditional branch patterns.");
                     while (Current.Kind == TokenKind.Tilde) Advance(); // skip tildes
                 }
-                return new Pattern.Bind(token.StringValue!);
+                return new Pattern.Bind(token.StringValue!) { NameSpan = TokenSpan(token) };
             }
 
             case TokenKind.LParen:
@@ -801,8 +823,12 @@ public sealed class Parser
     {
         switch (expr)
         {
-            case Expr.DotCall(var target, var name, null):
-                return new Expr.DotCall(NormalizeOpenExpr(target), name) { Span = expr.Span };
+            case Expr.DotCall dotCall when dotCall.Args is null:
+                return new Expr.DotCall(NormalizeOpenExpr(dotCall.Target), dotCall.Name)
+                {
+                    Span = expr.Span,
+                    MemberSpan = dotCall.MemberSpan
+                };
 
             case Expr.DotCall(var target, var name, _):
                 ReportError($"Invalid open form: call-like dotCall '.{name}(...)' is not allowed in open declarations.");
@@ -990,7 +1016,9 @@ public sealed class Parser
                         ReportError("Expected property name after '.'.");
                         break;
                     }
-                    var propName = Current.StringValue!;
+                    var propNameToken = Current;
+                    var propName = propNameToken.StringValue!;
+                    var memberSpan = TokenSpan(propNameToken);
                     Advance(); // consume identifier
 
                     if (Current.Kind is TokenKind.LParen or TokenKind.LBrace
@@ -999,12 +1027,20 @@ public sealed class Parser
                         // expr.Name(args) → DotCall(expr, Name, args)
                         // Lean: dotCall : Expr → Ident → Option Algorithm → Expr
                         var args = ParseCallArgs();
-                        lhs = new Expr.DotCall(lhs, propName, args) { Span = SpanFrom(lhs) };
+                        lhs = new Expr.DotCall(lhs, propName, args)
+                        {
+                            Span = SpanFrom(lhs),
+                            MemberSpan = memberSpan
+                        };
                     }
                     else
                     {
                         // expr.Name → DotCall(expr, Name, null)
-                        lhs = new Expr.DotCall(lhs, propName) { Span = SpanFrom(lhs) };
+                        lhs = new Expr.DotCall(lhs, propName)
+                        {
+                            Span = SpanFrom(lhs),
+                            MemberSpan = memberSpan
+                        };
                     }
                     break;
 

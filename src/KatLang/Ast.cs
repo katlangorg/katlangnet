@@ -46,6 +46,15 @@ public sealed record SourceSpan(
     int StartLineNumber, int StartColumn,
     int EndLineNumber, int EndColumn);
 
+/// <summary>
+/// Source-declared ordinary algorithm parameter metadata.
+/// This is populated for explicit clause binders that elaborate to an
+/// ordinary <see cref="Algorithm.User"/>, for example <c>Apply(f) = f(4)</c>.
+/// Implicit parameters inferred later by <see cref="ParameterDetector"/> do not
+/// create source declarations and therefore do not appear here.
+/// </summary>
+public sealed record ParameterDeclaration(string Name, SourceSpan? Span);
+
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
 
 /// <summary>
@@ -89,7 +98,14 @@ public abstract record Expr
     /// with smart resolution: property access when f has 0 params, otherwise call with receiver.
     /// Lean: <c>dotCall : Expr → Ident → Option Algorithm → Expr</c>.
     /// </summary>
-    public sealed record DotCall(Expr Target, string Name, Algorithm? Args = null) : Expr;
+    public sealed record DotCall(Expr Target, string Name, Algorithm? Args = null) : Expr
+    {
+        /// <summary>
+        /// Exact span of the member identifier to the right of the dot when the
+        /// parser has source information for it.
+        /// </summary>
+        public SourceSpan? MemberSpan { get; init; }
+    }
 
     /// <summary>
     /// Grace weight annotation. <c>Grace(inner, w)</c> marks an identifier with reordering weight.
@@ -130,7 +146,11 @@ public abstract record Pattern
     private Pattern() { }
 
     /// <summary>Matches any Result and binds it to the given name.</summary>
-    public sealed record Bind(string Name) : Pattern;
+    public sealed record Bind(string Name) : Pattern
+    {
+        /// <summary>Exact span of the binder identifier when available.</summary>
+        public SourceSpan? NameSpan { get; init; }
+    }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
     public sealed record LitInt(decimal Value) : Pattern;
@@ -185,18 +205,27 @@ public abstract record Pattern
     /// </summary>
     internal IReadOnlyList<string>? TryGetFlatMultiBinderParams()
     {
+        var binders = TryGetFlatMultiBinderBindings();
+        if (binders is null)
+            return null;
+
+        return binders.Select(binder => binder.Name).ToList();
+    }
+
+    internal IReadOnlyList<Bind>? TryGetFlatMultiBinderBindings()
+    {
         if (this is not Group(var items) || items.Count <= 1)
             return null;
 
-        var names = new List<string>(items.Count);
+        var binders = new List<Bind>(items.Count);
         foreach (var item in items)
         {
-            if (item is not Bind(var name))
+            if (item is not Bind binder)
                 return null;
-            names.Add(name);
+            binders.Add(binder);
         }
 
-        return names;
+        return binders;
     }
 
     /// <summary>
@@ -225,6 +254,13 @@ public abstract record Pattern
         {
             Bind(var name) => [name],
             _ => TryGetFlatMultiBinderParams(),
+        };
+
+    internal IReadOnlyList<Bind>? TryGetOrdinaryClauseBindings()
+        => this switch
+        {
+            Bind binder => [binder],
+            _ => TryGetFlatMultiBinderBindings(),
         };
 
     /// <summary>
@@ -278,7 +314,14 @@ public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 /// A named property within an algorithm, with visibility metadata.
 /// Lean: PropDef { name, alg, isPublic }.
 /// </summary>
-public sealed record Property(string Name, Algorithm Value, bool IsPublic = false);
+public sealed record Property(string Name, Algorithm Value, bool IsPublic = false)
+{
+    /// <summary>
+    /// Exact source spans of this property's declared name occurrences.
+    /// Conditional clause families may contribute more than one declaration span.
+    /// </summary>
+    public IReadOnlyList<SourceSpan> DeclarationSpans { get; init; } = [];
+}
 
 /// <summary>
 /// Represents a KatLang algorithm — the fundamental building block.
@@ -310,6 +353,20 @@ public abstract record Algorithm
 
     /// <summary>Lean: Algorithm.branches. Returns [] for non-Conditional algorithms.</summary>
     public virtual IReadOnlyList<CondBranch> Branches { get; init; } = [];
+
+    /// <summary>
+    /// Exact source-declared ordinary parameters for this algorithm.
+    /// Only explicit clause binders that elaborate to an ordinary user
+    /// algorithm appear here. Implicit parameters inferred later are not
+    /// represented as source declarations.
+    /// </summary>
+    public virtual IReadOnlyList<ParameterDeclaration> ExplicitParameters { get; init; } = [];
+
+    /// <summary>
+    /// Exact span of the reserved <c>Output</c> declaration name when this
+    /// algorithm used explicit output syntax.
+    /// </summary>
+    public virtual SourceSpan? ExplicitOutputSpan { get; init; }
 
     /// <summary>
     /// Check whether the property list contains duplicate property names.
@@ -377,8 +434,14 @@ public abstract record Algorithm
     /// </summary>
     public static Algorithm ElaborateClauseGroup(IReadOnlyList<CondBranch> clauses)
     {
-        if (clauses.Count == 1 && clauses[0].Pattern.TryGetOrdinaryClauseParams() is { } paramNames)
-            return clauses[0].Body.WithParams(paramNames);
+        if (clauses.Count == 1 && clauses[0].Pattern.TryGetOrdinaryClauseBindings() is { } binders)
+        {
+            var paramNames = binders.Select(binder => binder.Name).ToList();
+            var explicitParameters = binders
+                .Select(binder => new ParameterDeclaration(binder.Name, binder.NameSpan))
+                .ToList();
+            return clauses[0].Body.WithParams(paramNames) with { ExplicitParameters = explicitParameters };
+        }
 
         if (clauses.Count == 0)
             return new Conditional(Parent: null, Opens: [], Branches: []);
