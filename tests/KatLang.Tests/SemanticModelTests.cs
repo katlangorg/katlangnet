@@ -16,6 +16,12 @@ public class SemanticModelTests
     private static IdentifierResolution ResolutionAt(SemanticModel model, int line, int column)
         => Assert.IsType<IdentifierResolution>(model.FindResolutionAt(line, column));
 
+    private static PropertyInfo PropertyAt(SemanticModel model, int line, int column)
+        => Assert.IsType<PropertyInfo>(model.FindPropertyAt(line, column));
+
+    private static PropertyInfo SingleProperty(SemanticModel model, string name)
+        => Assert.Single(model.FindProperties(name));
+
     private static void AssertSpan(SourceSpan span, int startLine, int startColumn, int endLine, int endColumn)
     {
         Assert.Equal(startLine, span.StartLineNumber);
@@ -299,6 +305,172 @@ public class SemanticModelTests
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.LoadedExternalMemberReference, xReference.Classification);
         Assert.Null(xReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_OrdinaryPropertyInfo_ExposesExplicitParametersAndHoverResolution()
+    {
+        var model = BuildModel(
+            """
+            Add(x) = x + 1
+            Add(5)
+            """);
+
+        var property = SingleProperty(model, "Add");
+        Assert.Equal(PropertyShape.Ordinary, property.Shape);
+        Assert.False(property.IsPublic);
+
+        var parameter = Assert.Single(property.Parameters);
+        Assert.Equal("x", parameter.Name);
+        Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind);
+        Assert.NotNull(parameter.Span);
+        AssertSpan(parameter.Span!, 1, 5, 1, 5);
+        Assert.Empty(property.ConditionalBranches);
+
+        var definitionProperty = PropertyAt(model, 1, 1);
+        var referenceResolution = ResolutionAt(model, 2, 1);
+        Assert.Same(property, definitionProperty);
+        Assert.Same(property, referenceResolution.ResolvedProperty);
+        Assert.Same(property, model.FindPropertyByDeclaration(property.Declaration!));
+    }
+
+    [Fact]
+    public void Build_OrdinaryPropertyInfo_ExposesImplicitParametersInCallableOrder()
+    {
+        var model = BuildModel(
+            """
+            Square = x * y
+            Square
+            """);
+
+        var property = SingleProperty(model, "Square");
+        Assert.Equal(PropertyShape.Ordinary, property.Shape);
+        Assert.Equal(["x", "y"], property.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal([PropertyParameterKind.Implicit, PropertyParameterKind.Implicit], property.Parameters.Select(parameter => parameter.Kind).ToList());
+        Assert.All(property.Parameters, parameter => Assert.Null(parameter.Span));
+    }
+
+    [Fact]
+    public void Build_OrdinaryPropertyInfo_ExposesMixedExplicitAndImplicitParameters()
+    {
+        var model = BuildModel("Add(x) = x + y");
+
+        var property = SingleProperty(model, "Add");
+        Assert.Equal(PropertyShape.Ordinary, property.Shape);
+        Assert.Equal(["x", "y"], property.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(PropertyParameterKind.Explicit, property.Parameters[0].Kind);
+        Assert.Equal(PropertyParameterKind.Implicit, property.Parameters[1].Kind);
+        Assert.NotNull(property.Parameters[0].Span);
+        Assert.Null(property.Parameters[1].Span);
+    }
+
+    [Fact]
+    public void Build_ConditionalPropertyInfo_ExposesBranchHeadsInSourceOrder()
+    {
+        var model = BuildModel(
+            """
+            F(1) = 100
+            F(x) = 0
+            F(1)
+            """);
+
+        var property = SingleProperty(model, "F");
+        Assert.Equal(PropertyShape.Conditional, property.Shape);
+        Assert.Empty(property.Parameters);
+        Assert.Equal(["F(1)", "F(x)"], property.ConditionalBranches.Select(branch => branch.HeadText).ToList());
+        Assert.Empty(property.ConditionalBranches[0].BinderNames);
+        Assert.Equal(["x"], property.ConditionalBranches[1].BinderNames.ToList());
+        Assert.Equal([1, 2], property.ConditionalBranches.Select(branch => branch.HeadSpan?.StartLineNumber).ToList());
+
+        var declarations = model.FindDeclarations("F").ToList();
+        Assert.Equal(2, declarations.Count);
+        Assert.Same(property, model.FindPropertyByDeclaration(declarations[0]));
+        Assert.Same(property, model.FindPropertyByDeclaration(declarations[1]));
+
+        var referenceResolution = ResolutionAt(model, 3, 1);
+        Assert.Same(property, referenceResolution.ResolvedProperty);
+    }
+
+    [Fact]
+    public void Build_SinglePlainBinderClause_UsesActualUserAlgorithmShape()
+    {
+        var model = BuildModel(
+            """
+            F(x) = x
+            F(1)
+            """);
+
+        var property = SingleProperty(model, "F");
+        Assert.Equal(PropertyShape.Ordinary, property.Shape);
+        Assert.Equal(["x"], property.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Empty(property.ConditionalBranches);
+    }
+
+    [Fact]
+    public void Build_SingleLiteralClause_RemainsConditional()
+    {
+        var model = BuildModel(
+            """
+            F(1) = 1
+            F(1)
+            """);
+
+        var property = SingleProperty(model, "F");
+        Assert.Equal(PropertyShape.Conditional, property.Shape);
+        Assert.Empty(property.Parameters);
+        Assert.Single(property.ConditionalBranches);
+        Assert.Equal("F(1)", property.ConditionalBranches[0].HeadText);
+    }
+
+    [Fact]
+    public void Build_BuiltinPropertyInfo_ExposesConservativeShape()
+    {
+        var model = BuildModel("Math.Sqrt");
+
+        var property = PropertyAt(model, 1, 6);
+        Assert.Equal("Sqrt", property.Name);
+        Assert.Equal(PropertyShape.Builtin, property.Shape);
+        Assert.Null(property.Declaration);
+        Assert.Equal(["x"], property.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.All(property.Parameters, parameter => Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind));
+        Assert.Empty(property.ConditionalBranches);
+        Assert.Contains(model.PropertyInfos, candidate => ReferenceEquals(candidate, property));
+    }
+
+    [Fact]
+    public void Build_PropertyDefinitionAndReferenceShareResolvedPropertyInfo()
+    {
+        var model = BuildModel(
+            """
+            Value = 1
+            A = Value + 1
+            """);
+
+        var definitionResolution = ResolutionAt(model, 1, 1);
+        var referenceResolution = ResolutionAt(model, 2, 5);
+        var property = SingleProperty(model, "Value");
+
+        Assert.Equal(IdentifierClassification.PropertyDefinition, definitionResolution.Classification);
+        Assert.Equal(IdentifierClassification.PropertyReference, referenceResolution.Classification);
+        Assert.Same(property, definitionResolution.ResolvedProperty);
+        Assert.Same(property, referenceResolution.ResolvedProperty);
+        Assert.Same(property, model.FindPropertyByDeclaration(definitionResolution.ResolvedDeclaration!));
+    }
+
+    [Fact]
+    public void Build_ConditionalPropertyInfo_PreservesGroupedPatternShape()
+    {
+        var model = BuildModel(
+            """
+            Pair(1, (x, y)) = x
+            Pair(1, (2, 3))
+            """);
+
+        var property = SingleProperty(model, "Pair");
+        Assert.Equal(PropertyShape.Conditional, property.Shape);
+        var branch = Assert.Single(property.ConditionalBranches);
+        Assert.Equal("Pair(1, (x, y))", branch.HeadText);
+        Assert.Equal(["x", "y"], branch.BinderNames.ToList());
     }
 
     [Fact]

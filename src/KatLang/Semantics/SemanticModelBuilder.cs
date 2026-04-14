@@ -32,14 +32,25 @@ public static class SemanticModelBuilder
     public static IReadOnlyList<DeclarationOccurrence> EnumerateDeclarationOccurrences(Algorithm root)
         => Build(root).Declarations;
 
+    /// <summary>
+    /// Enumerates property-centered semantic objects.
+    /// </summary>
+    public static IReadOnlyList<PropertyInfo> EnumeratePropertyInfos(Algorithm root)
+        => Build(root).PropertyInfos;
+
     private sealed class Builder
     {
         private static readonly Algorithm.User MathAlgorithm = CreateMathAlgorithm();
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
+        private static readonly SymbolDefinition LengthIntrinsicSymbol = CreateBuiltinSymbol("length", algorithm: null, isPublic: true);
+        private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
         private readonly List<IdentifierResolution> _identifierResolutions = [];
+        private readonly List<PropertyInfo> _propertyInfos = [];
+        private readonly HashSet<PropertyInfo> _seenPropertyInfos = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<DeclarationOccurrence, PropertyInfo> _propertyInfoByDeclaration = [];
         private readonly Dictionary<Property, SymbolDefinition> _propertySymbolCache =
             new(ReferenceEqualityComparer.Instance);
 
@@ -56,8 +67,18 @@ public static class SemanticModelBuilder
             var sortedIdentifierResolutions = _identifierResolutions
                 .OrderBy(static resolution => resolution.Occurrence.Span, SpanComparer.Instance)
                 .ToList();
+            var sortedPropertyInfos = _propertyInfos
+                .OrderBy(static property => property.Declaration?.Span, SpanComparer.Instance)
+                .ThenBy(static property => property.Name, StringComparer.Ordinal)
+                .ToList();
 
-            return new SemanticModel(root, sortedIdentifierOccurrences, sortedDeclarations, sortedIdentifierResolutions);
+            return new SemanticModel(
+                root,
+                sortedIdentifierOccurrences,
+                sortedDeclarations,
+                sortedIdentifierResolutions,
+                sortedPropertyInfos,
+                new Dictionary<DeclarationOccurrence, PropertyInfo>(_propertyInfoByDeclaration));
         }
 
         private void VisitAlgorithm(
@@ -157,7 +178,7 @@ public static class SemanticModelBuilder
                         explicitParameters[parameterName].Span,
                         OccurrenceKind.ExplicitParameterDefinition,
                         IdentifierClassification.ExplicitParameterDefinition)
-                    : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false);
+                    : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
             }
 
             if (algorithm.ExplicitOutputSpan is { } outputSpan)
@@ -171,23 +192,34 @@ public static class SemanticModelBuilder
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
-            DeclarationOccurrence? canonicalDeclaration = null;
+            var declarations = new List<DeclarationOccurrence>(property.DeclarationSpans.Count);
             foreach (var span in property.DeclarationSpans)
+                declarations.Add(CreateDeclarationOccurrence(property.Name, span, OccurrenceKind.PropertyDefinition));
+
+            var canonicalDeclaration = declarations.FirstOrDefault();
+            var propertyInfo = CreatePropertyInfo(
+                property.Name,
+                SymbolKind.Property,
+                property.Value,
+                canonicalDeclaration,
+                property.IsPublic,
+                property.DeclarationSpans);
+
+            foreach (var declaration in declarations)
             {
-                var declaration = AddDeclaration(
-                    property.Name,
-                    span,
-                    OccurrenceKind.PropertyDefinition,
-                    IdentifierClassification.PropertyDefinition);
-                canonicalDeclaration ??= declaration;
+                _propertyInfoByDeclaration[declaration] = propertyInfo;
+                AddResolution(declaration, IdentifierClassification.PropertyDefinition, declaration, propertyInfo);
             }
+
+            TrackPropertyInfo(propertyInfo);
 
             var symbol = new SymbolDefinition(
                 property.Name,
                 SymbolKind.Property,
                 property.Value,
                 canonicalDeclaration,
-                property.IsPublic);
+                property.IsPublic,
+                propertyInfo);
             _propertySymbolCache[property] = symbol;
             return symbol;
         }
@@ -200,13 +232,25 @@ public static class SemanticModelBuilder
             if (!ReferenceEquals(owner, MathAlgorithm))
                 return CreatePropertySymbol(property);
 
-            return new SymbolDefinition(
-                property.Name,
-                SymbolKind.Builtin,
-                property.Value,
-                Declaration: null,
-                property.IsPublic);
+            var symbol = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
+            _propertySymbolCache[property] = symbol;
+            return symbol;
         }
+
+        private static SymbolDefinition CreateBuiltinSymbol(string name, Algorithm? algorithm, bool isPublic)
+            => new(
+                name,
+                SymbolKind.Builtin,
+                algorithm,
+                Declaration: null,
+                isPublic,
+                CreatePropertyInfo(
+                    name,
+                    SymbolKind.Builtin,
+                    algorithm,
+                    declaration: null,
+                    isPublic,
+                    declarationSpans: null));
 
         private SymbolDefinition CreateParameterSymbol(
             string name,
@@ -216,7 +260,7 @@ public static class SemanticModelBuilder
             IdentifierClassification definitionClassification)
         {
             var declaration = span is null ? null : AddDeclaration(name, span, occurrenceKind, definitionClassification);
-            return new SymbolDefinition(name, kind, AlgorithmValue: null, Declaration: declaration, IsPublic: false);
+            return new SymbolDefinition(name, kind, AlgorithmValue: null, Declaration: declaration, IsPublic: false, PropertyInfo: null);
         }
 
         private IReadOnlyDictionary<string, SymbolDefinition> CreateBinderSymbols(Pattern pattern)
@@ -255,28 +299,35 @@ public static class SemanticModelBuilder
             switch (expr)
             {
                 case Expr.Resolve resolve:
+                {
+                    var symbol = ResolveOpenHead(scope, resolve.Name);
+                    var isValidOpenTarget = symbol is not null && !IsIllegalOpenTarget(symbol);
                     AddReference(
                         resolve.Name,
                         resolve.Span,
                         OccurrenceKind.OpenTargetReference,
-                        ResolveOpenHead(scope, resolve.Name) is { } symbol && !IsIllegalOpenTarget(symbol)
+                        isValidOpenTarget
                             ? IdentifierClassification.OpenTarget
                             : IdentifierClassification.Unresolved,
-                        ResolveOpenHead(scope, resolve.Name)?.Declaration);
+                        isValidOpenTarget ? symbol?.Declaration : null,
+                        isValidOpenTarget ? symbol?.PropertyInfo : null);
                     break;
+                }
 
                 case Expr.DotCall dotCall when dotCall.Args is null:
                 {
                     var targetAlgorithm = VisitOpenExpressionAndResolve(dotCall.Target, scope);
                     var memberSymbol = targetAlgorithm is null ? null : TryResolvePublicProperty(targetAlgorithm, dotCall.Name);
+                    var isValidOpenTarget = memberSymbol is not null && !IsIllegalOpenTarget(memberSymbol);
                     AddReference(
                         dotCall.Name,
                         dotCall.MemberSpan,
                         OccurrenceKind.OpenTargetMemberReference,
-                        memberSymbol is not null && !IsIllegalOpenTarget(memberSymbol)
+                        isValidOpenTarget
                             ? IdentifierClassification.OpenTarget
                             : IdentifierClassification.Unresolved,
-                        memberSymbol?.Declaration);
+                        isValidOpenTarget ? memberSymbol?.Declaration : null,
+                        isValidOpenTarget ? memberSymbol?.PropertyInfo : null);
                     break;
                 }
 
@@ -313,7 +364,8 @@ public static class SemanticModelBuilder
                         resolve.Span,
                         OccurrenceKind.ResolveReference,
                         ClassifyReferenceSymbol(symbol),
-                        symbol?.Declaration);
+                        symbol?.Declaration,
+                        symbol?.PropertyInfo);
                     break;
                 }
 
@@ -325,7 +377,8 @@ public static class SemanticModelBuilder
                         parameter.Span,
                         OccurrenceKind.ParameterReference,
                         ClassifyParameterSymbol(symbol),
-                        symbol?.Declaration);
+                        symbol?.Declaration,
+                        propertyInfo: null);
                     break;
                 }
 
@@ -350,8 +403,14 @@ public static class SemanticModelBuilder
 
                 case Expr.DotCall dotCall:
                     VisitExpr(dotCall.Target, scope);
-                    var (classification, declaration) = ResolveDotMember(dotCall, scope);
-                    AddReference(dotCall.Name, dotCall.MemberSpan, OccurrenceKind.DotMemberReference, classification, declaration);
+                    var (classification, declaration, propertyInfo) = ResolveDotMember(dotCall, scope);
+                    AddReference(
+                        dotCall.Name,
+                        dotCall.MemberSpan,
+                        OccurrenceKind.DotMemberReference,
+                        classification,
+                        declaration,
+                        propertyInfo);
                     if (dotCall.Args is not null)
                         VisitAlgorithm(dotCall.Args, scope, extraParameters: null);
                     break;
@@ -376,36 +435,36 @@ public static class SemanticModelBuilder
             }
         }
 
-        private (IdentifierClassification Classification, DeclarationOccurrence? Declaration) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
+        private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
         {
             if (dotCall.Name == "string")
-                return (IdentifierClassification.Builtin, null);
+                return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
             var targetAlgorithm = TryResolveAlgorithmValue(dotCall.Target, scope);
             if (targetAlgorithm is not null)
             {
                 if (dotCall.Name == "length")
-                    return (IdentifierClassification.Builtin, null);
+                    return (IdentifierClassification.Builtin, null, LengthIntrinsicSymbol.PropertyInfo);
 
                 if (TryResolveAnyProperty(targetAlgorithm, dotCall.Name) is { } structuralProperty)
-                    return (ClassifyReferenceSymbol(structuralProperty), structuralProperty.Declaration);
+                    return (ClassifyReferenceSymbol(structuralProperty), structuralProperty.Declaration, structuralProperty.PropertyInfo);
 
                 if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexicalFallback)
-                    return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration);
+                    return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, lexicalFallback.PropertyInfo);
 
                 if (IsUnverifiedLoadedExternalReceiver(targetAlgorithm, scope))
-                    return (IdentifierClassification.LoadedExternalMemberReference, null);
+                    return (IdentifierClassification.LoadedExternalMemberReference, null, null);
 
-                return (IdentifierClassification.Unresolved, null);
+                return (IdentifierClassification.Unresolved, null, null);
             }
 
             if (!AllowsExactLexicalFallback(dotCall.Target))
-                return (IdentifierClassification.Unresolved, null);
+                return (IdentifierClassification.Unresolved, null, null);
 
             if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexical)
-                return (ClassifyReferenceSymbol(lexical), lexical.Declaration);
+                return (ClassifyReferenceSymbol(lexical), lexical.Declaration, lexical.PropertyInfo);
 
-            return (IdentifierClassification.Unresolved, null);
+            return (IdentifierClassification.Unresolved, null, null);
         }
 
         private SymbolDefinition? ResolveLexicalProperty(ScopeFrame scope, string name)
@@ -617,30 +676,184 @@ public static class SemanticModelBuilder
                 _ => IdentifierClassification.Unresolved,
             };
 
+        private static PropertyInfo CreatePropertyInfo(
+            string name,
+            SymbolKind kind,
+            Algorithm? algorithm,
+            DeclarationOccurrence? declaration,
+            bool isPublic,
+            IReadOnlyList<SourceSpan>? declarationSpans)
+        {
+            if (kind == SymbolKind.Builtin || algorithm is Algorithm.Builtin)
+            {
+                return new PropertyInfo(
+                    name,
+                    declaration,
+                    PropertyShape.Builtin,
+                    isPublic,
+                    CreateBuiltinParameters(name, algorithm),
+                    []);
+            }
+
+            return algorithm switch
+            {
+                Algorithm.User user => new PropertyInfo(
+                    name,
+                    declaration,
+                    PropertyShape.Ordinary,
+                    isPublic,
+                    CreateOrdinaryParameters(user),
+                    []),
+                Algorithm.Conditional conditional => new PropertyInfo(
+                    name,
+                    declaration,
+                    PropertyShape.Conditional,
+                    isPublic,
+                    [],
+                    CreateConditionalBranches(name, conditional, declarationSpans)),
+                _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, [], []),
+            };
+        }
+
+        private static IReadOnlyList<PropertyParameterInfo> CreateOrdinaryParameters(Algorithm.User algorithm)
+        {
+            var explicitParameters = algorithm.ExplicitParameters.ToDictionary(
+                parameter => parameter.Name,
+                StringComparer.Ordinal);
+            var parameters = new List<PropertyParameterInfo>(algorithm.Params.Count);
+
+            foreach (var parameterName in algorithm.Params)
+            {
+                if (explicitParameters.TryGetValue(parameterName, out var explicitParameter))
+                {
+                    parameters.Add(new PropertyParameterInfo(
+                        parameterName,
+                        PropertyParameterKind.Explicit,
+                        explicitParameter.Span));
+                    continue;
+                }
+
+                parameters.Add(new PropertyParameterInfo(
+                    parameterName,
+                    PropertyParameterKind.Implicit,
+                    Span: null));
+            }
+
+            return parameters;
+        }
+
+        private static IReadOnlyList<PropertyParameterInfo> CreateBuiltinParameters(string name, Algorithm? algorithm)
+        {
+            if (algorithm is Algorithm.User user)
+            {
+                return user.Params
+                    .Select(parameterName => new PropertyParameterInfo(
+                        parameterName,
+                        PropertyParameterKind.Explicit,
+                        Span: null))
+                    .ToList();
+            }
+
+            string[] parameterNames = name switch
+            {
+                "if" => ["condition", "whenTrue", "whenFalse"],
+                "while" => ["step", "initialState"],
+                "repeat" => ["step", "count", "initialState"],
+                "atoms" => ["value"],
+                "range" => ["start", "stop"],
+                "filter" => ["collection", "predicate"],
+                "map" => ["collection", "transform"],
+                "count" => ["collection"],
+                "min" => ["collection"],
+                "max" => ["collection"],
+                "sum" => ["collection"],
+                "avg" => ["collection"],
+                "reduce" => ["collection", "step", "initial"],
+                _ => [],
+            };
+
+            return parameterNames
+                .Select(parameterName => new PropertyParameterInfo(
+                    parameterName,
+                    PropertyParameterKind.Explicit,
+                    Span: null))
+                .ToList();
+        }
+
+        private static IReadOnlyList<ConditionalBranchInfo> CreateConditionalBranches(
+            string name,
+            Algorithm.Conditional algorithm,
+            IReadOnlyList<SourceSpan>? declarationSpans)
+        {
+            var branches = new List<ConditionalBranchInfo>(algorithm.Branches.Count);
+
+            for (var i = 0; i < algorithm.Branches.Count; i++)
+            {
+                var branch = algorithm.Branches[i];
+                var headSpan = declarationSpans is not null && i < declarationSpans.Count
+                    ? declarationSpans[i]
+                    : null;
+                branches.Add(new ConditionalBranchInfo(
+                    ConditionalBranchHeadFormatter.Format(name, branch.Pattern),
+                    headSpan,
+                    branch.Pattern.BoundNames()));
+            }
+
+            return branches;
+        }
+
+        private void TrackPropertyInfo(PropertyInfo? propertyInfo)
+        {
+            if (propertyInfo is null || !_seenPropertyInfos.Add(propertyInfo))
+                return;
+
+            _propertyInfos.Add(propertyInfo);
+        }
+
+        private DeclarationOccurrence CreateDeclarationOccurrence(string name, SourceSpan span, OccurrenceKind kind)
+        {
+            var declaration = new DeclarationOccurrence(name, span, kind);
+            _declarations.Add(declaration);
+            return declaration;
+        }
+
+        private void AddResolution(
+            IdentifierOccurrence occurrence,
+            IdentifierClassification classification,
+            DeclarationOccurrence? declaration,
+            PropertyInfo? propertyInfo)
+        {
+            TrackPropertyInfo(propertyInfo);
+            _identifierResolutions.Add(new IdentifierResolution(occurrence, classification, declaration, propertyInfo));
+        }
+
         private void AddReference(
             string name,
             SourceSpan? span,
             OccurrenceKind kind,
             IdentifierClassification classification,
-            DeclarationOccurrence? declaration)
+            DeclarationOccurrence? declaration,
+            PropertyInfo? propertyInfo)
         {
             if (span is null)
                 return;
 
             var occurrence = new IdentifierOccurrence(name, span, kind);
             _identifierOccurrences.Add(occurrence);
-            _identifierResolutions.Add(new IdentifierResolution(occurrence, classification, declaration));
+            AddResolution(occurrence, classification, declaration, propertyInfo);
         }
 
         private DeclarationOccurrence AddDeclaration(
             string name,
             SourceSpan span,
             OccurrenceKind kind,
-            IdentifierClassification classification)
+            IdentifierClassification classification,
+            PropertyInfo? propertyInfo = null)
         {
-            var declaration = new DeclarationOccurrence(name, span, kind);
-            _declarations.Add(declaration);
-            _identifierResolutions.Add(new IdentifierResolution(declaration, classification, declaration));
+            var declaration = CreateDeclarationOccurrence(name, span, kind);
+            if (propertyInfo is not null)
+                _propertyInfoByDeclaration[declaration] = propertyInfo;
+            AddResolution(declaration, classification, declaration, propertyInfo);
             return declaration;
         }
 
@@ -660,22 +873,18 @@ public static class SemanticModelBuilder
             {
                 var name = builtin.ToString();
                 var algorithm = new Algorithm.Builtin(builtin);
-                properties[name] = new SymbolDefinition(name, SymbolKind.Builtin, algorithm, Declaration: null, IsPublic: true);
+                properties[name] = CreateBuiltinSymbol(name, algorithm, isPublic: true);
             }
 
-            properties["load"] = new SymbolDefinition(
+            properties["load"] = CreateBuiltinSymbol(
                 "load",
-                SymbolKind.Builtin,
                 new Algorithm.User(Parent: null, Params: ["url"], Opens: [], Properties: [], Output: []),
-                Declaration: null,
-                IsPublic: true);
+                isPublic: true);
 
-            properties["Math"] = new SymbolDefinition(
+            properties["Math"] = CreateBuiltinSymbol(
                 "Math",
-                SymbolKind.Builtin,
                 MathAlgorithm,
-                Declaration: null,
-                IsPublic: true);
+                isPublic: true);
 
             return new ScopeFrame(parent: null, properties, parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal), opens: []);
         }
@@ -734,7 +943,8 @@ public static class SemanticModelBuilder
         SymbolKind Kind,
         Algorithm? AlgorithmValue,
         DeclarationOccurrence? Declaration,
-        bool IsPublic);
+        bool IsPublic,
+        PropertyInfo? PropertyInfo);
 
     private sealed class ScopeFrame
     {
@@ -759,7 +969,7 @@ public static class SemanticModelBuilder
         public IReadOnlyList<Expr> Opens { get; }
     }
 
-    private sealed class SpanComparer : IComparer<SourceSpan>
+    private sealed class SpanComparer : IComparer<SourceSpan?>
     {
         public static SpanComparer Instance { get; } = new();
 
