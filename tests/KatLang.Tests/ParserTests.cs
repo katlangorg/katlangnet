@@ -1042,6 +1042,7 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Opens[0]);
         var fn = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("load", fn.Name);
+        Assert.NotNull(fn.Span);
     }
 
     [Fact]
@@ -1054,6 +1055,7 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Opens[0]);
         var fn = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("load", fn.Name);
+        Assert.Null(fn.Span);
         Assert.Single(call.Args.Output);
         var strLit = Assert.IsType<Expr.StringLiteral>(call.Args.Output[0]);
         Assert.Equal("https://katlang.org/algorithm.kat", strLit.Value);

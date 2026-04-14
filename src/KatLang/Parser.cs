@@ -490,7 +490,10 @@ public sealed class Parser
                 Parent: null, Params: [], Opens: [],
                 Properties: [], Output: [urlExpr])
             { IsParametrized = false };
-            var loadResolve = new Expr.Resolve("load") { Span = TokenSpan(token) };
+            // This synthetic load has no identifier token in source, so it must
+            // stay spanless. Borrowing the quoted URL span would make downstream
+            // source-backed semantic models report an identifier on a string token.
+            var loadResolve = new Expr.Resolve("load");
             return new Expr.Call(loadResolve, loadArgs) { Span = TokenSpan(token) };
         }
 

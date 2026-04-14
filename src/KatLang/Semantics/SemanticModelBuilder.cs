@@ -835,6 +835,8 @@ public static class SemanticModelBuilder
             DeclarationOccurrence? declaration,
             PropertyInfo? propertyInfo)
         {
+            // SemanticModel is source-backed: if there is no real identifier token
+            // in source, there is no identifier occurrence to record.
             if (span is null)
                 return;
 

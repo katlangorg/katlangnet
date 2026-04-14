@@ -30,6 +30,37 @@ public class SemanticModelTests
         Assert.Equal(endColumn, span.EndColumn);
     }
 
+    private static SourceSpan StringLiteralSpan(string source)
+    {
+        var (tokens, _) = Lexer.Tokenize(source);
+        var token = Assert.Single(tokens.Where(token => token.Kind == TokenKind.StringLiteral));
+        return new SourceSpan(
+            token.Line,
+            token.Column,
+            token.Line,
+            token.Column + Math.Max(token.Length, 1) - 1);
+    }
+
+    private static int ComparePosition(int line, int column, int otherLine, int otherColumn)
+    {
+        var lineComparison = line.CompareTo(otherLine);
+        return lineComparison != 0 ? lineComparison : column.CompareTo(otherColumn);
+    }
+
+    private static bool SpansOverlap(SourceSpan left, SourceSpan right)
+        => ComparePosition(left.StartLineNumber, left.StartColumn, right.EndLineNumber, right.EndColumn) <= 0
+            && ComparePosition(right.StartLineNumber, right.StartColumn, left.EndLineNumber, left.EndColumn) <= 0;
+
+    private static void AssertNoIdentifierSemanticSiteOverlaps(SemanticModel model, SourceSpan span)
+    {
+        Assert.DoesNotContain(
+            model.IdentifierOccurrences,
+            occurrence => SpansOverlap(occurrence.Span, span));
+        Assert.DoesNotContain(
+            model.IdentifierResolutions,
+            resolution => SpansOverlap(resolution.Occurrence.Span, span));
+    }
+
     [Fact]
     public void Build_OrdinaryAlgorithm_TracksExactDeclarationsAndReferences()
     {
@@ -154,6 +185,74 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_OpenStringLiteralSugar_DoesNotEmitIdentifierSemanticsOnUrlSpan()
+    {
+        var source = """
+            open 'https://katlang.org/algorithm.kat'
+            1
+            """;
+
+        var model = BuildModel(source);
+        var urlSpan = StringLiteralSpan(source);
+
+        Assert.Null(model.FindResolutionAt(urlSpan.StartLineNumber, urlSpan.StartColumn));
+        AssertNoIdentifierSemanticSiteOverlaps(model, urlSpan);
+    }
+
+    [Fact]
+    public void Build_OpenMath_StillResolvesRealIdentifierTarget()
+    {
+        var model = BuildModel(
+            """
+            open Math
+            Pi
+            """);
+
+        var mathReference = ResolutionAt(model, 1, 6);
+        Assert.Equal(OccurrenceKind.OpenTargetReference, mathReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.OpenTarget, mathReference.Classification);
+        Assert.Equal("Math", mathReference.Occurrence.Name);
+
+        var piReference = ResolutionAt(model, 2, 1);
+        Assert.Equal(OccurrenceKind.ResolveReference, piReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, piReference.Classification);
+    }
+
+    [Fact]
+    public void Build_OpenLibSub_StillResolvesRealIdentifierTargets()
+    {
+        var model = BuildModel(
+            """
+            open Lib.Sub
+            Lib = {
+            public Sub = {
+            public Value = 1
+            }
+            }
+            Value
+            """);
+
+        var libDeclaration = Assert.Single(model.FindDeclarations("Lib"));
+        var subDeclaration = Assert.Single(model.FindDeclarations("Sub"));
+        var valueDeclaration = Assert.Single(model.FindDeclarations("Value"));
+
+        var libOpenReference = ResolutionAt(model, 1, 6);
+        Assert.Equal(OccurrenceKind.OpenTargetReference, libOpenReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.OpenTarget, libOpenReference.Classification);
+        Assert.Equal(libDeclaration, libOpenReference.ResolvedDeclaration);
+
+        var subOpenReference = ResolutionAt(model, 1, 10);
+        Assert.Equal(OccurrenceKind.OpenTargetMemberReference, subOpenReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.OpenTarget, subOpenReference.Classification);
+        Assert.Equal(subDeclaration, subOpenReference.ResolvedDeclaration);
+
+        var valueReference = ResolutionAt(model, 7, 1);
+        Assert.Equal(OccurrenceKind.ResolveReference, valueReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, valueReference.Classification);
+        Assert.Equal(valueDeclaration, valueReference.ResolvedDeclaration);
+    }
+
+    [Fact]
     public void Build_DotCall_UsesStructuralLookupExactFallbackAndBuiltinClassification()
     {
         var model = BuildModel(
@@ -271,6 +370,26 @@ public class SemanticModelTests
         var yReference = Assert.Single(model.FindResolutions("y"));
         Assert.Equal(OccurrenceKind.ParameterReference, yReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.ImplicitParameterReference, yReference.Classification);
+    }
+
+    [Fact]
+    public void Build_RuntimeStringLiteral_DoesNotEmitIdentifierSemanticsOnStringSpan()
+    {
+        var source = """
+            Label = 'hello'
+            Label
+            """;
+
+        var model = BuildModel(source);
+        var stringSpan = StringLiteralSpan(source);
+
+        Assert.Null(model.FindResolutionAt(stringSpan.StartLineNumber, stringSpan.StartColumn));
+        AssertNoIdentifierSemanticSiteOverlaps(model, stringSpan);
+
+        var labelDeclaration = Assert.Single(model.FindDeclarations("Label"));
+        var labelReference = ResolutionAt(model, 2, 1);
+        Assert.Equal(IdentifierClassification.PropertyReference, labelReference.Classification);
+        Assert.Equal(labelDeclaration, labelReference.ResolvedDeclaration);
     }
 
     [Fact]
