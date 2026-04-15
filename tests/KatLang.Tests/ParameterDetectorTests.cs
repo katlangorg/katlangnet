@@ -109,6 +109,35 @@ public class ParameterDetectorTests
     }
 
     [Fact]
+    public void Detect_NestedBlock_CapturesOuterParamWithoutAddingLocalParam()
+    {
+        var source = """
+            OccurrenceCount(values, target) = filter(values, {item == target}).count
+            """;
+        var ast = ParseAndDetect(source);
+
+        var occurrenceCount = Assert.Single(ast.Properties).Value;
+        Assert.Equal(["values", "target"], occurrenceCount.Params);
+
+        var countCall = Assert.IsType<Expr.DotCall>(Assert.Single(occurrenceCount.Output));
+        var filterCall = Assert.IsType<Expr.Call>(countCall.Target);
+        Assert.Empty(filterCall.Args.Params);
+
+        var valuesArg = Assert.IsType<Expr.Param>(filterCall.Args.Output[0]);
+        Assert.Equal("values", valuesArg.Name);
+
+        var predicateBlock = Assert.IsType<Expr.Block>(filterCall.Args.Output[1]);
+        Assert.Single(predicateBlock.Algorithm.Params);
+        Assert.Equal("item", predicateBlock.Algorithm.Params[0]);
+
+        var predicate = Assert.IsType<Expr.Binary>(Assert.Single(predicateBlock.Algorithm.Output));
+        var itemParam = Assert.IsType<Expr.Param>(predicate.Left);
+        var targetParam = Assert.IsType<Expr.Param>(predicate.Right);
+        Assert.Equal("item", itemParam.Name);
+        Assert.Equal("target", targetParam.Name);
+    }
+
+    [Fact]
     public void Detect_CallArgsInBraces_IsParametrized()
     {
         // F{x + 1} desugars to F({x + 1}).  The brace content is an Expr.Block

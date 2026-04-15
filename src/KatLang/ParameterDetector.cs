@@ -42,11 +42,21 @@ public static class ParameterDetector
     public static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) Detect(Algorithm root)
     {
         var diagnostics = new List<Diagnostic>();
-        var processed = ProcessAlgorithm(root, parentPropertyNames: new(PreludeNames), propertyAlgs: new(), diagnostics);
+        var processed = ProcessAlgorithm(
+            root,
+            parentPropertyNames: new(PreludeNames),
+            propertyAlgs: new(),
+            capturedParamNames: [],
+            diagnostics);
         return (processed, diagnostics);
     }
 
-    private static Algorithm ProcessAlgorithm(Algorithm alg, HashSet<string> parentPropertyNames, Dictionary<string, Algorithm> propertyAlgs, List<Diagnostic>? diagnostics = null)
+    private static Algorithm ProcessAlgorithm(
+        Algorithm alg,
+        HashSet<string> parentPropertyNames,
+        Dictionary<string, Algorithm> propertyAlgs,
+        HashSet<string> capturedParamNames,
+        List<Diagnostic>? diagnostics = null)
     {
         // Collect local property names and build property algorithm map
         var localNames = new HashSet<string>();
@@ -66,6 +76,28 @@ public static class ParameterDetector
         // Lean: shouldTreatAsImplicitParam uses lookupLexical which includes opens.
         CollectOpenVisibleNames(alg.Opens, allPropertyAlgs, visibleNames);
 
+        var paramNames = new HashSet<string>(alg.Params);
+        var paramOrder = new List<string>(alg.Params);
+        var graceWeights = new Dictionary<string, int>();
+
+        if (alg.IsParametrized)
+        {
+            // Ordinary nested algorithms close over already-known outer params.
+            // These should rewrite to Expr.Param but must not become new local params.
+            var boundNames = UnionNames(visibleNames, capturedParamNames);
+            foreach (var param in alg.Params)
+                boundNames.Add(param);
+
+            CollectFreeParams(alg.Output, boundNames, paramNames, paramOrder, graceWeights);
+
+            if (graceWeights.Count > 0)
+                ApplyGraceReordering(paramOrder, graceWeights);
+        }
+
+        var nestedCapturedParamNames = alg.IsParametrized
+            ? UnionNames(capturedParamNames, paramOrder)
+            : new HashSet<string>(capturedParamNames);
+
         // Process properties recursively (each property body is a parametrized algorithm)
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
@@ -80,7 +112,14 @@ public static class ParameterDetector
                 foreach (var branch in condAlg.Branches)
                 {
                     var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
-                    var processedBody = ProcessConditionalBranchBody(branch.Body, visibleNames, allPropertyAlgs, binderNames, prop.Name, diagnostics);
+                    var processedBody = ProcessConditionalBranchBody(
+                        branch.Body,
+                        visibleNames,
+                        allPropertyAlgs,
+                        binderNames,
+                        prop.Name,
+                        nestedCapturedParamNames,
+                        diagnostics);
                     processedBranches.Add(new CondBranch(branch.Pattern, processedBody));
                 }
                 var processedCond = new Algorithm.Conditional(
@@ -92,7 +131,12 @@ public static class ParameterDetector
             }
             else
             {
-                var processedBody = ProcessAlgorithm(prop.Value, visibleNames, allPropertyAlgs, diagnostics);
+                var processedBody = ProcessAlgorithm(
+                    prop.Value,
+                    visibleNames,
+                    allPropertyAlgs,
+                    nestedCapturedParamNames,
+                    diagnostics);
                 newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic)
                 {
                     DeclarationSpans = prop.DeclarationSpans
@@ -105,7 +149,7 @@ public static class ParameterDetector
             // Non-parametrized: just process nested blocks, no param detection
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
-                newOutput.Add(ProcessExpr(expr, visibleNames, allPropertyAlgs));
+                newOutput.Add(ProcessExpr(expr, visibleNames, allPropertyAlgs, nestedCapturedParamNames));
 
             return alg with
             {
@@ -114,25 +158,10 @@ public static class ParameterDetector
             };
         }
 
-        // Parametrized: start with any parser-declared params (used by plain-
-        // binder clause elaboration), then infer additional implicit
-        // params from free identifiers in order of first appearance.
-        var paramNames = new HashSet<string>(alg.Params);
-        var paramOrder = new List<string>(alg.Params);
-        var graceWeights = new Dictionary<string, int>();
-        var boundNames = new HashSet<string>(visibleNames);
-        foreach (var param in alg.Params)
-            boundNames.Add(param);
-        CollectFreeParams(alg.Output, boundNames, paramNames, paramOrder, graceWeights);
-
-        // Apply grace reordering
-        if (graceWeights.Count > 0)
-            ApplyGraceReordering(paramOrder, graceWeights);
-
         // Rewrite Resolve → Param for detected parameters
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
-            rewrittenOutput.Add(RewriteParams(expr, paramNames, visibleNames, allPropertyAlgs));
+            rewrittenOutput.Add(RewriteParams(expr, paramNames, visibleNames, allPropertyAlgs, capturedParamNames));
 
         return alg with
         {
@@ -161,6 +190,7 @@ public static class ParameterDetector
         Dictionary<string, Algorithm> propertyAlgs,
         HashSet<string> binderNames,
         string branchName,
+        HashSet<string> capturedParamNames,
         List<Diagnostic>? diagnostics)
     {
         // Collect local property names
@@ -182,6 +212,8 @@ public static class ParameterDetector
 
         CollectOpenVisibleNames(body.Opens, allPropertyAlgs, bodyVisibleNames);
 
+        var bodyCapturedParamNames = UnionNames(capturedParamNames, binderNames);
+
         // Detect free identifiers that would be implicit parameters — these are
         // forbidden in conditional branch bodies (full-input-specification rule).
         if (diagnostics is not null)
@@ -189,7 +221,12 @@ public static class ParameterDetector
             var freeNames = new HashSet<string>();
             var freeOrder = new List<string>();
             var dummyWeights = new Dictionary<string, int>();
-            CollectFreeParams(body.Output, bodyVisibleNames, freeNames, freeOrder, dummyWeights);
+            CollectFreeParams(
+                body.Output,
+                UnionNames(bodyVisibleNames, bodyCapturedParamNames),
+                freeNames,
+                freeOrder,
+                dummyWeights);
             foreach (var freeName in freeOrder)
             {
                 // Find the span for the first occurrence of this free identifier
@@ -205,7 +242,12 @@ public static class ParameterDetector
         var newProperties = new List<Property>(body.Properties.Count);
         foreach (var prop in body.Properties)
         {
-            var processedProp = ProcessAlgorithm(prop.Value, bodyVisibleNames, allPropertyAlgs, diagnostics);
+            var processedProp = ProcessAlgorithm(
+                prop.Value,
+                bodyVisibleNames,
+                allPropertyAlgs,
+                bodyCapturedParamNames,
+                diagnostics);
             newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic)
             {
                 DeclarationSpans = prop.DeclarationSpans
@@ -216,7 +258,7 @@ public static class ParameterDetector
         // Process nested blocks/calls normally for their own parameter detection.
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
-            rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyVisibleNames, allPropertyAlgs));
+            rewrittenOutput.Add(RewriteBinderRefs(expr, binderNames, bodyVisibleNames, allPropertyAlgs, capturedParamNames));
 
         return body with
         {
@@ -242,58 +284,58 @@ public static class ParameterDetector
         Expr expr,
         HashSet<string> binderNames,
         HashSet<string> visibleNames,
-        Dictionary<string, Algorithm> propertyAlgs)
+        Dictionary<string, Algorithm> propertyAlgs,
+        HashSet<string> capturedParamNames)
     {
         switch (expr)
         {
             case Expr.Grace(var inner, _):
                 // Grace in conditional branch body is a parse error (already reported).
                 // Strip it here for error recovery so downstream processing doesn't crash.
-                return RewriteBinderRefs(inner, binderNames, visibleNames, propertyAlgs);
+                return RewriteBinderRefs(inner, binderNames, visibleNames, propertyAlgs, capturedParamNames);
 
-            case Expr.Resolve(var name) when binderNames.Contains(name):
+            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, binderNames, visibleNames, capturedParamNames):
                 return new Expr.Param(name) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs),
-                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteBinderRefs(operand, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteBinderRefs(operand, binderNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs),
-                    RewriteBinderRefs(selector, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteBinderRefs(selector, binderNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Combine(var left, var right):
                 return new Expr.Combine(
-                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs),
-                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteBinderRefs(left, binderNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteBinderRefs(right, binderNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
-                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs),
+                    RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs, capturedParamNames),
                     name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
 
             case Expr.DotCall(var target, var name, var dotArgs):
             {
-                var rewrittenTarget = RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs);
-                if (dotArgs is null)
-                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
+                var rewrittenTarget = RewriteBinderRefs(target, binderNames, visibleNames, propertyAlgs, capturedParamNames);
+                var nestedCapturedParamNames = UnionNames(capturedParamNames, binderNames);
                 if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs))
+                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs, nestedCapturedParamNames))
                     {
                         Span = expr.Span,
                         MemberSpan = ((Expr.DotCall)expr).MemberSpan
                     };
                 var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
                 foreach (var argExpr in dotArgs.Output)
-                    rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                    rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic)
                     {
                         DeclarationSpans = prop.DeclarationSpans
                     });
@@ -308,16 +350,16 @@ public static class ParameterDetector
             case Expr.Block(var alg):
                 if (alg.IsParametrized)
                 {
-                    return new Expr.Block(ProcessAlgorithm(alg, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    return new Expr.Block(ProcessAlgorithm(alg, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames))) { Span = expr.Span };
                 }
                 else
                 {
                     var rewrittenOutput = new List<Expr>(alg.Output.Count);
                     foreach (var argExpr in alg.Output)
-                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -328,22 +370,22 @@ public static class ParameterDetector
                 if (args.IsParametrized)
                 {
                     return new Expr.Call(
-                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs),
-                        ProcessAlgorithm(args, visibleNames, propertyAlgs)) { Span = expr.Span };
+                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs, capturedParamNames),
+                        ProcessAlgorithm(args, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames))) { Span = expr.Span };
                 }
                 else
                 {
                     var rewrittenOutput = new List<Expr>(args.Output.Count);
                     foreach (var argExpr in args.Output)
-                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs));
+                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
                     return new Expr.Call(
-                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs),
+                        RewriteBinderRefs(func, binderNames, visibleNames, propertyAlgs, capturedParamNames),
                         args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
                 }
 
@@ -500,6 +542,22 @@ public static class ParameterDetector
         }
     }
 
+    private static HashSet<string> UnionNames(HashSet<string> baseNames, IEnumerable<string> extraNames)
+    {
+        var names = new HashSet<string>(baseNames);
+        foreach (var extraName in extraNames)
+            names.Add(extraName);
+        return names;
+    }
+
+    private static bool ShouldRewriteAsParam(
+        string name,
+        HashSet<string> localParamNames,
+        HashSet<string> visibleNames,
+        HashSet<string> capturedParamNames)
+        => localParamNames.Contains(name)
+            || (capturedParamNames.Contains(name) && !visibleNames.Contains(name));
+
     /// <summary>
     /// Rewrites <see cref="Expr.Resolve"/> to <see cref="Expr.Param"/> for detected parameter names.
     /// Also recursively processes nested algorithms.
@@ -508,57 +566,57 @@ public static class ParameterDetector
         Expr expr,
         HashSet<string> paramNames,
         HashSet<string> visibleNames,
-        Dictionary<string, Algorithm> propertyAlgs)
+        Dictionary<string, Algorithm> propertyAlgs,
+        HashSet<string> capturedParamNames)
     {
         switch (expr)
         {
             case Expr.Grace(var inner, _):
                 // Strip Grace wrapper — weight has been consumed during collection
-                return RewriteParams(inner, paramNames, visibleNames, propertyAlgs);
+                return RewriteParams(inner, paramNames, visibleNames, propertyAlgs, capturedParamNames);
 
-            case Expr.Resolve(var name) when paramNames.Contains(name):
+            case Expr.Resolve(var name) when ShouldRewriteAsParam(name, paramNames, visibleNames, capturedParamNames):
                 return new Expr.Param(name) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteParams(left, paramNames, visibleNames, propertyAlgs),
-                    RewriteParams(right, paramNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteParams(left, paramNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteParams(right, paramNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteParams(operand, paramNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteParams(operand, paramNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteParams(target, paramNames, visibleNames, propertyAlgs),
-                    RewriteParams(selector, paramNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteParams(target, paramNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteParams(selector, paramNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.Combine(var left, var right):
                 return new Expr.Combine(
-                    RewriteParams(left, paramNames, visibleNames, propertyAlgs),
-                    RewriteParams(right, paramNames, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    RewriteParams(left, paramNames, visibleNames, propertyAlgs, capturedParamNames),
+                    RewriteParams(right, paramNames, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
-                    RewriteParams(target, paramNames, visibleNames, propertyAlgs),
+                    RewriteParams(target, paramNames, visibleNames, propertyAlgs, capturedParamNames),
                     name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
 
             case Expr.DotCall(var target, var name, var dotArgs):
             {
-                var rewrittenTarget = RewriteParams(target, paramNames, visibleNames, propertyAlgs);
-                if (dotArgs is null)
-                    return new Expr.DotCall(rewrittenTarget, name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
+                var rewrittenTarget = RewriteParams(target, paramNames, visibleNames, propertyAlgs, capturedParamNames);
+                var nestedCapturedParamNames = UnionNames(capturedParamNames, paramNames);
                 if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs))
+                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, visibleNames, propertyAlgs, nestedCapturedParamNames))
                     {
                         Span = expr.Span,
                         MemberSpan = ((Expr.DotCall)expr).MemberSpan
                     };
                 var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
                 foreach (var argExpr in dotArgs.Output)
-                    rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
+                    rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic)
                     {
                         DeclarationSpans = prop.DeclarationSpans
                     });
@@ -573,17 +631,17 @@ public static class ParameterDetector
             case Expr.Block(var alg):
                 if (alg.IsParametrized)
                 {
-                    return new Expr.Block(ProcessAlgorithm(alg, visibleNames, propertyAlgs)) { Span = expr.Span };
+                    return new Expr.Block(ProcessAlgorithm(alg, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames))) { Span = expr.Span };
                 }
                 else
                 {
                     // Non-parametrized block (double-parens grouping): rewrite in enclosing param scope
                     var rewrittenOutput = new List<Expr>(alg.Output.Count);
                     foreach (var argExpr in alg.Output)
-                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
+                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -595,8 +653,8 @@ public static class ParameterDetector
                 {
                     // Parametrized args ({} block): process as independent algorithm
                     return new Expr.Call(
-                        RewriteParams(func, paramNames, visibleNames, propertyAlgs),
-                        ProcessAlgorithm(args, visibleNames, propertyAlgs)) { Span = expr.Span };
+                        RewriteParams(func, paramNames, visibleNames, propertyAlgs, capturedParamNames),
+                        ProcessAlgorithm(args, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames))) { Span = expr.Span };
                 }
                 else
                 {
@@ -604,15 +662,15 @@ public static class ParameterDetector
                     // param context, then process any nested properties/blocks within args.
                     var rewrittenOutput = new List<Expr>(args.Output.Count);
                     foreach (var argExpr in args.Output)
-                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs));
+                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
                     return new Expr.Call(
-                        RewriteParams(func, paramNames, visibleNames, propertyAlgs),
+                        RewriteParams(func, paramNames, visibleNames, propertyAlgs, capturedParamNames),
                         args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
                 }
 
@@ -624,31 +682,35 @@ public static class ParameterDetector
     /// <summary>
     /// Processes an expression in a non-parametrized context: just recurse into nested algorithms.
     /// </summary>
-    private static Expr ProcessExpr(Expr expr, HashSet<string> visibleNames, Dictionary<string, Algorithm> propertyAlgs)
+    private static Expr ProcessExpr(
+        Expr expr,
+        HashSet<string> visibleNames,
+        Dictionary<string, Algorithm> propertyAlgs,
+        HashSet<string> capturedParamNames)
     {
         return expr switch
         {
-            Expr.Grace(var inner, _) => ProcessExpr(inner, visibleNames, propertyAlgs),
+            Expr.Grace(var inner, _) => ProcessExpr(inner, visibleNames, propertyAlgs, capturedParamNames),
             Expr.Block(var alg) => new Expr.Block(
-                ProcessAlgorithm(alg, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessAlgorithm(alg, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.Call(var func, var args) => new Expr.Call(
-                ProcessExpr(func, visibleNames, propertyAlgs),
-                ProcessAlgorithm(args, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessExpr(func, visibleNames, propertyAlgs, capturedParamNames),
+                ProcessAlgorithm(args, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
-                ProcessExpr(l, visibleNames, propertyAlgs),
-                ProcessExpr(r, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessExpr(l, visibleNames, propertyAlgs, capturedParamNames),
+                ProcessExpr(r, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.Unary(var op, var operand) => new Expr.Unary(op,
-                ProcessExpr(operand, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessExpr(operand, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.Index(var t, var s) => new Expr.Index(
-                ProcessExpr(t, visibleNames, propertyAlgs),
-                ProcessExpr(s, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessExpr(t, visibleNames, propertyAlgs, capturedParamNames),
+                ProcessExpr(s, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.Combine(var l, var r) => new Expr.Combine(
-                ProcessExpr(l, visibleNames, propertyAlgs),
-                ProcessExpr(r, visibleNames, propertyAlgs)) { Span = expr.Span },
+                ProcessExpr(l, visibleNames, propertyAlgs, capturedParamNames),
+                ProcessExpr(r, visibleNames, propertyAlgs, capturedParamNames)) { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
-                ProcessExpr(t, visibleNames, propertyAlgs),
+                ProcessExpr(t, visibleNames, propertyAlgs, capturedParamNames),
                 n,
-                da is not null ? ProcessAlgorithm(da, visibleNames, propertyAlgs) : null)
+                da is not null ? ProcessAlgorithm(da, visibleNames, propertyAlgs, capturedParamNames) : null)
             {
                 Span = expr.Span,
                 MemberSpan = ((Expr.DotCall)expr).MemberSpan

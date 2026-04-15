@@ -3967,22 +3967,13 @@ public class EvaluatorTests
     // â”€â”€ NetSalary scenario (dotCall on parameterised algorithm) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_NetSalary_DotCallIncomeTax()
+    public void Eval_NetSalary_DotCallIncomeTax_FailsWhenOuterParamsAreCaptured()
     {
-        // NetSalary.IncomeTax(1000, 2) works because:
-        // 1. Navigation-only: dot finds IncomeTax inside NetSalary, args bind directly
-        // 2. ImplicitArgumentResolver transitively propagates params through sibling
-        //    property chains: IncomeTax â†’ TaxableIncome â†’ NonTaxableMinimum (grossSalary),
-        //                                                ChildTaxCredit (numberOfChildren)
-        // SocialSecurityTax = 1000 * 0.105 = 105
-        // NonTaxableMinimum = 1000 - 105 - 75 = 820
-        // ChildTaxCredit = 2 * 162 = 324
-        // TaxableIncome = 820 - 324 = 496
-        // IncomeTax = 496 * 0.24 = 119.04
-        //
-        // Output expression is present â€” NetSalary is parameterized but since
-        // dotCall uses navigation-only semantics (no receiver injection),
-        // NetSalary is never evaluated as a receiver.
+        // Once NetSalary itself becomes parameterized, nested helper properties
+        // close over already-known outer parameters instead of re-declaring them.
+        // Calling IncomeTax directly through dotCall therefore no longer binds
+        // NetSalary's full outer interface. Use NetSalary(...) for the whole
+        // algorithm or define a self-contained IncomeTax property instead.
         var source = """
             NetSalary = {
               SocialSecurityTax = grossSalary * 0.105
@@ -3995,7 +3986,7 @@ public class EvaluatorTests
             }
             NetSalary.IncomeTax(1000, 2)
             """;
-        AssertEval(source, 119.04m);
+                AssertEvalFails(source);
     }
 
     [Fact]
@@ -4261,6 +4252,17 @@ public class EvaluatorTests
         var source = """
             OccurrenceCount = filter(values, predicate).count
             OccurrenceCount((1, 2), {n mod 2 == 0})
+            """;
+
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter()
+    {
+        var source = """
+            OccurrenceCount(values, target) = filter(values, {item == target}).count
+            OccurrenceCount((1, 2), 2)
             """;
 
         AssertEval(source, 1);

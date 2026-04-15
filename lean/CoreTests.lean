@@ -1158,6 +1158,45 @@ def test19d : Bool :=
   ])
 ]))
 
+-- Test 19e: inline predicate captures an outer value parameter rather than
+-- re-declaring it as a local parameter.
+def occurrenceCountAlg19e : Algorithm :=
+  alg ["values", "target"] [] [] [
+    .dotCall
+      (.call (.resolve "filter") (alg [] [] [] [
+        .param "values",
+        .block (alg ["item"] [] [] [
+          .binary .eq
+            (.param "item")
+            (.param "target")
+        ])
+      ]))
+      "count"
+      none
+  ]
+
+def test19e : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("OccurrenceCount", occurrenceCountAlg19e)
+  ] [
+    .call (.resolve "OccurrenceCount") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .num 2
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test19e  -- should be true
+#eval runFlat (.block (algPrivate [] [] [
+  ("OccurrenceCount", occurrenceCountAlg19e)
+] [
+  .call (.resolve "OccurrenceCount") (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .num 2
+  ])
+]))
+
 -- if builtin tests
 -- if(cond, whenTrue, whenFalse): the only supported form.
 --------------------------------------------------------------------------------
