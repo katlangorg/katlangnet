@@ -1,228 +1,223 @@
-# Claude Instructions for KatLang (Lean Spec + C# Toolchain)
+# KatLang Project Instructions
 
-This repository contains:
+## Project Overview
 
-- **`KatLang.lean`** (repository root): the authoritative specification of KatLang’s core syntax, semantics, and invariants.
-- A **C# implementation** of KatLang exact syntax, including AST and parser (with evaluator/typechecker as future extensions).
+- KatLang core semantics are specified in `lean/KatLang.lean`.
+- The C# implementation in `src/KatLang/` must follow Lean.
+- If Lean and C# are both wrong for the same bug, fix both together.
+- Do not invent syntax or semantics that are not in Lean unless explicitly instructed.
+- Keep this file concise and operational, not a design document.
 
-Claude must treat the Lean file as the single source of truth for KatLang’s language design.
+## Core Rules
 
-Correctness and fidelity to the Lean specification take precedence over convenience, performance, or stylistic preferences.
+### Source of truth
 
-### Memoization Boundary
+- `lean/KatLang.lean` is the authoritative source for KatLang core semantics and invariants.
+- Lean wins over implementation convenience, performance, or stylistic preference.
+- If Lean is ambiguous for the requested change, stop and clarify before implementing.
+- Maintain Lean -> C# alignment for parser, elaboration, evaluator, and editor-visible behavior.
 
-- Conservative per-run memoization of repeated eligible property evaluation is implemented in the **C# evaluator**, not as a core semantic mechanism in `KatLang.lean`.
-- `KatLang.lean` may document this optimization boundary in comments, but it does **not** define KatLang as a memoized, lazy, or call-by-need language.
-- Do not describe memoization as a Lean-level language feature unless the Lean spec is explicitly extended to make it one.
-- When working on memoization behavior, treat it as C# implementation logic first; Lean changes should be limited to clarifying comments unless explicitly instructed otherwise.
+### Scope control
 
----
+- Default scope is the Lean-defined language plus the existing front-end/editor pipeline.
+- Do not add:
+   - new operators
+   - convenience syntax
+   - implicit coercions
+   - hidden fallbacks
+   - AST simplifications that erase Lean distinctions
+- If a requested feature is not in Lean, propose the Lean change first instead of implementing it directly.
 
-## Architectural Overview
+### Structural fidelity
 
-KatLang defines `.dotCall` as a first-class constructor in the Lean core model:
+- Preserve structural distinctions in AST and runtime behavior.
+- `.dotCall` is first-class in Lean and must remain explicit in C#.
+- `open` is part of algorithm definition structure and must follow the current parser/elaboration/runtime model.
+- `Output = expr` is reserved result syntax, not an ordinary property definition.
 
-    dotCall : Expr → Ident → Option Algorithm → Expr
+### Optimization boundary
 
-This means:
+- C# evaluator memoization is an implementation optimization boundary.
+- It is not a Lean-level KatLang semantic feature unless Lean is explicitly extended to make it one.
+- Do not describe KatLang as lazy, memoized, or call-by-need based on the current evaluator optimization.
 
-- Dot syntax (`a.f` and `a.f(args)`) is part of the Lean core — not surface sugar.
-- Its semantics are defined in Lean (`resolveAlg`, `evalDotCall`).
-- C# must faithfully implement this behavior without reinterpretation.
+### Diagnostics and fallbacks
 
-### dotCall Semantics (Normative)
+- Keep parser and elaboration errors structured and source-positioned.
+- Do not add silent recovery paths or hidden semantic fallbacks.
+- If behavior is intentionally implementation-only, keep that boundary explicit.
 
-When evaluating:
+## Repository Map
 
-    a.f
-    a.f(args)
+- `lean/KatLang.lean`
+   - authoritative core spec
+   - core AST, evaluation rules, invariants, and semantic intent
+- `lean/CoreTests.lean`
+   - Lean regression checks
+- `lean/AstDemo.lean`
+   - direct AST-construction compatibility check
+- `src/KatLang/`
+   - C# AST, parser, elaboration, evaluator, diagnostics, and public APIs
+- `src/KatLang/Semantics/`
+   - editor tooling only; not the evaluator and not normative language semantics
+- `.github/agents/katlang-generator.agent.md`
+   - custom agent for generating valid, runnable KatLang from natural-language requests
+   - must stay aligned with current syntax, builtin usage, `Output` rules, and code-generation idioms
+- `tests/KatLang.Tests/`
+   - parser, evaluator, elaboration, semantics, and integration regression coverage
+- `KatLang.ebnf`
+   - documents the actual accepted surface grammar and must match lexer/parser behavior
+- `tutorial.md`
+   - main user-facing documentation and must match real language behavior
 
-Lean enforces:
+## Semantics Folder
 
-1. Resolve `a` to an Algorithm.
-2. If `f` is a structural property of `a`:
-   - If no args and property has 0 parameters → evaluate directly.
-   - Otherwise → call with receiver injected as first argument.
-3. If `f` is not a structural property → perform lexical lookup (including imports).
-4. If multiple imports provide `f` → raise `ambiguousImport`.
-5. Fallback occurs only when structural property is absent — not on evaluation failure.
+- `src/KatLang/Semantics/` derives editor-facing semantic information from parsed and elaborated AST.
+- It is used for:
+   - go-to-definition
+   - find references
+   - hover
+   - semantic classification
+   - declaration and resolution lookup
+   - callable-property metadata
+- Build semantic models from `Parser.Parse` output, not raw syntax.
+- Only source-backed identifier tokens may produce semantic sites, spans, occurrences, or resolutions.
+- Synthetic constructs must not invent source spans.
+- This layer reflects editor-visible meaning; it does not define core language semantics.
 
-C# must reproduce this logic exactly.
+### Update Semantics when editor-visible meaning changes
 
----
+- AST spans or declaration spans
+- lookup behavior
+- `open` behavior
+- dot-call lookup or fallback behavior
+- explicit or implicit parameter handling
+- conditional binders
+- builtins, preludes, or intrinsic metadata
+- callable-property shape
+- reserved-name or builtin classification
 
-## Core Objectives
+### Required test sync
 
-1. **Spec alignment**
-   Ensure the C# implementation exactly matches Lean.
+- When `src/KatLang/Semantics/` changes, update `tests/KatLang.Tests/SemanticModelTests.cs`.
+- Preserve exact source-span invariants for editor-facing behavior.
 
-2. **Spec-first evolution**
-   New features must be proposed in Lean first.
+## Important Current Semantic Realities
 
-3. **Long-term maintainability**
-   Preserve modular architecture: parser → AST → evaluator → typechecker.
+### dotCall
 
----
+- `.dotCall` is a core Lean concept, not just surface sugar.
+- Dot-call behavior in Lean, parser, evaluator, and Semantics must stay aligned.
+- Structural property lookup, receiver injection, lexical fallback, and diagnostics must remain consistent across layers.
 
-## Non-Negotiable Rules
+### open
 
-- Do not modify `KatLang.lean` unless explicitly instructed.
-- **Bug-fix exception**: When a bug is identified in both the Lean spec and the C# implementation, fix both simultaneously. The Lean model is the source of truth, so a bug in Lean must be corrected there first (or together with C#) to keep the spec accurate.
-- Do not invent syntax or semantics.
-- If intuition conflicts with Lean: Lean wins.
-- No placeholder logic or silent fallbacks.
+- `open` is part of algorithm definition structure and affects both runtime and editor behavior.
+- Runtime and Semantics must match the current parser and elaboration rules for `open`.
+- `open Name` may target a lexically visible private head, but opens still expose only public members.
+- `open 'url'` is front-end sugar, not a core AST construct.
+- Unresolved `load` forms should not survive into semantic modeling.
+
+### Output and load boundary
+
+- `Output = expr` is reserved result syntax and direct calls do not delegate through structural `Output`.
+- External `Algo.Output` and `Algo.Output(...)` are invalid.
+- Default parse/run entry points reject unresolved `load`; only elaboration-enabled paths should consume it.
+
+### Conditional algorithms
+
+- Conditional algorithms are an active and high-risk area.
+- Changes to branch shape, binder scoping, higher-order behavior, callable-property shape, or lowering rules must be handled consistently across:
+   - Lean
+   - parser and elaboration
+   - evaluator
+   - `src/KatLang/Semantics/`
+   - tests
+   - docs
+
+### Builtins and intrinsic metadata
+
+- Builtins, prelude exposure, and editor-visible intrinsic metadata must stay synchronized where relevant across:
+   - evaluator
+   - parser and elaboration assumptions
+   - Semantics
+   - tests
+   - `.github/agents/katlang-generator.agent.md`
+   - docs
+
+### Numeric reality
+
+- Lean core uses `Int`.
+- C# currently uses `decimal` as the runtime numeric representation.
+- Do not silently widen or reinterpret numeric behavior without checking Lean first.
+
+## Required Sync Rules
+
+### After Lean changes
+
+From `lean/` run:
+
+1. `lake build CoreTests`
+2. `lake build AstDemo`
+
+Both must pass before the change is complete.
+
+### After syntax changes affecting lexer or parser grammar
+
+- Review and update `KatLang.ebnf`.
+- Keep grammar documentation aligned with actual accepted surface syntax, including tokenization, precedence, associativity, and parser-only surface forms.
+
+### After significant syntax or semantic changes
+
+- Review and update `tutorial.md`.
+- Keep examples and explanations aligned with actual language behavior.
+
+### After KatLang generation-rule changes
+
+- Review and update `.github/agents/katlang-generator.agent.md` when syntax, builtins, `Output` rules, `open`/`load` behavior, or recommended KatLang code-generation idioms change.
+
+### After Semantics or editor-visible changes
+
+- Update `tests/KatLang.Tests/SemanticModelTests.cs`.
+- Add or adjust coverage for spans, declarations, resolutions, classification, and property metadata when affected.
+
+### General rule
+
+- If a change affects multiple layers, update all affected layers in the same task when feasible.
 - Prefer small, reviewable changes.
-
-### After Every Change to `KatLang.lean`
-
-After any modification to `lean/KatLang.lean`, you **must**:
-
-1. **Run CoreTests** — execute `lake build CoreTests` from the `lean/` directory and confirm all tests pass (every `#eval` line must print `true`; no `false` or errors).
-2. **Check AstDemo** — execute `lake build AstDemo` from the `lean/` directory and confirm it builds without errors. AstDemo exercises the AST constructors directly; a build failure there signals a breaking API change.
-
-Both checks must pass before the change is considered complete. If either fails, fix the failures before proceeding with C# changes.
-
-### After Significant Syntax Changes
-
-After any change to `Lexer.cs` or `Parser.cs` that affects the surface grammar — new expression forms, new pattern kinds, new operators, changes to precedence or associativity, or new token types — review `KatLang.ebnf` and update it to match. Specifically:
-
-- Added or removed a token recognized by the lexer → update terminal rules.
-- Added or removed a production in the parser → update the corresponding non-terminal.
-- Changed operator precedence or associativity → update the grammar hierarchy.
-- Renamed or restructured an AST node that maps to a grammar rule → update the rule and any associated comments.
-
-`KatLang.ebnf` tracks what the parser actually accepts. It is not derived from `KatLang.lean` — surface syntax details (tokenization, concrete notation, punctuation) live only in `Lexer.cs` and `Parser.cs`. Keep all three in sync: `KatLang.lean` (normative semantics), `Parser.cs` (implementation), `KatLang.ebnf` (grammar reference). Drift between any two is a documentation bug.
-
-### After Significant Syntax or Semantic Changes
-
-After any change that affects how KatLang programs are written or how they behave — new syntax forms, changed evaluation rules, new built-in operations, changed error conditions, or new language concepts — review `tutorial.md` and update any affected examples, explanations, or descriptions. Specifically:
-
-- New syntax available to users → add an illustrative example.
-- Syntax removed or renamed → remove or correct affected examples.
-- Changed evaluation behavior → update the corresponding explanation.
-- New error condition or changed error message → reflect it in the relevant section.
-
-`tutorial.md` is the primary user-facing documentation. It must accurately reflect the language as it actually works. Stale examples or incorrect descriptions are bugs.
-
----
-
-## Required Spec-First Workflow
-
-When implementing features:
-
-1. Locate relevant Lean definitions.
-2. Summarize their intent.
-3. Define mapping:
-   Lean construct → C# AST → parser rule → evaluator rule.
-4. List invariants explicitly.
-5. Implement minimal complete slice (AST + parser + tests).
-6. Validate with positive and negative tests.
-7. Summarize diff and explain spec alignment.
-
-If Lean is ambiguous: stop and ask.
-
----
-
-## Lean → C# Mapping Requirements
-
-When implementing parser features:
-
-- Identify Lean constructors directly.
-- Preserve structural distinctions in Lean AST.
-- Respect operator precedence and associativity as defined.
-
-### Numeric Mapping
-
-Lean `Int` is interpreted as `decimal` in C# by convention.
-If precision issues arise, propose migration strategy — do not silently change behavior.
-
----
-
-## Scope Control
-
-Default scope is the Lean-defined core only.
-
-Do not add:
-
-- new operators
-- implicit coercions
-- syntactic sugar
-- convenience grammar
-
-Unless already defined in Lean or explicitly requested.
-
-Experimental features must be gated and default to spec-compliant behavior.
-
----
-
-## C# Implementation Rules
-
-- Use modern C#.
-- Prefer immutable AST nodes.
-- Encode invariants structurally.
-- Parser must be deterministic and total.
-- Prefer hand-written recursive descent or Pratt parser.
-
-### Error Handling
-
-- Parsing failures return structured errors.
-- Include position and concise explanation.
-- Exceptions only for internal invariant violations.
-
----
-
-## AST Design Standards
-
-- Minimal and semantically meaningful.
-- Avoid redundant state.
-- Mirror Lean structural distinctions.
-- Do not collapse `.dotCall` into `.call` or `.prop` in C# — it must remain explicit.
-
----
-
-## Testing Requirements
-
-Every feature must include:
-
-1. Parsing success tests.
-2. Parsing failure tests.
-3. At least one edge case.
-
-Recommended: golden tests asserting:
-
-    KatLang source → normalized AST
-
-Also include semantic tests for `.dotCall` covering:
-
-- Structural property access
-- Receiver injection
-- Lexical fallback
-- Ambiguous imports
-
----
-
-## Research & Extension Protocol
-
-When proposing new features:
-
-1. Specify change in Lean first.
-2. Analyze interactions.
-3. Highlight risks.
-4. Implement in C# only after confirmation.
-
-If feature not in Lean and no spec change requested:
-Do not implement — propose Lean extension plan.
-
----
 
 ## Working Style
 
-For implementation tasks:
+### Before implementing semantic changes
 
-1. Summarize Lean anchors.
-2. Propose minimal plan.
-3. Implement incrementally.
-4. Provide concise diff summary.
-5. Explain alignment with Lean semantics.
+- Check Lean anchors first.
+- Identify the relevant Lean constructors, invariants, and evaluation rules.
+- Map the change across:
+   - Lean construct
+   - C# AST or front-end representation
+   - parser and elaboration behavior
+   - evaluator behavior
+   - Semantics or editor behavior
+   - tests and docs
 
-If uncertain, ask — but only after referencing Lean definitions.
+### Implementation expectations
+
+- Maintain Lean -> C# alignment.
+- Preserve structural distinctions in AST.
+- Keep diagnostics structured and source-positioned.
+- Do not add convenience syntax or hidden fallbacks.
+- Keep implementation choices explainable in terms of Lean.
+
+### Testing expectations
+
+- Add or update focused tests for the changed behavior.
+- Include negative coverage when behavior has meaningful failure modes.
+- Prefer tests near the changed layer.
+- If behavior is cross-cutting, cover parser, evaluator, Semantics, and docs as needed.
+
+### Practical defaults
+
+- Prefer small, reviewable changes.
+- If a change is only an optimization, say so explicitly.
+- Push detailed edge-case knowledge into code comments and tests rather than expanding this file.
+- When updating this file in future, prefer shortening and de-duplicating over expanding.
