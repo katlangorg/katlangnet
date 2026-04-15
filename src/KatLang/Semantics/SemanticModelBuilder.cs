@@ -317,6 +317,18 @@ public static class SemanticModelBuilder
                 case Expr.DotCall dotCall when dotCall.Args is null:
                 {
                     var targetAlgorithm = VisitOpenExpressionAndResolve(dotCall.Target, scope);
+                    if (dotCall.Name == "Output")
+                    {
+                        AddReference(
+                            dotCall.Name,
+                            dotCall.MemberSpan,
+                            OccurrenceKind.OpenTargetMemberReference,
+                            IdentifierClassification.ReservedName,
+                            declaration: null,
+                            propertyInfo: null);
+                        break;
+                    }
+
                     var memberSymbol = targetAlgorithm is null ? null : TryResolvePublicProperty(targetAlgorithm, dotCall.Name);
                     var isValidOpenTarget = memberSymbol is not null && !IsIllegalOpenTarget(memberSymbol);
                     AddReference(
@@ -437,6 +449,9 @@ public static class SemanticModelBuilder
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
         {
+            if (dotCall.Name == "Output")
+                return (IdentifierClassification.ReservedName, null, null);
+
             if (dotCall.Name == "string")
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
@@ -575,6 +590,9 @@ public static class SemanticModelBuilder
 
                 case Expr.DotCall(var target, var name, null):
                 {
+                    if (name == "Output")
+                        return null;
+
                     var targetAlgorithm = TryResolveOpenExpression(target, scope);
                     var symbol = targetAlgorithm is null ? null : TryResolvePublicProperty(targetAlgorithm, name);
                     return symbol is not null && !IsIllegalOpenTarget(symbol)

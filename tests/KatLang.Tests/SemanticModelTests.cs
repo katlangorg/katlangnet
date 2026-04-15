@@ -311,6 +311,28 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_OutputDotMember_IsClassifiedAsReservedName()
+    {
+        var source =
+            """
+            Algo(x) = {
+              Output = x + 1
+            }
+            Algo.Output(6)
+            """;
+
+        var parseResult = Parser.Parse(source);
+        Assert.True(parseResult.HasErrors);
+        Assert.Contains(parseResult.Diagnostics, diagnostic => diagnostic.Message.Contains("Output is the designated result of an algorithm"));
+
+        var model = SemanticModelBuilder.Build(parseResult);
+        var outputReference = ResolutionAt(model, 4, 6);
+        Assert.Equal(OccurrenceKind.DotMemberReference, outputReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ReservedName, outputReference.Classification);
+        Assert.Null(outputReference.ResolvedDeclaration);
+    }
+
+    [Fact]
     public void Build_ImplicitParametersRemainVisibleInsideBuiltinCallArguments()
     {
         var model = BuildModel(
@@ -481,6 +503,40 @@ public class SemanticModelTests
         Assert.Equal(PropertyParameterKind.Implicit, property.Parameters[1].Kind);
         Assert.NotNull(property.Parameters[0].Span);
         Assert.Null(property.Parameters[1].Span);
+    }
+
+    [Fact]
+    public void Build_ExplicitOutput_RemainsReserved_And_OuterParametersStayOnAlgorithmMetadata()
+    {
+        var model = BuildModel(
+            """
+            Algo(x) = {
+            Output = x + 1
+            }
+            Algo(6)
+            """);
+
+        var algo = SingleProperty(model, "Algo");
+        Assert.Equal(PropertyShape.Ordinary, algo.Shape);
+        var parameter = Assert.Single(algo.Parameters);
+        Assert.Equal("x", parameter.Name);
+        Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind);
+        Assert.NotNull(parameter.Span);
+
+        Assert.Empty(model.FindProperties("Output"));
+
+        var outputDeclaration = Assert.Single(model.FindDeclarations("Output"));
+        Assert.Equal(OccurrenceKind.ReservedNameDefinition, outputDeclaration.Kind);
+
+        var outputResolution = ResolutionAt(model, 2, 1);
+        Assert.Equal(IdentifierClassification.ReservedName, outputResolution.Classification);
+        Assert.Equal(outputDeclaration, outputResolution.ResolvedDeclaration);
+
+        var xReference = ResolutionAt(model, 2, 10);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, xReference.Classification);
+
+        var callReference = ResolutionAt(model, 4, 1);
+        Assert.Same(algo, callReference.ResolvedProperty);
     }
 
     [Fact]

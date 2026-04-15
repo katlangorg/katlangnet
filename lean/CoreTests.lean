@@ -26,6 +26,11 @@ def innermostIsMissingOutput : Error -> Bool
   | .missingOutput => true
   | _ => false
 
+def innermostIsSpecialOutputAccess : Error -> Bool
+  | .withContext _ inner => innermostIsSpecialOutputAccess inner
+  | .specialOutputAccess => true
+  | _ => false
+
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
 def propAlg : Algorithm :=
@@ -85,6 +90,201 @@ def test2c : Bool :=
 #eval test2c  -- should be true
 -- EXPECTED: Except.error (withContext "while evaluating property A" (arityMismatch 1 0))
 #eval runResult (.block receiver2c)
+
+-- direct-call ordinary algorithm tests
+--------------------------------------------------------------------------------
+
+def directCallAlg : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+
+def directCallRoot : Algorithm :=
+  algPrivate [] [] [("Algo", directCallAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+  ]
+
+def directCallWorks : Bool :=
+  match runFlat (.block directCallRoot) with
+  | Except.ok [7] => true
+  | _ => false
+
+#eval directCallWorks  -- should be true
+
+def directCallArityRoot : Algorithm :=
+  algPrivate [] [] [("Algo", directCallAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [])
+  ]
+
+def directCallUsesOwnArity : Bool :=
+  match runResult (.block directCallArityRoot) with
+  | Except.error err =>
+      hasContext "while evaluating call to Algo" err
+      && innermostIsArityMismatch 1 0 err
+  | Except.ok _ => false
+
+#eval directCallUsesOwnArity  -- should be true
+
+def zeroArgOutputAlg : Algorithm :=
+  algPrivate [] [] [] [.num 5]
+
+def zeroArgOutputCallRoot : Algorithm :=
+  algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [])
+  ]
+
+def zeroArgOutputCallWorks : Bool :=
+  match runFlat (.block zeroArgOutputCallRoot) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval zeroArgOutputCallWorks  -- should be true
+
+def zeroArgOutputRejectsExtraArgsRoot : Algorithm :=
+  algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+  ]
+
+def zeroArgOutputRejectsExtraArgs : Bool :=
+  match runResult (.block zeroArgOutputRejectsExtraArgsRoot) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | Except.ok _ => false
+
+#eval zeroArgOutputRejectsExtraArgs  -- should be true
+
+def helperOutputAlg : Algorithm :=
+  algPrivate [] [] [
+    ("Helper", alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)])
+  ] [.num 5]
+
+def helperDotCallRoot : Algorithm :=
+  algPrivate [] [] [("Algo", helperOutputAlg)] [
+    .dotCall (.resolve "Algo") "Helper" (some (alg [] [] [] [.num 6]))
+  ]
+
+def helperDotCallStillWorks : Bool :=
+  match runFlat (.block helperDotCallRoot) with
+  | Except.ok [12] => true
+  | _ => false
+
+#eval helperDotCallStillWorks  -- should be true
+
+def helperDirectCallStillFailsRoot : Algorithm :=
+  algPrivate [] [] [("Algo", helperOutputAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+  ]
+
+def helperDirectCallStillFails : Bool :=
+  match runResult (.block helperDirectCallStillFailsRoot) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | Except.ok _ => false
+
+#eval helperDirectCallStillFails  -- should be true
+
+def parametrizedValuePositionRoot : Algorithm :=
+  algPrivate [] [] [("Algo", directCallAlg)] [
+    .resolve "Algo"
+  ]
+
+def parametrizedValuePositionRejectsBareUse : Bool :=
+  match runResult (.block parametrizedValuePositionRoot) with
+  | Except.error err =>
+      hasContext "while evaluating property Algo" err
+      && innermostIsArityMismatch 1 0 err
+  | Except.ok _ => false
+
+#eval parametrizedValuePositionRejectsBareUse  -- should be true
+
+def innerDirectAlg : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]
+
+def outerDirectCallAlg : Algorithm :=
+  algPrivate [] [] [("Inner", innerDirectAlg)] [
+    .call (.resolve "Inner") (alg [] [] [] [.num 5])
+  ]
+
+def nestedDirectCallRoot : Algorithm :=
+  algPrivate [] [] [("Outer", outerDirectCallAlg)] [
+    .resolve "Outer",
+    .dotCall (.resolve "Outer") "Inner" (some (alg [] [] [] [.num 5]))
+  ]
+
+def nestedDirectCallWorks : Bool :=
+  match runFlat (.block nestedDirectCallRoot) with
+  | Except.ok [15, 15] => true
+  | _ => false
+
+#eval nestedDirectCallWorks  -- should be true
+
+def publicOutputAlg : Algorithm :=
+  alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+
+def outputDotCallRejectedRoot : Algorithm :=
+  algPrivate [] [] [("Algo", publicOutputAlg)] [
+    .dotCall (.resolve "Algo") "Output" (some (alg [] [] [] [.num 6]))
+  ]
+
+def outputDotCallRejected : Bool :=
+  match runResult (.block outputDotCallRejectedRoot) with
+  | Except.error err => innermostIsSpecialOutputAccess err
+  | Except.ok _ => false
+
+#eval outputDotCallRejected  -- should be true
+
+def nestedOutputDotCallRejectedRoot : Algorithm :=
+  algPrivate [] [] [("Outer", outerDirectCallAlg)] [
+    .dotCall (.dotCall (.resolve "Outer") "Inner" none) "Output" (some (alg [] [] [] [.num 6]))
+  ]
+
+def nestedOutputDotCallRejected : Bool :=
+  match runResult (.block nestedOutputDotCallRejectedRoot) with
+  | Except.error err => innermostIsSpecialOutputAccess err
+  | Except.ok _ => false
+
+#eval nestedOutputDotCallRejected  -- should be true
+
+def bareOutputAccessRejectedRoot : Algorithm :=
+  algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
+    .dotCall (.resolve "Algo") "Output" none
+  ]
+
+def bareOutputAccessRejected : Bool :=
+  match runResult (.block bareOutputAccessRejectedRoot) with
+  | Except.error err => innermostIsSpecialOutputAccess err
+  | Except.ok _ => false
+
+#eval bareOutputAccessRejected  -- should be true
+
+def stringLiteralSatisfiesInvariant : Bool :=
+  KatLang.postElabInvariant (.stringLiteral "abc")
+
+#eval stringLiteralSatisfiesInvariant  -- should be true
+
+def stringOutputAlgSatisfiesInvariant : Bool :=
+  KatLang.postElabInvariantAlg (alg [] [] [] [.stringLiteral "abc"])
+
+#eval stringOutputAlgSatisfiesInvariant  -- should be true
+
+def unresolvedLoadViolatesInvariant : Bool :=
+  !KatLang.postElabInvariant
+    (.call (.resolve "load") (alg [] [] [] [.stringLiteral "https://katlang.org/lib.kat"]))
+
+#eval unresolvedLoadViolatesInvariant  -- should be true
+
+def outputDotCallViolatesInvariant : Bool :=
+  !KatLang.postElabInvariant (.dotCall (.resolve "Algo") "Output" none)
+
+#eval outputDotCallViolatesInvariant  -- should be true
+
+def structuralOutputPropertyViolatesInvariant : Bool :=
+  !KatLang.postElabInvariantAlg
+    (alg [] [] [privateProp "Output" (alg [] [] [] [.num 1])] [.num 2])
+
+#eval structuralOutputPropertyViolatesInvariant  -- should be true
+
+def helperPropertySatisfiesInvariant : Bool :=
+  KatLang.postElabInvariantAlg
+    (alg [] [] [privateProp "Helper" (alg [] [] [] [.num 1])] [.stringLiteral "abc"])
+
+#eval helperPropertySatisfiesInvariant  -- should be true
 
 --------------------------------------------------------------------------------
 -- missingOutput semantics tests

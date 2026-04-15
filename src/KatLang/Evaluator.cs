@@ -2810,8 +2810,8 @@ public static class Evaluator
                     EvalDotCall(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
             case Expr.Call(var func, var argsAlg):
-                return WithSpan(expr.Span, WithCtx(CtxCall(func),
-                    EvalCall(func, argsAlg, ctx, valEnv)));
+                return WithSpan(expr.Span,
+                    EvalCallExpr(func, argsAlg, ctx, valEnv));
 
             case Expr.Index(var target, var selector):
             {
@@ -2925,8 +2925,8 @@ public static class Evaluator
                     EvalDotCallCounted(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
             case Expr.Call(var func, var argsAlg):
-                return WithSpan(expr.Span, WithCtx(CtxCall(func),
-                    EvalCallCounted(func, argsAlg, ctx, valEnv)));
+                return WithSpan(expr.Span,
+                    EvalCallCountedExpr(func, argsAlg, ctx, valEnv));
 
             default:
             {
@@ -3124,33 +3124,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        // 1. Resolve callee
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var callee = calleeR.Value;
-
-        // 2. Dispatch on algorithm kind
-        if (callee is Algorithm.Builtin(var builtinId))
-        {
-            // Builtin: resolve args lazily as algorithms
-            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
-            if (argAlgsR.IsError) return argAlgsR.Error;
-            return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
-        }
-
-        // 3. Conditional algorithm: flat single-branch binder clauses are
-        // call-equivalent to ordinary user algorithms for higher-order binding.
-        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalUserCall(simpleCallee, argsAlg, ctx, valEnv);
-
-        // 4. Other conditional algorithms use structural pattern matching.
-        if (callee is Algorithm.Conditional)
-        {
-            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, OpenExprName(func));
-        }
-
-        // 5. User-defined: delegate to EvalUserCall (Lean: evalUserCall)
-        return EvalUserCall(callee, argsAlg, ctx, valEnv);
+        return EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func));
     }
 
     /// <summary>
@@ -3165,22 +3141,39 @@ public static class Evaluator
     {
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var callee = calleeR.Value;
+        return EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func));
+    }
 
-        if (callee is Algorithm.Builtin(var builtinId))
-        {
-            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
-            if (argAlgsR.IsError) return argAlgsR.Error;
-            return ApplyBuiltinCounted(builtinId, argAlgsR.Value, ctx, valEnv);
-        }
+    /// <summary>
+    /// Context-aware call evaluation for expression position.
+    /// </summary>
+    private static EvalResult<Result> EvalCallExpr(
+        Expr func,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var calleeR = ResolveAlg(func, ctx);
+        if (calleeR.IsError)
+            return new EvalError.WithContext(CtxCall(func), calleeR.Error) { Span = calleeR.Error.Span };
 
-        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalUserCallCounted(simpleCallee, argsAlg, ctx, valEnv);
+        return WithCtx(CtxCall(func), EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func)));
+    }
 
-        if (callee is Algorithm.Conditional)
-            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, OpenExprName(func));
+    /// <summary>
+    /// Counted expression-position call evaluation mirroring <see cref="EvalCallExpr"/>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalCallCountedExpr(
+        Expr func,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var calleeR = ResolveAlg(func, ctx);
+        if (calleeR.IsError)
+            return new EvalError.WithContext(CtxCall(func), calleeR.Error) { Span = calleeR.Error.Span };
 
-        return EvalUserCallCounted(callee, argsAlg, ctx, valEnv);
+        return WithCtx(CtxCall(func), EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func)));
     }
 
     // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
@@ -3353,6 +3346,32 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Dispatches an already-resolved callee.
+    /// </summary>
+    private static EvalResult<Result> EvalResolvedCall(
+        Algorithm callee,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName)
+    {
+        if (callee is Algorithm.Builtin(var builtinId))
+        {
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            if (argAlgsR.IsError) return argAlgsR.Error;
+            return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
+        }
+
+        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
+            return EvalUserCall(simpleCallee, argsAlg, ctx, valEnv);
+
+        if (callee is Algorithm.Conditional)
+            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, calleeName);
+
+        return EvalUserCall(callee, argsAlg, ctx, valEnv);
+    }
+
+    /// <summary>
     /// Counted user-defined call evaluation.
     /// Call semantics are unchanged; only the final emitted output count of the
     /// callee is preserved.
@@ -3420,6 +3439,32 @@ public static class Evaluator
         return EvalAlgOutputCounted(callee, newCtx, newEnv);
     }
 
+    /// <summary>
+    /// Counted dispatch for an already-resolved effective callee.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalResolvedCallCounted(
+        Algorithm callee,
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName)
+    {
+        if (callee is Algorithm.Builtin(var builtinId))
+        {
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            if (argAlgsR.IsError) return argAlgsR.Error;
+            return ApplyBuiltinCounted(builtinId, argAlgsR.Value, ctx, valEnv);
+        }
+
+        if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
+            return EvalUserCallCounted(simpleCallee, argsAlg, ctx, valEnv);
+
+        if (callee is Algorithm.Conditional)
+            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, calleeName);
+
+        return EvalUserCallCounted(callee, argsAlg, ctx, valEnv);
+    }
+
     // ── DotCall evaluation ────────────────────────────────────────────────
 
     /// <summary>
@@ -3443,6 +3488,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (name == "Output")
+            return new EvalError.SpecialOutputAccess();
+
         // Lean: let targetAlg <- resolveAlg target ctx
         // Extension-property rule: if target is a value-producing expression (not an algorithm),
         // ResolveAlg returns NotAnAlgorithm — check value-based intrinsics first,
@@ -3486,34 +3534,22 @@ public static class Evaluator
         if (prop is not null)
         {
             var wired = ChildOf(targetAlg, prop);
-            var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-
-            // Flat single-branch binder clauses behave like ordinary user calls.
-            if (simpleCallee is not null)
-            {
-                if (argsOpt is null)
-                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
-                return EvalUserCall(simpleCallee, argsOpt, ctx, valEnv);
-            }
-
-            // Other conditional algorithms: dedicated dispatch
-            if (wired is Algorithm.Conditional)
-            {
-                if (argsOpt is null)
-                    return new EvalError.NoMatchingBranch(name);
-                return EvalConditionalCall(wired, argsOpt, ctx, valEnv, name);
-            }
-
             if (argsOpt is null)
             {
+                var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
+                if (simpleCallee is not null)
+                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+
+                if (wired is Algorithm.Conditional)
+                    return new EvalError.NoMatchingBranch(name);
+
                 // No args: 0-param → value access, has params → arity error
                 if (wired.Params.Count == 0)
                     return EvalMaybeMemoizedStructuralPropertyOutput(prop, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
-            // Has args → navigation only: direct argument binding, no receiver
-            // Lean: evalUserCall wired args ctx env
-            return EvalUserCall(wired, argsOpt, ctx, valEnv);
+
+            return EvalResolvedCall(wired, argsOpt, ctx, valEnv, name);
         }
 
         // Lexical fallback (receiver injection via callLexicalWithReceiver)
@@ -3580,6 +3616,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (name == "Output")
+            return new EvalError.SpecialOutputAccess();
+
         var targetResult = ResolveAlg(target, ctx);
         if (targetResult.IsError)
         {
@@ -3620,30 +3659,21 @@ public static class Evaluator
         if (prop is not null)
         {
             var wired = ChildOf(targetAlg, prop);
-            var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-
-            if (simpleCallee is not null)
-            {
-                if (argsOpt is null)
-                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
-                return EvalUserCallCounted(simpleCallee, argsOpt, ctx, valEnv);
-            }
-
-            if (wired is Algorithm.Conditional)
-            {
-                if (argsOpt is null)
-                    return new EvalError.NoMatchingBranch(name);
-                return EvalConditionalCallCounted(wired, argsOpt, ctx, valEnv, name);
-            }
-
             if (argsOpt is null)
             {
+                var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
+                if (simpleCallee is not null)
+                    return new EvalError.ArityMismatch(simpleCallee.Params.Count, 0);
+
+                if (wired is Algorithm.Conditional)
+                    return new EvalError.NoMatchingBranch(name);
+
                 if (wired.Params.Count == 0)
                     return EvalMaybeMemoizedStructuralPropertyOutputCounted(prop, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
-            return EvalUserCallCounted(wired, argsOpt, ctx, valEnv);
+            return EvalResolvedCallCounted(wired, argsOpt, ctx, valEnv, name);
         }
 
         return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);

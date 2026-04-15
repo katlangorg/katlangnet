@@ -1,4 +1,4 @@
--- KatLang v0.8.13 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.40 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -57,6 +57,11 @@
 --     - `Output = expr` may appear anywhere in the property list (not only at end).
 --     - The name `Output` in assignment position is reserved for this syntax;
 --       users cannot define a normal property named `Output`.
+--     - Explicit parameters and clause branches belong on the enclosing
+--       algorithm head, not on `Output`; exact syntax such as `Output(x) = ...`
+--       is invalid.
+--     - External qualified access such as `Algo.Output` or `Algo.Output(...)`
+--       is invalid; users must call the algorithm directly as `Algo(...)`.
 --     - `Output` can still be used as a free identifier / parameter name in
 --       expressions (only the `Output = ...` assignment form is special).
 --
@@ -100,6 +105,7 @@ inductive Error where
   | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual)
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
+  | specialOutputAccess : Error                -- external property-style access to designated Output is invalid
   | missingOutput    : Error                   -- forced user-defined algorithm does not define output
   | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
@@ -2165,10 +2171,22 @@ mutual
     let argShape := Result.normalize (Result.group argResults)
     evalConditionalShapeCounted callee argShape ctx env calleeName
 
-  /-- Counted call evaluation for `reduce` step validation. -/
-  partial def evalCallCounted (f : Expr) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let callee <- resolveAlg f ctx
+  /-- Dispatch an already-resolved callee in ordinary evaluation. -/
+  partial def evalResolvedCall (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+    match callee with
+    | .builtin b => do
+        let argAlgs <- resolveArgAlgs args ctx
+        applyBuiltin b argAlgs ctx env
+    | .conditional _ _ _ =>
+      match flatBinderUserEquivalent? callee with
+      | some simple => evalUserCall simple args ctx env
+      | none => evalConditionalCall callee args ctx env calleeName
+    | _ => evalUserCall callee args ctx env
+
+  /-- Dispatch an already-resolved callee in counted evaluation. -/
+  partial def evalResolvedCallCounted (callee : Algorithm) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
     match callee with
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
@@ -2176,8 +2194,20 @@ mutual
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
       | some simple => evalUserCallCounted simple args ctx env
-      | none => evalConditionalCallCounted callee args ctx env (openExprName f)
+      | none => evalConditionalCallCounted callee args ctx env calleeName
     | _ => evalUserCallCounted callee args ctx env
+
+  /-- Counted call evaluation for `reduce` step validation. -/
+  partial def evalCallCounted (f : Expr) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let callee <- resolveAlg f ctx
+    evalResolvedCallCounted callee args ctx env (openExprName f)
+
+  /-- Context-aware counted call evaluation for expression position. -/
+  partial def evalCallCountedExpr (f : Expr) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
+    withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
   /-- Counted lexical fallback with receiver injection. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
@@ -2191,6 +2221,9 @@ mutual
   /-- Counted dotCall evaluation for `reduce` step validation. -/
   partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    if name = "Output" then
+      .error Error.specialOutputAccess
+    else
     match resolveAlg target ctx with
     | .ok targetAlg =>
       match (<- evalStructuralIntrinsic? targetAlg name) with
@@ -2216,17 +2249,12 @@ mutual
                       match wired with
                       | .conditional _ _ _ => .error (Error.noMatchingBranch name)
                       | _ =>
-                        if (Algorithm.params wired).length = 0 then
-                          evalAlgOutputCounted wired ctx env
-                        else
-                          .error (Error.arityMismatch (Algorithm.params wired).length 0)
+                          if (Algorithm.params wired).length = 0 then
+                            evalAlgOutputCounted wired ctx env
+                          else
+                            .error (Error.arityMismatch (Algorithm.params wired).length 0)
               | some args =>
-                  match flatBinderUserEquivalent? wired with
-                  | some simple => evalUserCallCounted simple args ctx env
-                  | none =>
-                      match wired with
-                      | .conditional _ _ _ => evalConditionalCallCounted wired args ctx env name
-                      | _ => evalUserCallCounted wired args ctx env
+                  evalResolvedCallCounted wired args ctx env name
           | none => callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
@@ -2277,8 +2305,8 @@ mutual
           .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params a).length 0))
     | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCallCounted o n argsOpt ctx env
-    | .call f args => withCtx (CtxMsg.call f) do
-        evalCallCounted f args ctx env
+    | .call f args =>
+        evalCallCountedExpr f args ctx env
     | _ => do
         let r <- eval e ctx env
         pure (r, Result.valueCount r)
@@ -2374,15 +2402,13 @@ mutual
   partial def evalCall (f : Expr) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let callee <- resolveAlg f ctx
-    match callee with
-    | .builtin b => do
-        let argAlgs <- resolveArgAlgs args ctx
-        applyBuiltin b argAlgs ctx env
-    | .conditional _ _ _ =>
-      match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCall simple args ctx env
-      | none => evalConditionalCall callee args ctx env (openExprName f)
-    | _ => evalUserCall callee args ctx env
+    evalResolvedCall callee args ctx env (openExprName f)
+
+  /-- Context-aware direct call evaluation for expression position. -/
+  partial def evalCallExpr (f : Expr) (args : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
+    withCtx (CtxMsg.call f) <| evalResolvedCall callee args ctx env (openExprName f)
 
   /-- Resolve name lexically and call with receiver prepended to args.
       Delegates to evalCall to get builtin dispatch for free. -/
@@ -2415,6 +2441,9 @@ mutual
     changing the semantic behavior of dotCall itself. -/
   partial def evalDotCall (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    if name = "Output" then
+      .error Error.specialOutputAccess
+    else
     match resolveAlg target ctx with
     | .ok targetAlg =>
       match (<- evalStructuralIntrinsic? targetAlg name) with
@@ -2428,18 +2457,14 @@ mutual
           match Algorithm.lookupProp targetAlg name with
           | some p =>
               let wired := Algorithm.childOf targetAlg p
-              match flatBinderUserEquivalent? wired with
-              | some simple =>
-                  match argsOpt with
-                  | none =>
+              match argsOpt with
+              | none =>
+                  match flatBinderUserEquivalent? wired with
+                  | some simple =>
                       if (Algorithm.params simple).length = 0 then
                         evalAlgOutput simple ctx env
                       else
                         .error (Error.arityMismatch (Algorithm.params simple).length 0)
-                  | some args =>
-                      evalUserCall simple args ctx env
-              | none =>
-                  match argsOpt with
                   | none =>
                       match wired with
                       | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
@@ -2449,12 +2474,8 @@ mutual
                           else
                             -- Navigation only: no receiver injection, need explicit args
                             .error (Error.arityMismatch (Algorithm.params wired).length 0)
-                  | some args =>
-                      match wired with
-                      | .conditional _ _ _ => evalConditionalCall wired args ctx env name
-                      | _ =>
-                          -- Navigation only: direct argument binding, no receiver
-                          evalUserCall wired args ctx env
+              | some args =>
+                  evalResolvedCall wired args ctx env name
           | none => callLexicalWithReceiver name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
@@ -2566,8 +2587,8 @@ mutual
     -- 1. Resolve f to an Algorithm
     -- 2. If builtin: args resolved lazily as algorithms, passed to builtin dispatch
     -- 3. If user alg: args evaluated eagerly to values, bound to params
-    | .call f args => withCtx (CtxMsg.call f) do
-        evalCall f args ctx env
+    | .call f args =>
+      evalCallExpr f args ctx env
 
     | .index a i => do
         let ar <- eval a ctx env
@@ -2972,29 +2993,36 @@ inductive LoadPosition where
   **Post-condition (invariant)**: After elaboration completes successfully,
   the resulting AST satisfies `postElabInvariant` / `postElabInvariantAlg`,
   which guarantees:
-    1. No `Expr.stringLiteral` nodes remain (they only exist to carry load URLs).
+    1. Runtime `Expr.stringLiteral` nodes may remain as ordinary first-class values.
     2. No unresolved load calls remain (i.e., no `call (resolve "load") _` nodes).
+    3. No elaborated dot-call targets the reserved member name `Output`.
+    4. No structural property is named `Output`; reserved `Output = ...`
+       syntax lowers directly to the algorithm output list instead of a property.
   All load directives have been replaced with `Expr.block` containing the
-  parsed and elaborated remote algorithm. The evaluator never sees load calls.
+  parsed and elaborated remote algorithm. The evaluator never sees unresolved
+  load calls.
 
   Formally:
     elaborate(call(resolve("load"), [stringLiteral url])) = block(parseModule(fetch(url)))
-    ∀ e ∈ elaborated AST, e ≠ Expr.stringLiteral _
     ∀ e ∈ elaborated AST, e ≠ Expr.call (Expr.resolve "load") _
+    ∀ e ∈ elaborated AST, e ≠ Expr.dotCall _ "Output" _
+    ∀ a ∈ elaborated AST algorithms, ∀ p ∈ a.props, p.name ≠ "Output"
 -/
 mutual
 /-- Post-elaboration invariant: returns true iff the expression tree contains
-    no `Expr.stringLiteral` nodes and no unresolved load calls
-    (`call (resolve "load") _`).  An AST satisfying this predicate is ready
-    for semantic evaluation. -/
+    no unresolved load calls (`call (resolve "load") _`) and no elaborated
+    dot-call targeting the reserved member name `Output`. Runtime
+    `Expr.stringLiteral` nodes are allowed as ordinary first-class values.
+    An AST satisfying this predicate is ready for semantic evaluation. -/
 partial def postElabInvariant : Expr -> Bool
-  | .stringLiteral _ => false
+  | .stringLiteral _ => true
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b
   | .index a b       => postElabInvariant a && postElabInvariant b
   | .combine a b     => postElabInvariant a && postElabInvariant b
   | .call (.resolve "load") _ => false  -- unresolved load call
   | .call f args     => postElabInvariant f && postElabInvariantAlg args
+  | .dotCall _ "Output" _ => false
   | .dotCall a _ args =>
       postElabInvariant a &&
       match args with
@@ -3004,12 +3032,15 @@ partial def postElabInvariant : Expr -> Bool
   | _                => true  -- param, num, resolve
 
 /-- Algorithm-level post-elaboration invariant: all contained expressions
-    satisfy `postElabInvariant`. -/
+  satisfy `postElabInvariant`, no elaborated dot-call targets the reserved
+  member name `Output`, and no structural property is named `Output`
+  because reserved `Output = ...` syntax lowers directly to the algorithm
+  output list instead of a property. -/
 partial def postElabInvariantAlg : Algorithm -> Bool
   | .builtin _ => true
   | .mk _ _ opens props output =>
       opens.all postElabInvariant &&
-      props.all (fun p => postElabInvariantAlg p.alg) &&
+      props.all (fun p => p.name != "Output" && postElabInvariantAlg p.alg) &&
       output.all postElabInvariant
   | .conditional _ opens branches =>
       opens.all postElabInvariant &&

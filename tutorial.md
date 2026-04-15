@@ -413,7 +413,19 @@ B = 2
 
 **Result:** `5`
 
-`Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm. The name `Output` in assignment position is reserved — you cannot define a property named `Output`.
+`Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm. The name `Output` is reserved in definition position: `Output(x) = ...` and multi-branch `Output` definitions are invalid. If you need explicit parameters or clause branches, declare them on the enclosing algorithm instead. External qualified access is also invalid: `Algo.Output` and `Algo.Output(...)` are rejected because `Output` is not a public property surface.
+
+When an algorithm is used in call position, KatLang calls the algorithm using its own parameter list. Put the call interface on the algorithm head, and use `Output = ...` only to declare its result:
+
+```
+Algo(x) = {
+    Output = x + 1
+}
+
+Algo(6)
+```
+
+This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head, not on `Output`. To get an algorithm's designated result, call the algorithm directly; do not write `Algo.Output(...)`. Bare `Algo` still refers to the algorithm value, not an automatic call. Ordinary helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`.
 
 An algorithm with no output is still valid when you use it structurally, for example as a namespace-like group or as a higher-order value:
 

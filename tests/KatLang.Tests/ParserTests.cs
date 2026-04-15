@@ -1243,6 +1243,87 @@ public class ParserTests
         Assert.Single(block.Output);
     }
 
+    [Fact]
+    public void Parse_OutputClauseDefinition_ReportsError()
+    {
+        var result = Parser.ParseSyntax("Output(x) = x + 1");
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot declare explicit parameters"));
+    }
+
+    [Fact]
+    public void Parse_OutputClauseGroup_ReportsConditionalError()
+    {
+        var result = Parser.ParseSyntax("Output(0) = 0\nOutput(x) = x");
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot declare explicit parameters"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot be a conditional or multi-branch definition"));
+    }
+
+    [Fact]
+    public void Parse_ParametrizedAlgorithm_WithExplicitOutputInBody()
+    {
+        var result = Parser.ParseSyntax("Algo(x) = { Output = x + 1 }");
+
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var user = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Equal(["x"], user.Params);
+        Assert.Single(user.Output);
+        var binary = Assert.IsType<Expr.Binary>(user.Output[0]);
+        Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    [Fact]
+    public void Parse_OutputPropertyAccess_ReportsError()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Algo(x) = {
+              Output = x + 1
+            }
+            Algo.Output(6)
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Instead of `Algo.Output(6)`, write `Algo(6)`"));
+    }
+
+    [Fact]
+    public void Parse_NestedOutputPropertyAccess_ReportsError()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Outer = {
+              Inner(x) = {
+                Output = x + 10
+              }
+            }
+            Outer.Inner.Output(6)
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
+    }
+
+    [Fact]
+    public void Parse_BareOutputPropertyAccess_ReportsError()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Algo = {
+              Output = 5
+            }
+            Algo.Output
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
+    }
+
     // -- Double-parens removal: ordinary grouping ---
 
     [Fact]

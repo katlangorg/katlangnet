@@ -1,20 +1,24 @@
 Program         = Algorithm ;
 
 Algorithm       = { AlgorithmItem } ;
-AlgorithmItem   = OpenDeclaration | PropertyDefinition | ConditionalBranch | OutputLine ;
+AlgorithmItem   = OpenDeclaration | PropertyDefinition | ConditionalBranch | ExplicitOutputDefinition | OutputLine ;
 
 OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
                 | CombineItem ;              (* full expression with ; for combine *)
 
-PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
+PropertyDefinition = [ "public" ] NonOutputIdentifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
 
-ConditionalBranch  = Identifier "(" Pattern ")" "=" OutputBundle ;
+ConditionalBranch  = NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style branch definition: Name(pattern) = body.
                         Recognized only in definition position;
-                        in expression position Name(...) remains an ordinary call. *)
+                        in expression position Name(...) remains an ordinary call.
+                        `Output(...) = ...` is invalid; declare parameters and
+                        branches on the enclosing algorithm instead. *)
+
+ExplicitOutputDefinition = "Output" "=" OutputBundle ;
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = Identifier                   (* bind      *)
@@ -63,6 +67,7 @@ BraceAlgorithmExpr = "{" Algorithm "}" ;
 
 NumberLiteral   = Number ;
 Number          = /\d+(\.\d+)?/ ;
+NonOutputIdentifier = Identifier ;       (* except the reserved definition-position name "Output" *)
 Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
 StringLiteral   = /'([^'\r\n])*'/ ;
 Comment         = /\/\/[^\r\n]*/ ;

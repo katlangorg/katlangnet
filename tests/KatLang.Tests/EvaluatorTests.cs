@@ -174,6 +174,14 @@ public class EvaluatorTests
         Assert.IsType<EvalError.MissingOutput>(error);
     }
 
+    private static void AssertInnermostSpecialOutputAccess(EvalError error)
+    {
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        Assert.IsType<EvalError.SpecialOutputAccess>(error);
+    }
+
     private static void AssertMissingOutputMessage(
         string source,
         string expectedMessage,
@@ -3978,10 +3986,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_NetSalary_DotCallOutput()
+    public void Eval_NetSalary_DirectCall_UsesAlgorithmParameters()
     {
-        // NetSalary.Output(1000, 2) â€” the "Output" property also gains
-        // transitive params [grossSalary, numberOfChildren] via IncomeTax.
+        // NetSalary(1000, 2) binds the algorithm-level interface directly.
         // Output = 1000 - 105 - 119.04 = 775.96
         var source = """
             NetSalary = {
@@ -4318,12 +4325,201 @@ public class EvaluatorTests
             """);
 
         Assert.NotNull(error);
+
         while (error is EvalError.WithContext withContext)
             error = withContext.Inner;
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(error);
         Assert.Equal(1, arity.Expected);
         Assert.Equal(2, arity.Actual);
+    }
+
+    [Fact]
+    public void Eval_DirectCall_UsesAlgorithmLevelExplicitParameters()
+    {
+        var source = """
+            Algo(x) = {
+              Output = x + 1
+            }
+            Algo(6)
+            """;
+
+        AssertEval(source, 7);
+    }
+
+    [Fact]
+    public void Eval_DirectCall_MultiParameterAlgorithmLevelDefinition_SupportsExplicitOutput()
+    {
+        var source = """
+            ImpactOnEarth(mass, height) = {
+              Gravity = 9.81
+              Output = mass * Gravity * height
+            }
+            ImpactOnEarth(3, 2)
+            """;
+
+        AssertEval(source, 58.86m);
+    }
+
+    [Fact]
+    public void Eval_DirectCall_ShorthandBodyStillWorks()
+    {
+        AssertEval(
+            """
+            Algo(x) = x + 1
+            Algo(6)
+            """,
+            7);
+    }
+
+    [Fact]
+    public void Eval_DirectCall_UsesAlgorithmArityInDiagnostics()
+    {
+        AssertArityMismatchMessage(
+            """
+            Algo(x) = {
+              Output = x + 1
+            }
+            Algo()
+            """,
+            "Property 'Algo' expects 1 parameter, but was called with 0 arguments.");
+    }
+
+    [Fact]
+    public void Eval_DirectCall_ZeroParamExplicitOutput_PreservesExistingBehavior()
+    {
+        AssertEval(
+            """
+            Algo = {
+              Output = 5
+            }
+            Algo()
+            """,
+            5);
+
+        AssertArityMismatchMessage(
+            """
+            Algo = {
+              Output = 5
+            }
+            Algo(6)
+            """,
+            "Property 'Algo' expects 0 parameters, but was called with 1 argument.");
+    }
+
+    [Fact]
+    public void Eval_DirectCall_DoesNotMakeHelperCallableThroughAlgorithmName()
+    {
+        AssertArityMismatchMessage(
+            """
+            Algo = {
+              Helper(x) = x * 2
+              Output = 5
+            }
+            Algo(6)
+            """,
+            "Property 'Algo' expects 0 parameters, but was called with 1 argument.");
+    }
+
+    [Fact]
+    public void Eval_DirectCall_PreservesHelperDotCall()
+    {
+        var source = """
+            Algo = {
+              Helper(x) = x * 2
+              Output = 5
+            }
+            Algo.Helper(6)
+            """;
+
+        AssertEval(source, 12);
+    }
+
+    [Fact]
+    public void Eval_DirectCall_NestedAlgorithmLevelDefinition_PreservesNestedCalls()
+    {
+        var source = """
+            Outer = {
+              Inner(x) = {
+                Output = x + 10
+              }
+              Inner(5)
+            }
+            Outer, Outer.Inner(5)
+            """;
+
+        AssertEval(source, 15, 15);
+    }
+
+    [Fact]
+    public void Eval_ManualOutputDotCall_IsRejected()
+    {
+        var callee = new Algorithm.User(
+            Parent: null,
+            Params: ["x"],
+            Opens: [],
+            Properties: [],
+            Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(1m))]);
+
+        var root = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [new Property("Algo", callee)],
+            Output:
+            [
+                new Expr.DotCall(
+                    new Expr.Resolve("Algo"),
+                    "Output",
+                    new Algorithm.User(Parent: null, Params: [], Opens: [], Properties: [], Output: [new Expr.Num(6m)]))
+            ]);
+
+        var result = Evaluator.Run(new Expr.Block(root));
+
+        Assert.True(result.IsError);
+        AssertInnermostSpecialOutputAccess(result.Error);
+        Assert.Equal(
+            "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead. Instead of `Algo.Output(...)`, write `Algo(...)`.",
+            KatLangError.FromEvalError(result.Error).Message);
+    }
+
+    [Fact]
+    public void Eval_ManualNestedOutputDotCall_UsesReceiverSpecificGuidance()
+    {
+        var inner = new Algorithm.User(
+            Parent: null,
+            Params: ["x"],
+            Opens: [],
+            Properties: [],
+            Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(10m))]);
+
+        var outer = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [new Property("Inner", inner)],
+            Output: []);
+
+        var root = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [new Property("Outer", outer)],
+            Output:
+            [
+                new Expr.DotCall(
+                    new Expr.DotCall(new Expr.Resolve("Outer"), "Inner"),
+                    "Output",
+                    new Algorithm.User(Parent: null, Params: [], Opens: [], Properties: [], Output: [new Expr.Num(6m)]))
+            ]);
+
+        var result = Evaluator.Run(new Expr.Block(root));
+
+        Assert.True(result.IsError);
+        AssertInnermostSpecialOutputAccess(result.Error);
+        Assert.Equal(
+            "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead. Instead of `Outer.Inner.Output(...)`, write `Outer.Inner(...)`.",
+            KatLangError.FromEvalError(result.Error).Message);
     }
 
     [Fact]

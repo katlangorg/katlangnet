@@ -85,6 +85,41 @@ public class KatLangEngineTests
     }
 
     [Fact]
+    public void Run_OutputPropertyAccess_ReturnsParseFailureWithGuidance()
+    {
+        var result = KatLangEngine.Run(
+            """
+            Algo(x) = {
+              Output = x + 1
+            }
+            Algo.Output(6)
+            """);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("Output is the designated result of an algorithm", error.Message);
+        Assert.Contains("Instead of `Algo.Output(6)`, write `Algo(6)`", error.Message);
+    }
+
+    [Fact]
+    public void Run_NestedOutputPropertyAccess_ReturnsParseFailure()
+    {
+        var result = KatLangEngine.Run(
+            """
+            Outer = {
+              Inner(x) = {
+                Output = x + 10
+              }
+            }
+            Outer.Inner.Output(6)
+            """);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("Output is the designated result of an algorithm", error.Message);
+    }
+
+    [Fact]
     public void Run_Filter_NonCallablePredicate_ExplainsImplicitItemArgument()
     {
         var result = KatLangEngine.Run("range(1, 5).filter(1)");

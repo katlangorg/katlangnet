@@ -13,6 +13,10 @@ namespace KatLang;
 /// </summary>
 public sealed class Parser
 {
+    private const string OutputPropertyAccessDiagnostic =
+        "Output is the designated result of an algorithm and cannot be accessed through property syntax. " +
+        "Call the algorithm directly instead. Instead of `Algo.Output(6)`, write `Algo(6)`.";
+
     private readonly IReadOnlyList<Token> _tokens;
     private readonly List<Diagnostic> _diagnostics;
     private int _pos;
@@ -148,6 +152,9 @@ public sealed class Parser
             span));
     }
 
+    private void ReportOutputPropertyAccess(SourceSpan span)
+        => ReportError(OutputPropertyAccessDiagnostic, span);
+
     private Token Previous
     {
         get
@@ -179,7 +186,8 @@ public sealed class Parser
     // Corresponds to 0.6's ReadSecondOrderAlgorithm.
     // Reads property definitions (Name = ...) and output expression lines.
     // Explicit output syntax: `Output = expr` is special output-definition syntax,
-    // NOT a property assignment. It lowers to the algorithm's Output list.
+    // NOT a property assignment or clause head. It lowers to the algorithm's
+    // Output list.
 
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
@@ -189,6 +197,7 @@ public sealed class Parser
         var output = new List<Expr>();
         var hasExplicitOutput = false;
         var hasImplicitOutput = false;
+        var sawOutputClauseDefinition = false;
         SourceSpan? explicitOutputSpan = null;
         var clauseGroups = new Dictionary<string, List<CondBranch>>();
         var clauseGroupSpans = new Dictionary<string, List<SourceSpan>>();
@@ -291,6 +300,24 @@ public sealed class Parser
                 Advance(); // consume '='
                 var exprs = ParseOutputLineExprs();
                 output.AddRange(exprs);
+            }
+            // Invalid Output clause definition: Output(pattern) = body
+            else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsClauseDefinition())
+            {
+                var outputToken = Current;
+                ReportError(
+                    sawOutputClauseDefinition
+                        ? "Output cannot be a conditional or multi-branch definition. Declare branches on the enclosing algorithm instead."
+                        : "Output cannot declare explicit parameters. Declare parameters on the enclosing algorithm instead.",
+                    TokenSpan(outputToken));
+                sawOutputClauseDefinition = true;
+
+                Advance(); // consume 'Output'
+                Expect(TokenKind.LParen);
+                _ = ParsePattern();
+                Expect(TokenKind.RParen);
+                Expect(TokenKind.Equals);
+                _ = ParseOutputLine();
             }
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
@@ -1023,6 +1050,9 @@ public sealed class Parser
                     var propName = propNameToken.StringValue!;
                     var memberSpan = TokenSpan(propNameToken);
                     Advance(); // consume identifier
+
+                    if (propName == "Output")
+                        ReportOutputPropertyAccess(memberSpan);
 
                     if (Current.Kind is TokenKind.LParen or TokenKind.LBrace
                         && Current.Position == Previous.Position + Previous.Length)

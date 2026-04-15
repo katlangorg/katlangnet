@@ -36,6 +36,8 @@ public sealed class KatLangError
     {
         if (TryFormatDotCallUnknownName(error, out var formattedDotCallError))
             return formattedDotCallError;
+        if (TryFormatSpecialOutputAccess(error, out var formattedSpecialOutputAccess))
+            return formattedSpecialOutputAccess;
         if (TryFormatMissingOutput(error, out var formattedMissingOutput))
             return formattedMissingOutput;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
@@ -57,12 +59,37 @@ public sealed class KatLangError
             EvalError.BadIndex => "Bad index",
             EvalError.DivByZero => "Division by zero",
             EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
+            EvalError.SpecialOutputAccess => FormatSpecialOutputAccess(receiverDesc: null),
             EvalError.MissingOutput => FormatGenericMissingOutput(),
             EvalError.NumericOverflow => "Numeric overflow",
             EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
             _ => error.ToString()!,
         };
+    }
+
+    private static bool TryFormatSpecialOutputAccess(EvalError error, out string message)
+    {
+        message = string.Empty;
+
+        if (error is EvalError.SpecialOutputAccess)
+        {
+            message = FormatSpecialOutputAccess(receiverDesc: null);
+            return true;
+        }
+
+        if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.SpecialOutputAccess })
+            return false;
+
+        if (TryParseDotCallContext(context, out var receiverDesc, out var propertyName)
+            && string.Equals(propertyName, "Output", StringComparison.Ordinal))
+        {
+            message = FormatSpecialOutputAccess(receiverDesc);
+            return true;
+        }
+
+        message = FormatSpecialOutputAccess(receiverDesc: null);
+        return true;
     }
 
     private static bool TryFormatDotCallUnknownName(EvalError error, out string message)
@@ -217,6 +244,14 @@ public sealed class KatLangError
 
     private static string FormatPropertyMissingOutput(string propertyName)
         => $"Property '{propertyName}' has no output here. Add an Output expression inside '{propertyName}', or use one of its properties, for example `{propertyName}.X`.";
+
+    private static string FormatSpecialOutputAccess(string? receiverDesc)
+    {
+        const string baseMessage = "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead.";
+        return string.IsNullOrWhiteSpace(receiverDesc)
+            ? $"{baseMessage} Instead of `Algo.Output(6)`, write `Algo(6)`."
+            : $"{baseMessage} Instead of `{receiverDesc}.Output(...)`, write `{receiverDesc}(...)`.";
+    }
 
     private static string FormatReferenceMissingOutput(string referenceDesc)
         => IsSimpleIdentifier(referenceDesc)

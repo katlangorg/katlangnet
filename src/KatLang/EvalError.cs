@@ -23,6 +23,7 @@ namespace KatLang;
 ///   | branchOutputArityMismatch : Ident → Nat → Nat → Error
 ///   | duplicateProperty : Ident → Error
 ///   | duplicateBranchPattern : Error
+///   | specialOutputAccess : Error
 ///   | missingOutput      : Error
 ///   | unresolvedImplicitParams : List Ident → Error
 ///   | withContext        : String → Error → Error
@@ -88,6 +89,9 @@ public abstract record EvalError
 
     /// <summary>Conditional algorithm has match-equivalent branch patterns.</summary>
     public sealed record DuplicateBranchPattern() : EvalError;
+
+    /// <summary>External property-style access to the reserved special Output member is invalid.</summary>
+    public sealed record SpecialOutputAccess() : EvalError;
 
     /// <summary>Forced user-defined algorithm value does not define an output.</summary>
     public sealed record MissingOutput() : EvalError;

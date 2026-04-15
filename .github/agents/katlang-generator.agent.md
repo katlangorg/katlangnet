@@ -12,6 +12,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Output only KatLang code.
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
+- Declare explicit parameters only on enclosing algorithm heads such as `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
 - Prefer collection builtins such as `range`, `filter`, `map`, `reduce`, `count`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
 - Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `count`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `startValue` instead of `range`, `predicate` instead of `filter`, or `transform` instead of `map`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
@@ -227,6 +228,8 @@ GOOD — assumed values in final call:
 - Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `( ... )` or `{ ... }` only when the body contains nested property definitions (see Nested Properties).
 - Do not generate multiple `open` declarations.
 - Do not put `public` on `open` or `Output`.
+- Do not declare parameters or branches on `Output`; `Output = ...` is reserved result syntax. Put parameters and branches on the enclosing algorithm instead.
+- Do not generate `Algo.Output` or `Algo.Output(...)`; `Output` is not a public property and the designated result must be obtained by calling the algorithm directly.
 - Do not call arbitrary expressions (e.g., `(1 + 2)(3)` is invalid).
 - Parenthesized sub-expressions work normally as call arguments. `f((a + b) mod 2, c)` is valid and parses as two arguments.
 - Single-quoted strings in `open 'url'` / load targets are compile-time directives. String literals used as runtime values follow separate rules (see String Literals).
@@ -257,6 +260,7 @@ Before emitting code, verify silently:
 
 - Response contains only KatLang — no prose, no markdown.
 - All constructs are valid KatLang syntax.
+- Any explicit parameters or same-name clause branches appear on enclosing algorithm definitions, never on `Output`.
 - No implicit parameter, branch binder, or helper placeholder shadows a builtin/prelude algorithm name.
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
