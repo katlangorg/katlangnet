@@ -60,6 +60,7 @@ public sealed class KatLangError
             EvalError.DivByZero => "Division by zero",
             EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
             EvalError.SpecialOutputAccess => FormatSpecialOutputAccess(receiverDesc: null),
+            EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
             EvalError.MissingOutput => FormatGenericMissingOutput(),
             EvalError.NumericOverflow => "Numeric overflow",
             EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),

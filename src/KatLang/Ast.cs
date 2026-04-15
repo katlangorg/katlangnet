@@ -556,6 +556,103 @@ public abstract record Algorithm
     }
 }
 
+internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
+
+internal static class AlgorithmValidation
+{
+    internal const string ExplicitParametersRequireOutputMessage =
+        "This algorithm declares explicit parameters but does not define an output. Remove the algorithm parameters if it is only a container, declare parameters on the relevant property instead, or define an algorithm output.";
+
+    public static IReadOnlyList<ExplicitParameterOutputViolation> FindExplicitParameterOutputViolations(Algorithm algorithm)
+    {
+        var violations = new List<ExplicitParameterOutputViolation>();
+        CollectAlgorithmViolations(algorithm, violations);
+        return violations;
+    }
+
+    public static ExplicitParameterOutputViolation? FindFirstExplicitParameterOutputViolation(Expr expr)
+    {
+        var violations = new List<ExplicitParameterOutputViolation>(capacity: 1);
+        CollectExprViolations(expr, violations);
+        return violations.Count > 0 ? violations[0] : null;
+    }
+
+    private static void CollectAlgorithmViolations(Algorithm algorithm, List<ExplicitParameterOutputViolation> violations)
+    {
+        if (algorithm is Algorithm.User user && user.Params.Count > 0 && user.Output.Count == 0)
+        {
+            var span = user.ExplicitParameters.FirstOrDefault()?.Span;
+            violations.Add(new ExplicitParameterOutputViolation(span));
+        }
+
+        foreach (var openExpr in algorithm.Opens)
+            CollectExprViolations(openExpr, violations);
+
+        foreach (var property in algorithm.Properties)
+            CollectAlgorithmViolations(property.Value, violations);
+
+        foreach (var expr in algorithm.Output)
+            CollectExprViolations(expr, violations);
+
+        foreach (var branch in algorithm.Branches)
+            CollectAlgorithmViolations(branch.Body, violations);
+    }
+
+    private static void CollectExprViolations(Expr expr, List<ExplicitParameterOutputViolation> violations)
+    {
+        switch (expr)
+        {
+            case Expr.Param:
+            case Expr.Num:
+            case Expr.StringLiteral:
+            case Expr.Resolve:
+            case Expr.NativeCall:
+                return;
+
+            case Expr.Unary unary:
+                CollectExprViolations(unary.Operand, violations);
+                return;
+
+            case Expr.Binary binary:
+                CollectExprViolations(binary.Left, violations);
+                CollectExprViolations(binary.Right, violations);
+                return;
+
+            case Expr.Index index:
+                CollectExprViolations(index.Target, violations);
+                CollectExprViolations(index.Selector, violations);
+                return;
+
+            case Expr.Combine combine:
+                CollectExprViolations(combine.Left, violations);
+                CollectExprViolations(combine.Right, violations);
+                return;
+
+            case Expr.Grace grace:
+                CollectExprViolations(grace.Inner, violations);
+                return;
+
+            case Expr.Block block:
+                CollectAlgorithmViolations(block.Algorithm, violations);
+                return;
+
+            case Expr.Call call:
+                CollectExprViolations(call.Function, violations);
+                CollectAlgorithmViolations(call.Args, violations);
+                return;
+
+            case Expr.DotCall dotCall:
+                CollectExprViolations(dotCall.Target, violations);
+                if (dotCall.Args is not null)
+                    CollectAlgorithmViolations(dotCall.Args, violations);
+                return;
+
+            default:
+                throw new InvalidOperationException($"Unhandled Expr type in AlgorithmValidation: {expr.GetType().Name}");
+        }
+    }
+}
+
 // ── ScopeCtx (Lean: ScopeCtx) ─────────────────────────────────────────────
 
 /// <summary>

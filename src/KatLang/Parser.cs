@@ -39,6 +39,15 @@ public sealed class Parser
         {
             parser.ReportError($"Expected end of input, got '{parser.Current.Kind}'.");
         }
+
+        foreach (var violation in AlgorithmValidation.FindExplicitParameterOutputViolations(root))
+        {
+            diagnostics.Add(new Diagnostic(
+                AlgorithmValidation.ExplicitParametersRequireOutputMessage,
+                DiagnosticSeverity.Error,
+                violation.Span ?? new SourceSpan(1, 1, 1, 1)));
+        }
+
         return new ParseResult(root, diagnostics);
     }
 

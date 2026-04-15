@@ -106,6 +106,7 @@ inductive Error where
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
   | specialOutputAccess : Error                -- external property-style access to designated Output is invalid
+  | explicitParamsRequireOutput : Error        -- explicit algorithm params require an algorithm output
   | missingOutput    : Error                   -- forced user-defined algorithm does not define output
   | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
@@ -740,6 +741,13 @@ namespace Algorithm
     | .builtin _ => true
     | _          => false
 
+  /-- Algorithm-level explicit parameters define a direct-call interface and
+      therefore require the algorithm to define output. -/
+  def declaresExplicitParamsWithoutOutput : Algorithm -> Bool
+    | .mk _ ps _ _ out => !ps.isEmpty && out.isEmpty
+    | .builtin _ => false
+    | .conditional _ _ _ => false
+
   /-- Unfiltered property lookup (sees private properties). -/
   def lookupProp (a : Algorithm) (k : Ident) : Option Algorithm :=
     lookupPropAny (props a) k
@@ -833,6 +841,56 @@ namespace Algorithm
         go bs
     | _ => false
 end Algorithm
+
+mutual
+  /-- Validate the invariant that explicit algorithm parameters only appear on
+      algorithms that define output. -/
+  partial def validateExplicitParamOutputInvariant : Algorithm -> EvalM Unit
+    | .mk _ ps op pr out => do
+        if !ps.isEmpty && out.isEmpty then
+          .error Error.explicitParamsRequireOutput
+        for openExpr in op do
+          validateExplicitParamOutputInvariantExpr openExpr
+        for prop in pr do
+          validateExplicitParamOutputInvariant prop.alg
+        for expr in out do
+          validateExplicitParamOutputInvariantExpr expr
+    | .builtin _ => pure ()
+    | .conditional _ op branches => do
+        for openExpr in op do
+          validateExplicitParamOutputInvariantExpr openExpr
+        for branch in branches do
+          validateExplicitParamOutputInvariant branch.body
+
+  /-- Traverse expressions so nested block literals and call-argument
+      algorithms also satisfy the explicit-parameter/output invariant. -/
+  partial def validateExplicitParamOutputInvariantExpr : Expr -> EvalM Unit
+    | .param _ => pure ()
+    | .num _ => pure ()
+    | .stringLiteral _ => pure ()
+    | .resolve _ => pure ()
+    | .unary _ operand =>
+        validateExplicitParamOutputInvariantExpr operand
+    | .binary _ left right => do
+        validateExplicitParamOutputInvariantExpr left
+        validateExplicitParamOutputInvariantExpr right
+    | .index target selector => do
+        validateExplicitParamOutputInvariantExpr target
+        validateExplicitParamOutputInvariantExpr selector
+    | .combine left right => do
+        validateExplicitParamOutputInvariantExpr left
+        validateExplicitParamOutputInvariantExpr right
+    | .block alg =>
+        validateExplicitParamOutputInvariant alg
+    | .call fn args => do
+        validateExplicitParamOutputInvariantExpr fn
+        validateExplicitParamOutputInvariant args
+    | .dotCall target _ args? => do
+        validateExplicitParamOutputInvariantExpr target
+        match args? with
+        | some args => validateExplicitParamOutputInvariant args
+        | none => pure ()
+end
 
 namespace ScopeCtx
   def parent : ScopeCtx -> Option ScopeCtx
@@ -2869,7 +2927,8 @@ def preludeAlg : Algorithm :=
     ]
     []
 
-def runResult (e : Expr) : EvalM Result :=
+def runResult (e : Expr) : EvalM Result := do
+  validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg], algEnv := [] }
   match e with
   | .block a =>

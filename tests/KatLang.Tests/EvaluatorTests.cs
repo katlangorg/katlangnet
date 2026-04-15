@@ -4436,6 +4436,32 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_ContainerWithParametrizedChildProperty_RemainsCallable()
+    {
+        AssertEval(
+            """
+            Algo = {
+              Prop(x, y) = 7
+            }
+            Algo.Prop(1, 2)
+            """,
+            7);
+    }
+
+    [Fact]
+    public void Eval_PlainContainerAlgorithm_RemainsValid()
+    {
+        AssertEval(
+            """
+            Algo = {
+              Prop = 7
+            }
+            Algo.Prop
+            """,
+            7);
+    }
+
+    [Fact]
     public void Eval_DirectCall_NestedAlgorithmLevelDefinition_PreservesNestedCalls()
     {
         var source = """
@@ -4449,6 +4475,38 @@ public class EvaluatorTests
             """;
 
         AssertEval(source, 15, 15);
+    }
+
+    [Fact]
+    public void Eval_ManualAlgorithmWithExplicitParametersWithoutOutput_IsRejected()
+    {
+        var invalid = new Algorithm.User(
+            Parent: null,
+            Params: ["x"],
+            Opens: [],
+            Properties:
+            [
+                new Property(
+                    "Prop",
+                    new Algorithm.User(
+                        Parent: null,
+                        Params: [],
+                        Opens: [],
+                        Properties: [],
+                        Output: [new Expr.Num(7m)]))
+            ],
+            Output: [])
+        {
+            ExplicitParameters = [new ParameterDeclaration("x", new SourceSpan(1, 6, 1, 6))]
+        };
+
+        var result = Evaluator.Run(new Expr.Block(invalid));
+
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.ExplicitParametersRequireOutput>(result.Error);
+        Assert.Equal(
+            AlgorithmValidation.ExplicitParametersRequireOutputMessage,
+            KatLangError.FromEvalError(result.Error).Message);
     }
 
     [Fact]

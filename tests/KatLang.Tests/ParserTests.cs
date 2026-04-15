@@ -1263,6 +1263,39 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_ParametrizedAlgorithm_WithoutOutput_ReportsError()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Algo(x, y) = {
+              Prop = 7
+            }
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d =>
+            d.Message.Contains("declares explicit parameters") &&
+            d.Message.Contains("does not define an output"));
+    }
+
+    [Fact]
+    public void Parse_ParametrizedAlgorithm_WithOnlyHelperProperties_ReportsError()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Algo(x) = {
+              A = x + 1
+              B = 2
+            }
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d =>
+            d.Message.Contains("declares explicit parameters") &&
+            d.Message.Contains("does not define an output"));
+    }
+
+    [Fact]
     public void Parse_ParametrizedAlgorithm_WithExplicitOutputInBody()
     {
         var result = Parser.ParseSyntax("Algo(x) = { Output = x + 1 }");
@@ -1274,6 +1307,32 @@ public class ParserTests
         Assert.Single(user.Output);
         var binary = Assert.IsType<Expr.Binary>(user.Output[0]);
         Assert.Equal(BinaryOp.Add, binary.Op);
+    }
+
+    [Fact]
+    public void Parse_ContainerWithParametrizedChildProperty_RemainsValid()
+    {
+        var result = Parser.ParseSyntax("Algo = { Prop(x, y) = 7 }");
+
+        Assert.False(result.HasErrors);
+        var algo = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Empty(algo.Params);
+        var prop = Assert.Single(algo.Properties);
+        var child = Assert.IsType<Algorithm.User>(prop.Value);
+        Assert.Equal(["x", "y"], child.Params);
+        Assert.Single(child.Output);
+    }
+
+    [Fact]
+    public void Parse_PlainContainerAlgorithm_RemainsValid()
+    {
+        var result = Parser.ParseSyntax("Algo = { Prop = 7 }");
+
+        Assert.False(result.HasErrors);
+        var algo = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Empty(algo.Params);
+        Assert.Empty(algo.Output);
+        Assert.Single(algo.Properties);
     }
 
     [Fact]

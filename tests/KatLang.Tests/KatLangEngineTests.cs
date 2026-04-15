@@ -163,6 +163,22 @@ public class KatLangEngineTests
     }
 
     [Fact]
+    public void Run_ParametrizedContainerWithoutOutput_ReturnsParseFailure()
+    {
+        var result = KatLangEngine.Run(
+            """
+            Algo(x, y) = {
+              Prop = 7
+            }
+            """);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Contains("declares explicit parameters", error.Message);
+        Assert.Contains("does not define an output", error.Message);
+    }
+
+    [Fact]
     public void Run_Filter_NonCallablePredicate_ExplainsImplicitItemArgument()
     {
         var result = KatLangEngine.Run("range(1, 5).filter(1)");

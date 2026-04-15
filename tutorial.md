@@ -413,7 +413,7 @@ B = 2
 
 **Result:** `5`
 
-`Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm. The name `Output` is reserved in definition position: `Output(x) = ...` and multi-branch `Output` definitions are invalid. If you need explicit parameters or clause branches, declare them on the enclosing algorithm instead. External qualified access is also invalid: `Algo.Output` and `Algo.Output(...)` are rejected because `Output` is not a public property surface.
+`Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm. The name `Output` is reserved in definition position: `Output(x) = ...` and multi-branch `Output` definitions are invalid. If you need explicit parameters or clause branches, declare them on the enclosing algorithm instead. If you declare explicit parameters on the enclosing algorithm, that algorithm must define output. External qualified access is also invalid: `Algo.Output` and `Algo.Output(...)` are rejected because `Output` is not a public property surface.
 
 When an algorithm is used in call position, KatLang calls the algorithm using its own parameter list. Put the call interface on the algorithm head, and use `Output = ...` only to declare its result:
 
@@ -427,7 +427,25 @@ Algo(6)
 
 This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head, not on `Output`. To get an algorithm's designated result, call the algorithm directly; do not write `Algo.Output(...)`. Bare `Algo` still refers to the algorithm value, not an automatic call. Ordinary helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`.
 
-An algorithm with no output is still valid when you use it structurally, for example as a namespace-like group or as a higher-order value:
+Algorithm-level explicit parameters define the algorithm's direct-call interface, so they are valid only when the algorithm defines output. This is invalid:
+
+```
+Algo(x, y) = {
+    Prop = 7
+}
+```
+
+If the algorithm is only a container, remove the outer parameters and put parameters on the callable child property instead:
+
+```
+Algo = {
+    Prop(x, y) = 7
+}
+
+Algo.Prop(1, 2)
+```
+
+An algorithm with no output is still valid when you use it structurally as a plain container or namespace-like group:
 
 ```
 A = {
@@ -439,7 +457,7 @@ A.X
 
 **Result:** `1`
 
-Using `A` itself where a concrete value is required is an error, because `A` does not define output.
+Using `A` itself where a concrete value is required is an error, because `A` does not define output. Do not add algorithm-level explicit parameters to this container form unless the algorithm also defines output.
 
 ### Algorithm Length
 

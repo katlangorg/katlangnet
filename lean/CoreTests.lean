@@ -26,6 +26,11 @@ def innermostIsMissingOutput : Error -> Bool
   | .missingOutput => true
   | _ => false
 
+def innermostIsExplicitParamsRequireOutput : Error -> Bool
+  | .withContext _ inner => innermostIsExplicitParamsRequireOutput inner
+  | .explicitParamsRequireOutput => true
+  | _ => false
+
 def innermostIsSpecialOutputAccess : Error -> Bool
   | .withContext _ inner => innermostIsSpecialOutputAccess inner
   | .specialOutputAccess => true
@@ -448,6 +453,42 @@ def missingOutputValid10 : Bool :=
   | _ => false
 
 #eval missingOutputValid10  -- should be true
+
+--------------------------------------------------------------------------------
+-- explicit algorithm params require output
+--------------------------------------------------------------------------------
+
+def noOutputHelperContainer : Algorithm :=
+  algPrivate [] [] [("Prop", alg [] [] [] [.num 7])] []
+
+def invalidExplicitParamClauseAlg : Algorithm :=
+  Algorithm.elaborateClauseDefinition (KatLang.Pattern.bind "x") noOutputHelperContainer
+
+def explicitParamsWithoutOutputRejected : Bool :=
+  match KatLang.validateExplicitParamOutputInvariant invalidExplicitParamClauseAlg with
+  | Except.error Error.explicitParamsRequireOutput => true
+  | _ => false
+
+#eval explicitParamsWithoutOutputRejected  -- should be true
+
+def explicitParamsWithoutOutputRejectedAtRun : Bool :=
+  match runResult (.block (algPrivate [] [] [("Algo", invalidExplicitParamClauseAlg)] [.num 0])) with
+  | Except.error err => innermostIsExplicitParamsRequireOutput err
+  | Except.ok _ => false
+
+#eval explicitParamsWithoutOutputRejectedAtRun  -- should be true
+
+def parameterizedChildPropertyContainer : Algorithm :=
+  algPrivate [] [] [("Prop", alg ["x", "y"] [] [] [.num 7])] []
+
+def parameterizedChildPropertyWithoutOuterParamsStillValid : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Algo", parameterizedChildPropertyContainer)] [
+    .dotCall (.resolve "Algo") "Prop" (some (alg [] [] [] [.num 1, .num 2]))
+  ])) with
+  | Except.ok [7] => true
+  | _ => false
+
+#eval parameterizedChildPropertyWithoutOuterParamsStillValid  -- should be true
 
 -- Test 3: Extension property call (lexical fallback)
 -- Receiver has no G, but lexical scope defines G(x) = x * 2

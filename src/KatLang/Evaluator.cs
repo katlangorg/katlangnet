@@ -3736,6 +3736,13 @@ public static class Evaluator
     internal static (EvalResult<Result> Result, MemoizationStats Stats) RunWithMemoizationStats(Expr expr)
     {
         var runState = new EvaluatorRunState();
+        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
+        {
+            return (
+                new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span },
+                runState.SnapshotStats());
+        }
+
         var ctx = new EvalCtx([PreludeAlg], [], runState);
         var result = expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
