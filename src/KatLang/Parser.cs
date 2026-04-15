@@ -43,19 +43,12 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Full pipeline: parse, elaborate loads, detect parameters, and resolve implicit arguments.
-    /// Returns the final processed AST along with any diagnostics.
+    /// Default public front-end without module elaboration support.
+    /// Parses surface syntax, rejects any <c>load</c> directives that would require elaboration,
+    /// then detects parameters and resolves implicit arguments.
     /// </summary>
     public static ParseResult Parse(string source)
-    {
-        var result = ParseSyntax(source);
-        var (detected, paramDiags) = ParameterDetector.Detect(result.Root);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
-        var allDiagnostics = paramDiags.Count > 0
-            ? result.Diagnostics.Concat(paramDiags).ToList()
-            : result.Diagnostics;
-        return new ParseResult(resolved, allDiagnostics);
-    }
+        => ParseWithoutModuleElaboration(source);
 
     /// <summary>
     /// Full pipeline with load elaboration: parse, elaborate load directives,
@@ -64,7 +57,7 @@ public sealed class Parser
     /// <param name="source">KatLang source code.</param>
     /// <param name="downloadCode">
     /// Injected code fetcher: URL → source text. In WASM, pass a JS interop downloader.
-    /// If null, a default HttpClient-based fetcher is used.
+    /// Calling this overload enables module elaboration; if null, a default HttpClient-based fetcher is used.
     /// </param>
     /// <param name="allowedHosts">
     /// Optional set of allowed hostnames for load directives. Defaults to katlang.org only.
@@ -81,21 +74,48 @@ public sealed class Parser
         var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts);
         var elaborated = loader.Elaborate(result.Root);
 
-        var (detected, paramDiags) = ParameterDetector.Detect(elaborated);
-        diagnostics.AddRange(paramDiags);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
-        return new ParseResult(resolved, diagnostics);
+        if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, out _))
+        {
+            diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(elaborated));
+            return new ParseResult(elaborated, diagnostics);
+        }
+
+        return FinalizeProcessedParse(elaborated, diagnostics);
     }
 
     /// <summary>
     /// Full pipeline with optional configuration via <see cref="RunOptions"/>.
-    /// When <paramref name="options"/> is null, behaves identically to <see cref="Parse(string)"/>.
+    /// When <paramref name="options"/> is null, or <see cref="RunOptions.DownloadCode"/> is null,
+    /// module elaboration is unavailable and <c>load</c> syntax is rejected.
     /// </summary>
     public static ParseResult Parse(string source, RunOptions? options)
     {
         if (options?.DownloadCode is not null)
             return Parse(source, options.DownloadCode, options.AllowedHosts);
-        return Parse(source);
+        return ParseWithoutModuleElaboration(source);
+    }
+
+    private static ParseResult ParseWithoutModuleElaboration(string source)
+    {
+        var result = ParseSyntax(source);
+        var diagnostics = new List<Diagnostic>(result.Diagnostics);
+        var loadDiagnostics = LoadElaborationGuard.CreateUnavailableDiagnostics(result.Root);
+
+        if (loadDiagnostics.Count > 0)
+        {
+            diagnostics.AddRange(loadDiagnostics);
+            return new ParseResult(result.Root, diagnostics);
+        }
+
+        return FinalizeProcessedParse(result.Root, diagnostics);
+    }
+
+    private static ParseResult FinalizeProcessedParse(Algorithm root, List<Diagnostic> diagnostics)
+    {
+        var (detected, paramDiags) = ParameterDetector.Detect(root);
+        diagnostics.AddRange(paramDiags);
+        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        return new ParseResult(resolved, diagnostics);
     }
 
     // ── Token access helpers ────────────────────────────────────────────────

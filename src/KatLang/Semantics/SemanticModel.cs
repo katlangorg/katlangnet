@@ -30,9 +30,9 @@ public enum IdentifierClassification
     ConditionalBinderReference,
     Builtin,
     /// <summary>
-    /// Member access on a receiver that originates from <c>load(...)</c>, where
-    /// the current semantic pass did not verify exported members locally.
-    /// This is intentionally more precise than generic <see cref="Unresolved"/>.
+    /// Legacy classification retained for API compatibility.
+    /// The default public front-end should not produce this because successful
+    /// parse/elaboration removes unresolved <c>load</c> before semantic modeling.
     /// </summary>
     LoadedExternalMemberReference,
     OpenTarget,

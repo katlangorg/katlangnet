@@ -32,6 +32,53 @@ public class ModuleLoaderTests
         return Parser.Parse(source, downloader);
     }
 
+    private static bool ContainsRawLoad(Algorithm algorithm)
+    {
+        foreach (var open in algorithm.Opens)
+        {
+            if (ContainsRawLoad(open))
+                return true;
+        }
+
+        foreach (var property in algorithm.Properties)
+        {
+            if (ContainsRawLoad(property.Value))
+                return true;
+        }
+
+        foreach (var expr in algorithm.Output)
+        {
+            if (ContainsRawLoad(expr))
+                return true;
+        }
+
+        if (algorithm is Algorithm.Conditional conditional)
+        {
+            foreach (var branch in conditional.Branches)
+            {
+                if (ContainsRawLoad(branch.Body))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsRawLoad(Expr expr)
+        => expr switch
+        {
+            Expr.Call(Expr.Resolve("load"), _) => true,
+            Expr.Call(var function, var args) => ContainsRawLoad(function) || ContainsRawLoad(args),
+            Expr.Block(var algorithm) => ContainsRawLoad(algorithm),
+            Expr.DotCall(var target, _, var args) => ContainsRawLoad(target) || (args is not null && ContainsRawLoad(args)),
+            Expr.Unary(_, var operand) => ContainsRawLoad(operand),
+            Expr.Binary(_, var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
+            Expr.Index(var target, var selector) => ContainsRawLoad(target) || ContainsRawLoad(selector),
+            Expr.Combine(var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
+            Expr.Grace(var inner, _) => ContainsRawLoad(inner),
+            _ => false,
+        };
+
     /// <summary>Helper: parse + evaluate with load elaboration.</summary>
     private static EvalResult<IReadOnlyList<decimal>> EvalWithLoad(
         string source, Dictionary<string, string> remoteFiles)
@@ -342,6 +389,47 @@ public class ModuleLoaderTests
         var source = "42";
         var result = Parser.Parse(source);
         Assert.False(result.HasErrors);
+    }
+
+    [Fact]
+    public void Load_WithoutDownloader_DefaultPipeline_RejectsLoad()
+    {
+        var source = "Lib = load('https://katlang.org/demo/lib.kat')";
+
+        var result = Parser.Parse(source);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics,
+            d => d.Severity == DiagnosticSeverity.Error
+                 && d.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void OpenStringLiteralSugar_WithoutDownloader_DefaultPipeline_RejectsLoad()
+    {
+        var source = "open 'https://katlang.org/demo/lib.kat'\n1";
+
+        var result = Parser.Parse(source);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics,
+            d => d.Severity == DiagnosticSeverity.Error
+                 && d.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Load_WithDownloader_SuccessfulParseContainsNoRawLoadCalls()
+    {
+        var source = "Lib = load('https://katlang.org/demo/lib.kat')\nLib.X";
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/demo/lib.kat"] = "public X = 9"
+        };
+
+        var result = ParseWithLoad(source, remoteFiles);
+
+        Assert.False(result.HasErrors, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        Assert.False(ContainsRawLoad(result.Root));
     }
 
     [Fact]

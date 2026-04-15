@@ -10,12 +10,17 @@ public static class SemanticModelBuilder
 {
     /// <summary>
     /// Builds a semantic model from a parsed KatLang root algorithm.
+    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling.
     /// </summary>
     public static SemanticModel Build(Algorithm root)
-        => new Builder().Build(root);
+    {
+        LoadElaborationGuard.ThrowIfUnresolvedLoad(root, "Semantic model building");
+        return new Builder().Build(root);
+    }
 
     /// <summary>
     /// Builds a semantic model from a parse result.
+    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling.
     /// </summary>
     public static SemanticModel Build(ParseResult parseResult)
         => Build(parseResult.Root);
@@ -467,9 +472,6 @@ public static class SemanticModelBuilder
                 if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexicalFallback)
                     return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, lexicalFallback.PropertyInfo);
 
-                if (IsUnverifiedLoadedExternalReceiver(targetAlgorithm, scope))
-                    return (IdentifierClassification.LoadedExternalMemberReference, null, null);
-
                 return (IdentifierClassification.Unresolved, null, null);
             }
 
@@ -492,39 +494,6 @@ public static class SemanticModelBuilder
 
             return LookupOpensInChain(scope, name);
         }
-
-        // Detects the conservative local case where a receiver is just a proxy for
-        // load(...) and this semantic pass has not verified remote exports.
-        private bool IsUnverifiedLoadedExternalReceiver(Algorithm algorithm, ScopeFrame scope)
-            => IsUnverifiedLoadedExternalAlgorithm(algorithm, scope, new HashSet<Algorithm>(ReferenceEqualityComparer.Instance));
-
-        private bool IsUnverifiedLoadedExternalAlgorithm(
-            Algorithm algorithm,
-            ScopeFrame scope,
-            HashSet<Algorithm> visited)
-        {
-            if (!visited.Add(algorithm))
-                return false;
-
-            if (algorithm is not Algorithm.User user)
-                return false;
-
-            if (user.Params.Count != 0 || user.Opens.Count != 0 || user.Properties.Count != 0 || user.Output.Count != 1)
-                return false;
-
-            return user.Output[0] switch
-            {
-                Expr.Call(Expr.Resolve(var name), _) when name == "load" && IsBuiltinLoadName(scope, name) => true,
-                Expr.Resolve(var name) when ResolveLexicalProperty(scope, name) is
-                    { Kind: SymbolKind.Property, AlgorithmValue: { } nextAlgorithm } =>
-                        IsUnverifiedLoadedExternalAlgorithm(nextAlgorithm, scope, visited),
-                Expr.Block(var innerAlgorithm) => IsUnverifiedLoadedExternalAlgorithm(innerAlgorithm, scope, visited),
-                _ => false,
-            };
-        }
-
-        private bool IsBuiltinLoadName(ScopeFrame scope, string name)
-            => ResolveLexicalProperty(scope, name)?.Kind == SymbolKind.Builtin;
 
         private static SymbolDefinition? ResolveParameter(ScopeFrame scope, string name)
         {

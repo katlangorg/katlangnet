@@ -7,7 +7,8 @@ public sealed class RunOptions
 {
     /// <summary>
     /// Injected code fetcher: URL → source text. In WASM, pass a JS interop downloader.
-    /// If null, load directives are not elaborated.
+    /// If null, this configuration does not provide module elaboration support,
+    /// so any source that uses <c>load</c> is rejected by the public parser/run pipeline.
     /// </summary>
     public Func<string, string>? DownloadCode { get; init; }
 

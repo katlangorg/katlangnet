@@ -2,6 +2,21 @@ namespace KatLang.Tests;
 
 public class KatLangEngineTests
 {
+    private static Func<string, string> MockDownloader(Dictionary<string, string> files)
+    {
+        return url =>
+        {
+            if (files.TryGetValue(url, out var content))
+                return content;
+
+            var trimmed = url.TrimEnd('/');
+            if (files.TryGetValue(trimmed, out content))
+                return content;
+
+            throw new Exception($"404: {url}");
+        };
+    }
+
     // ── Run ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -47,6 +62,34 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run("2 +");
         Assert.IsType<RunResult.ParseFailure>(result);
         // ParseFailure has no Root property — enforced by the type system
+    }
+
+    [Fact]
+    public void Run_LoadWithoutDownloader_ReturnsParseFailure()
+    {
+        var result = KatLangEngine.Run("open 'https://katlang.org/demo/lib.kat'\n1");
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        Assert.Contains(failure.Errors,
+            error => error.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Run_LoadWithDownloader_ReturnsSuccess()
+    {
+        var source = "open Lib\npublic Lib = load('https://katlang.org/demo/lib.kat')\nX";
+        var options = new RunOptions
+        {
+            DownloadCode = MockDownloader(new Dictionary<string, string>
+            {
+                ["https://katlang.org/demo/lib.kat"] = "public X = 7"
+            })
+        };
+
+        var result = KatLangEngine.Run(source, options);
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal([7m], success.Atoms);
     }
 
     [Fact]
@@ -253,6 +296,18 @@ public class KatLangEngineTests
         var result = Parser.Parse("42", new RunOptions());
         Assert.False(result.HasErrors);
         Assert.NotNull(result.Root);
+    }
+
+    [Fact]
+    public void Parser_Parse_WithEmptyParseOptions_RejectsLoad()
+    {
+        var result = Parser.Parse(
+            "Lib = load('https://katlang.org/demo/lib.kat')",
+            new RunOptions());
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("module elaboration is unavailable", StringComparison.OrdinalIgnoreCase));
     }
 
     // ── RunResult.ToDisplayString ────────────────────────────────────────────

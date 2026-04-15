@@ -4,9 +4,26 @@ namespace KatLang.Tests;
 
 public class SemanticModelTests
 {
-    private static SemanticModel BuildModel(string source)
+    private static Func<string, string> MockDownloader(Dictionary<string, string> files)
     {
-        var parseResult = Parser.Parse(source);
+        return url =>
+        {
+            if (files.TryGetValue(url, out var content))
+                return content;
+
+            var trimmed = url.TrimEnd('/');
+            if (files.TryGetValue(trimmed, out content))
+                return content;
+
+            throw new Exception($"404: {url}");
+        };
+    }
+
+    private static SemanticModel BuildModel(string source, Dictionary<string, string>? remoteFiles = null)
+    {
+        var parseResult = remoteFiles is null
+            ? Parser.Parse(source)
+            : Parser.Parse(source, MockDownloader(remoteFiles));
         Assert.False(
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(d => d.Message)));
@@ -191,8 +208,12 @@ public class SemanticModelTests
             open 'https://katlang.org/algorithm.kat'
             1
             """;
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/algorithm.kat"] = "\n\npublic Remote = 1"
+        };
 
-        var model = BuildModel(source);
+        var model = BuildModel(source, remoteFiles);
         var urlSpan = StringLiteralSpan(source);
 
         Assert.Null(model.FindResolutionAt(urlSpan.StartLineNumber, urlSpan.StartColumn));
@@ -357,23 +378,28 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_LoadedExternalDotMember_GetsDedicatedClassification()
+    public void Build_LoadedModuleDotMember_ResolvesExportedProperty()
     {
         var model = BuildModel(
             """
             A = load('https://katlang.org/algorithm.kat')
             A.X
-            """);
+            """,
+            new Dictionary<string, string>
+            {
+                ["https://katlang.org/algorithm.kat"] = "\n\npublic X = 1"
+            });
 
         var aDeclaration = Assert.Single(model.FindDeclarations("A"));
         var aReference = ResolutionAt(model, 2, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, aReference.Classification);
         Assert.Equal(aDeclaration, aReference.ResolvedDeclaration);
 
+        var xDeclaration = Assert.Single(model.FindDeclarations("X"));
         var xReference = ResolutionAt(model, 2, 3);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.LoadedExternalMemberReference, xReference.Classification);
-        Assert.Null(xReference.ResolvedDeclaration);
+        Assert.Equal(IdentifierClassification.PropertyReference, xReference.Classification);
+        Assert.Equal(xDeclaration, xReference.ResolvedDeclaration);
     }
 
     [Fact]
@@ -430,22 +456,39 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_AliasToLoadProxy_GetsLoadedExternalMemberClassification()
+    public void Build_AliasToLoadedModule_DoesNotUseLegacyLoadFallback()
     {
         var model = BuildModel(
             """
             Lib = load('https://katlang.org/algorithm.kat')
             Alias = Lib
             Alias.X
-            """);
+            """,
+            new Dictionary<string, string>
+            {
+                ["https://katlang.org/algorithm.kat"] = "\n\npublic X = 1"
+            });
 
         var aliasReference = ResolutionAt(model, 3, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, aliasReference.Classification);
 
         var xReference = ResolutionAt(model, 3, 7);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.LoadedExternalMemberReference, xReference.Classification);
+        Assert.Equal(IdentifierClassification.Unresolved, xReference.Classification);
         Assert.Null(xReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_UnresolvedLoadSyntax_ThrowsInvariantViolation()
+    {
+        var parseResult = Parser.ParseSyntax(
+            """
+            Lib = load('https://katlang.org/algorithm.kat')
+            Lib.X
+            """);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => SemanticModelBuilder.Build(parseResult));
+        Assert.Contains("Unresolved load syntax", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
