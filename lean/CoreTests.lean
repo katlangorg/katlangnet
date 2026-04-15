@@ -31,6 +31,21 @@ def innermostIsSpecialOutputAccess : Error -> Bool
   | .specialOutputAccess => true
   | _ => false
 
+def innermostIsUnknownName (target : String) : Error -> Bool
+  | .withContext _ inner => innermostIsUnknownName target inner
+  | .unknownName name => name = target
+  | _ => false
+
+def innermostIsNotPublicProperty (owner : String) (name : String) : Error -> Bool
+  | .withContext _ inner => innermostIsNotPublicProperty owner name inner
+  | .notPublicProperty actualOwner actualName => actualOwner = owner && actualName = name
+  | _ => false
+
+def innermostIsIllegalInOpen (msg : String) : Error -> Bool
+  | .withContext _ inner => innermostIsIllegalInOpen msg inner
+  | .illegalInOpen actual => actual = msg
+  | _ => false
+
 -- Test 1: Structural property access (0-param) → value access
 -- a.X where X has 0 params → evaluates property directly
 def propAlg : Algorithm :=
@@ -475,6 +490,77 @@ def test4 : Bool :=
 #eval test4  -- should be true
 -- EXPECTED: Expect.error (Error.ambiguousOpen "G" [...])
 #eval runResult (.block caller4)
+
+-- Open resolution regressions
+--------------------------------------------------------------------------------
+
+def openPrivateHeadLib : Algorithm :=
+  alg [] []
+    [ publicProp "X" (alg [] [] [] [.num 1])
+    , privateProp "Hidden" (alg [] [] [] [.num 2])
+    , privateProp "PrivateSub" (alg [] [] [publicProp "Y" (alg [] [] [] [.num 3])] [])
+    ]
+    []
+
+-- Models the surface form:
+--   open Lib
+--   Lib = { ... }
+-- where the open appears first and `Lib` is defined later in the same body.
+def openPrivateHeadLaterRoot : Algorithm :=
+  algPrivate [] [.resolve "Lib"] [("Lib", openPrivateHeadLib)] [.resolve "X"]
+
+def openPrivateHeadLaterWorks : Bool :=
+  match runFlat (.block openPrivateHeadLaterRoot) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval openPrivateHeadLaterWorks  -- should be true
+
+def openDoesNotExposePrivateMemberRoot : Algorithm :=
+  algPrivate [] [.resolve "Lib"] [("Lib", openPrivateHeadLib)] [.resolve "Hidden"]
+
+def openDoesNotExposePrivateMember : Bool :=
+  match runResult (.block openDoesNotExposePrivateMemberRoot) with
+  | Except.error err => innermostIsUnknownName "Hidden" err
+  | Except.ok _ => false
+
+#eval openDoesNotExposePrivateMember  -- should be true
+
+def openMissingHeadRoot : Algorithm :=
+  alg [] [.resolve "Missing"] [] [.resolve "X"]
+
+def openMissingHeadStillErrors : Bool :=
+  match runResult (.block openMissingHeadRoot) with
+  | Except.error err =>
+      hasContext "while resolving open: Missing" err
+      && innermostIsUnknownName "Missing" err
+  | Except.ok _ => false
+
+#eval openMissingHeadStillErrors  -- should be true
+
+def openBuiltinTargetRoot : Algorithm :=
+  alg [] [.resolve "if"] [] [.resolve "X"]
+
+def openBuiltinTargetStillIllegal : Bool :=
+  match runResult (.block openBuiltinTargetRoot) with
+  | Except.error err =>
+      hasContext "while resolving open: if" err
+      && innermostIsIllegalInOpen "builtin 'if'" err
+  | Except.ok _ => false
+
+#eval openBuiltinTargetStillIllegal  -- should be true
+
+def openQualifiedPrivatePathRoot : Algorithm :=
+  algPrivate [] [.dotCall (.resolve "Lib") "PrivateSub" none] [("Lib", openPrivateHeadLib)] [.resolve "Y"]
+
+def openQualifiedPrivatePathStillRestricted : Bool :=
+  match runResult (.block openQualifiedPrivatePathRoot) with
+  | Except.error err =>
+      hasContext "while resolving open: Lib.PrivateSub" err
+      && innermostIsNotPublicProperty "Lib" "PrivateSub" err
+  | Except.ok _ => false
+
+#eval openQualifiedPrivatePathStillRestricted  -- should be true
 
 -- Test 5: Structural property takes precedence over lexical extension
 -- a.G where G(x) = x+1 is structural on receiver, no args → arity mismatch (navigation-only)

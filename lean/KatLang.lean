@@ -889,34 +889,15 @@ partial def lookupInParentsDirectUnwired (sc : ScopeCtx) (name : Ident) : Option
 /-- Unwired direct lexical lookup: same search path as `lookupLexicalDirect`
     but returns algorithms without rewiring to the caller.
     The returned algorithm's parent chain is the one from its definition site.
-    Used by `resolveAlgForOpen` to preserve open isolation. -/
+    Used by `resolveAlgForOpen` to preserve open isolation.
+    Direct `open Name` targets are resolved with this ordinary lexical lookup,
+    so the head may be private if it is lexically visible. -/
 partial def lookupLexicalDirectUnwired (a : Algorithm) (name : Ident) : Option Algorithm :=
   match Algorithm.lookupProp a name with
   | some child => some child
   | none =>
     match Algorithm.parent a with
     | some sc => lookupInParentsDirectUnwired sc name
-    | none    => none
-
-/-- Public-only unwired parent-chain lookup: returns public properties only.
-    Used by open resolution to enforce strict public-only open targets. -/
-partial def lookupInParentsDirectUnwiredPublic (sc : ScopeCtx) (name : Ident) : Option Algorithm :=
-  match lookupPropPublic (ScopeCtx.props sc) name with
-  | some child => some child
-  | none =>
-      match ScopeCtx.parent sc with
-      | some sc' => lookupInParentsDirectUnwiredPublic sc' name
-      | none     => none
-
-/-- Public-only unwired direct lexical lookup: searches local then parent chain
-    for public properties only, returning algorithms unwired (definition-site parent preserved).
-    Used by `resolveAlgForOpen` to enforce strict public-only open targets. -/
-partial def lookupLexicalDirectUnwiredPublic (a : Algorithm) (name : Ident) : Option Algorithm :=
-  match Algorithm.lookupPublicProp a name with
-  | some child => some child
-  | none =>
-    match Algorithm.parent a with
-    | some sc => lookupInParentsDirectUnwiredPublic sc name
     | none    => none
 
 def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
@@ -1275,13 +1256,22 @@ mutual
 
       Open restrictions:
       - Only `Expr.openForm?` forms are permitted (structural references to libraries only).
-      - Builtins are rejected: they are not valid open targets.
-      - **Public-path policy**: Property access in open paths (e.g., `Open = Lib.Sub`) requires
-        all intermediate properties to be public. `Algorithm.lookupPublicProp` enforces this.
+      - Direct lexical heads (`open Name`) use ordinary unwired lexical lookup.
+        The head may be private if it is lexically visible. This includes the
+        common surface form where `open Lib` appears before a later
+        `Lib = { ... }` definition in the same algorithm body.
+      - Builtins are still rejected: even if lexical lookup finds one, it is
+        not a valid open target.
+      - **Public-path policy**: Qualified property access in open paths
+        (e.g., `open Lib.Sub`) still requires each dotted member after the
+        direct lexical head to be public. `Algorithm.lookupPublicProp`
+        enforces this unchanged rule.
+      - `open` exposes only public properties of the resolved algorithm.
+        Opening an algorithm never makes its private properties visible.
 
       Examples:
-      - `open Lib` where `Lib` has `{ publicProp "Sub" ... }` → OK, exposes public properties of Sub
-      - `open Lib.PrivateSub` where `PrivateSub` has `isPublic = false` → Error (unknownProperty)
+      - `open Lib` where private `Lib` is defined later in the same algorithm body → OK
+      - `open Lib.PrivateSub` where `PrivateSub` has `isPublic = false` → Error (notPublicProperty)
       - Structural access `Lib.PrivateSub.X` in code → OK (uses Algorithm.lookupProp, sees private)
       - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
   partial def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
@@ -1294,15 +1284,11 @@ mutual
     | some (.resolve n) =>
       match ctx.callStack with
       | a::_ =>
-        match lookupLexicalDirectUnwiredPublic a n with
+        match lookupLexicalDirectUnwired a n with
         | some r =>
             if r.isBuiltin then .error (Error.illegalInOpen s!"builtin '{n}'")
             else pure r       -- * unwired: preserves definition-site parent chain
-        | none =>
-            -- Try unfiltered lookup to distinguish private vs missing
-            match lookupLexicalDirectUnwired a n with
-            | some _ => .error (Error.notPublicProperty "(lexical)" n)
-            | none   => .error (Error.unknownName n)
+        | none => .error (Error.unknownName n)
       | [] => .error (Error.unknownName n)
     | some (.dotCall o n) => do
       let a <- resolveAlgForOpen o ctx
