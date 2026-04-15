@@ -2186,6 +2186,16 @@ mutual
           match ps, es, mas with
           | [], _, _ => pure ([], [])
           | ps, [], _ => pure (ps, [])
+          | p :: ps', [e], [ma] =>
+            match eval e argEvalCtx env with
+            | .ok value =>
+              match ps' with
+              | [] => pure ([p], [value])
+              | _  => pure (p :: ps', unpackArgs value)
+            | .error err =>
+              match ma with
+              | some _ => pure (ps', [])
+              | none => .error err
           | p :: ps', e :: es', ma :: mas' =>
               match eval e argEvalCtx env with
               | .ok value => do
@@ -2198,11 +2208,7 @@ mutual
           | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
         let (valueParams, valueResults) <- collectValues
             (Algorithm.params callee) argExprs maybeAlgs
-        let unpackedValueResults :=
-          match valueResults with
-          | [] => []
-          | rs => unpackArgs (Result.normalize (Result.group rs))
-        let argEnv <- bindParams valueParams unpackedValueResults
+        let argEnv <- bindParams valueParams valueResults
         let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
         evalAlgOutputCounted callee newCtx (argEnv ++ env)
 
@@ -2369,11 +2375,14 @@ mutual
       only that view is bound. If both fail, the ordinary eager-evaluation
       error is propagated.
 
-      Argument expressions may be fewer than parameters because a single eager
-      value can unpack to multiple positional results, but an explicit argument
-      list may not contain more expressions than the callee has parameters.
-      This prevents extra higher-order arguments from being silently ignored by
-      zipped AlgEnv binding. -/
+          Argument expressions may be fewer than parameters because the final
+          explicit eager value may unpack to multiple positional results, but an
+          explicit argument list may not contain more expressions than the callee
+          has parameters. Earlier explicit argument positions stay distinct on the
+          eager value side even if some later arguments bind only through `AlgEnv`.
+          This prevents higher-order arguments from collapsing neighboring grouped
+          values and also prevents extra higher-order arguments from being silently
+          ignored by zipped AlgEnv binding. -/
   partial def evalUserCall (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let wiredArgs := wireToCaller ctx args
@@ -2399,6 +2408,16 @@ mutual
           match ps, es, mas with
           | [], _, _ => pure ([], [])
           | ps, [], _ => pure (ps, [])
+          | p :: ps', [e], [ma] =>
+            match eval e argEvalCtx env with
+            | .ok value =>
+              match ps' with
+              | [] => pure ([p], [value])
+              | _  => pure (p :: ps', unpackArgs value)
+            | .error err =>
+              match ma with
+              | some _ => pure (ps', [])
+              | none => .error err
           | p :: ps', e :: es', ma :: mas' =>
               match eval e argEvalCtx env with
               | .ok value => do
@@ -2411,11 +2430,7 @@ mutual
           | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
         let (valueParams, valueResults) <- collectValues
             (Algorithm.params callee) argExprs maybeAlgs
-        let unpackedValueResults :=
-          match valueResults with
-          | [] => []
-          | rs => unpackArgs (Result.normalize (Result.group rs))
-        let argEnv <- bindParams valueParams unpackedValueResults
+        let argEnv <- bindParams valueParams valueResults
         let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
         evalAlgOutput callee newCtx (argEnv ++ env)
 

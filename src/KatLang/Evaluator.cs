@@ -3265,10 +3265,12 @@ public static class Evaluator
     /// If only value evaluation succeeds, only ValEnv is bound.
     /// If both fail, the eager-evaluation error is propagated.
     ///
-    /// Argument expressions may be fewer than parameters because a single
-    /// eager value can unpack to multiple positional results, but an explicit
-    /// argument list may not contain more expressions than the callee has
-    /// parameters.
+    /// Argument expressions may be fewer than parameters because the final
+    /// explicit eager value may unpack to multiple positional results, but an
+    /// explicit argument list may not contain more expressions than the callee
+    /// has parameters. Earlier explicit argument positions remain distinct on
+    /// the eager value side even if some later arguments bind only through
+    /// AlgEnv.
     /// </summary>
     private static EvalResult<Result> EvalUserCall(
         Algorithm callee, Algorithm args,
@@ -3313,15 +3315,43 @@ public static class Evaluator
                 continue;
             }
 
+            var isFinalExplicitArg = i == argExprs.Count - 1;
             var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
             if (evalR.IsOk)
             {
+                if (isFinalExplicitArg)
+                {
+                    var remainingParams = paramCount - i;
+                    if (remainingParams > 1)
+                    {
+                        for (var paramIndex = i; paramIndex < paramCount; paramIndex++)
+                            valueParams.Add(callee.Params[paramIndex]);
+
+                        foreach (var unpacked in UnpackArgs(evalR.Value))
+                            valueResults.Add(unpacked);
+                    }
+                    else
+                    {
+                        valueParams.Add(callee.Params[i]);
+                        valueResults.Add(evalR.Value);
+                    }
+
+                    break;
+                }
+
                 valueParams.Add(callee.Params[i]);
                 valueResults.Add(evalR.Value);
             }
             else if (i < maybeAlgs.Count && maybeAlgs[i] is not null)
             {
                 // Has algorithm binding → skip value binding for this param
+                if (isFinalExplicitArg)
+                {
+                    for (var paramIndex = i + 1; paramIndex < paramCount; paramIndex++)
+                        valueParams.Add(callee.Params[paramIndex]);
+
+                    break;
+                }
             }
             else
             {
@@ -3330,18 +3360,7 @@ public static class Evaluator
             }
         }
 
-        // Lean: unpackArgs (Result.normalize (Result.group valueResults))
-        IReadOnlyList<Result> unpackedValueResults;
-        if (valueResults.Count == 0)
-        {
-            unpackedValueResults = [];
-        }
-        else
-        {
-            unpackedValueResults = UnpackArgs(Result.FromItems(valueResults));
-        }
-
-        var argEnvR = BindParams(valueParams, unpackedValueResults);
+        var argEnvR = BindParams(valueParams, valueResults);
         if (argEnvR.IsError) return argEnvR.Error;
 
         var newCtx = ctx.WithAlgEnv(Concat(algBindings, ctx.AlgEnv));
@@ -3414,14 +3433,42 @@ public static class Evaluator
                 continue;
             }
 
+            var isFinalExplicitArg = i == argExprs.Count - 1;
             var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
             if (evalR.IsOk)
             {
+                if (isFinalExplicitArg)
+                {
+                    var remainingParams = paramCount - i;
+                    if (remainingParams > 1)
+                    {
+                        for (var paramIndex = i; paramIndex < paramCount; paramIndex++)
+                            valueParams.Add(callee.Params[paramIndex]);
+
+                        foreach (var unpacked in UnpackArgs(evalR.Value))
+                            valueResults.Add(unpacked);
+                    }
+                    else
+                    {
+                        valueParams.Add(callee.Params[i]);
+                        valueResults.Add(evalR.Value);
+                    }
+
+                    break;
+                }
+
                 valueParams.Add(callee.Params[i]);
                 valueResults.Add(evalR.Value);
             }
             else if (i < maybeAlgs.Count && maybeAlgs[i] is not null)
             {
+                if (isFinalExplicitArg)
+                {
+                    for (var paramIndex = i + 1; paramIndex < paramCount; paramIndex++)
+                        valueParams.Add(callee.Params[paramIndex]);
+
+                    break;
+                }
             }
             else
             {
@@ -3429,17 +3476,7 @@ public static class Evaluator
             }
         }
 
-        IReadOnlyList<Result> unpackedValueResults;
-        if (valueResults.Count == 0)
-        {
-            unpackedValueResults = [];
-        }
-        else
-        {
-            unpackedValueResults = UnpackArgs(Result.FromItems(valueResults));
-        }
-
-        var argEnvR = BindParams(valueParams, unpackedValueResults);
+        var argEnvR = BindParams(valueParams, valueResults);
         if (argEnvR.IsError) return argEnvR.Error;
 
         var newCtx = ctx.WithAlgEnv(Concat(algBindings, ctx.AlgEnv));

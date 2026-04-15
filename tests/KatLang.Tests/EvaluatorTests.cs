@@ -4256,6 +4256,29 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_HigherOrder_GroupedValueBeforeAlgorithmOnlyArg_PreservesArgumentBoundary()
+    {
+        var source = """
+            OccurrenceCount = filter(values, predicate).count
+            OccurrenceCount((1, 2), {n mod 2 == 0})
+            """;
+
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_HigherOrder_FinalGroupedValueStillUnpacksAfterAlgorithmOnlyArgument()
+    {
+        var source = """
+            Inc = x + 1
+            UsePair(f, x, y) = f(x) + y
+            UsePair(Inc, (10, 20))
+            """;
+
+        AssertEval(source, 31);
+    }
+
+    [Fact]
     public void Eval_HigherOrder_GraceReordersCallableParameter()
     {
         var source = """

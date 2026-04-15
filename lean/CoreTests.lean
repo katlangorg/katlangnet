@@ -1119,6 +1119,45 @@ def test19c : Bool :=
   .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
 ]))
 
+-- Test 19d: grouped eager values stay whole when a sibling argument binds only
+-- through AlgEnv.
+def evenPredicateAlg19d : Algorithm :=
+  alg ["n"] [] [] [
+    .binary .eq
+      (.binary .mod (.param "n") (.num 2))
+      (.num 0)
+  ]
+
+def occurrenceCountAlg19d : Algorithm :=
+  alg ["values", "predicate"] [] [] [
+    .dotCall
+      (.call (.resolve "filter") (alg [] [] [] [.param "values", .param "predicate"]))
+      "count"
+      none
+  ]
+
+def test19d : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("OccurrenceCount", occurrenceCountAlg19d)
+  ] [
+    .call (.resolve "OccurrenceCount") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block evenPredicateAlg19d
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test19d  -- should be true
+#eval runFlat (.block (algPrivate [] [] [
+  ("OccurrenceCount", occurrenceCountAlg19d)
+] [
+  .call (.resolve "OccurrenceCount") (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block evenPredicateAlg19d
+  ])
+]))
+
 -- if builtin tests
 -- if(cond, whenTrue, whenFalse): the only supported form.
 --------------------------------------------------------------------------------
