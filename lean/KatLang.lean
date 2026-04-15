@@ -2169,39 +2169,42 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
-    let paramCount := (Algorithm.params callee).length
-    if argExprs.length > paramCount then
-      .error (Error.arityMismatch paramCount argExprs.length)
+    if (Algorithm.output callee).isEmpty then
+      .error Error.missingOutput
     else do
-      let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
-      let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
-      let argEvalCtx := EvalCtx.push wiredArgs ctx
-      let rec collectValues
-          (ps : List Ident) (es : List Expr)
-          (mas : List (Option Algorithm))
-          : EvalM (List Ident × List Result) :=
-        match ps, es, mas with
-        | [], _, _ => pure ([], [])
-        | ps, [], _ => pure (ps, [])
-        | p :: ps', e :: es', ma :: mas' =>
-            match eval e argEvalCtx env with
-            | .ok value => do
-                let (rps, rvs) <- collectValues ps' es' mas'
-                pure (p :: rps, value :: rvs)
-            | .error err =>
-                match ma with
-                | some _ => collectValues ps' es' mas'
-                | none => .error err
-        | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
-      let (valueParams, valueResults) <- collectValues
-          (Algorithm.params callee) argExprs maybeAlgs
-      let unpackedValueResults :=
-        match valueResults with
-        | [] => []
-        | rs => unpackArgs (Result.normalize (Result.group rs))
-      let argEnv <- bindParams valueParams unpackedValueResults
-      let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
-      evalAlgOutputCounted callee newCtx (argEnv ++ env)
+      let paramCount := (Algorithm.params callee).length
+      if argExprs.length > paramCount then
+        .error (Error.arityMismatch paramCount argExprs.length)
+      else do
+        let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
+        let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
+        let argEvalCtx := EvalCtx.push wiredArgs ctx
+        let rec collectValues
+            (ps : List Ident) (es : List Expr)
+            (mas : List (Option Algorithm))
+            : EvalM (List Ident × List Result) :=
+          match ps, es, mas with
+          | [], _, _ => pure ([], [])
+          | ps, [], _ => pure (ps, [])
+          | p :: ps', e :: es', ma :: mas' =>
+              match eval e argEvalCtx env with
+              | .ok value => do
+                  let (rps, rvs) <- collectValues ps' es' mas'
+                  pure (p :: rps, value :: rvs)
+              | .error err =>
+                  match ma with
+                  | some _ => collectValues ps' es' mas'
+                  | none => .error err
+          | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+        let (valueParams, valueResults) <- collectValues
+            (Algorithm.params callee) argExprs maybeAlgs
+        let unpackedValueResults :=
+          match valueResults with
+          | [] => []
+          | rs => unpackArgs (Result.normalize (Result.group rs))
+        let argEnv <- bindParams valueParams unpackedValueResults
+        let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
+        evalAlgOutputCounted callee newCtx (argEnv ++ env)
 
   /-- Counted conditional call evaluation.
       The argument matching semantics are unchanged; only the selected branch's
@@ -2375,43 +2378,46 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
-    let paramCount := (Algorithm.params callee).length
-    if argExprs.length > paramCount then
-      .error (Error.arityMismatch paramCount argExprs.length)
+    if (Algorithm.output callee).isEmpty then
+      .error Error.missingOutput
     else do
-      let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
-      let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
-      let argEvalCtx := EvalCtx.push wiredArgs ctx
-      -- For each (param, argExpr, maybeAlg) triple, independently try eval.
-      -- Collect (param, value) for args whose eval succeeds.
-      -- If eval fails but the arg resolved as algorithm, skip value binding.
-      -- If eval fails and no algorithm, propagate the error.
-      let rec collectValues
-          (ps : List Ident) (es : List Expr)
-          (mas : List (Option Algorithm))
-          : EvalM (List Ident × List Result) :=
-        match ps, es, mas with
-        | [], _, _ => pure ([], [])
-        | ps, [], _ => pure (ps, [])
-        | p :: ps', e :: es', ma :: mas' =>
-            match eval e argEvalCtx env with
-            | .ok value => do
-                let (rps, rvs) <- collectValues ps' es' mas'
-                pure (p :: rps, value :: rvs)
-            | .error err =>
-                match ma with
-                | some _ => collectValues ps' es' mas'
-                | none => .error err
-        | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
-      let (valueParams, valueResults) <- collectValues
-          (Algorithm.params callee) argExprs maybeAlgs
-      let unpackedValueResults :=
-        match valueResults with
-        | [] => []
-        | rs => unpackArgs (Result.normalize (Result.group rs))
-      let argEnv <- bindParams valueParams unpackedValueResults
-      let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
-      evalAlgOutput callee newCtx (argEnv ++ env)
+      let paramCount := (Algorithm.params callee).length
+      if argExprs.length > paramCount then
+        .error (Error.arityMismatch paramCount argExprs.length)
+      else do
+        let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
+        let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
+        let argEvalCtx := EvalCtx.push wiredArgs ctx
+        -- For each (param, argExpr, maybeAlg) triple, independently try eval.
+        -- Collect (param, value) for args whose eval succeeds.
+        -- If eval fails but the arg resolved as algorithm, skip value binding.
+        -- If eval fails and no algorithm, propagate the error.
+        let rec collectValues
+            (ps : List Ident) (es : List Expr)
+            (mas : List (Option Algorithm))
+            : EvalM (List Ident × List Result) :=
+          match ps, es, mas with
+          | [], _, _ => pure ([], [])
+          | ps, [], _ => pure (ps, [])
+          | p :: ps', e :: es', ma :: mas' =>
+              match eval e argEvalCtx env with
+              | .ok value => do
+                  let (rps, rvs) <- collectValues ps' es' mas'
+                  pure (p :: rps, value :: rvs)
+              | .error err =>
+                  match ma with
+                  | some _ => collectValues ps' es' mas'
+                  | none => .error err
+          | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+        let (valueParams, valueResults) <- collectValues
+            (Algorithm.params callee) argExprs maybeAlgs
+        let unpackedValueResults :=
+          match valueResults with
+          | [] => []
+          | rs => unpackArgs (Result.normalize (Result.group rs))
+        let argEnv <- bindParams valueParams unpackedValueResults
+        let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
+        evalAlgOutput callee newCtx (argEnv ++ env)
 
   /-- Evaluate a conditional algorithm call.
       1. Evaluate argument expressions eagerly (same as normal call ABI).

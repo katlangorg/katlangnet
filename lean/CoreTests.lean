@@ -396,6 +396,20 @@ def missingOutputError6 : Bool :=
 
 #eval missingOutputError6  -- should be true
 
+def missingOutputError6bRoot : Algorithm :=
+  algPrivate [] [] [("A", noOutputGroupAlg)] [
+    .call (.resolve "A") (alg [] [] [] [.num 6])
+  ]
+
+def missingOutputError6b : Bool :=
+  match runResult (.block missingOutputError6bRoot) with
+  | Except.error err =>
+      hasContext "while evaluating call to A" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#eval missingOutputError6b  -- should be true
+
 def missingOutputError7Root : Algorithm :=
   algPrivate [] [] [("A", noOutputGroupAlg)] [
     .binary .add (.resolve "A") (.num 1)

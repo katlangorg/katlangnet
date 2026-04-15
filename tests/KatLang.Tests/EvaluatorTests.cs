@@ -2802,7 +2802,20 @@ public class EvaluatorTests
             }
             A()
             """,
-            "Property 'A' has no output here. Add an Output expression inside 'A', or use one of its properties, for example `A.X`.",
+            "Cannot call 'A' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.",
+            expectedLine: 4,
+            expectedColumn: 1);
+
+    [Fact]
+    public void Eval_MissingOutput_CallWithArgument_UsesKatLangFacingMessage()
+        => AssertMissingOutputMessage(
+            """
+            Algo = {
+                Prop = 7
+            }
+            Algo(6)
+            """,
+            "Cannot call 'Algo' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.",
             expectedLine: 4,
             expectedColumn: 1);
 

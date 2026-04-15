@@ -163,6 +163,24 @@ public class KatLangEngineTests
     }
 
     [Fact]
+    public void Run_CallToNoOutputAlgorithm_ReturnsEvalFailureWithMissingOutputMessage()
+    {
+        var result = KatLangEngine.Run(
+            """
+            Algo = {
+              Prop = 7
+            }
+            Algo(6)
+            """);
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(result);
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(
+            "Cannot call 'Algo' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.",
+            error.Message);
+    }
+
+    [Fact]
     public void Run_ParametrizedContainerWithoutOutput_ReturnsParseFailure()
     {
         var result = KatLangEngine.Run(

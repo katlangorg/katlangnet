@@ -138,7 +138,7 @@ public sealed class KatLangError
 
         if (TryParseCallContext(context, out var calleeDesc))
         {
-            message = FormatReferenceMissingOutput(calleeDesc);
+            message = FormatCallMissingOutput(calleeDesc);
             return true;
         }
 
@@ -258,6 +258,9 @@ public sealed class KatLangError
         => IsSimpleIdentifier(referenceDesc)
             ? FormatPropertyMissingOutput(referenceDesc)
             : $"The value `{referenceDesc}` has no output here. Add an Output expression inside it, or use one of its properties.";
+
+    private static string FormatCallMissingOutput(string calleeDesc)
+        => $"Cannot call '{calleeDesc}' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.";
 
     private static string FormatGenericMissingOutput()
         => "This algorithm or group has no output here. Add an Output expression inside it, or use one of its properties.";

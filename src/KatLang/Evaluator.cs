@@ -3277,6 +3277,10 @@ public static class Evaluator
     {
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
+
+        if (callee.Output.Count == 0)
+            return new EvalError.MissingOutput();
+
         var paramCount = callee.Params.Count;
 
         // Lean: if argExprs.length > paramCount then error (arityMismatch ...)
@@ -3384,6 +3388,10 @@ public static class Evaluator
     {
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
+
+        if (callee.Output.Count == 0)
+            return new EvalError.MissingOutput();
+
         var paramCount = callee.Params.Count;
 
         if (argExprs.Count > paramCount)
