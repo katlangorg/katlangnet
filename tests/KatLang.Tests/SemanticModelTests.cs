@@ -313,6 +313,50 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_LengthOnImplicitParameter_IsBuiltin()
+    {
+        var model = BuildModel(
+            """
+            Args = 1, 2, 5
+            Algo = p.length
+            Algo(Args)
+            """);
+
+        var parameterReference = ResolutionAt(model, 2, 8);
+        Assert.Equal(OccurrenceKind.ParameterReference, parameterReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, parameterReference.Classification);
+
+        var lengthReference = ResolutionAt(model, 2, 10);
+        Assert.Equal(OccurrenceKind.DotMemberReference, lengthReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, lengthReference.Classification);
+        Assert.Null(lengthReference.ResolvedDeclaration);
+        Assert.NotNull(lengthReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, lengthReference.ResolvedProperty!.Shape);
+    }
+
+    [Fact]
+    public void Build_DotCall_ReduceOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            CollectColumns((left, right), (leftList, rightList)) = ((left, leftList), (right, rightList))
+            SplitPairs = pairs.reduce(CollectColumns, ('end', 'end'))
+            """);
+
+        var pairsReference = ResolutionAt(model, 2, 14);
+        Assert.Equal(OccurrenceKind.ParameterReference, pairsReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, pairsReference.Classification);
+
+        var reduceReference = ResolutionAt(model, 2, 20);
+        Assert.Equal(OccurrenceKind.DotMemberReference, reduceReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, reduceReference.Classification);
+        Assert.Null(reduceReference.ResolvedDeclaration);
+        Assert.NotNull(reduceReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, reduceReference.ResolvedProperty!.Shape);
+        Assert.Equal(["collection", "step", "initial"], reduceReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_TracksReservedOutputDeclarationAndImplicitParameterReferences()
     {
         var model = BuildModel("Output = missing");

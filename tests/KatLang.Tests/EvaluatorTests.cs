@@ -1997,6 +1997,54 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Reduce_DotCall_OnImplicitParameterReceiver_UsesBuiltinFallback()
+    {
+        var source = """
+            CollectColumns((left, right), (leftList, rightList)) = ((left, leftList), (right, rightList))
+            SplitPairs = pairs.reduce(CollectColumns, ('end', 'end'))
+            SplitPairs(((1, 10), (2, 20)))
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first =>
+            {
+                var left = Assert.IsType<Result.Group>(first);
+                Assert.Collection(
+                    left.Items,
+                    head => Assert.Equal(2m, Assert.IsType<Result.Atom>(head).Value),
+                    tail =>
+                    {
+                        var nested = Assert.IsType<Result.Group>(tail);
+                        Assert.Collection(
+                            nested.Items,
+                            nestedHead => Assert.Equal(1m, Assert.IsType<Result.Atom>(nestedHead).Value),
+                            nestedTail => Assert.Equal("end", Assert.IsType<Result.Str>(nestedTail).Value));
+                    });
+            },
+            second =>
+            {
+                var right = Assert.IsType<Result.Group>(second);
+                Assert.Collection(
+                    right.Items,
+                    head => Assert.Equal(20m, Assert.IsType<Result.Atom>(head).Value),
+                    tail =>
+                    {
+                        var nested = Assert.IsType<Result.Group>(tail);
+                        Assert.Collection(
+                            nested.Items,
+                            nestedHead => Assert.Equal(10m, Assert.IsType<Result.Atom>(nestedHead).Value),
+                            nestedTail => Assert.Equal("end", Assert.IsType<Result.Str>(nestedTail).Value));
+                    });
+            });
+    }
+
+    [Fact]
     public void Eval_Reduce_EmptyStepResult_FailsWithContext()
     {
         var source = """

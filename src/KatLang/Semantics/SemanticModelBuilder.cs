@@ -460,12 +460,15 @@ public static class SemanticModelBuilder
             if (dotCall.Name == "string")
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
+            if (dotCall.Name == "length" && SupportsLengthIntrinsic(dotCall.Target, scope))
+                return (IdentifierClassification.Builtin, null, LengthIntrinsicSymbol.PropertyInfo);
+
+            if (TryResolveBuiltinFallbackOnParameterReceiver(dotCall.Target, dotCall.Name, scope) is { } parameterBuiltin)
+                return (ClassifyReferenceSymbol(parameterBuiltin), parameterBuiltin.Declaration, parameterBuiltin.PropertyInfo);
+
             var targetAlgorithm = TryResolveAlgorithmValue(dotCall.Target, scope);
             if (targetAlgorithm is not null)
             {
-                if (dotCall.Name == "length")
-                    return (IdentifierClassification.Builtin, null, LengthIntrinsicSymbol.PropertyInfo);
-
                 if (TryResolveAnyProperty(targetAlgorithm, dotCall.Name) is { } structuralProperty)
                     return (ClassifyReferenceSymbol(structuralProperty), structuralProperty.Declaration, structuralProperty.PropertyInfo);
 
@@ -616,6 +619,20 @@ public static class SemanticModelBuilder
                 default:
                     return null;
             }
+        }
+
+        private bool SupportsLengthIntrinsic(Expr expr, ScopeFrame scope)
+            => expr is Expr.Param || TryResolveAlgorithmValue(expr, scope) is not null;
+
+        private SymbolDefinition? TryResolveBuiltinFallbackOnParameterReceiver(Expr expr, string name, ScopeFrame scope)
+        {
+            if (expr is not Expr.Param)
+                return null;
+
+            var lexical = ResolveLexicalProperty(scope, name);
+            return lexical is { Kind: SymbolKind.Builtin, AlgorithmValue: Algorithm.Builtin }
+                ? lexical
+                : null;
         }
 
         private SymbolDefinition? TryResolveAnyProperty(Algorithm algorithm, string name)
