@@ -879,6 +879,54 @@ map(range(1, 3), PairWithSquare)
 
 Grouped input elements are passed to the transform as whole values, so `Swap((a, b)) = (b, a)` works on grouped pairs without flattening them.
 
+### Ordering: `order` and `orderDesc`
+
+`order(collection)` sorts the top-level numeric elements of a collection in ascending order.
+`orderDesc(collection)` sorts the same kind of collection in descending order.
+
+- Both builtins evaluate the full collection eagerly before sorting
+- Duplicates are preserved; there is no implicit distinct or unique step
+- The result is still an ordinary KatLang multi-output sequence
+- Each top-level element must be exactly one atomic numeric value
+- Grouped values are not flattened or inspected recursively
+- Strings and mixed-type collections are invalid
+- Empty collections stay empty
+
+Both call styles are supported: `order(collection)` / `orderDesc(collection)` and `collection.order` / `collection.orderDesc`.
+
+```
+Values = 3, 4, 2, 1, 3, 3
+Values.order
+Values.orderDesc
+
+range(5, 1).order
+```
+
+**Results:**
+```
+1
+2
+3
+3
+3
+4
+
+4
+3
+3
+3
+2
+1
+
+1
+2
+3
+4
+5
+```
+
+Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule.
+
 ### Counting: `count`
 
 `count(collection)` returns the number of top-level elements in a collection.
@@ -1687,6 +1735,8 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
+| `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
+| `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
 | `count` | `count(collection)` or `collection.count` — count top-level elements without flattening grouped values |
 | `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |

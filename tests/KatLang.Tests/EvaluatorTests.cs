@@ -1582,6 +1582,54 @@ public class EvaluatorTests
         AssertMapTransformShapeFails(source);
     }
 
+    // ── Order builtins ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Order_AscendingNumericSorting_PreservesDuplicates()
+        => AssertEval("order((3, 4, 2, 1, 3, 3))", 1, 2, 3, 3, 3, 4);
+
+    [Fact]
+    public void Eval_Order_DotCall_SortsPropertyOutputAscending()
+    {
+        var source = """
+            Values = 3, 4, 2, 1, 3, 3
+            Sorted = Values.order
+            Sorted
+            """;
+
+        AssertEval(source, 1, 2, 3, 3, 3, 4);
+    }
+
+    [Fact]
+    public void Eval_OrderDesc_DotCall_SortsDescending()
+    {
+        var source = """
+            Values = 3, 4, 2, 1, 3, 3
+            Values.orderDesc
+            """;
+
+        AssertEval(source, 4, 3, 3, 3, 2, 1);
+    }
+
+    [Fact]
+    public void Eval_Order_RangeOutput_SortsRangeAscending()
+        => AssertEval("range(5, 1).order", 1, 2, 3, 4, 5);
+
+    [Fact]
+    public void Eval_Order_EmptyCollection_ReturnsEmpty()
+    {
+        var source = """
+            IsNegative = x < 0
+            range(1, 4).filter(IsNegative).order
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Order_UnsupportedElement_FailsWithContext()
+        => AssertBuiltinFailureWithContext("order((1, 'hello'))", "order expects each collection element to be a single numeric value");
+
     // ── Count builtin ────────────────────────────────────────────────────────
 
     [Fact]

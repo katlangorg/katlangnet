@@ -147,7 +147,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -155,6 +155,8 @@ inductive Builtin where
     rangeBuiltin accepts 2 integer bounds: start and stop.
     filterBuiltin accepts 2 arguments: a collection and a predicate.
     mapBuiltin accepts 2 arguments: a collection and a transform.
+    orderBuiltin accepts 1 argument: a collection of top-level numeric elements sorted ascending.
+    orderDescBuiltin accepts 1 argument: a collection of top-level numeric elements sorted descending.
     countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
     minBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     maxBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
@@ -169,6 +171,8 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .rangeBuiltin, 2 => true
   | .filterBuiltin, 2 => true
   | .mapBuiltin, 2 => true
+  | .orderBuiltin, 1 => true
+  | .orderDescBuiltin, 1 => true
   | .countBuiltin, 1 => true
   | .minBuiltin, 1 => true
   | .maxBuiltin, 1 => true
@@ -186,6 +190,8 @@ def builtinArityDesc : Builtin -> String
   | .rangeBuiltin => "2"
   | .filterBuiltin => "2"
   | .mapBuiltin => "2"
+  | .orderBuiltin => "1"
+  | .orderDescBuiltin => "1"
   | .countBuiltin => "1"
   | .minBuiltin => "1"
   | .maxBuiltin => "1"
@@ -1059,6 +1065,24 @@ def inclusiveRange (start stop : Int) : List Int :=
   else
     (List.range (Int.toNat (start - stop + 1))).map (fun i => start - Int.ofNat i)
 
+/-- Insert an integer into an ascending sorted list, preserving duplicates. -/
+def insertIntAsc (value : Int) : List Int -> List Int
+  | [] => [value]
+  | head :: tail =>
+      if value <= head then
+        value :: head :: tail
+      else
+        head :: insertIntAsc value tail
+
+/-- Ascending numeric sort used by `order` and `orderDesc`. -/
+def sortIntsAsc : List Int -> List Int
+  | [] => []
+  | head :: tail => insertIntAsc head (sortIntsAsc tail)
+
+/-- Descending numeric sort used by `orderDesc`. -/
+def sortIntsDesc (xs : List Int) : List Int :=
+  (sortIntsAsc xs).reverse
+
 /-- Step output: state and continuation flag. -/
 abbrev StepOut := Prod Result Int
 
@@ -1838,6 +1862,53 @@ mutual
     let mapped <- mapLoop collection.toItems
     pure (Result.normalize (Result.group mapped), mapped.length)
 
+  /-- Collect top-level collection elements as single atomic numeric values.
+      Used by `order` and `orderDesc`, which reject strings and grouped
+      values instead of inventing mixed-type or structural ordering. -/
+  partial def collectSingleAtomicNumbers (errorContext : String) : List Result -> EvalM (List Int)
+    | [] => pure []
+    | item :: rest =>
+        match Result.singleAtomicNumber? item with
+        | some n => do
+            let tail <- collectSingleAtomicNumbers errorContext rest
+            pure (n :: tail)
+        | none =>
+            .error (Error.withContext errorContext Error.badArity)
+
+  /-- Evaluate `order(collection)`.
+      `order` eagerly evaluates the full top-level collection, sorts its
+      numeric elements ascending, preserves duplicates, and returns a normal
+      KatLang multi-output sequence.
+
+      Each top-level collection element must be exactly one atomic numeric
+      value. Grouped values are not flattened or recursively inspected, and
+      strings are rejected. Empty collections stay empty. -/
+  partial def evalOrderCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let numbers <- collectSingleAtomicNumbers
+      "order expects each collection element to be a single numeric value"
+      collection.toItems
+    let sorted := sortIntsAsc numbers
+    pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
+
+  /-- Evaluate `orderDesc(collection)`.
+      `orderDesc` eagerly evaluates the full top-level collection, sorts its
+      numeric elements descending, preserves duplicates, and returns a normal
+      KatLang multi-output sequence.
+
+      Each top-level collection element must be exactly one atomic numeric
+      value. Grouped values are not flattened or recursively inspected, and
+      strings are rejected. Empty collections stay empty. -/
+  partial def evalOrderDescCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    let numbers <- collectSingleAtomicNumbers
+      "orderDesc expects each collection element to be a single numeric value"
+      collection.toItems
+    let sorted := sortIntsDesc numbers
+    pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
+
   /-- Evaluate `count(collection)`.
       `count` processes top-level collection elements from left to right and
       increments once per element.
@@ -2050,6 +2121,12 @@ mutual
     | .mapBuiltin, [collectionAlg, transformAlg] =>
       evalMapCounted collectionAlg transformAlg ctx env
 
+    | .orderBuiltin, [collectionAlg] =>
+      evalOrderCounted collectionAlg ctx env
+
+    | .orderDescBuiltin, [collectionAlg] =>
+      evalOrderDescCounted collectionAlg ctx env
+
     | .countBuiltin, [collectionAlg] =>
       evalCountCounted collectionAlg ctx env
 
@@ -2154,6 +2231,22 @@ mutual
     -- original order and element count.
     | .mapBuiltin, [collectionAlg, transformAlg] => do
       let out <- evalMapCounted collectionAlg transformAlg ctx env
+      pure out.fst
+
+    -- order(collection): eagerly sort top-level numeric collection elements in
+    -- ascending order. Duplicates are preserved, the result remains an
+    -- ordinary multi-output sequence, and empty collections stay empty.
+    -- Grouped values are not flattened and strings are invalid.
+    | .orderBuiltin, [collectionAlg] => do
+      let out <- evalOrderCounted collectionAlg ctx env
+      pure out.fst
+
+    -- orderDesc(collection): eagerly sort top-level numeric collection
+    -- elements in descending order. Duplicates are preserved, the result
+    -- remains an ordinary multi-output sequence, and empty collections stay
+    -- empty. Grouped values are not flattened and strings are invalid.
+    | .orderDescBuiltin, [collectionAlg] => do
+      let out <- evalOrderDescCounted collectionAlg ctx env
       pure out.fst
 
     -- count(collection): count top-level collection elements from left to right.
@@ -3006,6 +3099,8 @@ def preludeAlg : Algorithm :=
     , publicProp "range" (Algorithm.builtin .rangeBuiltin)
     , publicProp "filter" (Algorithm.builtin .filterBuiltin)
     , publicProp "map" (Algorithm.builtin .mapBuiltin)
+    , publicProp "order" (Algorithm.builtin .orderBuiltin)
+    , publicProp "orderDesc" (Algorithm.builtin .orderDescBuiltin)
     , publicProp "count" (Algorithm.builtin .countBuiltin)
     , publicProp "min" (Algorithm.builtin .minBuiltin)
     , publicProp "max" (Algorithm.builtin .maxBuiltin)

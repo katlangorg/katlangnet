@@ -1309,6 +1309,87 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Collect top-level collection elements as single atomic numeric values.
+    /// Used by sorting builtins that only accept clearly comparable numeric
+    /// elements and reject strings or grouped values.
+    /// </summary>
+    private static EvalResult<List<decimal>> CollectSingleAtomicNumbers(
+        Result collection,
+        string errorContext)
+    {
+        var elements = new List<Result>();
+        ResultItems(elements, collection);
+
+        var numbers = new List<decimal>(elements.Count);
+        foreach (var item in elements)
+        {
+            var numeric = item.SingleAtomicNumber();
+            if (numeric is null)
+            {
+                return new EvalError.WithContext(
+                    errorContext,
+                    new EvalError.BadArity());
+            }
+
+            numbers.Add(numeric.Value);
+        }
+
+        return EvalResult<List<decimal>>.Ok(numbers);
+    }
+
+    /// <summary>
+    /// Evaluate <c>order(collection)</c> by eagerly sorting the top-level
+    /// numeric collection elements in ascending order.
+    /// Duplicates are preserved, groups are not flattened, strings are
+    /// rejected, and empty collections stay empty.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalOrderCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var numbersR = CollectSingleAtomicNumbers(
+            collectionR.Value,
+            "order expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
+
+        var sorted = numbersR.Value;
+        sorted.Sort();
+        return EvalResult<CountedResult>.Ok(new CountedResult(
+            Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
+            sorted.Count));
+    }
+
+    /// <summary>
+    /// Evaluate <c>orderDesc(collection)</c> by eagerly sorting the top-level
+    /// numeric collection elements in descending order.
+    /// Duplicates are preserved, groups are not flattened, strings are
+    /// rejected, and empty collections stay empty.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalOrderDescCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var numbersR = CollectSingleAtomicNumbers(
+            collectionR.Value,
+            "orderDesc expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
+
+        var sorted = numbersR.Value;
+        sorted.Sort(static (left, right) => right.CompareTo(left));
+        return EvalResult<CountedResult>.Ok(new CountedResult(
+            Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
+            sorted.Count));
+    }
+
+    /// <summary>
     /// Evaluate <c>count(collection)</c> by counting the top-level collection
     /// elements from left to right.
     /// Each atom, string, or grouped value counts as one top-level element;
@@ -1636,6 +1717,12 @@ public static class Evaluator
             case (BuiltinId.@map, 2):
                 return EvalMapCounted(args[0], args[1], ctx, valEnv);
 
+            case (BuiltinId.@order, 1):
+                return EvalOrderCounted(args[0], ctx, valEnv);
+
+            case (BuiltinId.@orderDesc, 1):
+                return EvalOrderDescCounted(args[0], ctx, valEnv);
+
             case (BuiltinId.@count, 1):
                 return EvalCountCounted(args[0], ctx, valEnv);
 
@@ -1758,6 +1845,8 @@ public static class Evaluator
             new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
             new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
             new("map",    new Algorithm.Builtin(BuiltinId.@map),    IsPublic: true),
+            new("order",  new Algorithm.Builtin(BuiltinId.@order),  IsPublic: true),
+            new("orderDesc", new Algorithm.Builtin(BuiltinId.@orderDesc), IsPublic: true),
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
             new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
             new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
@@ -1778,6 +1867,8 @@ public static class Evaluator
         (BuiltinId.@range, 2) => true,
         (BuiltinId.@filter, 2) => true,
         (BuiltinId.@map, 2) => true,
+        (BuiltinId.@order, 1) => true,
+        (BuiltinId.@orderDesc, 1) => true,
         (BuiltinId.@count, 1) => true,
         (BuiltinId.@min, 1) => true,
         (BuiltinId.@max, 1) => true,
@@ -1797,6 +1888,8 @@ public static class Evaluator
         BuiltinId.@range => "2",
         BuiltinId.@filter => "2",
         BuiltinId.@map => "2",
+        BuiltinId.@order => "1",
+        BuiltinId.@orderDesc => "1",
         BuiltinId.@count => "1",
         BuiltinId.@min => "1",
         BuiltinId.@max => "1",
@@ -2572,6 +2665,29 @@ public static class Evaluator
                 var mapR = EvalMapCounted(args[0], args[1], ctx, valEnv);
                 if (mapR.IsError) return mapR.Error;
                 return EvalResult<Result>.Ok(mapR.Value.Value);
+            }
+
+            // order(collection) — eagerly sort top-level numeric collection
+            // elements in ascending order. Duplicates are preserved, the result
+            // stays an ordinary multi-output sequence, and empty collections
+            // remain empty. Groups are not flattened and strings are invalid.
+            case (BuiltinId.@order, 1):
+            {
+                var orderR = EvalOrderCounted(args[0], ctx, valEnv);
+                if (orderR.IsError) return orderR.Error;
+                return EvalResult<Result>.Ok(orderR.Value.Value);
+            }
+
+            // orderDesc(collection) — eagerly sort top-level numeric collection
+            // elements in descending order. Duplicates are preserved, the
+            // result stays an ordinary multi-output sequence, and empty
+            // collections remain empty. Groups are not flattened and strings
+            // are invalid.
+            case (BuiltinId.@orderDesc, 1):
+            {
+                var orderR = EvalOrderDescCounted(args[0], ctx, valEnv);
+                if (orderR.IsError) return orderR.Error;
+                return EvalResult<Result>.Ok(orderR.Value.Value);
             }
 
             // count(collection) — count top-level collection elements from

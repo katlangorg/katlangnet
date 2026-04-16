@@ -798,6 +798,8 @@ public static class SemanticModelBuilder
                 "range" => ["start", "stop"],
                 "filter" => ["collection", "predicate"],
                 "map" => ["collection", "transform"],
+                "order" => ["collection"],
+                "orderDesc" => ["collection"],
                 "count" => ["collection"],
                 "min" => ["collection"],
                 "max" => ["collection"],

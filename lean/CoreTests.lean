@@ -2949,4 +2949,81 @@ def test137 : Bool :=
 
 #eval test137  -- should be true
 
+--------------------------------------------------------------------------------
+-- order builtins tests
+--------------------------------------------------------------------------------
+
+-- Test 138: ordinary builtin-call order sorts ascending and preserves duplicates
+def test138 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "order") (alg [] [] [] [
+      .block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+    ])
+  ])) with
+  | Except.ok [1, 2, 3, 3, 3, 4] => true
+  | _ => false
+
+#eval test138  -- should be true
+
+-- Test 139: dot-call order sorts property output ascending
+def test139 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+    .dotCall (.resolve "Values") "order" none
+  ])) with
+  | Except.ok [1, 2, 3, 3, 3, 4] => true
+  | _ => false
+
+#eval test139  -- should be true
+
+-- Test 140: dot-call orderDesc sorts descending and preserves duplicates
+def test140 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+    .dotCall (.resolve "Values") "orderDesc" none
+  ])) with
+  | Except.ok [4, 3, 3, 3, 2, 1] => true
+  | _ => false
+
+#eval test140  -- should be true
+
+-- Test 141: sorting a descending range returns ascending output for order
+def test141 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 5, .num 1]))
+      "order"
+      none
+  ])) with
+  | Except.ok [1, 2, 3, 4, 5] => true
+  | _ => false
+
+#eval test141  -- should be true
+
+-- Test 142: empty collections stay empty when sorted
+def test142 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .dotCall
+      (.call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]))
+      "order"
+      none
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test142  -- should be true
+
+-- Test 143: unsupported sortable elements are rejected by order
+def test143 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "order") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .stringLiteral "hello"])
+    ])
+  ])) with
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test143  -- should be true
+
 end KatLangTests

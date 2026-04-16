@@ -357,6 +357,27 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_OrderDescOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Sorted = values.orderDesc
+            """);
+
+        var valuesReference = ResolutionAt(model, 1, 10);
+        Assert.Equal(OccurrenceKind.ParameterReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, valuesReference.Classification);
+
+        var orderReference = ResolutionAt(model, 1, 17);
+        Assert.Equal(OccurrenceKind.DotMemberReference, orderReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, orderReference.Classification);
+        Assert.Null(orderReference.ResolvedDeclaration);
+        Assert.NotNull(orderReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, orderReference.ResolvedProperty!.Shape);
+        Assert.Equal(["collection"], orderReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_TracksReservedOutputDeclarationAndImplicitParameterReferences()
     {
         var model = BuildModel("Output = missing");
