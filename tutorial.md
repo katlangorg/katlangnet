@@ -425,7 +425,7 @@ Algo(x) = {
 Algo(6)
 ```
 
-This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head, not on `Output`. To get an algorithm's designated result, call the algorithm directly; do not write `Algo.Output(...)`. Bare `Algo` still refers to the algorithm value, not an automatic call. Ordinary helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`.
+This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head, not on `Output`. To get an algorithm's designated result, call the algorithm directly; do not write `Algo.Output(...)`. Bare `Algo` still refers to the algorithm value, not an automatic call. Self-contained helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`. If a nested property depends on parameters owned by the enclosing algorithm, or is defined inside a conditional algorithm branch, it is local-only and cannot be accessed as `Algo.Helper` or exported through `open`/`load`.
 
 Algorithm-level explicit parameters define the algorithm's direct-call interface, so they are valid only when the algorithm defines output. This is invalid:
 
@@ -1603,7 +1603,7 @@ Sqrt(16)
 
 ### Visibility
 
-By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` exposes it externally.
+By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, or if it is defined inside a conditional algorithm branch.
 
 ```
 // In a library algorithm:
@@ -1611,7 +1611,7 @@ public Area = r * r * Math.Pi
 Helper = Area / 2   // private — not visible to callers
 ```
 
-Only `public` properties are exposed through `load` and `open`.
+Only `public` exported properties are exposed through `load` and `open`.
 
 ---
 

@@ -8,6 +8,7 @@ namespace KatLang;
 ///   | unknownName      : Ident → Error
 ///   | unknownProperty  : String → Ident → Error
 ///   | notPublicProperty : String → Ident → Error
+///   | localOnlyProperty : String → Ident → PropertyExposure → Error
 ///   | notAnAlgorithm   : String → Error
 ///   | illegalInOpen     : String → Error
 ///   | badOpenForm       : String → Error
@@ -45,6 +46,9 @@ public abstract record EvalError
 
     /// <summary>Property exists but is not public (e.g. private property accessed via open path).</summary>
     public sealed record NotPublicProperty(string ObjectDesc, string PropertyName) : EvalError;
+
+    /// <summary>Property exists but is local-only and cannot be accessed structurally through its owner.</summary>
+    public sealed record LocalOnlyProperty(string ObjectDesc, string PropertyName, PropertyExposure Exposure) : EvalError;
 
     /// <summary>Expression does not resolve to an algorithm.</summary>
     public sealed record NotAnAlgorithm(string Description) : EvalError;

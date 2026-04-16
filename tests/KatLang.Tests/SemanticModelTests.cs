@@ -593,6 +593,51 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_LocalOnlyCapturedNestedProperty_IsNotResolvedThroughParentDotAccess()
+    {
+        var model = BuildModel(
+            """
+            Algo(x) = {
+            Prop = x + 1
+            x
+            }
+            Algo.Prop
+            """);
+
+        var property = SingleProperty(model, "Prop");
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, property.Exposure);
+        Assert.False(property.IsExported);
+
+        var declarationProperty = PropertyAt(model, 2, 1);
+        Assert.Same(property, declarationProperty);
+
+        var dotResolution = ResolutionAt(model, 5, 6);
+        Assert.Equal(IdentifierClassification.Unresolved, dotResolution.Classification);
+        Assert.Null(dotResolution.ResolvedDeclaration);
+        Assert.Null(dotResolution.ResolvedProperty);
+    }
+
+    [Fact]
+    public void Build_ExportedNestedProperty_RemainsResolvedThroughParentDotAccess()
+    {
+        var model = BuildModel(
+            """
+            Library = {
+            Add1 = x + 1
+            }
+            Library.Add1(6)
+            """);
+
+        var property = SingleProperty(model, "Add1");
+        Assert.Equal(PropertyExposure.Exported, property.Exposure);
+        Assert.True(property.IsExported);
+
+        var dotResolution = ResolutionAt(model, 4, 9);
+        Assert.Equal(IdentifierClassification.PropertyReference, dotResolution.Classification);
+        Assert.Same(property, dotResolution.ResolvedProperty);
+    }
+
+    [Fact]
     public void Build_ExplicitOutput_RemainsReserved_And_OuterParametersStayOnAlgorithmMetadata()
     {
         var model = BuildModel(
@@ -733,6 +778,36 @@ public class SemanticModelTests
         var branch = Assert.Single(property.ConditionalBranches);
         Assert.Equal("Pair(1, (x, y))", branch.HeadText);
         Assert.Equal(["x", "y"], branch.BinderNames.ToList());
+    }
+
+    [Fact]
+    public void Build_ConditionalBranchProperty_IsNotResolvedThroughParentDotAccess()
+    {
+        var model = BuildModel(
+            """
+            Outer(0) = {
+            Inner = 1
+            0
+            }
+            Outer(x) = {
+            Inner = x + 1
+            x
+            }
+            Outer.Inner
+            """);
+
+        var innerProperties = model.FindProperties("Inner").ToList();
+        Assert.Equal(2, innerProperties.Count);
+        Assert.All(innerProperties, property =>
+        {
+            Assert.Equal(PropertyExposure.LocalOnlyConditionalAlgorithm, property.Exposure);
+            Assert.False(property.IsExported);
+        });
+
+        var dotResolution = ResolutionAt(model, 9, 7);
+        Assert.Equal(IdentifierClassification.Unresolved, dotResolution.Classification);
+        Assert.Null(dotResolution.ResolvedDeclaration);
+        Assert.Null(dotResolution.ResolvedProperty);
     }
 
     [Fact]

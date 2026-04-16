@@ -93,7 +93,7 @@ public sealed class ModuleLoader
             // plain grouped values such as (a, b) wrapped as one block value while
             // still letting load-elaborated modules become direct property values.
             processedValue = UnwrapSingleBlock(processedValue);
-            newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic)
+            newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic, prop.Exposure)
             {
                 DeclarationSpans = prop.DeclarationSpans
             });

@@ -138,6 +138,64 @@ public class ParameterDetectorTests
     }
 
     [Fact]
+    public void Detect_ImplicitOuterOutputOwnership_BelongsToEnclosingAlgorithm()
+    {
+        var ast = ParseAndDetect(
+            """
+            Algo = {
+                Prop = x + 1
+                x
+            }
+            """);
+
+        var algo = Assert.IsType<Algorithm.User>(Assert.Single(ast.Properties).Value);
+        Assert.Equal(["x"], algo.Params);
+
+        var prop = Assert.IsType<Algorithm.User>(Assert.Single(algo.Properties).Value);
+        Assert.Empty(prop.Params);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(prop.Output));
+        Assert.Equal("x", Assert.IsType<Expr.Param>(binary.Left).Name);
+    }
+
+    [Fact]
+    public void Detect_ExplicitOuterOutputOwnership_MatchesImplicitOwnership()
+    {
+        var ast = ParseAndDetect(
+            """
+            Algo(x) = {
+                Prop = x + 1
+                x
+            }
+            """);
+
+        var algo = Assert.IsType<Algorithm.User>(Assert.Single(ast.Properties).Value);
+        Assert.Equal(["x"], algo.Params);
+
+        var prop = Assert.IsType<Algorithm.User>(Assert.Single(algo.Properties).Value);
+        Assert.Empty(prop.Params);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(prop.Output));
+        Assert.Equal("x", Assert.IsType<Expr.Param>(binary.Left).Name);
+    }
+
+    [Fact]
+    public void Detect_NestedPropertyOwnsIdentifier_WhenOuterOutputDoesNotUseIt()
+    {
+        var ast = ParseAndDetect(
+            """
+            Algo = {
+                Prop = x + 1
+                7
+            }
+            """);
+
+        var algo = Assert.IsType<Algorithm.User>(Assert.Single(ast.Properties).Value);
+        Assert.Empty(algo.Params);
+
+        var prop = Assert.IsType<Algorithm.User>(Assert.Single(algo.Properties).Value);
+        Assert.Equal(["x"], prop.Params);
+    }
+
+    [Fact]
     public void Detect_CallArgsInBraces_IsParametrized()
     {
         // F{x + 1} desugars to F({x + 1}).  The brace content is an Expr.Block

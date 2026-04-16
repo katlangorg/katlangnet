@@ -1324,6 +1324,82 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_ImplicitOuterOutputOwnership_MarksNestedPropertyLocalOnly()
+    {
+        var result = Parser.Parse(
+            """
+            Algo = {
+              Prop = x + 1
+              x
+            }
+            """);
+
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+        var algo = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Equal(["x"], algo.Params);
+
+        var prop = Assert.Single(algo.Properties);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, prop.Exposure);
+
+        var propBody = Assert.IsType<Algorithm.User>(prop.Value);
+        Assert.Empty(propBody.Params);
+    }
+
+    [Fact]
+    public void Parse_ExplicitAndImplicitOuterOutputOwnership_AreEquivalent()
+    {
+        var implicitResult = Parser.Parse(
+            """
+            Algo = {
+              Prop = x + 1
+              x
+            }
+            """);
+        var explicitResult = Parser.Parse(
+            """
+            Algo(x) = {
+              Prop = x + 1
+              x
+            }
+            """);
+
+        Assert.False(implicitResult.HasErrors, string.Join(Environment.NewLine, implicitResult.Diagnostics.Select(d => d.Message)));
+        Assert.False(explicitResult.HasErrors, string.Join(Environment.NewLine, explicitResult.Diagnostics.Select(d => d.Message)));
+
+        var implicitAlgo = Assert.IsType<Algorithm.User>(implicitResult.Root.Properties[0].Value);
+        var explicitAlgo = Assert.IsType<Algorithm.User>(explicitResult.Root.Properties[0].Value);
+        Assert.Equal(["x"], implicitAlgo.Params);
+        Assert.Equal(["x"], explicitAlgo.Params);
+
+        var implicitProp = Assert.Single(implicitAlgo.Properties);
+        var explicitProp = Assert.Single(explicitAlgo.Properties);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, implicitProp.Exposure);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, explicitProp.Exposure);
+        Assert.Empty(Assert.IsType<Algorithm.User>(implicitProp.Value).Params);
+        Assert.Empty(Assert.IsType<Algorithm.User>(explicitProp.Value).Params);
+    }
+
+    [Fact]
+    public void Parse_NestedPropertyOwnsParameter_WhenOuterOutputDoesNotUseIt()
+    {
+        var result = Parser.Parse(
+            """
+            Algo = {
+              Prop = x + 1
+              7
+            }
+            """);
+
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+        var algo = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+        Assert.Empty(algo.Params);
+
+        var prop = Assert.Single(algo.Properties);
+        Assert.Equal(PropertyExposure.Exported, prop.Exposure);
+        Assert.Equal(["x"], Assert.IsType<Algorithm.User>(prop.Value).Params);
+    }
+
+    [Fact]
     public void Parse_PlainContainerAlgorithm_RemainsValid()
     {
         var result = Parser.ParseSyntax("Algo = { Prop = 7 }");

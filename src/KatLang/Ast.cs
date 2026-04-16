@@ -314,7 +314,22 @@ public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 /// A named property within an algorithm, with visibility metadata.
 /// Lean: PropDef { name, alg, isPublic }.
 /// </summary>
-public sealed record Property(string Name, Algorithm Value, bool IsPublic = false)
+public enum PropertyExposure
+{
+    Exported,
+    LocalOnlyCapturedAncestorParameters,
+    LocalOnlyConditionalAlgorithm,
+}
+
+/// <summary>
+/// A named property within an algorithm, with visibility metadata.
+/// Lean: PropDef { name, alg, isPublic, exposure }.
+/// </summary>
+public sealed record Property(
+    string Name,
+    Algorithm Value,
+    bool IsPublic = false,
+    PropertyExposure Exposure = PropertyExposure.Exported)
 {
     /// <summary>
     /// Exact source spans of this property's declared name occurrences.

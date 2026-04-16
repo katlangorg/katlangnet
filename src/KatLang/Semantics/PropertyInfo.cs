@@ -51,8 +51,12 @@ public sealed record PropertyInfo(
     DeclarationOccurrence? Declaration,
     PropertyShape Shape,
     bool IsPublic,
+    PropertyExposure Exposure,
     IReadOnlyList<PropertyParameterInfo> Parameters,
-    IReadOnlyList<ConditionalBranchInfo> ConditionalBranches);
+    IReadOnlyList<ConditionalBranchInfo> ConditionalBranches)
+{
+    public bool IsExported => Exposure == PropertyExposure.Exported;
+}
 
 internal static class ConditionalBranchHeadFormatter
 {

@@ -208,6 +208,7 @@ public static class SemanticModelBuilder
                 property.Value,
                 canonicalDeclaration,
                 property.IsPublic,
+                property.Exposure,
                 property.DeclarationSpans);
 
             foreach (var declaration in declarations)
@@ -255,6 +256,7 @@ public static class SemanticModelBuilder
                     algorithm,
                     declaration: null,
                     isPublic,
+                    PropertyExposure.Exported,
                     declarationSpans: null));
 
         private SymbolDefinition CreateParameterSymbol(
@@ -469,8 +471,16 @@ public static class SemanticModelBuilder
             var targetAlgorithm = TryResolveAlgorithmValue(dotCall.Target, scope);
             if (targetAlgorithm is not null)
             {
-                if (TryResolveAnyProperty(targetAlgorithm, dotCall.Name) is { } structuralProperty)
-                    return (ClassifyReferenceSymbol(structuralProperty), structuralProperty.Declaration, structuralProperty.PropertyInfo);
+                if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
+                {
+                    if (declaredProperty.PropertyInfo?.IsExported == true)
+                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
+
+                    return (IdentifierClassification.Unresolved, null, null);
+                }
+
+                if (ConditionalBranchesDefineProperty(targetAlgorithm, dotCall.Name))
+                    return (IdentifierClassification.Unresolved, null, null);
 
                 if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexicalFallback)
                     return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, lexicalFallback.PropertyInfo);
@@ -635,7 +645,7 @@ public static class SemanticModelBuilder
                 : null;
         }
 
-        private SymbolDefinition? TryResolveAnyProperty(Algorithm algorithm, string name)
+        private SymbolDefinition? TryResolveDeclaredProperty(Algorithm algorithm, string name)
         {
             var property = algorithm.Properties.FirstOrDefault(p => p.Name == name);
             return property is null ? null : CreateLookupPropertySymbol(algorithm, property);
@@ -643,8 +653,25 @@ public static class SemanticModelBuilder
 
         private SymbolDefinition? TryResolvePublicProperty(Algorithm algorithm, string name)
         {
-            var property = algorithm.Properties.FirstOrDefault(p => p.Name == name && p.IsPublic);
+            var property = algorithm.Properties.FirstOrDefault(
+                p => p.Name == name
+                    && p.IsPublic
+                    && p.Exposure == PropertyExposure.Exported);
             return property is null ? null : CreateLookupPropertySymbol(algorithm, property);
+        }
+
+        private static bool ConditionalBranchesDefineProperty(Algorithm algorithm, string name)
+        {
+            if (algorithm is not Algorithm.Conditional conditional)
+                return false;
+
+            foreach (var branch in conditional.Branches)
+            {
+                if (branch.Body.Properties.Any(property => property.Name == name))
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool AllowsExactLexicalFallback(Expr expr)
@@ -686,6 +713,7 @@ public static class SemanticModelBuilder
             Algorithm? algorithm,
             DeclarationOccurrence? declaration,
             bool isPublic,
+            PropertyExposure exposure,
             IReadOnlyList<SourceSpan>? declarationSpans)
         {
             if (kind == SymbolKind.Builtin || algorithm is Algorithm.Builtin)
@@ -695,6 +723,7 @@ public static class SemanticModelBuilder
                     declaration,
                     PropertyShape.Builtin,
                     isPublic,
+                    exposure,
                     CreateBuiltinParameters(name, algorithm),
                     []);
             }
@@ -706,6 +735,7 @@ public static class SemanticModelBuilder
                     declaration,
                     PropertyShape.Ordinary,
                     isPublic,
+                    exposure,
                     CreateOrdinaryParameters(user),
                     []),
                 Algorithm.Conditional conditional => new PropertyInfo(
@@ -713,9 +743,10 @@ public static class SemanticModelBuilder
                     declaration,
                     PropertyShape.Conditional,
                     isPublic,
+                    exposure,
                     [],
                     CreateConditionalBranches(name, conditional, declarationSpans)),
-                _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, [], []),
+                _ => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
         }
 

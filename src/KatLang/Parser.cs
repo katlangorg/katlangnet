@@ -124,7 +124,8 @@ public sealed class Parser
         var (detected, paramDiags) = ParameterDetector.Detect(root);
         diagnostics.AddRange(paramDiags);
         var resolved = ImplicitArgumentResolver.Resolve(detected);
-        return new ParseResult(resolved, diagnostics);
+        var exposed = PropertyExposureResolver.Resolve(resolved);
+        return new ParseResult(exposed, diagnostics);
     }
 
     // ── Token access helpers ────────────────────────────────────────────────

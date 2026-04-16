@@ -31,7 +31,7 @@ public class EvaluatorTests
         Algorithm.User => alg with
         {
             Properties = alg.Properties.Select(p =>
-                new Property(p.Name, MakeAllPublic(p.Value), IsPublic: true)).ToList(),
+                new Property(p.Name, MakeAllPublic(p.Value), IsPublic: true, Exposure: p.Exposure)).ToList(),
             Output = alg.Output.Select(MakeAllPublicExpr).ToList(),
             Opens = alg.Opens.Select(MakeAllPublicExpr).ToList(),
         },
@@ -164,6 +164,23 @@ public class EvaluatorTests
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.Equal(expectedMessage, formatted);
         Assert.DoesNotContain("while evaluating", formatted);
+    }
+
+    private static void AssertLocalOnlyPropertyMessage(string source, string expectedMessage)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Equal(expectedMessage, formatted);
+        Assert.DoesNotContain("while evaluating", formatted);
+
+        var error = result.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        Assert.IsType<EvalError.LocalOnlyProperty>(error);
     }
 
     private static void AssertInnermostMissingOutput(EvalError error)
@@ -4017,24 +4034,22 @@ public class EvaluatorTests
     [Fact]
     public void Eval_NetSalary_DotCallIncomeTax_FailsWhenOuterParamsAreCaptured()
     {
-        // Once NetSalary itself becomes parameterized, nested helper properties
-        // close over already-known outer parameters instead of re-declaring them.
-        // Calling IncomeTax directly through dotCall therefore no longer binds
-        // NetSalary's full outer interface. Use NetSalary(...) for the whole
-        // algorithm or define a self-contained IncomeTax property instead.
-        var source = """
-            NetSalary = {
-              SocialSecurityTax = grossSalary * 0.105
-              NonTaxableMinimum = grossSalary - SocialSecurityTax - 75
-              ChildTaxCredit = numberOfChildren * 162
-              TaxableIncome = NonTaxableMinimum - ChildTaxCredit
-              IncomeTax = TaxableIncome * 0.24
-              
-              grossSalary - SocialSecurityTax - IncomeTax
-            }
-            NetSalary.IncomeTax(1000, 2)
-            """;
-                AssertEvalFails(source);
+                var source = @"
+                        NetSalary = {
+                            SocialSecurityTax = grossSalary * 0.105
+                            NonTaxableMinimum = grossSalary - SocialSecurityTax - 75
+                            ChildTaxCredit = numberOfChildren * 162
+                            TaxableIncome = NonTaxableMinimum - ChildTaxCredit
+                            IncomeTax = TaxableIncome * 0.24
+
+                            grossSalary - SocialSecurityTax - IncomeTax
+                        }
+                        NetSalary.IncomeTax(1000, 2)
+                        ";
+
+        AssertLocalOnlyPropertyMessage(
+                        source,
+                        "Property 'IncomeTax' on `NetSalary` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
     }
 
     [Fact]
@@ -4521,6 +4536,86 @@ public class EvaluatorTests
         AssertEval(source, 12);
     }
 
+        [Fact]
+        public void Eval_NestedHelperCapture_RemainsCallableLocally()
+        {
+                AssertEval(
+                        """
+                        Algo(x) = {
+                            Prop = x + 1
+                            Prop * 2
+                        }
+                        Algo(6)
+                        """,
+                        14);
+        }
+
+        [Fact]
+        public void Eval_ImplicitAndExplicitOuterOwnership_StayEquivalentForLocalUse()
+        {
+                AssertEval(
+                        """
+                        Algo = {
+                            Prop = x + 1
+                            x
+                        }
+                        Algo(6)
+                        """,
+                        6);
+
+                AssertEval(
+                        """
+                        Algo(x) = {
+                            Prop = x + 1
+                            x
+                        }
+                        Algo(6)
+                        """,
+                        6);
+        }
+
+        [Fact]
+        public void Eval_CapturedNestedProperty_DotAccess_IsLocalOnly()
+        {
+                AssertLocalOnlyPropertyMessage(
+                        """
+                        Algo(x) = {
+                            Prop = x + 1
+                            x
+                        }
+                        Algo.Prop
+                        """,
+                        "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+        }
+
+        [Fact]
+        public void Eval_CapturedNestedProperty_DotCall_IsLocalOnly()
+        {
+                AssertLocalOnlyPropertyMessage(
+                        """
+                        Algo(x) = {
+                            Prop = x + 1
+                            x
+                        }
+                        Algo.Prop(6)
+                        """,
+                        "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+        }
+
+        [Fact]
+        public void Eval_ImplicitlyOwnedCapturedNestedProperty_DotAccess_IsLocalOnly()
+        {
+                AssertLocalOnlyPropertyMessage(
+                        """
+                        Algo = {
+                            Prop = x + 1
+                            x
+                        }
+                        Algo.Prop
+                        """,
+                        "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+        }
+
     [Fact]
     public void Eval_ContainerWithParametrizedChildProperty_RemainsCallable()
     {
@@ -4562,6 +4657,42 @@ public class EvaluatorTests
 
         AssertEval(source, 15, 15);
     }
+
+        [Fact]
+        public void Eval_ConditionalBranchProperty_IsLocalOnly()
+        {
+                AssertLocalOnlyPropertyMessage(
+                        """
+                        Outer(0) = {
+                            Inner = 1
+                            0
+                        }
+                        Outer(x) = {
+                            Inner = x + 1
+                            x
+                        }
+                        Outer.Inner
+                        """,
+                        "Property 'Inner' on `Outer` is local-only because properties defined inside conditional algorithms are not publicly visible.");
+        }
+
+        [Fact]
+        public void Eval_ConditionalBranchProperties_AreNeverExposedThroughParent()
+        {
+                AssertLocalOnlyPropertyMessage(
+                        """
+                        Outer(0) = {
+                            First = 1
+                            0
+                        }
+                        Outer(x) = {
+                            Second = x + 1
+                            x
+                        }
+                        Outer.Second
+                        """,
+                        "Property 'Second' on `Outer` is local-only because properties defined inside conditional algorithms are not publicly visible.");
+        }
 
     [Fact]
     public void Eval_ManualAlgorithmWithExplicitParametersWithoutOutput_IsRejected()

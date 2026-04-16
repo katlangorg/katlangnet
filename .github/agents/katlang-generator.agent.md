@@ -483,7 +483,9 @@ or equivalently with braces:
 
 ### Scoping Rules
 
-- Nested property bodies do NOT capture parameters from the enclosing algorithm. Each nested property gets its own implicit parameters from its free identifiers.
+- Nested property bodies may capture parameters owned by an enclosing algorithm for local use.
+- Only self-contained nested properties should be treated as exported dot-call or `open` surfaces. If a nested property depends on parameters owned by an enclosing algorithm, it is local-only and must not be presented as a reusable external API.
+- Properties defined inside conditional algorithm branches are local-only and must not be exposed through parent dot-call or `open`.
 - Nested properties CAN reference sibling properties within the same block (siblings are visible, not treated as parameters).
 - If a step algorithm needs a value from an enclosing scope but receives state via `repeat`/`while`, thread that value through the state tuple.
 
@@ -548,15 +550,15 @@ The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provi
 
 ### Access Patterns
 
-- **Dot-call**: `Outer.Inner(args)` — access nested properties via dot notation.
-- **Open**: `open Lib` — import public nested properties into scope (requires `public` on both the library and the properties to export).
-- **Internal use**: nested properties can be referenced by name within their own block without dot-call.
+- **Dot-call**: `Outer.Inner(args)` — access exported nested properties via dot notation.
+- **Open**: `open Lib` — import public exported nested properties into scope (requires `public` on both the library and the properties to export).
+- **Internal use**: nested properties can be referenced by name within their own block without dot-call, including local-only helpers that capture enclosing parameters.
 
 ### When to Nest
 
 - **Encapsulation**: hide helper step algorithms that are only meaningful inside a specific computation.
-- **Modules**: group related computations into a single namespace accessed via dot-call.
-- **Libraries**: define reusable public APIs using `public` nested properties with `open`.
+- **Modules**: group related computations into a single namespace accessed via dot-call when the nested entry points are self-contained.
+- **Libraries**: define reusable public APIs using `public` self-contained nested properties with `open`.
 - Do NOT nest when the helper is independently useful or referenced by multiple outer properties.
 
 ## Calls and Grouping
@@ -1119,7 +1121,7 @@ The trailing output `Total` makes `Order` callable: `Order(25, 4)` returns `110.
     }
     Order.Total(25, 4)
 
-Without trailing output, `Order` has no direct result — use `Order.Total(25, 4)` to access a specific nested property.
+Without trailing output, `Order` has no direct result — use `Order.Total(25, 4)` to access a specific self-contained nested property.
 
 ### Nested properties: public library with open
 

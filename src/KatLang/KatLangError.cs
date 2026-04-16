@@ -38,6 +38,8 @@ public sealed class KatLangError
             return formattedDotCallError;
         if (TryFormatSpecialOutputAccess(error, out var formattedSpecialOutputAccess))
             return formattedSpecialOutputAccess;
+        if (TryFormatLocalOnlyProperty(error, out var formattedLocalOnlyProperty))
+            return formattedLocalOnlyProperty;
         if (TryFormatMissingOutput(error, out var formattedMissingOutput))
             return formattedMissingOutput;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
@@ -48,6 +50,7 @@ public sealed class KatLangError
             EvalError.UnknownName e => $"Unknown name: {e.Name}",
             EvalError.UnknownProperty e => $"Unknown property '{e.PropertyName}' on {e.ObjectDesc}",
             EvalError.NotPublicProperty e => $"Property '{e.PropertyName}' on {e.ObjectDesc} is not public",
+            EvalError.LocalOnlyProperty e => FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure),
             EvalError.NotAnAlgorithm e => $"Not an algorithm: {e.Description}",
             EvalError.IllegalInOpen e => $"Illegal in open: {e.Reason}",
             EvalError.BadOpenForm e => $"Bad open form: {e.Reason}",
@@ -91,6 +94,25 @@ public sealed class KatLangError
 
         message = FormatSpecialOutputAccess(receiverDesc: null);
         return true;
+    }
+
+    private static bool TryFormatLocalOnlyProperty(EvalError error, out string message)
+    {
+        message = string.Empty;
+
+        if (error is EvalError.LocalOnlyProperty direct)
+        {
+            message = FormatLocalOnlyProperty(direct.ObjectDesc, direct.PropertyName, direct.Exposure);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { Inner: EvalError.LocalOnlyProperty contextual })
+        {
+            message = FormatLocalOnlyProperty(contextual.ObjectDesc, contextual.PropertyName, contextual.Exposure);
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryFormatDotCallUnknownName(EvalError error, out string message)
@@ -245,6 +267,16 @@ public sealed class KatLangError
 
     private static string FormatPropertyMissingOutput(string propertyName)
         => $"Property '{propertyName}' has no output here. Add an Output expression inside '{propertyName}', or use one of its properties, for example `{propertyName}.X`.";
+
+    private static string FormatLocalOnlyProperty(string objectDesc, string propertyName, PropertyExposure exposure)
+        => exposure switch
+        {
+            PropertyExposure.LocalOnlyCapturedAncestorParameters =>
+                $"Property '{propertyName}' on `{objectDesc}` is local-only because it depends on parameter(s) owned by the enclosing algorithm.",
+            PropertyExposure.LocalOnlyConditionalAlgorithm =>
+                $"Property '{propertyName}' on `{objectDesc}` is local-only because properties defined inside conditional algorithms are not publicly visible.",
+            _ => $"Property '{propertyName}' on `{objectDesc}` is local-only.",
+        };
 
     private static string FormatSpecialOutputAccess(string? receiverDesc)
     {

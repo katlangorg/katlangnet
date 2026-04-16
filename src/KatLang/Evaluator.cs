@@ -5,7 +5,7 @@ namespace KatLang;
 /// Uses <see cref="EvalResult{T}"/> (<c>EvalM := Except Error</c>) for structured errors
 /// instead of nullable returns.
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
-/// Property visibility: opens only expose PUBLIC properties; structural lookup sees all.
+/// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
 /// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Min, Max, Sum, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
@@ -264,18 +264,43 @@ public static class Evaluator
         return null;
     }
 
+    private static bool IsExported(Property property)
+        => property.Exposure == PropertyExposure.Exported;
+
+    private static Algorithm? LookupExportedProp(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+        {
+            if (prop.Name == name && IsExported(prop))
+                return prop.Value;
+        }
+
+        return null;
+    }
+
+    private static Property? LookupExportedPropBinding(Algorithm alg, string name)
+    {
+        foreach (var prop in alg.Properties)
+        {
+            if (prop.Name == name && IsExported(prop))
+                return prop;
+        }
+
+        return null;
+    }
+
     /// <summary>Lean: Algorithm.lookupPublicProp (public only).</summary>
     private static Algorithm? LookupPublicProp(Algorithm alg, string name)
     {
         foreach (var prop in alg.Properties)
-            if (prop.Name == name && prop.IsPublic) return prop.Value;
+            if (prop.Name == name && prop.IsPublic && IsExported(prop)) return prop.Value;
         return null;
     }
 
     private static Property? LookupPublicPropBinding(Algorithm alg, string name)
     {
         foreach (var prop in alg.Properties)
-            if (prop.Name == name && prop.IsPublic) return prop;
+            if (prop.Name == name && prop.IsPublic && IsExported(prop)) return prop;
         return null;
     }
 
@@ -287,6 +312,23 @@ public static class Evaluator
     {
         foreach (var prop in alg.Properties)
             if (prop.Name == name) return true;
+        return false;
+    }
+
+    private static bool ConditionalBranchesDefineProperty(Algorithm alg, string name)
+    {
+        if (alg is not Algorithm.Conditional conditional)
+            return false;
+
+        foreach (var branch in conditional.Branches)
+        {
+            foreach (var prop in branch.Body.Properties)
+            {
+                if (prop.Name == name)
+                    return true;
+            }
+        }
+
         return false;
     }
 
@@ -491,7 +533,7 @@ public static class Evaluator
     {
         foreach (var prop in sc.Properties)
         {
-            if (prop.Name == name && prop.IsPublic)
+            if (prop.Name == name && prop.IsPublic && IsExported(prop))
                 return prop.Value; // no wiring, public only
         }
         return sc.Parent is { } parent ? LookupInParentsDirectUnwiredPublic(parent, name) : null;
@@ -1881,21 +1923,26 @@ public static class Evaluator
         var targetResult = ResolveAlgForOpen(target, ctx);
         if (targetResult.IsError) return targetResult.Error;
 
-        // First check if property exists at all (any visibility)
-        var prop = LookupProp(targetResult.Value, propName);
+        // First check if property exists at all so ownership still wins over opens.
+        var prop = LookupPropBinding(targetResult.Value, propName);
         if (prop is not null)
         {
-            if (prop is Algorithm.Builtin)
+            if (prop.Value is Algorithm.Builtin)
                 return new EvalError.IllegalInOpen(
                     $"builtin not allowed in open: {OpenExprName(target)}.{propName}");
 
+            if (!IsExported(prop))
+                return new EvalError.LocalOnlyProperty(OpenExprName(target), propName, prop.Exposure);
+
             // Property exists; check if it's public
-            var publicProp = LookupPublicProp(targetResult.Value, propName);
-            if (publicProp is not null)
-                return EvalResult<Algorithm>.Ok(publicProp); // no wiring (pure resolution)
+            if (prop.IsPublic)
+                return EvalResult<Algorithm>.Ok(prop.Value); // no wiring (pure resolution)
 
             return new EvalError.NotPublicProperty(OpenExprName(target), propName);
         }
+        if (ConditionalBranchesDefineProperty(targetResult.Value, propName))
+            return new EvalError.LocalOnlyProperty(OpenExprName(target), propName, PropertyExposure.LocalOnlyConditionalAlgorithm);
+
         return new EvalError.UnknownProperty(OpenExprName(target), propName);
     }
 
@@ -3574,11 +3621,14 @@ public static class Evaluator
             return ResultToString(val.Value);
         }
 
-        // Structural: property of target (any visibility — dot access sees private)
-        var prop = LookupProp(targetAlg, name);
+        // Structural: property of target (exported only; private export remains accessible)
+        var prop = LookupPropBinding(targetAlg, name);
         if (prop is not null)
         {
-            var wired = ChildOf(targetAlg, prop);
+            if (!IsExported(prop))
+                return new EvalError.LocalOnlyProperty(OpenExprName(target), name, prop.Exposure);
+
+            var wired = ChildOf(targetAlg, prop.Value);
             if (argsOpt is null)
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
@@ -3590,12 +3640,15 @@ public static class Evaluator
 
                 // No args: 0-param → value access, has params → arity error
                 if (wired.Params.Count == 0)
-                    return EvalMaybeMemoizedStructuralPropertyOutput(prop, name, wired, ctx, valEnv);
+                    return EvalMaybeMemoizedStructuralPropertyOutput(prop.Value, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
             return EvalResolvedCall(wired, argsOpt, ctx, valEnv, name);
         }
+
+        if (ConditionalBranchesDefineProperty(targetAlg, name))
+            return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
 
         // Lexical fallback (receiver injection via callLexicalWithReceiver)
         return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
@@ -3700,10 +3753,13 @@ public static class Evaluator
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
 
-        var prop = LookupProp(targetAlg, name);
+        var prop = LookupPropBinding(targetAlg, name);
         if (prop is not null)
         {
-            var wired = ChildOf(targetAlg, prop);
+            if (!IsExported(prop))
+                return new EvalError.LocalOnlyProperty(OpenExprName(target), name, prop.Exposure);
+
+            var wired = ChildOf(targetAlg, prop.Value);
             if (argsOpt is null)
             {
                 var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
@@ -3714,12 +3770,15 @@ public static class Evaluator
                     return new EvalError.NoMatchingBranch(name);
 
                 if (wired.Params.Count == 0)
-                    return EvalMaybeMemoizedStructuralPropertyOutputCounted(prop, name, wired, ctx, valEnv);
+                    return EvalMaybeMemoizedStructuralPropertyOutputCounted(prop.Value, name, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
             return EvalResolvedCallCounted(wired, argsOpt, ctx, valEnv, name);
         }
+
+        if (ConditionalBranchesDefineProperty(targetAlg, name))
+            return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
 
         return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);
     }

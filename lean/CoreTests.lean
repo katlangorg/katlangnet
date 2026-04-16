@@ -5,7 +5,7 @@ import KatLang
 --------------------------------------------------------------------------------
 
 namespace KatLangTests
-open KatLang (alg algPrivate privateProp publicProp runFlat runResult Algorithm Error Result)
+open KatLang (alg algPrivate privateProp publicProp privateLocalProp publicLocalProp runFlat runResult Algorithm Error Result PropExposure)
 
 def hasContext (target : String) : Error -> Bool
   | .withContext msg inner => msg = target || hasContext target inner
@@ -44,6 +44,12 @@ def innermostIsUnknownName (target : String) : Error -> Bool
 def innermostIsNotPublicProperty (owner : String) (name : String) : Error -> Bool
   | .withContext _ inner => innermostIsNotPublicProperty owner name inner
   | .notPublicProperty actualOwner actualName => actualOwner = owner && actualName = name
+  | _ => false
+
+def innermostIsLocalOnlyProperty (owner : String) (name : String) (exposure : PropExposure) : Error -> Bool
+  | .withContext _ inner => innermostIsLocalOnlyProperty owner name exposure inner
+  | .localOnlyProperty actualOwner actualName actualExposure =>
+      actualOwner = owner && actualName = name && actualExposure = exposure
   | _ => false
 
 def innermostIsIllegalInOpen (msg : String) : Error -> Bool
@@ -187,6 +193,58 @@ def helperDotCallStillWorks : Bool :=
 
 #eval helperDotCallStillWorks  -- should be true
 
+def capturedLocalHelperAlg : Algorithm :=
+  alg ["x"] [] [
+    privateLocalProp "Prop" .localCapturedAncestorParams
+      (alg [] [] [] [.binary .add (.param "x") (.num 1)])
+  ] [
+    .binary .mul (.resolve "Prop") (.num 2)
+  ]
+
+def capturedLocalHelperRoot : Algorithm :=
+  algPrivate [] [] [("Algo", capturedLocalHelperAlg)] [
+    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+  ]
+
+def capturedLocalHelperStillWorks : Bool :=
+  match runFlat (.block capturedLocalHelperRoot) with
+  | Except.ok [14] => true
+  | _ => false
+
+#eval capturedLocalHelperStillWorks  -- should be true
+
+def capturedLocalOnlyAlg : Algorithm :=
+  alg ["x"] [] [
+    privateLocalProp "Prop" .localCapturedAncestorParams
+      (alg [] [] [] [.binary .add (.param "x") (.num 1)])
+  ] [
+    .param "x"
+  ]
+
+def capturedLocalOnlyDotRoot : Algorithm :=
+  algPrivate [] [] [("Algo", capturedLocalOnlyAlg)] [
+    .dotCall (.resolve "Algo") "Prop" none
+  ]
+
+def capturedLocalOnlyDotRejected : Bool :=
+  match runResult (.block capturedLocalOnlyDotRoot) with
+  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
+  | Except.ok _ => false
+
+#eval capturedLocalOnlyDotRejected  -- should be true
+
+def capturedLocalOnlyDotCallRoot : Algorithm :=
+  algPrivate [] [] [("Algo", capturedLocalOnlyAlg)] [
+    .dotCall (.resolve "Algo") "Prop" (some (alg [] [] [] [.num 6]))
+  ]
+
+def capturedLocalOnlyDotCallRejected : Bool :=
+  match runResult (.block capturedLocalOnlyDotCallRoot) with
+  | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
+  | Except.ok _ => false
+
+#eval capturedLocalOnlyDotCallRejected  -- should be true
+
 def helperDirectCallStillFailsRoot : Algorithm :=
   algPrivate [] [] [("Algo", helperOutputAlg)] [
     .call (.resolve "Algo") (alg [] [] [] [.num 6])
@@ -233,6 +291,56 @@ def nestedDirectCallWorks : Bool :=
   | _ => false
 
 #eval nestedDirectCallWorks  -- should be true
+
+def conditionalLocalInnerAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .litInt 0,
+      alg [] [] [
+        privateLocalProp "Inner" .localConditional (alg [] [] [] [.num 1])
+      ] [.num 0] ⟩,
+    ⟨ .bind "x",
+      alg [] [] [
+        privateLocalProp "Inner" .localConditional
+          (alg [] [] [] [.binary .add (.param "x") (.num 1)])
+      ] [.param "x"] ⟩
+  ]
+
+def conditionalLocalInnerRoot : Algorithm :=
+  algPrivate [] [] [("Outer", conditionalLocalInnerAlg)] [
+    .dotCall (.resolve "Outer") "Inner" none
+  ]
+
+def conditionalLocalInnerRejected : Bool :=
+  match runResult (.block conditionalLocalInnerRoot) with
+  | Except.error err => innermostIsLocalOnlyProperty "Outer" "Inner" .localConditional err
+  | Except.ok _ => false
+
+#eval conditionalLocalInnerRejected  -- should be true
+
+def conditionalSplitHelpersAlg : Algorithm :=
+  .conditional none [] [
+    ⟨ .litInt 0,
+      alg [] [] [
+        privateLocalProp "First" .localConditional (alg [] [] [] [.num 1])
+      ] [.num 0] ⟩,
+    ⟨ .bind "x",
+      alg [] [] [
+        privateLocalProp "Second" .localConditional
+          (alg [] [] [] [.binary .add (.param "x") (.num 1)])
+      ] [.param "x"] ⟩
+  ]
+
+def conditionalSplitHelpersRoot : Algorithm :=
+  algPrivate [] [] [("Outer", conditionalSplitHelpersAlg)] [
+    .dotCall (.resolve "Outer") "Second" none
+  ]
+
+def conditionalSplitHelpersRejected : Bool :=
+  match runResult (.block conditionalSplitHelpersRoot) with
+  | Except.error err => innermostIsLocalOnlyProperty "Outer" "Second" .localConditional err
+  | Except.ok _ => false
+
+#eval conditionalSplitHelpersRejected  -- should be true
 
 def publicOutputAlg : Algorithm :=
   alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]

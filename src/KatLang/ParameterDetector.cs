@@ -124,7 +124,7 @@ public static class ParameterDetector
                 }
                 var processedCond = new Algorithm.Conditional(
                     condAlg.Parent, condAlg.Opens, processedBranches);
-                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic)
+                newProperties.Add(new Property(prop.Name, processedCond, prop.IsPublic, prop.Exposure)
                 {
                     DeclarationSpans = prop.DeclarationSpans
                 });
@@ -137,7 +137,7 @@ public static class ParameterDetector
                     allPropertyAlgs,
                     nestedCapturedParamNames,
                     diagnostics);
-                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic)
+                newProperties.Add(new Property(prop.Name, processedBody, prop.IsPublic, prop.Exposure)
                 {
                     DeclarationSpans = prop.DeclarationSpans
                 });
@@ -248,7 +248,7 @@ public static class ParameterDetector
                 allPropertyAlgs,
                 bodyCapturedParamNames,
                 diagnostics);
-            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic)
+            newProperties.Add(new Property(prop.Name, processedProp, prop.IsPublic, prop.Exposure)
             {
                 DeclarationSpans = prop.DeclarationSpans
             });
@@ -335,7 +335,7 @@ public static class ParameterDetector
                     rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic)
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic, prop.Exposure)
                     {
                         DeclarationSpans = prop.DeclarationSpans
                     });
@@ -359,7 +359,7 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic, prop.Exposure)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -380,7 +380,7 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, binderNames)), prop.IsPublic, prop.Exposure)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -616,7 +616,7 @@ public static class ParameterDetector
                     rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                 var processedProps = new List<Property>(dotArgs.Properties.Count);
                 foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic)
+                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, nestedCapturedParamNames), prop.IsPublic, prop.Exposure)
                     {
                         DeclarationSpans = prop.DeclarationSpans
                     });
@@ -641,7 +641,7 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(alg.Properties.Count);
                     foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic, prop.Exposure)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -665,7 +665,7 @@ public static class ParameterDetector
                         rewrittenOutput.Add(RewriteParams(argExpr, paramNames, visibleNames, propertyAlgs, capturedParamNames));
                     var processedProps = new List<Property>(args.Properties.Count);
                     foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic)
+                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, visibleNames, propertyAlgs, UnionNames(capturedParamNames, paramNames)), prop.IsPublic, prop.Exposure)
                         {
                             DeclarationSpans = prop.DeclarationSpans
                         });
@@ -737,7 +737,7 @@ public static class ParameterDetector
                 if (targetAlg is null) return null;
                 // Open path: intermediate must be public (Lean: lookupPublicProp)
                 foreach (var prop in targetAlg.Properties)
-                    if (prop.Name == name && prop.IsPublic)
+                    if (prop.Name == name && prop.IsPublic && prop.Exposure == PropertyExposure.Exported)
                         return prop.Value;
                 return null;
             }
@@ -790,7 +790,7 @@ public static class ParameterDetector
         }
 
         foreach (var prop in alg.Properties)
-            if (prop.IsPublic)
+            if (prop.IsPublic && prop.Exposure == PropertyExposure.Exported)
                 visibleNames.Add(prop.Name);
     }
 

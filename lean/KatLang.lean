@@ -82,6 +82,18 @@ namespace KatLang
 abbrev Ident := String    -- algorithm / property / parameter names
 abbrev Assoc (K V : Type) := List (Prod K V)  -- association list
 
+inductive PropExposure where
+  | exported
+  | localCapturedAncestorParams
+  | localConditional
+  deriving Repr, DecidableEq
+
+namespace PropExposure
+  def isExported : PropExposure -> Bool
+    | .exported => true
+    | _ => false
+end PropExposure
+
 --------------------------------------------------------------------------------
 -- Errors / Monad
 --------------------------------------------------------------------------------
@@ -90,6 +102,7 @@ inductive Error where
   | unknownName      : Ident -> Error
   | unknownProperty  : String -> Ident -> Error        -- object desc, property name
   | notPublicProperty : String -> Ident -> Error       -- object desc, property name (exists but private)
+  | localOnlyProperty : String -> Ident -> PropExposure -> Error  -- object desc, property name, reason
   | notAnAlgorithm   : String -> Error
   | illegalInOpen    : String -> Error                -- semantic restriction (e.g., builtin not allowed)
   | badOpenForm      : String -> Error                -- syntactic form not allowed in open
@@ -333,6 +346,7 @@ mutual
     name     : Ident
     alg      : Algorithm
     isPublic : Bool
+    exposure : PropExposure := .exported
     deriving Repr
 
   /-- A branch of a conditional algorithm: a pattern and a body algorithm.
@@ -616,9 +630,13 @@ def dedupList [BEq A] (xs : List A) : List A :=
 def lookupPropDefAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
   ps.find? (fun p => p.name = k)
 
+/-- Primary helper: Lookup PropDef by name when the property is exported. -/
+def lookupPropDefExportedAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
+  ps.find? (fun p => p.name = k && p.exposure.isExported)
+
 /-- Primary helper: Lookup PropDef by name (public only). -/
 def lookupPropDefPublic? (ps : List PropDef) (k : Ident) : Option PropDef :=
-  ps.find? (fun p => p.name = k && p.isPublic)
+  ps.find? (fun p => p.name = k && p.isPublic && p.exposure.isExported)
 
 /-- Private aliases for backwards compatibility. -/
 private def findPropAny? := @lookupPropDefAny?
@@ -627,6 +645,10 @@ private def findPropPublic? := @lookupPropDefPublic?
 /-- Lookup Algorithm from PropDef list (any visibility). -/
 def lookupPropAny (ps : List PropDef) (k : Ident) : Option Algorithm :=
   (lookupPropDefAny? ps k).map (fun propDef => propDef.alg)
+
+/-- Lookup Algorithm from PropDef list when the property is exported. -/
+def lookupPropExportedAny (ps : List PropDef) (k : Ident) : Option Algorithm :=
+  (lookupPropDefExportedAny? ps k).map (fun propDef => propDef.alg)
 
 /-- Lookup Algorithm from PropDef list (public only). -/
 def lookupPropPublic (ps : List PropDef) (k : Ident) : Option Algorithm :=
@@ -639,6 +661,10 @@ def hasPropAny (ps : List PropDef) (k : Ident) : Bool :=
 /-- Check if PropDef list contains a public property. -/
 def hasPropPublic (ps : List PropDef) (k : Ident) : Bool :=
   (lookupPropDefPublic? ps k).isSome
+
+/-- Check if PropDef list contains an exported property. -/
+def hasPropExportedAny (ps : List PropDef) (k : Ident) : Bool :=
+  (lookupPropDefExportedAny? ps k).isSome
 
 namespace Algorithm
   def parent : Algorithm -> Option ScopeCtx
@@ -752,6 +778,10 @@ namespace Algorithm
   def lookupProp (a : Algorithm) (k : Ident) : Option Algorithm :=
     lookupPropAny (props a) k
 
+  /-- Exported structural property lookup. -/
+  def lookupExportedProp (a : Algorithm) (k : Ident) : Option Algorithm :=
+    lookupPropExportedAny (props a) k
+
   /-- Public-only property lookup (for open resolution). -/
   def lookupPublicProp (a : Algorithm) (k : Ident) : Option Algorithm :=
     lookupPropPublic (props a) k
@@ -760,9 +790,18 @@ namespace Algorithm
   def lookupPropDefAny? (a : Algorithm) (k : Ident) : Option PropDef :=
     KatLang.lookupPropDefAny? (props a) k
 
+  /-- Lookup PropDef by name when the property is exported. -/
+  def lookupPropDefExportedAny? (a : Algorithm) (k : Ident) : Option PropDef :=
+    KatLang.lookupPropDefExportedAny? (props a) k
+
   /-- Lookup PropDef by name (public only). -/
   def lookupPropDefPublic? (a : Algorithm) (k : Ident) : Option PropDef :=
     KatLang.lookupPropDefPublic? (props a) k
+
+  /-- True when a conditional algorithm has a branch body defining the given property. -/
+  def conditionalBranchesDefineProperty : Algorithm -> Ident -> Bool
+    | .conditional _ _ bs, k => bs.any (fun br => hasPropAny (props br.body) k)
+    | _, _ => false
 
   /-- Wire a child algorithm to its parent's scope context. -/
   def childOf (a : Algorithm) (child : Algorithm) : Algorithm :=
@@ -1350,17 +1389,23 @@ mutual
       | [] => .error (Error.unknownName n)
     | some (.dotCall o n) => do
       let a <- resolveAlgForOpen o ctx
-      -- First check if property exists at all to distinguish missing vs private
-      match Algorithm.lookupProp a n with
+      -- First check if property exists at all so ownership still wins over opens.
+      match Algorithm.lookupPropDefAny? a n with
       | some p =>
-          if p.isBuiltin then
+          if p.alg.isBuiltin then
             .error (Error.illegalInOpen s!"builtin not allowed in open: {openExprName o}.{n}")
+          else if !p.exposure.isExported then
+            .error (Error.localOnlyProperty (openExprName o) n p.exposure)
           else
             -- Property exists; check if it's public
             match Algorithm.lookupPublicProp a n with
             | some publicAlg => pure publicAlg  -- * no wiring (pure resolution) - return public algorithm
             | none   => .error (Error.notPublicProperty (openExprName o) n)
-      | none => .error (Error.unknownProperty (openExprName o) n)
+      | none =>
+          if Algorithm.conditionalBranchesDefineProperty a n then
+            .error (Error.localOnlyProperty (openExprName o) n .localConditional)
+          else
+            .error (Error.unknownProperty (openExprName o) n)
     -- load('url') is not a core Expr constructor; it is represented as
     -- Call(Resolve("load"), ...) at parse time and elaborated to Block before
     -- open resolution.  If it reaches here un-elaborated, it falls through to
@@ -2287,9 +2332,12 @@ mutual
           let out <- resultToString val
           pure (out, Result.valueCount out)
         else
-          match Algorithm.lookupProp targetAlg name with
+          match Algorithm.lookupPropDefAny? targetAlg name with
           | some p =>
-              let wired := Algorithm.childOf targetAlg p
+              if !p.exposure.isExported then
+                .error (Error.localOnlyProperty (openExprName target) name p.exposure)
+              else
+              let wired := Algorithm.childOf targetAlg p.alg
               match argsOpt with
               | none =>
                   match flatBinderUserEquivalent? wired with
@@ -2308,7 +2356,11 @@ mutual
                             .error (Error.arityMismatch (Algorithm.params wired).length 0)
               | some args =>
                   evalResolvedCallCounted wired args ctx env name
-          | none => callLexicalWithReceiverCounted name target argsOpt ctx env
+          | none =>
+              if Algorithm.conditionalBranchesDefineProperty targetAlg name then
+                .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+              else
+                callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
         let val <- eval target ctx env
@@ -2519,9 +2571,12 @@ mutual
           let val <- evalAlgOutput targetAlg ctx env
           resultToString val
         else
-          match Algorithm.lookupProp targetAlg name with
+          match Algorithm.lookupPropDefAny? targetAlg name with
           | some p =>
-              let wired := Algorithm.childOf targetAlg p
+              if !p.exposure.isExported then
+                .error (Error.localOnlyProperty (openExprName target) name p.exposure)
+              else
+              let wired := Algorithm.childOf targetAlg p.alg
               match argsOpt with
               | none =>
                   match flatBinderUserEquivalent? wired with
@@ -2541,7 +2596,11 @@ mutual
                             .error (Error.arityMismatch (Algorithm.params wired).length 0)
               | some args =>
                   evalResolvedCall wired args ctx env name
-          | none => callLexicalWithReceiver name target argsOpt ctx env
+          | none =>
+              if Algorithm.conditionalBranchesDefineProperty targetAlg name then
+                .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+              else
+                callLexicalWithReceiver name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
         let val <- eval target ctx env
@@ -2913,11 +2972,19 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
 
 /-- Helper to create a private property (default visibility). -/
 def privateProp (name : Ident) (alg : Algorithm) : PropDef :=
-  { name := name, alg := alg, isPublic := false }
+  { name := name, alg := alg, isPublic := false, exposure := .exported }
 
 /-- Helper to create a public property. -/
 def publicProp (name : Ident) (alg : Algorithm) : PropDef :=
-  { name := name, alg := alg, isPublic := true }
+  { name := name, alg := alg, isPublic := true, exposure := .exported }
+
+/-- Helper to create a private local-only property. -/
+def privateLocalProp (name : Ident) (exposure : PropExposure) (alg : Algorithm) : PropDef :=
+  { name := name, alg := alg, isPublic := false, exposure := exposure }
+
+/-- Helper to create a public local-only property. -/
+def publicLocalProp (name : Ident) (exposure : PropExposure) (alg : Algorithm) : PropDef :=
+  { name := name, alg := alg, isPublic := true, exposure := exposure }
 
 /-- Migration helper: convert assoc list to private PropDefs. -/
 def propsPrivate (xs : List (Prod Ident Algorithm)) : List PropDef :=

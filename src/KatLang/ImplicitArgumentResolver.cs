@@ -287,7 +287,7 @@ public static class ImplicitArgumentResolver
                 }
                 var processedCond = new Algorithm.Conditional(
                     condAlg.Parent, condAlg.Opens, processedBranches);
-                processedProperties[idx] = new Property(prop.Name, processedCond, prop.IsPublic)
+                processedProperties[idx] = new Property(prop.Name, processedCond, prop.IsPublic, prop.Exposure)
                 {
                     DeclarationSpans = prop.DeclarationSpans
                 };
@@ -300,7 +300,7 @@ public static class ImplicitArgumentResolver
                 localParamMap[prop.Name] = processedBody.Params;
                 visibleParamMap[prop.Name] = processedBody.Params;
 
-                processedProperties[idx] = new Property(prop.Name, processedBody, prop.IsPublic)
+                processedProperties[idx] = new Property(prop.Name, processedBody, prop.IsPublic, prop.Exposure)
                 {
                     DeclarationSpans = prop.DeclarationSpans
                 };
