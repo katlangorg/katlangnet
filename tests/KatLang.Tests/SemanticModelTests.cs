@@ -399,6 +399,48 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_FirstOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Selected = values.first
+            """);
+
+        var valuesReference = ResolutionAt(model, 1, 12);
+        Assert.Equal(OccurrenceKind.ParameterReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, valuesReference.Classification);
+
+        var firstReference = ResolutionAt(model, 1, 19);
+        Assert.Equal(OccurrenceKind.DotMemberReference, firstReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, firstReference.Classification);
+        Assert.Null(firstReference.ResolvedDeclaration);
+        Assert.NotNull(firstReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, firstReference.ResolvedProperty!.Shape);
+        Assert.Equal(["collection"], firstReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
+    public void Build_DotCall_LastOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Selected = values.last
+            """);
+
+        var valuesReference = ResolutionAt(model, 1, 12);
+        Assert.Equal(OccurrenceKind.ParameterReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, valuesReference.Classification);
+
+        var lastReference = ResolutionAt(model, 1, 19);
+        Assert.Equal(OccurrenceKind.DotMemberReference, lastReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, lastReference.Classification);
+        Assert.Null(lastReference.ResolvedDeclaration);
+        Assert.NotNull(lastReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, lastReference.ResolvedProperty!.Shape);
+        Assert.Equal(["collection"], lastReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_TracksReservedOutputDeclarationAndImplicitParameterReferences()
     {
         var model = BuildModel("Output = missing");

@@ -1412,6 +1412,60 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>first(collection)</c> by returning the first top-level
+    /// collection element unchanged.
+    /// Atoms, strings, and grouped values each count as one top-level element;
+    /// grouped values are preserved whole, and the collection must be non-empty.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalFirstCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        if (elements.Count == 0)
+        {
+            return new EvalError.WithContext(
+                "first requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(elements[0], 1));
+    }
+
+    /// <summary>
+    /// Evaluate <c>last(collection)</c> by returning the last top-level
+    /// collection element unchanged.
+    /// Atoms, strings, and grouped values each count as one top-level element;
+    /// grouped values are preserved whole, and the collection must be non-empty.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalLastCounted(
+        Algorithm collectionAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
+        if (collectionR.IsError) return collectionR.Error;
+
+        var elements = new List<Result>();
+        ResultItems(elements, collectionR.Value);
+
+        if (elements.Count == 0)
+        {
+            return new EvalError.WithContext(
+                "last requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(elements[^1], 1));
+    }
+
+    /// <summary>
     /// Evaluate <c>min(collection)</c> by comparing top-level collection
     /// elements from left to right and returning the smallest numeric element.
     /// The collection must be non-empty, and each top-level element must be
@@ -1726,6 +1780,12 @@ public static class Evaluator
             case (BuiltinId.@count, 1):
                 return EvalCountCounted(args[0], ctx, valEnv);
 
+            case (BuiltinId.@first, 1):
+                return EvalFirstCounted(args[0], ctx, valEnv);
+
+            case (BuiltinId.@last, 1):
+                return EvalLastCounted(args[0], ctx, valEnv);
+
             case (BuiltinId.@min, 1):
                 return EvalMinCounted(args[0], ctx, valEnv);
 
@@ -1848,6 +1908,8 @@ public static class Evaluator
             new("order",  new Algorithm.Builtin(BuiltinId.@order),  IsPublic: true),
             new("orderDesc", new Algorithm.Builtin(BuiltinId.@orderDesc), IsPublic: true),
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
+            new("first",  new Algorithm.Builtin(BuiltinId.@first),  IsPublic: true),
+            new("last",   new Algorithm.Builtin(BuiltinId.@last),   IsPublic: true),
             new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
             new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
             new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
@@ -1870,6 +1932,8 @@ public static class Evaluator
         (BuiltinId.@order, 1) => true,
         (BuiltinId.@orderDesc, 1) => true,
         (BuiltinId.@count, 1) => true,
+        (BuiltinId.@first, 1) => true,
+        (BuiltinId.@last, 1) => true,
         (BuiltinId.@min, 1) => true,
         (BuiltinId.@max, 1) => true,
         (BuiltinId.@sum, 1) => true,
@@ -1891,6 +1955,8 @@ public static class Evaluator
         BuiltinId.@order => "1",
         BuiltinId.@orderDesc => "1",
         BuiltinId.@count => "1",
+        BuiltinId.@first => "1",
+        BuiltinId.@last => "1",
         BuiltinId.@min => "1",
         BuiltinId.@max => "1",
         BuiltinId.@sum => "1",
@@ -2699,6 +2765,28 @@ public static class Evaluator
                 var countR = EvalCountCounted(args[0], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 return EvalResult<Result>.Ok(countR.Value.Value);
+            }
+
+            // first(collection) — return the first top-level collection element
+            // unchanged. Atoms, strings, and grouped values each count as one
+            // element; grouped values stay grouped, and the collection must be
+            // non-empty.
+            case (BuiltinId.@first, 1):
+            {
+                var firstR = EvalFirstCounted(args[0], ctx, valEnv);
+                if (firstR.IsError) return firstR.Error;
+                return EvalResult<Result>.Ok(firstR.Value.Value);
+            }
+
+            // last(collection) — return the last top-level collection element
+            // unchanged. Atoms, strings, and grouped values each count as one
+            // element; grouped values stay grouped, and the collection must be
+            // non-empty.
+            case (BuiltinId.@last, 1):
+            {
+                var lastR = EvalLastCounted(args[0], ctx, valEnv);
+                if (lastR.IsError) return lastR.Error;
+                return EvalResult<Result>.Ok(lastR.Value.Value);
             }
 
             // min(collection) — compare top-level collection elements from

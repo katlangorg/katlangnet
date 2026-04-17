@@ -1115,9 +1115,8 @@ public sealed class Parser
                     // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
                     var callArgs = ParseCallArgs();
-                    // Direct-call lowering for while/repeat: package multi-item init
-                    // into a block so that while(step, s1, s2) → while(step, block([s1,s2]))
-                    // and repeat(step, n, s1, s2) → repeat(step, n, block([s1,s2])).
+                    // Direct-call lowering for builtins whose exact syntax packages
+                    // multiple comma-separated outputs into a single collection argument.
                     // This is safe to do in the parser for lexical calls because the callee
                     // is a known name; dotCall lowering must wait until the evaluator confirms
                     // no structural property shadows the name.
@@ -1268,19 +1267,22 @@ public sealed class Parser
         }
     }
 
-    // ── Direct-call lowering for while/repeat ─────────────────────────────
-    // When the parser sees a lexical call to "while" or "repeat" with more args
-    // than the builtin arity, it packages the trailing init-state arguments into
-    // a single Expr.Block argument. This allows:
+    // ── Direct-call lowering for builtin collection shorthand ─────────────
+    // When the parser sees a lexical call to one of these builtins with exact
+    // syntax that should package multiple comma-separated outputs into a single
+    // collection argument, it rewrites those outputs into one Expr.Block.
+    // This allows:
     //   while(Step, x, 0)       → while(Step, block([x, 0]))
     //   repeat(Step, n, x, 0)   → repeat(Step, n, block([x, 0]))
+    //   first(x, y, z)          → first(block([x, y, z]))
+    //   last(x, y, z)           → last(block([x, y, z]))
     // This rewriting is safe here because the callee is a known resolve name.
     // For dotCall (e.g. Step.while(x, 0)) the packaging must happen later in
     // the evaluator, after structural property lookup confirms no shadowing.
 
     /// <summary>
     /// Creates a zero-parameter block algorithm wrapping the given expressions.
-    /// Used to package multi-item init state for while/repeat lowering.
+    /// Used to package multi-item builtin collection shorthand lowering.
     /// </summary>
     private static Expr.Block MakeInitBlock(IReadOnlyList<Expr> exprs) =>
         new(new Algorithm.User(
@@ -1288,15 +1290,21 @@ public sealed class Parser
             Properties: [], Output: exprs));
 
     /// <summary>
-    /// If <paramref name="callee"/> is <c>resolve("while")</c> or <c>resolve("repeat")</c>
-    /// and <paramref name="args"/> has more outputs than the builtin arity, rewrite the
-    /// trailing init-state outputs into a single <see cref="Expr.Block"/> argument.
+    /// If <paramref name="callee"/> is a builtin whose exact syntax packages
+    /// multiple comma-separated outputs into one collection argument, rewrite
+    /// those outputs into a single <see cref="Expr.Block"/> argument.
     /// Otherwise returns <paramref name="args"/> unchanged.
     /// </summary>
     private static Algorithm MaybeLowerBuiltinInitArgs(Expr callee, Algorithm args)
     {
         if (callee is not Expr.Resolve(var name)) return args;
         var count = args.Output.Count;
+
+        if (name is "first" or "last" && count >= 2)
+        {
+            var newOutput = new List<Expr> { MakeInitBlock(args.Output) };
+            return args with { Output = newOutput };
+        }
 
         if (name == "while" && count >= 3)
         {

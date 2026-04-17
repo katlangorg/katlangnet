@@ -1747,6 +1747,106 @@ public class EvaluatorTests
     public void Eval_Count_StringInput_ReturnsOne()
         => AssertEval("count('hello')", 1);
 
+    // ── First/last builtins ────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_First_OrdinaryBuiltinCall_PicksFirstRangeElement()
+        => AssertEval("first(range(1, 5))", 1);
+
+    [Fact]
+    public void Eval_Last_OrdinaryBuiltinCall_PicksLastRangeElement()
+        => AssertEval("last(range(1, 5))", 5);
+
+    [Fact]
+    public void Eval_First_DotCall_PicksFirstRangeElement()
+        => AssertEval("range(1, 5).first", 1);
+
+    [Fact]
+    public void Eval_Last_DotCall_PicksLastRangeElement()
+        => AssertEval("range(1, 5).last", 5);
+
+    [Fact]
+    public void Eval_First_DirectCallMultiResult_Shorthand_ReturnsFirstOutput()
+        => AssertEval("first(1, 2, 3)", 1);
+
+    [Fact]
+    public void Eval_Last_DirectCallMultiResult_Shorthand_ReturnsLastOutput()
+        => AssertEval("last(1, 2, 3)", 3);
+
+    [Fact]
+    public void Eval_First_PropertyOutput_ReturnsFirstTopLevelValue()
+    {
+        var source = """
+            Values = 4, 5, 6
+            Head = Values.first
+            Head
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_Last_IntermediateProperty_ReturnsLastTopLevelValue()
+    {
+        var source = """
+            Values = 4, 5, 6
+            Tail = Values.last
+            Tail
+            """;
+
+        AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_First_GroupedElements_PreservesFirstGroup()
+    {
+        var result = EvalFull("first(((1, 2), (3, 4)))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(1m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(2m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Last_GroupedElements_PreservesLastGroup()
+    {
+        var result = EvalFull("last(((1, 2), (3, 4)))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(3m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(4m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_First_EmptyCollection_FailsWithContext()
+    {
+        var source = """
+            IsNegative = x < 0
+            first(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertBuiltinFailureWithContext(source, "first requires a non-empty collection");
+    }
+
+    [Fact]
+    public void Eval_Last_EmptyCollection_FailsWithContext()
+    {
+        var source = """
+            IsNegative = x < 0
+            last(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertBuiltinFailureWithContext(source, "last requires a non-empty collection");
+    }
+
     // ── Min builtin ──────────────────────────────────────────────────────────
 
     [Fact]

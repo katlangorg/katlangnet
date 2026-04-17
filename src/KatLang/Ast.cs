@@ -25,6 +25,12 @@ public enum UnaryOp { Minus, Not }
 /// <c>orderDesc(collection)</c> sorts top-level numeric collection elements in
 /// descending order; duplicates are preserved, grouped values are not
 /// flattened, strings are invalid, and empty collections stay empty.
+/// <c>first(collection)</c> returns the first top-level collection element
+/// unchanged; atoms, strings, and grouped values each count as one element,
+/// grouped values stay grouped, and the collection must be non-empty.
+/// <c>last(collection)</c> returns the last top-level collection element
+/// unchanged; atoms, strings, and grouped values each count as one element,
+/// grouped values stay grouped, and the collection must be non-empty.
 /// <c>min(collection)</c> compares top-level numeric collection elements left
 /// to right; the collection must be non-empty, each element must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
@@ -41,7 +47,7 @@ public enum UnaryOp { Minus, Not }
 /// left to right; <c>step(element, accumulator)</c> must return exactly one
 /// next accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @min, @max, @sum, @avg, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @min, @max, @sum, @avg, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

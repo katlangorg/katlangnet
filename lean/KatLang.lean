@@ -147,7 +147,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 /-- Check whether a builtin accepts a given argument count.
@@ -158,6 +158,8 @@ inductive Builtin where
     orderBuiltin accepts 1 argument: a collection of top-level numeric elements sorted ascending.
     orderDescBuiltin accepts 1 argument: a collection of top-level numeric elements sorted descending.
     countBuiltin accepts 1 argument: a collection whose top-level elements are counted.
+    firstBuiltin accepts 1 argument: a non-empty collection whose first top-level element is returned.
+    lastBuiltin accepts 1 argument: a non-empty collection whose last top-level element is returned.
     minBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     maxBuiltin accepts 1 argument: a non-empty collection of top-level numeric elements.
     sumBuiltin accepts 1 argument: a collection of top-level numeric elements.
@@ -174,6 +176,8 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | .orderBuiltin, 1 => true
   | .orderDescBuiltin, 1 => true
   | .countBuiltin, 1 => true
+  | .firstBuiltin, 1 => true
+  | .lastBuiltin, 1 => true
   | .minBuiltin, 1 => true
   | .maxBuiltin, 1 => true
   | .sumBuiltin, 1 => true
@@ -193,6 +197,8 @@ def builtinArityDesc : Builtin -> String
   | .orderBuiltin => "1"
   | .orderDescBuiltin => "1"
   | .countBuiltin => "1"
+  | .firstBuiltin => "1"
+  | .lastBuiltin => "1"
   | .minBuiltin => "1"
   | .maxBuiltin => "1"
   | .sumBuiltin => "1"
@@ -1926,6 +1932,40 @@ mutual
     let total <- countLoop collection.toItems 0
     pure (Result.atom total, 1)
 
+  /-- Evaluate `first(collection)`.
+      `first` evaluates the collection as a top-level multi-output sequence and
+      returns its first top-level element unchanged.
+
+      Atoms, strings, and grouped values each count as one top-level element.
+      Grouped values are preserved whole rather than flattened. The collection
+      must be non-empty. -/
+  partial def evalFirstCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    match collection.toItems with
+    | first :: _ => pure (first, 1)
+    | [] =>
+        .error (Error.withContext
+          "first requires a non-empty collection"
+          Error.badArity)
+
+  /-- Evaluate `last(collection)`.
+      `last` evaluates the collection as a top-level multi-output sequence and
+      returns its last top-level element unchanged.
+
+      Atoms, strings, and grouped values each count as one top-level element.
+      Grouped values are preserved whole rather than flattened. The collection
+      must be non-empty. -/
+  partial def evalLastCounted (collectionAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let collection <- evalAlgOutput collectionAlg ctx env
+    match collection.toItems.getLast? with
+    | some last => pure (last, 1)
+    | none =>
+        .error (Error.withContext
+          "last requires a non-empty collection"
+          Error.badArity)
+
   /-- Evaluate `min(collection)`.
       `min` compares top-level collection elements from left to right and
       returns the smallest numeric element.
@@ -2130,6 +2170,12 @@ mutual
     | .countBuiltin, [collectionAlg] =>
       evalCountCounted collectionAlg ctx env
 
+    | .firstBuiltin, [collectionAlg] =>
+      evalFirstCounted collectionAlg ctx env
+
+    | .lastBuiltin, [collectionAlg] =>
+      evalLastCounted collectionAlg ctx env
+
     | .minBuiltin, [collectionAlg] =>
       evalMinCounted collectionAlg ctx env
 
@@ -2254,6 +2300,20 @@ mutual
     -- values are not flattened, and empty collections return 0.
     | .countBuiltin, [collectionAlg] => do
       let out <- evalCountCounted collectionAlg ctx env
+      pure out.fst
+
+    -- first(collection): return the first top-level element unchanged.
+    -- Atoms, strings, and grouped values each count as one element, grouped
+    -- values stay grouped, and the collection must be non-empty.
+    | .firstBuiltin, [collectionAlg] => do
+      let out <- evalFirstCounted collectionAlg ctx env
+      pure out.fst
+
+    -- last(collection): return the last top-level element unchanged.
+    -- Atoms, strings, and grouped values each count as one element, grouped
+    -- values stay grouped, and the collection must be non-empty.
+    | .lastBuiltin, [collectionAlg] => do
+      let out <- evalLastCounted collectionAlg ctx env
       pure out.fst
 
     -- min(collection): compare top-level collection elements left to right.
@@ -2976,6 +3036,19 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      while(Step, init)        -- 2 args, no lowering
      repeat(Step, n, init)    -- 3 args, no lowering -/
 
+/- **first/last direct-call collection lowering** is an exact-syntax frontend
+   transformation used by the C# parser so comma-separated top-level outputs can
+   be used directly with the unary `first` and `last` builtins:
+
+     first(a, b, c)   =>  first(block([a, b, c]))
+     last(a, b, c)    =>  last(block([a, b, c]))
+
+   The Lean core model itself keeps `first` and `last` unary over one evaluated
+   collection argument. Dot-call forms such as `values.first` and `values.last`
+   need no special lowering because receiver injection already supplies exactly
+   one collection argument. This shorthand is intentionally about comma-separated
+   top-level multi-result collections, not semicolon combine expressions. -/
+
 --------------------------------------------------------------------------------
 -- Surface syntax support: trailing brace-block call sugar
 --------------------------------------------------------------------------------
@@ -3102,6 +3175,8 @@ def preludeAlg : Algorithm :=
     , publicProp "order" (Algorithm.builtin .orderBuiltin)
     , publicProp "orderDesc" (Algorithm.builtin .orderDescBuiltin)
     , publicProp "count" (Algorithm.builtin .countBuiltin)
+    , publicProp "first" (Algorithm.builtin .firstBuiltin)
+    , publicProp "last" (Algorithm.builtin .lastBuiltin)
     , publicProp "min" (Algorithm.builtin .minBuiltin)
     , publicProp "max" (Algorithm.builtin .maxBuiltin)
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)

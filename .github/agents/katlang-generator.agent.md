@@ -1,5 +1,5 @@
 ---
-description: "Use when: the user wants to generate KatLang code, write KatLang programs, create KatLang algorithms, produce KatLang solutions, or translate a natural-language calculation task into KatLang syntax. Prefers collection builtins like range, filter, map, order, orderDesc, reduce, count, sum, min, max, and avg when they fit. Accepts a task description and returns valid, runnable KatLang source code."
+description: "Use when: the user wants to generate KatLang code, write KatLang programs, create KatLang algorithms, produce KatLang solutions, or translate a natural-language calculation task into KatLang syntax. Prefers collection builtins like range, filter, map, order, orderDesc, first, last, reduce, count, sum, min, max, and avg when they fit. Accepts a task description and returns valid, runnable KatLang source code."
 tools: [read, search]
 ---
 
@@ -13,8 +13,8 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, never put explicit algorithm parameters on a container with no output, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
-- Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `reduce`, `count`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
-- Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
+- Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `first`, `last`, `reduce`, `count`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
+- Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `firstValue` instead of `first`, `lastValue` instead of `last`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
 - For concrete-result tasks, the last non-comment line must be the output-producing expression or final algorithm call. Definitions may appear above it, but never instead of it.
@@ -241,7 +241,7 @@ GOOD — assumed values in final call:
 - Builtin `if` always has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Never generate a 2-argument `if`.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `// assumed annual salary = 50000`.
-- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. If a concept is naturally named `sum`, `min`, `max`, `avg`, `count`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
+- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. If a concept is naturally named `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
 - Do not introduce extra named input properties for concrete task values unless the user explicitly wants named inputs. Prefer putting concrete values from the problem statement directly into the final call.
 - Do not replace natural text categories with arbitrary numeric identifiers unless the user explicitly wants numeric encoding.
 - Do not invent special default-branch syntax for conditional algorithms such as `Else = b`.
@@ -618,6 +618,7 @@ Prefer collection builtins first when the task is fundamentally:
 - generating a numeric span
 - selecting elements by a predicate
 - transforming each element
+- selecting the first or last top-level collection element
 - sorting a collection while preserving duplicates
 - folding a collection into one value
 - counting, summing, minimizing, maximizing, or averaging a collection
@@ -627,7 +628,7 @@ Builtin-first pipeline preference:
 2. Use `filter(collection, predicate)` or `collection.filter(predicate)` to keep top-level elements.
 3. Use `map(collection, transform)` or `collection.map(transform)` to transform top-level elements.
 4. Use `order(collection)` / `collection.order` or `orderDesc(collection)` / `collection.orderDesc` when the task is numeric sorting without removing duplicates.
-5. Use `count`, `sum`, `min`, `max`, or `avg` as terminal aggregations when they match the requested result.
+5. Use `first`, `last`, `count`, `sum`, `min`, `max`, or `avg` as terminal selectors or aggregations when they match the requested result.
 6. Use `reduce(collection, step, initial)` only when the task is a true left fold that needs a custom accumulator.
 7. Drop to `repeat` or `while` only when the problem is genuinely stateful or not naturally expressible with the collection builtins.
 
@@ -668,6 +669,17 @@ Builtin-first pipeline preference:
 - Grouped values are not flattened
 - Strings are invalid
 - Empty collections stay empty
+
+### `first` and `last`
+
+`first(collection)` / `collection.first` and `last(collection)` / `collection.last` select the first or last top-level collection element unchanged.
+
+- Use them when the task is to select one end of a collection rather than aggregate all elements
+- The collection must be non-empty
+- Atoms, strings, and grouped values each count as one top-level element
+- Grouped values stay whole; they are not flattened
+- The direct-call shorthand `first(a, b, c)` / `last(a, b, c)` is valid for comma-separated top-level outputs and should be preferred over wrapping those outputs in an unnecessary helper
+- This shorthand is about comma-separated multi-result collections, not semicolon composition
 
 ### `reduce`
 

@@ -28,6 +28,8 @@
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
     - [Counting: `count`](#counting-count)
+    - [First Element: `first`](#first-element-first)
+    - [Last Element: `last`](#last-element-last)
     - [Minimum: `min`](#minimum-min)
     - [Maximum: `max`](#maximum-max)
     - [Summation: `sum`](#summation-sum)
@@ -966,6 +968,68 @@ count(((1, 2), (3, 4)))
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
 
+### First Element: `first`
+
+`first(collection)` returns the first top-level value in the evaluated collection, unchanged.
+
+- The collection must be non-empty
+- Atoms, strings, and grouped values each count as one top-level element
+- Grouped values are preserved whole and are not flattened
+
+Both call styles are supported: `first(collection)` and `collection.first`.
+
+KatLang also supports a direct-call shorthand for comma-separated top-level outputs: `first(a, b, c)` is equivalent to `first((a, b, c))` at the collection level. This shorthand is for comma-separated multi-result collections, not for semicolon composition.
+
+```
+first(range(1, 5))
+
+first(4, 5, 6)
+
+first(((1, 2), (3, 4)))
+```
+
+**Results:**
+```
+1
+
+4
+
+(1, 2)
+```
+
+Applying `first` to an empty collection is invalid because `first` requires at least one top-level element.
+
+### Last Element: `last`
+
+`last(collection)` returns the last top-level value in the evaluated collection, unchanged.
+
+- The collection must be non-empty
+- Atoms, strings, and grouped values each count as one top-level element
+- Grouped values are preserved whole and are not flattened
+
+Both call styles are supported: `last(collection)` and `collection.last`.
+
+KatLang also supports a direct-call shorthand for comma-separated top-level outputs: `last(a, b, c)` is equivalent to `last((a, b, c))` at the collection level. This shorthand is for comma-separated multi-result collections, not for semicolon composition.
+
+```
+last(range(1, 5))
+
+last(4, 5, 6)
+
+last(((1, 2), (3, 4)))
+```
+
+**Results:**
+```
+5
+
+6
+
+(3, 4)
+```
+
+Applying `last` to an empty collection is invalid because `last` requires at least one top-level element.
+
 ### Minimum: `min`
 
 `min(collection)` returns the smallest top-level numeric element in a collection.
@@ -1748,6 +1812,8 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
 | `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
 | `count` | `count(collection)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
+| `first` | `first(collection)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the collection must be non-empty |
+| `last` | `last(collection)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the collection must be non-empty |
 | `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |

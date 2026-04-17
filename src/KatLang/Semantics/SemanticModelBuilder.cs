@@ -801,6 +801,8 @@ public static class SemanticModelBuilder
                 "order" => ["collection"],
                 "orderDesc" => ["collection"],
                 "count" => ["collection"],
+                "first" => ["collection"],
+                "last" => ["collection"],
                 "min" => ["collection"],
                 "max" => ["collection"],
                 "sum" => ["collection"],

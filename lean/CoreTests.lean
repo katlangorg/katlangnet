@@ -3083,4 +3083,116 @@ def test143 : Bool :=
 
 #eval test143  -- should be true
 
+--------------------------------------------------------------------------------
+-- first/last builtin tests
+--------------------------------------------------------------------------------
+
+-- Test 144: ordinary builtin-call first picks the first ascending range element
+def test144 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "first") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test144  -- should be true
+
+-- Test 145: dot-call first uses receiver injection with no explicit args
+def test145 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "first"
+      none
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test145  -- should be true
+
+-- Test 146: ordinary builtin-call last picks the last ascending range element
+def test146 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "last") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
+    ])
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test146  -- should be true
+
+-- Test 147: dot-call last uses receiver injection with no explicit args
+def test147 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "last"
+      none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test147  -- should be true
+
+-- Test 148: first preserves a grouped top-level element unchanged
+def test148 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "first") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.ok (.group [.atom 1, .atom 2]) => true
+  | _ => false
+
+#eval test148  -- should be true
+
+-- Test 149: last preserves a grouped top-level element unchanged
+def test149 : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "last") (alg [] [] [] [groupedPairs])
+  ])) with
+  | Except.ok (.group [.atom 3, .atom 4]) => true
+  | _ => false
+
+#eval test149  -- should be true
+
+-- Test 150: first rejects empty collections
+def test150 : Bool :=
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "first") (alg [] [] [] [
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
+    ])
+  ])) with
+  | Except.error err => hasContext "first requires a non-empty collection" err && innermostIsBadArity err
+  | _ => false
+
+#eval test150  -- should be true
+
+-- Test 151: last rejects empty collections
+def test151 : Bool :=
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "last") (alg [] [] [] [
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
+    ])
+  ])) with
+  | Except.error err => hasContext "last requires a non-empty collection" err && innermostIsBadArity err
+  | _ => false
+
+#eval test151  -- should be true
+
 end KatLangTests
