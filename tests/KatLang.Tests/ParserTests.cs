@@ -380,7 +380,7 @@ public class ParserTests
         Assert.Equal("Add", dotCall.Name);
         Assert.IsType<Expr.Num>(dotCall.Target);
         Assert.NotNull(dotCall.Args);
-        Assert.Equal(1, dotCall.Args!.Output.Count);
+        Assert.Single(dotCall.Args!.Output);
     }
 
     [Fact]

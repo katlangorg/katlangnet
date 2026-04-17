@@ -50,7 +50,7 @@ public class SemanticModelTests
     private static SourceSpan StringLiteralSpan(string source)
     {
         var (tokens, _) = Lexer.Tokenize(source);
-        var token = Assert.Single(tokens.Where(token => token.Kind == TokenKind.StringLiteral));
+        var token = Assert.Single(tokens, token => token.Kind == TokenKind.StringLiteral);
         return new SourceSpan(
             token.Line,
             token.Column,

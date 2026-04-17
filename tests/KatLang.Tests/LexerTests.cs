@@ -128,7 +128,7 @@ public class LexerTests
     {
         var (tokens, _) = Lexer.Tokenize("1 // hello");
 
-        var comment = Assert.Single(tokens.Where(t => t.Kind == TokenKind.Comment));
+        var comment = Assert.Single(tokens, t => t.Kind == TokenKind.Comment);
         Assert.Equal(" hello", comment.StringValue);  // text after //
         Assert.Equal(2, comment.Position);             // starts at offset of first /
         Assert.Equal(1, comment.Line);
