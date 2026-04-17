@@ -1267,22 +1267,20 @@ public sealed class Parser
         }
     }
 
-    // ── Direct-call lowering for builtin collection shorthand ─────────────
+    // ── Direct-call lowering for builtin init-state shorthand ──────────────
     // When the parser sees a lexical call to one of these builtins with exact
-    // syntax that should package multiple comma-separated outputs into a single
-    // collection argument, it rewrites those outputs into one Expr.Block.
+    // syntax that should package multiple comma-separated outputs into one
+    // init-state argument, it rewrites those outputs into one Expr.Block.
     // This allows:
     //   while(Step, x, 0)       → while(Step, block([x, 0]))
     //   repeat(Step, n, x, 0)   → repeat(Step, n, block([x, 0]))
-    //   first(x, y, z)          → first(block([x, y, z]))
-    //   last(x, y, z)           → last(block([x, y, z]))
     // This rewriting is safe here because the callee is a known resolve name.
     // For dotCall (e.g. Step.while(x, 0)) the packaging must happen later in
     // the evaluator, after structural property lookup confirms no shadowing.
 
     /// <summary>
     /// Creates a zero-parameter block algorithm wrapping the given expressions.
-    /// Used to package multi-item builtin collection shorthand lowering.
+    /// Used to package multi-item builtin init-state lowering.
     /// </summary>
     private static Expr.Block MakeInitBlock(IReadOnlyList<Expr> exprs) =>
         new(new Algorithm.User(
@@ -1291,7 +1289,7 @@ public sealed class Parser
 
     /// <summary>
     /// If <paramref name="callee"/> is a builtin whose exact syntax packages
-    /// multiple comma-separated outputs into one collection argument, rewrite
+    /// multiple comma-separated outputs into one init-state argument, rewrite
     /// those outputs into a single <see cref="Expr.Block"/> argument.
     /// Otherwise returns <paramref name="args"/> unchanged.
     /// </summary>
@@ -1299,12 +1297,6 @@ public sealed class Parser
     {
         if (callee is not Expr.Resolve(var name)) return args;
         var count = args.Output.Count;
-
-        if (name is "first" or "last" && count >= 2)
-        {
-            var newOutput = new List<Expr> { MakeInitBlock(args.Output) };
-            return args with { Output = newOutput };
-        }
 
         if (name == "while" && count >= 3)
         {

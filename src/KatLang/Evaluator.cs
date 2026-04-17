@@ -1237,28 +1237,105 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>reduce(collection, step, initial)</c> while preserving the
-    /// accumulator's emitted-value count for the empty-collection case.
+    /// Recover the top-level values emitted at one algorithm boundary from a
+    /// counted result.
+    /// A grouped value emitted as one top-level result stays grouped, while a
+    /// multi-output result is expanded back to its top-level items.
+    /// </summary>
+    private static List<Result> CountedTopLevelValues(CountedResult output)
+    {
+        if (output.EmittedCount == 0)
+            return [];
+
+        if (output.EmittedCount == 1)
+            return [output.Value];
+
+        var items = new List<Result>();
+        ResultItems(items, output.Value);
+        return items;
+    }
+
+    private static (IReadOnlyList<Algorithm> SequenceArgs, IReadOnlyList<Algorithm> TrailingArgs)? SplitSequenceBuiltinArgs(
+        int trailingArgCount,
+        IReadOnlyList<Algorithm> args)
+    {
+        if (args.Count <= trailingArgCount)
+            return null;
+
+        var sequenceCount = args.Count - trailingArgCount;
+        return (args.Take(sequenceCount).ToList(), args.Skip(sequenceCount).ToList());
+    }
+
+    /// <summary>
+    /// Split one or more leading sequence arguments away from a sequence
+    /// builtin's fixed trailing arguments, then run the builtin-specific
+    /// handler.
+    /// Sequence builtins always consume counted top-level items. A grouped
+    /// single output stays one item even when it is the only sequence argument;
+    /// there is no special 1-argument flattening path.
+    /// </summary>
+    private static EvalResult<CountedResult> ApplySequenceBuiltinCounted(
+        BuiltinId builtin,
+        IReadOnlyList<Algorithm> args,
+        Func<IReadOnlyList<Algorithm>, IReadOnlyList<Algorithm>, EvalResult<CountedResult>> handler)
+    {
+        var trailingArgCount = BuiltinTopLevelSequenceTrailingArgs(builtin);
+        if (trailingArgCount is null)
+            return WrongBuiltinArity(builtin, args.Count);
+
+        var split = SplitSequenceBuiltinArgs(trailingArgCount.Value, args);
+        if (split is null)
+            return WrongBuiltinArity(builtin, args.Count);
+
+        return handler(split.Value.SequenceArgs, split.Value.TrailingArgs);
+    }
+
+    /// <summary>
+    /// Collect sequence items for builtins that consume one or more leading
+    /// sequence arguments.
+    /// Sequence builtins always consume counted top-level items. Each argument
+    /// contributes the top-level values it emitted at its own boundary, so a
+    /// grouped single output stays whole even when it is the only sequence
+    /// argument.
+    /// </summary>
+    private static EvalResult<List<Result>> EvalCountedSequenceItems(
+        IReadOnlyList<Algorithm> collectionArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var collected = new List<Result>();
+        foreach (var collectionArg in collectionArgs)
+        {
+            var outputR = EvalMaybeMemoizedPropertyOutputCounted(collectionArg, ctx, valEnv);
+            if (outputR.IsError) return outputR.Error;
+
+            collected.AddRange(CountedTopLevelValues(outputR.Value));
+        }
+
+        return EvalResult<List<Result>>.Ok(collected);
+    }
+
+    /// <summary>
+    /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
+    /// preserving the accumulator's emitted-value count for the empty-sequence
+    /// case.
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         Algorithm stepAlg,
         Algorithm initialAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
-
         var initialR = EvalMaybeMemoizedPropertyOutputCounted(initialAlg, ctx, valEnv);
         if (initialR.IsError) return initialR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
         var accumulator = initialR.Value;
-        foreach (var item in elements)
+        foreach (var item in elementsR.Value)
         {
             var stepR = WithCtx(
                 "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)",
@@ -1275,24 +1352,57 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>map(collection, transform)</c> while preserving the number of
-    /// top-level mapped elements.
+    /// Evaluate <c>filter</c> over one or more leading sequence arguments.
+    /// The final argument is the predicate.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalFilterCounted(
+        IReadOnlyList<Algorithm> collectionArgs,
+        Algorithm predicateAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
+
+        var kept = new List<Result>();
+        foreach (var item in elementsR.Value)
+        {
+            var predicateR = WithCtx(
+                "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
+                EvalWholeArgCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
+            if (predicateR.IsError) return predicateR.Error;
+
+            var truth = predicateR.Value.SingleAtomicTruthValue();
+            if (truth is null)
+            {
+                return new EvalError.WithContext(
+                    "filter predicate must return exactly one atomic numeric value",
+                    new EvalError.BadArity());
+            }
+
+            if (truth.Value)
+                kept.Add(item);
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(kept), kept.Count));
+    }
+
+    /// <summary>
+    /// Evaluate <c>map</c> over one or more leading sequence arguments while
+    /// preserving the number of top-level mapped elements.
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         Algorithm transformAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        var mapped = new List<Result>(elements.Count);
-        foreach (var item in elements)
+        var mapped = new List<Result>(elementsR.Value.Count);
+        foreach (var item in elementsR.Value)
         {
             var transformR = WithCtx(
                 "while evaluating map transform (map passes each collection item as one argument to the transform)",
@@ -1309,17 +1419,14 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Collect top-level collection elements as single atomic numeric values.
-    /// Used by sorting builtins that only accept clearly comparable numeric
-    /// elements and reject strings or grouped values.
+    /// Collect top-level sequence items as single atomic numeric values.
+    /// Used by numeric ordering and aggregation builtins that only accept
+    /// clearly comparable numeric elements and reject strings or grouped values.
     /// </summary>
     private static EvalResult<List<decimal>> CollectSingleAtomicNumbers(
-        Result collection,
+        IReadOnlyList<Result> elements,
         string errorContext)
     {
-        var elements = new List<Result>();
-        ResultItems(elements, collection);
-
         var numbers = new List<decimal>(elements.Count);
         foreach (var item in elements)
         {
@@ -1338,21 +1445,21 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>order(collection)</c> by eagerly sorting the top-level
-    /// numeric collection elements in ascending order.
+    /// Evaluate <c>order</c> over one or more leading sequence arguments by
+    /// eagerly sorting the top-level numeric sequence items in ascending order.
     /// Duplicates are preserved, groups are not flattened, strings are
     /// rejected, and empty collections stay empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
         var numbersR = CollectSingleAtomicNumbers(
-            collectionR.Value,
+            elementsR.Value,
             "order expects each collection element to be a single numeric value");
         if (numbersR.IsError) return numbersR.Error;
 
@@ -1364,21 +1471,21 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>orderDesc(collection)</c> by eagerly sorting the top-level
-    /// numeric collection elements in descending order.
+    /// Evaluate <c>orderDesc</c> over one or more leading sequence arguments by
+    /// eagerly sorting the top-level numeric sequence items in descending order.
     /// Duplicates are preserved, groups are not flattened, strings are
     /// rejected, and empty collections stay empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
         var numbersR = CollectSingleAtomicNumbers(
-            collectionR.Value,
+            elementsR.Value,
             "orderDesc expects each collection element to be a single numeric value");
         if (numbersR.IsError) return numbersR.Error;
 
@@ -1390,7 +1497,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>count(collection)</c> by counting the top-level collection
+    /// Evaluate <c>count</c> over one or more leading sequence arguments by counting the top-level sequence
     /// elements from left to right.
     /// Each atom, string, or grouped value counts as one top-level element;
     /// groups are not flattened or inspected recursively, and empty collections
@@ -1398,75 +1505,66 @@ public static class Evaluator
     /// Lean: <c>evalCountCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalCountCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(elements.Count), 1));
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(elementsR.Value.Count), 1));
     }
 
     /// <summary>
-    /// Evaluate <c>first(collection)</c> by returning the first top-level
+    /// Evaluate <c>first</c> over one or more leading sequence arguments by returning the first top-level
     /// collection element unchanged.
     /// Atoms, strings, and grouped values each count as one top-level element;
     /// grouped values are preserved whole, and the collection must be non-empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalFirstCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        if (elements.Count == 0)
+        if (elementsR.Value.Count == 0)
         {
             return new EvalError.WithContext(
                 "first requires a non-empty collection",
                 new EvalError.BadArity());
         }
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(elements[0], 1));
+        return EvalResult<CountedResult>.Ok(new CountedResult(elementsR.Value[0], 1));
     }
 
     /// <summary>
-    /// Evaluate <c>last(collection)</c> by returning the last top-level
+    /// Evaluate <c>last</c> over one or more leading sequence arguments by returning the last top-level
     /// collection element unchanged.
     /// Atoms, strings, and grouped values each count as one top-level element;
     /// grouped values are preserved whole, and the collection must be non-empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalLastCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        if (elements.Count == 0)
+        if (elementsR.Value.Count == 0)
         {
             return new EvalError.WithContext(
                 "last requires a non-empty collection",
                 new EvalError.BadArity());
         }
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(elements[^1], 1));
+        return EvalResult<CountedResult>.Ok(new CountedResult(elementsR.Value[^1], 1));
     }
 
     /// <summary>
-    /// Evaluate <c>min(collection)</c> by comparing top-level collection
+    /// Evaluate <c>min</c> over one or more leading sequence arguments by comparing top-level sequence
     /// elements from left to right and returning the smallest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -1474,51 +1572,37 @@ public static class Evaluator
     /// Lean: <c>evalMinCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMinCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
+        var numbersR = CollectSingleAtomicNumbers(
+            elementsR.Value,
+            "min expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        if (elements.Count == 0)
+        var numbers = numbersR.Value;
+        if (numbers.Count == 0)
         {
             return new EvalError.WithContext(
                 "min requires a non-empty collection",
                 new EvalError.BadArity());
         }
 
-        var firstNumeric = elements[0].SingleAtomicNumber();
-        if (firstNumeric is null)
+        var minimum = numbers[0];
+        for (var i = 1; i < numbers.Count; i++)
         {
-            return new EvalError.WithContext(
-                "min expects each collection element to be a single numeric value",
-                new EvalError.BadArity());
-        }
-
-        var minimum = firstNumeric.Value;
-        for (var i = 1; i < elements.Count; i++)
-        {
-            var numeric = elements[i].SingleAtomicNumber();
-            if (numeric is null)
-            {
-                return new EvalError.WithContext(
-                    "min expects each collection element to be a single numeric value",
-                    new EvalError.BadArity());
-            }
-
-            if (numeric.Value < minimum)
-                minimum = numeric.Value;
+            if (numbers[i] < minimum)
+                minimum = numbers[i];
         }
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(minimum), 1));
     }
 
     /// <summary>
-    /// Evaluate <c>max(collection)</c> by comparing top-level collection
+    /// Evaluate <c>max</c> over one or more leading sequence arguments by comparing top-level sequence
     /// elements from left to right and returning the largest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -1526,81 +1610,62 @@ public static class Evaluator
     /// Lean: <c>evalMaxCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMaxCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
+        var numbersR = CollectSingleAtomicNumbers(
+            elementsR.Value,
+            "max expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        if (elements.Count == 0)
+        var numbers = numbersR.Value;
+        if (numbers.Count == 0)
         {
             return new EvalError.WithContext(
                 "max requires a non-empty collection",
                 new EvalError.BadArity());
         }
 
-        var firstNumeric = elements[0].SingleAtomicNumber();
-        if (firstNumeric is null)
+        var maximum = numbers[0];
+        for (var i = 1; i < numbers.Count; i++)
         {
-            return new EvalError.WithContext(
-                "max expects each collection element to be a single numeric value",
-                new EvalError.BadArity());
-        }
-
-        var maximum = firstNumeric.Value;
-        for (var i = 1; i < elements.Count; i++)
-        {
-            var numeric = elements[i].SingleAtomicNumber();
-            if (numeric is null)
-            {
-                return new EvalError.WithContext(
-                    "max expects each collection element to be a single numeric value",
-                    new EvalError.BadArity());
-            }
-
-            if (numeric.Value > maximum)
-                maximum = numeric.Value;
+            if (numbers[i] > maximum)
+                maximum = numbers[i];
         }
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(maximum), 1));
     }
 
     /// <summary>
-    /// Evaluate <c>sum(collection)</c> by adding the top-level collection
+    /// Evaluate <c>sum</c> over one or more leading sequence arguments by adding the top-level sequence
     /// elements from left to right.
     /// Each element must be exactly one atomic numeric value; groups are not
     /// flattened, strings are rejected, and empty collections return <c>0</c>.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSumCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
+        var numbersR = CollectSingleAtomicNumbers(
+            elementsR.Value,
+            "sum expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
+        var numbers = numbersR.Value;
 
         decimal total = 0;
         try
         {
-            foreach (var item in elements)
+            foreach (var numeric in numbers)
             {
-                var numeric = item.SingleAtomicNumber();
-                if (numeric is null)
-                {
-                    return new EvalError.WithContext(
-                        "sum expects each collection element to be a single numeric value",
-                        new EvalError.BadArity());
-                }
-
-                total = checked(total + numeric.Value);
+                total = checked(total + numeric);
             }
         }
         catch (OverflowException)
@@ -1612,7 +1677,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>avg(collection)</c> by averaging the top-level collection
+    /// Evaluate <c>avg</c> over one or more leading sequence arguments by averaging the top-level sequence
     /// elements from left to right.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -1620,17 +1685,19 @@ public static class Evaluator
     /// Lean: <c>evalAvgCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalAvgCounted(
-        Algorithm collectionAlg,
+        IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var collectionR = EvalMaybeMemoizedPropertyOutput(collectionAlg, ctx, valEnv);
-        if (collectionR.IsError) return collectionR.Error;
+        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (elementsR.IsError) return elementsR.Error;
+        var numbersR = CollectSingleAtomicNumbers(
+            elementsR.Value,
+            "avg expects each collection element to be a single numeric value");
+        if (numbersR.IsError) return numbersR.Error;
 
-        var elements = new List<Result>();
-        ResultItems(elements, collectionR.Value);
-
-        if (elements.Count == 0)
+        var numbers = numbersR.Value;
+        if (numbers.Count == 0)
         {
             return new EvalError.WithContext(
                 "avg requires a non-empty collection",
@@ -1640,20 +1707,12 @@ public static class Evaluator
         decimal total = 0;
         try
         {
-            foreach (var item in elements)
+            foreach (var numeric in numbers)
             {
-                var numeric = item.SingleAtomicNumber();
-                if (numeric is null)
-                {
-                    return new EvalError.WithContext(
-                        "avg expects each collection element to be a single numeric value",
-                        new EvalError.BadArity());
-                }
-
-                total = checked(total + numeric.Value);
+                total = checked(total + numeric);
             }
 
-            var average = total / elements.Count;
+            var average = total / numbers.Count;
             return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
         }
         catch (OverflowException)
@@ -1674,6 +1733,29 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (BuiltinTopLevelSequenceTrailingArgs(builtin) is not null)
+        {
+            return ApplySequenceBuiltinCounted(
+                builtin,
+                args,
+                (collectionArgs, trailingArgs) => (builtin, trailingArgs.Count) switch
+                {
+                    (BuiltinId.@filter, 1) => EvalFilterCounted(collectionArgs, trailingArgs[0], ctx, valEnv),
+                    (BuiltinId.@map, 1) => EvalMapCounted(collectionArgs, trailingArgs[0], ctx, valEnv),
+                    (BuiltinId.@order, 0) => EvalOrderCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@orderDesc, 0) => EvalOrderDescCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@count, 0) => EvalCountCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@first, 0) => EvalFirstCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@last, 0) => EvalLastCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@min, 0) => EvalMinCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@max, 0) => EvalMaxCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@sum, 0) => EvalSumCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@avg, 0) => EvalAvgCounted(collectionArgs, ctx, valEnv),
+                    (BuiltinId.@reduce, 2) => EvalReduceCounted(collectionArgs, trailingArgs[0], trailingArgs[1], ctx, valEnv),
+                    _ => WrongBuiltinArity(builtin, args.Count),
+                });
+        }
+
         switch (builtin, args.Count)
         {
             case (BuiltinId.@if, 3):
@@ -1736,70 +1818,6 @@ public static class Evaluator
                 var value = BuildInclusiveRange(startIntR.Value, stopIntR.Value);
                 return EvalResult<CountedResult>.Ok(new CountedResult(value, value.ToAtoms().Count));
             }
-
-            case (BuiltinId.@filter, 2):
-            {
-                var collectionR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
-                if (collectionR.IsError) return collectionR.Error;
-
-                var elements = new List<Result>();
-                ResultItems(elements, collectionR.Value);
-
-                var kept = new List<Result>();
-                foreach (var item in elements)
-                {
-                    var predicateR = WithCtx(
-                        "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
-                        EvalWholeArgCall(args[1], item, ctx, valEnv, "filter predicate"));
-                    if (predicateR.IsError) return predicateR.Error;
-
-                    var truth = predicateR.Value.SingleAtomicTruthValue();
-                    if (truth is null)
-                    {
-                        return new EvalError.WithContext(
-                            "filter predicate must return exactly one atomic numeric value",
-                            new EvalError.BadArity());
-                    }
-
-                    if (truth.Value)
-                        kept.Add(item);
-                }
-
-                return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(kept), kept.Count));
-            }
-
-            case (BuiltinId.@map, 2):
-                return EvalMapCounted(args[0], args[1], ctx, valEnv);
-
-            case (BuiltinId.@order, 1):
-                return EvalOrderCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@orderDesc, 1):
-                return EvalOrderDescCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@count, 1):
-                return EvalCountCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@first, 1):
-                return EvalFirstCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@last, 1):
-                return EvalLastCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@min, 1):
-                return EvalMinCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@max, 1):
-                return EvalMaxCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@sum, 1):
-                return EvalSumCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@avg, 1):
-                return EvalAvgCounted(args[0], ctx, valEnv);
-
-            case (BuiltinId.@reduce, 3):
-                return EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
 
             default:
                 return WrongBuiltinArity(builtin, args.Count);
@@ -1919,51 +1937,56 @@ public static class Evaluator
         ],
         Output: []);
 
-    /// <summary>Lean: builtinAcceptsArity. ifBuiltin accepts exactly 3 args.</summary>
-    private static bool BuiltinAcceptsArity(BuiltinId b, int n) => (b, n) switch
+    private static int? BuiltinTopLevelSequenceTrailingArgs(BuiltinId builtin) => builtin switch
     {
-        (BuiltinId.@if, 3) => true,
-        (BuiltinId.@while, 2) => true,
-        (BuiltinId.@repeat, 3) => true,
-        (BuiltinId.@atoms, 1) => true,
-        (BuiltinId.@range, 2) => true,
-        (BuiltinId.@filter, 2) => true,
-        (BuiltinId.@map, 2) => true,
-        (BuiltinId.@order, 1) => true,
-        (BuiltinId.@orderDesc, 1) => true,
-        (BuiltinId.@count, 1) => true,
-        (BuiltinId.@first, 1) => true,
-        (BuiltinId.@last, 1) => true,
-        (BuiltinId.@min, 1) => true,
-        (BuiltinId.@max, 1) => true,
-        (BuiltinId.@sum, 1) => true,
-        (BuiltinId.@avg, 1) => true,
-        (BuiltinId.@reduce, 3) => true,
-        _ => false,
+        BuiltinId.@filter => 1,
+        BuiltinId.@map => 1,
+        BuiltinId.@order => 0,
+        BuiltinId.@orderDesc => 0,
+        BuiltinId.@count => 0,
+        BuiltinId.@first => 0,
+        BuiltinId.@last => 0,
+        BuiltinId.@min => 0,
+        BuiltinId.@max => 0,
+        BuiltinId.@sum => 0,
+        BuiltinId.@avg => 0,
+        BuiltinId.@reduce => 2,
+        _ => null,
     };
 
-    /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
-    private static string BuiltinArityDesc(BuiltinId b) => b switch
+    /// <summary>Lean: builtinAcceptsArity. Fixed-arity builtins stay exact; sequence builtins accept one or more leading sequence args.</summary>
+    private static bool BuiltinAcceptsArity(BuiltinId b, int n)
     {
-        BuiltinId.@if => "3",
-        BuiltinId.@while => "2",
-        BuiltinId.@repeat => "3",
-        BuiltinId.@atoms => "1",
-        BuiltinId.@range => "2",
-        BuiltinId.@filter => "2",
-        BuiltinId.@map => "2",
-        BuiltinId.@order => "1",
-        BuiltinId.@orderDesc => "1",
-        BuiltinId.@count => "1",
-        BuiltinId.@first => "1",
-        BuiltinId.@last => "1",
-        BuiltinId.@min => "1",
-        BuiltinId.@max => "1",
-        BuiltinId.@sum => "1",
-        BuiltinId.@avg => "1",
-        BuiltinId.@reduce => "3",
-        _ => "?",
-    };
+        if (BuiltinTopLevelSequenceTrailingArgs(b) is { } trailing)
+            return n > trailing;
+
+        return (b, n) switch
+        {
+            (BuiltinId.@if, 3) => true,
+            (BuiltinId.@while, 2) => true,
+            (BuiltinId.@repeat, 3) => true,
+            (BuiltinId.@atoms, 1) => true,
+            (BuiltinId.@range, 2) => true,
+            _ => false,
+        };
+    }
+
+    /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
+    private static string BuiltinArityDesc(BuiltinId b)
+    {
+        if (BuiltinTopLevelSequenceTrailingArgs(b) is { } trailing)
+            return $"at least {trailing + 1}";
+
+        return b switch
+        {
+            BuiltinId.@if => "3",
+            BuiltinId.@while => "2",
+            BuiltinId.@repeat => "3",
+            BuiltinId.@atoms => "1",
+            BuiltinId.@range => "2",
+            _ => "?",
+        };
+    }
 
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
         => builtin switch
@@ -2623,6 +2646,13 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        if (BuiltinTopLevelSequenceTrailingArgs(builtin) is not null)
+        {
+            var countedR = ApplyBuiltinCounted(builtin, args, ctx, valEnv);
+            if (countedR.IsError) return countedR.Error;
+            return EvalResult<Result>.Ok(countedR.Value.Value);
+        }
+
         switch (builtin, args.Count)
         {
             // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
@@ -2683,167 +2713,6 @@ public static class Evaluator
                 if (stopIntR.IsError) return stopIntR.Error;
 
                 return EvalResult<Result>.Ok(BuildInclusiveRange(startIntR.Value, stopIntR.Value));
-            }
-
-            // filter(collection, predicate) — left-to-right selection over top-level
-            // collection elements. The predicate must return exactly one atomic
-            // numeric value: 0 rejects the item and any nonzero atom keeps it.
-            // Grouped, multi-output, empty, or string predicate results are invalid.
-            // Kept elements are preserved unchanged and in order; grouped elements
-            // remain grouped and rejected elements are omitted.
-            case (BuiltinId.@filter, 2):
-            {
-                var collectionR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
-                if (collectionR.IsError) return collectionR.Error;
-
-                var elements = new List<Result>();
-                ResultItems(elements, collectionR.Value);
-
-                var kept = new List<Result>();
-                foreach (var item in elements)
-                {
-                    var predicateR = WithCtx(
-                        "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
-                        EvalWholeArgCall(args[1], item, ctx, valEnv, "filter predicate"));
-                    if (predicateR.IsError) return predicateR.Error;
-
-                    var truth = predicateR.Value.SingleAtomicTruthValue();
-                    if (truth is null)
-                    {
-                        return new EvalError.WithContext(
-                            "filter predicate must return exactly one atomic numeric value",
-                            new EvalError.BadArity());
-                    }
-
-                    if (truth.Value)
-                        kept.Add(item);
-                }
-
-                return EvalResult<Result>.Ok(Result.FromItems(kept));
-            }
-
-            // map(collection, transform) — left-to-right transformation over
-            // top-level collection elements. transform(element) receives each
-            // element as one whole value and must return exactly one mapped
-            // element. Grouped input/output elements stay whole.
-            case (BuiltinId.@map, 2):
-            {
-                var mapR = EvalMapCounted(args[0], args[1], ctx, valEnv);
-                if (mapR.IsError) return mapR.Error;
-                return EvalResult<Result>.Ok(mapR.Value.Value);
-            }
-
-            // order(collection) — eagerly sort top-level numeric collection
-            // elements in ascending order. Duplicates are preserved, the result
-            // stays an ordinary multi-output sequence, and empty collections
-            // remain empty. Groups are not flattened and strings are invalid.
-            case (BuiltinId.@order, 1):
-            {
-                var orderR = EvalOrderCounted(args[0], ctx, valEnv);
-                if (orderR.IsError) return orderR.Error;
-                return EvalResult<Result>.Ok(orderR.Value.Value);
-            }
-
-            // orderDesc(collection) — eagerly sort top-level numeric collection
-            // elements in descending order. Duplicates are preserved, the
-            // result stays an ordinary multi-output sequence, and empty
-            // collections remain empty. Groups are not flattened and strings
-            // are invalid.
-            case (BuiltinId.@orderDesc, 1):
-            {
-                var orderR = EvalOrderDescCounted(args[0], ctx, valEnv);
-                if (orderR.IsError) return orderR.Error;
-                return EvalResult<Result>.Ok(orderR.Value.Value);
-            }
-
-            // count(collection) — count top-level collection elements from
-            // left to right. Atoms, strings, and grouped values each count as
-            // one element; groups are not flattened, and empty collections
-            // return 0.
-            case (BuiltinId.@count, 1):
-            {
-                var countR = EvalCountCounted(args[0], ctx, valEnv);
-                if (countR.IsError) return countR.Error;
-                return EvalResult<Result>.Ok(countR.Value.Value);
-            }
-
-            // first(collection) — return the first top-level collection element
-            // unchanged. Atoms, strings, and grouped values each count as one
-            // element; grouped values stay grouped, and the collection must be
-            // non-empty.
-            case (BuiltinId.@first, 1):
-            {
-                var firstR = EvalFirstCounted(args[0], ctx, valEnv);
-                if (firstR.IsError) return firstR.Error;
-                return EvalResult<Result>.Ok(firstR.Value.Value);
-            }
-
-            // last(collection) — return the last top-level collection element
-            // unchanged. Atoms, strings, and grouped values each count as one
-            // element; grouped values stay grouped, and the collection must be
-            // non-empty.
-            case (BuiltinId.@last, 1):
-            {
-                var lastR = EvalLastCounted(args[0], ctx, valEnv);
-                if (lastR.IsError) return lastR.Error;
-                return EvalResult<Result>.Ok(lastR.Value.Value);
-            }
-
-            // min(collection) — compare top-level collection elements from
-            // left to right. The collection must be non-empty and each element
-            // must be one atomic numeric value; groups are not flattened and
-            // strings are invalid.
-            case (BuiltinId.@min, 1):
-            {
-                var minR = EvalMinCounted(args[0], ctx, valEnv);
-                if (minR.IsError) return minR.Error;
-                return EvalResult<Result>.Ok(minR.Value.Value);
-            }
-
-            // max(collection) — compare top-level collection elements from
-            // left to right. The collection must be non-empty and each element
-            // must be one atomic numeric value; groups are not flattened and
-            // strings are invalid.
-            case (BuiltinId.@max, 1):
-            {
-                var maxR = EvalMaxCounted(args[0], ctx, valEnv);
-                if (maxR.IsError) return maxR.Error;
-                return EvalResult<Result>.Ok(maxR.Value.Value);
-            }
-
-            // sum(collection) — left-to-right numeric aggregation over top-level
-            // collection elements. Each element must be one atomic numeric value;
-            // groups are not flattened, strings are invalid, and empty collections
-            // return 0.
-            case (BuiltinId.@sum, 1):
-            {
-                var sumR = EvalSumCounted(args[0], ctx, valEnv);
-                if (sumR.IsError) return sumR.Error;
-                return EvalResult<Result>.Ok(sumR.Value.Value);
-            }
-
-            // avg(collection) — left-to-right numeric averaging over top-level
-            // collection elements. The collection must be non-empty and each
-            // element must be one atomic numeric value; groups are not flattened
-            // and strings are invalid.
-            case (BuiltinId.@avg, 1):
-            {
-                var avgR = EvalAvgCounted(args[0], ctx, valEnv);
-                if (avgR.IsError) return avgR.Error;
-                return EvalResult<Result>.Ok(avgR.Value.Value);
-            }
-
-            // reduce(collection, step, initial) — left fold over the collection's
-            // top-level elements. step(element, accumulator) receives each whole
-            // element and current accumulator and must return exactly one next
-            // accumulator value. Grouped input elements stay grouped, grouped
-            // accumulator values are allowed, and empty collections return the
-            // initial accumulator unchanged.
-            case (BuiltinId.@reduce, 3):
-            {
-                var reduceR = EvalReduceCounted(args[0], args[1], args[2], ctx, valEnv);
-                if (reduceR.IsError) return reduceR.Error;
-                return EvalResult<Result>.Ok(reduceR.Value.Value);
             }
 
             default:
@@ -3273,12 +3142,37 @@ public static class Evaluator
     /// All other errors (unknownName, unknownProperty, ambiguousOpen, etc.)
     /// are propagated immediately to preserve precise diagnostics.
     /// </summary>
+    private static bool ShouldWrapArgExprAsValue(Expr expr) => expr switch
+    {
+        Expr.Block(var algorithm)
+            when algorithm.Params.Count == 0
+                && algorithm.Opens.Count == 0
+                && algorithm.Properties.Count == 0 => true,
+        _ => false,
+    };
+
+    private static Algorithm WrapArgExprAsValue(Expr expr, EvalCtx ctx)
+        => WireToCaller(
+            ctx,
+            new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [expr]));
+
     private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
         Algorithm argsAlg, EvalCtx ctx)
     {
         var result = new List<Algorithm>(argsAlg.Output.Count);
         foreach (var argExpr in argsAlg.Output)
         {
+            if (ShouldWrapArgExprAsValue(argExpr))
+            {
+                result.Add(WrapArgExprAsValue(argExpr, ctx));
+                continue;
+            }
+
             var r = ResolveAlg(argExpr, ctx);
             if (r.IsOk)
             {
@@ -3325,6 +3219,12 @@ public static class Evaluator
         var result = new List<Algorithm?>(argsAlg.Output.Count);
         foreach (var argExpr in argsAlg.Output)
         {
+            if (ShouldWrapArgExprAsValue(argExpr))
+            {
+                result.Add(null);
+                continue;
+            }
+
             var r = ResolveAlg(argExpr, ctx);
             if (r.IsOk)
             {

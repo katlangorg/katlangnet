@@ -374,7 +374,7 @@ public class SemanticModelTests
         Assert.Null(reduceReference.ResolvedDeclaration);
         Assert.NotNull(reduceReference.ResolvedProperty);
         Assert.Equal(PropertyShape.Builtin, reduceReference.ResolvedProperty!.Shape);
-        Assert.Equal(["collection", "step", "initial"], reduceReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["items...", "step", "initial"], reduceReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
     }
 
     [Fact]
@@ -395,7 +395,7 @@ public class SemanticModelTests
         Assert.Null(orderReference.ResolvedDeclaration);
         Assert.NotNull(orderReference.ResolvedProperty);
         Assert.Equal(PropertyShape.Builtin, orderReference.ResolvedProperty!.Shape);
-        Assert.Equal(["collection"], orderReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["items..."], orderReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
     }
 
     [Fact]
@@ -416,7 +416,7 @@ public class SemanticModelTests
         Assert.Null(firstReference.ResolvedDeclaration);
         Assert.NotNull(firstReference.ResolvedProperty);
         Assert.Equal(PropertyShape.Builtin, firstReference.ResolvedProperty!.Shape);
-        Assert.Equal(["collection"], firstReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["items..."], firstReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
     }
 
     [Fact]
@@ -437,7 +437,7 @@ public class SemanticModelTests
         Assert.Null(lastReference.ResolvedDeclaration);
         Assert.NotNull(lastReference.ResolvedProperty);
         Assert.Equal(PropertyShape.Builtin, lastReference.ResolvedProperty!.Shape);
-        Assert.Equal(["collection"], lastReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["items..."], lastReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
     }
 
     [Fact]

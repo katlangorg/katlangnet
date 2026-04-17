@@ -1548,27 +1548,25 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_First_DirectCall_MultiResult_ProducesBlock()
+    public void Parse_First_DirectCall_MultiResult_PreservesOrdinaryArgs()
     {
-        // first(x, y, z) should lower to first(block([x, y, z]))
+        // first(x, y, z) should stay as three ordinary call arguments.
         var result = Parser.ParseSyntax("first(x, y, z)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Single(call.Args.Output);
-        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
-        Assert.Equal(3, block.Algorithm.Output.Count);
+        Assert.Equal(3, call.Args.Output.Count);
+        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Resolve>(expression));
     }
 
     [Fact]
-    public void Parse_Last_DirectCall_MultiResult_ProducesBlock()
+    public void Parse_Last_DirectCall_MultiResult_PreservesOrdinaryArgs()
     {
-        // last(x, y, z) should lower to last(block([x, y, z]))
+        // last(x, y, z) should stay as three ordinary call arguments.
         var result = Parser.ParseSyntax("last(x, y, z)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Single(call.Args.Output);
-        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
-        Assert.Equal(3, block.Algorithm.Output.Count);
+        Assert.Equal(3, call.Args.Output.Count);
+        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Resolve>(expression));
     }
 
     [Fact]

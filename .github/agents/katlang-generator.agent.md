@@ -625,11 +625,11 @@ Prefer collection builtins first when the task is fundamentally:
 
 Builtin-first pipeline preference:
 1. Use `range(start, stop)` to generate an inclusive integer sequence.
-2. Use `filter(collection, predicate)` or `collection.filter(predicate)` to keep top-level elements.
-3. Use `map(collection, transform)` or `collection.map(transform)` to transform top-level elements.
-4. Use `order(collection)` / `collection.order` or `orderDesc(collection)` / `collection.orderDesc` when the task is numeric sorting without removing duplicates.
+2. Use `filter(...items, predicate)` or `collection.filter(predicate)` to keep top-level elements.
+3. Use `map(...items, transform)` or `collection.map(transform)` to transform top-level elements.
+4. Use `order(...items)` / `collection.order` or `orderDesc(...items)` / `collection.orderDesc` when the task is numeric sorting without removing duplicates.
 5. Use `first`, `last`, `count`, `sum`, `min`, `max`, or `avg` as terminal selectors or aggregations when they match the requested result.
-6. Use `reduce(collection, step, initial)` only when the task is a true left fold that needs a custom accumulator.
+6. Use `reduce(...items, step, initial)` only when the task is a true left fold that needs a custom accumulator.
 7. Drop to `repeat` or `while` only when the problem is genuinely stateful or not naturally expressible with the collection builtins.
 
 ### `range`
@@ -642,53 +642,68 @@ Builtin-first pipeline preference:
 
 ### `filter`
 
-`filter(collection, predicate)` or `collection.filter(predicate)` keeps top-level collection elements whose predicate returns exactly one atomic numeric truth value.
+`filter(...items, predicate)` or `collection.filter(predicate)` keeps top-level collection elements whose predicate returns exactly one atomic numeric truth value.
 
 - `0` rejects the item
 - Any nonzero atomic number keeps the item
 - Operates on top-level elements only
 - Preserves grouped elements as whole values rather than flattening them
+- A helper that emits one grouped value still contributes one item; a helper that emits multiple top-level outputs contributes multiple items
 
 ### `map`
 
-`map(collection, transform)` or `collection.map(transform)` applies a transform to each top-level collection element.
+`map(...items, transform)` or `collection.map(transform)` applies a transform to each top-level collection element.
 
 - The transform receives each top-level element as one whole argument
 - The transform must return exactly one mapped element
 - Grouped input and grouped output elements stay whole
+- A helper that emits one grouped value still causes one transform application, not one application per nested atom
+
+### Sequence-Input Rule
+
+For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `min`, `max`, `sum`, `avg`, and `reduce`:
+
+- Prefer direct multi-argument syntax when the items are already separate outputs: `order(3, 4, 2, 1)`, `first(a, b, c)`, `last(a, b, c)`, `sum(10, 20, 30)`
+- Sequence builtins always consume counted top-level items; there is no special flattening rule for the 1-argument form
+- A helper that emits multiple top-level outputs can be passed directly as one argument and combined with other sequence arguments, for example `order(Values, 1, 3)` when `Values = 3, 4, 2`
+- A helper or grouped expression that emits one grouped value still contributes one grouped item even when it is the only sequence argument, so `order((1, 2, 3))` is invalid rather than flattened
+- Preserve parentheses when a grouped value itself is intended as one item, for example `first((1, 2), (3, 4))`
+- Do not generate `order((1, 2, 3))`, `order((1, 2), (3, 4))`, `sum((1, 2), (3, 4))`, or similar code expecting grouped arguments to be flattened recursively
+- Numeric ordering and aggregation builtins still require each resulting top-level item to be one atomic numeric value
 
 ### `order` and `orderDesc`
 
-`order(collection)` / `collection.order` and `orderDesc(collection)` / `collection.orderDesc` sort top-level numeric collection elements.
+`order(...items)` / `collection.order` and `orderDesc(...items)` / `collection.orderDesc` sort top-level numeric collection elements.
 
 - `order` sorts ascending
 - `orderDesc` sorts descending
 - Duplicates are preserved
 - The result remains an ordinary KatLang multi-output sequence
 - Each top-level element must be exactly one atomic numeric value
-- Grouped values are not flattened
+- Grouped values are not flattened, including the 1-argument form
 - Strings are invalid
 - Empty collections stay empty
 
 ### `first` and `last`
 
-`first(collection)` / `collection.first` and `last(collection)` / `collection.last` select the first or last top-level collection element unchanged.
+`first(...items)` / `collection.first` and `last(...items)` / `collection.last` select the first or last top-level collection element unchanged.
 
 - Use them when the task is to select one end of a collection rather than aggregate all elements
 - The collection must be non-empty
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values stay whole; they are not flattened
-- The direct-call shorthand `first(a, b, c)` / `last(a, b, c)` is valid for comma-separated top-level outputs and should be preferred over wrapping those outputs in an unnecessary helper
-- This shorthand is about comma-separated multi-result collections, not semicolon composition
+- Prefer direct multi-argument calls such as `first(a, b, c)` and `last(a, b, c)` over wrapping those outputs in an unnecessary helper group
+- `first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return the grouped value unchanged because it is one top-level item
 
 ### `reduce`
 
-`reduce(collection, step, initial)` or `collection.reduce(step, initial)` is the builtin left fold.
+`reduce(...items, step, initial)` or `collection.reduce(step, initial)` is the builtin left fold.
 
 - Use it when the task needs a custom accumulator shape or custom folding logic
 - `step(element, accumulator)` receives each top-level element and the current accumulator
 - The step must return exactly one next accumulator value
 - Prefer this over hand-written loops when the task is still just a fold
+- A helper that emits one grouped value contributes one fold step; a helper that emits multiple top-level outputs contributes multiple fold steps
 
 ### `arity`
 
@@ -709,39 +724,43 @@ Canonical distinction:
 
 ### `count`
 
-`count(collection)` or `collection.count` returns how many top-level values the evaluated expression denotes.
+`count(...items)` or `collection.count` returns how many top-level values the evaluated expression denotes.
 
 - Use `count` when the task is about denoted top-level value count after evaluation
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are not flattened
 - Empty collections return `0`
+- `count((1, 2, 3))` is `1`, while `Values = 1, 2, 3; count(Values)` is `3`
 
 ### `sum`
 
-`sum(collection)` or `collection.sum` adds top-level numeric elements.
+`sum(...items)` or `collection.sum` adds top-level numeric elements.
 
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened
 - Strings are invalid
 - Empty collections return `0`
+- `sum((1, 2, 3))` and `Values = (1, 2, 3); sum(Values)` are invalid because that grouped value stays one non-atomic item
 
 ### `min` and `max`
 
-`min(collection)` / `collection.min` and `max(collection)` / `collection.max` compare top-level numeric elements.
+`min(...items)` / `collection.min` and `max(...items)` / `collection.max` compare top-level numeric elements.
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened
 - Strings are invalid
+- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item, so `min(Values)` and `max(Values)` are invalid
 
 ### `avg`
 
-`avg(collection)` or `collection.avg` averages top-level numeric elements.
+`avg(...items)` or `collection.avg` averages top-level numeric elements.
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened
 - Strings are invalid
+- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item, so `avg(Values)` is invalid
 
 ### Builtin-First Examples
 

@@ -326,6 +326,15 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
+    private static void AssertGroupedAtoms(Result value, params decimal[] expected)
+    {
+        var group = Assert.IsType<Result.Group>(value);
+        Assert.Equal(expected.Length, group.Items.Count);
+
+        for (var i = 0; i < expected.Length; i++)
+            Assert.Equal(expected[i], Assert.IsType<Result.Atom>(group.Items[i]).Value);
+    }
+
     [Fact]
     public void Eval_Memoizes_RepeatedEligiblePropertyWithinSingleRun()
     {
@@ -864,7 +873,7 @@ public class EvaluatorTests
             T.count
             """;
 
-        AssertEval(source, 1, 3);
+        AssertEval(source, 1, 1);
     }
 
     [Fact]
@@ -1415,7 +1424,8 @@ public class EvaluatorTests
     {
         var source = """
             KeepPair = pair:0 mod 2 == 0
-            filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
+            Pairs = (1, 10), (2, 20), (3, 30), (4, 40)
+            filter(Pairs, KeepPair)
             """;
 
         var result = EvalFull(source);
@@ -1441,6 +1451,17 @@ public class EvaluatorTests
                     a => Assert.Equal(4m, Assert.IsType<Result.Atom>(a).Value),
                     b => Assert.Equal(40m, Assert.IsType<Result.Atom>(b).Value));
             });
+    }
+
+    [Fact]
+    public void Eval_Filter_DirectCallMultiSequenceArgs_ConcatenatesItemsBeforeFiltering()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(1, 2, range(3, 6), IsEven)
+            """;
+
+        AssertEval(source, 2, 4, 6);
     }
 
     [Fact]
@@ -1514,7 +1535,7 @@ public class EvaluatorTests
             error = wc.Inner;
         }
 
-        Assert.Contains(contexts, context => context.Contains("expected 2 arguments"));
+        Assert.Contains(contexts, context => context.Contains("expected at least 2 arguments"));
         Assert.IsType<EvalError.ArityMismatch>(error);
     }
 
@@ -1570,7 +1591,8 @@ public class EvaluatorTests
     {
         var source = """
             TakeValue = pair:1
-            map(((1, 10), (2, 20), (3, 30)), TakeValue)
+            Pairs = (1, 10), (2, 20), (3, 30)
+            map(Pairs, TakeValue)
             """;
 
         AssertEval(source, 10, 20, 30);
@@ -1618,6 +1640,17 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Map_DirectCallMultiSequenceArgs_ConcatenatesItemsBeforeMapping()
+    {
+        var source = """
+            Double = x * 2
+            map(1, range(2, 4), Double)
+            """;
+
+        AssertEval(source, 2, 4, 6, 8);
+    }
+
+    [Fact]
     public void Eval_Map_EmptyTransformResult_FailsWithContext()
     {
         var source = """
@@ -1643,8 +1676,75 @@ public class EvaluatorTests
     // ── Order builtins ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_Order_AscendingNumericSorting_PreservesDuplicates()
-        => AssertEval("order((3, 4, 2, 1, 3, 3))", 1, 2, 3, 3, 3, 4);
+    public void Eval_Order_SingleSequenceArgMultiOutput_SortsAscending()
+    {
+        var source = """
+            Values = 3, 4, 2, 1, 3, 3
+            order(Values)
+            """;
+
+        AssertEval(source, 1, 2, 3, 3, 3, 4);
+    }
+
+    [Fact]
+    public void Eval_Order_DirectCallMultiArgs_SortsAscending()
+        => AssertEval("order(3, 4, 2, 1, 3, 3)", 1, 2, 3, 3, 3, 4);
+
+    [Fact]
+    public void Eval_Order_SingleGroupedArg_FailsWithContext()
+        => AssertBuiltinFailureWithContext("order((3, 4, 2, 1, 3, 3))", "order expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Order_SingleGroupedPropertyArg_FailsWithContext()
+    {
+        var source = """
+            Values = (3, 4, 2, 1, 3, 3)
+            order(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "order expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_OrderDesc_SingleSequenceArgMultiOutput_SortsDescending()
+    {
+        var source = """
+            Values = 3, 4, 2, 1, 3, 3
+            orderDesc(Values)
+            """;
+
+        AssertEval(source, 4, 3, 3, 3, 2, 1);
+    }
+
+    [Fact]
+    public void Eval_OrderDesc_DirectCallMultiArgs_SortsDescending()
+        => AssertEval("orderDesc(3, 4, 2, 1, 3, 3)", 4, 3, 3, 3, 2, 1);
+
+    [Fact]
+    public void Eval_OrderDesc_SingleGroupedArg_FailsWithContext()
+        => AssertBuiltinFailureWithContext("orderDesc((3, 4, 2, 1, 3, 3))", "orderDesc expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_OrderDesc_SingleGroupedPropertyArg_FailsWithContext()
+    {
+        var source = """
+            Values = (3, 4, 2, 1, 3, 3)
+            orderDesc(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "orderDesc expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_Order_MixedSequenceArgs_ConcatenateTopLevelItems()
+    {
+        var source = """
+            Values = 3, 4, 2
+            order(Values, 1, 3)
+            """;
+
+        AssertEval(source, 1, 2, 3, 3, 4);
+    }
 
     [Fact]
     public void Eval_Order_DotCall_SortsPropertyOutputAscending()
@@ -1687,6 +1787,18 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Order_UnsupportedElement_FailsWithContext()
         => AssertBuiltinFailureWithContext("order((1, 'hello'))", "order expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Order_GroupedMultiArgs_FailWithContext()
+        => AssertBuiltinFailureWithContext("order((1, 2), (3, 4))", "order expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_OrderDesc_GroupedMultiArgs_FailWithContext()
+        => AssertBuiltinFailureWithContext("orderDesc((1, 2), (3, 4))", "orderDesc expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Order_MixedAtomicAndGroupedMultiArgs_FailWithContext()
+        => AssertBuiltinFailureWithContext("order(1, (2, 3))", "order expects each collection element to be a single numeric value");
 
     // ── Count builtin ────────────────────────────────────────────────────────
 
@@ -1737,7 +1849,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Count_GroupedElements_CountsTopLevelGroups()
-        => AssertEval("count(((1, 2), (3, 4)))", 2);
+        => AssertEval("count(((1, 2), (3, 4)))", 1);
 
     [Fact]
     public void Eval_Count_SingleAtomicInput_ReturnsOne()
@@ -1746,6 +1858,18 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Count_StringInput_ReturnsOne()
         => AssertEval("count('hello')", 1);
+
+    [Fact]
+    public void Eval_Count_DirectCallMultiArgs_CountsTopLevelItems()
+        => AssertEval("count(10, 20, 30)", 3);
+
+    [Fact]
+    public void Eval_Count_SingleGroupedArg_CountsOneTopLevelItem()
+        => AssertEval("count((1, 2))", 1);
+
+    [Fact]
+    public void Eval_Count_GroupedMultiArgs_CountTopLevelGroups()
+        => AssertEval("count((1, 2), (3, 4))", 2);
 
     // ── First/last builtins ────────────────────────────────────────────────
 
@@ -1772,6 +1896,62 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Last_DirectCallMultiResult_Shorthand_ReturnsLastOutput()
         => AssertEval("last(1, 2, 3)", 3);
+
+    [Fact]
+    public void Eval_First_SingleGroupedArg_PreservesGroup()
+    {
+        var result = EvalFull("first((1, 2))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(1m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(2m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_First_MultiArgGroupedInputs_PreservesFirstGroup()
+    {
+        var result = EvalFull("first((1, 2), (3, 4))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(1m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(2m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Last_SingleGroupedArg_PreservesGroup()
+    {
+        var result = EvalFull("last((1, 2))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(1m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(2m, Assert.IsType<Result.Atom>(second).Value));
+    }
+
+    [Fact]
+    public void Eval_Last_MultiArgGroupedInputs_PreservesLastGroup()
+    {
+        var result = EvalFull("last((1, 2), (3, 4))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        var group = Assert.IsType<Result.Group>(result.Value);
+        Assert.Collection(
+            group.Items,
+            first => Assert.Equal(3m, Assert.IsType<Result.Atom>(first).Value),
+            second => Assert.Equal(4m, Assert.IsType<Result.Atom>(second).Value));
+    }
 
     [Fact]
     public void Eval_First_PropertyOutput_ReturnsFirstTopLevelValue()
@@ -1807,8 +1987,22 @@ public class EvaluatorTests
         var group = Assert.IsType<Result.Group>(result.Value);
         Assert.Collection(
             group.Items,
-            first => Assert.Equal(1m, Assert.IsType<Result.Atom>(first).Value),
-            second => Assert.Equal(2m, Assert.IsType<Result.Atom>(second).Value));
+            first =>
+            {
+                var firstGroup = Assert.IsType<Result.Group>(first);
+                Assert.Collection(
+                    firstGroup.Items,
+                    a => Assert.Equal(1m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(2m, Assert.IsType<Result.Atom>(b).Value));
+            },
+            second =>
+            {
+                var secondGroup = Assert.IsType<Result.Group>(second);
+                Assert.Collection(
+                    secondGroup.Items,
+                    a => Assert.Equal(3m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(4m, Assert.IsType<Result.Atom>(b).Value));
+            });
     }
 
     [Fact]
@@ -1821,8 +2015,22 @@ public class EvaluatorTests
         var group = Assert.IsType<Result.Group>(result.Value);
         Assert.Collection(
             group.Items,
-            first => Assert.Equal(3m, Assert.IsType<Result.Atom>(first).Value),
-            second => Assert.Equal(4m, Assert.IsType<Result.Atom>(second).Value));
+            first =>
+            {
+                var firstGroup = Assert.IsType<Result.Group>(first);
+                Assert.Collection(
+                    firstGroup.Items,
+                    a => Assert.Equal(1m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(2m, Assert.IsType<Result.Atom>(b).Value));
+            },
+            second =>
+            {
+                var secondGroup = Assert.IsType<Result.Group>(second);
+                Assert.Collection(
+                    secondGroup.Items,
+                    a => Assert.Equal(3m, Assert.IsType<Result.Atom>(a).Value),
+                    b => Assert.Equal(4m, Assert.IsType<Result.Atom>(b).Value));
+            });
     }
 
     [Fact]
@@ -1899,6 +2107,10 @@ public class EvaluatorTests
         => AssertEval("min(5)", 5);
 
     [Fact]
+    public void Eval_Min_DirectCallMultiArgs_FindsMinimum()
+        => AssertEval("min(10, 4, 7)", 4);
+
+    [Fact]
     public void Eval_Min_GroupedElements_FailWithContext()
         => AssertBuiltinFailureWithContext("min(((1, 2), (3, 4)))", "min expects each collection element to be a single numeric value");
 
@@ -1956,6 +2168,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Max_SingleAtomicInput_ReturnsSameValue()
         => AssertEval("max(5)", 5);
+
+    [Fact]
+    public void Eval_Max_DirectCallMultiArgs_FindsMaximum()
+        => AssertEval("max(10, 4, 7)", 10);
 
     [Fact]
     public void Eval_Max_GroupedElements_FailWithContext()
@@ -2017,6 +2233,10 @@ public class EvaluatorTests
         => AssertEval("sum(5)", 5);
 
     [Fact]
+    public void Eval_Sum_DirectCallMultiArgs_AddsValues()
+        => AssertEval("sum(10, 20, 30)", 60);
+
+    [Fact]
     public void Eval_Sum_GroupedElements_FailWithContext()
         => AssertSumElementShapeFails("sum(((1, 2), (3, 4)))");
 
@@ -2076,6 +2296,10 @@ public class EvaluatorTests
         => AssertEval("avg(5)", 5);
 
     [Fact]
+    public void Eval_Avg_DirectCallMultiArgs_ComputesMean()
+        => AssertEval("avg(10, 20, 30)", 20);
+
+    [Fact]
     public void Eval_Avg_GroupedElements_FailWithContext()
         => AssertBuiltinFailureWithContext("avg(((1, 2), (3, 4)))", "avg expects each collection element to be a single numeric value");
 
@@ -2105,6 +2329,17 @@ public class EvaluatorTests
             """;
 
         AssertEval(source, 24);
+    }
+
+    [Fact]
+    public void Eval_Reduce_DirectCallMultiSequenceArgs_FoldsConcatenatedItems()
+    {
+        var source = """
+            Add = x + total
+            reduce(1, 2, range(3, 4), Add, 0)
+            """;
+
+        AssertEval(source, 10);
     }
 
     [Fact]
@@ -2155,7 +2390,8 @@ public class EvaluatorTests
     {
         var source = """
             TakeValue((tag, value), acc) = acc + value
-            reduce(((1, 10), (2, 20), (3, 30)), TakeValue, 0)
+            Pairs = (1, 10), (2, 20), (3, 30)
+            reduce(Pairs, TakeValue, 0)
             """;
 
         AssertEval(source, 60);
@@ -2205,7 +2441,8 @@ public class EvaluatorTests
     {
         var source = """
             TakeStats((tag, value), (sum, count)) = (sum + value, count + 1)
-            reduce(((1, 10), (2, 20), (3, 30)), TakeStats, (0, 0))
+            Pairs = (1, 10), (2, 20), (3, 30)
+            reduce(Pairs, TakeStats, (0, 0))
             """;
 
         var result = EvalFull(source);
@@ -2225,7 +2462,8 @@ public class EvaluatorTests
         var source = """
             CollectColumns((left, right), (leftList, rightList)) = ((left, leftList), (right, rightList))
             SplitPairs = pairs.reduce(CollectColumns, ('end', 'end'))
-            SplitPairs(((1, 10), (2, 20)))
+            Pairs = (1, 10), (2, 20)
+            SplitPairs(Pairs)
             """;
 
         var result = EvalFull(source);
@@ -2265,6 +2503,188 @@ public class EvaluatorTests
                             nestedTail => Assert.Equal("end", Assert.IsType<Result.Str>(nestedTail).Value));
                     });
             });
+    }
+
+    // ── Uniform counted sequence extraction regressions ────────────────────
+
+    [Fact]
+    public void Eval_Filter_WrapperSingleGroupedOutput_TreatsGroupAsOneItem()
+    {
+        var source = """
+            KeepSecondEven(pair) = pair:1 mod 2 == 0
+            Values = (1, 2)
+            filter(Values, KeepSecondEven)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 1m, 2m);
+    }
+
+    [Fact]
+    public void Eval_Map_WrapperSingleGroupedOutput_MapsOneGroupedItem()
+    {
+        var source = """
+            TakeValue(pair) = pair:1
+            Values = (1, 2)
+            map(Values, TakeValue)
+            """;
+
+        AssertEval(source, 2);
+    }
+
+    [Fact]
+    public void Eval_Reduce_WrapperSingleGroupedOutput_FoldsWholeGroupOnce()
+    {
+        var source = """
+            AddValue(pair, total) = total + pair:1
+            Values = (1, 2)
+            reduce(Values, AddValue, 0)
+            """;
+
+        AssertEval(source, 2);
+    }
+
+    [Fact]
+    public void Eval_Count_WrapperSingleGroupedOutput_CountsOneTopLevelItem()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            count(Values)
+            """;
+
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Count_WrapperMultiOutput_CountsAllTopLevelValues()
+    {
+        var source = """
+            Values = 1, 2, 3
+            count(Values)
+            """;
+
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_First_WrapperSingleGroupedOutput_PreservesGroup()
+    {
+        var source = """
+            Values = (1, 2)
+            first(Values)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 1m, 2m);
+    }
+
+    [Fact]
+    public void Eval_Last_WrapperSingleGroupedOutput_PreservesGroup()
+    {
+        var source = """
+            Values = (1, 2)
+            last(Values)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 1m, 2m);
+    }
+
+    [Fact]
+    public void Eval_Sum_WrapperSingleGroupedOutput_FailsWithContext()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            sum(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "sum expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_Min_WrapperSingleGroupedOutput_FailsWithContext()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            min(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "min expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_Max_WrapperSingleGroupedOutput_FailsWithContext()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            max(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "max expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_Avg_WrapperSingleGroupedOutput_FailsWithContext()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            avg(Values)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "avg expects each collection element to be a single numeric value");
+    }
+
+    [Fact]
+    public void Eval_Sum_WrapperMultiOutput_AddsAllTopLevelValues()
+    {
+        var source = """
+            Values = 10, 20, 30
+            sum(Values)
+            """;
+
+        AssertEval(source, 60);
+    }
+
+    [Fact]
+    public void Eval_Min_WrapperMultiOutput_FindsMinimum()
+    {
+        var source = """
+            Values = 10, 4, 7
+            min(Values)
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_Max_WrapperMultiOutput_FindsMaximum()
+    {
+        var source = """
+            Values = 10, 4, 7
+            max(Values)
+            """;
+
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_Avg_WrapperMultiOutput_ComputesMean()
+    {
+        var source = """
+            Values = 10, 20, 30
+            avg(Values)
+            """;
+
+        AssertEval(source, 20);
     }
 
     [Fact]
@@ -4520,7 +4940,7 @@ public class EvaluatorTests
     {
         var source = """
             OccurrenceCount = filter(values, predicate).count
-            OccurrenceCount((1, 2), {n mod 2 == 0})
+            OccurrenceCount((1, 2), {n:0 mod 2 == 1})
             """;
 
         AssertEval(source, 1);
@@ -4530,8 +4950,9 @@ public class EvaluatorTests
     public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter()
     {
         var source = """
-            OccurrenceCount(values, target) = filter(values, {item == target}).count
-            OccurrenceCount((1, 2), 2)
+            OccurrenceCount(values, target) = filter(values, {item:1 == target:1}).count
+            Pairs = (1, 10), (2, 20), (2, 30)
+            OccurrenceCount(Pairs, (2, 20))
             """;
 
         AssertEval(source, 1);

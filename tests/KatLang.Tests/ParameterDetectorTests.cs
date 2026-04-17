@@ -265,7 +265,7 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_FirstBuiltin_DirectCallMultiResult_UsesPreludeNameAndPackagesArgs()
+    public void Detect_FirstBuiltin_DirectCallMultiResult_UsesPreludeNameWithoutPackagingArgs()
     {
         var ast = ParseAndDetect("first(x, y)");
 
@@ -276,9 +276,8 @@ public class ParameterDetectorTests
         Assert.Equal("first", builtin.Name);
 
         Assert.Empty(call.Args.Params);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(call.Args.Output));
-        Assert.Empty(block.Algorithm.Params);
-        Assert.All(block.Algorithm.Output, expression => Assert.IsType<Expr.Param>(expression));
+        Assert.Equal(2, call.Args.Output.Count);
+        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Param>(expression));
     }
 
     [Fact]

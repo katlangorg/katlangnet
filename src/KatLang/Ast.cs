@@ -10,42 +10,44 @@ public enum UnaryOp { Minus, Not }
 
 /// <summary>
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
-/// <c>filter(collection, predicate)</c> keeps the original top-level collection
-/// elements whose predicate returns exactly one atomic numeric truth value;
-/// grouped elements are preserved whole and rejected elements are omitted entirely.
-/// <c>map(collection, transform)</c> maps top-level collection elements left to
-/// right; <c>transform(element)</c> must return exactly one mapped element, and
+/// Sequence-consuming builtins always consume counted top-level items; a
+/// grouped single output stays one item even when it is the only sequence
+/// argument.
+/// <c>filter(...items, predicate)</c> keeps the original top-level sequence
+/// items whose predicate returns exactly one atomic numeric truth value.
+/// <c>map(...items, transform)</c> maps top-level sequence items left to right;
+/// <c>transform(element)</c> must return exactly one mapped element, and
 /// grouped input/output elements are preserved whole.
-/// <c>count(collection)</c> counts top-level collection elements left to right;
-/// each atom, string, or grouped value counts as one element, grouped values
-/// are not flattened, and empty collections return <c>0</c>.
-/// <c>order(collection)</c> sorts top-level numeric collection elements in
-/// ascending order; duplicates are preserved, grouped values are not flattened,
+/// <c>count(...items)</c> counts top-level sequence items left to right; each
+/// atom, string, or grouped value counts as one element, grouped values are
+/// not flattened, and empty collections return <c>0</c>.
+/// <c>order(...items)</c> sorts top-level numeric sequence items in ascending
+/// order; duplicates are preserved, grouped values are not flattened,
 /// strings are invalid, and empty collections stay empty.
-/// <c>orderDesc(collection)</c> sorts top-level numeric collection elements in
+/// <c>orderDesc(...items)</c> sorts top-level numeric sequence items in
 /// descending order; duplicates are preserved, grouped values are not
 /// flattened, strings are invalid, and empty collections stay empty.
-/// <c>first(collection)</c> returns the first top-level collection element
-/// unchanged; atoms, strings, and grouped values each count as one element,
-/// grouped values stay grouped, and the collection must be non-empty.
-/// <c>last(collection)</c> returns the last top-level collection element
-/// unchanged; atoms, strings, and grouped values each count as one element,
-/// grouped values stay grouped, and the collection must be non-empty.
-/// <c>min(collection)</c> compares top-level numeric collection elements left
-/// to right; the collection must be non-empty, each element must be exactly one
+/// <c>first(...items)</c> returns the first top-level sequence item unchanged;
+/// atoms, strings, and grouped values each count as one element, grouped
+/// values stay grouped, and the sequence must be non-empty.
+/// <c>last(...items)</c> returns the last top-level sequence item unchanged;
+/// atoms, strings, and grouped values each count as one element, grouped
+/// values stay grouped, and the sequence must be non-empty.
+/// <c>min(...items)</c> compares top-level numeric sequence items left to
+/// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>max(collection)</c> compares top-level numeric collection elements left
-/// to right; the collection must be non-empty, each element must be exactly one
+/// <c>max(...items)</c> compares top-level numeric sequence items left to
+/// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>sum(collection)</c> adds top-level collection elements left to right;
-/// each element must be exactly one atomic numeric value, grouped values are
-/// not flattened, and empty collections return <c>0</c>.
-/// <c>avg(collection)</c> averages top-level collection elements left to
-/// right; the collection must be non-empty, each element must be exactly one
+/// <c>sum(...items)</c> adds top-level numeric sequence items left to right;
+/// each item must be exactly one atomic numeric value, grouped values are
+/// not flattened, and empty sequences return <c>0</c>.
+/// <c>avg(...items)</c> averages top-level numeric sequence items left to
+/// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>reduce(collection, step, initial)</c> folds top-level collection elements
-/// left to right; <c>step(element, accumulator)</c> must return exactly one
-/// next accumulator value, and grouped elements/accumulators are preserved whole.
+/// <c>reduce(...items, step, initial)</c> folds top-level sequence items left
+/// to right; <c>step(element, accumulator)</c> must return exactly one next
+/// accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @min, @max, @sum, @avg, @reduce }
 

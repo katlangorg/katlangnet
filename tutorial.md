@@ -820,7 +820,7 @@ range(3, 3)
 
 ### Selection: `filter`
 
-`filter(collection, predicate)` walks the collection from left to right and keeps only the top-level elements whose predicate result is exactly one atomic numeric value.
+`filter(...items, predicate)` walks the sequence from left to right and keeps only the top-level elements whose predicate result is exactly one atomic numeric value.
 
 - Kept elements stay in their original order
 - Rejected elements disappear completely; no placeholders are inserted
@@ -829,6 +829,9 @@ range(3, 3)
 - Grouped, multi-output, empty, or string predicate results are errors
 
 ```
+IsEven = x mod 2 == 0
+filter(1, 2, range(3, 6), IsEven)
+
 IsEven = x mod 2 == 0
 filter(range(1, 10), IsEven)
 
@@ -841,6 +844,10 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 2
 4
 6
+
+2
+4
+6
 8
 10
 
@@ -850,10 +857,11 @@ filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
 
 If every predicate result is `0`, `filter` returns an empty collection.
 Predicate results such as `0, 999`, `(1, 0)`, or `x.string` are invalid because `filter` does not derive truth from grouped or multi-output results.
+The same extraction rule applies to grouped wrapper outputs: `filter((1, 2), predicate)` and `Values = (1, 2); filter(Values, predicate)` each treat `(1, 2)` as one top-level item.
 
 ### Mapping: `map`
 
-`map(collection, transform)` walks the collection from left to right and replaces each top-level element with `transform(element)`.
+`map(...items, transform)` walks the sequence from left to right and replaces each top-level element with `transform(element)`.
 
 - The transform receives each whole top-level element
 - The transform must return exactly one mapped element
@@ -863,9 +871,12 @@ Predicate results such as `0, 999`, `(1, 0)`, or `x.string` are invalid because 
 - Output order and element count are preserved
 - Empty collections stay empty
 
-Both call styles are supported: `map(collection, transform)` and `collection.map(transform)`.
+Both call styles are supported: `map(...items, transform)` and `collection.map(transform)`.
 
 ```
+Double = x * 2
+map(1, range(2, 4), Double)
+
 Double = x * 2
 range(1, 5).map(Double)
 
@@ -879,6 +890,11 @@ map(range(1, 3), PairWithSquare)
 4
 6
 8
+
+2
+4
+6
+8
 10
 
 (1, 1)
@@ -887,11 +903,25 @@ map(range(1, 3), PairWithSquare)
 ```
 
 Grouped input elements are passed to the transform as whole values, so `Swap((a, b)) = (b, a)` works on grouped pairs without flattening them.
+The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `Values = (1, 2); map(Values, transform)` each call `transform` once with the grouped value.
+
+### Sequence Inputs
+
+`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
+
+- They always consume counted top-level items emitted by each sequence argument
+- The same extraction rule applies whether there is one sequence argument or many
+- An argument such as `Values` where `Values = 3, 4, 2` contributes three items
+- A grouped argument such as `(1, 2)` contributes one grouped item, even when it is the only sequence argument
+- A helper such as `Wrapped` where `Wrapped = (1, 2, 3)` also contributes one grouped item rather than three separate numeric items
+- Nested grouped values are not recursively flattened unless a builtin explicitly says so, such as `atoms`
+
+This is why `order(3, 4, 2, 1)` works directly, while `order((1, 2, 3))` and `order((1, 2), (3, 4))` are invalid: grouped values remain grouped top-level items instead of being flattened into sortable atoms.
 
 ### Ordering: `order` and `orderDesc`
 
-`order(collection)` sorts the top-level numeric elements of a collection in ascending order.
-`orderDesc(collection)` sorts the same kind of collection in descending order.
+`order(...items)` sorts top-level numeric items in ascending order.
+`orderDesc(...items)` sorts the same kind of top-level items in descending order.
 
 - Both builtins evaluate the full collection eagerly before sorting
 - Duplicates are preserved; there is no implicit distinct or unique step
@@ -901,12 +931,16 @@ Grouped input elements are passed to the transform as whole values, so `Swap((a,
 - Strings and mixed-type collections are invalid
 - Empty collections stay empty
 
-Both call styles are supported: `order(collection)` / `orderDesc(collection)` and `collection.order` / `collection.orderDesc`.
+Both call styles are supported: `order(...items)` / `orderDesc(...items)` and `collection.order` / `collection.orderDesc`.
 
 ```
+order(3, 4, 2, 1, 3, 3)
+
 Values = 3, 4, 2, 1, 3, 3
 Values.order
 Values.orderDesc
+
+order(Values, 0, 5)
 
 range(5, 1).order
 ```
@@ -914,6 +948,15 @@ range(5, 1).order
 **Results:**
 ```
 1
+0
+1
+2
+3
+3
+3
+4
+5
+
 2
 3
 3
@@ -921,7 +964,6 @@ range(5, 1).order
 4
 
 4
-3
 3
 3
 2
@@ -934,11 +976,11 @@ range(5, 1).order
 5
 ```
 
-Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule.
+Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule. `order((1, 2, 3))` is invalid because the single grouped argument remains one grouped top-level item, not three sortable atoms. `order((1, 2), (3, 4))` is also invalid, because each grouped argument is a separate top-level item and grouped items are not sortable atoms.
 
 ### Counting: `count`
 
-`count(collection)` returns how many top-level values the evaluated collection denotes.
+`count(...items)` returns how many top-level values the evaluated sequence denotes.
 
 Use `.arity` for structural top-level output slots. Use `count` for denotational top-level value count after evaluation.
 
@@ -946,20 +988,24 @@ Use `.arity` for structural top-level output slots. Use `count` for denotational
 - Grouped values are not flattened or inspected recursively
 - Empty collections return `0`
 
-Both call styles are supported: `count(collection)` and `collection.count`.
+Both call styles are supported: `count(...items)` and `collection.count`.
 
 ```
 count(range(1, 5))
 
+count(10, 20, 30)
+
 IsEven = x mod 2 == 0
 range(1, 10).filter(IsEven).count
 
-count(((1, 2), (3, 4)))
+count((1, 2), (3, 4))
 ```
 
 **Results:**
 ```
 5
+
+3
 
 5
 
@@ -967,25 +1013,24 @@ count(((1, 2), (3, 4)))
 ```
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
+`count((1, 2, 3))` also returns `1`, and `Values = (1, 2, 3); count(Values)` does the same because the grouped wrapper output is still one top-level item. By contrast, `Values = 1, 2, 3; count(Values)` returns `3`.
 
 ### First Element: `first`
 
-`first(collection)` returns the first top-level value in the evaluated collection, unchanged.
+`first(...items)` returns the first top-level value in the evaluated sequence, unchanged.
 
 - The collection must be non-empty
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are preserved whole and are not flattened
 
-Both call styles are supported: `first(collection)` and `collection.first`.
-
-KatLang also supports a direct-call shorthand for comma-separated top-level outputs: `first(a, b, c)` is equivalent to `first((a, b, c))` at the collection level. This shorthand is for comma-separated multi-result collections, not for semicolon composition.
+Both call styles are supported: `first(...items)` and `collection.first`.
 
 ```
 first(range(1, 5))
 
 first(4, 5, 6)
 
-first(((1, 2), (3, 4)))
+first((1, 2), (3, 4))
 ```
 
 **Results:**
@@ -998,25 +1043,24 @@ first(((1, 2), (3, 4)))
 ```
 
 Applying `first` to an empty collection is invalid because `first` requires at least one top-level element.
+`first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return `(1, 2, 3)` unchanged because that grouped value is one top-level item.
 
 ### Last Element: `last`
 
-`last(collection)` returns the last top-level value in the evaluated collection, unchanged.
+`last(...items)` returns the last top-level value in the evaluated sequence, unchanged.
 
 - The collection must be non-empty
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are preserved whole and are not flattened
 
-Both call styles are supported: `last(collection)` and `collection.last`.
-
-KatLang also supports a direct-call shorthand for comma-separated top-level outputs: `last(a, b, c)` is equivalent to `last((a, b, c))` at the collection level. This shorthand is for comma-separated multi-result collections, not for semicolon composition.
+Both call styles are supported: `last(...items)` and `collection.last`.
 
 ```
 last(range(1, 5))
 
 last(4, 5, 6)
 
-last(((1, 2), (3, 4)))
+last((1, 2), (3, 4))
 ```
 
 **Results:**
@@ -1029,19 +1073,22 @@ last(((1, 2), (3, 4)))
 ```
 
 Applying `last` to an empty collection is invalid because `last` requires at least one top-level element.
+`last((1, 2, 3))` and `Values = (1, 2, 3); last(Values)` both return `(1, 2, 3)` unchanged for the same reason.
 
 ### Minimum: `min`
 
-`min(collection)` returns the smallest top-level numeric element in a collection.
+`min(...items)` returns the smallest top-level numeric element in a sequence.
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened or inspected recursively
 - Strings are invalid
 
-Both call styles are supported: `min(collection)` and `collection.min`.
+Both call styles are supported: `min(...items)` and `collection.min`.
 
 ```
+min(10, 4, 7)
+
 min(range(1, 5))
 
 IsEven = x mod 2 == 0
@@ -1050,25 +1097,29 @@ range(1, 10).filter(IsEven).min
 
 **Results:**
 ```
+4
+
 1
 
 2
 ```
 
-Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. The same is true for a grouped wrapper output such as `Values = (1, 2, 3); min(Values)`: `Values` contributes one grouped item, not three numeric items.
 
 ### Maximum: `max`
 
-`max(collection)` returns the largest top-level numeric element in a collection.
+`max(...items)` returns the largest top-level numeric element in a sequence.
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened or inspected recursively
 - Strings are invalid
 
-Both call styles are supported: `max(collection)` and `collection.max`.
+Both call styles are supported: `max(...items)` and `collection.max`.
 
 ```
+max(10, 4, 7)
+
 max(range(1, 5))
 
 IsEven = x mod 2 == 0
@@ -1077,16 +1128,18 @@ range(1, 10).filter(IsEven).max
 
 **Results:**
 ```
+10
+
 5
 
 10
 ```
 
-Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison.
+Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. The same is true for a grouped wrapper output such as `Values = (1, 2, 3); max(Values)`.
 
 ### Summation: `sum`
 
-`sum(collection)` adds the top-level numeric elements of a collection from left to right and returns one numeric result.
+`sum(...items)` adds the top-level numeric elements of a sequence from left to right and returns one numeric result.
 
 - Each top-level element must be exactly one atomic numeric value
 - Empty collections return `0`
@@ -1094,9 +1147,11 @@ Applying `max` to an empty collection is invalid because `max` requires at least
 - Grouped values are invalid and are not flattened
 - Strings are invalid
 
-Both call styles are supported: `sum(collection)` and `collection.sum`.
+Both call styles are supported: `sum(...items)` and `collection.sum`.
 
 ```
+sum(10, 20, 30)
+
 sum(range(1, 5))
 
 IsEven = x mod 2 == 0
@@ -1105,16 +1160,18 @@ range(1, 10).filter(IsEven).sum
 
 **Results:**
 ```
+60
+
 15
 
 30
 ```
 
-Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding.
+Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding. The same is true for `sum((1, 2, 3))` or `Values = (1, 2, 3); sum(Values)`: the grouped value stays one non-atomic top-level item.
 
 ### Average: `avg`
 
-`avg(collection)` averages the top-level numeric elements of a collection and returns one numeric result.
+`avg(...items)` averages the top-level numeric elements of a sequence and returns one numeric result.
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
@@ -1122,9 +1179,11 @@ Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2)
 - Grouped values are invalid and are not flattened
 - Strings are invalid
 
-Both call styles are supported: `avg(collection)` and `collection.avg`.
+Both call styles are supported: `avg(...items)` and `collection.avg`.
 
 ```
+avg(10, 20, 30)
+
 avg(range(1, 5))
 
 Square = x * x
@@ -1133,16 +1192,18 @@ range(1, 4).map(Square).avg
 
 **Results:**
 ```
+20
+
 3
 
 7.5
 ```
 
-Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging.
+Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging. The same is true for a grouped wrapper output such as `Values = (1, 2, 3); avg(Values)`.
 
 ### Reduction: `reduce`
 
-`reduce(collection, step, initial)` walks the collection from left to right and threads an accumulator through the top-level collection elements.
+`reduce(...items, step, initial)` walks the sequence from left to right and threads an accumulator through the top-level items.
 
 - `step(element, accumulator)` receives each whole top-level element and the current accumulator
 - The step must return exactly one next accumulator value
@@ -1150,9 +1211,12 @@ Applying `avg` to an empty collection is invalid because `avg` requires at least
 - Grouped accumulator values are allowed when they are returned as one grouped value
 - Empty collections return `initial` unchanged
 
-Both call styles are supported: `reduce(collection, step, initial)` and `collection.reduce(step, initial)`.
+Both call styles are supported: `reduce(...items, step, initial)` and `collection.reduce(step, initial)`.
 
 ```
+Add = x + total
+reduce(1, 2, range(3, 4), Add, 0)
+
 Add = x + total
 range(1, 5).reduce(Add, 0)
 
@@ -1162,12 +1226,15 @@ range(1, 4).reduce(Stats, (0, 0))
 
 **Results:**
 ```
+10
+
 15
 
 (10, 4)
 ```
 
 No wrapper helper is required for grouped accumulators: a parenthesized tuple such as `(a, b)` is one grouped accumulator value.
+With the same extraction rule, `reduce((1, 2), step, initial)` and `Values = (1, 2); reduce(Values, step, initial)` each call `step` once with the grouped value. They do not split that group into separate iterations.
 Results such as `acc, x` or any empty result are still invalid step outputs because `reduce` requires exactly one accumulator value at every step.
 
 ### Fixed Loop: `repeat`
@@ -1807,18 +1874,18 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
 | `arity` | `expr.arity` — structural top-level output slot count without evaluation |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
-| `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
-| `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
-| `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
-| `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
-| `count` | `count(collection)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
-| `first` | `first(collection)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the collection must be non-empty |
-| `last` | `last(collection)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the collection must be non-empty |
-| `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
-| `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
-| `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
-| `avg` | `avg(collection)` or `collection.avg` — average top-level numeric elements; the collection must be non-empty, each element must be a single atomic numeric value, and grouped values are not flattened |
-| `reduce` | `reduce(collection, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
+| `filter` | `filter(...items, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
+| `map` | `map(...items, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
+| `order` | `order(...items)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
+| `orderDesc` | `orderDesc(...items)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
+| `count` | `count(...items)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
+| `first` | `first(...items)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
+| `last` | `last(...items)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
+| `min` | `min(...items)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
+| `max` | `max(...items)` or `collection.max` — find the largest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
+| `sum` | `sum(...items)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
+| `avg` | `avg(...items)` or `collection.avg` — average top-level numeric elements; the sequence must be non-empty, each element must be a single atomic numeric value, and grouped values are not flattened |
+| `reduce` | `reduce(...items, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |
