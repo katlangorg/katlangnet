@@ -284,14 +284,14 @@ public class EvaluatorTests
         Assert.IsType<EvalError.BadArity>(error);
     }
 
-    private static void AssertSumElementShapeFails(string source)
+    private static void AssertBuiltinFailureWithExactContext(string source, string expectedContext)
     {
         var result = EvalFull(source);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("sum expects each collection element to be a single numeric value", formatted);
+        Assert.Contains(expectedContext, formatted);
 
         var error = result.Error;
         var contexts = new List<string>();
@@ -301,7 +301,7 @@ public class EvaluatorTests
             error = wc.Inner;
         }
 
-        Assert.Contains(contexts, context => context.Contains("sum expects each collection element to be a single numeric value"));
+        Assert.Contains(expectedContext, contexts);
         Assert.IsType<EvalError.BadArity>(error);
     }
 
@@ -1692,7 +1692,9 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Order_SingleGroupedArg_FailsWithContext()
-        => AssertBuiltinFailureWithContext("order((3, 4, 2, 1, 3, 3))", "order expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "order((3, 4, 2, 1, 3, 3))",
+            "order expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Order_SingleGroupedPropertyArg_FailsWithContext()
@@ -1702,7 +1704,9 @@ public class EvaluatorTests
             order(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "order expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "order expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
@@ -1722,7 +1726,9 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_OrderDesc_SingleGroupedArg_FailsWithContext()
-        => AssertBuiltinFailureWithContext("orderDesc((3, 4, 2, 1, 3, 3))", "orderDesc expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "orderDesc((3, 4, 2, 1, 3, 3))",
+            "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_OrderDesc_SingleGroupedPropertyArg_FailsWithContext()
@@ -1732,7 +1738,9 @@ public class EvaluatorTests
             orderDesc(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "orderDesc expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
@@ -1801,11 +1809,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Order_GroupedMultiArgs_FailWithContext()
-        => AssertBuiltinFailureWithContext("order((1, 2), (3, 4))", "order expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "order((1, 2), (3, 4))",
+            "order expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_OrderDesc_GroupedMultiArgs_FailWithContext()
-        => AssertBuiltinFailureWithContext("orderDesc((1, 2), (3, 4))", "orderDesc expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "orderDesc((1, 2), (3, 4))",
+            "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Order_MixedAtomicAndGroupedMultiArgs_FailWithContext()
@@ -2135,11 +2147,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Min_GroupedElements_FailWithContext()
-        => AssertBuiltinFailureWithContext("min(((1, 2), (3, 4)))", "min expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "min(((1, 2), (3, 4)))",
+            "min expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Min_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithContext("min('hello')", "min expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "min('hello')",
+            "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Min_IndexedNumericDiagnostic_IncludesItemIndex()
@@ -2204,11 +2220,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Max_GroupedElements_FailWithContext()
-        => AssertBuiltinFailureWithContext("max(((1, 2), (3, 4)))", "max expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "max(((1, 2), (3, 4)))",
+            "max expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Max_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithContext("max('hello')", "max expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "max('hello')",
+            "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Max_IndexedNumericDiagnostic_IncludesItemIndex()
@@ -2273,11 +2293,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Sum_GroupedElements_FailWithContext()
-        => AssertSumElementShapeFails("sum(((1, 2), (3, 4)))");
+        => AssertBuiltinFailureWithExactContext(
+            "sum(((1, 2), (3, 4)))",
+            "sum expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Sum_StringElement_FailsWithContext()
-        => AssertSumElementShapeFails("sum('hello')");
+        => AssertBuiltinFailureWithExactContext(
+            "sum('hello')",
+            "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Sum_IndexedNumericDiagnostic_IncludesItemIndex()
@@ -2350,11 +2374,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Avg_GroupedElements_FailWithContext()
-        => AssertBuiltinFailureWithContext("avg(((1, 2), (3, 4)))", "avg expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "avg(((1, 2), (3, 4)))",
+            "avg expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Avg_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithContext("avg('hello')", "avg expects each collection element to be a single numeric value");
+        => AssertBuiltinFailureWithExactContext(
+            "avg('hello')",
+            "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Avg_IndexedNumericDiagnostic_IncludesItemIndex()
@@ -2662,7 +2690,9 @@ public class EvaluatorTests
             sum(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "sum expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "sum expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
@@ -2673,7 +2703,9 @@ public class EvaluatorTests
             min(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "min expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "min expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
@@ -2684,7 +2716,9 @@ public class EvaluatorTests
             max(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "max expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "max expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
@@ -2695,7 +2729,9 @@ public class EvaluatorTests
             avg(Values)
             """;
 
-        AssertBuiltinFailureWithContext(source, "avg expects each collection element to be a single numeric value");
+        AssertBuiltinFailureWithExactContext(
+            source,
+            "avg expects each collection element to be a single numeric value; item 0 was grouped value");
     }
 
     [Fact]
