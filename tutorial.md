@@ -13,7 +13,7 @@
 4. [Multiple Outputs](#multiple-outputs)
 5. [Properties](#properties)
    - [Implicit and Explicit Output](#implicit-and-explicit-output)
-   - [Algorithm Length](#algorithm-length)
+    - [Algorithm Arity](#algorithm-arity)
    - [Output Selection](#output-selection)
    - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
    - [Name Resolution](#name-resolution)
@@ -459,27 +459,34 @@ A.X
 
 Using `A` itself where a concrete value is required is an error, because `A` does not define output. Do not add algorithm-level explicit parameters to this container form unless the algorithm also defines output.
 
-### Algorithm Length
+### Algorithm Arity
 
-Every algorithm exposes a `.length` property that returns the number of output expressions in its definition.
+Every algorithm exposes an `.arity` property that reports how many top-level output slots it has structurally.
+
+- `arity` = how many top-level output slots the expression/algorithm has structurally
+- `count` = how many top-level output values that expression denotes when evaluated
 
 ```
-Pair = 10, 20
-Triple = 1, 2, 3
+T = (1, 2, 3)
+T.arity
+T.count
 
-Pair.length
-Triple.length
-(100, 200, 300).length
+A = 1, 2, 3
+A.arity
+A.count
 ```
 
 **Results:**
 ```
-2
+1
+3
 3
 3
 ```
 
-This is useful when iterating or when you need to know how many values an algorithm produces.
+`T` has one structural output slot whose value denotes three top-level outputs when evaluated. `A` has three structural output slots and also denotes three top-level values when evaluated.
+
+Use `.arity` when you care about structural output shape. Use `.count` when you care about denoted top-level values.
 
 ### Output Selection
 
@@ -929,7 +936,9 @@ Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid b
 
 ### Counting: `count`
 
-`count(collection)` returns the number of top-level elements in a collection.
+`count(collection)` returns how many top-level values the evaluated collection denotes.
+
+Use `.arity` for structural top-level output slots. Use `count` for denotational top-level value count after evaluation.
 
 - Each atom, string, or grouped value counts as one top-level element
 - Grouped values are not flattened or inspected recursively
@@ -1227,7 +1236,7 @@ Numbers = 3, 5, 9, 1, 0, 6
 Step = a + 1, total + Numbers:a
 
 // Repeat once per element, then select the accumulated sum:
-repeat(Step, Numbers.length, 0, 0) : 1
+repeat(Step, Numbers.arity, 0, 0) : 1
 ```
 
 **Result:** `24`
@@ -1304,8 +1313,8 @@ The distinction between braces and parentheses is critical:
 When a block has no free parameters, `{}` and `()` produce the same result:
 
 ```
-(1, 2, 3).length
-{1, 2, 3}.length
+(1, 2, 3).count
+{1, 2, 3}.count
 ```
 
 **Results:**
@@ -1405,7 +1414,7 @@ A variable name in a pattern (like `x`) matches any value — it acts as a catch
 
 ### Nested Group Patterns
 
-Parentheses inside a pattern denote a **group** — a tuple of a specific length. This lets you match nested structure:
+Parentheses inside a pattern denote a **group** — a tuple of a specific arity. This lets you match nested structure:
 
 ```
 Else(1, (a, b)) = a
@@ -1486,7 +1495,7 @@ The first argument is matched against `1` or `0`; the remaining arguments are bo
 
 ### Nested Group Patterns
 
-Parentheses inside a pattern denote a **group** — a tuple of a specific length. This lets you match nested structure:
+Parentheses inside a pattern denote a **group** — a tuple of a specific arity. This lets you match nested structure:
 
 ```
 Get(1, (a, b)) = a
@@ -1725,19 +1734,20 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `~` (prefix) | Grace: move parameter one position earlier | — |
 | `~` (postfix) | Grace: move parameter one position later | — |
 
-### Builtin Algorithms and Keywords
+### Builtin Algorithms, Intrinsics, and Keywords
 
 | Keyword | Usage |
 |---|---|
 | `if` | `if(cond, a, b)` |
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
+| `arity` | `expr.arity` — structural top-level output slot count without evaluation |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(collection, predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; grouped elements stay whole |
 | `map` | `map(collection, transform)` or `collection.map(transform)` — transform top-level elements left to right; transform must return exactly one mapped element |
 | `order` | `order(collection)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
 | `orderDesc` | `orderDesc(collection)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
-| `count` | `count(collection)` or `collection.count` — count top-level elements without flattening grouped values |
+| `count` | `count(collection)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
 | `min` | `min(collection)` or `collection.min` — find the smallest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `max` | `max(collection)` or `collection.max` — find the largest top-level numeric element; the collection must be non-empty and grouped values are not flattened |
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |

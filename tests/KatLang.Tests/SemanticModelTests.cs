@@ -313,7 +313,29 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_DotCall_LengthOnImplicitParameter_IsBuiltin()
+    public void Build_DotCall_ArityOnImplicitParameter_IsBuiltin()
+    {
+        var model = BuildModel(
+            """
+            Args = 1, 2, 5
+            Algo = p.arity
+            Algo(Args)
+            """);
+
+        var parameterReference = ResolutionAt(model, 2, 8);
+        Assert.Equal(OccurrenceKind.ParameterReference, parameterReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, parameterReference.Classification);
+
+        var arityReference = ResolutionAt(model, 2, 10);
+        Assert.Equal(OccurrenceKind.DotMemberReference, arityReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, arityReference.Classification);
+        Assert.Null(arityReference.ResolvedDeclaration);
+        Assert.NotNull(arityReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, arityReference.ResolvedProperty!.Shape);
+    }
+
+    [Fact]
+    public void Build_DotCall_LengthOnImplicitParameter_RemainsUnresolved()
     {
         var model = BuildModel(
             """
@@ -328,10 +350,9 @@ public class SemanticModelTests
 
         var lengthReference = ResolutionAt(model, 2, 10);
         Assert.Equal(OccurrenceKind.DotMemberReference, lengthReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Builtin, lengthReference.Classification);
+        Assert.Equal(IdentifierClassification.Unresolved, lengthReference.Classification);
         Assert.Null(lengthReference.ResolvedDeclaration);
-        Assert.NotNull(lengthReference.ResolvedProperty);
-        Assert.Equal(PropertyShape.Builtin, lengthReference.ResolvedProperty!.Shape);
+        Assert.Null(lengthReference.ResolvedProperty);
     }
 
     [Fact]

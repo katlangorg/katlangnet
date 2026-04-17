@@ -47,7 +47,7 @@ public static class SemanticModelBuilder
     {
         private static readonly Algorithm.User MathAlgorithm = CreateMathAlgorithm();
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
-        private static readonly SymbolDefinition LengthIntrinsicSymbol = CreateBuiltinSymbol("length", algorithm: null, isPublic: true);
+        private static readonly SymbolDefinition ArityIntrinsicSymbol = CreateBuiltinSymbol("arity", algorithm: null, isPublic: true);
         private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
@@ -462,8 +462,8 @@ public static class SemanticModelBuilder
             if (dotCall.Name == "string")
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
-            if (dotCall.Name == "length" && SupportsLengthIntrinsic(dotCall.Target, scope))
-                return (IdentifierClassification.Builtin, null, LengthIntrinsicSymbol.PropertyInfo);
+            if (dotCall.Name == "arity" && SupportsArityIntrinsic(dotCall.Target, scope))
+                return (IdentifierClassification.Builtin, null, ArityIntrinsicSymbol.PropertyInfo);
 
             if (TryResolveBuiltinFallbackOnParameterReceiver(dotCall.Target, dotCall.Name, scope) is { } parameterBuiltin)
                 return (ClassifyReferenceSymbol(parameterBuiltin), parameterBuiltin.Declaration, parameterBuiltin.PropertyInfo);
@@ -631,7 +631,7 @@ public static class SemanticModelBuilder
             }
         }
 
-        private bool SupportsLengthIntrinsic(Expr expr, ScopeFrame scope)
+        private bool SupportsArityIntrinsic(Expr expr, ScopeFrame scope)
             => expr is Expr.Param || TryResolveAlgorithmValue(expr, scope) is not null;
 
         private SymbolDefinition? TryResolveBuiltinFallbackOnParameterReceiver(Expr expr, string name, ScopeFrame scope)

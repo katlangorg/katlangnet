@@ -836,23 +836,81 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_PropertyAccess_Length()
+    public void Eval_PropertyAccess_Arity()
     {
         var source = """
             X = 1, 2, 3
-            X.length
+            X.arity
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_PropertyAccess_LengthSingle()
+    public void Eval_PropertyAccess_AritySingle()
     {
         var source = """
             X = 5
-            X.length
+            X.arity
             """;
         AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_ArityAndCount_DistinguishGroupedOutput()
+    {
+        var source = """
+            T = (1, 2, 3)
+            T.arity
+            T.count
+            """;
+
+        AssertEval(source, 1, 3);
+    }
+
+    [Fact]
+    public void Eval_ArityAndCount_MatchPlainMultiOutput()
+    {
+        var source = """
+            A = 1, 2, 3
+            A.arity
+            A.count
+            """;
+
+        AssertEval(source, 3, 3);
+    }
+
+    [Fact]
+    public void Eval_ArityAndCount_PreserveSortedExampleSemantics()
+    {
+        var source = """
+            List = 3, 1, 2
+            Sorted = List.order
+            Sorted.arity
+            Sorted.count
+            """;
+
+        AssertEval(source, 1, 3);
+    }
+
+    [Fact]
+    public void Eval_ArityIntrinsic_UsesDotCallDispatch()
+        => AssertEval("(1, 2).arity", 2);
+
+    [Fact]
+    public void Eval_Length_IsNoLongerRecognizedAsIntrinsic()
+    {
+        var result = EvalFull(
+            """
+            X = 1, 2, 3
+            X.length
+            """);
+
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        var unresolved = Assert.IsType<EvalError.UnknownName>(contextual.Inner);
+        Assert.Equal("length", unresolved.Name);
     }
 
     // ── string intrinsic tests ──────────────────────────────────────────
@@ -911,7 +969,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_StringIntrinsic_WorksThroughDotCallPath()
     {
-        // Works through ordinary dot-call builtin-property path, analogous to length
+        // Works through ordinary dot-call builtin-property path, analogous to arity
         var source = """
             X = 42
             X.string
@@ -2202,7 +2260,7 @@ public class EvaluatorTests
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
             Add = a + 1, total + Numbers:a
-            Sum = repeat(Add, (Numbers.length), (0, 0)) : 1
+            Sum = repeat(Add, (Numbers.arity), (0, 0)) : 1
             Sum
             """;
         AssertEval(source, 24);

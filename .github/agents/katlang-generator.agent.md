@@ -678,10 +678,28 @@ Builtin-first pipeline preference:
 - The step must return exactly one next accumulator value
 - Prefer this over hand-written loops when the task is still just a fold
 
+### `arity`
+
+`expr.arity` returns how many top-level output slots the expression or algorithm has structurally.
+
+- Use `arity` when the task is about structural top-level output shape
+- Do not treat `arity` and `count` as interchangeable
+
+Canonical distinction:
+
+    T = (1, 2, 3)
+    T.arity    // 1
+    T.count    // 3
+
+    A = 1, 2, 3
+    A.arity    // 3
+    A.count    // 3
+
 ### `count`
 
-`count(collection)` or `collection.count` returns the number of top-level elements.
+`count(collection)` or `collection.count` returns how many top-level values the evaluated expression denotes.
 
+- Use `count` when the task is about denoted top-level value count after evaluation
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are not flattened
 - Empty collections return `0`
@@ -948,7 +966,8 @@ BETTER — specific branch first:
 
 ## Dot-Call Semantics
 
-- `a.length` — number of output items.
+- `a.arity` — structural top-level output slot count.
+- `a.count` — top-level value count after evaluation.
 - `a.string` — converts a numeric value to its string representation (e.g. `123.string` → `'123'`).
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.

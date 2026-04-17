@@ -1916,10 +1916,10 @@ public static class Evaluator
     /// Lean: isIntrinsic. Predicate for intrinsic (non-builtin) property names.
     /// These are handled specially in resolveAlg / evalDotCall.
     /// Intrinsic kinds:
-    /// - "length": structural — returns the count of output expressions (no evaluation needed)
+    /// - "arity": structural — returns the top-level output slot count without evaluation
     /// - "string": value-based — evaluates the algorithm output, converts numeric result to string
     /// </summary>
-    private static bool IsIntrinsic(string name) => name is "length" or "string";
+    private static bool IsIntrinsic(string name) => name is "arity" or "string";
 
     /// <summary>
     /// Lean: evalStructuralIntrinsic?. Evaluate a structural intrinsic property on a resolved algorithm.
@@ -1929,7 +1929,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result>? EvalStructuralIntrinsic(Algorithm targetAlg, string name)
     {
-        if (name == "length")
+        if (name == "arity")
             return EvalResult<Result>.Ok(new Result.Atom(targetAlg.Output.Count));
         return null;
     }
@@ -2083,7 +2083,7 @@ public static class Evaluator
             case Expr.DotCall:
             {
                 // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
-                // evalDotCall handles all semantics (length intrinsic, structural, lexical fallback)
+                // evalDotCall handles all semantics (arity intrinsic, structural, lexical fallback)
                 var wrapper = new Algorithm.User(
                     Parent: null, Params: [], Opens: [],
                     Properties: [], Output: [expr]);
@@ -3678,7 +3678,7 @@ public static class Evaluator
     /// <summary>
     /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
     /// Smart dispatch:
-    /// 1. Structural intrinsic (length) → output expression count of target
+    /// 1. Structural intrinsic (arity) → top-level output slot count of target
     /// 2. Value-based intrinsic (string) → evaluate target, convert numeric result to string
     /// 3. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
@@ -3725,7 +3725,7 @@ public static class Evaluator
         }
         var targetAlg = targetResult.Value;
 
-        // Lean: evalStructuralIntrinsic? — structural intrinsics (length)
+        // Lean: evalStructuralIntrinsic? — structural intrinsics (arity)
         var intrinsic = EvalStructuralIntrinsic(targetAlg, name);
         if (intrinsic is { } r) return r;
 

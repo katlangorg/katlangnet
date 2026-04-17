@@ -763,9 +763,9 @@ def test5b : Bool :=
     .dotCall (.block receiver5) "G" (some (alg [] [] [] [.num 5]))
   ]))
 
--- Test 6: Numbers.length as algorithm argument to Repeat
--- Repeat(step, Numbers.length, init) where Numbers = [10,20,30]
--- step(x) = x + 1, init = 0, count = Numbers.length = 3
+-- Test 6: Numbers.arity as algorithm argument to Repeat
+-- Repeat(step, Numbers.arity, init) where Numbers = [10,20,30]
+-- step(x) = x + 1, init = 0, count = Numbers.arity = 3
 -- Result: 0 → 1 → 2 → 3
 open KatLang (resolve param num)
 
@@ -776,27 +776,27 @@ def numbersAlg : Algorithm :=
 def stepAlg : Algorithm :=
   alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
 
--- Root algorithm that calls Repeat(step, Numbers.length, init)
-def repeatLenRoot : Algorithm :=
+-- Root algorithm that calls Repeat(step, Numbers.arity, init)
+def repeatArityRoot : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg), ("Step", stepAlg)] [
     .call (resolve "repeat")
       (alg [] [] [] [
         resolve "Step",
-        .dotCall (resolve "Numbers") "length" none,
+        .dotCall (resolve "Numbers") "arity" none,
         .block (alg [] [] [] [.num 0])
       ])
   ]
 
 def test6 : Bool :=
-  match runFlat (.block repeatLenRoot) with
+  match runFlat (.block repeatArityRoot) with
   | Except.ok [3] => true
   | _ => false
 
 #eval test6  -- should be true
 -- EXPECTED: Except.ok [3] (step applied 3 times: 0→1→2→3)
-#eval runFlat (.block repeatLenRoot)
+#eval runFlat (.block repeatArityRoot)
 
--- Test 7: Numbers.length as Repeat count (comprehensive)
+-- Test 7: Numbers.arity as Repeat count (comprehensive)
 -- Uses 6 output expressions to verify correct count
 def numbersAlg7 : Algorithm :=
   alg [] [] [] [.num 3, .num 5, .num 9, .num 1, .num 0, .num 6]
@@ -806,7 +806,7 @@ def testAlg7 : Algorithm :=
     .call (resolve "repeat")
       (alg [] [] [] [
         .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step: increment
-        .dotCall (resolve "Numbers") "length" none,                     -- count: 6
+        .dotCall (resolve "Numbers") "arity" none,                      -- count: 6
         .block (alg [] [] [] [.num 0])                                   -- init: 0
       ])
   ]
@@ -896,9 +896,9 @@ def test10 : Bool :=
     ])
 ]))
 
--- Test 11: dotCall none syntax for length in Repeat argument position
--- Repeat(Add, Numbers.length, (0,0)) where Numbers.length is encoded as .dotCall
--- Numbers = [3,5,9,1,0,6] → length = 6
+-- Test 11: dotCall none syntax for arity in Repeat argument position
+-- Repeat(Add, Numbers.arity, (0,0)) where Numbers.arity is encoded as .dotCall
+-- Numbers = [3,5,9,1,0,6] → arity = 6
 -- Add(a,sum) = (a+1, sum + Numbers[a])
 -- Result: sum of all Numbers = 3+5+9+1+0+6 = 24, extracted via index 1
 def numbersAlg11 : Algorithm :=
@@ -916,7 +916,7 @@ def testAlg11 : Algorithm :=
       (.call (resolve "repeat")
         (alg [] [] [] [
           resolve "Add",
-          .dotCall (resolve "Numbers") "length" none,    -- ← no-arg dotCall
+          .dotCall (resolve "Numbers") "arity" none,     -- ← no-arg dotCall
           .block (alg [] [] [] [.num 0, .num 0])
         ]))
       (.num 1)
@@ -931,9 +931,9 @@ def test11 : Bool :=
 -- EXPECTED: Except.ok [24]
 #eval runFlat (.block testAlg11)
 
--- Test 12: dotCall length as Repeat count (simple increment)
+-- Test 12: dotCall arity as Repeat count (simple increment)
 -- Same as Test 7 but with dotCall none syntax
--- Numbers has 3 outputs → length = 3, step(x) = x + 1, init = 0 → 3
+-- Numbers has 3 outputs → arity = 3, step(x) = x + 1, init = 0 → 3
 def numbersAlg12 : Algorithm :=
   alg [] [] [] [.num 10, .num 20, .num 30]
 
@@ -942,7 +942,7 @@ def testAlg12 : Algorithm :=
     .call (resolve "repeat")
       (alg [] [] [] [
         .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step
-        .dotCall (resolve "Numbers") "length" none,                              -- ← no-arg dotCall
+        .dotCall (resolve "Numbers") "arity" none,                       -- ← no-arg dotCall
         .block (alg [] [] [] [.num 0])                                   -- init
       ])
   ]
@@ -956,23 +956,80 @@ def test12 : Bool :=
 -- EXPECTED: Except.ok [3]
 #eval runFlat (.block testAlg12)
 
--- Test 13: dotCall none length in value position (evalDotCall path)
+-- Test 13: dotCall none arity in value position (evalDotCall path)
 def test13 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none) with
+  match runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none) with
   | Except.ok [2] => true
   | _ => false
 
 #eval test13  -- should be true
-#eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none)
+#eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none)
 
--- Test 14: .dotCall length in value position (evalDotCall path)
+-- Test 14: .dotCall arity in value position (evalDotCall path)
 def test14 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none) with
+  match runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none) with
   | Except.ok [2] => true
   | _ => false
 
 #eval test14  -- should be true
-#eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none)
+#eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none)
+
+-- Test 14a: grouped output keeps structural arity distinct from count
+def groupedOutputRoot14a : Algorithm :=
+  algPrivate [] [] [("T", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])] [
+    .dotCall (resolve "T") "arity" none,
+    .dotCall (resolve "T") "count" none
+  ]
+
+def test14a : Bool :=
+  match runFlat (.block groupedOutputRoot14a) with
+  | Except.ok [1, 3] => true
+  | _ => false
+
+#eval test14a  -- should be true
+#eval runFlat (.block groupedOutputRoot14a)
+
+-- Test 14b: plain multi-output keeps arity and count aligned
+def multiOutputRoot14b : Algorithm :=
+  algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2, .num 3])] [
+    .dotCall (resolve "A") "arity" none,
+    .dotCall (resolve "A") "count" none
+  ]
+
+def test14b : Bool :=
+  match runFlat (.block multiOutputRoot14b) with
+  | Except.ok [3, 3] => true
+  | _ => false
+
+#eval test14b  -- should be true
+#eval runFlat (.block multiOutputRoot14b)
+
+-- Test 14c: sorted output preserves structural arity while count reflects evaluated values
+def sortedOutputRoot14c : Algorithm :=
+  algPrivate [] [] [
+    ("List", alg [] [] [] [.num 3, .num 1, .num 2]),
+    ("Sorted", alg [] [] [] [.dotCall (resolve "List") "order" none])
+  ] [
+    .dotCall (resolve "Sorted") "arity" none,
+    .dotCall (resolve "Sorted") "count" none
+  ]
+
+def test14c : Bool :=
+  match runFlat (.block sortedOutputRoot14c) with
+  | Except.ok [1, 3] => true
+  | _ => false
+
+#eval test14c  -- should be true
+#eval runFlat (.block sortedOutputRoot14c)
+
+-- Test 14d: old length intrinsic name is no longer recognized
+def test14d : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval test14d  -- should be true
+#eval runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none)
 
 -- Test 15: user-defined higher-order call keeps eager value ABI
 -- ApplyTwice(f, x) = f(f(x)); passing Inc as an algorithm argument should work.

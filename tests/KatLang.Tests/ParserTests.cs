@@ -268,11 +268,11 @@ public class ParserTests
     [Fact]
     public void Parse_DotAccess_ReturnsDotCallExpr()
     {
-        var result = Parser.ParseSyntax("X.length");
+        var result = Parser.ParseSyntax("X.arity");
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        Assert.Equal("length", dotCall.Name);
+        Assert.Equal("arity", dotCall.Name);
         var target = Assert.IsType<Expr.Resolve>(dotCall.Target);
         Assert.Equal("X", target.Name);
     }

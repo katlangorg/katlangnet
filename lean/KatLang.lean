@@ -1017,10 +1017,10 @@ def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
     rather than being looked up as structural properties.
 
     Intrinsic kinds:
-    - "length": structural — returns the count of output expressions (no evaluation needed)
+    - "arity": structural — returns the top-level output slot count without evaluation
     - "string": value-based — evaluates the algorithm output, converts numeric result to string -/
 def isIntrinsic (name : Ident) : Bool :=
-  name = "length" || name = "string"
+  name = "arity" || name = "string"
 
 /-- Convert a numeric Result to its canonical string representation.
     Only atomic numeric values are supported; other forms raise typeMismatch.
@@ -1035,7 +1035,7 @@ def resultToString (r : Result) : EvalM Result :=
     Value-based intrinsics (e.g. `string`) are handled inside evalDotCall
     because they require evaluation context. -/
 def evalStructuralIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result) :=
-  if name = "length" then
+  if name = "arity" then
     pure (some (Result.atom (Int.ofNat (Algorithm.output targetAlg).length)))
   else
     pure none
@@ -1580,7 +1580,7 @@ mutual
         | []   => .error (Error.unknownName n)
     | .dotCall o n args =>
         -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all semantics
-        -- (length intrinsic, structural property, receiver injection, lexical fallback)
+      -- (arity intrinsic, structural property, receiver injection, lexical fallback)
         pure (wireToCaller ctx (Algorithm.ofExpr (.dotCall o n args)))
     -- Explicit errors for syntactic forms that cannot resolve to algorithms
     | .param x =>
@@ -2632,7 +2632,7 @@ mutual
 
   /-- Evaluate dotCall: a.f or a.f(args)
       Smart dispatch:
-      - "length" structural intrinsic → output expression count of target
+      - "arity" structural intrinsic → top-level output slot count of target
       - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):
         - If no args and 0-param → value access
