@@ -335,6 +335,22 @@ public class EvaluatorTests
             Assert.Equal(expected[i], Assert.IsType<Result.Atom>(group.Items[i]).Value);
     }
 
+    private static void AssertNestedGroupedAtoms(Result value, params decimal[][] expectedGroups)
+    {
+        var outer = Assert.IsType<Result.Group>(value);
+        Assert.Equal(expectedGroups.Length, outer.Items.Count);
+
+        for (var groupIndex = 0; groupIndex < expectedGroups.Length; groupIndex++)
+        {
+            var group = Assert.IsType<Result.Group>(outer.Items[groupIndex]);
+            var expected = expectedGroups[groupIndex];
+            Assert.Equal(expected.Length, group.Items.Count);
+
+            for (var itemIndex = 0; itemIndex < expected.Length; itemIndex++)
+                Assert.Equal(expected[itemIndex], Assert.IsType<Result.Atom>(group.Items[itemIndex]).Value);
+        }
+    }
+
     [Fact]
     public void Eval_Memoizes_RepeatedEligiblePropertyWithinSingleRun()
     {
@@ -2088,6 +2104,82 @@ public class EvaluatorTests
             """;
 
         AssertBuiltinFailureWithContext(source, "last requires a non-empty collection");
+    }
+
+    // ── Distinct builtin ───────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Distinct_OrdinaryBuiltinCall_RemovesLaterDuplicatesPreservingFirstOccurrence()
+        => AssertEval("distinct(3, 1, 3, 2, 1, 2)", 3, 1, 2);
+
+    [Fact]
+    public void Eval_Distinct_DotCall_RemovesLaterDuplicates()
+    {
+        var source = """
+            Values = 3, 1, 3, 2, 1, 2
+            Values.distinct
+            """;
+
+        AssertEval(source, 3, 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Distinct_AllEqualInput_ReturnsSingleValue()
+        => AssertEval("distinct(4, 4, 4, 4)", 4);
+
+    [Fact]
+    public void Eval_Distinct_AlreadyDistinctInput_PreservesOrder()
+        => AssertEval("distinct(1, 2, 3)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Distinct_EmptyInput_ReturnsEmpty()
+    {
+        var source = """
+            IsNegative = x < 0
+            distinct(range(1, 4).filter(IsNegative))
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Distinct_GroupedItems_RemoveDuplicateGroupsByValue()
+    {
+        var result = EvalFull("distinct((1, 2), (1, 2), (3, 4))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertNestedGroupedAtoms(result.Value, [1m, 2m], [3m, 4m]);
+    }
+
+    [Fact]
+    public void Eval_Distinct_GroupedWrapperOutput_PreservesSingleGroupedItem()
+    {
+        var source = """
+            Values = ((1, 2), (1, 2), (3, 4))
+            distinct(Values)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertNestedGroupedAtoms(result.Value, [1m, 2m], [1m, 2m], [3m, 4m]);
+    }
+
+    [Fact]
+    public void Eval_Distinct_MultiOutputWrapper_RemovesDuplicateTopLevelGroups()
+    {
+        var source = """
+            Values = (1, 2), (1, 2), (3, 4)
+            distinct(Values)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertNestedGroupedAtoms(result.Value, [1m, 2m], [3m, 4m]);
     }
 
     // ── Take/skip builtins ────────────────────────────────────────────────

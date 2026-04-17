@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, First, Last, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, First, Last, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -1818,6 +1818,27 @@ public static class Evaluator
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(items.Count), 1));
 
     /// <summary>
+    /// Evaluate <c>distinct</c> over one or more leading sequence arguments by
+    /// removing later duplicate top-level items while preserving the original
+    /// order of first occurrence. Duplicate detection follows KatLang value
+    /// semantics, so atoms compare by numeric value, strings by exact string
+    /// value, and groups structurally by grouped contents.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalDistinctCounted(
+        IReadOnlyList<Result> items)
+    {
+        var distinctItems = new List<Result>(items.Count);
+        var seen = new HashSet<Result>(Result.ValueComparer);
+        foreach (var item in items)
+        {
+            if (seen.Add(item))
+                distinctItems.Add(item);
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(distinctItems), distinctItems.Count));
+    }
+
+    /// <summary>
     /// Evaluate <c>first</c> over one or more leading sequence arguments by returning the first top-level
     /// collection element unchanged.
     /// Atoms, strings, and grouped values each count as one top-level element;
@@ -2068,6 +2089,7 @@ public static class Evaluator
                 (BuiltinId.@order, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderCounted),
                 (BuiltinId.@orderDesc, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderDescCounted),
                 (BuiltinId.@count, 0) => WithPreparedFlatItems(collectionArgs, EvalCountCounted),
+                (BuiltinId.@distinct, 0) => WithPreparedFlatItems(collectionArgs, EvalDistinctCounted),
                 (BuiltinId.@first, 0) => WithPreparedFlatItems(collectionArgs, EvalFirstCounted),
                 (BuiltinId.@last, 0) => WithPreparedFlatItems(collectionArgs, EvalLastCounted),
                 (BuiltinId.@take, 1) => WithPreparedSingleWholeNumberTrailingArg(trailingArgs, count => WithPreparedFlatItems(collectionArgs, items => EvalTakeCounted(items, count))),
@@ -2268,6 +2290,7 @@ public static class Evaluator
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
             new("first",  new Algorithm.Builtin(BuiltinId.@first),  IsPublic: true),
             new("last",   new Algorithm.Builtin(BuiltinId.@last),   IsPublic: true),
+            new("distinct", new Algorithm.Builtin(BuiltinId.@distinct), IsPublic: true),
             new("take",   new Algorithm.Builtin(BuiltinId.@take),   IsPublic: true),
             new("skip",   new Algorithm.Builtin(BuiltinId.@skip),   IsPublic: true),
             new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
@@ -2302,6 +2325,9 @@ public static class Evaluator
     private static readonly SequenceBuiltinMetadata LastSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
 
+    private static readonly SequenceBuiltinMetadata DistinctSequenceBuiltinMetadata =
+        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+
     private static readonly SequenceBuiltinMetadata TakeSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
@@ -2332,6 +2358,7 @@ public static class Evaluator
         BuiltinId.@count => CountSequenceBuiltinMetadata,
         BuiltinId.@first => FirstSequenceBuiltinMetadata,
         BuiltinId.@last => LastSequenceBuiltinMetadata,
+        BuiltinId.@distinct => DistinctSequenceBuiltinMetadata,
         BuiltinId.@take => TakeSequenceBuiltinMetadata,
         BuiltinId.@skip => SkipSequenceBuiltinMetadata,
         BuiltinId.@min => MinSequenceBuiltinMetadata,
@@ -2356,6 +2383,7 @@ public static class Evaluator
         BuiltinId.@count => "count",
         BuiltinId.@first => "first",
         BuiltinId.@last => "last",
+        BuiltinId.@distinct => "distinct",
         BuiltinId.@take => "take",
         BuiltinId.@skip => "skip",
         BuiltinId.@min => "min",

@@ -441,6 +441,27 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_DistinctOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Selected = values.distinct
+            """);
+
+        var valuesReference = ResolutionAt(model, 1, 12);
+        Assert.Equal(OccurrenceKind.ParameterReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, valuesReference.Classification);
+
+        var distinctReference = ResolutionAt(model, 1, 19);
+        Assert.Equal(OccurrenceKind.DotMemberReference, distinctReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, distinctReference.Classification);
+        Assert.Null(distinctReference.ResolvedDeclaration);
+        Assert.NotNull(distinctReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, distinctReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items..."], distinctReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_DotCall_TakeOnImplicitParameter_UsesBuiltinFallback()
     {
         var model = BuildModel(

@@ -147,7 +147,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | distinctBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 structure SequenceBuiltinLeadingArity where
@@ -231,6 +231,8 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
     }
   | .lastBuiltin => some {
       emptyPolicy := .requireAnyItem
+    }
+  | .distinctBuiltin => some {
     }
   | .takeBuiltin => some {
       trailingArgs := [{ label := "count", kind := .wholeNumber }]
@@ -355,6 +357,7 @@ def builtinDisplayName : Builtin -> String
   | .countBuiltin => "count"
   | .firstBuiltin => "first"
   | .lastBuiltin => "last"
+  | .distinctBuiltin => "distinct"
   | .takeBuiltin => "take"
   | .skipBuiltin => "skip"
   | .minBuiltin => "min"
@@ -650,7 +653,7 @@ inductive Result where
   | atom  : Int -> Result
   | str   : String -> Result     -- first-class string value (exact equality, no ordering/coercion)
   | group : List Result -> Result
-  deriving Repr
+  deriving Repr, BEq
 
 namespace Result
   def normalize : Result -> Result
@@ -2366,6 +2369,18 @@ mutual
   partial def evalCountCounted (items : List Result) : EvalM CountedResult := do
     pure (Result.atom (Int.ofNat items.length), 1)
 
+  /-- Evaluate `distinct` over one or more leading sequence arguments.
+      `distinct` removes later duplicate top-level items while preserving the
+      first occurrence of each item and the original left-to-right order.
+
+      Equality follows ordinary KatLang value semantics on extracted top-level
+      items: atoms compare by numeric value, strings by exact string value, and
+      grouped values structurally by their grouped contents. Grouped items stay
+      grouped and are not flattened. Empty collections stay empty. -/
+  partial def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
+    let distinctItems := dedupList items
+    pure (Result.normalize (Result.group distinctItems), distinctItems.length)
+
   /-- Evaluate `first` over one or more leading sequence arguments.
       `first` evaluates the full top-level sequence and
       returns its first top-level element unchanged.
@@ -2535,6 +2550,9 @@ mutual
         | .countBuiltin, [] =>
             withPreparedFlatItems collectionArgs fun items =>
               evalCountCounted items
+        | .distinctBuiltin, [] =>
+            withPreparedFlatItems collectionArgs fun items =>
+              evalDistinctCounted items
         | .firstBuiltin, [] =>
             withPreparedFlatItems collectionArgs fun items =>
               evalFirstCounted items
@@ -3498,6 +3516,7 @@ def preludeAlg : Algorithm :=
     , publicProp "count" (Algorithm.builtin .countBuiltin)
     , publicProp "first" (Algorithm.builtin .firstBuiltin)
     , publicProp "last" (Algorithm.builtin .lastBuiltin)
+    , publicProp "distinct" (Algorithm.builtin .distinctBuiltin)
     , publicProp "take" (Algorithm.builtin .takeBuiltin)
     , publicProp "skip" (Algorithm.builtin .skipBuiltin)
     , publicProp "min" (Algorithm.builtin .minBuiltin)

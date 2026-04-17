@@ -8,6 +8,13 @@ public abstract record Result
 {
     private Result() { }
 
+    /// <summary>
+    /// KatLang value-semantic comparer for <see cref="Result"/>.
+    /// Atoms compare by numeric value, strings by exact string value, and
+    /// groups structurally by ordered child results.
+    /// </summary>
+    public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer();
+
     /// <summary>A single numeric value.</summary>
     public sealed record Atom(decimal Value) : Result;
 
@@ -172,5 +179,64 @@ public abstract record Result
     {
         var list = items.ToList();
         return new Group(list).Normalize();
+    }
+
+    private sealed class ValueSemanticComparer : IEqualityComparer<Result>
+    {
+        public bool Equals(Result? x, Result? y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x is null || y is null) return false;
+
+            return (x, y) switch
+            {
+                (Atom(var left), Atom(var right)) => left == right,
+                (Str(var left), Str(var right)) => StringComparer.Ordinal.Equals(left, right),
+                (Group(var leftItems), Group(var rightItems)) =>
+                    leftItems.Count == rightItems.Count && ItemsEqual(leftItems, rightItems),
+                _ => false,
+            };
+        }
+
+        public int GetHashCode(Result obj)
+        {
+            var hash = new HashCode();
+            AddHashCode(ref hash, obj);
+            return hash.ToHashCode();
+        }
+
+        private bool ItemsEqual(IReadOnlyList<Result> left, IReadOnlyList<Result> right)
+        {
+            for (var index = 0; index < left.Count; index++)
+            {
+                if (!Equals(left[index], right[index]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static void AddHashCode(ref HashCode hash, Result result)
+        {
+            switch (result)
+            {
+                case Atom(var value):
+                    hash.Add(0);
+                    hash.Add(value);
+                    break;
+
+                case Str(var value):
+                    hash.Add(1);
+                    hash.Add(value, StringComparer.Ordinal);
+                    break;
+
+                case Group(var items):
+                    hash.Add(2);
+                    hash.Add(items.Count);
+                    foreach (var item in items)
+                        AddHashCode(ref hash, item);
+                    break;
+            }
+        }
     }
 }

@@ -30,6 +30,7 @@
     - [Counting: `count`](#counting-count)
     - [First Element: `first`](#first-element-first)
     - [Last Element: `last`](#last-element-last)
+    - [Distinct: `distinct`](#distinct-distinct)
     - [Take Prefix: `take`](#take-prefix-take)
     - [Skip Prefix: `skip`](#skip-prefix-skip)
     - [Minimum: `min`](#minimum-min)
@@ -909,7 +910,7 @@ The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `
 
 ### Sequence Inputs
 
-`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `take`, `skip`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
+`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
 
 - They always consume counted top-level items emitted by each sequence argument
 - The same extraction rule applies whether there is one sequence argument or many
@@ -917,6 +918,7 @@ The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `
 - A grouped argument such as `(1, 2)` contributes one grouped item, even when it is the only sequence argument
 - A helper such as `Wrapped` where `Wrapped = (1, 2, 3)` also contributes one grouped item rather than three separate numeric items
 - Nested grouped values are not recursively flattened unless a builtin explicitly says so, such as `atoms`
+- `distinct` compares those extracted top-level items using ordinary KatLang value semantics: atoms by numeric value, strings by exact string value, and grouped values structurally by grouped contents
 - `take` and `skip` keep their count first in direct-call surface syntax (`take(2, Values)` / `skip(2, Values)`), but they still consume the same extracted top-level items as the other sequence builtins
 
 This is why `order(3, 4, 2, 1)` works directly, while `order((1, 2, 3))` and `order((1, 2), (3, 4))` are invalid: grouped values remain grouped top-level items instead of being flattened into sortable atoms.
@@ -927,7 +929,7 @@ This is why `order(3, 4, 2, 1)` works directly, while `order((1, 2, 3))` and `or
 `orderDesc(...items)` sorts the same kind of top-level items in descending order.
 
 - Both builtins evaluate the full collection eagerly before sorting
-- Duplicates are preserved; there is no implicit distinct or unique step
+- Duplicates are preserved; there is no implicit distinct or unique step, so use `distinct` separately when deduplication is required
 - The result is still an ordinary KatLang multi-output sequence
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened or inspected recursively
@@ -1077,6 +1079,42 @@ last((1, 2), (3, 4))
 
 Applying `last` to an empty collection is invalid because `last` requires at least one top-level element.
 `last((1, 2, 3))` and `Values = (1, 2, 3); last(Values)` both return `(1, 2, 3)` unchanged for the same reason.
+
+### Distinct: `distinct`
+
+`distinct(...items)` returns the extracted top-level sequence items with later duplicates removed.
+
+- The original left-to-right order of first occurrence is preserved
+- Atoms compare by numeric value, strings by exact string value, and grouped values structurally by grouped contents
+- Grouped values stay whole and are not flattened
+- Empty collections stay empty
+
+Both call styles are supported: `distinct(...items)` and `collection.distinct`.
+
+```
+distinct(3, 1, 3, 2, 1, 2)
+
+distinct((1, 2), (1, 2), (3, 4))
+
+Values = 3, 1, 3, 2, 1, 2
+Values.distinct
+```
+
+**Results:**
+```
+3
+1
+2
+
+(1, 2)
+(3, 4)
+
+3
+1
+2
+```
+
+`Values = ((1, 2), (1, 2), (3, 4)); distinct(Values)` returns that single grouped value unchanged because the outer grouped wrapper is one top-level item. By contrast, `Values = (1, 2), (1, 2), (3, 4); distinct(Values)` removes the duplicate grouped top-level item and returns two grouped outputs.
 
 ### Take Prefix: `take`
 
@@ -1955,6 +1993,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `count` | `count(...items)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
 | `first` | `first(...items)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `last` | `last(...items)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
+| `distinct` | `distinct(...items)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; grouped values stay grouped and duplicate detection follows KatLang value semantics |
 | `take` | `take(count, ...items)` or `collection.take(count)` — keep the first `count` top-level elements unchanged; non-positive counts return empty and grouped values stay grouped |
 | `skip` | `skip(count, ...items)` or `collection.skip(count)` — drop the first `count` top-level elements; non-positive counts keep the original sequence and grouped values stay grouped |
 | `min` | `min(...items)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |

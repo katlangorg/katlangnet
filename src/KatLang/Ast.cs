@@ -33,6 +33,10 @@ public enum UnaryOp { Minus, Not }
 /// <c>last(...items)</c> returns the last top-level sequence item unchanged;
 /// atoms, strings, and grouped values each count as one element, grouped
 /// values stay grouped, and the sequence must be non-empty.
+/// <c>distinct(...items)</c> removes later duplicate top-level sequence items
+/// while preserving the original order of first occurrence; grouped values
+/// stay grouped and duplicate detection follows ordinary KatLang value
+/// semantics.
 /// <c>take(count, ...items)</c> returns the first <c>count</c> extracted
 /// top-level sequence items unchanged; non-positive counts return an empty
 /// sequence, oversized counts return the whole sequence, and grouped values
@@ -58,7 +62,7 @@ public enum UnaryOp { Minus, Not }
 /// to right; <c>step(element, accumulator)</c> must return exactly one next
 /// accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @take, @skip, @min, @max, @sum, @avg, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

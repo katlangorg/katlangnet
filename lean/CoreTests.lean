@@ -4113,4 +4113,120 @@ def test195 : Bool :=
 
 #eval test195  -- should be true
 
+def test196 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .num 3,
+      .num 1,
+      .num 3,
+      .num 2,
+      .num 1,
+      .num 2
+    ])
+  ])) with
+  | Except.ok [3, 1, 2] => true
+  | _ => false
+
+#eval test196  -- should be true
+
+def test197 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .num 4,
+      .num 4,
+      .num 4,
+      .num 4
+    ])
+  ])) with
+  | Except.ok [4] => true
+  | _ => false
+
+#eval test197  -- should be true
+
+def test198 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3
+    ])
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test198  -- should be true
+
+def test199 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test199  -- should be true
+
+def test200 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ])
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 1, .atom 2],
+      .group [.atom 3, .atom 4]
+    ]) => true
+  | _ => false
+
+#eval test200  -- should be true
+
+def test201 : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ])
+    ])
+  ] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .resolve "Values"
+    ])
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 1, .atom 2],
+      .group [.atom 1, .atom 2],
+      .group [.atom 3, .atom 4]
+    ]) => true
+  | _ => false
+
+#eval test201  -- should be true
+
+def test202 : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ])
+  ] [
+    .call (resolve "distinct") (alg [] [] [] [
+      .resolve "Values"
+    ])
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 1, .atom 2],
+      .group [.atom 3, .atom 4]
+    ]) => true
+  | _ => false
+
+#eval test202  -- should be true
+
 end KatLangTests
