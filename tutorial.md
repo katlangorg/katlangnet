@@ -30,6 +30,8 @@
     - [Counting: `count`](#counting-count)
     - [First Element: `first`](#first-element-first)
     - [Last Element: `last`](#last-element-last)
+    - [Take Prefix: `take`](#take-prefix-take)
+    - [Skip Prefix: `skip`](#skip-prefix-skip)
     - [Minimum: `min`](#minimum-min)
     - [Maximum: `max`](#maximum-max)
     - [Summation: `sum`](#summation-sum)
@@ -907,7 +909,7 @@ The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `
 
 ### Sequence Inputs
 
-`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
+`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `take`, `skip`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
 
 - They always consume counted top-level items emitted by each sequence argument
 - The same extraction rule applies whether there is one sequence argument or many
@@ -915,6 +917,7 @@ The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `
 - A grouped argument such as `(1, 2)` contributes one grouped item, even when it is the only sequence argument
 - A helper such as `Wrapped` where `Wrapped = (1, 2, 3)` also contributes one grouped item rather than three separate numeric items
 - Nested grouped values are not recursively flattened unless a builtin explicitly says so, such as `atoms`
+- `take` and `skip` keep their count first in direct-call surface syntax (`take(2, Values)` / `skip(2, Values)`), but they still consume the same extracted top-level items as the other sequence builtins
 
 This is why `order(3, 4, 2, 1)` works directly, while `order((1, 2, 3))` and `order((1, 2), (3, 4))` are invalid: grouped values remain grouped top-level items instead of being flattened into sortable atoms.
 
@@ -1074,6 +1077,72 @@ last((1, 2), (3, 4))
 
 Applying `last` to an empty collection is invalid because `last` requires at least one top-level element.
 `last((1, 2, 3))` and `Values = (1, 2, 3); last(Values)` both return `(1, 2, 3)` unchanged for the same reason.
+
+### Take Prefix: `take`
+
+`take(count, ...items)` returns the first `count` top-level values in the evaluated sequence, unchanged.
+
+- The count must evaluate to exactly one whole-number value
+- `count <= 0` returns an empty sequence
+- Counts larger than the sequence length return the whole sequence
+- Grouped values are preserved whole and are not flattened
+
+Both call styles are supported: `take(count, ...items)` and `collection.take(count)`.
+
+```
+take(3, 1, 2, 3, 4, 5)
+
+take(1, (1, 2), (3, 4))
+
+range(1, 5).take(2)
+```
+
+**Results:**
+```
+1
+2
+3
+
+(1, 2)
+
+1
+2
+```
+
+`take(0, 1, 2, 3)` and `take(-2, 1, 2, 3)` both return an empty result. `take((1, 2, 3), 4, 5)` is invalid because the count must be exactly one whole-number value, not a grouped item.
+
+### Skip Prefix: `skip`
+
+`skip(count, ...items)` returns the evaluated sequence after skipping the first `count` top-level values.
+
+- The count must evaluate to exactly one whole-number value
+- `count <= 0` returns the original sequence unchanged
+- Counts larger than the sequence length return an empty sequence
+- Grouped values are preserved whole and are not flattened
+
+Both call styles are supported: `skip(count, ...items)` and `collection.skip(count)`.
+
+```
+skip(3, 1, 2, 3, 4, 5)
+
+skip(1, (1, 2), (3, 4))
+
+range(1, 5).skip(2)
+```
+
+**Results:**
+```
+4
+5
+
+(3, 4)
+
+3
+4
+5
+```
+
+`skip(0, 1, 2, 3)` and `skip(-2, 1, 2, 3)` both return `1, 2, 3`. `skip('hello', 1, 2)` is invalid because the count must be exactly one whole-number value.
 
 ### Minimum: `min`
 
@@ -1886,6 +1955,8 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `count` | `count(...items)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
 | `first` | `first(...items)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `last` | `last(...items)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
+| `take` | `take(count, ...items)` or `collection.take(count)` — keep the first `count` top-level elements unchanged; non-positive counts return empty and grouped values stay grouped |
+| `skip` | `skip(count, ...items)` or `collection.skip(count)` — drop the first `count` top-level elements; non-positive counts keep the original sequence and grouped values stay grouped |
 | `min` | `min(...items)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `max` | `max(...items)` or `collection.max` — find the largest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `sum` | `sum(...items)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |

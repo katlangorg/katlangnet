@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Min, Max, Sum, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, First, Last, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -1001,6 +1001,15 @@ public static class Evaluator
         };
     }
 
+    private abstract record PreparedSequenceBuiltinTrailingArg
+    {
+        public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinTrailingArg;
+
+        public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinTrailingArg;
+
+        public sealed record WholeNumberArg(decimal WholeNumberValue) : PreparedSequenceBuiltinTrailingArg;
+    }
+
     /// <summary>
     /// Validate the output shape required by counted builtins that must emit
     /// exactly one top-level value. Non-empty grouped values are valid; empty
@@ -1657,6 +1666,101 @@ public static class Evaluator
         return PrepareSequenceBuiltinInput(builtin, metadata, collectedR.Value);
     }
 
+    private static string WholeNumberSequenceTrailingArgErrorContext(
+        BuiltinId builtin,
+        SequenceBuiltinTrailingArgDescriptor descriptor)
+        => $"{BuiltinDisplayName(builtin)} {descriptor.Label} must be exactly one whole-number value";
+
+    private static EvalResult<PreparedSequenceBuiltinTrailingArg> EvalPreparedSequenceBuiltinTrailingArg(
+        BuiltinId builtin,
+        SequenceBuiltinTrailingArgDescriptor descriptor,
+        Algorithm arg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (descriptor.Kind)
+        {
+            case SequenceBuiltinTrailingArgKind.Algorithm:
+                return EvalResult<PreparedSequenceBuiltinTrailingArg>.Ok(
+                    new PreparedSequenceBuiltinTrailingArg.AlgorithmArg(arg));
+
+            case SequenceBuiltinTrailingArgKind.Value:
+            {
+                var valueR = EvalMaybeMemoizedPropertyOutput(arg, ctx, valEnv);
+                if (valueR.IsError) return valueR.Error;
+
+                return EvalResult<PreparedSequenceBuiltinTrailingArg>.Ok(
+                    new PreparedSequenceBuiltinTrailingArg.ValueArg(valueR.Value));
+            }
+
+            case SequenceBuiltinTrailingArgKind.WholeNumber:
+            {
+                var valueR = EvalMaybeMemoizedPropertyOutput(arg, ctx, valEnv);
+                if (valueR.IsError) return valueR.Error;
+
+                var numeric = valueR.Value.SingleAtomicNumber();
+                if (numeric is null || numeric.Value != Math.Truncate(numeric.Value))
+                {
+                    return new EvalError.WithContext(
+                        WholeNumberSequenceTrailingArgErrorContext(builtin, descriptor),
+                        new EvalError.BadArity());
+                }
+
+                return EvalResult<PreparedSequenceBuiltinTrailingArg>.Ok(
+                    new PreparedSequenceBuiltinTrailingArg.WholeNumberArg(numeric.Value));
+            }
+
+            default:
+                return new EvalError.WithContext(
+                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} used an unknown trailing-argument kind",
+                    new EvalError.BadArity());
+        }
+    }
+
+    private static EvalResult<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>> EvalPreparedSequenceBuiltinTrailingArgs(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
+        IReadOnlyList<Algorithm> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (descriptors.Count != args.Count)
+        {
+            return new EvalError.WithContext(
+                $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched trailing arguments",
+                new EvalError.BadArity());
+        }
+
+        var preparedArgs = new List<PreparedSequenceBuiltinTrailingArg>(args.Count);
+        for (var index = 0; index < args.Count; index++)
+        {
+            var preparedArgR = EvalPreparedSequenceBuiltinTrailingArg(
+                builtin,
+                descriptors[index],
+                args[index],
+                ctx,
+                valEnv);
+            if (preparedArgR.IsError) return preparedArgR.Error;
+
+            preparedArgs.Add(preparedArgR.Value);
+        }
+
+        return EvalResult<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>>.Ok(preparedArgs);
+    }
+
+    private static EvalResult<decimal> ExpectPreparedWholeNumberTrailingArg(
+        BuiltinId builtin,
+        SequenceBuiltinTrailingArgDescriptor descriptor,
+        PreparedSequenceBuiltinTrailingArg arg)
+    {
+        if (arg is PreparedSequenceBuiltinTrailingArg.WholeNumberArg(var value))
+            return EvalResult<decimal>.Ok(value);
+
+        return new EvalError.WithContext(
+            WholeNumberSequenceTrailingArgErrorContext(builtin, descriptor),
+            new EvalError.BadArity());
+    }
+
     private static EvalResult<IReadOnlyList<decimal>> ExpectPreparedFlattenedNumericItems(
         BuiltinId builtin,
         PreparedSequenceBuiltinInput prepared)
@@ -1741,6 +1845,42 @@ public static class Evaluator
             return new EvalError.BadArity();
 
         return EvalResult<CountedResult>.Ok(new CountedResult(items[^1], 1));
+    }
+
+    /// <summary>
+    /// Evaluate <c>take</c> over one or more leading sequence arguments by
+    /// returning the first <paramref name="count"/> extracted top-level items.
+    /// Non-positive counts return an empty sequence, oversized counts return
+    /// the whole sequence, grouped values stay grouped, and original order is
+    /// preserved.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalTakeCounted(
+        IReadOnlyList<Result> items,
+        decimal count)
+    {
+        IReadOnlyList<Result> taken = count <= 0
+            ? []
+            : items.Take((int)count).ToList();
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(taken), taken.Count));
+    }
+
+    /// <summary>
+    /// Evaluate <c>skip</c> over one or more leading sequence arguments by
+    /// returning the extracted top-level items after the first
+    /// <paramref name="count"/> items. Non-positive counts leave the sequence
+    /// unchanged, oversized counts return an empty sequence, grouped values
+    /// stay grouped, and original order is preserved.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalSkipCounted(
+        IReadOnlyList<Result> items,
+        decimal count)
+    {
+        IReadOnlyList<Result> remaining = count <= 0
+            ? items.ToList()
+            : items.Skip((int)count).ToList();
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.FromItems(remaining), remaining.Count));
     }
 
     /// <summary>
@@ -1889,6 +2029,34 @@ public static class Evaluator
             return handler(numbersR.Value);
         }
 
+        EvalResult<CountedResult> WithPreparedSingleWholeNumberTrailingArg(
+            IReadOnlyList<Algorithm> trailingArgs,
+            Func<decimal, EvalResult<CountedResult>> handler)
+        {
+            var preparedArgsR = EvalPreparedSequenceBuiltinTrailingArgs(
+                builtin,
+                metadata.TrailingArgs,
+                trailingArgs,
+                ctx,
+                valEnv);
+            if (preparedArgsR.IsError) return preparedArgsR.Error;
+
+            if (metadata.TrailingArgs.Count != 1 || preparedArgsR.Value.Count != 1)
+            {
+                return new EvalError.WithContext(
+                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched whole-number trailing arguments",
+                    new EvalError.BadArity());
+            }
+
+            var countR = ExpectPreparedWholeNumberTrailingArg(
+                builtin,
+                metadata.TrailingArgs[0],
+                preparedArgsR.Value[0]);
+            if (countR.IsError) return countR.Error;
+
+            return handler(countR.Value);
+        }
+
         return ApplySequenceBuiltinCounted(
             builtin,
             metadata,
@@ -1902,6 +2070,8 @@ public static class Evaluator
                 (BuiltinId.@count, 0) => WithPreparedFlatItems(collectionArgs, EvalCountCounted),
                 (BuiltinId.@first, 0) => WithPreparedFlatItems(collectionArgs, EvalFirstCounted),
                 (BuiltinId.@last, 0) => WithPreparedFlatItems(collectionArgs, EvalLastCounted),
+                (BuiltinId.@take, 1) => WithPreparedSingleWholeNumberTrailingArg(trailingArgs, count => WithPreparedFlatItems(collectionArgs, items => EvalTakeCounted(items, count))),
+                (BuiltinId.@skip, 1) => WithPreparedSingleWholeNumberTrailingArg(trailingArgs, count => WithPreparedFlatItems(collectionArgs, items => EvalSkipCounted(items, count))),
                 (BuiltinId.@min, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalMinCounted),
                 (BuiltinId.@max, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalMaxCounted),
                 (BuiltinId.@sum, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalSumCounted),
@@ -2098,6 +2268,8 @@ public static class Evaluator
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
             new("first",  new Algorithm.Builtin(BuiltinId.@first),  IsPublic: true),
             new("last",   new Algorithm.Builtin(BuiltinId.@last),   IsPublic: true),
+            new("take",   new Algorithm.Builtin(BuiltinId.@take),   IsPublic: true),
+            new("skip",   new Algorithm.Builtin(BuiltinId.@skip),   IsPublic: true),
             new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
             new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
             new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
@@ -2130,6 +2302,12 @@ public static class Evaluator
     private static readonly SequenceBuiltinMetadata LastSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
 
+    private static readonly SequenceBuiltinMetadata TakeSequenceBuiltinMetadata =
+        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+
+    private static readonly SequenceBuiltinMetadata SkipSequenceBuiltinMetadata =
+        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+
     private static readonly SequenceBuiltinMetadata MinSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
@@ -2154,6 +2332,8 @@ public static class Evaluator
         BuiltinId.@count => CountSequenceBuiltinMetadata,
         BuiltinId.@first => FirstSequenceBuiltinMetadata,
         BuiltinId.@last => LastSequenceBuiltinMetadata,
+        BuiltinId.@take => TakeSequenceBuiltinMetadata,
+        BuiltinId.@skip => SkipSequenceBuiltinMetadata,
         BuiltinId.@min => MinSequenceBuiltinMetadata,
         BuiltinId.@max => MaxSequenceBuiltinMetadata,
         BuiltinId.@sum => SumSequenceBuiltinMetadata,
@@ -2176,6 +2356,8 @@ public static class Evaluator
         BuiltinId.@count => "count",
         BuiltinId.@first => "first",
         BuiltinId.@last => "last",
+        BuiltinId.@take => "take",
+        BuiltinId.@skip => "skip",
         BuiltinId.@min => "min",
         BuiltinId.@max => "max",
         BuiltinId.@sum => "sum",

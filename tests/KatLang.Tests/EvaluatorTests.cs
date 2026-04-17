@@ -2090,6 +2090,178 @@ public class EvaluatorTests
         AssertBuiltinFailureWithContext(source, "last requires a non-empty collection");
     }
 
+    // ── Take/skip builtins ────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Take_OrdinaryBuiltinCall_ReturnsLeadingItems()
+        => AssertEval("take(3, 1, 2, 3, 4, 5)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Skip_OrdinaryBuiltinCall_ReturnsRemainingItems()
+        => AssertEval("skip(3, 1, 2, 3, 4, 5)", 4, 5);
+
+    [Fact]
+    public void Eval_Take_DotCall_ReturnsLeadingItems()
+        => AssertEval("range(1, 5).take(3)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Skip_DotCall_ReturnsRemainingItems()
+        => AssertEval("range(1, 5).skip(3)", 4, 5);
+
+    [Fact]
+    public void Eval_Take_ZeroCount_ReturnsEmpty()
+        => AssertEval("take(0, 1, 2, 3)");
+
+    [Fact]
+    public void Eval_Skip_ZeroCount_ReturnsOriginalSequence()
+        => AssertEval("skip(0, 1, 2, 3)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Take_NegativeCount_ReturnsEmpty()
+        => AssertEval("take(-2, 1, 2, 3)");
+
+    [Fact]
+    public void Eval_Skip_NegativeCount_ReturnsOriginalSequence()
+        => AssertEval("skip(-2, 1, 2, 3)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Take_CountLargerThanLength_ReturnsWholeSequence()
+        => AssertEval("take(10, 1, 2, 3)", 1, 2, 3);
+
+    [Fact]
+    public void Eval_Skip_CountLargerThanLength_ReturnsEmpty()
+        => AssertEval("skip(10, 1, 2, 3)");
+
+    [Fact]
+    public void Eval_Take_EmptyInput_ReturnsEmpty()
+    {
+        var source = """
+            IsNegative = x < 0
+            take(3, range(1, 4).filter(IsNegative))
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Skip_EmptyInput_ReturnsEmpty()
+    {
+        var source = """
+            IsNegative = x < 0
+            skip(3, range(1, 4).filter(IsNegative))
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Take_GroupedItems_PreservesFirstGroup()
+    {
+        var result = EvalFull("take(1, (1, 2), (3, 4))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Skip_GroupedItems_PreservesSecondGroup()
+    {
+        var result = EvalFull("skip(1, (1, 2), (3, 4))");
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 3, 4);
+    }
+
+    [Fact]
+    public void Eval_Take_GroupedWrapperOutput_PreservesSingleGroupedItem()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            take(1, Values)
+            """;
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertGroupedAtoms(result.Value, 1, 2, 3);
+    }
+
+    [Fact]
+    public void Eval_Take_MultiOutputWrapper_ReturnsFirstTopLevelValue()
+    {
+        var source = """
+            Values = 1, 2, 3
+            take(1, Values)
+            """;
+
+        AssertEval(source, 1);
+    }
+
+    [Fact]
+    public void Eval_Skip_GroupedWrapperOutput_ReturnsEmptyAfterSkippingSingleGroupedItem()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            skip(1, Values)
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
+    public void Eval_Skip_MultiOutputWrapper_ReturnsRemainingTopLevelValues()
+    {
+        var source = """
+            Values = 1, 2, 3
+            skip(1, Values)
+            """;
+
+        AssertEval(source, 2, 3);
+    }
+
+    [Fact]
+    public void Eval_Take_EmptyCountArgument_FailsWithContext()
+    {
+        var source = """
+            IsNegative = x < 0
+            take(range(1, 4).filter(IsNegative), 1, 2)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "take count must be exactly one whole-number value");
+    }
+
+    [Fact]
+    public void Eval_Take_GroupedCountArgument_FailsWithContext()
+        => AssertBuiltinFailureWithContext(
+            "take((1, 2), 3, 4)",
+            "take count must be exactly one whole-number value");
+
+    [Fact]
+    public void Eval_Take_FractionalCountArgument_FailsWithContext()
+        => AssertBuiltinFailureWithContext(
+            "take(1.5, 1, 2)",
+            "take count must be exactly one whole-number value");
+
+    [Fact]
+    public void Eval_Skip_StringCountArgument_FailsWithContext()
+        => AssertBuiltinFailureWithContext(
+            "skip('hello', 1, 2)",
+            "skip count must be exactly one whole-number value");
+
+    [Fact]
+    public void Eval_Skip_MultipleValueCountArgument_FailsWithContext()
+    {
+        var source = """
+            Bad = 1, 2
+            skip(Bad, 3, 4)
+            """;
+
+        AssertBuiltinFailureWithContext(source, "skip count must be exactly one whole-number value");
+    }
+
     // ── Min builtin ──────────────────────────────────────────────────────────
 
     [Fact]

@@ -1570,6 +1570,47 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_Take_DirectCall_ReordersCountToTrailingArg()
+    {
+        var result = Parser.ParseSyntax("take(n, x, y, z)");
+        Assert.False(result.HasErrors);
+
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(4, call.Args.Output.Count);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
+        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args.Output[2]).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args.Output[3]).Name);
+    }
+
+    [Fact]
+    public void Parse_Skip_DirectCall_ReordersCountToTrailingArg()
+    {
+        var result = Parser.ParseSyntax("skip(n, x, y, z)");
+        Assert.False(result.HasErrors);
+
+        var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
+        Assert.Equal(4, call.Args.Output.Count);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
+        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args.Output[2]).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args.Output[3]).Name);
+    }
+
+    [Fact]
+    public void Parse_DotCall_Take_NoLowering_InParser()
+    {
+        var result = Parser.ParseSyntax("values.take(n)");
+        Assert.False(result.HasErrors);
+
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        Assert.Equal("take", dotCall.Name);
+        Assert.NotNull(dotCall.Args);
+        Assert.Single(dotCall.Args!.Output);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(dotCall.Args.Output[0]).Name);
+    }
+
+    [Fact]
     public void Parse_DotCall_While_NoLowering_InParser()
     {
         // Step.while(x, 0) should NOT be lowered in the parser

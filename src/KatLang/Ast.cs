@@ -33,6 +33,14 @@ public enum UnaryOp { Minus, Not }
 /// <c>last(...items)</c> returns the last top-level sequence item unchanged;
 /// atoms, strings, and grouped values each count as one element, grouped
 /// values stay grouped, and the sequence must be non-empty.
+/// <c>take(count, ...items)</c> returns the first <c>count</c> extracted
+/// top-level sequence items unchanged; non-positive counts return an empty
+/// sequence, oversized counts return the whole sequence, and grouped values
+/// stay grouped.
+/// <c>skip(count, ...items)</c> returns the extracted top-level sequence items
+/// after the first <c>count</c>; non-positive counts leave the sequence
+/// unchanged, oversized counts return an empty sequence, and grouped values
+/// stay grouped.
 /// <c>min(...items)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
@@ -50,7 +58,7 @@ public enum UnaryOp { Minus, Not }
 /// to right; <c>step(element, accumulator)</c> must return exactly one next
 /// accumulator value, and grouped elements/accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @min, @max, @sum, @avg, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @take, @skip, @min, @max, @sum, @avg, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 

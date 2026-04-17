@@ -803,6 +803,8 @@ public static class SemanticModelBuilder
                 "count" => ["items..."],
                 "first" => ["items..."],
                 "last" => ["items..."],
+                "take" => ["items...", "count"],
+                "skip" => ["items...", "count"],
                 "min" => ["items..."],
                 "max" => ["items..."],
                 "sum" => ["items..."],

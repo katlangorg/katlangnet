@@ -441,6 +441,27 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_TakeOnImplicitParameter_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Selected = values.take(2)
+            """);
+
+        var valuesReference = ResolutionAt(model, 1, 12);
+        Assert.Equal(OccurrenceKind.ParameterReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, valuesReference.Classification);
+
+        var takeReference = ResolutionAt(model, 1, 19);
+        Assert.Equal(OccurrenceKind.DotMemberReference, takeReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, takeReference.Classification);
+        Assert.Null(takeReference.ResolvedDeclaration);
+        Assert.NotNull(takeReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, takeReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items...", "count"], takeReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_TracksReservedOutputDeclarationAndImplicitParameterReferences()
     {
         var model = BuildModel("Output = missing");

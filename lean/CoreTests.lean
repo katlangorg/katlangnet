@@ -3785,4 +3785,291 @@ def test175 : Bool :=
 
 #eval test175  -- should be true
 
+def test176 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 4,
+      .num 5,
+      .num 3
+    ])
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test176  -- should be true
+
+def test177 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 4,
+      .num 5,
+      .num 3
+    ])
+  ])) with
+  | Except.ok [4, 5] => true
+  | _ => false
+
+#eval test177  -- should be true
+
+def test178 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 0
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test178  -- should be true
+
+def test179 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 0
+    ])
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test179  -- should be true
+
+def test180 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num (-2)
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test180  -- should be true
+
+def test181 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num (-2)
+    ])
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test181  -- should be true
+
+def test182 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 10
+    ])
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test182  -- should be true
+
+def test183 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 10
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test183  -- should be true
+
+def test184 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "take") (alg [] [] [] [
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
+      .num 3
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test184  -- should be true
+
+def test185 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "skip") (alg [] [] [] [
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]),
+      .num 3
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test185  -- should be true
+
+def test186 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4]),
+      .num 1
+    ])
+  ])) with
+  | Except.ok (.group [.atom 1, .atom 2]) => true
+  | _ => false
+
+#eval test186  -- should be true
+
+def test187 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4]),
+      .num 1
+    ])
+  ])) with
+  | Except.ok (.group [.atom 3, .atom 4]) => true
+  | _ => false
+
+#eval test187  -- should be true
+
+def test188 : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2, .num 3])
+    ])
+  ] [
+    .call (resolve "take") (alg [] [] [] [
+      .resolve "Values",
+      .num 1
+    ])
+  ])) with
+  | Except.ok (.group [.atom 1, .atom 2, .atom 3]) => true
+  | _ => false
+
+#eval test188  -- should be true
+
+def test189 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [.num 1, .num 2, .num 3])
+  ] [
+    .call (resolve "take") (alg [] [] [] [
+      .resolve "Values",
+      .num 1
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test189  -- should be true
+
+def test190 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2, .num 3])
+    ])
+  ] [
+    .call (resolve "skip") (alg [] [] [] [
+      .resolve "Values",
+      .num 1
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test190  -- should be true
+
+def test191 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [.num 1, .num 2, .num 3])
+  ] [
+    .call (resolve "skip") (alg [] [] [] [
+      .resolve "Values",
+      .num 1
+    ])
+  ])) with
+  | Except.ok [2, 3] => true
+  | _ => false
+
+#eval test191  -- should be true
+
+def test192 : Bool :=
+  match runResult (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ])
+    ])
+  ])) with
+  | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test192  -- should be true
+
+def test193 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [
+      .num 3,
+      .num 4,
+      .block (alg [] [] [] [.num 1, .num 2])
+    ])
+  ])) with
+  | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test193  -- should be true
+
+def test194 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .stringLiteral "hello"
+    ])
+  ])) with
+  | Except.error err => hasContext "skip count must be exactly one whole-number value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test194  -- should be true
+
+def test195 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "skip") (alg [] [] [] [
+      .num 3,
+      .num 4,
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 2])
+    ])
+  ])) with
+  | Except.error err => hasContext "skip count must be exactly one whole-number value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test195  -- should be true
+
 end KatLangTests

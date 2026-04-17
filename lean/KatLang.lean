@@ -147,7 +147,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 structure SequenceBuiltinLeadingArity where
@@ -231,6 +231,12 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
     }
   | .lastBuiltin => some {
       emptyPolicy := .requireAnyItem
+    }
+  | .takeBuiltin => some {
+      trailingArgs := [{ label := "count", kind := .wholeNumber }]
+    }
+  | .skipBuiltin => some {
+      trailingArgs := [{ label := "count", kind := .wholeNumber }]
     }
   | .minBuiltin => some {
       emptyPolicy := .requireAnyItem
@@ -349,6 +355,8 @@ def builtinDisplayName : Builtin -> String
   | .countBuiltin => "count"
   | .firstBuiltin => "first"
   | .lastBuiltin => "last"
+  | .takeBuiltin => "take"
+  | .skipBuiltin => "skip"
   | .minBuiltin => "min"
   | .maxBuiltin => "max"
   | .sumBuiltin => "sum"
@@ -1446,6 +1454,12 @@ def PreparedSequenceBuiltinInput.perInputNumericItems?
   | { numericItems := some (.perInput inputs), .. } => some inputs
   | _ => none
 
+inductive PreparedSequenceBuiltinTrailingArg where
+  | algorithm (value : Algorithm)
+  | value (value : Result)
+  | wholeNumber (value : Int)
+  deriving Repr
+
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
   | n + 1 => b * intPow b n
@@ -2184,6 +2198,56 @@ mutual
     let collected <- evalCountedSequenceInputs collectionArgs ctx env
     prepareSequenceBuiltinInput b metadata collected
 
+    partial def wholeNumberSequenceTrailingArgErrorContext
+      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor) : String :=
+    s!"{builtinDisplayName b} {descriptor.label} must be exactly one whole-number value"
+
+    partial def evalPreparedSequenceBuiltinTrailingArg
+      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
+      (arg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM PreparedSequenceBuiltinTrailingArg := do
+    match descriptor.kind with
+    | .algorithm =>
+      pure (.algorithm arg)
+    | .value => do
+      let value <- evalAlgOutput arg ctx env
+      pure (.value value)
+    | .wholeNumber => do
+      let value <- evalAlgOutput arg ctx env
+      match Result.singleAtomicNumber? value with
+      | some number =>
+        pure (.wholeNumber number)
+      | none =>
+        .error (Error.withContext
+          (wholeNumberSequenceTrailingArgErrorContext b descriptor)
+          Error.badArity)
+
+    partial def evalPreparedSequenceBuiltinTrailingArgs
+      (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
+      (args : List Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM (List PreparedSequenceBuiltinTrailingArg) :=
+    match descriptors, args with
+    | [], [] =>
+      pure []
+    | descriptor :: restDescriptors, arg :: restArgs => do
+      let preparedArg <- evalPreparedSequenceBuiltinTrailingArg b descriptor arg ctx env
+      let tail <- evalPreparedSequenceBuiltinTrailingArgs b restDescriptors restArgs ctx env
+      pure (preparedArg :: tail)
+    | _, _ =>
+      .error (Error.withContext
+        s!"internal sequence metadata for {builtinDisplayName b} mismatched trailing arguments"
+        Error.badArity)
+
+    partial def expectPreparedSequenceBuiltinWholeNumberTrailingArg
+      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
+      : PreparedSequenceBuiltinTrailingArg -> EvalM Int
+    | .wholeNumber number =>
+      pure number
+    | _ =>
+      .error (Error.withContext
+        (wholeNumberSequenceTrailingArgErrorContext b descriptor)
+        Error.badArity)
+
   partial def expectPreparedFlattenedNumericItems (b : Builtin)
       (prepared : PreparedSequenceBuiltinInput) : EvalM (List Int) :=
     match prepared.flattenedNumericItems? with
@@ -2319,6 +2383,34 @@ mutual
     | some last => pure (last, 1)
     | none => .error Error.badArity
 
+  /-- Evaluate `take` over one or more leading sequence arguments.
+      `take` returns the first `count` extracted top-level items unchanged.
+
+      Non-positive counts return an empty result. Counts larger than the
+      sequence length return the whole sequence. Grouped items stay grouped,
+      and the original top-level order is preserved. -/
+  partial def evalTakeCounted (items : List Result) (count : Int) : EvalM CountedResult := do
+    let taken :=
+      if count <= 0 then
+        []
+      else
+        items.take (Int.toNat count)
+    pure (Result.normalize (Result.group taken), taken.length)
+
+  /-- Evaluate `skip` over one or more leading sequence arguments.
+      `skip` returns the extracted top-level items after the first `count`
+      items, preserving item identity and original order.
+
+      Non-positive counts leave the sequence unchanged. Counts larger than the
+      sequence length return an empty result. Grouped items stay grouped. -/
+  partial def evalSkipCounted (items : List Result) (count : Int) : EvalM CountedResult := do
+    let remaining :=
+      if count <= 0 then
+        items
+      else
+        items.drop (Int.toNat count)
+    pure (Result.normalize (Result.group remaining), remaining.length)
+
     /-- Evaluate `min` over one or more leading sequence arguments.
       `min` compares top-level sequence items from left to right and
       returns the smallest numeric element.
@@ -2407,6 +2499,18 @@ mutual
           (k : List Int -> EvalM CountedResult) : EvalM CountedResult := do
         let prepared <- evalPreparedSequenceBuiltinInput b metadata collectionArgs ctx env
         k (<- expectPreparedFlattenedNumericItems b prepared)
+      let withPreparedSingleWholeNumberTrailingArg (trailingArgs : List Algorithm)
+          (k : Int -> EvalM CountedResult) : EvalM CountedResult := do
+        let preparedTrailingArgs <-
+          evalPreparedSequenceBuiltinTrailingArgs b metadata.trailingArgs trailingArgs ctx env
+        match metadata.trailingArgs, preparedTrailingArgs with
+        | [descriptor], [preparedTrailingArg] =>
+            let count <- expectPreparedSequenceBuiltinWholeNumberTrailingArg b descriptor preparedTrailingArg
+            k count
+        | _, _ =>
+            .error (Error.withContext
+              s!"internal sequence metadata for {builtinDisplayName b} mismatched whole-number trailing arguments"
+              Error.badArity)
       applySequenceBuiltinCounted b metadata args fun collectionArgs trailingArgs =>
         match b, trailingArgs with
         | .filterBuiltin, [predicateAlg] =>
@@ -2430,6 +2534,14 @@ mutual
         | .lastBuiltin, [] =>
             withPreparedFlatItems collectionArgs fun items =>
               evalLastCounted items
+        | .takeBuiltin, [_] =>
+            withPreparedSingleWholeNumberTrailingArg trailingArgs fun count =>
+              withPreparedFlatItems collectionArgs fun items =>
+                evalTakeCounted items count
+        | .skipBuiltin, [_] =>
+            withPreparedSingleWholeNumberTrailingArg trailingArgs fun count =>
+              withPreparedFlatItems collectionArgs fun items =>
+                evalSkipCounted items count
         | .minBuiltin, [] =>
             withPreparedFlatNumericItems collectionArgs fun numbers =>
               evalMinCounted numbers
@@ -3377,6 +3489,8 @@ def preludeAlg : Algorithm :=
     , publicProp "count" (Algorithm.builtin .countBuiltin)
     , publicProp "first" (Algorithm.builtin .firstBuiltin)
     , publicProp "last" (Algorithm.builtin .lastBuiltin)
+    , publicProp "take" (Algorithm.builtin .takeBuiltin)
+    , publicProp "skip" (Algorithm.builtin .skipBuiltin)
     , publicProp "min" (Algorithm.builtin .minBuiltin)
     , publicProp "max" (Algorithm.builtin .maxBuiltin)
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)
