@@ -399,6 +399,23 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_OrderOnInlineBlockReceiver_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Sorted = {1, 2, 3}.order
+            """);
+
+        var orderReference = ResolutionAt(model, 1, 20);
+        Assert.Equal(OccurrenceKind.DotMemberReference, orderReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, orderReference.Classification);
+        Assert.Null(orderReference.ResolvedDeclaration);
+        Assert.NotNull(orderReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, orderReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items..."], orderReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_DotCall_FirstOnImplicitParameter_UsesBuiltinFallback()
     {
         var model = BuildModel(

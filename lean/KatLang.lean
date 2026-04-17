@@ -2795,9 +2795,50 @@ mutual
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
+  /-- Sequence builtins get a deliberate inline-receiver rule for direct
+      `.block` dot-call syntax. When the receiver is a direct inline block
+      expression, its own top-level output expressions become the builtin's
+      leading sequence arguments instead of the whole receiver being treated as
+      one grouped item.
+
+      Each extracted output expression is rewrapped under the inline receiver's
+      lexical scope so receiver-local properties still resolve. Ordinary named
+      and grouped values keep the existing receiver-injection rule. -/
+  partial def tryInlineSequenceBuiltinDotCall
+      (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
+      (ctx : EvalCtx) : EvalM (Option (Builtin × List Algorithm)) := do
+    match receiver with
+    | .block receiverAlg =>
+        if (Algorithm.output receiverAlg).isEmpty then
+          pure none
+        else
+          match resolveAlg (.resolve name) ctx with
+          | .ok (.builtin b) =>
+              match sequenceBuiltinMetadata? b with
+              | some _ =>
+                  let wiredReceiver := wireToCaller ctx receiverAlg
+                  let receiverArgs :=
+                    (Algorithm.output wiredReceiver).map fun outputExpr =>
+                      Algorithm.childOf wiredReceiver (Algorithm.ofExpr outputExpr)
+                  let extraArgAlgs <-
+                    match extraArgs with
+                    | some args => resolveArgAlgs args ctx
+                    | none => pure []
+                  pure (some (b, receiverArgs ++ extraArgAlgs))
+              | none =>
+                  pure none
+          | _ =>
+              pure none
+    | _ =>
+        pure none
+
   /-- Counted lexical fallback with receiver injection. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
       (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    match <- tryInlineSequenceBuiltinDotCall name receiver extraArgs ctx with
+    | some (b, args) =>
+        applyBuiltinCounted b args ctx env
+    | none =>
     let outputExprs := [receiver] ++ match extraArgs with
       | some ea => Algorithm.output ea
       | none => []
@@ -3021,6 +3062,10 @@ mutual
       Delegates to evalCall to get builtin dispatch for free. -/
   partial def callLexicalWithReceiver (name : Ident) (receiver : Expr)
       (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    match <- tryInlineSequenceBuiltinDotCall name receiver extraArgs ctx with
+    | some (b, args) =>
+        applyBuiltin b args ctx env
+    | none =>
     let outputExprs := [receiver] ++ match extraArgs with
       | some ea => Algorithm.output ea
       | none => []

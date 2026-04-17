@@ -917,11 +917,14 @@ The same rule applies to grouped wrapper outputs: `map((1, 2), transform)` and `
 - An argument such as `Values` where `Values = 3, 4, 2` contributes three items
 - A grouped argument such as `(1, 2)` contributes one grouped item, even when it is the only sequence argument
 - A helper such as `Wrapped` where `Wrapped = (1, 2, 3)` also contributes one grouped item rather than three separate numeric items
+- In dot-call form only, a direct inline receiver written as `(...)` or `{...}` is treated specially for these sequence builtins: its own top-level outputs become the consumed sequence items
+- That inline dot-call rule is narrow syntax sugar, not general flattening: `Values = (1, 2, 3)` still makes `Values.order`, `Values.count`, `Values.sum`, and similar calls see one grouped item
 - Nested grouped values are not recursively flattened unless a builtin explicitly says so, such as `atoms`
 - `distinct` compares those extracted top-level items using ordinary KatLang value semantics: atoms by numeric value, strings by exact string value, and grouped values structurally by grouped contents
 - `take` and `skip` keep their count first in direct-call surface syntax (`take(2, Values)` / `skip(2, Values)`), but they still consume the same extracted top-level items as the other sequence builtins
 
 This is why `order(3, 4, 2, 1)` works directly, while `order((1, 2, 3))` and `order((1, 2), (3, 4))` are invalid: grouped values remain grouped top-level items instead of being flattened into sortable atoms.
+By design, `(3, 4, 2, 1).order` and `{3, 4, 2, 1}.order` also work because the receiver itself is a direct inline expression, so KatLang feeds that inline block's own outputs to the sequence builtin.
 
 ### Ordering: `order` and `orderDesc`
 
@@ -982,6 +985,7 @@ range(5, 1).order
 ```
 
 Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule. `order((1, 2, 3))` is invalid because the single grouped argument remains one grouped top-level item, not three sortable atoms. `order((1, 2), (3, 4))` is also invalid, because each grouped argument is a separate top-level item and grouped items are not sortable atoms.
+The deliberate inline-receiver exception is narrower than that general rule: `(1, 2, 3).order` and `{1, 2, 3}.order` succeed because the receiver is direct inline syntax, but `Values = (1, 2, 3); Values.order` still treats `Values` as one grouped item and therefore remains invalid.
 
 ### Counting: `count`
 

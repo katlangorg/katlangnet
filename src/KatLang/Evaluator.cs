@@ -4279,11 +4279,64 @@ public static class Evaluator
     ///
     /// Lean: callLexicalWithReceiver.
     /// </summary>
+    private readonly record struct InlineSequenceBuiltinDotCall(
+        BuiltinId Builtin,
+        IReadOnlyList<Algorithm> Args);
+
+    /// <summary>
+    /// Sequence builtins get a deliberate inline-receiver rule for direct
+    /// <c>(...)</c> / <c>{...}</c> dot-call syntax. When the receiver parses as
+    /// an inline block expression, its own top-level output expressions become
+    /// the builtin's leading sequence arguments instead of the whole receiver
+    /// being treated as one grouped item.
+    ///
+    /// Each extracted output expression is wrapped back under the receiver's
+    /// lexical scope so inline receiver-local properties still resolve.
+    /// Ordinary named/grouped values keep the existing receiver-injection rule.
+    /// </summary>
+    private static EvalResult<InlineSequenceBuiltinDotCall?> TryBuildInlineSequenceBuiltinDotCall(
+        string name,
+        Expr receiver,
+        Algorithm? extraArgs,
+        EvalCtx ctx)
+    {
+        if (receiver is not Expr.Block(var receiverAlgorithm) || receiverAlgorithm.Output.Count == 0)
+            return EvalResult<InlineSequenceBuiltinDotCall?>.Ok(null);
+
+        var calleeR = ResolveAlg(new Expr.Resolve(name), ctx);
+        if (calleeR.IsError
+            || calleeR.Value is not Algorithm.Builtin(var builtin)
+            || GetSequenceBuiltinMetadata(builtin) is null)
+        {
+            return EvalResult<InlineSequenceBuiltinDotCall?>.Ok(null);
+        }
+
+        var wiredReceiver = WireToCaller(ctx, receiverAlgorithm);
+        var argAlgs = new List<Algorithm>(wiredReceiver.Output.Count + (extraArgs?.Output.Count ?? 0));
+        foreach (var outputExpr in wiredReceiver.Output)
+            argAlgs.Add(ChildOf(wiredReceiver, AlgorithmOfExpr(outputExpr)));
+
+        if (extraArgs is not null)
+        {
+            var extraArgAlgsR = ResolveArgAlgs(extraArgs, ctx);
+            if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
+            argAlgs.AddRange(extraArgAlgsR.Value);
+        }
+
+        return EvalResult<InlineSequenceBuiltinDotCall?>.Ok(
+            new InlineSequenceBuiltinDotCall(builtin, argAlgs));
+    }
+
     private static EvalResult<Result> CallLexicalWithReceiver(
         string name, Expr receiver, Algorithm? extraArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        var inlineSequenceCallR = TryBuildInlineSequenceBuiltinDotCall(name, receiver, extraArgs, ctx);
+        if (inlineSequenceCallR.IsError) return inlineSequenceCallR.Error;
+        if (inlineSequenceCallR.Value is { } inlineSequenceCall)
+            return ApplyBuiltin(inlineSequenceCall.Builtin, inlineSequenceCall.Args, ctx, valEnv);
+
         var outputExprs = new List<Expr> { receiver };
         if (extraArgs is not null)
             outputExprs.AddRange(extraArgs.Output);
@@ -4402,6 +4455,11 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        var inlineSequenceCallR = TryBuildInlineSequenceBuiltinDotCall(name, receiver, extraArgs, ctx);
+        if (inlineSequenceCallR.IsError) return inlineSequenceCallR.Error;
+        if (inlineSequenceCallR.Value is { } inlineSequenceCall)
+            return ApplyBuiltinCounted(inlineSequenceCall.Builtin, inlineSequenceCall.Args, ctx, valEnv);
+
         var outputExprs = new List<Expr> { receiver };
         if (extraArgs is not null)
             outputExprs.AddRange(extraArgs.Output);

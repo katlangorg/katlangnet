@@ -4229,4 +4229,163 @@ def test202 : Bool :=
 
 #eval test202  -- should be true
 
+def test203 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 3,
+    .num 5,
+    .num 3,
+    .num 6,
+    .num 3
+  ])) "order" none) with
+  | Except.ok [3, 3, 3, 5, 6] => true
+  | _ => false
+
+#eval test203  -- should be true
+
+def test204 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 3,
+    .num 5,
+    .num 3,
+    .num 6,
+    .num 3
+  ])) "orderDesc" none) with
+  | Except.ok [6, 5, 3, 3, 3] => true
+  | _ => false
+
+#eval test204  -- should be true
+
+def test205 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 3,
+    .num 5,
+    .num 3,
+    .num 6,
+    .num 3
+  ])) "count" none) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test205  -- should be true
+
+def test206 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 3,
+    .num 5,
+    .num 3
+  ])) "sum" none) with
+  | Except.ok [11] => true
+  | _ => false
+
+#eval test206  -- should be true
+
+def test207 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 1,
+    .num 2,
+    .num 1,
+    .num 3
+  ])) "distinct" none) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test207  -- should be true
+
+def test208 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 1,
+    .num 2,
+    .num 3
+  ])) "take" (some (alg [] [] [] [.num 2]))) with
+  | Except.ok [1, 2] => true
+  | _ => false
+
+#eval test208  -- should be true
+
+def test209 : Bool :=
+  match runFlat (.dotCall (.block (alg [] [] [] [
+    .num 1,
+    .num 2,
+    .num 3
+  ])) "skip" (some (alg [] [] [] [.num 1]))) with
+  | Except.ok [2, 3] => true
+  | _ => false
+
+#eval test209  -- should be true
+
+def test210 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+    .dotCall (.block (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3
+    ])) "map" (some (alg [] [] [] [.resolve "Double"]))
+  ])) with
+  | Except.ok [2, 4, 6] => true
+  | _ => false
+
+#eval test210  -- should be true
+
+def test211 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall (.block (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .num 4
+    ])) "filter" (some (alg [] [] [] [.resolve "IsEven"]))
+  ])) with
+  | Except.ok [2, 4] => true
+  | _ => false
+
+#eval test211  -- should be true
+
+def test212 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
+    .dotCall (.block (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3
+    ])) "reduce" (some (alg [] [] [] [
+      .resolve "Add",
+      .num 0
+    ]))
+  ])) with
+  | Except.ok [6] => true
+  | _ => false
+
+#eval test212  -- should be true
+
+def test213 : Bool :=
+  match runFlat (.dotCall (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [.num 3, .num 1, .num 2])
+  ] [
+    .resolve "Values"
+  ])) "order" none) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test213  -- should be true
+
+def test214 : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("Data", alg [] [] [] [
+      .block (alg [] [] [] [
+        .num 3,
+        .num 5,
+        .num 3,
+        .num 6,
+        .num 3
+      ])
+    ])
+  ] [
+    .dotCall (.resolve "Data") "order" none
+  ])) with
+  | Except.error err =>
+      hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err
+        && innermostIsBadArity err
+  | _ => false
+
+#eval test214  -- should be true
+
 end KatLangTests

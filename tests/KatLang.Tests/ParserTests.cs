@@ -546,6 +546,30 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_DotCall_InlineParenMultiOutputReceiver_IsBlock()
+    {
+        var result = Parser.ParseSyntax("(1, 2, 3).order");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        var target = Assert.IsType<Expr.Block>(dotCall.Target);
+        Assert.Equal(3, target.Algorithm.Output.Count);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
+    public void Parse_DotCall_InlineBraceReceiver_IsBlock()
+    {
+        var result = Parser.ParseSyntax("{1, 2, 3}.order");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        var target = Assert.IsType<Expr.Block>(dotCall.Target);
+        Assert.Equal(3, target.Algorithm.Output.Count);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
     public void Parse_RootAlgorithm_IsParametrized()
     {
         var result = Parser.ParseSyntax("x + 1");

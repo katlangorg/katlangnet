@@ -12,7 +12,9 @@ public enum UnaryOp { Minus, Not }
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
 /// Sequence-consuming builtins always consume counted top-level items; a
 /// grouped single output stays one item even when it is the only sequence
-/// argument.
+/// argument. In dot-call form only, a direct inline receiver written as
+/// <c>(...)</c> or <c>{...}</c> contributes its own top-level outputs to these
+/// builtins; named grouped values still stay one item.
 /// <c>filter(...items, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value.
 /// <c>map(...items, transform)</c> maps top-level sequence items left to right;
