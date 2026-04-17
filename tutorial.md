@@ -1176,6 +1176,7 @@ Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2)
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
 - A single numeric value is treated as a one-element collection
+- The final quotient follows KatLang's current Lean integer semantics, so non-exact averages use floor division, for example `avg(1, 2)` returns `1`
 - Grouped values are invalid and are not flattened
 - Strings are invalid
 
@@ -1188,6 +1189,8 @@ avg(range(1, 5))
 
 Square = x * x
 range(1, 4).map(Square).avg
+
+avg(1, 2)
 ```
 
 **Results:**
@@ -1196,7 +1199,9 @@ range(1, 4).map(Square).avg
 
 3
 
-7.5
+7
+
+1
 ```
 
 Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging. The same is true for a grouped wrapper output such as `Values = (1, 2, 3); avg(Values)`.
@@ -1884,7 +1889,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `min` | `min(...items)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `max` | `max(...items)` or `collection.max` — find the largest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `sum` | `sum(...items)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |
-| `avg` | `avg(...items)` or `collection.avg` — average top-level numeric elements; the sequence must be non-empty, each element must be a single atomic numeric value, and grouped values are not flattened |
+| `avg` | `avg(...items)` or `collection.avg` — average top-level numeric elements using the current Lean integer quotient rule; the sequence must be non-empty, each element must be a single atomic numeric value, and grouped values are not flattened |
 | `reduce` | `reduce(...items, step, initial)` or `collection.reduce(step, initial)` — fold left over top-level elements; step must return exactly one accumulator value |
 | `atoms` | `atoms(alg)` — flatten to individual values |
 | `load` | `Name = load('url')` — load external algorithm |

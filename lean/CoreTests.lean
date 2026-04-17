@@ -2509,7 +2509,7 @@ def test100 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "sum") (alg [] [] [] [groupedPairs])
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test100  -- should be true
@@ -2519,7 +2519,7 @@ def test101 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "sum") (alg [] [] [] [.stringLiteral "hello"])
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
 
 #eval test101  -- should be true
@@ -2758,7 +2758,7 @@ def test118 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "min") (alg [] [] [] [groupedPairs])
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test118  -- should be true
@@ -2768,7 +2768,7 @@ def test119 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "min") (alg [] [] [] [.stringLiteral "hello"])
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
 
 #eval test119  -- should be true
@@ -2880,7 +2880,7 @@ def test127 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "max") (alg [] [] [] [groupedPairs])
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test127  -- should be true
@@ -2890,7 +2890,7 @@ def test128 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "max") (alg [] [] [] [.stringLiteral "hello"])
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
 
 #eval test128  -- should be true
@@ -2998,7 +2998,7 @@ def test136 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "avg") (alg [] [] [] [groupedPairs])
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test136  -- should be true
@@ -3008,7 +3008,7 @@ def test137 : Bool :=
   match runResult (.block (alg [] [] [] [
     .call (resolve "avg") (alg [] [] [] [.stringLiteral "hello"])
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
 
 #eval test137  -- should be true
@@ -3090,7 +3090,7 @@ def test143 : Bool :=
       .block (alg [] [] [] [.num 1, .stringLiteral "hello"])
     ])
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test143  -- should be true
@@ -3249,7 +3249,7 @@ def test151d : Bool :=
       .block (alg [] [] [] [.num 3, .num 4])
     ])
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151d  -- should be true
@@ -3261,7 +3261,7 @@ def test151e : Bool :=
       .block (alg [] [] [] [.num 3, .num 4])
     ])
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151e  -- should be true
@@ -3395,7 +3395,7 @@ def test151q : Bool :=
       .block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
     ])
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151q  -- should be true
@@ -3413,7 +3413,7 @@ def test151s : Bool :=
   match runResult (.block (algPrivate [] [] [("Values", alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2])])] [
     .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151s  -- should be true
@@ -3424,7 +3424,7 @@ def test151t : Bool :=
       .block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
     ])
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151t  -- should be true
@@ -3442,7 +3442,7 @@ def test151v : Bool :=
   match runResult (.block (algPrivate [] [] [("Values", alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2])])] [
     .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test151v  -- should be true
@@ -3592,7 +3592,7 @@ def test159 : Bool :=
   ] [
     .call (resolve "sum") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test159  -- should be true
@@ -3605,7 +3605,7 @@ def test160 : Bool :=
   ] [
     .call (resolve "min") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test160  -- should be true
@@ -3618,7 +3618,7 @@ def test161 : Bool :=
   ] [
     .call (resolve "max") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test161  -- should be true
@@ -3631,7 +3631,7 @@ def test162 : Bool :=
   ] [
     .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value" err && innermostIsBadArity err
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
 
 #eval test162  -- should be true
@@ -3679,5 +3679,110 @@ def test166 : Bool :=
   | _ => false
 
 #eval test166  -- should be true
+
+def test167 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsNegative", isNegativeAlg65)] [
+    .dotCall
+      (.call (resolve "filter") (alg [] [] [] [
+        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+        .resolve "IsNegative"
+      ]))
+      "orderDesc"
+      none
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test167  -- should be true
+
+def test168 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [.num 1, .num 2])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test168  -- should be true
+
+def test169 : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [.num (-1), .num (-2)])
+  ])) with
+  | Except.ok [-2] => true
+  | _ => false
+
+#eval test169  -- should be true
+
+def test170 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "order") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test170  -- should be true
+
+def test171 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "orderDesc") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test171  -- should be true
+
+def test172 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "min") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test172  -- should be true
+
+def test173 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "max") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test173  -- should be true
+
+def test174 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test174  -- should be true
+
+def test175 : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (resolve "avg") (alg [] [] [] [
+      .num 1,
+      .block (alg [] [] [] [.num 2, .num 3])
+    ])
+  ])) with
+  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
+  | _ => false
+
+#eval test175  -- should be true
 
 end KatLangTests

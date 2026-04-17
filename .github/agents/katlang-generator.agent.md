@@ -758,6 +758,7 @@ Canonical distinction:
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
+- Non-exact averages follow the current Lean core integer semantics, so `avg(1, 2)` returns `1`
 - Grouped values are not flattened
 - Strings are invalid
 - A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item, so `avg(Values)` is invalid

@@ -1785,6 +1785,17 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_OrderDesc_EmptyCollection_ReturnsEmpty()
+    {
+        var source = """
+            IsNegative = x < 0
+            range(1, 4).filter(IsNegative).orderDesc
+            """;
+
+        AssertEval(source);
+    }
+
+    [Fact]
     public void Eval_Order_UnsupportedElement_FailsWithContext()
         => AssertBuiltinFailureWithContext("order((1, 'hello'))", "order expects each collection element to be a single numeric value");
 
@@ -1799,6 +1810,18 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Order_MixedAtomicAndGroupedMultiArgs_FailWithContext()
         => AssertBuiltinFailureWithContext("order(1, (2, 3))", "order expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Order_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "order(1, (2, 3))",
+            "order expects each collection element to be a single numeric value; item 1 was grouped value");
+
+    [Fact]
+    public void Eval_OrderDesc_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "orderDesc(1, (2, 3))",
+            "orderDesc expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Count builtin ────────────────────────────────────────────────────────
 
@@ -2118,6 +2141,12 @@ public class EvaluatorTests
     public void Eval_Min_StringElement_FailsWithContext()
         => AssertBuiltinFailureWithContext("min('hello')", "min expects each collection element to be a single numeric value");
 
+    [Fact]
+    public void Eval_Min_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "min(1, (2, 3))",
+            "min expects each collection element to be a single numeric value; item 1 was grouped value");
+
     // ── Max builtin ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -2180,6 +2209,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Max_StringElement_FailsWithContext()
         => AssertBuiltinFailureWithContext("max('hello')", "max expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Max_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "max(1, (2, 3))",
+            "max expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Sum builtin ──────────────────────────────────────────────────────────
 
@@ -2244,6 +2279,12 @@ public class EvaluatorTests
     public void Eval_Sum_StringElement_FailsWithContext()
         => AssertSumElementShapeFails("sum('hello')");
 
+    [Fact]
+    public void Eval_Sum_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "sum(1, (2, 3))",
+            "sum expects each collection element to be a single numeric value; item 1 was grouped value");
+
     // ── Avg builtin ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -2270,15 +2311,23 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Avg_MapComposition_ReturnsFractionalMean()
+    public void Eval_Avg_MapComposition_ReturnsLeanFloorMean()
     {
         var source = """
             Square = x * x
             range(1, 4).map(Square).avg
             """;
 
-        AssertEval(source, 7.5m);
+        AssertEval(source, 7);
     }
+
+    [Fact]
+    public void Eval_Avg_NonExactPositiveMean_UsesLeanFloorSemantics()
+        => AssertEval("avg(1, 2)", 1);
+
+    [Fact]
+    public void Eval_Avg_NonExactNegativeMean_UsesLeanFloorSemantics()
+        => AssertEval("avg(-1, -2)", -2);
 
     [Fact]
     public void Eval_Avg_EmptyCollection_FailsWithContext()
@@ -2306,6 +2355,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Avg_StringElement_FailsWithContext()
         => AssertBuiltinFailureWithContext("avg('hello')", "avg expects each collection element to be a single numeric value");
+
+    [Fact]
+    public void Eval_Avg_IndexedNumericDiagnostic_IncludesItemIndex()
+        => AssertBuiltinFailureWithContext(
+            "avg(1, (2, 3))",
+            "avg expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Reduce builtin ───────────────────────────────────────────────────────
 

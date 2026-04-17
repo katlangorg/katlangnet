@@ -43,8 +43,9 @@ public enum UnaryOp { Minus, Not }
 /// each item must be exactly one atomic numeric value, grouped values are
 /// not flattened, and empty sequences return <c>0</c>.
 /// <c>avg(...items)</c> averages top-level numeric sequence items left to
-/// right; the sequence must be non-empty, each item must be exactly one
-/// atomic numeric value, and grouped values are not flattened.
+/// right using the Lean core's floor-style integer quotient rule; the
+/// sequence must be non-empty, each item must be exactly one atomic numeric
+/// value, and grouped values are not flattened.
 /// <c>reduce(...items, step, initial)</c> folds top-level sequence items left
 /// to right; <c>step(element, accumulator)</c> must return exactly one next
 /// accumulator value, and grouped elements/accumulators are preserved whole.

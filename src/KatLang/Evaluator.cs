@@ -909,9 +909,27 @@ public static class Evaluator
     /// <summary>
     /// Counted evaluation result: the normalized value paired with the number of
     /// top-level values emitted at the current algorithm boundary.
+    /// Helpers whose names end in <c>Counted</c> preserve this pair instead of
+    /// collapsing it to just <see cref="Result"/>.
     /// Lean: <c>CountedResult</c>.
     /// </summary>
     private readonly record struct CountedResult(Result Value, int EmittedCount);
+
+    private enum SequenceBuiltinEmptyPolicy
+    {
+        AllowEmpty,
+        RequireNonEmpty,
+    }
+
+    private readonly record struct SequenceBuiltinMetadata(
+        int TrailingArgCount,
+        IReadOnlyList<string> TrailingArgRoles,
+        SequenceBuiltinEmptyPolicy EmptyPolicy = SequenceBuiltinEmptyPolicy.AllowEmpty,
+        bool NumericOnly = false);
+
+    private readonly record struct PreparedSequenceBuiltinInput(
+        IReadOnlyList<Result> Items,
+        IReadOnlyList<decimal>? NumericItems = null);
 
     /// <summary>
     /// Validate the output shape required by counted builtins that must emit
@@ -1268,26 +1286,28 @@ public static class Evaluator
 
     /// <summary>
     /// Split one or more leading sequence arguments away from a sequence
-    /// builtin's fixed trailing arguments, then run the builtin-specific
-    /// handler.
+    /// builtin's fixed trailing arguments, eagerly prepare the counted top-level
+    /// sequence input, then run the builtin-specific handler.
     /// Sequence builtins always consume counted top-level items. A grouped
     /// single output stays one item even when it is the only sequence argument;
     /// there is no special 1-argument flattening path.
     /// </summary>
     private static EvalResult<CountedResult> ApplySequenceBuiltinCounted(
         BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
         IReadOnlyList<Algorithm> args,
-        Func<IReadOnlyList<Algorithm>, IReadOnlyList<Algorithm>, EvalResult<CountedResult>> handler)
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        Func<PreparedSequenceBuiltinInput, IReadOnlyList<Algorithm>, EvalResult<CountedResult>> handler)
     {
-        var trailingArgCount = BuiltinTopLevelSequenceTrailingArgs(builtin);
-        if (trailingArgCount is null)
-            return WrongBuiltinArity(builtin, args.Count);
-
-        var split = SplitSequenceBuiltinArgs(trailingArgCount.Value, args);
+        var split = SplitSequenceBuiltinArgs(metadata.TrailingArgCount, args);
         if (split is null)
             return WrongBuiltinArity(builtin, args.Count);
 
-        return handler(split.Value.SequenceArgs, split.Value.TrailingArgs);
+        var preparedR = PrepareSequenceBuiltinInput(builtin, metadata, split.Value.SequenceArgs, ctx, valEnv);
+        if (preparedR.IsError) return preparedR.Error;
+
+        return handler(preparedR.Value, split.Value.TrailingArgs);
     }
 
     /// <summary>
@@ -1297,6 +1317,8 @@ public static class Evaluator
     /// contributes the top-level values it emitted at its own boundary, so a
     /// grouped single output stays whole even when it is the only sequence
     /// argument.
+    /// Sequence-builtin evaluation is eager by design: all leading sequence
+    /// arguments are evaluated before builtin-specific processing begins.
     /// </summary>
     private static EvalResult<List<Result>> EvalCountedSequenceItems(
         IReadOnlyList<Algorithm> collectionArgs,
@@ -1315,6 +1337,33 @@ public static class Evaluator
         return EvalResult<List<Result>>.Ok(collected);
     }
 
+    private static EvalResult<List<Result>> ApplySequenceBuiltinEmptyPolicy(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        List<Result> items)
+    {
+        if (metadata.EmptyPolicy == SequenceBuiltinEmptyPolicy.RequireNonEmpty && items.Count == 0)
+        {
+            return new EvalError.WithContext(
+                $"{BuiltinDisplayName(builtin)} requires a non-empty collection",
+                new EvalError.BadArity());
+        }
+
+        return EvalResult<List<Result>>.Ok(items);
+    }
+
+    private static string DescribeSequenceItem(Result item) => item switch
+    {
+        Result.Atom(var n) => $"numeric value {n}",
+        Result.Str(var s) => $"string value \"{s}\"",
+        Result.Group(var items) when items.Count == 0 => "empty grouped value",
+        Result.Group => "grouped value",
+        _ => "value",
+    };
+
+    private static string NumericSequenceItemErrorContext(BuiltinId builtin, int index, Result item)
+        => $"{BuiltinDisplayName(builtin)} expects each collection element to be a single numeric value; item {index} was {DescribeSequenceItem(item)}";
+
     /// <summary>
     /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
     /// preserving the accumulator's emitted-value count for the empty-sequence
@@ -1322,7 +1371,7 @@ public static class Evaluator
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
+        IReadOnlyList<Result> items,
         Algorithm stepAlg,
         Algorithm initialAlg,
         EvalCtx ctx,
@@ -1331,11 +1380,8 @@ public static class Evaluator
         var initialR = EvalMaybeMemoizedPropertyOutputCounted(initialAlg, ctx, valEnv);
         if (initialR.IsError) return initialR.Error;
 
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
         var accumulator = initialR.Value;
-        foreach (var item in elementsR.Value)
+        foreach (var item in items)
         {
             var stepR = WithCtx(
                 "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)",
@@ -1356,16 +1402,13 @@ public static class Evaluator
     /// The final argument is the predicate.
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
+        IReadOnlyList<Result> items,
         Algorithm predicateAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
         var kept = new List<Result>();
-        foreach (var item in elementsR.Value)
+        foreach (var item in items)
         {
             var predicateR = WithCtx(
                 "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
@@ -1393,16 +1436,13 @@ public static class Evaluator
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
+        IReadOnlyList<Result> items,
         Algorithm transformAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
-        var mapped = new List<Result>(elementsR.Value.Count);
-        foreach (var item in elementsR.Value)
+        var mapped = new List<Result>(items.Count);
+        foreach (var item in items)
         {
             var transformR = WithCtx(
                 "while evaluating map transform (map passes each collection item as one argument to the transform)",
@@ -1422,19 +1462,22 @@ public static class Evaluator
     /// Collect top-level sequence items as single atomic numeric values.
     /// Used by numeric ordering and aggregation builtins that only accept
     /// clearly comparable numeric elements and reject strings or grouped values.
+    /// Diagnostics include the 0-based item index after counted top-level
+    /// extraction so numeric shape failures are easier to debug.
     /// </summary>
     private static EvalResult<List<decimal>> CollectSingleAtomicNumbers(
-        IReadOnlyList<Result> elements,
-        string errorContext)
+        BuiltinId builtin,
+        IReadOnlyList<Result> elements)
     {
         var numbers = new List<decimal>(elements.Count);
-        foreach (var item in elements)
+        for (var index = 0; index < elements.Count; index++)
         {
+            var item = elements[index];
             var numeric = item.SingleAtomicNumber();
             if (numeric is null)
             {
                 return new EvalError.WithContext(
-                    errorContext,
+                    NumericSequenceItemErrorContext(builtin, index, item),
                     new EvalError.BadArity());
             }
 
@@ -1444,6 +1487,31 @@ public static class Evaluator
         return EvalResult<List<decimal>>.Ok(numbers);
     }
 
+    private static EvalResult<PreparedSequenceBuiltinInput> PrepareSequenceBuiltinInput(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        IReadOnlyList<Algorithm> collectionArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var itemsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
+        if (itemsR.IsError) return itemsR.Error;
+
+        var validatedItemsR = ApplySequenceBuiltinEmptyPolicy(builtin, metadata, itemsR.Value);
+        if (validatedItemsR.IsError) return validatedItemsR.Error;
+
+        IReadOnlyList<decimal>? numericItems = null;
+        if (metadata.NumericOnly)
+        {
+            var numbersR = CollectSingleAtomicNumbers(builtin, validatedItemsR.Value);
+            if (numbersR.IsError) return numbersR.Error;
+            numericItems = numbersR.Value;
+        }
+
+        return EvalResult<PreparedSequenceBuiltinInput>.Ok(
+            new PreparedSequenceBuiltinInput(validatedItemsR.Value, numericItems));
+    }
+
     /// <summary>
     /// Evaluate <c>order</c> over one or more leading sequence arguments by
     /// eagerly sorting the top-level numeric sequence items in ascending order.
@@ -1451,19 +1519,9 @@ public static class Evaluator
     /// rejected, and empty collections stay empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<decimal> numbers)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "order expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var sorted = numbersR.Value;
+        var sorted = numbers.ToList();
         sorted.Sort();
         return EvalResult<CountedResult>.Ok(new CountedResult(
             Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
@@ -1477,19 +1535,9 @@ public static class Evaluator
     /// rejected, and empty collections stay empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<decimal> numbers)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "orderDesc expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var sorted = numbersR.Value;
+        var sorted = numbers.ToList();
         sorted.Sort(static (left, right) => right.CompareTo(left));
         return EvalResult<CountedResult>.Ok(new CountedResult(
             Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
@@ -1505,15 +1553,8 @@ public static class Evaluator
     /// Lean: <c>evalCountCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalCountCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(elementsR.Value.Count), 1));
-    }
+        IReadOnlyList<Result> items)
+        => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(items.Count), 1));
 
     /// <summary>
     /// Evaluate <c>first</c> over one or more leading sequence arguments by returning the first top-level
@@ -1522,21 +1563,12 @@ public static class Evaluator
     /// grouped values are preserved whole, and the collection must be non-empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalFirstCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<Result> items)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
+        if (items.Count == 0)
+            return new EvalError.BadArity();
 
-        if (elementsR.Value.Count == 0)
-        {
-            return new EvalError.WithContext(
-                "first requires a non-empty collection",
-                new EvalError.BadArity());
-        }
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(elementsR.Value[0], 1));
+        return EvalResult<CountedResult>.Ok(new CountedResult(items[0], 1));
     }
 
     /// <summary>
@@ -1546,21 +1578,12 @@ public static class Evaluator
     /// grouped values are preserved whole, and the collection must be non-empty.
     /// </summary>
     private static EvalResult<CountedResult> EvalLastCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<Result> items)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
+        if (items.Count == 0)
+            return new EvalError.BadArity();
 
-        if (elementsR.Value.Count == 0)
-        {
-            return new EvalError.WithContext(
-                "last requires a non-empty collection",
-                new EvalError.BadArity());
-        }
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(elementsR.Value[^1], 1));
+        return EvalResult<CountedResult>.Ok(new CountedResult(items[^1], 1));
     }
 
     /// <summary>
@@ -1572,24 +1595,10 @@ public static class Evaluator
     /// Lean: <c>evalMinCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMinCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<decimal> numbers)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "min expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var numbers = numbersR.Value;
         if (numbers.Count == 0)
-        {
-            return new EvalError.WithContext(
-                "min requires a non-empty collection",
-                new EvalError.BadArity());
-        }
+            return new EvalError.BadArity();
 
         var minimum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
@@ -1610,24 +1619,10 @@ public static class Evaluator
     /// Lean: <c>evalMaxCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMaxCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<decimal> numbers)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "max expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var numbers = numbersR.Value;
         if (numbers.Count == 0)
-        {
-            return new EvalError.WithContext(
-                "max requires a non-empty collection",
-                new EvalError.BadArity());
-        }
+            return new EvalError.BadArity();
 
         var maximum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
@@ -1644,22 +1639,13 @@ public static class Evaluator
     /// elements from left to right.
     /// Each element must be exactly one atomic numeric value; groups are not
     /// flattened, strings are rejected, and empty collections return <c>0</c>.
+    /// Implementation note: Lean <c>Int</c> is unbounded, but the C# decimal
+    /// runtime can overflow; that overflow remains an implementation-only
+    /// concern and is reported as <see cref="EvalError.NumericOverflow"/>.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalSumCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+    private static EvalResult<decimal> SumNumbersChecked(IReadOnlyList<decimal> numbers)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "sum expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var numbers = numbersR.Value;
-
         decimal total = 0;
         try
         {
@@ -1667,13 +1653,28 @@ public static class Evaluator
             {
                 total = checked(total + numeric);
             }
+
+            return EvalResult<decimal>.Ok(total);
         }
         catch (OverflowException)
         {
             return new EvalError.NumericOverflow();
         }
+    }
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(total), 1));
+    /// <summary>
+    /// Evaluate <c>sum</c> over one or more leading sequence arguments by adding the top-level sequence
+    /// elements from left to right.
+    /// Each element must be exactly one atomic numeric value; groups are not
+    /// flattened, strings are rejected, and empty collections return <c>0</c>.
+    /// Lean: <c>evalSumCounted</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalSumCounted(IReadOnlyList<decimal> numbers)
+    {
+        var totalR = SumNumbersChecked(numbers);
+        if (totalR.IsError) return totalR.Error;
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(totalR.Value), 1));
     }
 
     /// <summary>
@@ -1682,43 +1683,54 @@ public static class Evaluator
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
     /// are rejected.
+    /// Lean core still defines <c>avg</c> over <c>Int</c>, so the final quotient
+    /// uses Lean's floor-style integer semantics even though C# stores runtime
+    /// numbers as decimal.
+    /// Implementation note: the intermediate decimal accumulation can still
+    /// overflow in C#, which is reported as <see cref="EvalError.NumericOverflow"/>.
     /// Lean: <c>evalAvgCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalAvgCounted(
-        IReadOnlyList<Algorithm> collectionArgs,
+    private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<decimal> numbers)
+    {
+        if (numbers.Count == 0)
+            return new EvalError.BadArity();
+
+        var totalR = SumNumbersChecked(numbers);
+        if (totalR.IsError) return totalR.Error;
+
+        var average = Math.Floor(totalR.Value / numbers.Count);
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
+    }
+
+    private static EvalResult<CountedResult> ApplyBuiltinCountedSequence(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        IReadOnlyList<Algorithm> args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var elementsR = EvalCountedSequenceItems(collectionArgs, ctx, valEnv);
-        if (elementsR.IsError) return elementsR.Error;
-        var numbersR = CollectSingleAtomicNumbers(
-            elementsR.Value,
-            "avg expects each collection element to be a single numeric value");
-        if (numbersR.IsError) return numbersR.Error;
-
-        var numbers = numbersR.Value;
-        if (numbers.Count == 0)
-        {
-            return new EvalError.WithContext(
-                "avg requires a non-empty collection",
-                new EvalError.BadArity());
-        }
-
-        decimal total = 0;
-        try
-        {
-            foreach (var numeric in numbers)
+        return ApplySequenceBuiltinCounted(
+            builtin,
+            metadata,
+            args,
+            ctx,
+            valEnv,
+            (prepared, trailingArgs) => (builtin, trailingArgs.Count, prepared.NumericItems) switch
             {
-                total = checked(total + numeric);
-            }
-
-            var average = total / numbers.Count;
-            return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
-        }
-        catch (OverflowException)
-        {
-            return new EvalError.NumericOverflow();
-        }
+                (BuiltinId.@filter, 1, _) => EvalFilterCounted(prepared.Items, trailingArgs[0], ctx, valEnv),
+                (BuiltinId.@map, 1, _) => EvalMapCounted(prepared.Items, trailingArgs[0], ctx, valEnv),
+                (BuiltinId.@order, 0, { } numbers) => EvalOrderCounted(numbers),
+                (BuiltinId.@orderDesc, 0, { } numbers) => EvalOrderDescCounted(numbers),
+                (BuiltinId.@count, 0, _) => EvalCountCounted(prepared.Items),
+                (BuiltinId.@first, 0, _) => EvalFirstCounted(prepared.Items),
+                (BuiltinId.@last, 0, _) => EvalLastCounted(prepared.Items),
+                (BuiltinId.@min, 0, { } numbers) => EvalMinCounted(numbers),
+                (BuiltinId.@max, 0, { } numbers) => EvalMaxCounted(numbers),
+                (BuiltinId.@sum, 0, { } numbers) => EvalSumCounted(numbers),
+                (BuiltinId.@avg, 0, { } numbers) => EvalAvgCounted(numbers),
+                (BuiltinId.@reduce, 2, _) => EvalReduceCounted(prepared.Items, trailingArgs[0], trailingArgs[1], ctx, valEnv),
+                _ => WrongBuiltinArity(builtin, args.Count),
+            });
     }
 
     /// <summary>
@@ -1733,28 +1745,8 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (BuiltinTopLevelSequenceTrailingArgs(builtin) is not null)
-        {
-            return ApplySequenceBuiltinCounted(
-                builtin,
-                args,
-                (collectionArgs, trailingArgs) => (builtin, trailingArgs.Count) switch
-                {
-                    (BuiltinId.@filter, 1) => EvalFilterCounted(collectionArgs, trailingArgs[0], ctx, valEnv),
-                    (BuiltinId.@map, 1) => EvalMapCounted(collectionArgs, trailingArgs[0], ctx, valEnv),
-                    (BuiltinId.@order, 0) => EvalOrderCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@orderDesc, 0) => EvalOrderDescCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@count, 0) => EvalCountCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@first, 0) => EvalFirstCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@last, 0) => EvalLastCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@min, 0) => EvalMinCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@max, 0) => EvalMaxCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@sum, 0) => EvalSumCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@avg, 0) => EvalAvgCounted(collectionArgs, ctx, valEnv),
-                    (BuiltinId.@reduce, 2) => EvalReduceCounted(collectionArgs, trailingArgs[0], trailingArgs[1], ctx, valEnv),
-                    _ => WrongBuiltinArity(builtin, args.Count),
-                });
-        }
+        if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
+            return ApplyBuiltinCountedSequence(builtin, metadata, args, ctx, valEnv);
 
         switch (builtin, args.Count)
         {
@@ -1937,28 +1929,89 @@ public static class Evaluator
         ],
         Output: []);
 
-    private static int? BuiltinTopLevelSequenceTrailingArgs(BuiltinId builtin) => builtin switch
+    private static readonly SequenceBuiltinMetadata FilterSequenceBuiltinMetadata =
+        new(1, ["predicate"]);
+
+    private static readonly SequenceBuiltinMetadata MapSequenceBuiltinMetadata =
+        new(1, ["transform"]);
+
+    private static readonly SequenceBuiltinMetadata OrderSequenceBuiltinMetadata =
+        new(0, [], NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata OrderDescSequenceBuiltinMetadata =
+        new(0, [], NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata CountSequenceBuiltinMetadata =
+        new(0, []);
+
+    private static readonly SequenceBuiltinMetadata FirstSequenceBuiltinMetadata =
+        new(0, [], EmptyPolicy: SequenceBuiltinEmptyPolicy.RequireNonEmpty);
+
+    private static readonly SequenceBuiltinMetadata LastSequenceBuiltinMetadata =
+        new(0, [], EmptyPolicy: SequenceBuiltinEmptyPolicy.RequireNonEmpty);
+
+    private static readonly SequenceBuiltinMetadata MinSequenceBuiltinMetadata =
+        new(0, [], EmptyPolicy: SequenceBuiltinEmptyPolicy.RequireNonEmpty, NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata MaxSequenceBuiltinMetadata =
+        new(0, [], EmptyPolicy: SequenceBuiltinEmptyPolicy.RequireNonEmpty, NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata SumSequenceBuiltinMetadata =
+        new(0, [], NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata AvgSequenceBuiltinMetadata =
+        new(0, [], EmptyPolicy: SequenceBuiltinEmptyPolicy.RequireNonEmpty, NumericOnly: true);
+
+    private static readonly SequenceBuiltinMetadata ReduceSequenceBuiltinMetadata =
+        new(2, ["step", "initial accumulator"]);
+
+    private static SequenceBuiltinMetadata? GetSequenceBuiltinMetadata(BuiltinId builtin) => builtin switch
     {
-        BuiltinId.@filter => 1,
-        BuiltinId.@map => 1,
-        BuiltinId.@order => 0,
-        BuiltinId.@orderDesc => 0,
-        BuiltinId.@count => 0,
-        BuiltinId.@first => 0,
-        BuiltinId.@last => 0,
-        BuiltinId.@min => 0,
-        BuiltinId.@max => 0,
-        BuiltinId.@sum => 0,
-        BuiltinId.@avg => 0,
-        BuiltinId.@reduce => 2,
+        BuiltinId.@filter => FilterSequenceBuiltinMetadata,
+        BuiltinId.@map => MapSequenceBuiltinMetadata,
+        BuiltinId.@order => OrderSequenceBuiltinMetadata,
+        BuiltinId.@orderDesc => OrderDescSequenceBuiltinMetadata,
+        BuiltinId.@count => CountSequenceBuiltinMetadata,
+        BuiltinId.@first => FirstSequenceBuiltinMetadata,
+        BuiltinId.@last => LastSequenceBuiltinMetadata,
+        BuiltinId.@min => MinSequenceBuiltinMetadata,
+        BuiltinId.@max => MaxSequenceBuiltinMetadata,
+        BuiltinId.@sum => SumSequenceBuiltinMetadata,
+        BuiltinId.@avg => AvgSequenceBuiltinMetadata,
+        BuiltinId.@reduce => ReduceSequenceBuiltinMetadata,
         _ => null,
     };
+
+    private static string BuiltinDisplayName(BuiltinId builtin) => builtin switch
+    {
+        BuiltinId.@if => "if",
+        BuiltinId.@while => "while",
+        BuiltinId.@repeat => "repeat",
+        BuiltinId.@atoms => "atoms",
+        BuiltinId.@range => "range",
+        BuiltinId.@filter => "filter",
+        BuiltinId.@map => "map",
+        BuiltinId.@order => "order",
+        BuiltinId.@orderDesc => "orderDesc",
+        BuiltinId.@count => "count",
+        BuiltinId.@first => "first",
+        BuiltinId.@last => "last",
+        BuiltinId.@min => "min",
+        BuiltinId.@max => "max",
+        BuiltinId.@sum => "sum",
+        BuiltinId.@avg => "avg",
+        BuiltinId.@reduce => "reduce",
+        _ => builtin.ToString(),
+    };
+
+    private static string DescribeSequenceBuiltinTrailingRoles(IReadOnlyList<string> roles)
+        => string.Join(", ", roles);
 
     /// <summary>Lean: builtinAcceptsArity. Fixed-arity builtins stay exact; sequence builtins accept one or more leading sequence args.</summary>
     private static bool BuiltinAcceptsArity(BuiltinId b, int n)
     {
-        if (BuiltinTopLevelSequenceTrailingArgs(b) is { } trailing)
-            return n > trailing;
+        if (GetSequenceBuiltinMetadata(b) is { } metadata)
+            return n > metadata.TrailingArgCount;
 
         return (b, n) switch
         {
@@ -1974,8 +2027,13 @@ public static class Evaluator
     /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
     private static string BuiltinArityDesc(BuiltinId b)
     {
-        if (BuiltinTopLevelSequenceTrailingArgs(b) is { } trailing)
-            return $"at least {trailing + 1}";
+        if (GetSequenceBuiltinMetadata(b) is { } metadata)
+        {
+            if (metadata.TrailingArgRoles.Count == 0)
+                return $"at least {metadata.TrailingArgCount + 1}";
+
+            return $"at least {metadata.TrailingArgCount + 1} arguments (one or more sequence arguments plus {DescribeSequenceBuiltinTrailingRoles(metadata.TrailingArgRoles)})";
+        }
 
         return b switch
         {
@@ -2646,9 +2704,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (BuiltinTopLevelSequenceTrailingArgs(builtin) is not null)
+        if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
         {
-            var countedR = ApplyBuiltinCounted(builtin, args, ctx, valEnv);
+            var countedR = ApplyBuiltinCountedSequence(builtin, metadata, args, ctx, valEnv);
             if (countedR.IsError) return countedR.Error;
             return EvalResult<Result>.Ok(countedR.Value.Value);
         }

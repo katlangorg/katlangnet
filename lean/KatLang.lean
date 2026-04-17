@@ -150,40 +150,90 @@ inductive Builtin where
   | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
-/-- Check whether a builtin accepts a given argument count.
-  ifBuiltin accepts 3 arguments: condition, whenTrue, and whenFalse.
-    rangeBuiltin accepts 2 integer bounds: start and stop.
-    filterBuiltin accepts 2+ arguments: one or more sequence arguments and a predicate.
-    mapBuiltin accepts 2+ arguments: one or more sequence arguments and a transform.
-    orderBuiltin accepts 1+ arguments: one or more sequence arguments of sortable top-level items.
-    orderDescBuiltin accepts 1+ arguments: one or more sequence arguments of sortable top-level items.
-    countBuiltin accepts 1+ arguments: one or more sequence arguments whose top-level items are counted.
-    firstBuiltin accepts 1+ arguments: one or more sequence arguments whose first top-level item is returned.
-    lastBuiltin accepts 1+ arguments: one or more sequence arguments whose last top-level item is returned.
-    minBuiltin accepts 1+ arguments: one or more sequence arguments of top-level numeric items.
-    maxBuiltin accepts 1+ arguments: one or more sequence arguments of top-level numeric items.
-    sumBuiltin accepts 1+ arguments: one or more sequence arguments of top-level numeric items.
-    avgBuiltin accepts 1+ arguments: one or more sequence arguments of top-level numeric items.
-    reduceBuiltin accepts 3+ arguments: one or more sequence arguments, a step, and an initial accumulator. -/
-def builtinTopLevelSequenceTrailingArgs? : Builtin -> Option Nat
-  | .filterBuiltin => some 1
-  | .mapBuiltin => some 1
-  | .orderBuiltin => some 0
-  | .orderDescBuiltin => some 0
-  | .countBuiltin => some 0
-  | .firstBuiltin => some 0
-  | .lastBuiltin => some 0
-  | .minBuiltin => some 0
-  | .maxBuiltin => some 0
-  | .sumBuiltin => some 0
-  | .avgBuiltin => some 0
-  | .reduceBuiltin => some 2
+inductive SequenceBuiltinEmptyPolicy where
+  | allowEmpty
+  | requireNonEmpty
+  deriving Repr, BEq, DecidableEq
+
+structure SequenceBuiltinMetadata where
+  trailingArgCount : Nat
+  trailingArgRoles : List String
+  emptyPolicy : SequenceBuiltinEmptyPolicy := .allowEmpty
+  numericOnly : Bool := false
+  deriving Repr, BEq
+
+/-- Metadata for sequence builtins that consume counted top-level items.
+  The leading arguments are always sequence inputs; `trailingArgCount` and
+  `trailingArgRoles` describe the fixed trailing non-sequence arguments. -/
+def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
+  | .filterBuiltin => some {
+      trailingArgCount := 1
+      trailingArgRoles := ["predicate"]
+    }
+  | .mapBuiltin => some {
+      trailingArgCount := 1
+      trailingArgRoles := ["transform"]
+    }
+  | .orderBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      numericOnly := true
+    }
+  | .orderDescBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      numericOnly := true
+    }
+  | .countBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+    }
+  | .firstBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      emptyPolicy := .requireNonEmpty
+    }
+  | .lastBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      emptyPolicy := .requireNonEmpty
+    }
+  | .minBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      emptyPolicy := .requireNonEmpty
+      numericOnly := true
+    }
+  | .maxBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      emptyPolicy := .requireNonEmpty
+      numericOnly := true
+    }
+  | .sumBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      numericOnly := true
+    }
+  | .avgBuiltin => some {
+      trailingArgCount := 0
+      trailingArgRoles := []
+      emptyPolicy := .requireNonEmpty
+      numericOnly := true
+    }
+  | .reduceBuiltin => some {
+      trailingArgCount := 2
+      trailingArgRoles := ["step", "initial accumulator"]
+    }
   | _ => none
+
+private def sequenceBuiltinTrailingRolesDesc (roles : List String) : String :=
+  String.intercalate ", " roles
 
 def builtinAcceptsArity : Builtin -> Nat -> Bool
   | b, n =>
-      match builtinTopLevelSequenceTrailingArgs? b with
-      | some trailing => n > trailing
+      match sequenceBuiltinMetadata? b with
+      | some metadata => n > metadata.trailingArgCount
       | none =>
           match b, n with
           | .ifBuiltin, 3 => true
@@ -196,8 +246,12 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
 /-- Human-readable expected arity string for error messages. -/
 def builtinArityDesc : Builtin -> String
   | b =>
-      match builtinTopLevelSequenceTrailingArgs? b with
-      | some trailing => s!"at least {trailing + 1}"
+      match sequenceBuiltinMetadata? b with
+      | some metadata =>
+          if metadata.trailingArgRoles.isEmpty then
+            s!"at least {metadata.trailingArgCount + 1}"
+          else
+            s!"at least {metadata.trailingArgCount + 1} arguments (one or more sequence arguments plus {sequenceBuiltinTrailingRolesDesc metadata.trailingArgRoles})"
       | none =>
           match b with
           | .ifBuiltin => "3"
@@ -209,6 +263,25 @@ def builtinArityDesc : Builtin -> String
 
 def builtinArityError (b : Builtin) (actual : Nat) : Error :=
   Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 actual)
+
+def builtinDisplayName : Builtin -> String
+  | .ifBuiltin => "if"
+  | .whileBuiltin => "while"
+  | .repeatBuiltin => "repeat"
+  | .atomsBuiltin => "atoms"
+  | .rangeBuiltin => "range"
+  | .filterBuiltin => "filter"
+  | .mapBuiltin => "map"
+  | .orderBuiltin => "order"
+  | .orderDescBuiltin => "orderDesc"
+  | .countBuiltin => "count"
+  | .firstBuiltin => "first"
+  | .lastBuiltin => "last"
+  | .minBuiltin => "min"
+  | .maxBuiltin => "max"
+  | .sumBuiltin => "sum"
+  | .avgBuiltin => "avg"
+  | .reduceBuiltin => "reduce"
 
 --------------------------------------------------------------------------------
 -- Patterns (for conditional algorithms)
@@ -1098,7 +1171,10 @@ def sortIntsDesc (xs : List Int) : List Int :=
 abbrev StepOut := Prod Result Int
 
 /-- Counted evaluation result: the normalized value paired with the number of
-  top-level values emitted at the current algorithm boundary. -/
+  top-level values emitted at the current algorithm boundary.
+
+  Helpers whose names end in `Counted` preserve this pair instead of
+  collapsing the result to just the normalized value. -/
 abbrev CountedResult := Prod Result Nat
 
 /-- Split a step result into (state, continue-flag).
@@ -1234,6 +1310,19 @@ def splitSequenceBuiltinArgs (trailing : Nat) (args : List Algorithm)
     some (args.take sequenceCount, args.drop sequenceCount)
   else
     none
+
+def describeSequenceItem : Result -> String
+  | .atom n => s!"numeric value {n}"
+  | .str s => s!"string value {repr s}"
+  | .group [] => "empty grouped value"
+  | .group _ => "grouped value"
+
+def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
+  s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
+
+structure PreparedSequenceBuiltinInput where
+  items : List Result
+  numericItems : Option (List Int) := none
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -1870,7 +1959,10 @@ mutual
       Sequence builtins always consume counted top-level items. Each argument
       contributes the top-level values it emitted at its own boundary, so a
       grouped single output stays whole even when it is the only sequence
-      argument. -/
+      argument.
+
+      Sequence-builtin evaluation is eager by design: all leading sequence
+      arguments are evaluated before builtin-specific processing begins. -/
     partial def evalCountedSequenceItems (collectionArgs : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) := do
     let rec loop : List Algorithm -> EvalM (List Result)
@@ -1881,6 +1973,47 @@ mutual
           pure (countedTopLevelValues out ++ tail)
     loop collectionArgs
 
+  partial def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMetadata)
+      (items : List Result) : EvalM (List Result) :=
+    match metadata.emptyPolicy, items with
+    | .requireNonEmpty, [] =>
+        .error (Error.withContext
+          s!"{builtinDisplayName b} requires a non-empty collection"
+          Error.badArity)
+    | _, _ =>
+        pure items
+
+  /-- Collect top-level collection elements as single atomic numeric values.
+      Used by numeric ordering and aggregation builtins, which reject strings
+      and grouped values instead of inventing mixed-type or structural
+      interpretation.
+
+      Diagnostics identify the 0-based collection item index so numeric shape
+      failures remain debuggable after counted top-level extraction. -/
+  partial def collectSingleAtomicNumbers (b : Builtin)
+      : Nat -> List Result -> EvalM (List Int)
+    | _, [] => pure []
+    | index, item :: rest =>
+        match Result.singleAtomicNumber? item with
+        | some n => do
+            let tail <- collectSingleAtomicNumbers b (index + 1) rest
+            pure (n :: tail)
+        | none =>
+            .error (Error.withContext
+              (numericSequenceItemErrorContext b index item)
+              Error.badArity)
+
+  partial def prepareSequenceBuiltinInput (b : Builtin) (metadata : SequenceBuiltinMetadata)
+      (collectionArgs : List Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM PreparedSequenceBuiltinInput := do
+    let items <- applySequenceBuiltinEmptyPolicy b metadata (<- evalCountedSequenceItems collectionArgs ctx env)
+    let numericItems <-
+      if metadata.numericOnly then
+        some <$> collectSingleAtomicNumbers b 0 items
+      else
+        pure none
+    pure { items := items, numericItems := numericItems }
+
   /-- Evaluate `reduce` over one or more leading sequence arguments.
       `reduce` processes top-level collection elements from left to right.
       `step(element, accumulator)` receives each whole collection element and
@@ -1889,11 +2022,10 @@ mutual
       empty and multi-output results are rejected.
 
       Empty collections return the initial accumulator unchanged. -/
-  partial def evalReduceCounted (collectionArgs : List Algorithm)
+  partial def evalReduceCounted (collection : List Result)
       (stepAlg initialAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let initOut <- evalAlgOutputCounted initialAlg ctx env
-    let collection <- evalCountedSequenceItems collectionArgs ctx env
     let rec reduceLoop : List Result -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
@@ -1906,9 +2038,8 @@ mutual
 
   /-- Evaluate `filter` over one or more leading sequence arguments.
       The final argument is the predicate. -/
-  partial def evalFilterCounted (collectionArgs : List Algorithm) (predicateAlg : Algorithm)
+  partial def evalFilterCounted (items : List Result) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let items <- evalCountedSequenceItems collectionArgs ctx env
     let rec filterLoop : List Result -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
@@ -1937,9 +2068,8 @@ mutual
       Grouped input elements are passed whole, grouped mapped elements are
       accepted as single output elements, empty collections stay empty, and the
       output preserves the original element order and element count. -/
-  partial def evalMapCounted (collectionArgs : List Algorithm) (transformAlg : Algorithm)
+  partial def evalMapCounted (collection : List Result) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let collection <- evalCountedSequenceItems collectionArgs ctx env
     let rec mapLoop : List Result -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
@@ -1952,20 +2082,6 @@ mutual
     let mapped <- mapLoop collection
     pure (Result.normalize (Result.group mapped), mapped.length)
 
-    /-- Collect top-level collection elements as single atomic numeric values.
-      Used by numeric ordering and aggregation builtins, which reject strings
-      and grouped values instead of inventing mixed-type or structural
-      interpretation. -/
-  partial def collectSingleAtomicNumbers (errorContext : String) : List Result -> EvalM (List Int)
-    | [] => pure []
-    | item :: rest =>
-        match Result.singleAtomicNumber? item with
-        | some n => do
-            let tail <- collectSingleAtomicNumbers errorContext rest
-            pure (n :: tail)
-        | none =>
-            .error (Error.withContext errorContext Error.badArity)
-
     /-- Evaluate `order` over one or more leading sequence arguments.
       `order` eagerly evaluates the full top-level sequence, sorts its numeric
       items ascending, preserves duplicates, and returns a normal KatLang
@@ -1974,11 +2090,7 @@ mutual
       Each top-level collection element must be exactly one atomic numeric
       value. Grouped values are not flattened or recursively inspected, and
       strings are rejected. Empty collections stay empty. -/
-  partial def evalOrderCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "order expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalOrderCounted (numbers : List Int) : EvalM CountedResult := do
     let sorted := sortIntsAsc numbers
     pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
 
@@ -1990,11 +2102,7 @@ mutual
       Each top-level collection element must be exactly one atomic numeric
       value. Grouped values are not flattened or recursively inspected, and
       strings are rejected. Empty collections stay empty. -/
-  partial def evalOrderDescCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "orderDesc expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalOrderDescCounted (numbers : List Int) : EvalM CountedResult := do
     let sorted := sortIntsDesc numbers
     pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
 
@@ -2005,14 +2113,8 @@ mutual
       Each atom, string, or grouped value counts as one top-level element.
       Grouped values are not flattened or recursively inspected, and empty
       collections return `0`. -/
-  partial def evalCountCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let rec countLoop : List Result -> Int -> EvalM Int
-      | [], total => pure total
-      | _ :: rest, total =>
-          countLoop rest (total + 1)
-    let total <- countLoop (<- evalCountedSequenceItems collectionArgs ctx env) 0
-    pure (Result.atom total, 1)
+  partial def evalCountCounted (items : List Result) : EvalM CountedResult := do
+    pure (Result.atom (Int.ofNat items.length), 1)
 
   /-- Evaluate `first` over one or more leading sequence arguments.
       `first` evaluates the full top-level sequence and
@@ -2021,14 +2123,10 @@ mutual
       Atoms, strings, and grouped values each count as one top-level element.
       Grouped values are preserved whole rather than flattened. The collection
       must be non-empty. -/
-  partial def evalFirstCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    match (<- evalCountedSequenceItems collectionArgs ctx env) with
+  partial def evalFirstCounted (items : List Result) : EvalM CountedResult := do
+    match items with
     | first :: _ => pure (first, 1)
-    | [] =>
-        .error (Error.withContext
-          "first requires a non-empty collection"
-          Error.badArity)
+    | [] => .error Error.badArity
 
   /-- Evaluate `last` over one or more leading sequence arguments.
       `last` evaluates the full top-level sequence and
@@ -2037,14 +2135,10 @@ mutual
       Atoms, strings, and grouped values each count as one top-level element.
       Grouped values are preserved whole rather than flattened. The collection
       must be non-empty. -/
-  partial def evalLastCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    match (<- evalCountedSequenceItems collectionArgs ctx env).getLast? with
+  partial def evalLastCounted (items : List Result) : EvalM CountedResult := do
+    match items.getLast? with
     | some last => pure (last, 1)
-    | none =>
-        .error (Error.withContext
-          "last requires a non-empty collection"
-          Error.badArity)
+    | none => .error Error.badArity
 
     /-- Evaluate `min` over one or more leading sequence arguments.
       `min` compares top-level sequence items from left to right and
@@ -2053,20 +2147,13 @@ mutual
       The collection must be non-empty. Each top-level collection element must
       be exactly one atomic numeric value. Grouped values are not flattened or
       recursively inspected, and strings are rejected. -/
-  partial def evalMinCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "min expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalMinCounted (numbers : List Int) : EvalM CountedResult := do
     let rec minLoop : List Int -> Int -> EvalM Int
       | [], currentMin => pure currentMin
       | n :: rest, currentMin =>
           minLoop rest (if n < currentMin then n else currentMin)
     match numbers with
-    | [] =>
-        .error (Error.withContext
-          "min requires a non-empty collection"
-          Error.badArity)
+    | [] => .error Error.badArity
     | first :: rest => do
         let minimum <- minLoop rest first
         pure (Result.atom minimum, 1)
@@ -2078,20 +2165,13 @@ mutual
       The collection must be non-empty. Each top-level collection element must
       be exactly one atomic numeric value. Grouped values are not flattened or
       recursively inspected, and strings are rejected. -/
-  partial def evalMaxCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "max expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalMaxCounted (numbers : List Int) : EvalM CountedResult := do
     let rec maxLoop : List Int -> Int -> EvalM Int
       | [], currentMax => pure currentMax
       | n :: rest, currentMax =>
           maxLoop rest (if n > currentMax then n else currentMax)
     match numbers with
-    | [] =>
-        .error (Error.withContext
-          "max requires a non-empty collection"
-          Error.badArity)
+    | [] => .error Error.badArity
     | first :: rest => do
         let maximum <- maxLoop rest first
         pure (Result.atom maximum, 1)
@@ -2103,11 +2183,7 @@ mutual
       Each top-level collection element must be exactly one atomic numeric
       value. Grouped values are not flattened or recursively summed, strings
       are rejected, and empty collections return `0`. -/
-  partial def evalSumCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "sum expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalSumCounted (numbers : List Int) : EvalM CountedResult := do
     let total := numbers.foldl (fun acc n => acc + n) 0
     pure (Result.atom total, 1)
 
@@ -2118,40 +2194,63 @@ mutual
       The collection must be non-empty. Each top-level collection element must
       be exactly one atomic numeric value. Grouped values are not flattened or
       recursively inspected, and strings are rejected. -/
-  partial def evalAvgCounted (collectionArgs : List Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let numbers <- collectSingleAtomicNumbers
-      "avg expects each collection element to be a single numeric value"
-      (<- evalCountedSequenceItems collectionArgs ctx env)
+  partial def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
     match numbers with
-    | [] =>
-        .error (Error.withContext
-          "avg requires a non-empty collection"
-          Error.badArity)
+    | [] => .error Error.badArity
     | values =>
         let total := values.foldl (fun acc n => acc + n) 0
         pure (Result.atom (total / values.length), 1)
 
     /-- Split one or more leading sequence arguments away from a sequence
-      builtin's fixed trailing arguments, then run the builtin-specific
-      handler.
+      builtin's fixed trailing arguments, eagerly prepare the counted top-level
+      sequence input, then run the builtin-specific handler.
 
-      Sequence builtins always consume counted top-level items. Grouped single
-      outputs stay grouped even in the 1-argument form; there is no special
-      flattening path for a lone sequence argument. -/
+      Grouped single outputs stay grouped even in the 1-argument form; there
+      is no special flattening path for a lone sequence argument. -/
     partial def applySequenceBuiltinCounted
-      (b : Builtin) (args : List Algorithm)
-      (handler : List Algorithm -> List Algorithm -> EvalM CountedResult)
+      (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List Algorithm)
+      (ctx : EvalCtx) (env : ValEnv)
+      (handler : PreparedSequenceBuiltinInput -> List Algorithm -> EvalM CountedResult)
       : EvalM CountedResult :=
-      match builtinTopLevelSequenceTrailingArgs? b with
-      | some trailing =>
-          match splitSequenceBuiltinArgs trailing args with
-          | some (collectionArgs, trailingArgs) =>
-              handler collectionArgs trailingArgs
-          | none =>
-              .error (builtinArityError b args.length)
+      match splitSequenceBuiltinArgs metadata.trailingArgCount args with
+      | some (collectionArgs, trailingArgs) => do
+          let prepared <- prepareSequenceBuiltinInput b metadata collectionArgs ctx env
+          handler prepared trailingArgs
       | none =>
           .error (builtinArityError b args.length)
+
+    partial def applyBuiltinCountedSequence
+      (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List Algorithm)
+      (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult :=
+      applySequenceBuiltinCounted b metadata args ctx env fun prepared trailingArgs =>
+        match b, trailingArgs, prepared.numericItems with
+        | .filterBuiltin, [predicateAlg], _ =>
+            evalFilterCounted prepared.items predicateAlg ctx env
+        | .mapBuiltin, [transformAlg], _ =>
+            evalMapCounted prepared.items transformAlg ctx env
+        | .orderBuiltin, [], some numbers =>
+            evalOrderCounted numbers
+        | .orderDescBuiltin, [], some numbers =>
+            evalOrderDescCounted numbers
+        | .countBuiltin, [], _ =>
+            evalCountCounted prepared.items
+        | .firstBuiltin, [], _ =>
+            evalFirstCounted prepared.items
+        | .lastBuiltin, [], _ =>
+            evalLastCounted prepared.items
+        | .minBuiltin, [], some numbers =>
+            evalMinCounted numbers
+        | .maxBuiltin, [], some numbers =>
+            evalMaxCounted numbers
+        | .sumBuiltin, [], some numbers =>
+            evalSumCounted numbers
+        | .avgBuiltin, [], some numbers =>
+            evalAvgCounted numbers
+        | .reduceBuiltin, [stepAlg, initialAlg], _ =>
+            evalReduceCounted prepared.items stepAlg initialAlg ctx env
+        | _, _, _ =>
+            .error (builtinArityError b args.length)
 
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
@@ -2160,36 +2259,9 @@ mutual
       (b : Builtin) (args : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult :=
-    match builtinTopLevelSequenceTrailingArgs? b with
-    | some _ =>
-        applySequenceBuiltinCounted b args fun collectionArgs trailingArgs =>
-          match b, trailingArgs with
-          | .filterBuiltin, [predicateAlg] =>
-              evalFilterCounted collectionArgs predicateAlg ctx env
-          | .mapBuiltin, [transformAlg] =>
-              evalMapCounted collectionArgs transformAlg ctx env
-          | .orderBuiltin, [] =>
-              evalOrderCounted collectionArgs ctx env
-          | .orderDescBuiltin, [] =>
-              evalOrderDescCounted collectionArgs ctx env
-          | .countBuiltin, [] =>
-              evalCountCounted collectionArgs ctx env
-          | .firstBuiltin, [] =>
-              evalFirstCounted collectionArgs ctx env
-          | .lastBuiltin, [] =>
-              evalLastCounted collectionArgs ctx env
-          | .minBuiltin, [] =>
-              evalMinCounted collectionArgs ctx env
-          | .maxBuiltin, [] =>
-              evalMaxCounted collectionArgs ctx env
-          | .sumBuiltin, [] =>
-              evalSumCounted collectionArgs ctx env
-          | .avgBuiltin, [] =>
-              evalAvgCounted collectionArgs ctx env
-          | .reduceBuiltin, [stepAlg, initialAlg] =>
-              evalReduceCounted collectionArgs stepAlg initialAlg ctx env
-          | _, _ =>
-              .error (builtinArityError b args.length)
+    match sequenceBuiltinMetadata? b with
+    | some metadata =>
+      applyBuiltinCountedSequence b metadata args ctx env
     | none =>
         match b, args with
         | .ifBuiltin, [c,t,e] => do
@@ -2240,9 +2312,9 @@ mutual
       (b : Builtin) (args : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM Result :=
-    match builtinTopLevelSequenceTrailingArgs? b with
-    | some _ => do
-        let out <- applyBuiltinCounted b args ctx env
+    match sequenceBuiltinMetadata? b with
+    | some metadata => do
+        let out <- applyBuiltinCountedSequence b metadata args ctx env
         pure out.fst
     | none =>
       match b, args with
