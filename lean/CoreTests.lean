@@ -1114,31 +1114,72 @@ def test18 : Bool :=
 #eval test18  -- should be true
 #eval runFlat (.block outer18)
 
--- Test 19: dual-view semantics for higher-order parameters
--- The same parameter should remain callable through AlgEnv and readable through ValEnv
--- when the original argument expression supports both meanings.
--- A 0-param block supports both: it evaluates to a value (ValEnv) and resolves
--- as an algorithm (AlgEnv).  The body calls f() via AlgEnv and reads f via ValEnv.
+-- Test 19: zero-parameter inline blocks passed to higher-order parameters are
+-- treated uniformly as value/output structures.
+-- Reading the parameter as a value works, but callability is not inferred from
+-- having one output, and output count does not change that binding mode.
 def constSevenAlg19 : Algorithm :=
   alg [] [] [] [.num 7]
 
-def dualUseAlg19 : Algorithm :=
+def twoValueAlg19 : Algorithm :=
+  alg [] [] [] [.num 1, .num 2]
+
+def readInlineArgAlg19 : Algorithm :=
   alg ["f"] [] [] [
-    .binary .add
-      (.call (.param "f") (alg [] [] [] []))
-      (.param "f")
+    .param "f"
+  ]
+
+def callInlineArgAlg19 : Algorithm :=
+  alg ["f"] [] [] [
+    .call (.param "f") (alg [] [] [] [])
   ]
 
 def test19 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("DualUse", dualUseAlg19)] [
-    .call (resolve "DualUse") (alg [] [] [] [.block constSevenAlg19])
+  match runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+    .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
   ])) with
-  | Except.ok [14] => true
+  | Except.ok [7] => true
   | _ => false
 
 #eval test19  -- should be true
-#eval runFlat (.block (algPrivate [] [] [("DualUse", dualUseAlg19)] [
-  .call (resolve "DualUse") (alg [] [] [] [.block constSevenAlg19])
+#eval runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+  .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+]))
+
+def test19SingleOutputCallRejected : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+    .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+  ])) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test19SingleOutputCallRejected  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+  .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+]))
+
+def test19MultiOutput : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+    .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+  ])) with
+  | Except.ok [1, 2] => true
+  | _ => false
+
+#eval test19MultiOutput  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+  .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+]))
+
+def test19MultiOutputCallRejected : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+    .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+  ])) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test19MultiOutputCallRejected  -- should be true
+#eval runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+  .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
 ]))
 
 -- Test 19a: same-name clause-group elaboration classifies a sole plain-binder

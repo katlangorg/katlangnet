@@ -1849,13 +1849,17 @@ mutual
     | .call _ _ => .error (Error.notAnAlgorithm "call expression")
     | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
 
-  /-- Treat simple zero-parameter block expressions as value-producing argument
-      expressions rather than bare algorithms when building lazy builtin args.
+  /-- Treat simple zero-parameter block expressions uniformly as
+      value/output structures in argument position.
 
-      This preserves grouped argument boundaries for calls such as
-      `first((1, 2), (3, 4))` without relying on parser rewriting, while still
-      allowing callable inline algorithms with parameters, properties, or opens
-      to resolve as algorithms. -/
+      This rule is shared by builtin lazy-argument preparation and higher-order
+      argument probing. Callability is not inferred from output count: both
+      `{123}` and `{1, 2}` stay on the value side, while inline blocks with
+      parameters, properties, or opens may still resolve as algorithms.
+
+      Preserving zero-parameter inline blocks as values keeps grouped argument
+      boundaries intact for calls such as `first((1, 2), (3, 4))` without
+      relying on parser rewriting. -/
   partial def shouldWrapArgExprAsValue : Expr -> Bool
     | .block alg =>
         (Algorithm.params alg).isEmpty
@@ -1902,8 +1906,11 @@ mutual
 
   /-- Try to resolve each argument expression to an algorithm.
       Returns `some alg` for expressions that resolve, `none` for those that don't
-      (e.g., numeric literals, arithmetic).  Only liftable errors → none;
-      genuine lookup failures propagate.
+      (e.g., numeric literals, arithmetic). Simple zero-parameter inline blocks
+      are intentionally treated as value/output structures here, regardless of
+      whether they emit one value or many, so higher-order probing never grants
+      them callable `AlgEnv` bindings based on output count. Only liftable
+      errors → none; genuine lookup failures propagate.
       Used by evalCall to build AlgEnv for higher-order algorithm parameters. -/
   partial def tryResolveArgAlgs (args : Algorithm) (ctx : EvalCtx) : EvalM (List (Option Algorithm)) :=
     (Algorithm.output args).mapM (fun e => do
@@ -2888,7 +2895,9 @@ mutual
 
       If both succeed, the parameter gets both meanings. If only one succeeds,
       only that view is bound. If both fail, the ordinary eager-evaluation
-      error is propagated.
+      error is propagated. Zero-parameter inline block arguments are excluded
+      from the `AlgEnv` side by `tryResolveArgAlgs`; they remain ordinary
+      value/output structures regardless of output count.
 
           Argument expressions may be fewer than parameters because the final
           explicit eager value may unpack to multiple positional results, but an

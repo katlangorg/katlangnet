@@ -3603,6 +3603,14 @@ public static class Evaluator
     /// All other errors (unknownName, unknownProperty, ambiguousOpen, etc.)
     /// are propagated immediately to preserve precise diagnostics.
     /// </summary>
+    /// <summary>
+    /// Treat simple zero-parameter inline block expressions uniformly as
+    /// value/output structures in argument position.
+    /// This rule is shared by builtin lazy-argument preparation and higher-order
+    /// probing; callability is not inferred from output count, so both
+    /// <c>{123}</c> and <c>{1, 2}</c> stay on the value side. Blocks with
+    /// parameters, properties, or opens may still resolve as algorithms.
+    /// </summary>
     private static bool ShouldWrapArgExprAsValue(Expr expr) => expr switch
     {
         Expr.Block(var algorithm)
@@ -3672,6 +3680,10 @@ public static class Evaluator
     /// <summary>
     /// Try to resolve each argument expression to an algorithm.
     /// Returns Some(alg) for expressions that resolve, null for those that don't.
+    /// Simple zero-parameter inline blocks are intentionally treated as
+    /// value/output structures here, regardless of whether they emit one value
+    /// or many, so higher-order probing never grants them callable AlgEnv
+    /// bindings based on output count.
     /// Lean: tryResolveArgAlgs.
     /// </summary>
     private static EvalResult<IReadOnlyList<Algorithm?>> TryResolveArgAlgs(
@@ -3875,7 +3887,10 @@ public static class Evaluator
     /// If both succeed, the parameter gets both meanings (dual-view).
     /// If only algorithm resolution succeeds, only AlgEnv is bound.
     /// If only value evaluation succeeds, only ValEnv is bound.
-    /// If both fail, the eager-evaluation error is propagated.
+    /// If both fail, the eager-evaluation error is propagated. Zero-parameter
+    /// inline block arguments are excluded from the AlgEnv side by
+    /// <c>TryResolveArgAlgs</c>; they remain ordinary value/output structures
+    /// regardless of output count.
     ///
     /// Argument expressions may be fewer than parameters because the final
     /// explicit eager value may unpack to multiple positional results, but an

@@ -5164,8 +5164,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_HigherOrder_DualView_BothAlgAndValueMeaning()
     {
-        // V = 42 is a 0-param algorithm that also evaluates to a value.
-        // When passed as argument, both AlgEnv and ValEnv bindings should be available.
+        // Named algorithm V = 42 resolves structurally and also evaluates to a value.
+        // This is about lexical algorithm lookup, not zero-parameter inline blocks.
         // Use = func; V = 42; Use(V) → ValEnv has func=42, AlgEnv has func=V
         // Param("func") checks ValEnv first → 42
         AssertEval("Use = func\nV = 42\nUse(V)", 42);
@@ -5732,10 +5732,35 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_InlineBlock_ZeroParamInParens()
+    public void Eval_InlineBlock_ZeroParamSingleOutputInParens_RemainsValueStructure()
     {
-        // Use = func; Use({42}) → 42
-        AssertEval("Use = func\nUse({42})", 42);
+        // Zero-parameter inline blocks stay value/output structures in
+        // higher-order argument position.
+        AssertEval("Apply(f) = f\nApply({123})", 123);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_ZeroParamSingleOutputInParens_IsNotAutoCallable()
+    {
+        // A zero-parameter inline block does not become callable just because
+        // it emits exactly one output.
+        AssertEvalFails("Apply(f) = f()\nApply({123})");
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_ZeroParamMultiOutputInParens_RemainsValueStructure()
+    {
+        // Output count does not change higher-order binding mode.
+        AssertEval("Apply(f) = f\nApply({1, 2})", 1, 2);
+    }
+
+    [Fact]
+    public void Eval_InlineBlock_ZeroParamMultiOutputInParens_IsNotAutoCallable()
+    {
+        // Multi-output zero-parameter inline blocks follow the same rule as
+        // single-output ones: they stay value/output structures rather than
+        // callable higher-order arguments.
+        AssertEvalFails("Apply(f) = f()\nApply({1, 2})");
     }
 
     [Fact]
