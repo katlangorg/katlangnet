@@ -257,7 +257,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_DotCallTarget_ParamDetected()
     {
-        var ast = ParseAndDetect("x.arity");
+        var ast = ParseAndDetect("x.count");
 
         Assert.Single(ast.Params);
         var dotCall = Assert.IsType<Expr.DotCall>(ast.Output[0]);

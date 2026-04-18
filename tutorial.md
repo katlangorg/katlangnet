@@ -13,7 +13,7 @@
 4. [Multiple Outputs](#multiple-outputs)
 5. [Properties](#properties)
    - [Implicit and Explicit Output](#implicit-and-explicit-output)
-    - [Algorithm Arity](#algorithm-arity)
+    - [Grouped Values and Count](#grouped-values-and-count)
    - [Output Selection](#output-selection)
    - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
    - [Name Resolution](#name-resolution)
@@ -464,20 +464,15 @@ A.X
 
 Using `A` itself where a concrete value is required is an error, because `A` does not define output. Do not add algorithm-level explicit parameters to this container form unless the algorithm also defines output.
 
-### Algorithm Arity
+### Grouped Values and Count
 
-Every algorithm exposes an `.arity` property that reports how many top-level output slots it has structurally.
-
-- `arity` = how many top-level output slots the expression/algorithm has structurally
-- `count` = how many top-level output values that expression denotes when evaluated
+Use `.count` to ask how many top-level values an expression denotes when evaluated.
 
 ```
 T = (1, 2, 3)
-T.arity
 T.count
 
 A = 1, 2, 3
-A.arity
 A.count
 ```
 
@@ -485,13 +480,9 @@ A.count
 ```
 1
 3
-3
-3
 ```
 
-`T` has one structural output slot whose value denotes three top-level outputs when evaluated. `A` has three structural output slots and also denotes three top-level values when evaluated.
-
-Use `.arity` when you care about structural output shape. Use `.count` when you care about denoted top-level values.
+Grouped values count as one top-level item. Plain multi-output expressions count each top-level item separately. See `count` below for the full rules.
 
 ### Output Selection
 
@@ -1023,7 +1014,7 @@ The same receiver-normalization rule governs dot-call form: `(1, 2, 3).order`, `
 
 `count(...items)` returns how many top-level values the evaluated sequence denotes.
 
-Use `.arity` for structural top-level output slots. Use `count` for denotational top-level value count after evaluation.
+Use `count` for denotational top-level value count after evaluation.
 
 - Each atom, string, or grouped value counts as one top-level element
 - Grouped values are not flattened or inspected recursively
@@ -1515,7 +1506,7 @@ Numbers = 3, 5, 9, 1, 0, 6
 Step = a + 1, total + Numbers:a
 
 // Repeat once per element, then select the accumulated sum:
-repeat(Step, Numbers.arity, 0, 0) : 1
+repeat(Step, Numbers.count, 0, 0) : 1
 ```
 
 **Result:** `24`
@@ -2024,7 +2015,6 @@ For the sequence builtins below, plain-call grouped arguments remain single item
 | `if` | `if(cond, a, b)` |
 | `while` | `step.while(init...)` or `while(step, init)` |
 | `repeat` | `step.repeat(n, init...)` or `repeat(step, n, init)` |
-| `arity` | `expr.arity` — structural top-level output slot count without evaluation |
 | `range` | `range(start, stop)` — inclusive integer sequence, ascending or descending |
 | `filter` | `filter(...items, predicate)` or `collection.filter(predicate)` — keep top-level elements whose predicate returns exactly one atomic numeric value; the callback item behaves like `S:i`, but kept results remain the original top-level elements |
 | `map` | `map(...items, transform)` or `collection.map(transform)` — transform top-level elements left to right; the callback item behaves like `S:i`, and the transform must return exactly one mapped element |

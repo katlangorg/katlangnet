@@ -313,7 +313,7 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_DotCall_ArityOnImplicitParameter_IsBuiltin()
+    public void Build_DotCall_ArityOnImplicitParameter_RemainsUnresolved()
     {
         var model = BuildModel(
             """
@@ -328,10 +328,9 @@ public class SemanticModelTests
 
         var arityReference = ResolutionAt(model, 2, 10);
         Assert.Equal(OccurrenceKind.DotMemberReference, arityReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Builtin, arityReference.Classification);
+        Assert.Equal(IdentifierClassification.Unresolved, arityReference.Classification);
         Assert.Null(arityReference.ResolvedDeclaration);
-        Assert.NotNull(arityReference.ResolvedProperty);
-        Assert.Equal(PropertyShape.Builtin, arityReference.ResolvedProperty!.Shape);
+        Assert.Null(arityReference.ResolvedProperty);
     }
 
     [Fact]

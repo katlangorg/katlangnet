@@ -1204,19 +1204,8 @@ def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
   | some caller => Algorithm.childOf caller a
   | none        => a
 
+-- Dot-call helpers
 --------------------------------------------------------------------------------
--- Intrinsics
---------------------------------------------------------------------------------
-
-/-- Predicate for intrinsic (non-builtin) property names.
-    These names are handled specially in resolveAlg / evalDotCall
-    rather than being looked up as structural properties.
-
-    Intrinsic kinds:
-    - "arity": structural — returns the top-level output slot count without evaluation
-    - "string": value-based — evaluates the algorithm output, converts numeric result to string -/
-def isIntrinsic (name : Ident) : Bool :=
-  name = "arity" || name = "string"
 
 /-- Convert a numeric Result to its canonical string representation.
     Only atomic numeric values are supported; other forms raise typeMismatch.
@@ -1225,16 +1214,6 @@ def resultToString (r : Result) : EvalM Result :=
   match r with
   | .atom n => pure (Result.str (toString n))
   | _ => .error (Error.typeMismatch "builtin property `string` expects a numeric receiver")
-
-/-- Evaluate a structural intrinsic property on a resolved algorithm.
-    Returns `some result` if `name` is a recognized structural intrinsic, `none` otherwise.
-    Value-based intrinsics (e.g. `string`) are handled inside evalDotCall
-    because they require evaluation context. -/
-def evalStructuralIntrinsic? (targetAlg : Algorithm) (name : Ident) : EvalM (Option Result) :=
-  if name = "arity" then
-    pure (some (Result.atom (Int.ofNat (Algorithm.output targetAlg).length)))
-  else
-    pure none
 
 --------------------------------------------------------------------------------
 -- Semantics
@@ -1920,7 +1899,7 @@ mutual
         | []   => .error (Error.unknownName n)
     | .dotCall o n args =>
         -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all semantics
-      -- (arity intrinsic, structural property, receiver injection, lexical fallback)
+      -- (builtin property special cases, structural property, receiver injection, lexical fallback)
         pure (wireToCaller ctx (Algorithm.ofExpr (.dotCall o n args)))
     -- Explicit errors for syntactic forms that cannot resolve to algorithms
     | .param x =>
@@ -2943,43 +2922,40 @@ mutual
     else
     match resolveAlg target ctx with
     | .ok targetAlg =>
-      match (<- evalStructuralIntrinsic? targetAlg name) with
-      | some r => pure (r, Result.valueCount r)
-      | none =>
-        if name = "string" then do
-          let val <- evalAlgOutput targetAlg ctx env
-          let out <- resultToString val
-          pure (out, Result.valueCount out)
-        else
-          match Algorithm.lookupPropDefAny? targetAlg name with
-          | some p =>
-              if !p.exposure.isExported then
-                .error (Error.localOnlyProperty (openExprName target) name p.exposure)
-              else
-              let wired := Algorithm.childOf targetAlg p.alg
-              match argsOpt with
-              | none =>
-                  match flatBinderUserEquivalent? wired with
-                  | some simple =>
-                      if (Algorithm.params simple).length = 0 then
-                        evalAlgOutputCounted simple ctx env
-                      else
-                        .error (Error.arityMismatch (Algorithm.params simple).length 0)
-                  | none =>
-                      match wired with
-                      | .conditional _ _ _ => .error (Error.noMatchingBranch name)
-                      | _ =>
-                          if (Algorithm.params wired).length = 0 then
-                            evalAlgOutputCounted wired ctx env
-                          else
-                            .error (Error.arityMismatch (Algorithm.params wired).length 0)
-              | some args =>
-                  evalResolvedCallCounted wired args ctx env name
-          | none =>
-              if Algorithm.conditionalBranchesDefineProperty targetAlg name then
-                .error (Error.localOnlyProperty (openExprName target) name .localConditional)
-              else
-                callLexicalWithReceiverCounted name target argsOpt ctx env
+      if name = "string" then do
+        let val <- evalAlgOutput targetAlg ctx env
+        let out <- resultToString val
+        pure (out, Result.valueCount out)
+      else
+        match Algorithm.lookupPropDefAny? targetAlg name with
+        | some p =>
+            if !p.exposure.isExported then
+              .error (Error.localOnlyProperty (openExprName target) name p.exposure)
+            else
+            let wired := Algorithm.childOf targetAlg p.alg
+            match argsOpt with
+            | none =>
+                match flatBinderUserEquivalent? wired with
+                | some simple =>
+                    if (Algorithm.params simple).length = 0 then
+                      evalAlgOutputCounted simple ctx env
+                    else
+                      .error (Error.arityMismatch (Algorithm.params simple).length 0)
+                | none =>
+                    match wired with
+                    | .conditional _ _ _ => .error (Error.noMatchingBranch name)
+                    | _ =>
+                        if (Algorithm.params wired).length = 0 then
+                          evalAlgOutputCounted wired ctx env
+                        else
+                          .error (Error.arityMismatch (Algorithm.params wired).length 0)
+            | some args =>
+                evalResolvedCallCounted wired args ctx env name
+        | none =>
+            if Algorithm.conditionalBranchesDefineProperty targetAlg name then
+              .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+            else
+              callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
         let val <- eval target ctx env
@@ -3177,7 +3153,6 @@ mutual
 
   /-- Evaluate dotCall: a.f or a.f(args)
       Smart dispatch:
-      - "arity" structural intrinsic → top-level output slot count of target
       - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):
         - If no args and 0-param → value access
@@ -3201,44 +3176,41 @@ mutual
     else
     match resolveAlg target ctx with
     | .ok targetAlg =>
-      match (<- evalStructuralIntrinsic? targetAlg name) with
-      | some r => pure r
-      | none =>
-        -- Value-based intrinsic: "string" — evaluate algorithm output and convert
-        if name = "string" then do
-          let val <- evalAlgOutput targetAlg ctx env
-          resultToString val
-        else
-          match Algorithm.lookupPropDefAny? targetAlg name with
-          | some p =>
-              if !p.exposure.isExported then
-                .error (Error.localOnlyProperty (openExprName target) name p.exposure)
-              else
-              let wired := Algorithm.childOf targetAlg p.alg
-              match argsOpt with
-              | none =>
-                  match flatBinderUserEquivalent? wired with
-                  | some simple =>
-                      if (Algorithm.params simple).length = 0 then
-                        evalAlgOutput simple ctx env
-                      else
-                        .error (Error.arityMismatch (Algorithm.params simple).length 0)
-                  | none =>
-                      match wired with
-                      | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
-                      | _ =>
-                          if (Algorithm.params wired).length = 0 then
-                            evalAlgOutput wired ctx env
-                          else
-                            -- Navigation only: no receiver injection, need explicit args
-                            .error (Error.arityMismatch (Algorithm.params wired).length 0)
-              | some args =>
-                  evalResolvedCall wired args ctx env name
-          | none =>
-              if Algorithm.conditionalBranchesDefineProperty targetAlg name then
-                .error (Error.localOnlyProperty (openExprName target) name .localConditional)
-              else
-                callLexicalWithReceiver name target argsOpt ctx env
+      -- Value-based intrinsic: "string" — evaluate algorithm output and convert
+      if name = "string" then do
+        let val <- evalAlgOutput targetAlg ctx env
+        resultToString val
+      else
+        match Algorithm.lookupPropDefAny? targetAlg name with
+        | some p =>
+            if !p.exposure.isExported then
+              .error (Error.localOnlyProperty (openExprName target) name p.exposure)
+            else
+            let wired := Algorithm.childOf targetAlg p.alg
+            match argsOpt with
+            | none =>
+                match flatBinderUserEquivalent? wired with
+                | some simple =>
+                    if (Algorithm.params simple).length = 0 then
+                      evalAlgOutput simple ctx env
+                    else
+                      .error (Error.arityMismatch (Algorithm.params simple).length 0)
+                | none =>
+                    match wired with
+                    | .conditional _ _ _ => .error (Error.noMatchingBranch name)  -- no args to match against
+                    | _ =>
+                        if (Algorithm.params wired).length = 0 then
+                          evalAlgOutput wired ctx env
+                        else
+                          -- Navigation only: no receiver injection, need explicit args
+                          .error (Error.arityMismatch (Algorithm.params wired).length 0)
+            | some args =>
+                evalResolvedCall wired args ctx env name
+        | none =>
+            if Algorithm.conditionalBranchesDefineProperty targetAlg name then
+              .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+            else
+              callLexicalWithReceiver name target argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
         let val <- eval target ctx env

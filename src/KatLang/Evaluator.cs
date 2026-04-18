@@ -2623,29 +2623,7 @@ public static class Evaluator
                 new EvalError.ArityMismatch(0, actualCount)),
         };
 
-    // ── Intrinsics ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Lean: isIntrinsic. Predicate for intrinsic (non-builtin) property names.
-    /// These are handled specially in resolveAlg / evalDotCall.
-    /// Intrinsic kinds:
-    /// - "arity": structural — returns the top-level output slot count without evaluation
-    /// - "string": value-based — evaluates the algorithm output, converts numeric result to string
-    /// </summary>
-    private static bool IsIntrinsic(string name) => name is "arity" or "string";
-
-    /// <summary>
-    /// Lean: evalStructuralIntrinsic?. Evaluate a structural intrinsic property on a resolved algorithm.
-    /// Returns a result if name is a recognized structural intrinsic, null otherwise.
-    /// Value-based intrinsics (e.g. "string") are handled inside EvalDotCall
-    /// because they require evaluation context.
-    /// </summary>
-    private static EvalResult<Result>? EvalStructuralIntrinsic(Algorithm targetAlg, string name)
-    {
-        if (name == "arity")
-            return EvalResult<Result>.Ok(new Result.Atom(targetAlg.Output.Count));
-        return null;
-    }
+    // ── Dot-call helpers ───────────────────────────────────────────────────
 
     /// <summary>
     /// Lean: resultToString. Convert a numeric Result to its canonical string representation.
@@ -2796,7 +2774,7 @@ public static class Evaluator
             case Expr.DotCall:
             {
                 // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
-                // evalDotCall handles all semantics (arity intrinsic, structural, lexical fallback)
+                // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
                 var wrapper = new Algorithm.User(
                     Parent: null, Params: [], Opens: [],
                     Properties: [], Output: [expr]);
@@ -4311,13 +4289,12 @@ public static class Evaluator
     /// <summary>
     /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
     /// Smart dispatch:
-    /// 1. Structural intrinsic (arity) → top-level output slot count of target
-    /// 2. Value-based intrinsic (string) → evaluate target, convert numeric result to string
-    /// 3. Structural property found (navigation-only):
+    /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
+    /// 2. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
     ///    - No args + has params → arity mismatch error
     ///    - Has args → delegate to EvalUserCall (dual-view binding, no receiver injection)
-    /// 4. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
+    /// 3. No property → lexical fallback (receiver injection via callLexicalWithReceiver)
     /// When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
     /// value-based intrinsics are checked before lexical fallback.
     /// Structural property calls use the same higher-order binding logic as normal
@@ -4357,10 +4334,6 @@ public static class Evaluator
             return targetResult.Error;
         }
         var targetAlg = targetResult.Value;
-
-        // Lean: evalStructuralIntrinsic? — structural intrinsics (arity)
-        var intrinsic = EvalStructuralIntrinsic(targetAlg, name);
-        if (intrinsic is { } r) return r;
 
         // Value-based intrinsic: "string" — evaluate algorithm output and convert
         if (name == "string")
@@ -4540,12 +4513,6 @@ public static class Evaluator
         }
 
         var targetAlg = targetResult.Value;
-        var intrinsic = EvalStructuralIntrinsic(targetAlg, name);
-        if (intrinsic is { } r)
-        {
-            if (r.IsError) return r.Error;
-            return EvalResult<CountedResult>.Ok(new CountedResult(r.Value, r.Value.ValueCount()));
-        }
 
         if (name == "string")
         {

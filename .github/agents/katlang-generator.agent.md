@@ -726,27 +726,11 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`,
 - Prefer this over hand-written loops when the task is still just a fold
 - A helper that emits one grouped value contributes one fold step; a helper that emits multiple top-level outputs contributes multiple fold steps
 
-### `arity`
-
-`expr.arity` returns how many top-level output slots the expression or algorithm has structurally.
-
-- Use `arity` when the task is about structural top-level output shape
-- Do not treat `arity` and `count` as interchangeable
-
-Canonical distinction:
-
-    T = (1, 2, 3)
-    T.arity    // 1
-    T.count    // 3
-
-    A = 1, 2, 3
-    A.arity    // 3
-    A.count    // 3
-
 ### `count`
 
 `count(...items)` or `collection.count` returns how many top-level values the evaluated expression denotes.
 
+- Do not generate `expr.arity`; it is not part of the public KatLang surface
 - Use `count` when the task is about denoted top-level value count after evaluation
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are not flattened
@@ -1019,7 +1003,6 @@ BETTER — specific branch first:
 
 ## Dot-Call Semantics
 
-- `a.arity` — structural top-level output slot count.
 - `a.count` — top-level value count after evaluation.
 - `a.string` — converts a numeric value to its string representation (e.g. `123.string` → `'123'`).
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
