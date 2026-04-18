@@ -1134,8 +1134,12 @@ public sealed class Parser
 
     /// <summary>
     /// Parses call arguments: <c>(algorithm)</c> or <c>{algorithm}</c>.
-    /// Ordinary parentheses always mean ordinary grouping — <c>((expr))</c> is
-    /// just nested grouping, never special block construction.
+    /// Ordinary parentheses still mean ordinary grouping. For scalar and other
+    /// single-expression cases, <c>((expr))</c> behaves like <c>(expr)</c>.
+    /// When the inner grouped expression is itself a non-parametrized block
+    /// value, the parser preserves the extra outer layer so dot-call receiver
+    /// normalization can distinguish <c>(1, 2).count</c> from
+    /// <c>((1, 2)).count</c> without changing ordinary evaluation.
     /// </summary>
     private Algorithm ParseCallArgs()
     {
@@ -1164,6 +1168,18 @@ public sealed class Parser
     }
 
     // ── Primary expressions ─────────────────────────────────────────────────
+
+    private static bool ShouldUnwrapParenthesizedPrimary(Algorithm alg)
+    {
+        if (alg.Properties.Count != 0 || alg.Output.Count != 1)
+            return false;
+
+        return alg.Output[0] switch
+        {
+            Expr.Block(var innerAlg) => innerAlg.IsParametrized,
+            _ => true,
+        };
+    }
 
     private Expr ParsePrimary()
     {
@@ -1233,8 +1249,11 @@ public sealed class Parser
                 var alg = ParseAlgorithm(isParametrized: false);
                 Expect(TokenKind.RParen);
 
-                // Unwrap single expression without properties (grouping parens)
-                if (alg.Properties.Count == 0 && alg.Output.Count == 1)
+                // Ordinary grouping parens usually unwrap to the inner
+                // expression. Preserve an extra non-parametrized block layer so
+                // sequence dot-call receiver normalization can observe
+                // `(items).builtin` vs `((items)).builtin`.
+                if (ShouldUnwrapParenthesizedPrimary(alg))
                     return alg.Output[0];
 
                 return new Expr.Block(alg) { Span = MakeSpan(start) };

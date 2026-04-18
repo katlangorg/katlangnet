@@ -558,6 +558,34 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_DotCall_DoubleParenGroupedReceiver_PreservesOuterBlockLayer()
+    {
+        var result = Parser.ParseSyntax("((1, 2, 3)).count");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        var outer = Assert.IsType<Expr.Block>(dotCall.Target);
+        Assert.Single(outer.Algorithm.Output);
+
+        var inner = Assert.IsType<Expr.Block>(outer.Algorithm.Output[0]);
+        Assert.Equal(3, inner.Algorithm.Output.Count);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
+    public void Parse_DotCall_ParenWrappedBraceReceiver_RemainsScopingOnly()
+    {
+        var result = Parser.ParseSyntax("({1, 2, 3}).order");
+
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
+        var target = Assert.IsType<Expr.Block>(dotCall.Target);
+        Assert.True(target.Algorithm.IsParametrized);
+        Assert.Equal(3, target.Algorithm.Output.Count);
+        Assert.Null(dotCall.Args);
+    }
+
+    [Fact]
     public void Parse_DotCall_InlineBraceReceiver_IsBlock()
     {
         var result = Parser.ParseSyntax("{1, 2, 3}.order");
@@ -1483,7 +1511,7 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
     }
 
-    // -- Double-parens removal: ordinary grouping ---
+    // -- Double-parens: ordinary grouping unless preserving a grouped receiver block ---
 
     [Fact]
     public void Parse_ParenSubExpr_FirstCallArg_ParsesNormally()
@@ -1511,11 +1539,10 @@ public class ParserTests
     [Fact]
     public void Parse_DoubleParens_RemainsOrdinaryGrouping()
     {
-        // X = ((1 + 2)) is ordinary nested grouping
+        // Scalar/group-free cases still collapse to ordinary nested grouping.
         var result = Parser.ParseSyntax("X = ((1 + 2))");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Properties);
-        // The inner (1 + 2) is just grouping, outer layer is also grouping
         var output = result.Root.Properties[0].Value.Output;
         Assert.Single(output);
         var binary = Assert.IsType<Expr.Binary>(output[0]);

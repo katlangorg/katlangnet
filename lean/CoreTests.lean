@@ -974,7 +974,7 @@ def test14 : Bool :=
 #eval test14  -- should be true
 #eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none)
 
--- Test 14a: grouped output keeps structural arity while sequence dot-call count unwraps one receiver layer
+-- Test 14a: grouped named outputs keep structural arity and grouped count aligned
 def groupedOutputRoot14a : Algorithm :=
   algPrivate [] [] [("T", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])] [
     .dotCall (resolve "T") "arity" none,
@@ -983,7 +983,7 @@ def groupedOutputRoot14a : Algorithm :=
 
 def test14a : Bool :=
   match runFlat (.block groupedOutputRoot14a) with
-  | Except.ok [1, 3] => true
+  | Except.ok [1, 1] => true
   | _ => false
 
 #eval test14a  -- should be true
@@ -2103,7 +2103,7 @@ def test75 : Bool :=
     "filter"
     (some (alg [] [] [] [.num 1]))) with
   | Except.error err =>
-      hasContext "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)" err &&
+      hasContext "while evaluating filter predicate (filter passes each collection item through S:i-style one-level projection)" err &&
       innermostIsArityMismatch 0 1 err
   | _ => false
 
@@ -2593,6 +2593,42 @@ def test103 : Bool :=
   | _ => false
 
 #eval test103  -- should be true
+
+-- Test 103a: dot-call count matches the shared grouped receiver examples
+def countReceiverNormalizationRoot103a : Algorithm :=
+  algPrivate [] [] [
+    ("Data1", alg [] [] [] [.num 1, .num 7]),
+    ("Data2", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 7])])
+  ] [
+    .dotCall (.resolve "Data1") "count" none,
+    .dotCall (.resolve "Data2") "count" none,
+    .dotCall (.block (alg [] [] [] [.num 1, .num 7])) "count" none,
+    .dotCall (.block (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 7])
+    ])) "count" none
+  ]
+
+def test103a : Bool :=
+  match runFlat (.block countReceiverNormalizationRoot103a) with
+  | Except.ok [2, 1, 2, 1] => true
+  | _ => false
+
+#eval test103a  -- should be true
+
+-- Test 103b: nested grouped receiver boundaries are preserved after one strip
+def test103b : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runFlat (.block (alg [] [] [] [
+    .dotCall groupedPairs "count" none,
+    .dotCall (.block (alg [] [] [] [groupedPairs])) "count" none
+  ])) with
+  | Except.ok [2, 1] => true
+  | _ => false
+
+#eval test103b  -- should be true
 
 -- Test 104: descending ranges keep their top-level element count
 def test104 : Bool :=
@@ -4368,21 +4404,35 @@ def test213 : Bool :=
 #eval test213  -- should be true
 
 def test214 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
-    ("Data", alg [] [] [] [
-      .block (alg [] [] [] [
-        .num 3,
-        .num 5,
-        .num 3,
-        .num 6,
-        .num 3
-      ])
-    ])
-  ] [
-    .dotCall (.resolve "Data") "order" none
-  ])) with
-  | Except.ok [3, 3, 3, 5, 6] => true
-  | _ => false
+  let inlineReceiver := .block (alg [] [] [] [
+    .num 3,
+    .num 5,
+    .num 3,
+    .num 6,
+    .num 3
+  ])
+  let groupedReceiver := .block (alg [] [] [] [inlineReceiver])
+  let namedGroupedFails :=
+    match runResult (.block (algPrivate [] [] [
+      ("Data", alg [] [] [] [inlineReceiver])
+    ] [
+      .dotCall (.resolve "Data") "order" none
+    ])) with
+    | Except.error err =>
+        hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let inlineReceiverWorks :=
+    match runFlat (.dotCall inlineReceiver "order" none) with
+    | Except.ok [3, 3, 3, 5, 6] => true
+    | _ => false
+  let doubleParenReceiverFails :=
+    match runResult (.dotCall groupedReceiver "order" none) with
+    | Except.error err =>
+        hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  namedGroupedFails && inlineReceiverWorks && doubleParenReceiverFails
 
 #eval test214  -- should be true
 
@@ -4393,15 +4443,144 @@ def test215 : Bool :=
       .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
     ])
   ] [
+    .call (resolve "count") (alg [] [] [] [.index (.resolve "Data") (.num 0)]),
     .dotCall (.index (.resolve "Data") (.num 0)) "count" none
+    , .call (resolve "order") (alg [] [] [] [.index (.resolve "Data") (.num 0)])
+    , .dotCall (.index (.resolve "Data") (.num 0)) "order" none
   ])) with
-  | Except.ok [5] => true
+  | Except.ok [5, 5, 1, 2, 4, 6, 7, 1, 2, 4, 6, 7] => true
   | _ => false
 
 #eval test215  -- should be true
 
-def test216 : Bool :=
+def test215a : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 7, .num 8])
+  ] [
+    .index (.resolve "A") (.num 0)
+  ])) with
+  | Except.ok (.atom 7) => true
+  | _ => false
+
+#eval test215a  -- should be true
+
+def test215b : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ])
+  ] [
+    .index (.resolve "A") (.num 0)
+  ])) with
+  | Except.ok (.group [.atom 1, .atom 2]) => true
+  | _ => false
+
+#eval test215b  -- should be true
+
+def test215c : Bool :=
   match runFlat (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ])
+  ] [
+    .call (resolve "count") (alg [] [] [] [.index (.resolve "A") (.num 0)]),
+    .dotCall (.index (.resolve "A") (.num 0)) "count" none
+  ])) with
+  | Except.ok [2, 2] => true
+  | _ => false
+
+#eval test215c  -- should be true
+
+def test215d : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ]),
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 5, .num 6]),
+        .block (alg [] [] [] [.num 7, .num 8])
+      ])
+    ])
+  ] [
+    .index (.resolve "A") (.num 0)
+  ])) with
+  | Except.ok (.group [
+      .group [.atom 1, .atom 2],
+      .group [.atom 3, .atom 4]
+    ]) => true
+  | _ => false
+
+#eval test215d  -- should be true
+
+def test215e : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ]),
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 5, .num 6]),
+        .block (alg [] [] [] [.num 7, .num 8])
+      ])
+    ])
+  ] [
+    .index (.index (.resolve "A") (.num 0)) (.num 1)
+  ])) with
+  | Except.ok (.group [.atom 3, .atom 4]) => true
+  | _ => false
+
+#eval test215e  -- should be true
+
+def test215f : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ]),
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 5, .num 6]),
+        .block (alg [] [] [] [.num 7, .num 8])
+      ])
+    ])
+  ] [
+    .call (resolve "count") (alg [] [] [] [.index (.resolve "A") (.num 0)]),
+    .call (resolve "count") (alg [] [] [] [.index (.index (.resolve "A") (.num 0)) (.num 1)])
+  ])) with
+  | Except.ok [2, 2] => true
+  | _ => false
+
+#eval test215f  -- should be true
+
+def test215g : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ]),
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 5, .num 6]),
+        .block (alg [] [] [] [.num 7, .num 8])
+      ])
+    ])
+  ] [
+    .call (resolve "sum") (alg [] [] [] [.index (.resolve "A") (.num 0)])
+  ])) with
+  | Except.error err =>
+      hasContext "sum expects each collection element to be a single numeric value; item 0 was grouped value" err
+        && innermostIsBadArity err
+  | _ => false
+
+#eval test215g  -- should be true
+
+def test216 : Bool :=
+  match runResult (.block (algPrivate [] [] [
     ("Values", alg [] [] [] [
       .block (alg [] [] [] [.num 4, .num 5, .num 4, .num 6])
     ])
@@ -4412,44 +4591,123 @@ def test216 : Bool :=
     .dotCall (.resolve "Values") "take" (some (alg [] [] [] [.num 2])),
     .dotCall (.resolve "Values") "skip" (some (alg [] [] [] [.num 1]))
   ])) with
-  | Except.ok [4, 6, 4, 5, 6, 4, 5, 5, 4, 6] => true
+  | Except.ok (.group [
+      .group [.atom 4, .atom 5, .atom 4, .atom 6],
+      .group [.atom 4, .atom 5, .atom 4, .atom 6],
+      .group [.atom 4, .atom 5, .atom 4, .atom 6],
+      .group [.atom 4, .atom 5, .atom 4, .atom 6],
+      .group []
+    ]) => true
   | _ => false
 
 #eval test216  -- should be true
 
 def test217 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
-    ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
-    ])
-  ] [
-    .dotCall (.resolve "Values") "min" none,
-    .dotCall (.resolve "Values") "max" none,
-    .dotCall (.resolve "Values") "sum" none,
-    .dotCall (.resolve "Values") "avg" none,
-    .dotCall (.resolve "Values") "order" none,
-    .dotCall (.resolve "Values") "orderDesc" none
-  ])) with
-  | Except.ok [10, 30, 60, 20, 10, 20, 30, 30, 20, 10] => true
-  | _ => false
+  let runBuiltin := fun (name : String) =>
+    runResult (.block (algPrivate [] [] [
+      ("Values", alg [] [] [] [
+        .block (alg [] [] [] [.num 10, .num 20, .num 30])
+      ])
+    ] [
+      .dotCall (.resolve "Values") name none
+    ]))
+  let minFails :=
+    match runBuiltin "min" with
+    | Except.error err =>
+        hasContext "min expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let maxFails :=
+    match runBuiltin "max" with
+    | Except.error err =>
+        hasContext "max expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let sumFails :=
+    match runBuiltin "sum" with
+    | Except.error err =>
+        hasContext "sum expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let avgFails :=
+    match runBuiltin "avg" with
+    | Except.error err =>
+        hasContext "avg expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let orderFails :=
+    match runBuiltin "order" with
+    | Except.error err =>
+        hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  let orderDescFails :=
+    match runBuiltin "orderDesc" with
+    | Except.error err =>
+        hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value" err
+          && innermostIsBadArity err
+    | _ => false
+  minFails && maxFails && sumFails && avgFails && orderFails && orderDescFails
 
 #eval test217  -- should be true
 
 def test218 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
-    ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])
-    ]),
-    ("Double", doubleAlg85),
-    ("IsEven", isEvenAlg93),
-    ("Add", addAlg76)
-  ] [
-    .dotCall (.resolve "Values") "filter" (some (alg [] [] [] [.resolve "IsEven"])),
-    .dotCall (.resolve "Values") "map" (some (alg [] [] [] [.resolve "Double"])),
-    .dotCall (.resolve "Values") "reduce" (some (alg [] [] [] [.resolve "Add", .num 0]))
-  ])) with
-  | Except.ok [2, 4, 2, 4, 6, 8, 10] => true
-  | _ => false
+  let keepSecondEven : Algorithm :=
+    alg ["pair"] [] [] [
+      .binary .eq
+        (.binary .mod (.index (.param "pair") (.num 1)) (.num 2))
+        (.num 0)
+    ]
+  let takeFirstAlg : Algorithm :=
+    alg ["x"] [] [] [
+      .index (.param "x") (.num 0)
+    ]
+  let addItemCount : Algorithm :=
+    alg ["item", "acc"] [] [] [
+      .binary .add
+        (.call (.resolve "count") (alg [] [] [] [.param "item"]))
+        (.param "acc")
+    ]
+  let filterResult :=
+    runResult (.block (algPrivate [] [] [
+      ("Values", alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2])
+      ]),
+      ("KeepSecondEven", keepSecondEven)
+    ] [
+      .dotCall (.resolve "Values") "filter" (some (alg [] [] [] [.resolve "KeepSecondEven"]))
+    ]))
+  let mapResult :=
+    runResult (.block (algPrivate [] [] [
+      ("Values", alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2, .num 3])
+      ]),
+      ("TakeFirst", takeFirstAlg)
+    ] [
+      .dotCall (.resolve "Values") "map" (some (alg [] [] [] [.resolve "TakeFirst"]))
+    ]))
+  let reduceResult :=
+    runFlat (.block (algPrivate [] [] [
+      ("Values", alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2, .num 3])
+      ]),
+      ("AddItemCount", addItemCount)
+    ] [
+      .dotCall (.resolve "Values") "reduce" (some (alg [] [] [] [.resolve "AddItemCount", .num 0]))
+    ]))
+  let filterOk :=
+    match filterResult with
+    | Except.ok (.group [.atom 1, .atom 2]) => true
+    | _ => false
+  let mapOk :=
+    match mapResult with
+    | Except.ok (.atom 1) => true
+    | _ => false
+  let reduceOk :=
+    match reduceResult with
+    | Except.ok [3] => true
+    | _ => false
+  filterOk && mapOk && reduceOk
 
 #eval test218  -- should be true
 
@@ -4464,5 +4722,206 @@ def test219 : Bool :=
   | _ => false
 
 #eval test219  -- should be true
+
+def hasFourAtomsAlg220 : Algorithm :=
+  alg ["item"] [] [] [
+    .binary .eq
+      (.call (.resolve "count") (alg [] [] [] [
+        .call (.resolve "atoms") (alg [] [] [] [.param "item"])
+      ]))
+      (.num 4)
+  ]
+
+def topLevelItemCountAlg221 : Algorithm :=
+  alg ["item"] [] [] [
+    .call (.resolve "count") (alg [] [] [] [.param "item"])
+  ]
+
+def addTopLevelItemCountAlg222 : Algorithm :=
+  alg ["item", "acc"] [] [] [
+    .binary .add
+      (.call (.resolve "count") (alg [] [] [] [.param "item"]))
+      (.param "acc")
+  ]
+
+def takeFirstProjectedAlg223 : Algorithm :=
+  alg ["item"] [] [] [
+    .index (.param "item") (.num 0)
+  ]
+
+def hasFiveAlg224 : Algorithm :=
+  alg ["report"] [] [] [
+    .binary .eq
+      (.dotCall (.param "report") "count" none)
+      (.num 5)
+  ]
+
+def safeReportAlg225 : Algorithm :=
+  let report := .param "report"
+  let itemAt (i : Int) := .index report (.num i)
+  let desc (i : Int) := .binary .gt (itemAt i) (itemAt (i + 1))
+  let stepOk (i : Int) := .binary .le (.binary .sub (itemAt i) (itemAt (i + 1))) (.num 3)
+  let descendingChecks :=
+    .binary .and
+      (desc 0)
+      (.binary .and
+        (desc 1)
+        (.binary .and (desc 2) (desc 3)))
+  let stepChecks :=
+    .binary .and
+      (stepOk 0)
+      (.binary .and
+        (stepOk 1)
+        (.binary .and (stepOk 2) (stepOk 3)))
+  alg ["report"] [] [] [
+    .binary .and
+      (.binary .eq (.dotCall report "count" none) (.num 5))
+      (.binary .and descendingChecks stepChecks)
+  ]
+
+def test220 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("HasFourAtoms", hasFourAtomsAlg220),
+    ("TopLevelItemCount", topLevelItemCountAlg221),
+    ("AddTopLevelItemCount", addTopLevelItemCountAlg222),
+    ("Pairs", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ])
+    ])
+  ] [
+    .dotCall (.resolve "Pairs") "count" none,
+    .dotCall (.dotCall (.resolve "Pairs") "filter" (some (alg [] [] [] [.resolve "HasFourAtoms"]))) "count" none,
+    .dotCall (.dotCall (.resolve "Pairs") "map" (some (alg [] [] [] [.resolve "TopLevelItemCount"]))) "sum" none,
+    .dotCall (.resolve "Pairs") "reduce" (some (alg [] [] [] [.resolve "AddTopLevelItemCount", .num 0]))
+  ])) with
+  | Except.ok [1, 1, 2, 2] => true
+  | _ => false
+
+#eval test220  -- should be true
+
+def test221 : Bool :=
+  let receiver := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runFlat (.block (algPrivate [] [] [
+    ("HasFourAtoms", hasFourAtomsAlg220),
+    ("TopLevelItemCount", topLevelItemCountAlg221),
+    ("AddTopLevelItemCount", addTopLevelItemCountAlg222)
+  ] [
+    .dotCall receiver "count" none,
+    .dotCall (.dotCall receiver "filter" (some (alg [] [] [] [.resolve "HasFourAtoms"]))) "count" none,
+    .dotCall (.dotCall receiver "map" (some (alg [] [] [] [.resolve "TopLevelItemCount"]))) "sum" none,
+    .dotCall receiver "reduce" (some (alg [] [] [] [.resolve "AddTopLevelItemCount", .num 0]))
+  ])) with
+  | Except.ok [2, 0, 4, 4] => true
+  | _ => false
+
+#eval test221  -- should be true
+
+def test222 : Bool :=
+  let firstBag := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  let secondBag := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 5, .num 6]),
+    .block (alg [] [] [] [.num 7, .num 8])
+  ])
+  match runFlat (.block (algPrivate [] [] [
+    ("HasFourAtoms", hasFourAtomsAlg220),
+    ("TopLevelItemCount", topLevelItemCountAlg221),
+    ("AddTopLevelItemCount", addTopLevelItemCountAlg222),
+    ("Bags", alg [] [] [] [firstBag, secondBag])
+  ] [
+    .dotCall (.index (.resolve "Bags") (.num 0)) "count" none,
+    .dotCall (.dotCall (.index (.resolve "Bags") (.num 0)) "filter" (some (alg [] [] [] [.resolve "HasFourAtoms"]))) "count" none,
+    .dotCall (.dotCall (.index (.resolve "Bags") (.num 0)) "map" (some (alg [] [] [] [.resolve "TopLevelItemCount"]))) "sum" none,
+    .dotCall (.index (.resolve "Bags") (.num 0)) "reduce" (some (alg [] [] [] [.resolve "AddTopLevelItemCount", .num 0]))
+  ])) with
+  | Except.ok [2, 0, 4, 4] => true
+  | _ => false
+
+#eval test222  -- should be true
+
+def test223 : Bool :=
+  let firstReport := .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1])
+  let secondReport := .block (alg [] [] [] [.num 1, .num 2, .num 7, .num 8, .num 9])
+  match runFlat (.block (algPrivate [] [] [
+    ("HasFive", hasFiveAlg224),
+    ("Reports", alg [] [] [] [firstReport, secondReport])
+  ] [
+    .dotCall (.index (.resolve "Reports") (.num 0)) "count" none,
+    .dotCall (.dotCall (.resolve "Reports") "filter" (some (alg [] [] [] [.resolve "HasFive"]))) "count" none
+  ])) with
+  | Except.ok [5, 2] => true
+  | _ => false
+
+#eval test223  -- should be true
+
+def test224 : Bool :=
+  let firstReport := .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1])
+  let secondReport := .block (alg [] [] [] [.num 1, .num 2, .num 7, .num 8, .num 9])
+  match runFlat (.block (algPrivate [] [] [
+    ("TakeFirst", takeFirstProjectedAlg223),
+    ("Reports", alg [] [] [] [firstReport, secondReport])
+  ] [
+    .dotCall (.resolve "Reports") "map" (some (alg [] [] [] [.resolve "TakeFirst"]))
+  ])) with
+  | Except.ok [7, 1] => true
+  | _ => false
+
+#eval test224  -- should be true
+
+def test225 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("TakeFirst", takeFirstProjectedAlg223),
+    ("Pairs", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ])
+  ] [
+    .dotCall (.resolve "Pairs") "map" (some (alg [] [] [] [.resolve "TakeFirst"]))
+  ])) with
+  | Except.ok [1, 3] => true
+  | _ => false
+
+#eval test225  -- should be true
+
+def test226 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("TopLevelItemCount", topLevelItemCountAlg221),
+    ("AddTopLevelItemCount", addTopLevelItemCountAlg222),
+    ("Nested", alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2]),
+        .block (alg [] [] [] [.num 3, .num 4])
+      ])
+    ])
+  ] [
+    .dotCall (.index (.resolve "Nested") (.num 0)) "count" none,
+    .dotCall (.dotCall (.resolve "Nested") "map" (some (alg [] [] [] [.resolve "TopLevelItemCount"]))) "sum" none,
+    .dotCall (.resolve "Nested") "reduce" (some (alg [] [] [] [.resolve "AddTopLevelItemCount", .num 0]))
+  ])) with
+  | Except.ok [2, 2, 2] => true
+  | _ => false
+
+#eval test226  -- should be true
+
+def test227 : Bool :=
+  let firstReport := .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1])
+  let secondReport := .block (alg [] [] [] [.num 1, .num 2, .num 7, .num 8, .num 9])
+  match runFlat (.block (algPrivate [] [] [
+    ("IsSafe", safeReportAlg225),
+    ("Reports", alg [] [] [] [firstReport, secondReport])
+  ] [
+    .dotCall (.dotCall (.resolve "Reports") "filter" (some (alg [] [] [] [.resolve "IsSafe"]))) "count" none
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test227  -- should be true
 
 end KatLangTests

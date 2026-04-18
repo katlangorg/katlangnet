@@ -203,7 +203,7 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each collection item as one argument to the predicate", error.Message);
+        Assert.Contains("filter passes each collection item through S:i-style one-level projection", error.Message);
         Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 

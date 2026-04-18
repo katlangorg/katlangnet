@@ -190,24 +190,41 @@ public static class Evaluator
     private readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
         IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
+        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
         EvaluatorRunState RunState)
     {
-        public static readonly EvalCtx Empty = new([], [], new EvaluatorRunState());
+        public static readonly EvalCtx Empty = new([], [], [], new EvaluatorRunState());
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
-        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, RunState);
+        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, CountedParamEnv, RunState);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, RunState);
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, CountedParamEnv, RunState);
+
+        /// <summary>Replace the counted callback-parameter environment.</summary>
+        public EvalCtx WithCountedParamEnv(IReadOnlyList<(string, CountedResult)> countedParamEnv)
+            => new(CallStack, AlgEnv, countedParamEnv, RunState);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
 
     /// <summary>Value environment: maps parameter names to results. Lean: lookupVal (Option).</summary>
     private static Result? LookupVal(IReadOnlyList<(string Name, Result Value)> env, string name)
+    {
+        foreach (var (n, v) in env)
+            if (n == name) return v;
+        return null;
+    }
+
+    /// <summary>
+    /// Counted callback-parameter environment for projected higher-order items.
+    /// These bindings preserve both the normalized value and the emitted
+    /// top-level count so callback params behave like <c>S:i</c>.
+    /// </summary>
+    private static CountedResult? LookupCountedParam(IReadOnlyList<(string Name, CountedResult Value)> env, string name)
     {
         foreach (var (n, v) in env)
             if (n == name) return v;
@@ -871,6 +888,36 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Evaluate <c>target:selector</c> through the shared one-level projected
+    /// selection semantics.
+    /// Construction preserves structure; selection projects content.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalIndexSelectionCounted(
+        Expr target,
+        Expr selector,
+        SourceSpan? span,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var targetR = Eval(target, ctx, valEnv);
+        if (targetR.IsError) return targetR.Error;
+
+        var nR = EvalInt(selector, ctx, valEnv);
+        if (nR.IsError) return nR.Error;
+
+        var n = nR.Value;
+        if (n < 0 || n != Math.Floor(n))
+            return new EvalError.BadIndex() { Span = span };
+
+        var selected = targetR.Value.SelectProjected((int)n);
+        if (selected is null)
+            return new EvalError.BadIndex() { Span = span };
+
+        return EvalResult<CountedResult>.Ok(
+            new CountedResult(selected.Value.Value, selected.Value.EmittedCount));
+    }
+
+    /// <summary>
     /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
     /// evaluates back to the same shape.
     /// </summary>
@@ -1132,8 +1179,8 @@ public static class Evaluator
     /// <summary>
     /// Evaluate a conditional algorithm against an already-assembled argument
     /// shape. Used both for ordinary conditional calls and for builtins like
-    /// <c>filter</c> and <c>map</c> that must pass one whole result without
-    /// flattening it.
+    /// higher-order sequence callbacks after the iterated item has already
+    /// been projected through the same one-level rule as <c>:</c>.
     /// Lean: <c>evalConditionalShape</c>.
     /// </summary>
     private static EvalResult<Result> EvalConditionalShape(
@@ -1158,49 +1205,91 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate a resolved algorithm on one whole result value.
-    /// Grouped values are bound as a single input and are never unpacked into
-    /// multiple positional arguments. This is required by <c>filter</c> and
-    /// <c>map</c>, whose predicate / transform must inspect each collection
-    /// element as a whole unit.
-    /// Lean: <c>evalWholeArgCall</c>.
+    /// Reify a pre-evaluated callback argument as a zero-parameter algorithm
+    /// that preserves the same value and emitted top-level count.
     /// </summary>
-    private static EvalResult<Result> EvalWholeArgCall(
-        Algorithm callee,
-        Result arg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        string calleeName = "conditional")
+    private static Algorithm CountedArgAlgorithm(CountedResult arg)
     {
-        switch (callee)
+        IReadOnlyList<Expr> output = arg.EmittedCount switch
         {
-            case Algorithm.Builtin(var builtin):
-                return ApplyBuiltin(
-                    builtin,
-                    [AlgorithmOfExpr(ResultToExpr(arg))],
-                    ctx,
-                    valEnv);
+            0 => [EmptyResultExpr()],
+            1 => [ResultToExpr(arg.Value)],
+            _ => arg.Value.ToItems().Select(ResultToExpr).ToList(),
+        };
 
-            case Algorithm.Conditional:
-                return EvalConditionalShape(callee, arg.Normalize(), ctx, valEnv, calleeName);
-
-            default:
-            {
-                var argEnvR = BindParams(callee.Params, [arg]);
-                if (argEnvR.IsError) return argEnvR.Error;
-                return EvalAlgOutput(callee, ctx, Concat(argEnvR.Value, valEnv));
-            }
-        }
+        return new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [],
+            Output: output);
     }
 
     /// <summary>
-    /// Evaluate a resolved algorithm on one whole result value while preserving
-    /// the number of top-level values emitted by the callee.
-    /// Lean: <c>evalWholeArgCallCounted</c>.
+    /// Ordinary call-style unpacking for a pre-evaluated explicit callback
+    /// argument. A final explicit arg may still unpack across the remaining
+    /// parameters, matching <c>callee(S:i)</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalWholeArgCallCounted(
+    private static IReadOnlyList<CountedResult> UnpackCountedArg(CountedResult arg)
+        => UnpackArgs(arg.Value)
+            .Select(value => new CountedResult(value, value.ValueCount()))
+            .ToList();
+
+    /// <summary>
+    /// Bind callback parameters while preserving the projected emitted count of
+    /// the iterated item. This keeps callback params behaving like <c>S:i</c>
+    /// without making them callable algorithms.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<(string, CountedResult)>> BindCountedCallbackParams(
+        IReadOnlyList<string> paramNames,
+        IReadOnlyList<CountedResult> args)
+    {
+        if (args.Count > paramNames.Count)
+            return new EvalError.ArityMismatch(paramNames.Count, args.Count);
+
+        var boundValues = new List<CountedResult>(paramNames.Count);
+        for (var argIndex = 0; argIndex < args.Count; argIndex++)
+        {
+            var isFinalArg = argIndex == args.Count - 1;
+            var remainingParams = paramNames.Count - boundValues.Count;
+
+            if (isFinalArg && remainingParams > 1)
+            {
+                boundValues.AddRange(UnpackCountedArg(args[argIndex]));
+                break;
+            }
+
+            boundValues.Add(args[argIndex]);
+        }
+
+        if (boundValues.Count != paramNames.Count)
+            return new EvalError.ArityMismatch(paramNames.Count, boundValues.Count);
+
+        var bindings = new List<(string, CountedResult)>(paramNames.Count);
+        for (var i = 0; i < paramNames.Count; i++)
+            bindings.Add((paramNames[i], boundValues[i]));
+
+        return EvalResult<IReadOnlyList<(string, CountedResult)>>.Ok(bindings);
+    }
+
+    /// <summary>
+    /// Higher-order sequence iteration projects content the same way
+    /// <c>:</c> does. The callback item for a sequence item behaves like
+    /// <c>S:i</c>.
+    /// </summary>
+    private static CountedResult ProjectSequenceCallbackItem(Result item)
+    {
+        var projected = item.ProjectIteratedContent();
+        return new CountedResult(projected.Value, projected.EmittedCount);
+    }
+
+    /// <summary>
+    /// Evaluate a resolved algorithm against pre-evaluated callback arguments
+    /// that preserve their emitted top-level counts.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalResolvedCallbackCallCounted(
         Algorithm callee,
-        Result arg,
+        IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
@@ -1210,21 +1299,83 @@ public static class Evaluator
             case Algorithm.Builtin(var builtin):
                 return ApplyBuiltinCounted(
                     builtin,
-                    [AlgorithmOfExpr(ResultToExpr(arg))],
+                    args.Select(CountedArgAlgorithm).ToList(),
                     ctx,
                     valEnv);
 
             case Algorithm.Conditional:
-                return EvalConditionalShapeCounted(callee, arg.Normalize(), ctx, valEnv, calleeName);
+                if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
+                {
+                    if (simpleCallee.Output.Count == 0)
+                        return new EvalError.MissingOutput();
+
+                    var countedEnvR = BindCountedCallbackParams(simpleCallee.Params, args);
+                    if (countedEnvR.IsError) return countedEnvR.Error;
+
+                    var newCtx = ctx.WithCountedParamEnv(Concat(countedEnvR.Value, ctx.CountedParamEnv));
+                    return EvalAlgOutputCounted(simpleCallee, newCtx, valEnv);
+                }
+
+                return EvalConditionalShapeCounted(
+                    callee,
+                    Result.FromItems(args.Select(static arg => arg.Value)),
+                    ctx,
+                    valEnv,
+                    calleeName);
 
             default:
             {
-                var argEnvR = BindParams(callee.Params, [arg]);
-                if (argEnvR.IsError) return argEnvR.Error;
-                return EvalAlgOutputCounted(callee, ctx, Concat(argEnvR.Value, valEnv));
+                if (callee.Output.Count == 0)
+                    return new EvalError.MissingOutput();
+
+                var countedEnvR = BindCountedCallbackParams(callee.Params, args);
+                if (countedEnvR.IsError) return countedEnvR.Error;
+
+                var newCtx = ctx.WithCountedParamEnv(Concat(countedEnvR.Value, ctx.CountedParamEnv));
+                return EvalAlgOutputCounted(callee, newCtx, valEnv);
             }
         }
     }
+
+    /// <summary>
+    /// Non-counted wrapper for callback dispatch that still preserves projected
+    /// item emitted counts internally where downstream operations depend on
+    /// them.
+    /// </summary>
+    private static EvalResult<Result> EvalResolvedCallbackCall(
+        Algorithm callee,
+        IReadOnlyList<CountedResult> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+    {
+        var callbackR = EvalResolvedCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
+        return callbackR.IsError
+            ? callbackR.Error
+            : EvalResult<Result>.Ok(callbackR.Value.Value);
+    }
+
+    /// <summary>
+    /// Evaluate a higher-order sequence callback on one iterated item.
+    /// </summary>
+    private static EvalResult<Result> EvalSequenceCallbackCall(
+        Algorithm callee,
+        Result item,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+        => EvalResolvedCallbackCall(callee, [ProjectSequenceCallbackItem(item)], ctx, valEnv, calleeName);
+
+    /// <summary>
+    /// Counted variant of <see cref="EvalSequenceCallbackCall"/>.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalSequenceCallbackCallCounted(
+        Algorithm callee,
+        Result item,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName = "conditional")
+        => EvalResolvedCallbackCallCounted(callee, [ProjectSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
     /// <summary>
     /// Evaluate an algorithm's output expressions and count how many top-level
@@ -1294,44 +1445,22 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate a resolved algorithm on two whole result values.
-    /// The collection element and current accumulator are each passed as a
-    /// whole argument so grouped values stay grouped.
-    /// Lean: <c>evalTwoWholeArgCallCounted</c>.
+    /// Evaluate a <c>reduce</c> step while projecting only the current item.
+    /// The accumulator keeps ordinary explicit-argument semantics.
     /// </summary>
-    private static EvalResult<CountedResult> EvalTwoWholeArgCallCounted(
+    private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
         Algorithm callee,
         Result element,
         Result accumulator,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
-    {
-        switch (callee)
-        {
-            case Algorithm.Builtin(var builtin):
-                return ApplyBuiltinCounted(
-                    builtin,
-                    [AlgorithmOfExpr(ResultToExpr(element)), AlgorithmOfExpr(ResultToExpr(accumulator))],
-                    ctx,
-                    valEnv);
-
-            case Algorithm.Conditional:
-                return EvalConditionalShapeCounted(
-                    callee,
-                    Result.FromItems([element, accumulator]),
-                    ctx,
-                    valEnv,
-                    calleeName);
-
-            default:
-            {
-                var argEnvR = BindParams(callee.Params, [element, accumulator]);
-                if (argEnvR.IsError) return argEnvR.Error;
-                return EvalAlgOutputCounted(callee, ctx, Concat(argEnvR.Value, valEnv));
-            }
-        }
-    }
+        => EvalResolvedCallbackCallCounted(
+            callee,
+            [ProjectSequenceCallbackItem(element), new CountedResult(accumulator, accumulator.ValueCount())],
+            ctx,
+            valEnv,
+            calleeName);
 
     /// <summary>
     /// Recover the top-level values emitted at one algorithm boundary from a
@@ -1452,6 +1581,8 @@ public static class Evaluator
     /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
     /// preserving the accumulator's emitted-value count for the empty-sequence
     /// case.
+    /// The current item follows the same one-level projection rule as
+    /// <c>S:i</c>; the accumulator keeps ordinary explicit-argument semantics.
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
@@ -1468,8 +1599,8 @@ public static class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)",
-                EvalTwoWholeArgCallCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
+                "while evaluating reduce step (reduce passes each collection item through S:i-style one-level projection and leaves the accumulator unchanged)",
+                EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 
             var nextR = ExpectSingleAccumulator(stepR.Value);
@@ -1484,6 +1615,8 @@ public static class Evaluator
     /// <summary>
     /// Evaluate <c>filter</c> over one or more leading sequence arguments.
     /// The final argument is the predicate.
+    /// Each iterated item is bound through the same one-level projection rule
+    /// as <c>:</c>; kept outputs remain the original sequence items.
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
         IReadOnlyList<Result> items,
@@ -1495,8 +1628,8 @@ public static class Evaluator
         foreach (var item in items)
         {
             var predicateR = WithCtx(
-                "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)",
-                EvalWholeArgCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
+                "while evaluating filter predicate (filter passes each collection item through S:i-style one-level projection)",
+                EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
             if (predicateR.IsError) return predicateR.Error;
 
             var truth = predicateR.Value.SingleAtomicTruthValue();
@@ -1517,6 +1650,8 @@ public static class Evaluator
     /// <summary>
     /// Evaluate <c>map</c> over one or more leading sequence arguments while
     /// preserving the number of top-level mapped elements.
+    /// Each callback item follows the same one-level projection rule as
+    /// <c>S:i</c>.
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
@@ -1529,8 +1664,8 @@ public static class Evaluator
         foreach (var item in items)
         {
             var transformR = WithCtx(
-                "while evaluating map transform (map passes each collection item as one argument to the transform)",
-                EvalWholeArgCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
+                "while evaluating map transform (map passes each collection item through S:i-style one-level projection)",
+                EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
             if (transformR.IsError) return transformR.Error;
 
             var mappedElementR = ExpectSingleMappedElement(transformR.Value);
@@ -3266,10 +3401,14 @@ public static class Evaluator
             case Expr.Param(var name):
             {
                 // Dual-view parameter evaluation (Lean: eval Param(x)):
-                // 1. ValEnv first (value meaning)
-                // 2. AlgEnv fallback (algorithm meaning):
+                // 1. Counted callback-param env (projected higher-order item meaning)
+                // 2. ValEnv (ordinary value meaning)
+                // 3. AlgEnv fallback (algorithm meaning):
                 //    - 0-param algorithm → auto-evaluate (thunk semantics)
                 //    - multi-param algorithm → arityMismatch (needs explicit call)
+                var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+                if (counted is not null) return EvalResult<Result>.Ok(counted.Value.Value);
+
                 var val = LookupVal(valEnv, name);
                 if (val is not null) return EvalResult<Result>.Ok(val);
                 var algBound = LookupAlg(ctx.AlgEnv, name);
@@ -3424,16 +3563,10 @@ public static class Evaluator
 
             case Expr.Index(var target, var selector):
             {
-                var targetR = Eval(target, ctx, valEnv);
-                if (targetR.IsError) return targetR.Error;
-                var nR = EvalInt(selector, ctx, valEnv);
-                if (nR.IsError) return nR.Error;
-                var n = nR.Value;
-                if (n < 0 || n != Math.Floor(n))
-                    return new EvalError.BadIndex() { Span = expr.Span };
-                var indexed = targetR.Value.Index((int)n);
-                if (indexed is null) return new EvalError.BadIndex() { Span = expr.Span };
-                return EvalResult<Result>.Ok(indexed);
+                var selectionR = EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
+                return selectionR.IsError
+                    ? selectionR.Error
+                    : EvalResult<Result>.Ok(selectionR.Value.Value);
             }
 
             case Expr.NativeCall(var fnName, var argNames):
@@ -3463,6 +3596,10 @@ public static class Evaluator
         {
             case Expr.Param(var name):
             {
+                var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+                if (counted is not null)
+                    return EvalResult<CountedResult>.Ok(counted.Value);
+
                 var val = LookupVal(valEnv, name);
                 if (val is not null)
                     return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
@@ -3536,6 +3673,10 @@ public static class Evaluator
             case Expr.Call(var func, var argsAlg):
                 return WithSpan(expr.Span,
                     EvalCallCountedExpr(func, argsAlg, ctx, valEnv));
+
+            case Expr.Index(var target, var selector):
+                return WithSpan(expr.Span,
+                    EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv));
 
             default:
             {
@@ -4284,29 +4425,18 @@ public static class Evaluator
         IReadOnlyList<Algorithm> Args);
 
     /// <summary>
-    /// Sequence builtins share one dot-call receiver rule: evaluate the
-    /// receiver, unwrap exactly one grouped receiver layer into top-level
-    /// sequence items, and otherwise keep the receiver's ordinary top-level
-    /// item boundary. The resulting one-layer sequence is reified back into a
-    /// synthetic algorithm argument so the normal sequence-builtin pipeline can
-    /// handle it uniformly.
+    /// Sequence builtins share one dot-call receiver rule through the same
+    /// algorithm-argument path used by plain calls.
+    /// If the receiver is a block expression, one outer receiver-scoping block
+    /// layer is removed and the builtin consumes that block algorithm directly.
+    /// Otherwise the receiver is wrapped as one ordinary argument expression.
+    /// Additional parenthesized layers therefore remain nested block outputs and
+    /// stay grouped values rather than being flattened by dot-call.
     /// </summary>
-    private static Algorithm SequenceBuiltinDotReceiverArg(Result receiverValue)
-    {
-        var receiverItems = new List<Result>();
-        ResultItems(receiverItems, receiverValue);
-
-        var outputExprs = receiverItems.Count == 0
-            ? [EmptyResultExpr()]
-            : receiverItems.Select(ResultToExpr).ToList();
-
-        return new Algorithm.User(
-            Parent: null,
-            Params: [],
-            Opens: [],
-            Properties: [],
-            Output: outputExprs);
-    }
+    private static Algorithm SequenceBuiltinDotReceiverArg(Expr receiver, EvalCtx ctx)
+        => receiver is Expr.Block(var algorithm)
+            ? WireToCaller(ctx, algorithm)
+            : WireToCaller(ctx, AlgorithmOfExpr(receiver));
 
     private static EvalResult<SequenceBuiltinDotCall?> TryBuildSequenceBuiltinDotCall(
         string name,
@@ -4323,12 +4453,9 @@ public static class Evaluator
             return EvalResult<SequenceBuiltinDotCall?>.Ok(null);
         }
 
-        var receiverValueR = Eval(receiver, ctx, valEnv);
-        if (receiverValueR.IsError) return receiverValueR.Error;
-
         var argAlgs = new List<Algorithm>(1 + (extraArgs?.Output.Count ?? 0))
         {
-            SequenceBuiltinDotReceiverArg(receiverValueR.Value)
+            SequenceBuiltinDotReceiverArg(receiver, ctx)
         };
 
         if (extraArgs is not null)
@@ -4528,7 +4655,7 @@ public static class Evaluator
                 runState.SnapshotStats());
         }
 
-        var ctx = new EvalCtx([PreludeAlg], [], runState);
+        var ctx = new EvalCtx([PreludeAlg], [], [], runState);
         var result = expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);

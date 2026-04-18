@@ -12,16 +12,20 @@ public enum UnaryOp { Minus, Not }
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
 /// Sequence-consuming builtins always consume counted top-level items; a
 /// grouped single output stays one item even when it is the only sequence
-/// argument in plain-call form. In dot-call form, the receiver is evaluated
-/// first; if the receiver value is grouped, its top-level members become the
-/// consumed sequence items. This unwraps only one receiver layer, so nested
-/// grouped elements still stay grouped values rather than being flattened
-/// recursively.
+/// argument in plain-call form. In dot-call form, one parenthesized receiver
+/// layer is receiver scoping only; an additional parenthesized layer creates a
+/// real grouped value. Sequence builtins therefore consume the same counted
+/// top-level items that plain-call semantics would see after removing that one
+/// receiver-scoping layer, and nested grouped elements still stay grouped
+/// values rather than being flattened recursively.
 /// <c>filter(...items, predicate)</c> keeps the original top-level sequence
-/// items whose predicate returns exactly one atomic numeric truth value.
+/// items whose predicate returns exactly one atomic numeric truth value after
+/// seeing each callback item through the same one-level projection rule as
+/// <c>S:i</c>.
 /// <c>map(...items, transform)</c> maps top-level sequence items left to right;
-/// <c>transform(element)</c> must return exactly one mapped element, and
-/// grouped input/output elements are preserved whole.
+/// each callback item follows the same one-level projection rule as
+/// <c>S:i</c>, <c>transform(element)</c> must return exactly one mapped
+/// element, and grouped mapped outputs are preserved whole.
 /// <c>count(...items)</c> counts top-level sequence items left to right; each
 /// atom, string, or grouped value counts as one element, grouped values are
 /// not flattened, and empty collections return <c>0</c>.
@@ -63,8 +67,9 @@ public enum UnaryOp { Minus, Not }
 /// sequence must be non-empty, each item must be exactly one atomic numeric
 /// value, and grouped values are not flattened.
 /// <c>reduce(...items, step, initial)</c> folds top-level sequence items left
-/// to right; <c>step(element, accumulator)</c> must return exactly one next
-/// accumulator value, and grouped elements/accumulators are preserved whole.
+/// to right; the current callback item follows the same one-level projection
+/// rule as <c>S:i</c>, <c>step(element, accumulator)</c> must return exactly
+/// one next accumulator value, and grouped accumulators are preserved whole.
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
 
@@ -115,7 +120,7 @@ public abstract record Expr
     /// <summary>Binary arithmetic or comparison expression.</summary>
     public sealed record Binary(BinaryOp Op, Expr Left, Expr Right) : Expr;
 
-    /// <summary>Output selection. <c>Index(a, i)</c> selects element <c>i</c> from evaluated output of <c>a</c>.</summary>
+    /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> from evaluated output of <c>a</c> and projects that item's content one level.</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;
 
     /// <summary>Combines two algorithms into one (structural combination via <c>;</c>).</summary>

@@ -144,21 +144,63 @@ public abstract record Result
     }
 
     /// <summary>
-    /// Structural indexing (preserves grouping).
-    /// Lean: Result.index?
+    /// Extract top-level items from a result.
+    /// Atom/string → singleton list; group → its items.
+    /// Lean: <c>Result.toItems</c>.
     /// </summary>
-    public Result? Index(int i)
+    public IReadOnlyList<Result> ToItems()
     {
         return this switch
         {
-            Atom(var n) when i == 0 => new Atom(n),
-            Atom _ => null,
-            Str _ when i == 0 => this,
-            Str _ => null,
-            Group(var items) when i >= 0 && i < items.Count => items[i],
-            Group _ => null,
-            _ => null,
+            Atom or Str => [this],
+            Group(var items) => items,
+            _ => [],
         };
+    }
+
+    /// <summary>
+    /// Construction preserves structure; selection projects content.
+    /// Project one selected value to the top-level content it denotes at the
+    /// current boundary, without recursively flattening nested grouped members.
+    /// Lean: <c>Result.projectSelectedContent</c>.
+    /// </summary>
+    private static (Result Value, int EmittedCount) ProjectSelectedContent(Result selected)
+    {
+        var items = selected.ToItems();
+        return (FromItems(items), items.Count);
+    }
+
+    /// <summary>
+    /// Construction preserves structure; selection projects content.
+    /// <c>:</c> selects one top-level item from the target and projects that
+    /// item's content one level: atoms stay atomic, grouped items yield their
+    /// immediate members, and nested grouped members remain grouped.
+    /// Lean: <c>Result.select?</c>.
+    /// </summary>
+    public (Result Value, int EmittedCount)? SelectProjected(int i)
+    {
+        var sourceItems = ToItems();
+        return i >= 0 && i < sourceItems.Count
+            ? ProjectSelectedContent(sourceItems[i])
+            : null;
+    }
+
+    /// <summary>
+    /// Construction preserves structure; selection projects content.
+    /// Higher-order sequence iteration uses the same one-level projection rule
+    /// for each iterated item as <c>:</c> uses for a selected item.
+    /// Lean: callback item projection via <c>Result.projectSelectedContent</c>.
+    /// </summary>
+    public (Result Value, int EmittedCount) ProjectIteratedContent()
+        => ProjectSelectedContent(this);
+
+    /// <summary>
+    /// One-level projected selection result for <c>:</c>.
+    /// Lean: <c>Result.index?</c>.
+    /// </summary>
+    public Result? Index(int i)
+    {
+        return SelectProjected(i)?.Value;
     }
 
     /// <summary>

@@ -720,6 +720,17 @@ namespace Result
     | str s    => [str s]
     | group rs => rs
 
+  /-- Construction preserves structure; selection projects content.
+      Project one selected value to the top-level content it denotes at the
+      current boundary, without recursively flattening nested grouped members.
+
+      Atoms and strings stay atomic. Grouped values project exactly one level
+      to their immediate members, and the accompanying count records how many
+      top-level values that projection emits. -/
+  def projectSelectedContent (selected : Result) : Result × Nat :=
+    let items := selected.toItems
+    (normalize (group items), items.length)
+
   /-- Count emitted top-level values when a result is already in hand.
       Empty results emit 0. Any non-empty atomic, string, or grouped value
       counts as one value.
@@ -731,13 +742,18 @@ namespace Result
     | group [] => 0
     | _ => 1
 
-  /-- Structural indexing (preserves grouping). -/
-  def index? : Result -> Nat -> Option Result
-    | atom n, 0   => some (atom n)
-    | atom _, _   => none
-    | str s, 0    => some (str s)
-    | str _, _    => none
-    | group rs, i => rs[i]?
+  /-- Construction preserves structure; selection projects content.
+      `:` selects one top-level item from the target and projects that item's
+      content one level: atoms stay atomic, grouped items yield their immediate
+      members, and nested grouped members remain grouped. -/
+  def select? (r : Result) (i : Nat) : Option (Result × Nat) :=
+    match r.toItems[i]? with
+    | some selected => some (projectSelectedContent selected)
+    | none => none
+
+  /-- One-level projected selection result for `:`. -/
+  def index? (r : Result) (i : Nat) : Option Result :=
+    (select? r i).map Prod.fst
 end Result
 
 --------------------------------------------------------------------------------
@@ -761,6 +777,16 @@ namespace AlgEnv
     lookupAssoc x env
 end AlgEnv
 
+/-- Counted parameter environment for callback-bound values that must preserve
+    expression-level emitted counts, for example higher-order sequence items
+    projected through the same one-level rule as `:`. -/
+abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
+
+namespace CountedParamEnv
+  def lookup (env : CountedParamEnv) (x : Ident) : Option (Prod Result Nat) :=
+    lookupAssoc x env
+end CountedParamEnv
+
 /-- Evaluation context threaded through resolution and evaluation.
     Wraps the algorithm chain (current algorithm + enclosing callers) used for
     both lexical resolution and runtime dispatch.
@@ -775,15 +801,18 @@ end AlgEnv
 structure EvalCtx where
   callStack : List Algorithm
   algEnv    : AlgEnv := []
+  countedParamEnv : CountedParamEnv := []
   deriving Repr
 
 namespace EvalCtx
-  def empty : EvalCtx := { callStack := [], algEnv := [] }
+  def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv }
+    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := ctx.countedParamEnv }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
   def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := env }
+    { callStack := ctx.callStack, algEnv := env, countedParamEnv := ctx.countedParamEnv }
+  def withCountedParamEnv (env : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
+    { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := env }
 end EvalCtx
 
 abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
@@ -1386,6 +1415,60 @@ def countedTopLevelValues : CountedResult -> List Result
   | (value, 1) => [value]
   | (value, _) => value.toItems
 
+/-- Reify a counted argument shape as a zero-parameter algorithm that preserves
+    the same value and emitted top-level count when evaluated. -/
+def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
+  let output :=
+    match arg with
+    | (_, 0) => [emptyResultExpr]
+    | _ => (countedTopLevelValues arg).map resultToExpr
+  Algorithm.mk none [] [] [] output
+
+/-- Ordinary call-style unpacking for a pre-evaluated explicit argument whose
+    expression-level emitted count is already known.
+
+    A final explicit argument may still unpack its value across the remaining
+    parameters, matching `callee(S:i)` and preserving the one-level projected
+    callback item rule without changing global call semantics. -/
+def unpackCountedArg (arg : CountedResult) : List CountedResult :=
+  unpackArgs arg.fst |>.map (fun value => (value, Result.valueCount value))
+
+/-- Bind callback parameters through counted argument semantics.
+    This preserves the difference between a projected callback item that emits
+    several top-level values and an ordinary grouped value that still emits one.
+    The bound parameter remains a parameter value, not a callable algorithm. -/
+partial def bindCountedCallbackParams (ps : List Ident) (args : List CountedResult)
+    : EvalM CountedParamEnv := do
+  let rec collect
+      (remainingParams : List Ident)
+      (remainingArgs : List CountedResult)
+      : EvalM (List Ident × List CountedResult) :=
+    match remainingParams, remainingArgs with
+    | [], _ => pure ([], [])
+    | params, [] => pure (params, [])
+    | p :: ps', [arg] =>
+        match ps' with
+        | [] => pure ([p], [arg])
+        | _ => pure (p :: ps', unpackCountedArg arg)
+    | p :: ps', arg :: args' => do
+        let (boundParams, boundArgs) <- collect ps' args'
+        pure (p :: boundParams, arg :: boundArgs)
+  if args.length > ps.length then
+    .error (Error.arityMismatch ps.length args.length)
+  else do
+    let (boundParams, boundArgs) <- collect ps args
+    if boundParams.length != boundArgs.length then
+      .error (Error.arityMismatch boundParams.length boundArgs.length)
+    else
+      pure (List.zip boundParams boundArgs)
+
+/-- Higher-order sequence iteration projects content the same way `:` does.
+    The callback item for sequence item `i` behaves like `S:i`: atoms stay
+    atomic, grouped items project exactly one level, and nested grouped members
+    remain grouped. -/
+def projectSequenceCallbackItem (item : Result) : CountedResult :=
+  Result.projectSelectedContent item
+
 def splitSequenceBuiltinArgs (metadata : SequenceBuiltinMetadata) (args : List Algorithm)
     : Option (List Algorithm × List Algorithm) :=
   let trailingArgCount := metadata.trailingArgCount
@@ -1977,10 +2060,9 @@ mutual
     evalAlgOutput step ctx (argEnv ++ env)
 
   /-- Evaluate a conditional algorithm against an already assembled argument
-      Result shape. Used by ordinary conditional calls and by builtins that
-      must pass one whole result value (for example `filter` / `map` elements)
-      without
-      flattening grouped structure. -/
+      Result shape. Used by ordinary conditional calls and by higher-order
+      sequence callbacks after the iterated item has already been projected
+      through the same one-level rule as `:`. -/
   partial def evalConditionalShape (callee : Algorithm) (argShape : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM Result := do
@@ -1995,40 +2077,20 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
-  /-- Evaluate a resolved algorithm on one whole result value.
-      Unlike ordinary eager calls, grouped results are bound as a single input
-      value and are never unpacked into multiple positional arguments.
-      This is used by `filter` and `map`, whose predicate / transform must see
-      each collection element as a whole unit. -/
-  partial def evalWholeArgCall (callee : Algorithm) (arg : Result)
+  /-- Evaluate a higher-order sequence callback on one iterated item.
+      Sequence iteration projects content the same way `:` does, so the
+      callback item behaves like `S:i` rather than like one opaque grouped
+      value. -/
+  partial def evalSequenceCallbackCall (callee : Algorithm) (item : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      : EvalM Result := do
-    match callee with
-    | .builtin b =>
-        applyBuiltin b [Algorithm.ofExpr (resultToExpr arg)] ctx env
-    | .conditional _ _ _ =>
-        evalConditionalShape callee (Result.normalize arg) ctx env calleeName
-    | _ => do
-        let argEnv <- bindParams (Algorithm.params callee) [arg]
-        evalAlgOutput callee ctx (argEnv ++ env)
+      : EvalM Result :=
+    evalResolvedCallbackCall callee [projectSequenceCallbackItem item] ctx env calleeName
 
-    /-- Evaluate a resolved algorithm on one whole result value, preserving the
-      number of top-level values emitted by the callee.
-
-      This is used by `map`, whose transform must receive each collection
-      element as one whole argument while still being validated to return
-      exactly one mapped element. -/
-    partial def evalWholeArgCallCounted (callee : Algorithm) (arg : Result)
+  /-- Counted variant of `evalSequenceCallbackCall` used by `map`. -/
+  partial def evalSequenceCallbackCallCounted (callee : Algorithm) (item : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      : EvalM CountedResult := do
-    match callee with
-    | .builtin b =>
-      applyBuiltinCounted b [Algorithm.ofExpr (resultToExpr arg)] ctx env
-    | .conditional _ _ _ =>
-      evalConditionalShapeCounted callee (Result.normalize arg) ctx env calleeName
-    | _ => do
-      let argEnv <- bindParams (Algorithm.params callee) [arg]
-      evalAlgOutputCounted callee ctx (argEnv ++ env)
+      : EvalM CountedResult :=
+    evalResolvedCallbackCallCounted callee [projectSequenceCallbackItem item] ctx env calleeName
 
   /-- Evaluate an algorithm's output expressions and also count how many
       top-level values they emitted at the current algorithm boundary.
@@ -2074,30 +2136,61 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
-  /-- Evaluate a resolved algorithm on two whole result values.
-      The collection element and current accumulator are each passed as one
-      whole argument: grouped elements stay grouped, and grouped accumulators
-      stay grouped.
+  /-- Evaluate a resolved algorithm against pre-evaluated callback arguments
+      that preserve their emitted top-level counts.
 
-      This is used by `reduce`, whose step has the contract
-      `step(element, accumulator)`. -/
-  partial def evalTwoWholeArgCallCounted (callee : Algorithm) (element accumulator : Result)
+      This is the shared callback-binding path for higher-order sequence
+      builtins. It mirrors ordinary call semantics for final-argument
+      unpacking while making the projected callback item behave like `S:i`
+      inside the callback body. -/
+  partial def evalResolvedCallbackCallCounted (callee : Algorithm)
+      (args : List CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
     match callee with
     | .builtin b =>
-        applyBuiltinCounted b
-          [ Algorithm.ofExpr (resultToExpr element)
-          , Algorithm.ofExpr (resultToExpr accumulator)
-          ]
-          ctx env
+        applyBuiltinCounted b (args.map countedArgAlgorithm) ctx env
     | .conditional _ _ _ =>
-        evalConditionalShapeCounted callee
-          (Result.normalize (Result.group [element, accumulator]))
-          ctx env calleeName
-    | _ => do
-        let argEnv <- bindParams (Algorithm.params callee) [element, accumulator]
-        evalAlgOutputCounted callee ctx (argEnv ++ env)
+        match flatBinderUserEquivalent? callee with
+        | some simple => do
+            if (Algorithm.output simple).isEmpty then
+              .error Error.missingOutput
+            else do
+              let countedParamEnv <- bindCountedCallbackParams (Algorithm.params simple) args
+              let newCtx := ctx.withCountedParamEnv (countedParamEnv ++ ctx.countedParamEnv)
+              evalAlgOutputCounted simple newCtx env
+        | none =>
+            evalConditionalShapeCounted callee
+              (Result.normalize (Result.group (args.map Prod.fst)))
+              ctx env calleeName
+    | _ =>
+        if (Algorithm.output callee).isEmpty then
+          .error Error.missingOutput
+        else do
+          let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
+          let newCtx := ctx.withCountedParamEnv (countedParamEnv ++ ctx.countedParamEnv)
+          evalAlgOutputCounted callee newCtx env
+
+  /-- Non-counted wrapper for callback calls that still preserve projected item
+      emitted counts internally where later operations depend on them. -/
+  partial def evalResolvedCallbackCall (callee : Algorithm)
+      (args : List CountedResult)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM Result := do
+    let out <- evalResolvedCallbackCallCounted callee args ctx env calleeName
+    pure out.fst
+
+  /-- Evaluate a `reduce` step while projecting only the current iterated item.
+      The accumulator keeps ordinary explicit-argument semantics. -/
+  partial def evalSequenceReduceStepCounted (callee : Algorithm)
+      (element accumulator : Result)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM CountedResult :=
+    evalResolvedCallbackCallCounted callee
+      [ projectSequenceCallbackItem element
+      , (accumulator, Result.valueCount accumulator)
+      ]
+      ctx env calleeName
 
     /-- Evaluate the leading sequence arguments for a sequence builtin while
       preserving per-input boundaries.
@@ -2269,10 +2362,11 @@ mutual
 
   /-- Evaluate `reduce` over one or more leading sequence arguments.
       `reduce` processes top-level collection elements from left to right.
-      `step(element, accumulator)` receives each whole collection element and
-      the current accumulator as whole arguments. The step must return exactly
-      one accumulator value: one atom or one grouped value is valid, while
-      empty and multi-output results are rejected.
+      `step(element, accumulator)` receives the current item through the same
+      one-level projection rule as `S:i`, while the accumulator keeps ordinary
+      explicit-argument semantics. The step must return exactly one
+      accumulator value: one atom or one grouped value is valid, while empty
+      and multi-output results are rejected.
 
       Empty collections return the initial accumulator unchanged. -/
   partial def evalReduceCounted (collection : List Result)
@@ -2283,21 +2377,25 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each collection item and accumulator as whole arguments)" <|
-            evalTwoWholeArgCallCounted stepAlg item accValue ctx env "reduce step"
+            "while evaluating reduce step (reduce passes each collection item through S:i-style one-level projection and leaves the accumulator unchanged)" <|
+            evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
     reduceLoop collection initOut
 
   /-- Evaluate `filter` over one or more leading sequence arguments.
-      The final argument is the predicate. -/
+      The final argument is the predicate.
+
+      Each iterated item is bound through the same one-level projection rule as
+      `:`. The kept output items themselves remain the original sequence items.
+      -/
   partial def evalFilterCounted (items : List Result) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec filterLoop : List Result -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
-          let pr <- withCtx "while evaluating filter predicate (filter passes each collection item as one argument to the predicate)" <|
-            evalWholeArgCall predicateAlg item ctx env "filter predicate"
+          let pr <- withCtx "while evaluating filter predicate (filter passes each collection item through S:i-style one-level projection)" <|
+            evalSequenceCallbackCall predicateAlg item ctx env "filter predicate"
           match Result.singleAtomicTruthValue? pr with
           | some true => do
               let kept <- filterLoop rest
@@ -2313,22 +2411,22 @@ mutual
 
   /-- Evaluate `map` over one or more leading sequence arguments.
       `map` processes top-level collection elements from left to right.
-      `transform(element)` receives each whole collection element as one
-      argument and must return exactly one mapped element: one atom or one
-      grouped value is valid, while empty and multi-output results are
-      rejected.
+      `transform(element)` receives each item through the same one-level
+      projection rule as `S:i` and must return exactly one mapped element: one
+      atom or one grouped value is valid, while empty and multi-output results
+      are rejected.
 
-      Grouped input elements are passed whole, grouped mapped elements are
-      accepted as single output elements, empty collections stay empty, and the
-      output preserves the original element order and element count. -/
+      Grouped mapped elements are accepted as single output elements, empty
+      collections stay empty, and the output preserves the original element
+      order and element count. -/
   partial def evalMapCounted (collection : List Result) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec mapLoop : List Result -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each collection item as one argument to the transform)" <|
-            evalWholeArgCallCounted transformAlg item ctx env "map transform"
+            "while evaluating map transform (map passes each collection item through S:i-style one-level projection)" <|
+            evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
           pure (mapped :: restMapped)
@@ -2795,33 +2893,30 @@ mutual
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
-  /-- Sequence builtins share one dot-call receiver rule: evaluate the
-      receiver, unwrap exactly one grouped receiver layer into top-level
-      sequence items, and otherwise keep the receiver's ordinary top-level item
-      boundary. The resulting one-layer sequence is reified back into a
-      synthetic algorithm argument so the normal sequence-builtin pipeline can
-      handle it uniformly. -/
-  partial def sequenceBuiltinDotReceiverArg (receiverValue : Result) : Algorithm :=
-    let receiverItems := Result.toItems receiverValue
-    let outputExprs :=
-      match receiverItems with
-      | [] => [emptyResultExpr]
-      | _ => receiverItems.map resultToExpr
-    Algorithm.mk none [] [] [] outputExprs
+  /-- Sequence builtins share one dot-call receiver rule through the same
+      algorithm-argument path used by plain calls.
+      If the receiver is a block expression, one outer receiver-scoping block
+      layer is removed and the builtin consumes that block algorithm directly.
+      Otherwise the receiver is wrapped as one ordinary argument expression.
+      Additional parenthesized layers therefore remain nested block outputs and
+      stay grouped values rather than being flattened by dot-call. -/
+  partial def sequenceBuiltinDotReceiverArg (receiver : Expr) (ctx : EvalCtx) : Algorithm :=
+    match receiver with
+    | .block alg => wireToCaller ctx alg
+    | _ => wireToCaller ctx (Algorithm.ofExpr receiver)
 
   partial def trySequenceBuiltinDotCall
       (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (Builtin × List Algorithm)) := do
+      (ctx : EvalCtx) (_env : ValEnv) : EvalM (Option (Builtin × List Algorithm)) := do
     match resolveAlg (.resolve name) ctx with
     | .ok (.builtin b) =>
         match sequenceBuiltinMetadata? b with
         | some _ =>
-            let receiverValue <- eval receiver ctx env
             let extraArgAlgs <-
               match extraArgs with
               | some args => resolveArgAlgs args ctx
               | none => pure []
-            pure (some (b, sequenceBuiltinDotReceiverArg receiverValue :: extraArgAlgs))
+            pure (some (b, sequenceBuiltinDotReceiverArg receiver ctx :: extraArgAlgs))
         | none =>
             pure none
     | _ =>
@@ -2905,16 +3000,19 @@ mutual
   partial def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match e with
     | .param x =>
-        match env.lookup x with
-        | some v => pure (v, Result.valueCount v)
+        match ctx.countedParamEnv.lookup x with
+        | some counted => pure counted
         | none =>
-            match ctx.algEnv.lookup x with
-            | some alg =>
-                if (Algorithm.params alg).length = 0 then
-                  evalAlgOutputCounted alg ctx env
-                else
-                  .error (Error.arityMismatch (Algorithm.params alg).length 0)
-            | none => .error (Error.unknownName x)
+            match env.lookup x with
+            | some v => pure (v, Result.valueCount v)
+            | none =>
+                match ctx.algEnv.lookup x with
+                | some alg =>
+                    if (Algorithm.params alg).length = 0 then
+                      evalAlgOutputCounted alg ctx env
+                    else
+                      .error (Error.arityMismatch (Algorithm.params alg).length 0)
+                | none => .error (Error.unknownName x)
     | .combine e1 e2 => do
         let (r1, c1) <- evalCounted e1 ctx env
         let (r2, c2) <- evalCounted e2 ctx env
@@ -2932,6 +3030,16 @@ mutual
           withMissingOutputCtx (CtxMsg.property n) <| evalAlgOutputCounted a ctx env
         else
           .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params a).length 0))
+    | .index a i => do
+        let ar <- eval a ctx env
+        let ir <- eval i ctx env
+        let n  <- expectInt ir
+        if n < 0 then
+          .error Error.badIndex
+        else
+          match Result.select? ar (Int.toNat n) with
+          | some projected => pure projected
+          | none => .error Error.badIndex
     | .dotCall o n argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCallCounted o n argsOpt ctx env
     | .call f args =>
@@ -3146,19 +3254,22 @@ mutual
     | .stringLiteral s => pure (Result.str s)
 
     | .param x =>
-        match env.lookup x with
-        | some v => pure v
-        | none   =>
-            -- Higher-order fallback: if x is bound in AlgEnv as a 0-param algorithm,
-            -- auto-evaluate it (thunk semantics).  Multi-param algorithms require
-            -- explicit call syntax and produce arityMismatch.
-            match ctx.algEnv.lookup x with
-            | some alg =>
-                if (Algorithm.params alg).length = 0 then
-                  evalAlgOutput alg ctx env
-                else
-                  .error (Error.arityMismatch (Algorithm.params alg).length 0)
-            | none => .error (Error.unknownName x)
+        match ctx.countedParamEnv.lookup x with
+        | some counted => pure counted.fst
+        | none =>
+            match env.lookup x with
+            | some v => pure v
+            | none   =>
+                -- Higher-order fallback: if x is bound in AlgEnv as a 0-param algorithm,
+                -- auto-evaluate it (thunk semantics).  Multi-param algorithms require
+                -- explicit call syntax and produce arityMismatch.
+                match ctx.algEnv.lookup x with
+                | some alg =>
+                    if (Algorithm.params alg).length = 0 then
+                      evalAlgOutput alg ctx env
+                    else
+                      .error (Error.arityMismatch (Algorithm.params alg).length 0)
+                | none => .error (Error.unknownName x)
 
     | .unary op e => do
         let r <- eval e ctx env
@@ -3251,9 +3362,9 @@ mutual
         if n < 0 then
           .error Error.badIndex
         else
-          match Result.index? ar (Int.toNat n) with
-          | some r => pure r
-          | none   => .error Error.badIndex
+          match Result.select? ar (Int.toNat n) with
+          | some (selected, _) => pure selected
+          | none => .error Error.badIndex
 
 end
 
