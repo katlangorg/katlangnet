@@ -416,6 +416,50 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_CountOnGroupedPropertyReceiver_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Values = (1, 2, 3)
+            Values.count
+            """);
+
+        var valuesDeclaration = Assert.Single(model.FindDeclarations("Values"));
+        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 6);
+
+        var valuesReference = ResolutionAt(model, 2, 1);
+        Assert.Equal(OccurrenceKind.ResolveReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, valuesReference.Classification);
+        Assert.Equal(valuesDeclaration, valuesReference.ResolvedDeclaration);
+
+        var countReference = ResolutionAt(model, 2, 8);
+        Assert.Equal(OccurrenceKind.DotMemberReference, countReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, countReference.Classification);
+        Assert.Null(countReference.ResolvedDeclaration);
+        Assert.NotNull(countReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, countReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items..."], countReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
+    public void Build_DotCall_TakeOnIndexedReceiver_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Data = (1, 2, 3), (4, 5)
+            (Data:0).take(2)
+            """);
+
+        var takeReference = ResolutionAt(model, 2, 10);
+        Assert.Equal(OccurrenceKind.DotMemberReference, takeReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, takeReference.Classification);
+        Assert.Null(takeReference.ResolvedDeclaration);
+        Assert.NotNull(takeReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, takeReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items...", "count"], takeReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_DotCall_FirstOnImplicitParameter_UsesBuiltinFallback()
     {
         var model = BuildModel(

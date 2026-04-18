@@ -889,7 +889,7 @@ public class EvaluatorTests
             T.count
             """;
 
-        AssertEval(source, 1, 1);
+        AssertEval(source, 1, 3);
     }
 
     [Fact]
@@ -1865,16 +1865,25 @@ public class EvaluatorTests
         => AssertBuiltinFailureWithContext("order(1, (2, 3))", "order expects each collection element to be a single numeric value");
 
     [Fact]
-    public void Eval_Order_NamedGroupedValue_DotCallRemainsOneGroupedItem()
+    public void Eval_Order_NamedGroupedValue_DotCallUsesReceiverTopLevelItems()
     {
         var source = """
             Data = (3, 5, 3, 6, 3)
             Data.order
             """;
 
-        AssertBuiltinFailureWithExactContext(
-            source,
-            "order expects each collection element to be a single numeric value; item 0 was grouped value");
+        AssertEval(source, 3, 3, 3, 5, 6);
+    }
+
+    [Fact]
+    public void Eval_OrderDesc_NamedGroupedValue_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Data = (3, 5, 3, 6, 3)
+            Data.orderDesc
+            """;
+
+        AssertEval(source, 6, 5, 3, 3, 3);
     }
 
     [Fact]
@@ -1963,6 +1972,28 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Count_InlineParenReceiver_DotCallCountsReceiverOutputs()
         => AssertEval("(3, 5, 3, 6, 3).count", 5);
+
+    [Fact]
+    public void Eval_Count_GroupedReceiver_DotCallCountsTopLevelItems()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            Values.count
+            """;
+
+        AssertEval(source, 3);
+    }
+
+    [Fact]
+    public void Eval_Count_IndexedGroupedReceiver_DotCallCountsTopLevelItems()
+    {
+        var source = """
+            Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
+            (Data:0).count
+            """;
+
+        AssertEval(source, 5);
+    }
 
     // ── First/last builtins ────────────────────────────────────────────────
 
@@ -2156,6 +2187,28 @@ public class EvaluatorTests
     public void Eval_Last_InlineParenReceiver_DotCallUsesReceiverOutputs()
         => AssertEval("(4, 5, 6).last", 6);
 
+    [Fact]
+    public void Eval_First_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (4, 5, 6)
+            Values.first
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_Last_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (4, 5, 6)
+            Values.last
+            """;
+
+        AssertEval(source, 6);
+    }
+
     // ── Distinct builtin ───────────────────────────────────────────────────
 
     [Fact]
@@ -2236,6 +2289,17 @@ public class EvaluatorTests
     public void Eval_Distinct_InlineParenReceiver_DotCallUsesReceiverOutputs()
         => AssertEval("(1, 2, 1, 3).distinct", 1, 2, 3);
 
+    [Fact]
+    public void Eval_Distinct_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (1, 2, 1, 3)
+            Values.distinct
+            """;
+
+        AssertEval(source, 1, 2, 3);
+    }
+
     // ── Take/skip builtins ────────────────────────────────────────────────
 
     [Fact]
@@ -2261,6 +2325,28 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Skip_InlineParenReceiver_DotCallUsesReceiverOutputs()
         => AssertEval("(1, 2, 3).skip(1)", 2, 3);
+
+    [Fact]
+    public void Eval_Take_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            Values.take(2)
+            """;
+
+        AssertEval(source, 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Skip_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (1, 2, 3)
+            Values.skip(1)
+            """;
+
+        AssertEval(source, 2, 3);
+    }
 
     [Fact]
     public void Eval_Take_ZeroCount_ReturnsEmpty()
@@ -2435,6 +2521,17 @@ public class EvaluatorTests
         => AssertEval("(10, 4, 7).min", 4);
 
     [Fact]
+    public void Eval_Min_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (10, 4, 7)
+            Values.min
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
     public void Eval_Min_FilterComposition_ReturnsKeptMinimum()
     {
         var source = """
@@ -2510,6 +2607,17 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Max_InlineBraceReceiver_DotCallUsesReceiverOutputs()
         => AssertEval("{10, 4, 7}.max", 10);
+
+    [Fact]
+    public void Eval_Max_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (10, 4, 7)
+            Values.max
+            """;
+
+        AssertEval(source, 10);
+    }
 
     [Fact]
     public void Eval_Max_FilterComposition_ReturnsKeptMaximum()
@@ -2611,6 +2719,23 @@ public class EvaluatorTests
         => AssertEval("{3, 5, 3}.sum", 11);
 
     [Fact]
+    public void Eval_Sum_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            Values.sum
+            """;
+
+        AssertEval(source, 60);
+    }
+
+    [Fact]
+    public void Eval_Sum_NestedGroupedReceiver_DotCallPreservesNestedGroups()
+        => AssertBuiltinFailureWithExactContext(
+            "((1, 2), (3, 4)).sum",
+            "sum expects each collection element to be a single numeric value; item 0 was grouped value");
+
+    [Fact]
     public void Eval_Sum_EmptyCollection_ReturnsZero()
     {
         var source = """
@@ -2686,6 +2811,17 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Avg_InlineParenReceiver_DotCallUsesReceiverOutputs()
         => AssertEval("(10, 4, 7).avg", 7);
+
+    [Fact]
+    public void Eval_Avg_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Values = (10, 20, 30)
+            Values.avg
+            """;
+
+        AssertEval(source, 20);
+    }
 
     [Fact]
     public void Eval_Avg_NonExactPositiveMean_UsesLeanFloorSemantics()
@@ -2942,6 +3078,18 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Filter_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            IsOdd = x mod 2 == 1
+            Values = (1, 2, 3, 4)
+            Values.filter(IsOdd)
+            """;
+
+        AssertEval(source, 1, 3);
+    }
+
+    [Fact]
     public void Eval_Map_InlineParenReceiver_DotCallUsesReceiverOutputs()
     {
         var source = """
@@ -2953,11 +3101,35 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Map_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Double = x * 2
+            Values = (1, 2, 3)
+            Values.map(Double)
+            """;
+
+        AssertEval(source, 2, 4, 6);
+    }
+
+    [Fact]
     public void Eval_Reduce_InlineParenReceiver_DotCallUsesReceiverOutputs()
     {
         var source = """
             Add(a, acc) = a + acc
             (1, 2, 3).reduce(Add, 0)
+            """;
+
+        AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_Reduce_GroupedReceiver_DotCallUsesReceiverTopLevelItems()
+    {
+        var source = """
+            Add(a, acc) = a + acc
+            Values = (1, 2, 3)
+            Values.reduce(Add, 0)
             """;
 
         AssertEval(source, 6);
@@ -5409,7 +5581,7 @@ public class EvaluatorTests
             OccurrenceCount((1, 2), {n:0 mod 2 == 1})
             """;
 
-        AssertEval(source, 1);
+        AssertEval(source, 2);
     }
 
     [Fact]
@@ -5421,7 +5593,7 @@ public class EvaluatorTests
             OccurrenceCount(Pairs, (2, 20))
             """;
 
-        AssertEval(source, 1);
+        AssertEval(source, 2);
     }
 
     [Fact]

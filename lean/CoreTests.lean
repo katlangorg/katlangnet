@@ -974,7 +974,7 @@ def test14 : Bool :=
 #eval test14  -- should be true
 #eval runFlat (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "arity" none)
 
--- Test 14a: grouped output counts as one top-level item for both arity and count
+-- Test 14a: grouped output keeps structural arity while sequence dot-call count unwraps one receiver layer
 def groupedOutputRoot14a : Algorithm :=
   algPrivate [] [] [("T", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])] [
     .dotCall (resolve "T") "arity" none,
@@ -983,7 +983,7 @@ def groupedOutputRoot14a : Algorithm :=
 
 def test14a : Bool :=
   match runFlat (.block groupedOutputRoot14a) with
-  | Except.ok [1, 1] => true
+  | Except.ok [1, 3] => true
   | _ => false
 
 #eval test14a  -- should be true
@@ -4368,7 +4368,7 @@ def test213 : Bool :=
 #eval test213  -- should be true
 
 def test214 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runFlat (.block (algPrivate [] [] [
     ("Data", alg [] [] [] [
       .block (alg [] [] [] [
         .num 3,
@@ -4381,11 +4381,88 @@ def test214 : Bool :=
   ] [
     .dotCall (.resolve "Data") "order" none
   ])) with
-  | Except.error err =>
-      hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err
-        && innermostIsBadArity err
+  | Except.ok [3, 3, 3, 5, 6] => true
   | _ => false
 
 #eval test214  -- should be true
+
+def test215 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Data", alg [] [] [] [
+      .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
+      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
+    ])
+  ] [
+    .dotCall (.index (.resolve "Data") (.num 0)) "count" none
+  ])) with
+  | Except.ok [5] => true
+  | _ => false
+
+#eval test215  -- should be true
+
+def test216 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 4, .num 5, .num 4, .num 6])
+    ])
+  ] [
+    .dotCall (.resolve "Values") "first" none,
+    .dotCall (.resolve "Values") "last" none,
+    .dotCall (.resolve "Values") "distinct" none,
+    .dotCall (.resolve "Values") "take" (some (alg [] [] [] [.num 2])),
+    .dotCall (.resolve "Values") "skip" (some (alg [] [] [] [.num 1]))
+  ])) with
+  | Except.ok [4, 6, 4, 5, 6, 4, 5, 5, 4, 6] => true
+  | _ => false
+
+#eval test216  -- should be true
+
+def test217 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 10, .num 20, .num 30])
+    ])
+  ] [
+    .dotCall (.resolve "Values") "min" none,
+    .dotCall (.resolve "Values") "max" none,
+    .dotCall (.resolve "Values") "sum" none,
+    .dotCall (.resolve "Values") "avg" none,
+    .dotCall (.resolve "Values") "order" none,
+    .dotCall (.resolve "Values") "orderDesc" none
+  ])) with
+  | Except.ok [10, 30, 60, 20, 10, 20, 30, 30, 20, 10] => true
+  | _ => false
+
+#eval test217  -- should be true
+
+def test218 : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("Values", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])
+    ]),
+    ("Double", doubleAlg85),
+    ("IsEven", isEvenAlg93),
+    ("Add", addAlg76)
+  ] [
+    .dotCall (.resolve "Values") "filter" (some (alg [] [] [] [.resolve "IsEven"])),
+    .dotCall (.resolve "Values") "map" (some (alg [] [] [] [.resolve "Double"])),
+    .dotCall (.resolve "Values") "reduce" (some (alg [] [] [] [.resolve "Add", .num 0]))
+  ])) with
+  | Except.ok [2, 4, 2, 4, 6, 8, 10] => true
+  | _ => false
+
+#eval test218  -- should be true
+
+def test219 : Bool :=
+  match runResult (.dotCall (.block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])) "sum" none) with
+  | Except.error err =>
+      hasContext "sum expects each collection element to be a single numeric value; item 0 was grouped value" err
+        && innermostIsBadArity err
+  | _ => false
+
+#eval test219  -- should be true
 
 end KatLangTests

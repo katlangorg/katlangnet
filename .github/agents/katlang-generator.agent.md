@@ -14,7 +14,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Do not invent syntax. Do not ask questions.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, never put explicit algorithm parameters on a container with no output, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
 - Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `count`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
-- For sequence-consuming builtins, a direct inline dot-call receiver such as `(3, 5, 3).order`, `{1, 2, 3}.count`, or `(1, 2, 3).map(Double)` is valid and uses the inline receiver's own top-level outputs. Do not generalize that rule to named grouped helpers: `Values = (1, 2, 3)` still makes `Values.order` behave as one grouped item.
+- For sequence-consuming builtins in dot-call form, evaluate the receiver first. If the receiver value is grouped, its top-level members become the consumed sequence items; otherwise the receiver contributes its ordinary top-level items. This applies to direct inline receivers and named grouped helpers alike, but unwraps only one receiver layer, so nested grouped values are not recursively flattened.
 - Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
@@ -667,11 +667,12 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`,
 
 - Prefer direct multi-argument syntax when the items are already separate outputs: `order(3, 4, 2, 1)`, `first(a, b, c)`, `last(a, b, c)`, `distinct(a, b, a, c)`, `take(2, a, b, c)`, `skip(2, a, b, c)`, `sum(10, 20, 30)`
 - `take` and `skip` are the count-first exact-syntax exceptions: use `take(count, ...items)` / `skip(count, ...items)` for direct calls, and `collection.take(count)` / `collection.skip(count)` for dot-calls
-- Sequence builtins always consume counted top-level items; there is no special flattening rule for the 1-argument form
+- Sequence builtins always consume counted top-level items from each direct sequence argument; there is no special flattening rule for the 1-argument plain-call form
 - A helper that emits multiple top-level outputs can be passed directly as one argument and combined with other sequence arguments, for example `order(Values, 1, 3)` when `Values = 3, 4, 2`
-- A helper or grouped expression that emits one grouped value still contributes one grouped item even when it is the only sequence argument, so `order((1, 2, 3))` is invalid rather than flattened
+- A helper or grouped expression that emits one grouped value still contributes one grouped item in plain-call form even when it is the only sequence argument, so `order((1, 2, 3))` and `order(Values)` with `Values = (1, 2, 3)` are invalid rather than flattened
+- In dot-call form, evaluate the receiver first. If it is grouped, use its top-level members as the consumed sequence items, so `Values = (1, 2, 3); Values.order`, `Values.count`, `Values.sum`, and similar calls are valid
 - Preserve parentheses when a grouped value itself is intended as one item, for example `first((1, 2), (3, 4))`
-- Do not generate `order((1, 2, 3))`, `order((1, 2), (3, 4))`, `sum((1, 2), (3, 4))`, or similar code expecting grouped arguments to be flattened recursively
+- Do not generate `order((1, 2, 3))`, `order((1, 2), (3, 4))`, `sum((1, 2), (3, 4))`, `Values = ((1, 2), (3, 4)); Values.sum`, or similar code expecting grouped arguments to be flattened recursively
 - Numeric ordering and aggregation builtins still require each resulting top-level item to be one atomic numeric value
 
 ### `order` and `orderDesc`
@@ -696,7 +697,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`,
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values stay whole; they are not flattened
 - Prefer direct multi-argument calls such as `first(a, b, c)` and `last(a, b, c)` over wrapping those outputs in an unnecessary helper group
-- `first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return the grouped value unchanged because it is one top-level item
+- `first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return the grouped value unchanged because it is one top-level item in plain-call form; by contrast `Values.first` returns `1` and `Values.last` returns `3`
 
 ### `distinct`
 
@@ -742,7 +743,7 @@ Canonical distinction:
 - Atoms, strings, and grouped values each count as one top-level element
 - Grouped values are not flattened
 - Empty collections return `0`
-- `count((1, 2, 3))` is `1`, while `Values = 1, 2, 3; count(Values)` is `3`
+- `count((1, 2, 3))` is `1`, `Values = (1, 2, 3); count(Values)` is also `1`, and `Values.count` is `3`
 
 ### `sum`
 
@@ -752,7 +753,7 @@ Canonical distinction:
 - Grouped values are not flattened
 - Strings are invalid
 - Empty collections return `0`
-- `sum((1, 2, 3))` and `Values = (1, 2, 3); sum(Values)` are invalid because that grouped value stays one non-atomic item
+- `sum((1, 2, 3))` and `Values = (1, 2, 3); sum(Values)` are invalid because that grouped value stays one non-atomic item in plain-call form; by contrast `Values.sum` is valid
 
 ### `min` and `max`
 
@@ -762,7 +763,7 @@ Canonical distinction:
 - Each top-level element must be exactly one atomic numeric value
 - Grouped values are not flattened
 - Strings are invalid
-- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item, so `min(Values)` and `max(Values)` are invalid
+- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item in plain-call form, so `min(Values)` and `max(Values)` are invalid; by contrast `Values.min` and `Values.max` are valid because the grouped receiver contributes its top-level members in dot-call form
 
 ### `avg`
 
@@ -773,7 +774,7 @@ Canonical distinction:
 - Non-exact averages follow the current Lean core integer semantics, so `avg(1, 2)` returns `1`
 - Grouped values are not flattened
 - Strings are invalid
-- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item, so `avg(Values)` is invalid
+- A grouped wrapper output such as `Values = (1, 2, 3)` remains one grouped item in plain-call form, so `avg(Values)` is invalid; by contrast `Values.avg` is valid because the grouped receiver contributes its top-level members in dot-call form
 
 ### Builtin-First Examples
 
