@@ -16,12 +16,14 @@ public enum UnaryOp { Minus, Not }
 /// one item instead of being spread into surrounding plain-call sequence
 /// input. Sequence-builtin dot-call receivers are different: they contribute
 /// the receiver expression's counted top-level items. Resolved helpers, call
-/// receivers, and projected callback params can therefore expose several
-/// receiver items, while zero-parameter block receivers such as
-/// <c>(1, 2, 3).count</c> still stay grouped because the block expression
-/// itself is one grouped value. Direct <c>:</c> selection remains the explicit
-/// one-level projection exception, and nested grouped elements still stay
-/// grouped values rather than being flattened recursively.
+/// receivers, projected callback params, and direct inline block receivers can
+/// therefore expose several receiver items. Dot-call strips exactly one outer
+/// inline receiver block layer, so <c>(1, 2, 3).count</c> behaves like three
+/// receiver items while <c>((1, 2, 3)).count</c> and named grouped helpers
+/// such as <c>Values = (1, 2, 3); Values.count</c> stay grouped. Direct
+/// <c>:</c> selection remains the explicit one-level projection exception, and
+/// nested grouped elements still stay grouped values rather than being
+/// flattened recursively.
 /// <c>filter(...items, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
 /// seeing each callback item through the same one-level projection rule as
@@ -54,11 +56,11 @@ public enum UnaryOp { Minus, Not }
 /// while preserving the original order of first occurrence; grouped values
 /// stay grouped and duplicate detection follows ordinary KatLang value
 /// semantics.
-/// <c>take(count, ...items)</c> returns the first <c>count</c> extracted
+/// <c>take(...items, count)</c> returns the first <c>count</c> extracted
 /// top-level sequence items unchanged; non-positive counts return an empty
 /// sequence, oversized counts return the whole sequence, and grouped values
 /// stay grouped.
-/// <c>skip(count, ...items)</c> returns the extracted top-level sequence items
+/// <c>skip(...items, count)</c> returns the extracted top-level sequence items
 /// after the first <c>count</c>; non-positive counts leave the sequence
 /// unchanged, oversized counts return an empty sequence, and grouped values
 /// stay grouped.

@@ -243,20 +243,25 @@ public static class SemanticModelBuilder
         }
 
         private static SymbolDefinition CreateBuiltinSymbol(string name, Algorithm? algorithm, bool isPublic)
-            => new(
+        {
+            var propertyInfo = CreatePropertyInfo(
+                name,
+                SymbolKind.Builtin,
+                algorithm,
+                declaration: null,
+                isPublic,
+                PropertyExposure.Exported,
+                declarationSpans: null);
+
+            return new SymbolDefinition(
                 name,
                 SymbolKind.Builtin,
                 algorithm,
                 Declaration: null,
                 isPublic,
-                CreatePropertyInfo(
-                    name,
-                    SymbolKind.Builtin,
-                    algorithm,
-                    declaration: null,
-                    isPublic,
-                    PropertyExposure.Exported,
-                    declarationSpans: null));
+                propertyInfo,
+                propertyInfo.WithPreferredCallStyle(PropertyCallStyle.Dot));
+        }
 
         private SymbolDefinition CreateParameterSymbol(
             string name,
@@ -462,7 +467,7 @@ public static class SemanticModelBuilder
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
             if (TryResolveBuiltinFallbackOnParameterReceiver(dotCall.Target, dotCall.Name, scope) is { } parameterBuiltin)
-                return (ClassifyReferenceSymbol(parameterBuiltin), parameterBuiltin.Declaration, parameterBuiltin.PropertyInfo);
+                return (ClassifyReferenceSymbol(parameterBuiltin), parameterBuiltin.Declaration, GetDotMemberPropertyInfo(parameterBuiltin));
 
             var targetAlgorithm = TryResolveAlgorithmValue(dotCall.Target, scope);
             if (targetAlgorithm is not null)
@@ -470,7 +475,7 @@ public static class SemanticModelBuilder
                 if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
                 {
                     if (declaredProperty.PropertyInfo?.IsExported == true)
-                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
+                        return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, GetDotMemberPropertyInfo(declaredProperty));
 
                     return (IdentifierClassification.Unresolved, null, null);
                 }
@@ -479,7 +484,7 @@ public static class SemanticModelBuilder
                     return (IdentifierClassification.Unresolved, null, null);
 
                 if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexicalFallback)
-                    return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, lexicalFallback.PropertyInfo);
+                    return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, GetDotMemberPropertyInfo(lexicalFallback));
 
                 return (IdentifierClassification.Unresolved, null, null);
             }
@@ -488,10 +493,15 @@ public static class SemanticModelBuilder
                 return (IdentifierClassification.Unresolved, null, null);
 
             if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexical)
-                return (ClassifyReferenceSymbol(lexical), lexical.Declaration, lexical.PropertyInfo);
+                return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetDotMemberPropertyInfo(lexical));
 
             return (IdentifierClassification.Unresolved, null, null);
         }
+
+        private static PropertyInfo? GetDotMemberPropertyInfo(SymbolDefinition symbol)
+            => symbol.Kind == SymbolKind.Builtin
+                ? symbol.DotPropertyInfo ?? symbol.PropertyInfo
+                : symbol.PropertyInfo;
 
         private SymbolDefinition? ResolveLexicalProperty(ScopeFrame scope, string name)
         {
@@ -707,18 +717,27 @@ public static class SemanticModelBuilder
             DeclarationOccurrence? declaration,
             bool isPublic,
             PropertyExposure exposure,
-            IReadOnlyList<SourceSpan>? declarationSpans)
+            IReadOnlyList<SourceSpan>? declarationSpans,
+            PropertyCallStyle preferredCallStyle = PropertyCallStyle.Plain)
         {
             if (kind == SymbolKind.Builtin || algorithm is Algorithm.Builtin)
             {
+                var signatures = CreateBuiltinSignatures(name, algorithm);
+                var preferredSignature = signatures.FirstOrDefault(signature => signature.CallStyle == preferredCallStyle)
+                    ?? signatures.FirstOrDefault(signature => signature.CallStyle == PropertyCallStyle.Plain);
+
                 return new PropertyInfo(
                     name,
                     declaration,
                     PropertyShape.Builtin,
                     isPublic,
                     exposure,
-                    CreateBuiltinParameters(name, algorithm),
-                    []);
+                    preferredSignature?.Parameters ?? [],
+                    [])
+                {
+                    PreferredCallStyle = preferredSignature?.CallStyle ?? PropertyCallStyle.Plain,
+                    Signatures = signatures,
+                };
             }
 
             return algorithm switch
@@ -770,7 +789,36 @@ public static class SemanticModelBuilder
             return parameters;
         }
 
-        private static IReadOnlyList<PropertyParameterInfo> CreateBuiltinParameters(string name, Algorithm? algorithm)
+        private static IReadOnlyList<PropertySignatureInfo> CreateBuiltinSignatures(string name, Algorithm? algorithm)
+        {
+            var plainParameters = CreateBuiltinParameters(name, algorithm, PropertyCallStyle.Plain);
+            if (plainParameters.Count == 0)
+                return [];
+
+            var signatures = new List<PropertySignatureInfo>
+            {
+                new(
+                    PropertyCallStyle.Plain,
+                    FormatBuiltinSignature(name, plainParameters, PropertyCallStyle.Plain),
+                    plainParameters),
+            };
+
+            var dotParameters = CreateBuiltinParameters(name, algorithm, PropertyCallStyle.Dot);
+            if (!dotParameters.SequenceEqual(plainParameters))
+            {
+                signatures.Add(new PropertySignatureInfo(
+                    PropertyCallStyle.Dot,
+                    FormatBuiltinSignature(name, dotParameters, PropertyCallStyle.Dot),
+                    dotParameters));
+            }
+
+            return signatures;
+        }
+
+        private static IReadOnlyList<PropertyParameterInfo> CreateBuiltinParameters(
+            string name,
+            Algorithm? algorithm,
+            PropertyCallStyle callStyle)
         {
             if (algorithm is Algorithm.User user)
             {
@@ -804,9 +852,17 @@ public static class SemanticModelBuilder
                 "max" => ["items..."],
                 "sum" => ["items..."],
                 "avg" => ["items..."],
-                "reduce" => ["items...", "step", "initial"],
+                "reduce" => ["items...", "step", "initial accumulator"],
                 _ => [],
             };
+
+            // In dot-call style, the receiver provides the leading variadic parameter.
+            if (callStyle == PropertyCallStyle.Dot
+                && parameterNames.Length > 0
+                && parameterNames[0].EndsWith("...", StringComparison.Ordinal))
+            {
+                parameterNames = parameterNames[1..];
+            }
 
             return parameterNames
                 .Select(parameterName => new PropertyParameterInfo(
@@ -814,6 +870,22 @@ public static class SemanticModelBuilder
                     PropertyParameterKind.Explicit,
                     Span: null))
                 .ToList();
+        }
+
+        private static string FormatBuiltinSignature(
+            string name,
+            IReadOnlyList<PropertyParameterInfo> parameters,
+            PropertyCallStyle callStyle)
+        {
+            var parameterList = string.Join(", ", parameters.Select(parameter => parameter.Name));
+
+            return callStyle switch
+            {
+                PropertyCallStyle.Dot when parameters.Count == 0 => $"items.{name}",
+                PropertyCallStyle.Dot => $"items.{name}({parameterList})",
+                _ when parameters.Count == 0 => name,
+                _ => $"{name}({parameterList})",
+            };
         }
 
         private static IReadOnlyList<ConditionalBranchInfo> CreateConditionalBranches(
@@ -982,7 +1054,8 @@ public static class SemanticModelBuilder
         Algorithm? AlgorithmValue,
         DeclarationOccurrence? Declaration,
         bool IsPublic,
-        PropertyInfo? PropertyInfo);
+        PropertyInfo? PropertyInfo,
+        PropertyInfo? DotPropertyInfo = null);
 
     private sealed class ScopeFrame
     {

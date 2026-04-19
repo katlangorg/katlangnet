@@ -1621,9 +1621,9 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Take_DirectCall_ReordersCountToTrailingArg()
+    public void Parse_Take_DirectCall_PreservesTrailingCountOrder()
     {
-        var result = Parser.ParseSyntax("take(n, x, y, z)");
+        var result = Parser.ParseSyntax("take(x, y, z, n)");
         Assert.False(result.HasErrors);
 
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
@@ -1635,9 +1635,9 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Skip_DirectCall_ReordersCountToTrailingArg()
+    public void Parse_Skip_DirectCall_PreservesTrailingCountOrder()
     {
-        var result = Parser.ParseSyntax("skip(n, x, y, z)");
+        var result = Parser.ParseSyntax("skip(x, y, z, n)");
         Assert.False(result.HasErrors);
 
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);

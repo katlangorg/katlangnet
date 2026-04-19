@@ -13,6 +13,15 @@ public enum PropertyShape
 }
 
 /// <summary>
+/// Editor-facing callable surface for a property signature.
+/// </summary>
+public enum PropertyCallStyle
+{
+    Plain,
+    Dot,
+}
+
+/// <summary>
 /// Editor-facing classification of one callable property parameter slot.
 /// </summary>
 public enum PropertyParameterKind
@@ -29,6 +38,14 @@ public enum PropertyParameterKind
 public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Kind, SourceSpan? Span);
 
 /// <summary>
+/// Editor-facing metadata for one callable signature surface.
+/// </summary>
+public sealed record PropertySignatureInfo(
+    PropertyCallStyle CallStyle,
+    string DisplayText,
+    IReadOnlyList<PropertyParameterInfo> Parameters);
+
+/// <summary>
 /// Editor-facing summary of one conditional branch head.
 /// <see cref="HeadSpan"/> is the best available source anchor for the branch
 /// head. When the AST only preserves the declared property name span, that
@@ -43,8 +60,9 @@ public sealed record ConditionalBranchInfo(
 /// Property-centered semantic information for one resolved declaration target.
 /// Ordinary properties expose <see cref="Parameters"/>. Conditional properties
 /// expose <see cref="ConditionalBranches"/>. Builtins are represented
-/// conservatively with <see cref="PropertyShape.Builtin"/> and parameter data
-/// only when the callable shape is known.
+/// conservatively with <see cref="PropertyShape.Builtin"/>, where
+/// <see cref="Parameters"/> reflects the preferred surface for the current
+/// usage and <see cref="Signatures"/> retains any alternate callable forms.
 /// </summary>
 public sealed record PropertyInfo(
     string Name,
@@ -56,6 +74,48 @@ public sealed record PropertyInfo(
     IReadOnlyList<ConditionalBranchInfo> ConditionalBranches)
 {
     public bool IsExported => Exposure == PropertyExposure.Exported;
+
+    public PropertyCallStyle PreferredCallStyle { get; init; } = PropertyCallStyle.Plain;
+
+    public IReadOnlyList<PropertySignatureInfo> Signatures { get; init; } = [];
+
+    public string DisplaySignature => GetDisplaySignature(PreferredCallStyle);
+
+    public PropertySignatureInfo? FindSignature(PropertyCallStyle callStyle)
+    {
+        foreach (var signature in Signatures)
+        {
+            if (signature.CallStyle == callStyle)
+                return signature;
+        }
+
+        return null;
+    }
+
+    public IReadOnlyList<PropertyParameterInfo> GetParameters(PropertyCallStyle callStyle)
+        => FindSignature(callStyle)?.Parameters ?? Parameters;
+
+    public string GetDisplaySignature(PropertyCallStyle callStyle)
+        => FindSignature(callStyle)?.DisplayText
+            ?? FormatSignature(Name, GetParameters(callStyle));
+
+    public PropertyInfo WithPreferredCallStyle(PropertyCallStyle callStyle)
+    {
+        var signature = FindSignature(callStyle);
+        if (signature is null)
+            return this;
+
+        return this with
+        {
+            Parameters = signature.Parameters,
+            PreferredCallStyle = callStyle,
+        };
+    }
+
+    private static string FormatSignature(string name, IReadOnlyList<PropertyParameterInfo> parameters)
+        => parameters.Count == 0
+            ? name
+            : $"{name}({string.Join(", ", parameters.Select(parameter => parameter.Name))})";
 }
 
 internal static class ConditionalBranchHeadFormatter

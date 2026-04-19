@@ -488,7 +488,7 @@ count(A)
 1
 ```
 
-Grouped values count as one top-level item. Dot-call receivers consume the receiver's counted top-level items, so named helpers such as `A = 1, 2, 3; A.count` return `3`, while plain-call `count(A)` still returns `1` because `A` is one ordinary leading argument. Zero-parameter block receivers such as `(1, 2, 3).count` still return `1`. See `count` below for the full sequence-input rules.
+Grouped values count as one top-level item. Dot-call receivers consume the receiver's counted top-level items, so named helpers such as `A = 1, 2, 3; A.count` return `3`, while plain-call `count(A)` still returns `1` because `A` is one ordinary leading argument. Dot-call also strips one outer inline receiver block layer, so `(1, 2, 3).count` and `{1, 2, 3}.count` return `3`, while `T = (1, 2, 3); T.count` and `((1, 2, 3)).count` stay grouped and return `1`. See `count` below for the full sequence-input rules.
 
 ### Output Selection
 
@@ -933,7 +933,7 @@ With that rule, `map((1, 2), (3, 4), Swap)` calls `Swap` once per pair and produ
 - If that argument evaluates to several top-level outputs, those outputs stay grouped together as one boundary item instead of spreading into the surrounding sequence input
 - Sequence-builtin dot-call receivers are different: they contribute the receiver expression's counted top-level items before the builtin runs
 - Resolved helpers, call receivers, and projected callback params can therefore expose several receiver items: `Values = 1, 2, 3; Values.count` is `3`, `range(1, 5).count` is `5`, and `Items = range(1, 3), 7; Items.count` is `2`
-- Zero-parameter block receivers such as `(1, 2, 3).count` and `{1, 2, 3}.sum` still stay grouped because the block expression itself is one grouped value
+- Dot-call strips exactly one outer inline receiver block layer. Inline receivers such as `(1, 2, 3).count`, `(3, 1, 2).order`, and `{1, 2, 3}.sum` therefore expose several receiver items, while named grouped helpers such as `Values = (1, 2, 3); Values.count` and extra-paren receivers such as `((1, 2, 3)).count` stay grouped
 - Direct multi-argument syntax is how you intentionally pass several top-level items to a sequence builtin: `count(1, 2, 3)` is `3`, `order(3, 4, 2, 1)` works, and `sum(10, 20, 30)` is valid
 - Grouped arguments remain grouped top-level items: `order((1, 2, 3))`, `sum((1, 2, 3))`, and `count((1, 2, 3))` treat that grouped value as one item
 - `:` selection is the explicit projection exception. `Pairs = (1, 2), (3, 4)` gives `count(Pairs:0) = 2` and `(Pairs:0).count = 2`. `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)` gives `order(Data:0)` and `(Data:0).order` as `1, 2, 4, 6, 7`
@@ -941,7 +941,7 @@ With that rule, `map((1, 2), (3, 4), Swap)` calls `Swap` once per pair and produ
 - Nested grouped values are never recursively flattened unless a builtin explicitly says so, such as `atoms`
 - `contains` compares its searched item against those extracted top-level items using ordinary KatLang value equality; it does not recurse into nested grouped members
 - `distinct` compares those extracted top-level items structurally, using the same ordinary KatLang value equality rules
-- `take` and `skip` keep their count first in direct-call surface syntax (`take(2, ...items)` / `skip(2, ...items)`), but otherwise follow the same boundary rules
+- `take` and `skip` follow the same family pattern as the other sequence builtins: direct calls use trailing count (`take(...items, 2)` / `skip(...items, 2)`), and dot-calls use `collection.take(2)` / `collection.skip(2)`
 
 ### Ordering: `order` and `orderDesc`
 
@@ -997,7 +997,7 @@ order(Data:0)
 ```
 
 Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule. `order((1, 2, 3))` is invalid because the single grouped argument remains one grouped top-level item, not three sortable atoms in plain-call form. `order((1, 2), (3, 4))` is also invalid, because each grouped argument is a separate top-level item and grouped items are not sortable atoms.
-Dot-call form uses the receiver's counted top-level items. Named multi-output helpers and call receivers such as `Values = 1, 2, 3; Values.order` and `range(5, 1).order` therefore sort successfully, while inline block receivers such as `(1, 2, 3).order` and `{1, 2, 3}.order` remain invalid because the block expression itself is one grouped receiver item. `Values = (1, 2, 3); Values.order` is likewise invalid because that named property denotes one grouped value. Selection already projects one level of content, so `order(Data:0)` and `(Data:0).order` both sort `7, 6, 4, 2, 1` to `1, 2, 4, 6, 7`.
+Dot-call form uses the receiver's counted top-level items. Named multi-output helpers and call receivers such as `Values = 1, 2, 3; Values.order` and `range(5, 1).order` therefore sort successfully. Inline block receivers such as `(1, 2, 3).order` and `{1, 2, 3}.order` do the same because dot-call strips one outer inline receiver block layer before consuming receiver items. `Values = (1, 2, 3); Values.order` and `((1, 2, 3)).order` are still invalid because those receivers denote one grouped value. Selection already projects one level of content, so `order(Data:0)` and `(Data:0).order` both sort `7, 6, 4, 2, 1` to `1, 2, 4, 6, 7`.
 
 ### Counting: `count`
 
@@ -1038,7 +1038,7 @@ count(Data:0)
 ```
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
-`count((1, 2, 3))` also returns `1`, and `Values = (1, 2, 3); count(Values)` does the same because the grouped wrapper output is still one top-level item in plain-call form. `Values = (1, 2, 3); Values.count` and `(1, 2, 3).count` also return `1`, because those receivers denote one grouped value. By contrast, `Values = 1, 2, 3; Values.count` returns `3`, and `range(1, 5).count` returns `5`, because sequence-builtin dot-call receivers consume the receiver's counted top-level items. Plain-call `count(Values)` still returns `1` because `Values` is one ordinary leading argument. Selection is different: `Pairs = (1, 2), (3, 4); count(Pairs:0)` and `(Pairs:0).count` both return `2`, because `:` projects the selected grouped item's immediate content one level.
+`count((1, 2, 3))` also returns `1`, and `Values = (1, 2, 3); count(Values)` does the same because the grouped wrapper output is still one top-level item in plain-call form. `Values = (1, 2, 3); Values.count` and `((1, 2, 3)).count` also return `1`, because those receivers still denote one grouped value. By contrast, `Values = 1, 2, 3; Values.count`, `range(1, 5).count`, and `(1, 2, 3).count` each return `3`, because sequence-builtin dot-call receivers consume the receiver's counted top-level items after stripping one outer inline receiver block layer. Plain-call `count(Values)` still returns `1` because `Values` is one ordinary leading argument. Selection is different: `Pairs = (1, 2), (3, 4); count(Pairs:0)` and `(Pairs:0).count` both return `2`, because `:` projects the selected grouped item's immediate content one level.
 
 ### Membership: `contains`
 
@@ -1100,7 +1100,7 @@ first((1, 2), (3, 4))
 ```
 
 Applying `first` to an empty collection is invalid because `first` requires at least one top-level element.
-`first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return `(1, 2, 3)` unchanged because that grouped value is one top-level item in plain-call form. The same is true for `Values = (1, 2, 3); Values.first` and `(1, 2, 3).first`, because those receivers still denote one grouped value. By contrast, `Values = 1, 2, 3; Values.first` returns `1` because the named receiver contributes three counted top-level items.
+`first((1, 2, 3))` and `Values = (1, 2, 3); first(Values)` both return `(1, 2, 3)` unchanged because that grouped value is one top-level item in plain-call form. `Values = (1, 2, 3); Values.first` and `((1, 2, 3)).first` do the same because those receivers still denote one grouped value. By contrast, `Values = 1, 2, 3; Values.first` returns `1`, and `(1, 2, 3).first` also returns `1` because dot-call strips one outer inline receiver block layer before consuming receiver items.
 
 ### Last Element: `last`
 
@@ -1130,7 +1130,7 @@ last((1, 2), (3, 4))
 ```
 
 Applying `last` to an empty collection is invalid because `last` requires at least one top-level element.
-`last((1, 2, 3))` and `Values = (1, 2, 3); last(Values)` both return `(1, 2, 3)` unchanged for the same reason in plain-call form. The same is true for `Values = (1, 2, 3); Values.last` and `(1, 2, 3).last`, because those receivers still denote one grouped value. By contrast, `Values = 1, 2, 3; Values.last` returns `3` because the named receiver contributes three counted top-level items.
+`last((1, 2, 3))` and `Values = (1, 2, 3); last(Values)` both return `(1, 2, 3)` unchanged for the same reason in plain-call form. `Values = (1, 2, 3); Values.last` and `((1, 2, 3)).last` do the same because those receivers still denote one grouped value. By contrast, `Values = 1, 2, 3; Values.last` returns `3`, and `(1, 2, 3).last` also returns `3` because dot-call strips one outer inline receiver block layer before consuming receiver items.
 
 ### Distinct: `distinct`
 
@@ -1170,19 +1170,19 @@ Values.distinct
 
 ### Take Prefix: `take`
 
-`take(count, ...items)` returns the first `count` top-level values in the evaluated sequence, unchanged.
+`take(...items, count)` returns the first `count` top-level values in the evaluated sequence, unchanged.
 
 - The count must evaluate to exactly one whole-number value
 - `count <= 0` returns an empty sequence
 - Counts larger than the sequence length return the whole sequence
 - Grouped values are preserved whole and are not flattened
 
-Both call styles are supported: `take(count, ...items)` and `collection.take(count)`.
+Both call styles are supported: `take(...items, count)` and `collection.take(count)`.
 
 ```
-take(3, 1, 2, 3, 4, 5)
+take(1, 2, 3, 4, 5, 3)
 
-take(1, (1, 2), (3, 4))
+take((1, 2), (3, 4), 1)
 
 range(1, 5).take(2)
 ```
@@ -1199,23 +1199,23 @@ range(1, 5).take(2)
 2
 ```
 
-`take(0, 1, 2, 3)` and `take(-2, 1, 2, 3)` both return an empty result. `take((1, 2, 3), 4, 5)` is invalid because the count must be exactly one whole-number value, not a grouped item. `Values = (1, 2, 3); take(1, Values)` returns the grouped value unchanged in plain-call form, and `Values.take(2)` does the same because that named receiver denotes one grouped value. By contrast, `range(1, 5).take(2)` returns `1, 2` because call receivers contribute their counted top-level items.
+`take(1, 2, 3, 0)` and `take(1, 2, 3, -2)` both return an empty result. `take(3, 4, (1, 2, 3))` is invalid because the count must be exactly one whole-number value, not a grouped item. `Values = (1, 2, 3); take(Values, 1)` returns the grouped value unchanged in plain-call form, and `Values.take(2)` does the same because that named receiver denotes one grouped value. By contrast, `range(1, 5).take(2)` and `(1, 2, 3).take(2)` both return `1, 2` because dot-call consumes counted top-level receiver items after stripping one outer inline receiver block layer.
 
 ### Skip Prefix: `skip`
 
-`skip(count, ...items)` returns the evaluated sequence after skipping the first `count` top-level values.
+`skip(...items, count)` returns the evaluated sequence after skipping the first `count` top-level values.
 
 - The count must evaluate to exactly one whole-number value
 - `count <= 0` returns the original sequence unchanged
 - Counts larger than the sequence length return an empty sequence
 - Grouped values are preserved whole and are not flattened
 
-Both call styles are supported: `skip(count, ...items)` and `collection.skip(count)`.
+Both call styles are supported: `skip(...items, count)` and `collection.skip(count)`.
 
 ```
-skip(3, 1, 2, 3, 4, 5)
+skip(1, 2, 3, 4, 5, 3)
 
-skip(1, (1, 2), (3, 4))
+skip((1, 2), (3, 4), 1)
 
 range(1, 5).skip(2)
 ```
@@ -1233,7 +1233,7 @@ range(1, 5).skip(2)
 
 ```
 
-`skip(0, 1, 2, 3)` and `skip(-2, 1, 2, 3)` both return `1, 2, 3`. `skip('hello', 1, 2)` is invalid because the count must be exactly one whole-number value. `Values = (1, 2, 3); skip(1, Values)` returns empty in plain-call form because the grouped wrapper is one item, and `Values.skip(1)` does the same because that named receiver denotes one grouped value. By contrast, `range(1, 5).skip(2)` returns `3, 4, 5` because call receivers contribute their counted top-level items.
+`skip(1, 2, 3, 0)` and `skip(1, 2, 3, -2)` both return `1, 2, 3`. `skip(1, 2, 'hello')` is invalid because the count must be exactly one whole-number value. `Values = (1, 2, 3); skip(Values, 1)` returns empty in plain-call form because the grouped wrapper is one item, and `Values.skip(1)` does the same because that named receiver denotes one grouped value. By contrast, `range(1, 5).skip(2)` returns `3, 4, 5`, and `(1, 2, 3).skip(1)` returns `2, 3`, because dot-call consumes counted top-level receiver items after stripping one outer inline receiver block layer.
 
 ### Minimum: `min`
 
@@ -1260,7 +1260,7 @@ min(Data:0)
 1
 ```
 
-Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. `min(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).min` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.min` succeeds, while `(1, 2, 3).min` remains invalid because the inline block receiver is one grouped value. Use direct multi-argument syntax such as `min(1, 2, 3)` or explicit selection such as `min(Data:0)` when you want several numeric top-level items.
+Applying `min` to an empty collection is invalid because `min` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. `min(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).min` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.min` and `(1, 2, 3).min` both succeed, while `Values = (1, 2, 3); Values.min` and `((1, 2, 3)).min` remain invalid because those receivers denote one grouped value. Use direct multi-argument syntax such as `min(1, 2, 3)` or explicit selection such as `min(Data:0)` when you want several numeric top-level items.
 
 ### Maximum: `max`
 
@@ -1287,7 +1287,7 @@ max(Data:0)
 7
 ```
 
-Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. `max(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).max` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.max` succeeds, while `(1, 2, 3).max` remains invalid because the inline block receiver is one grouped value. Use direct multi-argument syntax such as `max(1, 2, 3)` or explicit selection such as `max(Data:0)` when you want several numeric top-level items.
+Applying `max` to an empty collection is invalid because `max` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because grouped elements are not flattened before comparison. `max(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).max` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.max` and `(1, 2, 3).max` both succeed, while `Values = (1, 2, 3); Values.max` and `((1, 2, 3)).max` remain invalid because those receivers denote one grouped value. Use direct multi-argument syntax such as `max(1, 2, 3)` or explicit selection such as `max(Data:0)` when you want several numeric top-level items.
 
 ### Summation: `sum`
 
@@ -1318,7 +1318,7 @@ sum(Data:0)
 20
 ```
 
-Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding. `sum(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).sum` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.sum` succeeds, while `(1, 2, 3).sum` remains invalid because the inline block receiver is one non-atomic grouped value. Use direct multi-argument syntax such as `sum(1, 2, 3)` or explicit selection such as `sum(Data:0)` when you want several numeric top-level items.
+Applying `sum` to an empty collection returns `0`. A collection such as `((1, 2), (3, 4))` is invalid because `sum` does not flatten grouped elements before adding. `sum(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).sum` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.sum`, `(1, 2, 3).sum`, and `{1, 2, 3}.sum` succeed, while `Values = (1, 2, 3); Values.sum` and `((1, 2, 3)).sum` remain invalid because those receivers denote one grouped value. Use direct multi-argument syntax such as `sum(1, 2, 3)` or explicit selection such as `sum(Data:0)` when you want several numeric top-level items.
 
 ### Average: `avg`
 
@@ -1354,7 +1354,7 @@ avg(1, 2)
 1
 ```
 
-Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging. `avg(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).avg` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.avg` succeeds, while `(1, 2, 3).avg` remains invalid because the inline block receiver is one grouped value. Use direct multi-argument syntax such as `avg(1, 2, 3)` or explicit selection such as `avg(Data:0)` when you want several numeric top-level items.
+Applying `avg` to an empty collection is invalid because `avg` requires at least one top-level numeric element. A collection such as `((1, 2), (3, 4))` is also invalid because `avg` does not flatten grouped elements before averaging. `avg(range(1, 5))` is invalid in plain-call form because `range(1, 5)` is one ordinary leading argument boundary item, but `range(1, 5).avg` succeeds because the call receiver contributes its counted top-level items. Likewise, `Values = 1, 2, 3; Values.avg` and `(1, 2, 3).avg` succeed, while `Values = (1, 2, 3); Values.avg` and `((1, 2, 3)).avg` remain invalid because those receivers denote one grouped value. Use direct multi-argument syntax such as `avg(1, 2, 3)` or explicit selection such as `avg(Data:0)` when you want several numeric top-level items.
 
 ### Reduction: `reduce`
 
@@ -2041,8 +2041,8 @@ For the sequence builtins below, plain-call grouped arguments remain single item
 | `first` | `first(...items)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `last` | `last(...items)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `distinct` | `distinct(...items)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; grouped values stay grouped and duplicate detection follows KatLang value semantics |
-| `take` | `take(count, ...items)` or `collection.take(count)` — keep the first `count` top-level elements unchanged; non-positive counts return empty and grouped values stay grouped |
-| `skip` | `skip(count, ...items)` or `collection.skip(count)` — drop the first `count` top-level elements; non-positive counts keep the original sequence and grouped values stay grouped |
+| `take` | `take(...items, count)` or `collection.take(count)` — keep the first `count` top-level elements unchanged; non-positive counts return empty and grouped values stay grouped |
+| `skip` | `skip(...items, count)` or `collection.skip(count)` — drop the first `count` top-level elements; non-positive counts keep the original sequence and grouped values stay grouped |
 | `min` | `min(...items)` or `collection.min` — find the smallest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `max` | `max(...items)` or `collection.max` — find the largest top-level numeric element; the sequence must be non-empty and grouped values are not flattened |
 | `sum` | `sum(...items)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and grouped values are not flattened |

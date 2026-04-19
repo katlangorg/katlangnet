@@ -970,12 +970,6 @@ public static class Evaluator
             => count >= MinCount && (!MaxCount.HasValue || count <= MaxCount.Value);
     }
 
-    private enum SequenceBuiltinBoundaryPolicy
-    {
-        FlattenAll,
-        PreservePerInput,
-    }
-
     private enum SequenceBuiltinTrailingArgKind
     {
         Algorithm,
@@ -1000,9 +994,15 @@ public static class Evaluator
         SingleNumeric,
     }
 
+    /// <summary>
+    /// Shared metadata for the current sequence-builtin family.
+    /// Leading arguments are always collected with per-argument boundary
+    /// preservation first, then current handlers consume the flattened
+    /// top-level item stream. Reintroduce richer prepared-view metadata only
+    /// if a concrete builtin actually needs it.
+    /// </summary>
     private readonly record struct SequenceBuiltinMetadata(
         SequenceBuiltinLeadingArity LeadingSequenceArity,
-        SequenceBuiltinBoundaryPolicy BoundaryPolicy,
         IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> TrailingArgs,
         SequenceBuiltinEmptyPolicy EmptyPolicy,
         SequenceBuiltinItemShapeConstraint ItemShapeConstraint)
@@ -1010,6 +1010,10 @@ public static class Evaluator
         public int TrailingArgCount => TrailingArgs.Count;
     }
 
+    /// <summary>
+    /// Collected sequence input keeps both the real per-input boundary view and
+    /// the flattened view current handlers consume.
+    /// </summary>
     private readonly record struct CollectedSequenceBuiltinInput(
         IReadOnlyList<IReadOnlyList<Result>> PerInputItems,
         IReadOnlyList<Result> FlattenedItems)
@@ -1019,33 +1023,16 @@ public static class Evaluator
         public bool AnyInputEmpty => PerInputItems.Any(static items => items.Count == 0);
     }
 
-    private abstract record SequenceBuiltinNumericItems
-    {
-        public sealed record Flattened(IReadOnlyList<decimal> Items) : SequenceBuiltinNumericItems;
-
-        public sealed record PerInput(IReadOnlyList<IReadOnlyList<decimal>> Inputs) : SequenceBuiltinNumericItems;
-    }
-
+    /// <summary>
+    /// Prepared input for current sequence builtin handlers.
+    /// Numeric builtins cache the flattened numeric projection of the collected
+    /// top-level items.
+    /// </summary>
     private readonly record struct PreparedSequenceBuiltinInput(
         CollectedSequenceBuiltinInput Collected,
-        SequenceBuiltinNumericItems? NumericItems = null)
+        IReadOnlyList<decimal>? NumericItems = null)
     {
         public IReadOnlyList<Result> FlattenedItems => Collected.FlattenedItems;
-
-        public IReadOnlyList<IReadOnlyList<Result>> PerInputItems => Collected.PerInputItems;
-
-        public IReadOnlyList<decimal>? FlattenedNumericItems => NumericItems switch
-        {
-            SequenceBuiltinNumericItems.Flattened(var items) => items,
-            SequenceBuiltinNumericItems.PerInput(var inputs) => inputs.SelectMany(static items => items).ToList(),
-            _ => null,
-        };
-
-        public IReadOnlyList<IReadOnlyList<decimal>>? PerInputNumericItems => NumericItems switch
-        {
-            SequenceBuiltinNumericItems.PerInput(var inputs) => inputs,
-            _ => null,
-        };
     }
 
     private abstract record PreparedSequenceBuiltinTrailingArg
@@ -1503,11 +1490,16 @@ public static class Evaluator
         => Result.FromItems(CountedTopLevelValues(output));
 
     /// <summary>
-    /// Direct <c>:</c> selections already project one level of content, so a
-    /// sequence builtin must preserve that explicit projection instead of
-    /// regrouping it at the argument boundary.
+    /// This check is intentionally syntax-shaped today.
+    /// Only a zero-parameter algorithm whose sole output is a direct
+    /// <c>:</c> selection (<c>Expr.Index</c>) counts as already projected
+    /// sequence input. Wrapped or rewritten equivalents do not count
+    /// automatically.
+    /// If projection preservation ever needs to survive more lowering or
+    /// elaboration shapes, revisit this check explicitly instead of
+    /// broadening it accidentally.
     /// </summary>
-    private static bool SequenceBuiltinArgUsesProjectedContent(Algorithm arg)
+    private static bool SequenceBuiltinArgMatchesDirectIndexProjectionSyntax(Algorithm arg)
         => arg is Algorithm.User
         {
             Params.Count: 0,
@@ -1556,8 +1548,11 @@ public static class Evaluator
     /// Ordinary argument passing contributes exactly one top-level item at the
     /// call boundary, so grouped or multi-output content stays grouped as one
     /// item instead of spreading into surrounding sequence-builtin input.
-    /// Direct <c>:</c> selections are the existing explicit projection rule,
-    /// so their projected content remains visible as multiple top-level items.
+    /// Only direct <c>:</c> selections that still have this exact syntax shape
+    /// are treated as the existing explicit projection rule, so their
+    /// projected content remains visible as multiple top-level items.
+    /// Wrapped or rewritten equivalents still follow ordinary
+    /// argument-boundary grouping until this logic is revisited explicitly.
     /// Handlers call this explicitly so they can choose when leading sequence
     /// evaluation happens relative to any trailing-argument validation.
     /// </summary>
@@ -1573,7 +1568,7 @@ public static class Evaluator
             var outputR = EvalMaybeMemoizedPropertyOutputCounted(collectionArg, ctx, valEnv);
             if (outputR.IsError) return outputR.Error;
 
-            var items = SequenceBuiltinArgUsesProjectedContent(collectionArg)
+            var items = SequenceBuiltinArgMatchesDirectIndexProjectionSyntax(collectionArg)
                 ? CountedTopLevelValues(outputR.Value)
                 : [SequenceBuiltinArgumentItem(outputR.Value)];
             perInputItems.Add(items);
@@ -1613,9 +1608,6 @@ public static class Evaluator
 
     private static string NumericSequenceItemErrorContext(BuiltinId builtin, int index, Result item)
         => $"{BuiltinDisplayName(builtin)} expects each collection element to be a single numeric value; item {index} was {DescribeSequenceItem(item)}";
-
-    private static string NumericSequenceInputItemErrorContext(BuiltinId builtin, int inputIndex, int itemIndex, Result item)
-        => $"{BuiltinDisplayName(builtin)} expects each collection element to be a single numeric value; input {inputIndex} item {itemIndex} was {DescribeSequenceItem(item)}";
 
     /// <summary>
     /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
@@ -1746,45 +1738,6 @@ public static class Evaluator
         return EvalResult<List<decimal>>.Ok(numbers);
     }
 
-    private static EvalResult<List<decimal>> CollectSingleAtomicNumbersInInput(
-        BuiltinId builtin,
-        int inputIndex,
-        IReadOnlyList<Result> elements)
-    {
-        var numbers = new List<decimal>(elements.Count);
-        for (var itemIndex = 0; itemIndex < elements.Count; itemIndex++)
-        {
-            var item = elements[itemIndex];
-            var numeric = item.SingleAtomicNumber();
-            if (numeric is null)
-            {
-                return new EvalError.WithContext(
-                    NumericSequenceInputItemErrorContext(builtin, inputIndex, itemIndex, item),
-                    new EvalError.BadArity());
-            }
-
-            numbers.Add(numeric.Value);
-        }
-
-        return EvalResult<List<decimal>>.Ok(numbers);
-    }
-
-    private static EvalResult<List<IReadOnlyList<decimal>>> CollectSingleAtomicNumbersPerInput(
-        BuiltinId builtin,
-        IReadOnlyList<IReadOnlyList<Result>> inputs)
-    {
-        var numericInputs = new List<IReadOnlyList<decimal>>(inputs.Count);
-        for (var inputIndex = 0; inputIndex < inputs.Count; inputIndex++)
-        {
-            var numbersR = CollectSingleAtomicNumbersInInput(builtin, inputIndex, inputs[inputIndex]);
-            if (numbersR.IsError) return numbersR.Error;
-
-            numericInputs.Add(numbersR.Value);
-        }
-
-        return EvalResult<List<IReadOnlyList<decimal>>>.Ok(numericInputs);
-    }
-
     private static EvalResult<PreparedSequenceBuiltinInput> PrepareSequenceBuiltinInput(
         BuiltinId builtin,
         SequenceBuiltinMetadata metadata,
@@ -1793,25 +1746,17 @@ public static class Evaluator
         var validatedItemsR = ApplySequenceBuiltinEmptyPolicy(builtin, metadata, collected);
         if (validatedItemsR.IsError) return validatedItemsR.Error;
 
-        SequenceBuiltinNumericItems? numericItems = null;
-        switch (metadata.ItemShapeConstraint, metadata.BoundaryPolicy)
+        IReadOnlyList<decimal>? numericItems = null;
+        switch (metadata.ItemShapeConstraint)
         {
-            case (SequenceBuiltinItemShapeConstraint.Any, _):
+            case SequenceBuiltinItemShapeConstraint.Any:
                 break;
 
-            case (SequenceBuiltinItemShapeConstraint.SingleNumeric, SequenceBuiltinBoundaryPolicy.FlattenAll):
+            case SequenceBuiltinItemShapeConstraint.SingleNumeric:
             {
                 var numbersR = CollectSingleAtomicNumbers(builtin, validatedItemsR.Value.FlattenedItems);
                 if (numbersR.IsError) return numbersR.Error;
-                numericItems = new SequenceBuiltinNumericItems.Flattened(numbersR.Value);
-                break;
-            }
-
-            case (SequenceBuiltinItemShapeConstraint.SingleNumeric, SequenceBuiltinBoundaryPolicy.PreservePerInput):
-            {
-                var numbersR = CollectSingleAtomicNumbersPerInput(builtin, validatedItemsR.Value.PerInputItems);
-                if (numbersR.IsError) return numbersR.Error;
-                numericItems = new SequenceBuiltinNumericItems.PerInput(numbersR.Value);
+                numericItems = numbersR.Value;
                 break;
             }
         }
@@ -1841,10 +1786,37 @@ public static class Evaluator
         return PrepareSequenceBuiltinInput(builtin, metadata, collectedR.Value);
     }
 
-    private static string WholeNumberSequenceTrailingArgErrorContext(
+    private static string DescribeSequenceBuiltinTrailingArgRequirement(
+        SequenceBuiltinTrailingArgKind kind)
+        => kind switch
+        {
+            SequenceBuiltinTrailingArgKind.Algorithm => "an algorithm",
+            SequenceBuiltinTrailingArgKind.Value => "exactly one value",
+            SequenceBuiltinTrailingArgKind.WholeNumber => "exactly one whole-number value",
+            _ => "a valid trailing argument",
+        };
+
+    private static string DescribeSequenceBuiltinTrailingArgKind(
+        SequenceBuiltinTrailingArgKind kind)
+        => kind switch
+        {
+            SequenceBuiltinTrailingArgKind.Algorithm => "algorithm",
+            SequenceBuiltinTrailingArgKind.Value => "value",
+            SequenceBuiltinTrailingArgKind.WholeNumber => "whole-number value",
+            _ => "unknown",
+        };
+
+    private static string SequenceBuiltinTrailingArgErrorContext(
         BuiltinId builtin,
         SequenceBuiltinTrailingArgDescriptor descriptor)
-        => $"{BuiltinDisplayName(builtin)} {descriptor.Label} must be exactly one whole-number value";
+        => $"{BuiltinDisplayName(builtin)} {descriptor.Label} must be {DescribeSequenceBuiltinTrailingArgRequirement(descriptor.Kind)}";
+
+    private static EvalResult<T> InternalSequenceBuiltinTrailingArgMetadataError<T>(
+        BuiltinId builtin,
+        string detail)
+        => new EvalError.WithContext(
+            $"internal sequence metadata for {BuiltinDisplayName(builtin)} {detail}",
+            new EvalError.BadArity());
 
     private static EvalResult<PreparedSequenceBuiltinTrailingArg> EvalPreparedSequenceBuiltinTrailingArg(
         BuiltinId builtin,
@@ -1877,7 +1849,7 @@ public static class Evaluator
                 if (numeric is null || numeric.Value != Math.Truncate(numeric.Value))
                 {
                     return new EvalError.WithContext(
-                        WholeNumberSequenceTrailingArgErrorContext(builtin, descriptor),
+                        SequenceBuiltinTrailingArgErrorContext(builtin, descriptor),
                         new EvalError.BadArity());
                 }
 
@@ -1886,12 +1858,17 @@ public static class Evaluator
             }
 
             default:
-                return new EvalError.WithContext(
-                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} used an unknown trailing-argument kind",
-                    new EvalError.BadArity());
+                return InternalSequenceBuiltinTrailingArgMetadataError<PreparedSequenceBuiltinTrailingArg>(
+                    builtin,
+                    "used an unknown trailing-argument kind");
         }
     }
 
+    /// <summary>
+    /// Shared trailing-argument preparation path for sequence builtins.
+    /// Metadata stays the source of truth for trailing count and kinds; callers
+    /// use the typed ExpectPrepared... helpers below to extract prepared values.
+    /// </summary>
     private static EvalResult<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>> EvalPreparedSequenceBuiltinTrailingArgs(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
@@ -1901,9 +1878,9 @@ public static class Evaluator
     {
         if (descriptors.Count != args.Count)
         {
-            return new EvalError.WithContext(
-                $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched trailing arguments",
-                new EvalError.BadArity());
+            return InternalSequenceBuiltinTrailingArgMetadataError<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>>(
+                builtin,
+                "mismatched trailing arguments");
         }
 
         var preparedArgs = new List<PreparedSequenceBuiltinTrailingArg>(args.Count);
@@ -1923,37 +1900,95 @@ public static class Evaluator
         return EvalResult<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>>.Ok(preparedArgs);
     }
 
+    private static EvalResult<T> ExpectPreparedSequenceBuiltinTrailingArgAt<T>(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinTrailingArg> args,
+        int index,
+        SequenceBuiltinTrailingArgKind expectedKind,
+        Func<SequenceBuiltinTrailingArgDescriptor, PreparedSequenceBuiltinTrailingArg, EvalResult<T>> projector)
+    {
+        if (descriptors.Count != args.Count)
+        {
+            return InternalSequenceBuiltinTrailingArgMetadataError<T>(
+                builtin,
+                "mismatched trailing arguments");
+        }
+
+        if ((uint)index >= (uint)descriptors.Count)
+        {
+            return InternalSequenceBuiltinTrailingArgMetadataError<T>(
+                builtin,
+                $"expected trailing argument {index + 1} to have metadata kind {DescribeSequenceBuiltinTrailingArgKind(expectedKind)}");
+        }
+
+        var descriptor = descriptors[index];
+        if (descriptor.Kind != expectedKind)
+        {
+            return InternalSequenceBuiltinTrailingArgMetadataError<T>(
+                builtin,
+                $"expected trailing argument {index + 1} ({descriptor.Label}) to have metadata kind {DescribeSequenceBuiltinTrailingArgKind(expectedKind)}, but found {DescribeSequenceBuiltinTrailingArgKind(descriptor.Kind)}");
+        }
+
+        return projector(descriptor, args[index]);
+    }
+
+    private static EvalResult<Algorithm> ExpectPreparedAlgorithmTrailingArg(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinTrailingArg> args,
+        int index)
+        => ExpectPreparedSequenceBuiltinTrailingArgAt(
+            builtin,
+            descriptors,
+            args,
+            index,
+            SequenceBuiltinTrailingArgKind.Algorithm,
+            (descriptor, arg) => arg is PreparedSequenceBuiltinTrailingArg.AlgorithmArg(var algorithm)
+                ? EvalResult<Algorithm>.Ok(algorithm)
+                : InternalSequenceBuiltinTrailingArgMetadataError<Algorithm>(
+                    builtin,
+                    $"prepared trailing argument {index + 1} ({descriptor.Label}) did not match metadata kind {DescribeSequenceBuiltinTrailingArgKind(SequenceBuiltinTrailingArgKind.Algorithm)}"));
+
     private static EvalResult<decimal> ExpectPreparedWholeNumberTrailingArg(
         BuiltinId builtin,
-        SequenceBuiltinTrailingArgDescriptor descriptor,
-        PreparedSequenceBuiltinTrailingArg arg)
-    {
-        if (arg is PreparedSequenceBuiltinTrailingArg.WholeNumberArg(var value))
-            return EvalResult<decimal>.Ok(value);
-
-        return new EvalError.WithContext(
-            WholeNumberSequenceTrailingArgErrorContext(builtin, descriptor),
-            new EvalError.BadArity());
-    }
+        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinTrailingArg> args,
+        int index)
+        => ExpectPreparedSequenceBuiltinTrailingArgAt(
+            builtin,
+            descriptors,
+            args,
+            index,
+            SequenceBuiltinTrailingArgKind.WholeNumber,
+            (descriptor, arg) => arg is PreparedSequenceBuiltinTrailingArg.WholeNumberArg(var value)
+                ? EvalResult<decimal>.Ok(value)
+                : InternalSequenceBuiltinTrailingArgMetadataError<decimal>(
+                    builtin,
+                    $"prepared trailing argument {index + 1} ({descriptor.Label}) did not match metadata kind {DescribeSequenceBuiltinTrailingArgKind(SequenceBuiltinTrailingArgKind.WholeNumber)}"));
 
     private static EvalResult<Result> ExpectPreparedValueTrailingArg(
         BuiltinId builtin,
-        SequenceBuiltinTrailingArgDescriptor descriptor,
-        PreparedSequenceBuiltinTrailingArg arg)
-    {
-        if (arg is PreparedSequenceBuiltinTrailingArg.ValueArg(var value))
-            return EvalResult<Result>.Ok(value);
+        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinTrailingArg> args,
+        int index)
+        => ExpectPreparedSequenceBuiltinTrailingArgAt(
+            builtin,
+            descriptors,
+            args,
+            index,
+            SequenceBuiltinTrailingArgKind.Value,
+            (descriptor, arg) => arg is PreparedSequenceBuiltinTrailingArg.ValueArg(var value)
+                ? EvalResult<Result>.Ok(value)
+                : InternalSequenceBuiltinTrailingArgMetadataError<Result>(
+                    builtin,
+                    $"prepared trailing argument {index + 1} ({descriptor.Label}) did not match metadata kind {DescribeSequenceBuiltinTrailingArgKind(SequenceBuiltinTrailingArgKind.Value)}"));
 
-        return new EvalError.WithContext(
-            $"{BuiltinDisplayName(builtin)} {descriptor.Label} must be exactly one value",
-            new EvalError.BadArity());
-    }
-
-    private static EvalResult<IReadOnlyList<decimal>> ExpectPreparedFlattenedNumericItems(
+    private static EvalResult<IReadOnlyList<decimal>> ExpectPreparedNumericItems(
         BuiltinId builtin,
         PreparedSequenceBuiltinInput prepared)
     {
-        if (prepared.FlattenedNumericItems is { } numbers)
+        if (prepared.NumericItems is { } numbers)
             return EvalResult<IReadOnlyList<decimal>>.Ok(numbers);
 
         return new EvalError.WithContext(
@@ -2239,22 +2274,22 @@ public static class Evaluator
             return handler(preparedR.Value.FlattenedItems);
         }
 
-        EvalResult<CountedResult> WithPreparedFlatNumericItems(
+        EvalResult<CountedResult> WithPreparedNumericItems(
             IReadOnlyList<Algorithm> collectionArgs,
             Func<IReadOnlyList<decimal>, EvalResult<CountedResult>> handler)
         {
             var preparedR = EvalPreparedSequenceBuiltinInput(builtin, metadata, collectionArgs, ctx, valEnv);
             if (preparedR.IsError) return preparedR.Error;
 
-            var numbersR = ExpectPreparedFlattenedNumericItems(builtin, preparedR.Value);
+            var numbersR = ExpectPreparedNumericItems(builtin, preparedR.Value);
             if (numbersR.IsError) return numbersR.Error;
 
             return handler(numbersR.Value);
         }
 
-        EvalResult<CountedResult> WithPreparedSingleWholeNumberTrailingArg(
+        EvalResult<CountedResult> WithPreparedTrailingArgs(
             IReadOnlyList<Algorithm> trailingArgs,
-            Func<decimal, EvalResult<CountedResult>> handler)
+            Func<IReadOnlyList<PreparedSequenceBuiltinTrailingArg>, EvalResult<CountedResult>> handler)
         {
             var preparedArgsR = EvalPreparedSequenceBuiltinTrailingArgs(
                 builtin,
@@ -2264,72 +2299,110 @@ public static class Evaluator
                 valEnv);
             if (preparedArgsR.IsError) return preparedArgsR.Error;
 
-            if (metadata.TrailingArgs.Count != 1 || preparedArgsR.Value.Count != 1)
-            {
-                return new EvalError.WithContext(
-                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched whole-number trailing arguments",
-                    new EvalError.BadArity());
-            }
-
-            var countR = ExpectPreparedWholeNumberTrailingArg(
-                builtin,
-                metadata.TrailingArgs[0],
-                preparedArgsR.Value[0]);
-            if (countR.IsError) return countR.Error;
-
-            return handler(countR.Value);
-        }
-
-        EvalResult<CountedResult> WithPreparedSingleValueTrailingArg(
-            IReadOnlyList<Algorithm> trailingArgs,
-            Func<Result, EvalResult<CountedResult>> handler)
-        {
-            var preparedArgsR = EvalPreparedSequenceBuiltinTrailingArgs(
-                builtin,
-                metadata.TrailingArgs,
-                trailingArgs,
-                ctx,
-                valEnv);
-            if (preparedArgsR.IsError) return preparedArgsR.Error;
-
-            if (metadata.TrailingArgs.Count != 1 || preparedArgsR.Value.Count != 1)
-            {
-                return new EvalError.WithContext(
-                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched value trailing arguments",
-                    new EvalError.BadArity());
-            }
-
-            var valueR = ExpectPreparedValueTrailingArg(
-                builtin,
-                metadata.TrailingArgs[0],
-                preparedArgsR.Value[0]);
-            if (valueR.IsError) return valueR.Error;
-
-            return handler(valueR.Value);
+            return handler(preparedArgsR.Value);
         }
 
         return ApplySequenceBuiltinCounted(
             builtin,
             metadata,
             args,
-            (collectionArgs, trailingArgs) => (builtin, trailingArgs.Count) switch
+            (collectionArgs, trailingArgs) => builtin switch
             {
-                (BuiltinId.@filter, 1) => WithPreparedFlatItems(collectionArgs, items => EvalFilterCounted(items, trailingArgs[0], ctx, valEnv)),
-                (BuiltinId.@map, 1) => WithPreparedFlatItems(collectionArgs, items => EvalMapCounted(items, trailingArgs[0], ctx, valEnv)),
-                (BuiltinId.@order, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderCounted),
-                (BuiltinId.@orderDesc, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderDescCounted),
-                (BuiltinId.@count, 0) => WithPreparedFlatItems(collectionArgs, EvalCountCounted),
-                (BuiltinId.@contains, 1) => WithPreparedSingleValueTrailingArg(trailingArgs, searchedItem => WithPreparedFlatItems(collectionArgs, items => EvalContainsCounted(items, searchedItem))),
-                (BuiltinId.@distinct, 0) => WithPreparedFlatItems(collectionArgs, EvalDistinctCounted),
-                (BuiltinId.@first, 0) => WithPreparedFlatItems(collectionArgs, EvalFirstCounted),
-                (BuiltinId.@last, 0) => WithPreparedFlatItems(collectionArgs, EvalLastCounted),
-                (BuiltinId.@take, 1) => WithPreparedSingleWholeNumberTrailingArg(trailingArgs, count => WithPreparedFlatItems(collectionArgs, items => EvalTakeCounted(items, count))),
-                (BuiltinId.@skip, 1) => WithPreparedSingleWholeNumberTrailingArg(trailingArgs, count => WithPreparedFlatItems(collectionArgs, items => EvalSkipCounted(items, count))),
-                (BuiltinId.@min, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalMinCounted),
-                (BuiltinId.@max, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalMaxCounted),
-                (BuiltinId.@sum, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalSumCounted),
-                (BuiltinId.@avg, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalAvgCounted),
-                (BuiltinId.@reduce, 2) => WithPreparedFlatItems(collectionArgs, items => EvalReduceCounted(items, trailingArgs[0], trailingArgs[1], ctx, valEnv)),
+                BuiltinId.@filter => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var predicateR = ExpectPreparedAlgorithmTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (predicateR.IsError) return predicateR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalFilterCounted(items, predicateR.Value, ctx, valEnv));
+                    }),
+                BuiltinId.@map => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var transformR = ExpectPreparedAlgorithmTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (transformR.IsError) return transformR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalMapCounted(items, transformR.Value, ctx, valEnv));
+                    }),
+                BuiltinId.@order => WithPreparedNumericItems(collectionArgs, EvalOrderCounted),
+                BuiltinId.@orderDesc => WithPreparedNumericItems(collectionArgs, EvalOrderDescCounted),
+                BuiltinId.@count => WithPreparedFlatItems(collectionArgs, EvalCountCounted),
+                BuiltinId.@contains => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var searchedItemR = ExpectPreparedValueTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (searchedItemR.IsError) return searchedItemR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalContainsCounted(items, searchedItemR.Value));
+                    }),
+                BuiltinId.@distinct => WithPreparedFlatItems(collectionArgs, EvalDistinctCounted),
+                BuiltinId.@first => WithPreparedFlatItems(collectionArgs, EvalFirstCounted),
+                BuiltinId.@last => WithPreparedFlatItems(collectionArgs, EvalLastCounted),
+                BuiltinId.@take => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var countR = ExpectPreparedWholeNumberTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (countR.IsError) return countR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalTakeCounted(items, countR.Value));
+                    }),
+                BuiltinId.@skip => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var countR = ExpectPreparedWholeNumberTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (countR.IsError) return countR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalSkipCounted(items, countR.Value));
+                    }),
+                BuiltinId.@min => WithPreparedNumericItems(collectionArgs, EvalMinCounted),
+                BuiltinId.@max => WithPreparedNumericItems(collectionArgs, EvalMaxCounted),
+                BuiltinId.@sum => WithPreparedNumericItems(collectionArgs, EvalSumCounted),
+                BuiltinId.@avg => WithPreparedNumericItems(collectionArgs, EvalAvgCounted),
+                BuiltinId.@reduce => WithPreparedTrailingArgs(
+                    trailingArgs,
+                    preparedTrailingArgs =>
+                    {
+                        var stepR = ExpectPreparedAlgorithmTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            0);
+                        if (stepR.IsError) return stepR.Error;
+
+                        var initialR = ExpectPreparedAlgorithmTrailingArg(
+                            builtin,
+                            metadata.TrailingArgs,
+                            preparedTrailingArgs,
+                            1);
+                        if (initialR.IsError) return initialR.Error;
+
+                        return WithPreparedFlatItems(collectionArgs, items => EvalReduceCounted(items, stepR.Value, initialR.Value, ctx, valEnv));
+                    }),
                 _ => WrongBuiltinArity(builtin, args.Count),
             });
     }
@@ -2537,52 +2610,52 @@ public static class Evaluator
     private static readonly SequenceBuiltinLeadingArity OneOrMoreSequenceArguments = new(1);
 
     private static readonly SequenceBuiltinMetadata FilterSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata MapSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("transform")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("transform")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata OrderSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata OrderDescSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata CountSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata ContainsSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("item", SequenceBuiltinTrailingArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("item", SequenceBuiltinTrailingArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata FirstSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata LastSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata DistinctSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata TakeSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata SkipSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata MinSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata MaxSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata SumSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata AvgSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
+        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata ReduceSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("step"), new("initial accumulator")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("step"), new("initial accumulator")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static SequenceBuiltinMetadata? GetSequenceBuiltinMetadata(BuiltinId builtin) => builtin switch
     {
@@ -4502,19 +4575,38 @@ public static class Evaluator
     /// <summary>
     /// Sequence builtins in dot-call form consume the receiver's own counted
     /// top-level items.
-    /// The receiver expression is evaluated once, its counted top-level items
-    /// are reified as one ordinary leading argument per item, and any extra
-    /// dot-call arguments still follow the plain-call argument path.
+    /// A direct inline receiver block first exposes its inner algorithm output
+    /// count, which strips exactly one receiver-scoping block layer for forms
+    /// like <c>(1, 2, 3).take(2)</c> while still keeping
+    /// <c>((1, 2, 3)).take(2)</c> and named grouped helpers grouped.
+    /// The resulting counted top-level items are then reified as one ordinary
+    /// leading argument per item, and any extra dot-call arguments still
+    /// follow the plain-call argument path.
     /// This keeps plain-call boundary preservation unchanged while making
     /// <c>receiver.builtin(...)</c> operate on the same top-level collection
     /// that <c>receiver:i</c> and higher-order callback projection observe.
     /// </summary>
+    private static EvalResult<CountedResult> EvalSequenceBuiltinDotReceiverCounted(
+        Expr receiver,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (receiver is Expr.Block(var algorithm))
+        {
+            var wired = WireToCaller(ctx, algorithm);
+            if (wired.Params.Count == 0)
+                return WithSpan(receiver.Span ?? FirstSpan(wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
+        }
+
+        return EvalCounted(receiver, ctx, valEnv);
+    }
+
     private static EvalResult<IReadOnlyList<Algorithm>> SequenceBuiltinDotReceiverArgs(
         Expr receiver,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var receiverR = EvalCounted(receiver, ctx, valEnv);
+        var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError) return receiverR.Error;
 
         return EvalResult<IReadOnlyList<Algorithm>>.Ok(

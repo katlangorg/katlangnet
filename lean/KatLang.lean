@@ -1,4 +1,4 @@
--- KatLang v0.8.40 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.56 (core AST + semantics + while/repeat init lowering + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init lowering).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -168,11 +168,6 @@ def accepts (arity : SequenceBuiltinLeadingArity) (count : Nat) : Bool :=
 
 end SequenceBuiltinLeadingArity
 
-inductive SequenceBuiltinBoundaryPolicy where
-  | flattenAll
-  | preservePerInput
-  deriving Repr, BEq, DecidableEq
-
 inductive SequenceBuiltinTrailingArgKind where
   | algorithm
   | value
@@ -197,7 +192,6 @@ inductive SequenceBuiltinItemShapeConstraint where
 
 structure SequenceBuiltinMetadata where
   leadingSequenceArity : SequenceBuiltinLeadingArity := {}
-  boundaryPolicy : SequenceBuiltinBoundaryPolicy := .flattenAll
   trailingArgs : List SequenceBuiltinTrailingArgDescriptor := []
   emptyPolicy : SequenceBuiltinEmptyPolicy := .allowEmpty
   itemShapeConstraint : SequenceBuiltinItemShapeConstraint := .any
@@ -210,9 +204,11 @@ def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata
   All leading sequence arguments first pass through the shared argument-
   boundary rule: each argument expression contributes exactly one top-level
   item, so grouped or multi-output content stays grouped as one item instead of
-  spreading into surrounding builtin input. `boundaryPolicy` only controls any
-  later handler-specific view of those already-preserved boundary items, and
-  `trailingArgs` describes the fixed trailing non-sequence arguments. -/
+  spreading into surrounding builtin input. Current builtins all consume the
+  flattened top-level item stream after that collection step, and
+  `trailingArgs` describes the fixed trailing non-sequence arguments. If a
+  future builtin genuinely needs a different prepared boundary view,
+  reintroduce that metadata alongside the concrete handler that uses it. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
       trailingArgs := [{ label := "predicate" }]
@@ -1410,10 +1406,14 @@ def countedTopLevelValues : CountedResult -> List Result
 def sequenceBuiltinArgumentItem (arg : CountedResult) : Result :=
   Result.normalize (Result.group (countedTopLevelValues arg))
 
-/-- Direct selection expressions already project one level of content, so a
-    sequence builtin must preserve that explicit projection instead of grouping
-    it back into one item at the argument boundary. -/
-def sequenceBuiltinArgUsesProjectedContent (arg : Algorithm) : Bool :=
+/-- This check is intentionally syntax-shaped today.
+    Only a zero-parameter algorithm whose sole output is a direct `:`
+    selection (`.index`) counts as already projected sequence input.
+    Wrapped or rewritten equivalents do not count automatically.
+    If projection preservation ever needs to survive more lowering or
+    elaboration shapes, revisit this helper explicitly instead of broadening
+    it accidentally. -/
+def sequenceBuiltinArgMatchesDirectIndexProjectionSyntax (arg : Algorithm) : Bool :=
   arg.params.isEmpty &&
     arg.opens.isEmpty &&
     arg.props.isEmpty &&
@@ -1508,6 +1508,10 @@ def numericSequenceInputItemErrorContext
     (b : Builtin) (inputIndex itemIndex : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; input {inputIndex} item {itemIndex} was {describeSequenceItem item}"
 
+/-- Shared collected view for current sequence-builtin evaluation.
+    The per-input boundary view remains part of the real model because direct
+    projection handling and boundary-sensitive validation depend on it, even
+    though current builtin handlers all consume the flattened item stream. -/
 structure CollectedSequenceBuiltinInput where
   perInputItems : List (List Result)
   deriving Repr
@@ -1524,35 +1528,14 @@ def CollectedSequenceBuiltinInput.anyInputEmpty
     (input : CollectedSequenceBuiltinInput) : Bool :=
   input.perInputItems.any List.isEmpty
 
-inductive SequenceBuiltinNumericItems where
-  | flattened (items : List Int)
-  | perInput (inputs : List (List Int))
-  deriving Repr
-
 structure PreparedSequenceBuiltinInput where
   collected : CollectedSequenceBuiltinInput
-  numericItems : Option SequenceBuiltinNumericItems := none
+  numericItems? : Option (List Int) := none
   deriving Repr
 
 def PreparedSequenceBuiltinInput.flattenedItems
     (prepared : PreparedSequenceBuiltinInput) : List Result :=
   prepared.collected.flattenedItems
-
-def PreparedSequenceBuiltinInput.perInputItems
-    (prepared : PreparedSequenceBuiltinInput) : List (List Result) :=
-  prepared.collected.perInputItems
-
-def PreparedSequenceBuiltinInput.flattenedNumericItems?
-    : PreparedSequenceBuiltinInput -> Option (List Int)
-  | { numericItems := some (.flattened items), .. } => some items
-  | { numericItems := some (.perInput inputs), .. } =>
-      some (inputs.foldr List.append [])
-  | _ => none
-
-def PreparedSequenceBuiltinInput.perInputNumericItems?
-    : PreparedSequenceBuiltinInput -> Option (List (List Int))
-  | { numericItems := some (.perInput inputs), .. } => some inputs
-  | _ => none
 
 inductive PreparedSequenceBuiltinTrailingArg where
   | algorithm (value : Algorithm)
@@ -2212,8 +2195,11 @@ mutual
       Ordinary argument passing contributes exactly one top-level item at the
       call boundary. Grouped or multi-output content therefore stays grouped as
       one item instead of spreading into the surrounding sequence builtin
-      input. Direct `:` selections are the existing explicit projection rule,
-      so their projected content remains visible as multiple top-level items.
+      input. Only direct `:` selections that still have this exact syntax
+      shape are treated as the existing explicit projection rule, so their
+      projected content remains visible as multiple top-level items. Wrapped
+      or rewritten equivalents still follow the ordinary argument-boundary
+      rule until this logic is revisited explicitly.
       Handlers call this explicitly so they can choose when leading sequence
       evaluation happens relative to any trailing-argument validation. -/
     partial def evalCountedSequenceInputs (collectionArgs : List Algorithm)
@@ -2224,7 +2210,7 @@ mutual
           let out <- evalAlgOutputCounted collectionAlg ctx env
           let tail <- loop rest
           let items :=
-            if sequenceBuiltinArgUsesProjectedContent collectionAlg then
+            if sequenceBuiltinArgMatchesDirectIndexProjectionSyntax collectionAlg then
               countedTopLevelValues out
             else
               [sequenceBuiltinArgumentItem out]
@@ -2285,29 +2271,18 @@ mutual
               (numericSequenceInputItemErrorContext b inputIndex itemIndex item)
               Error.badArity)
 
-  partial def collectSingleAtomicNumbersPerInput (b : Builtin)
-      : Nat -> List (List Result) -> EvalM (List (List Int))
-    | _, [] => pure []
-    | inputIndex, items :: rest => do
-        let numbers <- collectSingleAtomicNumbersInInput b inputIndex 0 items
-        let tail <- collectSingleAtomicNumbersPerInput b (inputIndex + 1) rest
-        pure (numbers :: tail)
-
   partial def prepareSequenceBuiltinInput (b : Builtin) (metadata : SequenceBuiltinMetadata)
       (collected : CollectedSequenceBuiltinInput)
       : EvalM PreparedSequenceBuiltinInput := do
     let collected <- applySequenceBuiltinEmptyPolicy b metadata collected
     let numericItems <-
-      match metadata.itemShapeConstraint, metadata.boundaryPolicy with
-      | .any, _ =>
+      match metadata.itemShapeConstraint with
+      | .any =>
           pure none
-      | .singleNumeric, .flattenAll => do
+      | .singleNumeric => do
         let numbers <- collectSingleAtomicNumbers b 0 collected.flattenedItems
-        pure (some (.flattened numbers))
-      | .singleNumeric, .preservePerInput => do
-        let numbers <- collectSingleAtomicNumbersPerInput b 0 collected.perInputItems
-        pure (some (.perInput numbers))
-    pure { collected := collected, numericItems := numericItems }
+        pure (some numbers)
+    pure { collected := collected, numericItems? := numericItems }
 
   /-- Evaluate and prepare a sequence builtin's leading inputs according to the
       builtin metadata.
@@ -2322,9 +2297,29 @@ mutual
     let collected <- evalCountedSequenceInputs collectionArgs ctx env
     prepareSequenceBuiltinInput b metadata collected
 
-    partial def wholeNumberSequenceTrailingArgErrorContext
+    partial def sequenceBuiltinTrailingArgRequirementDesc
+      (kind : SequenceBuiltinTrailingArgKind) : String :=
+    match kind with
+    | .algorithm => "an algorithm"
+    | .value => "exactly one value"
+    | .wholeNumber => "exactly one whole-number value"
+
+    partial def sequenceBuiltinTrailingArgKindDesc
+      (kind : SequenceBuiltinTrailingArgKind) : String :=
+    match kind with
+    | .algorithm => "algorithm"
+    | .value => "value"
+    | .wholeNumber => "whole-number value"
+
+    partial def sequenceBuiltinTrailingArgErrorContext
       (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor) : String :=
-    s!"{builtinDisplayName b} {descriptor.label} must be exactly one whole-number value"
+    s!"{builtinDisplayName b} {descriptor.label} must be {sequenceBuiltinTrailingArgRequirementDesc descriptor.kind}"
+
+    partial def internalSequenceBuiltinTrailingArgMetadataError
+      (b : Builtin) (detail : String) : EvalM α :=
+    .error (Error.withContext
+      s!"internal sequence metadata for {builtinDisplayName b} {detail}"
+      Error.badArity)
 
     partial def evalPreparedSequenceBuiltinTrailingArg
       (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
@@ -2343,9 +2338,12 @@ mutual
         pure (.wholeNumber number)
       | none =>
         .error (Error.withContext
-          (wholeNumberSequenceTrailingArgErrorContext b descriptor)
+          (sequenceBuiltinTrailingArgErrorContext b descriptor)
           Error.badArity)
 
+    /-- Shared trailing-argument preparation path for sequence builtins.
+        Metadata stays the source of truth for trailing count and kinds; the
+        typed expect helpers below extract prepared values by index. -/
     partial def evalPreparedSequenceBuiltinTrailingArgs
       (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
       (args : List Algorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -2358,33 +2356,61 @@ mutual
       let tail <- evalPreparedSequenceBuiltinTrailingArgs b restDescriptors restArgs ctx env
       pure (preparedArg :: tail)
     | _, _ =>
-      .error (Error.withContext
-        s!"internal sequence metadata for {builtinDisplayName b} mismatched trailing arguments"
-        Error.badArity)
+      internalSequenceBuiltinTrailingArgMetadataError b "mismatched trailing arguments"
+
+    partial def expectPreparedSequenceBuiltinTrailingArgAt
+      (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
+      (args : List PreparedSequenceBuiltinTrailingArg) (index : Nat)
+      (expectedKind : SequenceBuiltinTrailingArgKind)
+      (projector : SequenceBuiltinTrailingArgDescriptor -> PreparedSequenceBuiltinTrailingArg -> EvalM α)
+      : EvalM α := do
+    if descriptors.length != args.length then
+      internalSequenceBuiltinTrailingArgMetadataError b "mismatched trailing arguments"
+    else
+      match List.drop index descriptors, List.drop index args with
+      | descriptor :: _, arg :: _ =>
+          if descriptor.kind = expectedKind then
+            projector descriptor arg
+          else
+            internalSequenceBuiltinTrailingArgMetadataError b
+              s!"expected trailing argument {index + 1} ({descriptor.label}) to have metadata kind {sequenceBuiltinTrailingArgKindDesc expectedKind}, but found {sequenceBuiltinTrailingArgKindDesc descriptor.kind}"
+      | _, _ =>
+          internalSequenceBuiltinTrailingArgMetadataError b
+            s!"expected trailing argument {index + 1} to have metadata kind {sequenceBuiltinTrailingArgKindDesc expectedKind}"
+
+    partial def expectPreparedSequenceBuiltinAlgorithmTrailingArg
+      (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
+      (args : List PreparedSequenceBuiltinTrailingArg) (index : Nat) : EvalM Algorithm :=
+    expectPreparedSequenceBuiltinTrailingArgAt b descriptors args index .algorithm fun descriptor arg =>
+      match arg with
+      | .algorithm algorithm => pure algorithm
+      | _ =>
+          internalSequenceBuiltinTrailingArgMetadataError b
+            s!"prepared trailing argument {index + 1} ({descriptor.label}) did not match metadata kind {sequenceBuiltinTrailingArgKindDesc .algorithm}"
 
     partial def expectPreparedSequenceBuiltinWholeNumberTrailingArg
-      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
-      : PreparedSequenceBuiltinTrailingArg -> EvalM Int
-    | .wholeNumber number =>
-      pure number
-    | _ =>
-      .error (Error.withContext
-        (wholeNumberSequenceTrailingArgErrorContext b descriptor)
-        Error.badArity)
+      (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
+      (args : List PreparedSequenceBuiltinTrailingArg) (index : Nat) : EvalM Int :=
+    expectPreparedSequenceBuiltinTrailingArgAt b descriptors args index .wholeNumber fun descriptor arg =>
+      match arg with
+      | .wholeNumber number => pure number
+      | _ =>
+          internalSequenceBuiltinTrailingArgMetadataError b
+            s!"prepared trailing argument {index + 1} ({descriptor.label}) did not match metadata kind {sequenceBuiltinTrailingArgKindDesc .wholeNumber}"
 
     partial def expectPreparedSequenceBuiltinValueTrailingArg
-      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
-      : PreparedSequenceBuiltinTrailingArg -> EvalM Result
-    | .value value =>
-      pure value
-    | _ =>
-      .error (Error.withContext
-        s!"{builtinDisplayName b} {descriptor.label} must be exactly one value"
-        Error.badArity)
+      (b : Builtin) (descriptors : List SequenceBuiltinTrailingArgDescriptor)
+      (args : List PreparedSequenceBuiltinTrailingArg) (index : Nat) : EvalM Result :=
+    expectPreparedSequenceBuiltinTrailingArgAt b descriptors args index .value fun descriptor arg =>
+      match arg with
+      | .value value => pure value
+      | _ =>
+          internalSequenceBuiltinTrailingArgMetadataError b
+            s!"prepared trailing argument {index + 1} ({descriptor.label}) did not match metadata kind {sequenceBuiltinTrailingArgKindDesc .value}"
 
-  partial def expectPreparedFlattenedNumericItems (b : Builtin)
+  partial def expectPreparedNumericItems (b : Builtin)
       (prepared : PreparedSequenceBuiltinInput) : EvalM (List Int) :=
-    match prepared.flattenedNumericItems? with
+    match prepared.numericItems? with
     | some numbers => pure numbers
     | none =>
         .error (Error.withContext
@@ -2656,88 +2682,86 @@ mutual
           (k : List Result -> EvalM CountedResult) : EvalM CountedResult := do
         let prepared <- evalPreparedSequenceBuiltinInput b metadata collectionArgs ctx env
         k prepared.flattenedItems
-      let withPreparedFlatNumericItems (collectionArgs : List Algorithm)
+      let withPreparedNumericItems (collectionArgs : List Algorithm)
           (k : List Int -> EvalM CountedResult) : EvalM CountedResult := do
         let prepared <- evalPreparedSequenceBuiltinInput b metadata collectionArgs ctx env
-        k (<- expectPreparedFlattenedNumericItems b prepared)
-      let withPreparedSingleWholeNumberTrailingArg (trailingArgs : List Algorithm)
-          (k : Int -> EvalM CountedResult) : EvalM CountedResult := do
+        k (<- expectPreparedNumericItems b prepared)
+      let withPreparedTrailingArgs (trailingArgs : List Algorithm)
+          (k : List PreparedSequenceBuiltinTrailingArg -> EvalM CountedResult) : EvalM CountedResult := do
         let preparedTrailingArgs <-
           evalPreparedSequenceBuiltinTrailingArgs b metadata.trailingArgs trailingArgs ctx env
-        match metadata.trailingArgs, preparedTrailingArgs with
-        | [descriptor], [preparedTrailingArg] =>
-            let count <- expectPreparedSequenceBuiltinWholeNumberTrailingArg b descriptor preparedTrailingArg
-            k count
-        | _, _ =>
-            .error (Error.withContext
-              s!"internal sequence metadata for {builtinDisplayName b} mismatched whole-number trailing arguments"
-              Error.badArity)
-      let withPreparedSingleValueTrailingArg (trailingArgs : List Algorithm)
-          (k : Result -> EvalM CountedResult) : EvalM CountedResult := do
-        let preparedTrailingArgs <-
-          evalPreparedSequenceBuiltinTrailingArgs b metadata.trailingArgs trailingArgs ctx env
-        match metadata.trailingArgs, preparedTrailingArgs with
-        | [descriptor], [preparedTrailingArg] =>
-            let value <- expectPreparedSequenceBuiltinValueTrailingArg b descriptor preparedTrailingArg
-            k value
-        | _, _ =>
-            .error (Error.withContext
-              s!"internal sequence metadata for {builtinDisplayName b} mismatched value trailing arguments"
-              Error.badArity)
+        k preparedTrailingArgs
       applySequenceBuiltinCounted b metadata args fun collectionArgs trailingArgs =>
-        match b, trailingArgs with
-        | .filterBuiltin, [predicateAlg] =>
-            withPreparedFlatItems collectionArgs fun items =>
-              evalFilterCounted items predicateAlg ctx env
-        | .mapBuiltin, [transformAlg] =>
-            withPreparedFlatItems collectionArgs fun items =>
-              evalMapCounted items transformAlg ctx env
-        | .orderBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        match b with
+        | .filterBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let predicateAlg <-
+                expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
+              withPreparedFlatItems collectionArgs fun items =>
+                evalFilterCounted items predicateAlg ctx env
+        | .mapBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let transformAlg <-
+                expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
+              withPreparedFlatItems collectionArgs fun items =>
+                evalMapCounted items transformAlg ctx env
+        | .orderBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalOrderCounted numbers
-        | .orderDescBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        | .orderDescBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalOrderDescCounted numbers
-        | .countBuiltin, [] =>
+        | .countBuiltin =>
             withPreparedFlatItems collectionArgs fun items =>
               evalCountCounted items
-        | .containsBuiltin, [_] =>
-            withPreparedSingleValueTrailingArg trailingArgs fun searched =>
+        | .containsBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let searched <-
+                expectPreparedSequenceBuiltinValueTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
               withPreparedFlatItems collectionArgs fun items =>
                 evalContainsCounted items searched
-        | .distinctBuiltin, [] =>
+        | .distinctBuiltin =>
             withPreparedFlatItems collectionArgs fun items =>
               evalDistinctCounted items
-        | .firstBuiltin, [] =>
+        | .firstBuiltin =>
             withPreparedFlatItems collectionArgs fun items =>
               evalFirstCounted items
-        | .lastBuiltin, [] =>
+        | .lastBuiltin =>
             withPreparedFlatItems collectionArgs fun items =>
               evalLastCounted items
-        | .takeBuiltin, [_] =>
-            withPreparedSingleWholeNumberTrailingArg trailingArgs fun count =>
+        | .takeBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let count <-
+                expectPreparedSequenceBuiltinWholeNumberTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
               withPreparedFlatItems collectionArgs fun items =>
                 evalTakeCounted items count
-        | .skipBuiltin, [_] =>
-            withPreparedSingleWholeNumberTrailingArg trailingArgs fun count =>
+        | .skipBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let count <-
+                expectPreparedSequenceBuiltinWholeNumberTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
               withPreparedFlatItems collectionArgs fun items =>
                 evalSkipCounted items count
-        | .minBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        | .minBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalMinCounted numbers
-        | .maxBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        | .maxBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalMaxCounted numbers
-        | .sumBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        | .sumBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalSumCounted numbers
-        | .avgBuiltin, [] =>
-            withPreparedFlatNumericItems collectionArgs fun numbers =>
+        | .avgBuiltin =>
+            withPreparedNumericItems collectionArgs fun numbers =>
               evalAvgCounted numbers
-        | .reduceBuiltin, [stepAlg, initialAlg] =>
-            withPreparedFlatItems collectionArgs fun items =>
-              evalReduceCounted items stepAlg initialAlg ctx env
-        | _, _ =>
+        | .reduceBuiltin =>
+            withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
+              let stepAlg <-
+                expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
+              let initialAlg <-
+                expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 1
+              withPreparedFlatItems collectionArgs fun items =>
+                evalReduceCounted items stepAlg initialAlg ctx env
+        | _ =>
             .error (builtinArityError b args.length)
 
   /-- Builtin application with counted output shape.
@@ -2953,16 +2977,33 @@ mutual
   /-- Sequence builtins in dot-call form consume the receiver's own counted
       top-level items.
 
-      The receiver expression is evaluated once, its counted top-level items
-      are reified as one ordinary leading argument per item, and any extra
-      dot-call arguments still follow the plain-call argument path.
+      A direct inline receiver block first exposes its inner algorithm output
+      count, which strips exactly one receiver-scoping block layer for forms
+      like `(1, 2, 3).take(2)` while still keeping `((1, 2, 3)).take(2)` and
+      named grouped helpers grouped.
+
+      The receiver expression is then evaluated once, its counted top-level
+      items are reified as one ordinary leading argument per item, and any
+      extra dot-call arguments still follow the plain-call argument path.
 
       This keeps plain-call boundary preservation unchanged while making
       `receiver.builtin(...)` operate on the same top-level collection that
       `receiver:i` and higher-order callback projection observe. -/
+  partial def evalSequenceBuiltinDotReceiverCounted (receiver : Expr) (ctx : EvalCtx)
+      (env : ValEnv) : EvalM CountedResult := do
+    match receiver with
+    | .block a =>
+        let wired := wireToCaller ctx a
+        if (Algorithm.params wired).length = 0 then
+          evalAlgOutputCounted wired ctx env
+        else
+          evalCounted receiver ctx env
+    | _ =>
+        evalCounted receiver ctx env
+
   partial def sequenceBuiltinDotReceiverArgs (receiver : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM (List Algorithm) := do
-    let receiverOut <- evalCounted receiver ctx env
+    let receiverOut <- evalSequenceBuiltinDotReceiverCounted receiver ctx env
     pure (countedTopLevelItemAlgorithms receiverOut)
 
   partial def trySequenceBuiltinDotCall

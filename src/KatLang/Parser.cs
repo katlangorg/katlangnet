@@ -1293,8 +1293,6 @@ public sealed class Parser
     // This allows:
     //   while(Step, x, 0)       → while(Step, block([x, 0]))
     //   repeat(Step, n, x, 0)   → repeat(Step, n, block([x, 0]))
-    //   take(3, a, b, c)        → take(a, b, c, 3)
-    //   skip(2, a, b, c)        → skip(a, b, c, 2)
     // This rewriting is safe here because the callee is a known resolve name.
     // For dotCall (e.g. Step.while(x, 0)) the packaging must happen later in
     // the evaluator, after structural property lookup confirms no shadowing.
@@ -1332,14 +1330,6 @@ public sealed class Parser
             // repeat(step, count, s1, s2, ..., sk) → repeat(step, count, block([s1..sk]))
             var initExprs = args.Output.Skip(2).ToList();
             var newOutput = new List<Expr> { args.Output[0], args.Output[1], MakeInitBlock(initExprs) };
-            return args with { Output = newOutput };
-        }
-
-        if (name is "take" or "skip" && count >= 2)
-        {
-            // take(count, x1, x2, ..., xk) → take(x1, x2, ..., xk, count)
-            // skip(count, x1, x2, ..., xk) → skip(x1, x2, ..., xk, count)
-            var newOutput = args.Output.Skip(1).Append(args.Output[0]).ToList();
             return args with { Output = newOutput };
         }
 
