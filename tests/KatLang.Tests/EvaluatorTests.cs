@@ -2075,6 +2075,46 @@ public class EvaluatorTests
         AssertEval(source, 5, 5);
     }
 
+    // ── Contains builtin ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Eval_Contains_OrdinaryBuiltinCall_FindsRangeElement()
+        => AssertEval("contains(range(1, 5), 3)", 1);
+
+    [Fact]
+    public void Eval_Contains_OrdinaryBuiltinCall_ReturnsZeroWhenAbsent()
+        => AssertEval("contains(range(1, 5), 9)", 0);
+
+    [Fact]
+    public void Eval_Contains_DotCall_MatchesPlainCallReceiverSemantics()
+        => AssertEval("range(1, 5).contains(4)", 1);
+
+    [Fact]
+    public void Eval_Contains_GroupedItem_UsesOrdinaryValueEquality()
+        => AssertEval("contains((1, 2), (1, 2))", 1);
+
+    [Fact]
+    public void Eval_Contains_DoesNotSearchInsideNestedGroupedMembers()
+        => AssertEval("contains(((1, 2), (3, 4)), (1, 2))", 0);
+
+    [Fact]
+    public void Eval_Contains_ProjectedSelection_PlainAndDotCallAgree()
+    {
+        var source = """
+            Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
+            contains(Data:0, 4)
+            (Data:0).contains(4)
+            """;
+
+        AssertEval(source, 1, 1);
+    }
+
+    [Fact]
+    public void Eval_Contains_ArityMismatch_RequiresSequenceAndItem()
+        => AssertArityMismatchMessage(
+            "contains(1)",
+            "expected at least 2 arguments (one or more sequence arguments plus item)");
+
     // ── First/last builtins ────────────────────────────────────────────────
 
     [Fact]

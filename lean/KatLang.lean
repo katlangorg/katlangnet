@@ -147,7 +147,7 @@ inductive UnaryOp where
   deriving Repr
 
 inductive Builtin where
-  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | firstBuiltin | lastBuiltin | distinctBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | containsBuiltin | firstBuiltin | lastBuiltin | distinctBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   deriving Repr, BEq, DecidableEq
 
 structure SequenceBuiltinLeadingArity where
@@ -225,6 +225,9 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
       itemShapeConstraint := .singleNumeric
     }
   | .countBuiltin => some {
+    }
+  | .containsBuiltin => some {
+      trailingArgs := [{ label := "item", kind := .value }]
     }
   | .firstBuiltin => some {
       emptyPolicy := .requireAnyItem
@@ -355,6 +358,7 @@ def builtinDisplayName : Builtin -> String
   | .orderBuiltin => "order"
   | .orderDescBuiltin => "orderDesc"
   | .countBuiltin => "count"
+  | .containsBuiltin => "contains"
   | .firstBuiltin => "first"
   | .lastBuiltin => "last"
   | .distinctBuiltin => "distinct"
@@ -2330,6 +2334,16 @@ mutual
         (wholeNumberSequenceTrailingArgErrorContext b descriptor)
         Error.badArity)
 
+    partial def expectPreparedSequenceBuiltinValueTrailingArg
+      (b : Builtin) (descriptor : SequenceBuiltinTrailingArgDescriptor)
+      : PreparedSequenceBuiltinTrailingArg -> EvalM Result
+    | .value value =>
+      pure value
+    | _ =>
+      .error (Error.withContext
+        s!"{builtinDisplayName b} {descriptor.label} must be exactly one value"
+        Error.badArity)
+
   partial def expectPreparedFlattenedNumericItems (b : Builtin)
       (prepared : PreparedSequenceBuiltinInput) : EvalM (List Int) :=
     match prepared.flattenedNumericItems? with
@@ -2445,6 +2459,16 @@ mutual
       collections return `0`. -/
   partial def evalCountCounted (items : List Result) : EvalM CountedResult := do
     pure (Result.atom (Int.ofNat items.length), 1)
+
+  /-- Evaluate `contains` over one or more leading sequence arguments.
+      `contains` checks whether any extracted top-level item equals the searched
+      item using ordinary KatLang value equality.
+
+      Search is top-level only: grouped values compare as grouped values and are
+      not recursively flattened or inspected. Empty collections return `0`. -/
+  partial def evalContainsCounted (items : List Result) (searched : Result) : EvalM CountedResult := do
+    let found := items.any (fun item => item == searched)
+    pure (Result.atom (if found then 1 else 0), 1)
 
   /-- Evaluate `distinct` over one or more leading sequence arguments.
       `distinct` removes later duplicate top-level items while preserving the
@@ -2610,6 +2634,18 @@ mutual
             .error (Error.withContext
               s!"internal sequence metadata for {builtinDisplayName b} mismatched whole-number trailing arguments"
               Error.badArity)
+      let withPreparedSingleValueTrailingArg (trailingArgs : List Algorithm)
+          (k : Result -> EvalM CountedResult) : EvalM CountedResult := do
+        let preparedTrailingArgs <-
+          evalPreparedSequenceBuiltinTrailingArgs b metadata.trailingArgs trailingArgs ctx env
+        match metadata.trailingArgs, preparedTrailingArgs with
+        | [descriptor], [preparedTrailingArg] =>
+            let value <- expectPreparedSequenceBuiltinValueTrailingArg b descriptor preparedTrailingArg
+            k value
+        | _, _ =>
+            .error (Error.withContext
+              s!"internal sequence metadata for {builtinDisplayName b} mismatched value trailing arguments"
+              Error.badArity)
       applySequenceBuiltinCounted b metadata args fun collectionArgs trailingArgs =>
         match b, trailingArgs with
         | .filterBuiltin, [predicateAlg] =>
@@ -2627,6 +2663,10 @@ mutual
         | .countBuiltin, [] =>
             withPreparedFlatItems collectionArgs fun items =>
               evalCountCounted items
+        | .containsBuiltin, [_] =>
+            withPreparedSingleValueTrailingArg trailingArgs fun searched =>
+              withPreparedFlatItems collectionArgs fun items =>
+                evalContainsCounted items searched
         | .distinctBuiltin, [] =>
             withPreparedFlatItems collectionArgs fun items =>
               evalDistinctCounted items
@@ -3637,6 +3677,7 @@ def preludeAlg : Algorithm :=
     , publicProp "order" (Algorithm.builtin .orderBuiltin)
     , publicProp "orderDesc" (Algorithm.builtin .orderDescBuiltin)
     , publicProp "count" (Algorithm.builtin .countBuiltin)
+    , publicProp "contains" (Algorithm.builtin .containsBuiltin)
     , publicProp "first" (Algorithm.builtin .firstBuiltin)
     , publicProp "last" (Algorithm.builtin .lastBuiltin)
     , publicProp "distinct" (Algorithm.builtin .distinctBuiltin)

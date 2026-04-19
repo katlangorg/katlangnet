@@ -7,7 +7,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, First, Last, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Contains, First, Last, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -1896,6 +1896,19 @@ public static class Evaluator
             new EvalError.BadArity());
     }
 
+    private static EvalResult<Result> ExpectPreparedValueTrailingArg(
+        BuiltinId builtin,
+        SequenceBuiltinTrailingArgDescriptor descriptor,
+        PreparedSequenceBuiltinTrailingArg arg)
+    {
+        if (arg is PreparedSequenceBuiltinTrailingArg.ValueArg(var value))
+            return EvalResult<Result>.Ok(value);
+
+        return new EvalError.WithContext(
+            $"{BuiltinDisplayName(builtin)} {descriptor.Label} must be exactly one value",
+            new EvalError.BadArity());
+    }
+
     private static EvalResult<IReadOnlyList<decimal>> ExpectPreparedFlattenedNumericItems(
         BuiltinId builtin,
         PreparedSequenceBuiltinInput prepared)
@@ -1951,6 +1964,20 @@ public static class Evaluator
     private static EvalResult<CountedResult> EvalCountCounted(
         IReadOnlyList<Result> items)
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(items.Count), 1));
+
+    /// <summary>
+    /// Evaluate <c>contains</c> over one or more leading sequence arguments by
+    /// checking whether any extracted top-level item equals the searched item
+    /// under ordinary KatLang value semantics.
+    /// Search is top-level only: grouped values compare structurally as grouped
+    /// items and are not searched recursively.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalContainsCounted(
+        IReadOnlyList<Result> items,
+        Result searchedItem)
+        => EvalResult<CountedResult>.Ok(new CountedResult(
+            new Result.Atom(items.Any(item => Result.ValueComparer.Equals(item, searchedItem)) ? 1 : 0),
+            1));
 
     /// <summary>
     /// Evaluate <c>distinct</c> over one or more leading sequence arguments by
@@ -2213,6 +2240,34 @@ public static class Evaluator
             return handler(countR.Value);
         }
 
+        EvalResult<CountedResult> WithPreparedSingleValueTrailingArg(
+            IReadOnlyList<Algorithm> trailingArgs,
+            Func<Result, EvalResult<CountedResult>> handler)
+        {
+            var preparedArgsR = EvalPreparedSequenceBuiltinTrailingArgs(
+                builtin,
+                metadata.TrailingArgs,
+                trailingArgs,
+                ctx,
+                valEnv);
+            if (preparedArgsR.IsError) return preparedArgsR.Error;
+
+            if (metadata.TrailingArgs.Count != 1 || preparedArgsR.Value.Count != 1)
+            {
+                return new EvalError.WithContext(
+                    $"internal sequence metadata for {BuiltinDisplayName(builtin)} mismatched value trailing arguments",
+                    new EvalError.BadArity());
+            }
+
+            var valueR = ExpectPreparedValueTrailingArg(
+                builtin,
+                metadata.TrailingArgs[0],
+                preparedArgsR.Value[0]);
+            if (valueR.IsError) return valueR.Error;
+
+            return handler(valueR.Value);
+        }
+
         return ApplySequenceBuiltinCounted(
             builtin,
             metadata,
@@ -2224,6 +2279,7 @@ public static class Evaluator
                 (BuiltinId.@order, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderCounted),
                 (BuiltinId.@orderDesc, 0) => WithPreparedFlatNumericItems(collectionArgs, EvalOrderDescCounted),
                 (BuiltinId.@count, 0) => WithPreparedFlatItems(collectionArgs, EvalCountCounted),
+                (BuiltinId.@contains, 1) => WithPreparedSingleValueTrailingArg(trailingArgs, searchedItem => WithPreparedFlatItems(collectionArgs, items => EvalContainsCounted(items, searchedItem))),
                 (BuiltinId.@distinct, 0) => WithPreparedFlatItems(collectionArgs, EvalDistinctCounted),
                 (BuiltinId.@first, 0) => WithPreparedFlatItems(collectionArgs, EvalFirstCounted),
                 (BuiltinId.@last, 0) => WithPreparedFlatItems(collectionArgs, EvalLastCounted),
@@ -2423,6 +2479,7 @@ public static class Evaluator
             new("order",  new Algorithm.Builtin(BuiltinId.@order),  IsPublic: true),
             new("orderDesc", new Algorithm.Builtin(BuiltinId.@orderDesc), IsPublic: true),
             new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
+            new("contains", new Algorithm.Builtin(BuiltinId.@contains), IsPublic: true),
             new("first",  new Algorithm.Builtin(BuiltinId.@first),  IsPublic: true),
             new("last",   new Algorithm.Builtin(BuiltinId.@last),   IsPublic: true),
             new("distinct", new Algorithm.Builtin(BuiltinId.@distinct), IsPublic: true),
@@ -2453,6 +2510,9 @@ public static class Evaluator
 
     private static readonly SequenceBuiltinMetadata CountSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+
+    private static readonly SequenceBuiltinMetadata ContainsSequenceBuiltinMetadata =
+        new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [new("item", SequenceBuiltinTrailingArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata FirstSequenceBuiltinMetadata =
         new(OneOrMoreSequenceArguments, SequenceBuiltinBoundaryPolicy.FlattenAll, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
@@ -2491,6 +2551,7 @@ public static class Evaluator
         BuiltinId.@order => OrderSequenceBuiltinMetadata,
         BuiltinId.@orderDesc => OrderDescSequenceBuiltinMetadata,
         BuiltinId.@count => CountSequenceBuiltinMetadata,
+        BuiltinId.@contains => ContainsSequenceBuiltinMetadata,
         BuiltinId.@first => FirstSequenceBuiltinMetadata,
         BuiltinId.@last => LastSequenceBuiltinMetadata,
         BuiltinId.@distinct => DistinctSequenceBuiltinMetadata,
@@ -2516,6 +2577,7 @@ public static class Evaluator
         BuiltinId.@order => "order",
         BuiltinId.@orderDesc => "orderDesc",
         BuiltinId.@count => "count",
+        BuiltinId.@contains => "contains",
         BuiltinId.@first => "first",
         BuiltinId.@last => "last",
         BuiltinId.@distinct => "distinct",

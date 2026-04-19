@@ -2705,6 +2705,97 @@ def test110 : Bool :=
 
 #eval test110  -- should be true
 
+-- Test 110a: ordinary builtin-call contains finds an element in a range
+def test110a : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "contains") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+      .num 3
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test110a  -- should be true
+
+-- Test 110b: contains returns zero when no top-level item matches
+def test110b : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "contains") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+      .num 9
+    ])
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test110b  -- should be true
+
+-- Test 110c: dot-call contains matches plain-call receiver semantics
+def test110c : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      "contains"
+      (some (alg [] [] [] [.num 4]))
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test110c  -- should be true
+
+-- Test 110d: contains compares grouped top-level items structurally
+def test110d : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "contains") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 1, .num 2])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test110d  -- should be true
+
+-- Test 110e: contains searches top-level items only, not nested grouped members
+def test110e : Bool :=
+  let groupedPairs := .block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "contains") (alg [] [] [] [
+      groupedPairs,
+      .block (alg [] [] [] [.num 1, .num 2])
+    ])
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test110e  -- should be true
+
+-- Test 110f: selection-projected content follows the same contains rules in both call styles
+def containsProjectionRoot110f : Algorithm :=
+  algPrivate [] [] [
+    ("Data", alg [] [] [] [
+      .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
+      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
+    ])
+  ] [
+    .call (resolve "contains") (alg [] [] [] [
+      .index (.resolve "Data") (.num 0),
+      .num 4
+    ]),
+    .dotCall (.index (.resolve "Data") (.num 0)) "contains" (some (alg [] [] [] [.num 4]))
+  ]
+
+def test110f : Bool :=
+  match runFlat (.block containsProjectionRoot110f) with
+  | Except.ok [1, 1] => true
+  | _ => false
+
+#eval test110f  -- should be true
+
 --------------------------------------------------------------------------------
 -- min builtin tests
 --------------------------------------------------------------------------------

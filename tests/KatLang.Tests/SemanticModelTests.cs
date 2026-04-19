@@ -441,6 +441,32 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_ContainsOnGroupedPropertyReceiver_UsesBuiltinFallback()
+    {
+        var model = BuildModel(
+            """
+            Values = (1, 2, 3)
+            Values.contains(2)
+            """);
+
+        var valuesDeclaration = Assert.Single(model.FindDeclarations("Values"));
+        AssertSpan(valuesDeclaration.Span, 1, 1, 1, 6);
+
+        var valuesReference = ResolutionAt(model, 2, 1);
+        Assert.Equal(OccurrenceKind.ResolveReference, valuesReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, valuesReference.Classification);
+        Assert.Equal(valuesDeclaration, valuesReference.ResolvedDeclaration);
+
+        var containsReference = ResolutionAt(model, 2, 8);
+        Assert.Equal(OccurrenceKind.DotMemberReference, containsReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Builtin, containsReference.Classification);
+        Assert.Null(containsReference.ResolvedDeclaration);
+        Assert.NotNull(containsReference.ResolvedProperty);
+        Assert.Equal(PropertyShape.Builtin, containsReference.ResolvedProperty!.Shape);
+        Assert.Equal(["items...", "item"], containsReference.ResolvedProperty.Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_DotCall_TakeOnIndexedReceiver_UsesBuiltinFallback()
     {
         var model = BuildModel(

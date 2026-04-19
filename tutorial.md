@@ -28,6 +28,7 @@
     - [Selection: `filter`](#selection-filter)
     - [Mapping: `map`](#mapping-map)
     - [Counting: `count`](#counting-count)
+    - [Membership: `contains`](#membership-contains)
     - [First Element: `first`](#first-element-first)
     - [Last Element: `last`](#last-element-last)
     - [Distinct: `distinct`](#distinct-distinct)
@@ -930,7 +931,7 @@ With that rule, `map((1, 2), Swap)` and `Values = (1, 2); map(Values, Swap)` eac
 
 ### Sequence Inputs
 
-`filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
+`filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, and `reduce` all consume top-level items.
 
 - They always consume counted top-level items emitted by each direct sequence argument
 - The same extraction rule applies whether there is one plain sequence argument or many
@@ -943,6 +944,7 @@ With that rule, `map((1, 2), Swap)` and `Values = (1, 2); map(Values, Swap)` eac
 - `:` already projects one level of selected content before those ordinary sequence rules apply. For example, `Pairs = (1, 2), (3, 4)` gives `count(Pairs:0) = 2` and `(Pairs:0).count = 2`, while `Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))` gives `count(Bags:0) = 2` and `sum(Bags:0)` is invalid because the projected items are still grouped.
 - Higher-order dot-calls do not get a separate auto-expansion rule, but each callback item still behaves like `S:i` for the traversed sequence `S`. For example, with `HasFourAtoms(item) = count(atoms(item)) == 4`, `TopLevelItemCount(item) = count(item)`, and `AddTopLevelItemCount(item, acc) = count(item) + acc`, the named grouped receiver `Pairs = ((1, 2), (3, 4))` gives `Pairs.filter(HasFourAtoms).count = 1`, `Pairs.map(TopLevelItemCount).sum = 2`, and `Pairs.reduce(AddTopLevelItemCount, 0) = 2`. By contrast, the direct receiver expression `((1, 2), (3, 4))` normalizes to two top-level items, so `((1, 2), (3, 4)).filter(HasFourAtoms).count = 0`, `((1, 2), (3, 4)).map(TopLevelItemCount).sum = 4`, and `((1, 2), (3, 4)).reduce(AddTopLevelItemCount, 0) = 4`. Indexed grouped selection already has that projected shape, so `(Bags:0).filter(HasFourAtoms).count = 0`, `(Bags:0).map(TopLevelItemCount).sum = 4`, and `(Bags:0).reduce(AddTopLevelItemCount, 0) = 4`.
 - Nested grouped values are not recursively flattened unless a builtin explicitly says so, such as `atoms`; `((1, 2), (3, 4)).sum`, `Values = (1, 2, 3); Values.sum`, and `Values = ((1, 2), (3, 4)); Values.order` remain invalid
+- `contains` compares its final searched item against those extracted top-level items using the same ordinary KatLang value semantics as `distinct`; it does not recurse into nested grouped members
 - `distinct` compares those extracted top-level items using ordinary KatLang value semantics: atoms by numeric value, strings by exact string value, and grouped values structurally by grouped contents
 - `take` and `skip` keep their count first in direct-call surface syntax (`take(2, Values)` / `skip(2, Values)`), but they still consume the same extracted top-level items as the other sequence builtins
 
@@ -1046,6 +1048,38 @@ count((1, 2), (3, 4))
 
 `count(5)` and `count('hello')` both return `1`, because an atomic value is treated as a one-element collection.
 `count((1, 2, 3))` also returns `1`, and `Values = (1, 2, 3); count(Values)` does the same because the grouped wrapper output is still one top-level item in plain-call form. The same is true for `Values = (1, 2, 3); Values.count` and `((1, 2, 3)).count`, both of which return `1`. By contrast, `Values = 1, 2, 3; Values.count`, `(1, 2, 3).count`, and `Values = 1, 2, 3; count(Values)` all return `3`. Selection is different: `Pairs = (1, 2), (3, 4); count(Pairs:0)` and `(Pairs:0).count` both return `2`, because `:` projects the selected grouped item's immediate content one level.
+
+### Membership: `contains`
+
+`contains(...items, item)` returns `1` when any extracted top-level sequence item equals `item`, otherwise `0`.
+
+- Comparison uses ordinary KatLang value equality
+- Atoms compare by numeric value, strings by exact string value, and grouped values structurally by grouped contents
+- Search is top-level only; nested grouped members are not searched recursively
+- Empty collections return `0`
+
+Both call styles are supported: `contains(...items, item)` and `collection.contains(item)`.
+
+```
+contains(range(1, 5), 3)
+
+contains((1, 2), (1, 2))
+
+Pairs = (1, 2), (3, 4)
+Pairs.contains((1, 2))
+```
+
+**Results:**
+```
+1
+
+1
+
+1
+```
+
+`contains(range(1, 5), 9)` returns `0` because no top-level item equals `9`.
+`contains(((1, 2), (3, 4)), (1, 2))` also returns `0`: the only top-level item is the outer grouped value `((1, 2), (3, 4))`, so KatLang does not recurse into its nested grouped members to find `(1, 2)`. Selection still projects one level first, so with `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)`, both `contains(Data:0, 4)` and `(Data:0).contains(4)` return `1`.
 
 ### First Element: `first`
 
@@ -2021,6 +2055,7 @@ For the sequence builtins below, plain-call grouped arguments remain single item
 | `order` | `order(...items)` or `collection.order` — eagerly sort top-level numeric elements ascending; duplicates are preserved and grouped/string elements are invalid |
 | `orderDesc` | `orderDesc(...items)` or `collection.orderDesc` — eagerly sort top-level numeric elements descending; duplicates are preserved and grouped/string elements are invalid |
 | `count` | `count(...items)` or `collection.count` — denotational top-level value count after evaluation, without flattening grouped values |
+| `contains` | `contains(...items, item)` or `collection.contains(item)` — return `1` when any extracted top-level element equals `item` under ordinary KatLang value semantics, otherwise `0`; grouped values stay grouped and search is top-level only |
 | `first` | `first(...items)` or `collection.first` — return the first top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `last` | `last(...items)` or `collection.last` — return the last top-level element unchanged; grouped values stay grouped and the sequence must be non-empty |
 | `distinct` | `distinct(...items)` or `collection.distinct` — remove later duplicate top-level elements while preserving first-occurrence order; grouped values stay grouped and duplicate detection follows KatLang value semantics |

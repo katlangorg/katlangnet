@@ -1,5 +1,5 @@
 ---
-description: "Use when: the user wants to generate KatLang code, write KatLang programs, create KatLang algorithms, produce KatLang solutions, or translate a natural-language calculation task into KatLang syntax. Prefers collection builtins like range, filter, map, order, orderDesc, first, last, distinct, take, skip, reduce, count, sum, min, max, and avg when they fit. Accepts a task description and returns valid, runnable KatLang source code."
+description: "Use when: the user wants to generate KatLang code, write KatLang programs, create KatLang algorithms, produce KatLang solutions, or translate a natural-language calculation task into KatLang syntax. Prefers collection builtins like range, filter, map, order, orderDesc, count, contains, first, last, distinct, take, skip, reduce, sum, min, max, and avg when they fit. Accepts a task description and returns valid, runnable KatLang source code."
 tools: [read, search]
 ---
 
@@ -13,11 +13,11 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, never put explicit algorithm parameters on a container with no output, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
-- Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `count`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
+- Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
 - Construction preserves structure; selection projects content. `Pairs = (1, 2), (3, 4); Pairs:0` yields `1, 2`, while `Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8)); Bags:0` yields `(1, 2), (3, 4)`. Chained `:` repeats the same one-level projection step and never recursively flattens nested grouped members.
 - For sequence-consuming builtins in dot-call form, use the same algorithm-argument shape as plain calls after removing one outer receiver-scoping block layer. Inline receivers such as `(1, 2, 3).count`, `{1, 2, 3}.sum`, or `Values = 1, 2, 3; Values.order` therefore consume top-level items, while named grouped helpers such as `Values = (1, 2, 3); Values.count` or extra-paren receivers such as `((1, 2, 3)).count` stay grouped. Because `:` already projects one level of selected content, `count(Values:0)` and `(Values:0).count` should agree without any builtin-specific workaround. Do not assume any recursive flattening.
 - For `filter`, `map`, and `reduce`, keep that same top-level iteration structure, but bind each callback item as the same one-level projected view that `S:i` would produce. `filter` still keeps or discards the original top-level item, `reduce` leaves accumulator semantics unchanged, and nothing recursively flattens.
-- Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
+- Never use builtin or prelude algorithm names as implicit parameter names, local binders, or helper placeholders. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
 - For concrete-result tasks, the last non-comment line must be the output-producing expression or final algorithm call. Definitions may appear above it, but never instead of it.
@@ -621,6 +621,7 @@ Prefer collection builtins first when the task is fundamentally:
 - generating a numeric span
 - selecting elements by a predicate
 - transforming each element
+- checking whether a top-level collection item is present
 - selecting the first or last top-level collection element
 - removing later duplicates while preserving first occurrence order
 - sorting a collection while preserving duplicates
@@ -632,7 +633,7 @@ Builtin-first pipeline preference:
 2. Use `filter(...items, predicate)` or `collection.filter(predicate)` to keep top-level elements.
 3. Use `map(...items, transform)` or `collection.map(transform)` to transform top-level elements.
 4. Use `order(...items)` / `collection.order` or `orderDesc(...items)` / `collection.orderDesc` when the task is numeric sorting without removing duplicates.
-5. Use `distinct`, `first`, `last`, `take`, `skip`, `count`, `sum`, `min`, `max`, or `avg` as terminal selectors or aggregations when they match the requested result.
+5. Use `contains`, `distinct`, `first`, `last`, `take`, `skip`, `count`, `sum`, `min`, `max`, or `avg` as terminal selectors or aggregations when they match the requested result.
 6. Use `reduce(...items, step, initial)` only when the task is a true left fold that needs a custom accumulator.
 7. Drop to `repeat` or `while` only when the problem is genuinely stateful or not naturally expressible with the collection builtins.
 
@@ -668,9 +669,9 @@ Builtin-first pipeline preference:
 
 ### Sequence-Input Rule
 
-For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`, `min`, `max`, `sum`, `avg`, and `reduce`:
+For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `min`, `max`, `sum`, `avg`, and `reduce`:
 
-- Prefer direct multi-argument syntax when the items are already separate outputs: `order(3, 4, 2, 1)`, `first(a, b, c)`, `last(a, b, c)`, `distinct(a, b, a, c)`, `take(2, a, b, c)`, `skip(2, a, b, c)`, `sum(10, 20, 30)`
+- Prefer direct multi-argument syntax when the items are already separate outputs: `order(3, 4, 2, 1)`, `contains(a, b, c, target)`, `first(a, b, c)`, `last(a, b, c)`, `distinct(a, b, a, c)`, `take(2, a, b, c)`, `skip(2, a, b, c)`, `sum(10, 20, 30)`
 - `take` and `skip` are the count-first exact-syntax exceptions: use `take(count, ...items)` / `skip(count, ...items)` for direct calls, and `collection.take(count)` / `collection.skip(count)` for dot-calls
 - Sequence builtins always consume counted top-level items from each direct sequence argument; there is no special flattening rule for the 1-argument plain-call form
 - A helper that emits multiple top-level outputs can be passed directly as one argument and combined with other sequence arguments, for example `order(Values, 1, 3)` when `Values = 3, 4, 2`
@@ -678,6 +679,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`,
 - Construction preserves structure; selection projects content. `Values:0` projects one selected item one level, so grouped selections expose their immediate members and chained `:` repeats that same one-level rule without recursive flattening
 - In dot-call form, remove only one outer receiver-scoping block layer. `Values = 1, 2, 3; Values.order`, `(1, 2, 3).count`, and `{1, 2, 3}.sum` are valid, while `Values = (1, 2, 3); Values.order`, `Values.count`, `Values.sum`, and `((1, 2, 3)).count` keep the receiver grouped. Because `:` already projects content, `count(Values:0)` and `(Values:0).count` should match whenever both are valid
 - Higher-order dot-calls follow that same receiver-normalization rule, but each callback item still behaves like `S:i`. For example, `Pairs = ((1, 2), (3, 4)); Pairs.map(count)` runs once and yields `2`, while `((1, 2), (3, 4)).map(count)` runs twice and yields `2, 2`; analogous rules hold for `filter` and `reduce`
+- `contains` compares its final searched item against those extracted top-level items using ordinary KatLang value equality; it does not search recursively inside nested grouped members
 - Preserve parentheses when a grouped value itself is intended as one item, for example `first((1, 2), (3, 4))`
 - Do not generate `order((1, 2, 3))`, `order((1, 2), (3, 4))`, `Values = (1, 2, 3); Values.order`, `Values = (1, 2, 3); Values.sum`, `sum((1, 2), (3, 4))`, `Values = ((1, 2), (3, 4)); Values.sum`, or similar code expecting grouped arguments to be flattened recursively or by dot-call receiver normalization
 - Numeric ordering and aggregation builtins still require each resulting top-level item to be one atomic numeric value
@@ -705,6 +707,15 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `distinct`,
 - Grouped values stay whole; they are not flattened
 - Prefer direct multi-argument calls such as `first(a, b, c)` and `last(a, b, c)` over wrapping those outputs in an unnecessary helper group
 - `first((1, 2, 3))`, `Values = (1, 2, 3); first(Values)`, `Values = (1, 2, 3); Values.first`, and `Values = (1, 2, 3); Values.last` all keep that grouped value unchanged because it is still one top-level item; by contrast `Values = 1, 2, 3; Values.first` returns `1` and `Values = 1, 2, 3; Values.last` returns `3`
+
+### `contains`
+
+`contains(...items, item)` or `collection.contains(item)` returns `1` when any extracted top-level collection element equals `item`, otherwise `0`.
+
+- Use it when the task is membership testing over top-level collection elements
+- Equality follows ordinary KatLang value semantics: atoms by numeric value, strings by exact string value, and grouped values structurally by grouped contents
+- Search is top-level only; nested grouped members are not searched recursively
+- Empty collections return `0`
 
 ### `distinct`
 

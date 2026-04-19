@@ -794,6 +794,7 @@ public static class SemanticModelBuilder
                 "order" => ["items..."],
                 "orderDesc" => ["items..."],
                 "count" => ["items..."],
+                "contains" => ["items...", "item"],
                 "first" => ["items..."],
                 "last" => ["items..."],
                 "distinct" => ["items..."],

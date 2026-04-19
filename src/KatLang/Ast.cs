@@ -29,6 +29,10 @@ public enum UnaryOp { Minus, Not }
 /// <c>count(...items)</c> counts top-level sequence items left to right; each
 /// atom, string, or grouped value counts as one element, grouped values are
 /// not flattened, and empty collections return <c>0</c>.
+/// <c>contains(...items, item)</c> returns <c>1</c> when any top-level sequence
+/// item equals <c>item</c> under ordinary KatLang value equality, otherwise
+/// <c>0</c>; grouped values compare as grouped values and are not searched
+/// recursively.
 /// <c>order(...items)</c> sorts top-level numeric sequence items in ascending
 /// order; duplicates are preserved, grouped values are not flattened,
 /// strings are invalid, and empty collections stay empty.
@@ -71,7 +75,7 @@ public enum UnaryOp { Minus, Not }
 /// rule as <c>S:i</c>, <c>step(element, accumulator)</c> must return exactly
 /// one next accumulator value, and grouped accumulators are preserved whole.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
 
 // ── Source span ──────────────────────────────────────────────────────────────
 
