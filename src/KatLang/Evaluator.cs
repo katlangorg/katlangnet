@@ -1226,6 +1226,18 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Reify each counted top-level item as its own zero-parameter algorithm.
+    /// Sequence-builtin dot-call receivers use this so the receiver contributes
+    /// the top-level items it denotes, while each reified item still flows
+    /// through the ordinary leading-argument boundary rule when the builtin
+    /// runs.
+    /// </summary>
+    private static IReadOnlyList<Algorithm> CountedTopLevelItemAlgorithms(CountedResult arg)
+        => CountedTopLevelValues(arg)
+            .Select(item => CountedArgAlgorithm(new CountedResult(item, 1)))
+            .ToList();
+
+    /// <summary>
     /// Ordinary call-style unpacking for a pre-evaluated explicit callback
     /// argument. A final explicit arg may still unpack across the remaining
     /// parameters, matching <c>callee(S:i)</c>.
@@ -1481,6 +1493,30 @@ public static class Evaluator
         return items;
     }
 
+    /// <summary>
+    /// Sequence-builtin argument passing preserves the first-level boundary of
+    /// each leading argument expression.
+    /// Empty outputs become the empty grouped value, single outputs stay as-is,
+    /// and multi-output results become one grouped item.
+    /// </summary>
+    private static Result SequenceBuiltinArgumentItem(CountedResult output)
+        => Result.FromItems(CountedTopLevelValues(output));
+
+    /// <summary>
+    /// Direct <c>:</c> selections already project one level of content, so a
+    /// sequence builtin must preserve that explicit projection instead of
+    /// regrouping it at the argument boundary.
+    /// </summary>
+    private static bool SequenceBuiltinArgUsesProjectedContent(Algorithm arg)
+        => arg is Algorithm.User
+        {
+            Params.Count: 0,
+            Opens.Count: 0,
+            Properties.Count: 0,
+            Output.Count: 1,
+        }
+        && arg.Output[0] is Expr.Index;
+
     private static (IReadOnlyList<Algorithm> SequenceArgs, IReadOnlyList<Algorithm> TrailingArgs)? SplitSequenceBuiltinArgs(
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<Algorithm> args)
@@ -1516,12 +1552,14 @@ public static class Evaluator
 
     /// <summary>
     /// Evaluate the leading sequence arguments for a sequence builtin while
-    /// preserving per-input boundaries.
-    /// Each argument contributes the top-level values it emitted at its own
-    /// boundary, so a grouped single output stays whole even when it is the
-    /// only sequence argument. Handlers call this explicitly so they can choose
-    /// when leading sequence evaluation happens relative to any trailing-
-    /// argument validation.
+    /// preserving the first-level boundary of each input expression.
+    /// Ordinary argument passing contributes exactly one top-level item at the
+    /// call boundary, so grouped or multi-output content stays grouped as one
+    /// item instead of spreading into surrounding sequence-builtin input.
+    /// Direct <c>:</c> selections are the existing explicit projection rule,
+    /// so their projected content remains visible as multiple top-level items.
+    /// Handlers call this explicitly so they can choose when leading sequence
+    /// evaluation happens relative to any trailing-argument validation.
     /// </summary>
     private static EvalResult<CollectedSequenceBuiltinInput> EvalCountedSequenceInputs(
         IReadOnlyList<Algorithm> collectionArgs,
@@ -1535,7 +1573,9 @@ public static class Evaluator
             var outputR = EvalMaybeMemoizedPropertyOutputCounted(collectionArg, ctx, valEnv);
             if (outputR.IsError) return outputR.Error;
 
-            var items = CountedTopLevelValues(outputR.Value);
+            var items = SequenceBuiltinArgUsesProjectedContent(collectionArg)
+                ? CountedTopLevelValues(outputR.Value)
+                : [SequenceBuiltinArgumentItem(outputR.Value)];
             perInputItems.Add(items);
             flattenedItems.AddRange(items);
         }
@@ -4460,18 +4500,26 @@ public static class Evaluator
         IReadOnlyList<Algorithm> Args);
 
     /// <summary>
-    /// Sequence builtins share one dot-call receiver rule through the same
-    /// algorithm-argument path used by plain calls.
-    /// If the receiver is a block expression, one outer receiver-scoping block
-    /// layer is removed and the builtin consumes that block algorithm directly.
-    /// Otherwise the receiver is wrapped as one ordinary argument expression.
-    /// Additional parenthesized layers therefore remain nested block outputs and
-    /// stay grouped values rather than being flattened by dot-call.
+    /// Sequence builtins in dot-call form consume the receiver's own counted
+    /// top-level items.
+    /// The receiver expression is evaluated once, its counted top-level items
+    /// are reified as one ordinary leading argument per item, and any extra
+    /// dot-call arguments still follow the plain-call argument path.
+    /// This keeps plain-call boundary preservation unchanged while making
+    /// <c>receiver.builtin(...)</c> operate on the same top-level collection
+    /// that <c>receiver:i</c> and higher-order callback projection observe.
     /// </summary>
-    private static Algorithm SequenceBuiltinDotReceiverArg(Expr receiver, EvalCtx ctx)
-        => receiver is Expr.Block(var algorithm)
-            ? WireToCaller(ctx, algorithm)
-            : WireToCaller(ctx, AlgorithmOfExpr(receiver));
+    private static EvalResult<IReadOnlyList<Algorithm>> SequenceBuiltinDotReceiverArgs(
+        Expr receiver,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var receiverR = EvalCounted(receiver, ctx, valEnv);
+        if (receiverR.IsError) return receiverR.Error;
+
+        return EvalResult<IReadOnlyList<Algorithm>>.Ok(
+            CountedTopLevelItemAlgorithms(receiverR.Value));
+    }
 
     private static EvalResult<SequenceBuiltinDotCall?> TryBuildSequenceBuiltinDotCall(
         string name,
@@ -4488,10 +4536,10 @@ public static class Evaluator
             return EvalResult<SequenceBuiltinDotCall?>.Ok(null);
         }
 
-        var argAlgs = new List<Algorithm>(1 + (extraArgs?.Output.Count ?? 0))
-        {
-            SequenceBuiltinDotReceiverArg(receiver, ctx)
-        };
+        var receiverArgAlgsR = SequenceBuiltinDotReceiverArgs(receiver, ctx, valEnv);
+        if (receiverArgAlgsR.IsError) return receiverArgAlgsR.Error;
+
+        var argAlgs = new List<Algorithm>(receiverArgAlgsR.Value);
 
         if (extraArgs is not null)
         {

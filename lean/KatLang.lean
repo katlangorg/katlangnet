@@ -207,10 +207,12 @@ def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata
   metadata.trailingArgs.length
 
 /-- Metadata for sequence builtins that consume counted top-level items.
-  `leadingSequenceArity` constrains the counted sequence inputs, `boundaryPolicy`
-  chooses whether handlers flatten those inputs into one stream or preserve
-  per-input boundaries, and `trailingArgs` describes the fixed trailing
-  non-sequence arguments. -/
+  All leading sequence arguments first pass through the shared argument-
+  boundary rule: each argument expression contributes exactly one top-level
+  item, so grouped or multi-output content stays grouped as one item instead of
+  spreading into surrounding builtin input. `boundaryPolicy` only controls any
+  later handler-specific view of those already-preserved boundary items, and
+  `trailingArgs` describes the fixed trailing non-sequence arguments. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
       trailingArgs := [{ label := "predicate" }]
@@ -1398,6 +1400,27 @@ def countedTopLevelValues : CountedResult -> List Result
   | (value, 1) => [value]
   | (value, _) => value.toItems
 
+/-- Sequence-builtin argument passing preserves the first-level boundary of
+    each leading argument expression.
+
+    Empty outputs become the empty grouped value, single outputs stay as-is,
+    and multi-output results become one grouped item. This shared helper is the
+    only place where leading sequence arguments are converted into builtin input
+    items. -/
+def sequenceBuiltinArgumentItem (arg : CountedResult) : Result :=
+  Result.normalize (Result.group (countedTopLevelValues arg))
+
+/-- Direct selection expressions already project one level of content, so a
+    sequence builtin must preserve that explicit projection instead of grouping
+    it back into one item at the argument boundary. -/
+def sequenceBuiltinArgUsesProjectedContent (arg : Algorithm) : Bool :=
+  arg.params.isEmpty &&
+    arg.opens.isEmpty &&
+    arg.props.isEmpty &&
+    match arg.output with
+    | [.index _ _] => true
+    | _ => false
+
 /-- Reify a counted argument shape as a zero-parameter algorithm that preserves
     the same value and emitted top-level count when evaluated. -/
 def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
@@ -1406,6 +1429,14 @@ def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
     | (_, 0) => [emptyResultExpr]
     | _ => (countedTopLevelValues arg).map resultToExpr
   Algorithm.mk none [] [] [] output
+
+/-- Reify each counted top-level item as its own zero-parameter algorithm.
+    Sequence-builtin dot-call receivers use this so the receiver contributes
+    the top-level items it denotes, while each reified item still flows
+    through the ordinary leading-argument boundary rule when the builtin runs.
+    -/
+def countedTopLevelItemAlgorithms (arg : CountedResult) : List Algorithm :=
+  (countedTopLevelValues arg).map (fun item => countedArgAlgorithm (item, 1))
 
 /-- Ordinary call-style unpacking for a pre-evaluated explicit argument whose
     expression-level emitted count is already known.
@@ -2178,11 +2209,13 @@ mutual
     /-- Evaluate the leading sequence arguments for a sequence builtin while
       preserving per-input boundaries.
 
-      Each argument contributes the top-level values it emitted at its own
-      boundary, so a grouped single output stays whole even when it is the only
-      sequence argument. Handlers call this explicitly so they can choose when
-      leading sequence evaluation happens relative to any trailing-argument
-      validation. -/
+      Ordinary argument passing contributes exactly one top-level item at the
+      call boundary. Grouped or multi-output content therefore stays grouped as
+      one item instead of spreading into the surrounding sequence builtin
+      input. Direct `:` selections are the existing explicit projection rule,
+      so their projected content remains visible as multiple top-level items.
+      Handlers call this explicitly so they can choose when leading sequence
+      evaluation happens relative to any trailing-argument validation. -/
     partial def evalCountedSequenceInputs (collectionArgs : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CollectedSequenceBuiltinInput := do
     let rec loop : List Algorithm -> EvalM (List (List Result))
@@ -2190,7 +2223,12 @@ mutual
       | collectionAlg :: rest => do
           let out <- evalAlgOutputCounted collectionAlg ctx env
           let tail <- loop rest
-          pure (countedTopLevelValues out :: tail)
+          let items :=
+            if sequenceBuiltinArgUsesProjectedContent collectionAlg then
+              countedTopLevelValues out
+            else
+              [sequenceBuiltinArgumentItem out]
+          pure (items :: tail)
     let perInputItems <- loop collectionArgs
     pure { perInputItems := perInputItems }
 
@@ -2912,30 +2950,34 @@ mutual
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
-  /-- Sequence builtins share one dot-call receiver rule through the same
-      algorithm-argument path used by plain calls.
-      If the receiver is a block expression, one outer receiver-scoping block
-      layer is removed and the builtin consumes that block algorithm directly.
-      Otherwise the receiver is wrapped as one ordinary argument expression.
-      Additional parenthesized layers therefore remain nested block outputs and
-      stay grouped values rather than being flattened by dot-call. -/
-  partial def sequenceBuiltinDotReceiverArg (receiver : Expr) (ctx : EvalCtx) : Algorithm :=
-    match receiver with
-    | .block alg => wireToCaller ctx alg
-    | _ => wireToCaller ctx (Algorithm.ofExpr receiver)
+  /-- Sequence builtins in dot-call form consume the receiver's own counted
+      top-level items.
+
+      The receiver expression is evaluated once, its counted top-level items
+      are reified as one ordinary leading argument per item, and any extra
+      dot-call arguments still follow the plain-call argument path.
+
+      This keeps plain-call boundary preservation unchanged while making
+      `receiver.builtin(...)` operate on the same top-level collection that
+      `receiver:i` and higher-order callback projection observe. -/
+  partial def sequenceBuiltinDotReceiverArgs (receiver : Expr) (ctx : EvalCtx)
+      (env : ValEnv) : EvalM (List Algorithm) := do
+    let receiverOut <- evalCounted receiver ctx env
+    pure (countedTopLevelItemAlgorithms receiverOut)
 
   partial def trySequenceBuiltinDotCall
       (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
-      (ctx : EvalCtx) (_env : ValEnv) : EvalM (Option (Builtin × List Algorithm)) := do
+      (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (Builtin × List Algorithm)) := do
     match resolveAlg (.resolve name) ctx with
     | .ok (.builtin b) =>
         match sequenceBuiltinMetadata? b with
         | some _ =>
+            let receiverArgAlgs <- sequenceBuiltinDotReceiverArgs receiver ctx env
             let extraArgAlgs <-
               match extraArgs with
               | some args => resolveArgAlgs args ctx
               | none => pure []
-            pure (some (b, sequenceBuiltinDotReceiverArg receiver ctx :: extraArgAlgs))
+            pure (some (b, receiverArgAlgs ++ extraArgAlgs))
         | none =>
             pure none
     | _ =>

@@ -10,14 +10,18 @@ public enum UnaryOp { Minus, Not }
 
 /// <summary>
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
-/// Sequence-consuming builtins always consume counted top-level items; a
-/// grouped single output stays one item even when it is the only sequence
-/// argument in plain-call form. In dot-call form, one parenthesized receiver
-/// layer is receiver scoping only; an additional parenthesized layer creates a
-/// real grouped value. Sequence builtins therefore consume the same counted
-/// top-level items that plain-call semantics would see after removing that one
-/// receiver-scoping layer, and nested grouped elements still stay grouped
-/// values rather than being flattened recursively.
+/// Sequence-consuming builtins preserve leading argument boundaries: each
+/// leading argument expression contributes exactly one top-level item at the
+/// builtin call boundary, so grouped or multi-output content stays grouped as
+/// one item instead of being spread into surrounding plain-call sequence
+/// input. Sequence-builtin dot-call receivers are different: they contribute
+/// the receiver expression's counted top-level items. Resolved helpers, call
+/// receivers, and projected callback params can therefore expose several
+/// receiver items, while zero-parameter block receivers such as
+/// <c>(1, 2, 3).count</c> still stay grouped because the block expression
+/// itself is one grouped value. Direct <c>:</c> selection remains the explicit
+/// one-level projection exception, and nested grouped elements still stay
+/// grouped values rather than being flattened recursively.
 /// <c>filter(...items, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
 /// seeing each callback item through the same one-level projection rule as
@@ -26,9 +30,10 @@ public enum UnaryOp { Minus, Not }
 /// each callback item follows the same one-level projection rule as
 /// <c>S:i</c>, <c>transform(element)</c> must return exactly one mapped
 /// element, and grouped mapped outputs are preserved whole.
-/// <c>count(...items)</c> counts top-level sequence items left to right; each
-/// atom, string, or grouped value counts as one element, grouped values are
-/// not flattened, and empty collections return <c>0</c>.
+/// <c>count(...items)</c> counts the preserved top-level sequence items left to
+/// right; each ordinary leading argument expression contributes one element,
+/// grouped values are not flattened, and a grouped empty value still counts as
+/// one argument-boundary item.
 /// <c>contains(...items, item)</c> returns <c>1</c> when any top-level sequence
 /// item equals <c>item</c> under ordinary KatLang value equality, otherwise
 /// <c>0</c>; grouped values compare as grouped values and are not searched
@@ -39,12 +44,12 @@ public enum UnaryOp { Minus, Not }
 /// <c>orderDesc(...items)</c> sorts top-level numeric sequence items in
 /// descending order; duplicates are preserved, grouped values are not
 /// flattened, strings are invalid, and empty collections stay empty.
-/// <c>first(...items)</c> returns the first top-level sequence item unchanged;
-/// atoms, strings, and grouped values each count as one element, grouped
-/// values stay grouped, and the sequence must be non-empty.
-/// <c>last(...items)</c> returns the last top-level sequence item unchanged;
-/// atoms, strings, and grouped values each count as one element, grouped
-/// values stay grouped, and the sequence must be non-empty.
+/// <c>first(...items)</c> returns the first preserved top-level sequence item
+/// unchanged; atoms, strings, and grouped values each count as one element,
+/// and grouped values stay grouped.
+/// <c>last(...items)</c> returns the last preserved top-level sequence item
+/// unchanged; atoms, strings, and grouped values each count as one element,
+/// and grouped values stay grouped.
 /// <c>distinct(...items)</c> removes later duplicate top-level sequence items
 /// while preserving the original order of first occurrence; grouped values
 /// stay grouped and duplicate detection follows ordinary KatLang value
@@ -63,13 +68,13 @@ public enum UnaryOp { Minus, Not }
 /// <c>max(...items)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>sum(...items)</c> adds top-level numeric sequence items left to right;
-/// each item must be exactly one atomic numeric value, grouped values are
-/// not flattened, and empty sequences return <c>0</c>.
+/// <c>sum(...items)</c> adds preserved top-level numeric sequence items left to
+/// right; each item must be exactly one atomic numeric value, and grouped
+/// values are not flattened.
 /// <c>avg(...items)</c> averages top-level numeric sequence items left to
-/// right using the Lean core's floor-style integer quotient rule; the
-/// sequence must be non-empty, each item must be exactly one atomic numeric
-/// value, and grouped values are not flattened.
+/// right using the Lean core's floor-style integer quotient rule; each item
+/// must be exactly one atomic numeric value, and grouped values are not
+/// flattened.
 /// <c>reduce(...items, step, initial)</c> folds top-level sequence items left
 /// to right; the current callback item follows the same one-level projection
 /// rule as <c>S:i</c>, <c>step(element, accumulator)</c> must return exactly
