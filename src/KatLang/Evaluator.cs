@@ -21,162 +21,8 @@ namespace KatLang;
 /// </summary>
 public static class Evaluator
 {
-    internal readonly record struct MemoizationStats(
-        int PropertyCacheHitCount,
-        int PropertyCacheStoreCount,
-        int PropertyCacheMissCount,
-        int PropertyCacheBypassCount);
-
-    private readonly record struct MemoizedPropertyResult(Result Value, int EmittedCount);
-
-    private enum PropertyMemoLookup
-    {
-        Hit,
-        Miss,
-        InProgress,
-    }
-
-    private enum PropertyMemoKind
-    {
-        LexicalClosedResolve,
-        LexicalContextualResolve,
-        StructuralDot,
-    }
-
-    private static readonly object ClosedLexicalPropertyMemoContextToken = new();
-
-    private readonly record struct PropertyMemoKey(
-        PropertyMemoKind Kind,
-        string Name,
-        object CallStackToken,
-        object AlgEnvToken,
-        object ValEnvToken,
-        object? BindingToken);
-
-    private sealed class PropertyMemoKeyComparer : IEqualityComparer<PropertyMemoKey>
-    {
-        public static readonly PropertyMemoKeyComparer Instance = new();
-
-        public bool Equals(PropertyMemoKey x, PropertyMemoKey y)
-            => x.Kind == y.Kind
-                && StringComparer.Ordinal.Equals(x.Name, y.Name)
-                && ReferenceEquals(x.CallStackToken, y.CallStackToken)
-                && ReferenceEquals(x.AlgEnvToken, y.AlgEnvToken)
-                && ReferenceEquals(x.ValEnvToken, y.ValEnvToken)
-                && ReferenceEquals(x.BindingToken, y.BindingToken);
-
-        public int GetHashCode(PropertyMemoKey key)
-        {
-            var hash = new HashCode();
-            hash.Add((int)key.Kind);
-            hash.Add(key.Name, StringComparer.Ordinal);
-            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.CallStackToken));
-            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.AlgEnvToken));
-            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.ValEnvToken));
-            hash.Add(key.BindingToken is null
-                ? 0
-                : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.BindingToken));
-            return hash.ToHashCode();
-        }
-    }
-
-    private readonly record struct LexicalPropertyReference(
-        Property Binding,
-        ScopeCtx DefinitionScope);
-
     private readonly record struct ResolvedLexicalProperty(
-        Algorithm ResolvedAlgorithm,
-        LexicalPropertyReference Reference);
-
-    private readonly record struct LexicalPropertyBinding(
-        string Name,
-        object BindingToken,
-        bool IsClosedForMemoization);
-
-    private sealed class EvaluatorRunState
-    {
-        private readonly Dictionary<PropertyMemoKey, MemoizedPropertyResult> _memoizedPropertyResults =
-            new(PropertyMemoKeyComparer.Instance);
-
-        private readonly HashSet<PropertyMemoKey> _memoizedPropertyResultsInProgress =
-            new(PropertyMemoKeyComparer.Instance);
-
-        private readonly Dictionary<Algorithm, LexicalPropertyBinding> _resolvedLexicalPropertyBindings =
-            new(ReferenceEqualityComparer.Instance);
-
-        private readonly Dictionary<LexicalPropertyReference, bool> _contextIndependentLexicalBindings =
-            [];
-
-        private int _propertyCacheHitCount;
-        private int _propertyCacheStoreCount;
-        private int _propertyCacheMissCount;
-        private int _propertyCacheBypassCount;
-
-        public MemoizationStats SnapshotStats()
-            => new(
-                _propertyCacheHitCount,
-                _propertyCacheStoreCount,
-                _propertyCacheMissCount,
-                _propertyCacheBypassCount);
-
-        public void RegisterResolvedLexicalPropertyBinding(
-            Algorithm resolvedAlgorithm,
-            LexicalPropertyBinding binding)
-        {
-            if (resolvedAlgorithm is Algorithm.Builtin)
-                return;
-
-            _resolvedLexicalPropertyBindings[resolvedAlgorithm] = binding;
-        }
-
-        public bool TryGetResolvedLexicalPropertyBinding(
-            Algorithm resolvedAlgorithm,
-            out LexicalPropertyBinding binding)
-            => _resolvedLexicalPropertyBindings.TryGetValue(resolvedAlgorithm, out binding);
-
-        public bool TryGetContextIndependentLexicalBinding(
-            LexicalPropertyReference reference,
-            out bool isContextIndependent)
-            => _contextIndependentLexicalBindings.TryGetValue(reference, out isContextIndependent);
-
-        public void StoreContextIndependentLexicalBinding(
-            LexicalPropertyReference reference,
-            bool isContextIndependent)
-            => _contextIndependentLexicalBindings[reference] = isContextIndependent;
-
-        public PropertyMemoLookup TryGetMemoizedPropertyResult(
-            PropertyMemoKey key,
-            out MemoizedPropertyResult result)
-        {
-            if (_memoizedPropertyResults.TryGetValue(key, out result))
-            {
-                _propertyCacheHitCount++;
-                return PropertyMemoLookup.Hit;
-            }
-
-            if (_memoizedPropertyResultsInProgress.Contains(key))
-            {
-                _propertyCacheBypassCount++;
-                result = default;
-                return PropertyMemoLookup.InProgress;
-            }
-
-            _propertyCacheMissCount++;
-            _memoizedPropertyResultsInProgress.Add(key);
-            result = default;
-            return PropertyMemoLookup.Miss;
-        }
-
-        public void StoreMemoizedPropertyResult(PropertyMemoKey key, MemoizedPropertyResult result)
-        {
-            _memoizedPropertyResultsInProgress.Remove(key);
-            _memoizedPropertyResults[key] = result;
-            _propertyCacheStoreCount++;
-        }
-
-        public void ClearMemoizedPropertyResult(PropertyMemoKey key)
-            => _memoizedPropertyResultsInProgress.Remove(key);
-    }
+        Algorithm ResolvedAlgorithm);
 
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
@@ -190,23 +36,22 @@ public static class Evaluator
     private readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
         IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
-        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
-        EvaluatorRunState RunState)
+        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv)
     {
-        public static readonly EvalCtx Empty = new([], [], [], new EvaluatorRunState());
+        public static readonly EvalCtx Empty = new([], [], []);
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
-        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, CountedParamEnv, RunState);
+        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, CountedParamEnv);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, CountedParamEnv, RunState);
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, CountedParamEnv);
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
         public EvalCtx WithCountedParamEnv(IReadOnlyList<(string, CountedResult)> countedParamEnv)
-            => new(CallStack, AlgEnv, countedParamEnv, RunState);
+            => new(CallStack, AlgEnv, countedParamEnv);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -490,17 +335,6 @@ public static class Evaluator
         return sc.Parent is { } parent ? LookupInParentsDirect(parent, name) : null;
     }
 
-    private static LexicalPropertyReference? LookupInParentsDirectBinding(ScopeCtx sc, string name)
-    {
-        foreach (var prop in sc.Properties)
-        {
-            if (prop.Name == name)
-                return new LexicalPropertyReference(prop, sc);
-        }
-
-        return sc.Parent is { } parent ? LookupInParentsDirectBinding(parent, name) : null;
-    }
-
     /// <summary>
     /// Direct lexical lookup: local properties + parent chain only (no opens).
     /// Lean: lookupLexicalDirect (Option).
@@ -668,10 +502,7 @@ public static class Evaluator
         if (hits.Count == 1)
         {
             var hit = hits[0];
-            return EvalResult<ResolvedLexicalProperty?>.Ok(
-                new ResolvedLexicalProperty(
-                    ChildOf(hit.Lib, hit.Binding.Value),
-                    new LexicalPropertyReference(hit.Binding, AsScopeCtx(hit.Lib))));
+                return EvalResult<ResolvedLexicalProperty?>.Ok(new ResolvedLexicalProperty(ChildOf(hit.Lib, hit.Binding.Value)));
         }
         return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
     }
@@ -729,26 +560,16 @@ public static class Evaluator
         Algorithm alg, string name, EvalCtx ctx)
     {
         // 1. Local properties (any visibility)
-        var local = LookupPropBinding(alg, name);
+            var local = LookupProp(alg, name);
         if (local is not null)
-        {
-            return EvalResult<ResolvedLexicalProperty>.Ok(
-                new ResolvedLexicalProperty(
-                    ChildOf(alg, local.Value),
-                    new LexicalPropertyReference(local, AsScopeCtx(alg))));
-        }
+                return EvalResult<ResolvedLexicalProperty>.Ok(new ResolvedLexicalProperty(ChildOf(alg, local)));
 
         // 2. Parent chain structural only (any visibility, no opens)
         if (alg.Parent is { } sc)
         {
-            var structural = LookupInParentsDirectBinding(sc, name);
+                var structural = LookupInParentsDirect(sc, name);
             if (structural is not null)
-            {
-                return EvalResult<ResolvedLexicalProperty>.Ok(
-                    new ResolvedLexicalProperty(
-                        WithParent(structural.Value.Binding.Value, structural.Value.DefinitionScope),
-                        structural.Value));
-            }
+                    return EvalResult<ResolvedLexicalProperty>.Ok(new ResolvedLexicalProperty(structural));
         }
 
         // 3. Opens fallback across the entire chain (public only)
@@ -1565,7 +1386,7 @@ public static class Evaluator
         var flattenedItems = new List<Result>();
         foreach (var collectionArg in collectionArgs)
         {
-            var outputR = EvalMaybeMemoizedPropertyOutputCounted(collectionArg, ctx, valEnv);
+            var outputR = EvalAlgOutputCounted(collectionArg, ctx, valEnv);
             if (outputR.IsError) return outputR.Error;
 
             var items = SequenceBuiltinArgMatchesDirectIndexProjectionSyntax(collectionArg)
@@ -1624,7 +1445,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var initialR = EvalMaybeMemoizedPropertyOutputCounted(initialAlg, ctx, valEnv);
+        var initialR = EvalAlgOutputCounted(initialAlg, ctx, valEnv);
         if (initialR.IsError) return initialR.Error;
 
         var accumulator = initialR.Value;
@@ -1833,7 +1654,7 @@ public static class Evaluator
 
             case SequenceBuiltinTrailingArgKind.Value:
             {
-                var valueR = EvalMaybeMemoizedPropertyOutput(arg, ctx, valEnv);
+                var valueR = EvalAlgOutput(arg, ctx, valEnv);
                 if (valueR.IsError) return valueR.Error;
 
                 return EvalResult<PreparedSequenceBuiltinTrailingArg>.Ok(
@@ -1842,7 +1663,7 @@ public static class Evaluator
 
             case SequenceBuiltinTrailingArgKind.WholeNumber:
             {
-                var valueR = EvalMaybeMemoizedPropertyOutput(arg, ctx, valEnv);
+                var valueR = EvalAlgOutput(arg, ctx, valEnv);
                 if (valueR.IsError) return valueR.Error;
 
                 var numeric = valueR.Value.SingleAtomicNumber();
@@ -2426,18 +2247,18 @@ public static class Evaluator
         {
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalMaybeMemoizedPropertyOutputCounted(args[1], ctx, valEnv)
-                    : EvalMaybeMemoizedPropertyOutputCounted(args[2], ctx, valEnv);
+                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
+                    : EvalAlgOutputCounted(args[2], ctx, valEnv);
             }
 
             case (BuiltinId.@while, 2):
             {
-                var initR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var initR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 var loopR = WhileLoop(args[0], initR.Value, ctx, valEnv);
                 if (loopR.IsError) return loopR.Error;
@@ -2446,14 +2267,14 @@ public static class Evaluator
 
             case (BuiltinId.@repeat, 3):
             {
-                var countR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var countR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
                 var n = (long)nR.Value;
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
 
-                var initR = EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
+                var initR = EvalAlgOutput(args[2], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 var loopR = RepeatLoop(args[0], n, initR.Value, ctx, valEnv);
                 if (loopR.IsError) return loopR.Error;
@@ -2462,7 +2283,7 @@ public static class Evaluator
 
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 var atoms = atomsR.Value.ToAtoms();
                 var value = Result.FromItems(atoms.Select(n => new Result.Atom(n)));
@@ -2471,12 +2292,12 @@ public static class Evaluator
 
             case (BuiltinId.@range, 2):
             {
-                var startR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var startR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (startR.IsError) return startR.Error;
                 var startIntR = ExpectWholeInt(startR.Value, "range start");
                 if (startIntR.IsError) return startIntR.Error;
 
-                var stopR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (stopR.IsError) return stopR.Error;
                 var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
                 if (stopIntR.IsError) return stopIntR.Error;
@@ -2930,13 +2751,6 @@ public static class Evaluator
                 if (ctx.CallStack.Count > 0)
                 {
                     var r = LookupLexical(ctx.CallStack[0], name, ctx);
-                    if (r.IsOk)
-                    {
-                        var binding = CreateLexicalPropertyBinding(r.Value.Reference, ctx.RunState);
-                        ctx.RunState.RegisterResolvedLexicalPropertyBinding(
-                            r.Value.ResolvedAlgorithm,
-                            binding);
-                    }
                     if (r.IsError && r.Error.Span is null)
                         return r.Error with { Span = expr.Span };
                     return r.IsError
@@ -3035,364 +2849,6 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
         => EvalAlgOutputCore(alg, ctx, valEnv, allowEmptyUserOutput: true);
 
-    private static bool IsMemoizablePropertyResult(Algorithm alg)
-        => alg is not Algorithm.Builtin && alg.Params.Count == 0;
-
-    private static PropertyMemoLookup TryGetMemoizedPropertyResult(
-        EvalCtx ctx,
-        PropertyMemoKey key,
-        out MemoizedPropertyResult result)
-        => ctx.RunState.TryGetMemoizedPropertyResult(key, out result);
-
-    private static void StoreMemoizedPropertyResult(
-        EvalCtx ctx,
-        PropertyMemoKey key,
-        MemoizedPropertyResult result)
-        => ctx.RunState.StoreMemoizedPropertyResult(key, result);
-
-    private static ScopeCtx CreateLexicalScope(Algorithm alg, ScopeCtx? parentScope)
-        => new(parentScope, alg.Opens, alg.Properties);
-
-    private static bool HasOpenSensitiveLexicalScope(Algorithm alg, ScopeCtx? parentScope)
-    {
-        if (alg.Opens.Count > 0)
-            return true;
-
-        for (var scope = parentScope; scope is not null; scope = scope.Parent)
-        {
-            if (scope.Opens.Count > 0)
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool TryLookupLexicalBindingWithoutOpens(
-        Algorithm alg,
-        ScopeCtx? parentScope,
-        string name,
-        out LexicalPropertyReference reference)
-    {
-        var local = LookupPropBinding(alg, name);
-        if (local is not null)
-        {
-            reference = new LexicalPropertyReference(local, CreateLexicalScope(alg, parentScope));
-            return true;
-        }
-
-        if (parentScope is not null)
-        {
-            var structural = LookupInParentsDirectBinding(parentScope, name);
-            if (structural is not null)
-            {
-                reference = structural.Value;
-                return true;
-            }
-        }
-
-        reference = default;
-        return false;
-    }
-
-    private static LexicalPropertyBinding CreateLexicalPropertyBinding(
-        LexicalPropertyReference reference,
-        EvaluatorRunState runState)
-        => new(
-            reference.Binding.Name,
-            reference.Binding,
-            IsClosedLexicalPropertyForMemoization(reference, runState));
-
-    private static bool IsClosedLexicalPropertyForMemoization(
-        LexicalPropertyReference reference,
-        EvaluatorRunState runState)
-    {
-        if (reference.Binding.Value is Algorithm.Builtin)
-            return false;
-
-        if (reference.Binding.Value.Params.Count != 0)
-            return false;
-
-        return IsContextIndependentLexicalBinding(
-            reference,
-            runState,
-            new HashSet<object>(ReferenceEqualityComparer.Instance));
-    }
-
-    private static bool IsContextIndependentLexicalBinding(
-        LexicalPropertyReference reference,
-        EvaluatorRunState runState,
-        HashSet<object> activeBindings)
-    {
-        if (runState.TryGetContextIndependentLexicalBinding(reference, out var cached))
-            return cached;
-
-        if (!activeBindings.Add(reference.Binding))
-            return false;
-
-        var isContextIndependent = IsContextIndependentAlgorithm(
-            reference.Binding.Value,
-            reference.DefinitionScope,
-            runState,
-            activeBindings);
-
-        activeBindings.Remove(reference.Binding);
-        runState.StoreContextIndependentLexicalBinding(reference, isContextIndependent);
-        return isContextIndependent;
-    }
-
-    private static bool IsContextIndependentAlgorithm(
-        Algorithm alg,
-        ScopeCtx? parentScope,
-        EvaluatorRunState runState,
-        HashSet<object> activeBindings)
-    {
-        if (alg is Algorithm.Builtin)
-            return true;
-
-        if (alg is Algorithm.Conditional)
-            return false;
-
-        if (HasOpenSensitiveLexicalScope(alg, parentScope))
-            return false;
-
-        foreach (var expr in alg.Output)
-        {
-            if (!IsContextIndependentExpression(expr, alg, parentScope, runState, activeBindings))
-                return false;
-        }
-
-        return true;
-    }
-
-    private static bool IsContextIndependentExpression(
-        Expr expr,
-        Algorithm currentAlg,
-        ScopeCtx? parentScope,
-        EvaluatorRunState runState,
-        HashSet<object> activeBindings)
-    {
-        switch (expr)
-        {
-            case Expr.Num:
-            case Expr.StringLiteral:
-                return true;
-
-            case Expr.Param(var name):
-                return currentAlg.Params.Contains(name);
-
-            case Expr.Grace(var inner, _):
-                return IsContextIndependentExpression(inner, currentAlg, parentScope, runState, activeBindings);
-
-            case Expr.Unary(_, var operand):
-                return IsContextIndependentExpression(operand, currentAlg, parentScope, runState, activeBindings);
-
-            case Expr.Binary(_, var left, var right):
-                return IsContextIndependentExpression(left, currentAlg, parentScope, runState, activeBindings)
-                    && IsContextIndependentExpression(right, currentAlg, parentScope, runState, activeBindings);
-
-            case Expr.Combine(var left, var right):
-                return IsContextIndependentExpression(left, currentAlg, parentScope, runState, activeBindings)
-                    && IsContextIndependentExpression(right, currentAlg, parentScope, runState, activeBindings);
-
-            case Expr.Index(var target, var selector):
-                return IsContextIndependentExpression(target, currentAlg, parentScope, runState, activeBindings)
-                    && IsContextIndependentExpression(selector, currentAlg, parentScope, runState, activeBindings);
-
-            case Expr.Resolve(var name):
-            {
-                if (!TryLookupLexicalBindingWithoutOpens(currentAlg, parentScope, name, out var reference))
-                    return false;
-
-                return reference.Binding.Value is Algorithm.Builtin
-                    || IsContextIndependentLexicalBinding(reference, runState, activeBindings);
-            }
-
-            case Expr.Block(var alg):
-                return IsContextIndependentAlgorithm(
-                    alg,
-                    CreateLexicalScope(currentAlg, parentScope),
-                    runState,
-                    activeBindings);
-
-            case Expr.Call(var func, var args):
-                return IsContextIndependentExpression(func, currentAlg, parentScope, runState, activeBindings)
-                    && IsContextIndependentAlgorithm(
-                        args,
-                        CreateLexicalScope(currentAlg, parentScope),
-                        runState,
-                        activeBindings);
-
-            case Expr.DotCall(var target, _, var argsOpt):
-                return IsContextIndependentExpression(target, currentAlg, parentScope, runState, activeBindings)
-                    && (argsOpt is null
-                        || IsContextIndependentAlgorithm(
-                            argsOpt,
-                            CreateLexicalScope(currentAlg, parentScope),
-                            runState,
-                            activeBindings));
-
-            case Expr.NativeCall(_, var argNames):
-                return argNames.All(currentAlg.Params.Contains);
-
-            default:
-                return false;
-        }
-    }
-
-    private static bool TryCreateLexicalPropertyMemoKey(
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        out PropertyMemoKey key)
-    {
-        key = default;
-
-        if (!IsMemoizablePropertyResult(alg))
-            return false;
-
-        if (!ctx.RunState.TryGetResolvedLexicalPropertyBinding(alg, out var binding))
-            return false;
-
-        if (binding.IsClosedForMemoization && ctx.AlgEnv.Count == 0 && valEnv.Count == 0)
-        {
-            key = new(
-                PropertyMemoKind.LexicalClosedResolve,
-                binding.Name,
-                ClosedLexicalPropertyMemoContextToken,
-                ClosedLexicalPropertyMemoContextToken,
-                ClosedLexicalPropertyMemoContextToken,
-                binding.BindingToken);
-            return true;
-        }
-
-        key = new(
-            PropertyMemoKind.LexicalContextualResolve,
-            binding.Name,
-            ctx.CallStack,
-            ctx.AlgEnv,
-            valEnv,
-            BindingToken: null);
-        return true;
-    }
-
-    private static bool TryCreateStructuralPropertyMemoKey(
-        Algorithm propertyBinding,
-        string name,
-        Algorithm wiredProperty,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        out PropertyMemoKey key)
-    {
-        key = default;
-
-        if (!IsMemoizablePropertyResult(wiredProperty))
-            return false;
-
-        key = new(
-            PropertyMemoKind.StructuralDot,
-            name,
-            ctx.CallStack,
-            ctx.AlgEnv,
-            valEnv,
-            propertyBinding);
-        return true;
-    }
-
-    private static EvalResult<MemoizedPropertyResult> EvalAlgOutputAsMemoizedPropertyResult(
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var countedR = EvalAlgOutputCounted(alg, ctx, valEnv);
-        if (countedR.IsError) return countedR.Error;
-        return EvalResult<MemoizedPropertyResult>.Ok(
-            new MemoizedPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
-    }
-
-    private static EvalResult<MemoizedPropertyResult> EvalMemoizedPropertyResult(
-        PropertyMemoKey key,
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var lookup = TryGetMemoizedPropertyResult(ctx, key, out var memoizedResult);
-        if (lookup == PropertyMemoLookup.Hit)
-            return EvalResult<MemoizedPropertyResult>.Ok(memoizedResult);
-
-        if (lookup == PropertyMemoLookup.InProgress)
-            return EvalAlgOutputAsMemoizedPropertyResult(alg, ctx, valEnv);
-
-        var evaluatedResult = EvalAlgOutputAsMemoizedPropertyResult(alg, ctx, valEnv);
-        if (evaluatedResult.IsOk)
-            StoreMemoizedPropertyResult(ctx, key, evaluatedResult.Value);
-        else
-            ctx.RunState.ClearMemoizedPropertyResult(key);
-
-        return evaluatedResult;
-    }
-
-    private static EvalResult<Result> EvalMaybeMemoizedPropertyOutput(
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (!TryCreateLexicalPropertyMemoKey(alg, ctx, valEnv, out var key))
-            return EvalAlgOutput(alg, ctx, valEnv);
-
-        var memoizedResult = EvalMemoizedPropertyResult(key, alg, ctx, valEnv);
-        return memoizedResult.IsError
-            ? memoizedResult.Error
-            : EvalResult<Result>.Ok(memoizedResult.Value.Value);
-    }
-
-    private static EvalResult<CountedResult> EvalMaybeMemoizedPropertyOutputCounted(
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (!TryCreateLexicalPropertyMemoKey(alg, ctx, valEnv, out var key))
-            return EvalAlgOutputCounted(alg, ctx, valEnv);
-
-        var memoizedResult = EvalMemoizedPropertyResult(key, alg, ctx, valEnv);
-        return memoizedResult.IsError
-            ? memoizedResult.Error
-            : EvalResult<CountedResult>.Ok(
-                new CountedResult(memoizedResult.Value.Value, memoizedResult.Value.EmittedCount));
-    }
-
-    private static EvalResult<Result> EvalMaybeMemoizedStructuralPropertyOutput(
-        Algorithm propertyBinding,
-        string name,
-        Algorithm wiredProperty,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (!TryCreateStructuralPropertyMemoKey(propertyBinding, name, wiredProperty, ctx, valEnv, out var key))
-            return EvalAlgOutput(wiredProperty, ctx, valEnv);
-
-        var memoizedResult = EvalMemoizedPropertyResult(key, wiredProperty, ctx, valEnv);
-        return memoizedResult.IsError
-            ? memoizedResult.Error
-            : EvalResult<Result>.Ok(memoizedResult.Value.Value);
-    }
-
-    private static EvalResult<CountedResult> EvalMaybeMemoizedStructuralPropertyOutputCounted(
-        Algorithm propertyBinding,
-        string name,
-        Algorithm wiredProperty,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (!TryCreateStructuralPropertyMemoKey(propertyBinding, name, wiredProperty, ctx, valEnv, out var key))
-            return EvalAlgOutputCounted(wiredProperty, ctx, valEnv);
-
-        var memoizedResult = EvalMemoizedPropertyResult(key, wiredProperty, ctx, valEnv);
-        return memoizedResult.IsError
-            ? memoizedResult.Error
-            : EvalResult<CountedResult>.Ok(
-                new CountedResult(memoizedResult.Value.Value, memoizedResult.Value.EmittedCount));
-    }
-
     /// <summary>Evaluate an expression and coerce to decimal. Lean: evalInt.</summary>
     private static EvalResult<decimal> EvalInt(
         Expr expr, EvalCtx ctx, IReadOnlyList<(string, Result)> valEnv)
@@ -3435,19 +2891,19 @@ public static class Evaluator
             // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var condR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv)
-                    : EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
+                    ? EvalAlgOutput(args[1], ctx, valEnv)
+                    : EvalAlgOutput(args[2], ctx, valEnv);
             }
 
             // while(step, init)
             case (BuiltinId.@while, 2):
             {
-                var initR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var initR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (initR.IsError) return initR.Error;
                 return WhileLoop(args[0], initR.Value, ctx, valEnv);
             }
@@ -3455,13 +2911,13 @@ public static class Evaluator
             // repeat(step, count, init)
             case (BuiltinId.@repeat, 3):
             {
-                var countR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var countR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
                 var n = (long)nR.Value;
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                var repeatInitR = EvalMaybeMemoizedPropertyOutput(args[2], ctx, valEnv);
+                var repeatInitR = EvalAlgOutput(args[2], ctx, valEnv);
                 if (repeatInitR.IsError) return repeatInitR.Error;
                 return RepeatLoop(args[0], n, repeatInitR.Value, ctx, valEnv);
             }
@@ -3469,7 +2925,7 @@ public static class Evaluator
             // atoms(alg) — flatten to atoms
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 var atoms = atomsR.Value.ToAtoms();
                 return EvalResult<Result>.Ok(
@@ -3479,12 +2935,12 @@ public static class Evaluator
             // range(start, stop) — inclusive integer sequence, ascending or descending.
             case (BuiltinId.@range, 2):
             {
-                var startR = EvalMaybeMemoizedPropertyOutput(args[0], ctx, valEnv);
+                var startR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (startR.IsError) return startR.Error;
                 var startIntR = ExpectWholeInt(startR.Value, "range start");
                 if (startIntR.IsError) return startIntR.Error;
 
-                var stopR = EvalMaybeMemoizedPropertyOutput(args[1], ctx, valEnv);
+                var stopR = EvalAlgOutput(args[1], ctx, valEnv);
                 if (stopR.IsError) return stopR.Error;
                 var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
                 if (stopIntR.IsError) return stopIntR.Error;
@@ -3702,7 +3158,7 @@ public static class Evaluator
                 }
 
                 return WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalMaybeMemoizedPropertyOutput(resolvedR.Value, ctx, valEnv));
+                    EvalAlgOutput(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -3816,7 +3272,7 @@ public static class Evaluator
                 }
 
                 return WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalMaybeMemoizedPropertyOutputCounted(resolvedR.Value, ctx, valEnv));
+                    EvalAlgOutputCounted(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -4513,7 +3969,7 @@ public static class Evaluator
         // Value-based intrinsic: "string" — evaluate algorithm output and convert
         if (name == "string")
         {
-            var val = EvalMaybeMemoizedPropertyOutput(targetAlg, ctx, valEnv);
+            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             return ResultToString(val.Value);
         }
@@ -4537,7 +3993,7 @@ public static class Evaluator
 
                 // No args: 0-param → value access, has params → arity error
                 if (wired.Params.Count == 0)
-                    return EvalMaybeMemoizedStructuralPropertyOutput(prop.Value, name, wired, ctx, valEnv);
+                    return EvalAlgOutput(wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
@@ -4718,7 +4174,7 @@ public static class Evaluator
 
         if (name == "string")
         {
-            var val = EvalMaybeMemoizedPropertyOutput(targetAlg, ctx, valEnv);
+            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(val.Value);
             if (outR.IsError) return outR.Error;
@@ -4742,7 +4198,7 @@ public static class Evaluator
                     return new EvalError.NoMatchingBranch(name);
 
                 if (wired.Params.Count == 0)
-                    return EvalMaybeMemoizedStructuralPropertyOutputCounted(prop.Value, name, wired, ctx, valEnv);
+                    return EvalAlgOutputCounted(wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
@@ -4812,23 +4268,14 @@ public static class Evaluator
     /// Lean: runResult → EvalM Result.
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
-        => RunWithMemoizationStats(expr).Result;
-
-    internal static (EvalResult<Result> Result, MemoizationStats Stats) RunWithMemoizationStats(Expr expr)
     {
-        var runState = new EvaluatorRunState();
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
-        {
-            return (
-                new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span },
-                runState.SnapshotStats());
-        }
+            return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
-        var ctx = new EvalCtx([PreludeAlg], [], [], runState);
-        var result = expr is Expr.Block(var alg)
+        var ctx = new EvalCtx([PreludeAlg], [], []);
+        return expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
-        return (result, runState.SnapshotStats());
     }
 
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)

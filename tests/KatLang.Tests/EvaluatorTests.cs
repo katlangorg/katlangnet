@@ -114,25 +114,6 @@ public class EvaluatorTests
         return Evaluator.Run(new Expr.Block(ast));
     }
 
-    private static (EvalResult<Result> Result, Evaluator.MemoizationStats Stats) EvalFullWithMemoizationStats(string source)
-    {
-        var ast = Parser.Parse(source).Root;
-        return Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
-    }
-
-    private static void AssertMemoizationStats(
-        Evaluator.MemoizationStats stats,
-        int expectedHits,
-        int expectedStores,
-        int expectedMisses,
-        int expectedBypasses = 0)
-    {
-        Assert.Equal(expectedHits, stats.PropertyCacheHitCount);
-        Assert.Equal(expectedStores, stats.PropertyCacheStoreCount);
-        Assert.Equal(expectedMisses, stats.PropertyCacheMissCount);
-        Assert.Equal(expectedBypasses, stats.PropertyCacheBypassCount);
-    }
-
     private static void AssertEvalString(string source, string expected)
     {
         var result = EvalFull(source);
@@ -363,23 +344,22 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Memoizes_RepeatedEligiblePropertyWithinSingleRun()
+    public void Eval_RepeatedEligiblePropertyWithinSingleRun()
     {
         var source = """
             Values = range(1, 5)
             Values.count + Values.count
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([10m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
     }
 
     [Fact]
-    public void Eval_Memoization_Reuses_ClosedLexicalPropertyAcrossCallerContexts()
+    public void Eval_ClosedLexicalProperty_RemainsCorrectAcrossCallerContexts()
     {
         var source = """
             Measure(values) = {
@@ -389,18 +369,15 @@ public class EvaluatorTests
             Measure((1, 2)) + Measure((3, 4, 5))
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([4m], result.Value.ToAtoms());
-        Assert.True(
-            stats.PropertyCacheHitCount > 0,
-            $"Expected at least one memoization hit, but saw stats: {stats}");
     }
 
     [Fact]
-        public void Eval_Memoization_Distinguishes_SamePropertyTextAcrossReceiverContexts()
+        public void Eval_Distinguishes_SamePropertyTextAcrossReceiverContexts()
     {
         var source = """
                         Left = {
@@ -412,32 +389,30 @@ public class EvaluatorTests
                         Left.Value + Left.Value + Right.Value + Right.Value
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([6m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
     }
 
     [Fact]
-    public void Eval_Memoization_DoesNotCache_ParameterizedCallResults()
+    public void Eval_ParameterizedCallResults_RemainDistinct()
     {
         var source = """
             Inc = x + 1
             Inc(1) + Inc(2)
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([5m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 0, expectedStores: 0, expectedMisses: 0);
     }
 
     [Fact]
-    public void Eval_Memoization_CacheIsIsolatedPerRun()
+    public void Eval_RepeatedRuns_AreConsistent()
     {
         var source = """
             Values = range(1, 5)
@@ -446,21 +421,19 @@ public class EvaluatorTests
 
         var ast = Parser.Parse(source).Root;
 
-        var first = Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
-        var second = Evaluator.RunWithMemoizationStats(new Expr.Block(ast));
+        var first = Evaluator.Run(new Expr.Block(ast));
+        var second = Evaluator.Run(new Expr.Block(ast));
 
-        if (first.Result.IsError)
-            Assert.Fail($"Expected first run success but got error: {first.Result.Error}");
-        if (second.Result.IsError)
-            Assert.Fail($"Expected second run success but got error: {second.Result.Error}");
+        if (first.IsError)
+            Assert.Fail($"Expected first run success but got error: {first.Error}");
+        if (second.IsError)
+            Assert.Fail($"Expected second run success but got error: {second.Error}");
 
-        Assert.Equal(first.Result.Value.ToAtoms(), second.Result.Value.ToAtoms());
-        AssertMemoizationStats(first.Stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
-        AssertMemoizationStats(second.Stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
+        Assert.Equal(first.Value.ToAtoms(), second.Value.ToAtoms());
     }
 
     [Fact]
-    public void Eval_Memoization_PreservesRecursivePropertyBehavior()
+    public void Eval_PreservesRecursivePropertyBehavior()
     {
         var source = """
             Recursive = {
@@ -470,16 +443,15 @@ public class EvaluatorTests
             Recursive + Recursive
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([0m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 1, expectedStores: 1, expectedMisses: 1);
     }
 
     [Fact]
-    public void Eval_Memoization_Distinguishes_HigherOrderAlgorithmContexts()
+    public void Eval_Distinguishes_HigherOrderAlgorithmContexts()
     {
         var source = """
                         Left = {
@@ -493,16 +465,15 @@ public class EvaluatorTests
                         Left.Value + Left.Value + Right.Value + Right.Value
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([46m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
     }
 
     [Fact]
-    public void Eval_Memoization_Distinguishes_SameLexicalPropertyTextAcrossNestedBindings()
+    public void Eval_Distinguishes_SameLexicalPropertyTextAcrossNestedBindings()
     {
         var source = """
             Outer = {
@@ -519,16 +490,15 @@ public class EvaluatorTests
             Outer
             """;
 
-        var (result, stats) = EvalFullWithMemoizationStats(source);
+        var result = EvalFull(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([60m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 5, expectedMisses: 5);
     }
 
     [Fact]
-    public void Eval_Memoization_Keeps_CallerBoundZeroParamLexicalPropertyOnContextualKey()
+    public void Eval_Keeps_CallerBoundZeroParamLexicalProperty_Contextual()
     {
         var shared = new Property(
             "Shared",
@@ -581,16 +551,15 @@ public class EvaluatorTests
                     new Expr.Call(new Expr.Resolve("Caller"), twoArg))
             ]);
 
-        var (result, stats) = Evaluator.RunWithMemoizationStats(new Expr.Block(root));
+            var result = Evaluator.Run(new Expr.Block(root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([6m], result.Value.ToAtoms());
-        AssertMemoizationStats(stats, expectedHits: 2, expectedStores: 2, expectedMisses: 2);
     }
 
     [Fact]
-    public void Eval_Memoization_SharedBindingAcrossDefinitionScopes_DoesNotContaminateOpenDependentMeaning()
+        public void Eval_SharedBindingAcrossDefinitionScopes_DoesNotContaminateOpenDependentMeaning()
     {
         var sharedClosedBinding = new Property(
             "Shared",
@@ -673,16 +642,13 @@ public class EvaluatorTests
                     new Expr.Resolve("OpenWrapper"))
             ]);
 
-        var (result, stats) = Evaluator.RunWithMemoizationStats(new Expr.Block(root));
+            var result = Evaluator.Run(new Expr.Block(root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal(
             [6m],
             result.Value.ToAtoms());
-        Assert.True(
-            stats.PropertyCacheHitCount >= 2,
-            $"Expected memoization to remain active within each wrapper without cross-scope contamination, but saw stats: {stats}");
     }
 
     // â”€â”€ Numbers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
