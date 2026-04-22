@@ -4227,6 +4227,9 @@ public class EvaluatorTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        var dotContext = Assert.IsType<DotCallContext>(contextual.ErrorContext);
+        Assert.Equal("Lib", dotContext.ReceiverDescription);
+        Assert.Equal("B", dotContext.PropertyName);
         var unresolved = Assert.IsType<EvalError.UnknownName>(contextual.Inner);
         Assert.Equal("B", unresolved.Name);
 
@@ -4337,6 +4340,29 @@ public class EvaluatorTests
             "Cannot call 'A' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.",
             expectedLine: 4,
             expectedColumn: 1);
+
+    [Fact]
+    public void Eval_MissingOutput_CallUse_CarriesStructuredCallContext()
+    {
+        var result = EvalFull(
+            """
+            A = {
+                X = 1
+            }
+            A()
+            """);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        var callContext = Assert.IsType<CallContext>(contextual.ErrorContext);
+        Assert.Equal("A", callContext.CalleeDescription);
+        Assert.IsType<EvalError.MissingOutput>(contextual.Inner);
+
+        Assert.Equal(
+            "Cannot call 'A' because it does not define an output. Add an Output expression inside it, or call one of its properties instead.",
+            KatLangError.FromEvalError(result.Error).Message);
+    }
 
     [Fact]
     public void Eval_MissingOutput_CallWithArgument_UsesKatLangFacingMessage()
@@ -4707,6 +4733,26 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_UnknownIdentifier_CarriesStructuredImplicitParameterContext()
+    {
+        var error = GetEvalError("Sum");
+        Assert.NotNull(error);
+
+        var contextual = Assert.IsType<EvalError.WithContext>(error);
+        var implicitContext = Assert.IsType<ImplicitParameterContext>(contextual.ErrorContext);
+        Assert.Equal(["Sum"], implicitContext.ParamNames);
+        Assert.Equal(0, implicitContext.ProvidedArgumentCount);
+
+        var unresolved = Assert.IsType<EvalError.UnresolvedImplicitParams>(contextual.Inner);
+        Assert.Equal(["Sum"], unresolved.ParamNames);
+
+        var formatted = KatLangError.FromEvalError(error).Message;
+        Assert.Contains("KatLang interprets it as an implicit parameter", formatted);
+        Assert.Contains("expected 1 argument, got 0", formatted);
+        Assert.DoesNotContain("while evaluating", formatted);
+    }
+
+    [Fact]
     public void Eval_UnknownIdentifier_ReturnsUnresolvedImplicitParamsType()
     {
         // "Sum" becomes a parameter → block has 1 param → UnresolvedImplicitParams in value position.
@@ -4778,6 +4824,31 @@ public class EvaluatorTests
         }
 
         [Fact]
+        public void Eval_ArityMismatch_DirectCall_CarriesStructuredCallContext()
+        {
+            var source = """
+                Add = a + b
+                Add(1)
+                """;
+
+            var result = EvalFull(source);
+            if (result.IsOk)
+                Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+            var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+            var callContext = Assert.IsType<CallContext>(contextual.ErrorContext);
+            Assert.Equal("Add", callContext.CalleeDescription);
+
+            var arity = Assert.IsType<EvalError.ArityMismatch>(contextual.Inner);
+            Assert.Equal(2, arity.Expected);
+            Assert.Equal(1, arity.Actual);
+
+            Assert.Equal(
+                "Property 'Add' expects 2 parameters, but was called with 1 argument.",
+                KatLangError.FromEvalError(result.Error).Message);
+        }
+
+        [Fact]
         public void Eval_ArityMismatch_NoArgumentsProvided_UsesUserFacingMessage()
         {
             var source = """
@@ -4790,7 +4861,8 @@ public class EvaluatorTests
                 Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
             var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
-            Assert.Equal("while evaluating property A", contextual.Context);
+            var propertyContext = Assert.IsType<PropertyEvaluationContext>(contextual.ErrorContext);
+            Assert.Equal("A", propertyContext.PropertyName);
             var arity = Assert.IsType<EvalError.ArityMismatch>(contextual.Inner);
             Assert.Equal(1, arity.Expected);
             Assert.Equal(0, arity.Actual);

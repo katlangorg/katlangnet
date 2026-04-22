@@ -44,6 +44,8 @@ public sealed class KatLangError
             return formattedMissingOutput;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
             return formattedArityMismatch;
+        if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
+            return formattedImplicitParams;
 
         return error switch
         {
@@ -72,6 +74,20 @@ public sealed class KatLangError
         };
     }
 
+    private static bool TryGetTextContext(EvalError error, out string context, out EvalError inner)
+    {
+        if (error is EvalError.WithContext { ErrorContext: TextErrorContext(var message), Inner: var nestedInner })
+        {
+            context = message;
+            inner = nestedInner;
+            return true;
+        }
+
+        context = string.Empty;
+        inner = null!;
+        return false;
+    }
+
     private static bool TryFormatSpecialOutputAccess(EvalError error, out string message)
     {
         message = string.Empty;
@@ -82,10 +98,19 @@ public sealed class KatLangError
             return true;
         }
 
-        if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.SpecialOutputAccess })
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotContext, Inner: EvalError.SpecialOutputAccess })
+        {
+            message = string.Equals(dotContext.PropertyName, "Output", StringComparison.Ordinal)
+                ? FormatSpecialOutputAccess(dotContext.ReceiverDescription)
+                : FormatSpecialOutputAccess(receiverDesc: null);
+            return true;
+        }
+
+        if (error is not EvalError.WithContext { Inner: EvalError.SpecialOutputAccess })
             return false;
 
-        if (TryParseDotCallContext(context, out var receiverDesc, out var propertyName)
+        if (TryGetTextContext(error, out var context, out _)
+            && TryParseDotCallContext(context, out var receiverDesc, out var propertyName)
             && string.Equals(propertyName, "Output", StringComparison.Ordinal))
         {
             message = FormatSpecialOutputAccess(receiverDesc);
@@ -119,7 +144,15 @@ public sealed class KatLangError
     {
         message = string.Empty;
 
-        if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.UnknownName(var missingName) })
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotContext, Inner: EvalError.UnknownName(var missingName) }
+            && string.Equals(dotContext.PropertyName, missingName, StringComparison.Ordinal))
+        {
+            message = $"Property '{dotContext.PropertyName}' was not found on `{dotContext.ReceiverDescription}`, and no visible algorithm or property named '{dotContext.PropertyName}' can be used with `{dotContext.ReceiverDescription}` as the first argument.";
+            return true;
+        }
+
+        if (!TryGetTextContext(error, out var context, out var inner)
+            || inner is not EvalError.UnknownName(var legacyMissingName))
             return false;
 
         const string prefix = "while evaluating dotCall .";
@@ -131,7 +164,7 @@ public sealed class KatLangError
             return false;
 
         var propertyName = context[prefix.Length..delimiterIndex];
-        if (!string.Equals(propertyName, missingName, StringComparison.Ordinal))
+        if (!string.Equals(propertyName, legacyMissingName, StringComparison.Ordinal))
             return false;
 
         var receiverDesc = context[(delimiterIndex + " of ".Length)..];
@@ -149,7 +182,28 @@ public sealed class KatLangError
             return true;
         }
 
-        if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.MissingOutput })
+        if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.MissingOutput })
+        {
+            message = FormatPropertyMissingOutput(propertyContext.PropertyName);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.MissingOutput })
+        {
+            message = FormatCallMissingOutput(callContext.CalleeDescription);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput })
+        {
+            message = string.Equals(dotCallContext.PropertyName, "string", StringComparison.Ordinal)
+                ? FormatReferenceMissingOutput(dotCallContext.ReceiverDescription)
+                : FormatReferenceMissingOutput($"{dotCallContext.ReceiverDescription}.{dotCallContext.PropertyName}");
+            return true;
+        }
+
+        if (!TryGetTextContext(error, out var context, out var inner)
+            || inner is not EvalError.MissingOutput)
             return false;
 
         if (TryParsePropertyContext(context, out var propertyName))
@@ -179,7 +233,30 @@ public sealed class KatLangError
     {
         message = string.Empty;
 
-        if (error is not EvalError.WithContext { Context: var context, Inner: EvalError.ArityMismatch inner })
+        if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.ArityMismatch propertyArity })
+        {
+            message = FormatNamedArityMismatch(propertyContext.PropertyName, propertyArity.Expected, propertyArity.Actual, preferPropertyName: true);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.ArityMismatch callArity })
+        {
+            message = callArity.Span is null
+                ? FormatNamedArityMismatch(callContext.CalleeDescription, callArity.Expected, callArity.Actual, preferPropertyName: IsSimpleIdentifier(callContext.CalleeDescription))
+                : FormatGenericArityMismatch(callArity.Expected, callArity.Actual);
+            return true;
+        }
+
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.ArityMismatch dotCallArity })
+        {
+            message = dotCallArity.Span is null
+                ? $"Property '{dotCallContext.PropertyName}' on `{dotCallContext.ReceiverDescription}` expects {FormatCount(dotCallArity.Expected, "parameter")}, but was called with {FormatCount(dotCallArity.Actual, "argument")}."
+                : FormatGenericArityMismatch(dotCallArity.Expected, dotCallArity.Actual);
+            return true;
+        }
+
+        if (!TryGetTextContext(error, out var context, out var inner)
+            || inner is not EvalError.ArityMismatch legacyArity)
             return false;
 
         if (context.StartsWith("Builtin '", StringComparison.Ordinal))
@@ -190,27 +267,38 @@ public sealed class KatLangError
 
         if (TryParsePropertyContext(context, out var propertyName))
         {
-            message = FormatNamedArityMismatch(propertyName, inner.Expected, inner.Actual, preferPropertyName: true);
+            message = FormatNamedArityMismatch(propertyName, legacyArity.Expected, legacyArity.Actual, preferPropertyName: true);
             return true;
         }
 
         if (TryParseCallContext(context, out var calleeDesc))
         {
-            message = inner.Span is null
-                ? FormatNamedArityMismatch(calleeDesc, inner.Expected, inner.Actual, preferPropertyName: IsSimpleIdentifier(calleeDesc))
-                : FormatGenericArityMismatch(inner.Expected, inner.Actual);
+            message = legacyArity.Span is null
+                ? FormatNamedArityMismatch(calleeDesc, legacyArity.Expected, legacyArity.Actual, preferPropertyName: IsSimpleIdentifier(calleeDesc))
+                : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
             return true;
         }
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            message = inner.Span is null
-                ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(inner.Expected, "parameter")}, but was called with {FormatCount(inner.Actual, "argument")}."
-                : FormatGenericArityMismatch(inner.Expected, inner.Actual);
+            message = legacyArity.Span is null
+                ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(legacyArity.Expected, "parameter")}, but was called with {FormatCount(legacyArity.Actual, "argument")}."
+                : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
             return true;
         }
 
         return false;
+    }
+
+    private static bool TryFormatUnresolvedImplicitParams(EvalError error, out string message)
+    {
+        message = string.Empty;
+
+        if (error is not EvalError.WithContext { ErrorContext: ImplicitParameterContext context, Inner: EvalError.UnresolvedImplicitParams inner })
+            return false;
+
+        message = FormatUnresolvedImplicitParams(inner, context.ProvidedArgumentCount);
+        return true;
     }
 
     private static bool TryParseCallContext(string context, out string calleeDesc)
@@ -317,7 +405,7 @@ public sealed class KatLangError
         return true;
     }
 
-    private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e)
+    private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e, int providedArgumentCount = 0)
     {
         var count = e.ParamNames.Count;
         var subject = count == 1 ? "Identifier" : "Identifiers";
@@ -327,12 +415,14 @@ public sealed class KatLangError
             : "properties or other visible names";
         var interpretation = count == 1 ? "an implicit parameter" : "implicit parameters";
         var callerSentence = count == 1 ? "Its value is provided by the caller." : "Their values are provided by the caller.";
-        var argPhrase = count == 1 ? "argument was" : "arguments were";
         var argWord = count == 1 ? "argument" : "arguments";
         var names = count == 1
             ? $"'{e.ParamNames[0]}'"
             : string.Join(", ", e.ParamNames.Take(count - 1).Select(n => $"'{n}'")) + $" and '{e.ParamNames[^1]}'";
-        return $"{subject} {names} {nameVerb} not resolve to {resolutionTarget} here, so KatLang interprets {(count == 1 ? "it" : "them")} as {interpretation}. {callerSentence} No {argPhrase} provided, so the program cannot be executed (expected {count} {argWord}, got 0).";
+        var missingArgumentSentence = providedArgumentCount == 0
+            ? $"No {(count == 1 ? "argument was" : "arguments were")} provided"
+            : $"Only {providedArgumentCount} {(providedArgumentCount == 1 ? "argument was" : "arguments were")} provided";
+        return $"{subject} {names} {nameVerb} not resolve to {resolutionTarget} here, so KatLang interprets {(count == 1 ? "it" : "them")} as {interpretation}. {callerSentence} {missingArgumentSentence}, so the program cannot be executed (expected {count} {argWord}, got {providedArgumentCount}).";
     }
 
     public override string ToString()

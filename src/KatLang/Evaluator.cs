@@ -282,12 +282,12 @@ public static class Evaluator
         _ => "?",
     };
 
-    // ── Context string helpers (Lean: CtxMsg.openMsg, CtxMsg.call, CtxMsg.dotCall) ─
+    // ── Error context helpers ──────────────────────────────────────────────
 
-    private static string CtxOpen(string key) => $"while resolving open: {key}";
-    private static string CtxCall(Expr f) => $"while evaluating call to {OpenExprName(f)}";
-    private static string CtxProperty(string name) => $"while evaluating property {name}";
-    private static string CtxDotCall(Expr obj, string name) => $"while evaluating dotCall .{name} of {OpenExprName(obj)}";
+    private static ErrorContext CtxOpen(string key) => new OpenResolutionContext(key);
+    private static ErrorContext CtxCall(Expr f) => new CallContext(OpenExprName(f));
+    private static ErrorContext CtxProperty(string name) => new PropertyEvaluationContext(name);
+    private static ErrorContext CtxDotCall(Expr obj, string name) => new DotCallContext(OpenExprName(obj), name);
 
     // ── Error context helper ────────────────────────────────────────────────
 
@@ -295,10 +295,13 @@ public static class Evaluator
     /// Attach context to any error raised by the given result.
     /// Lean: withCtx.
     /// </summary>
-    private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result) =>
+    private static EvalResult<T> WithCtx<T>(ErrorContext context, EvalResult<T> result) =>
         result.IsError
             ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
+
+    private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result)
+        => WithCtx(new TextErrorContext(context), result);
 
     private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
         result.IsError && result.Error.Span is null
@@ -311,6 +314,12 @@ public static class Evaluator
             return WithSpan<T>(span, new EvalError.WithContext(CtxProperty(name), result.Error));
 
         return WithSpan(span, result);
+    }
+
+    private static EvalResult<T> MissingImplicitArguments<T>(IReadOnlyList<string> paramNames, SourceSpan? span)
+    {
+        var inner = new EvalError.UnresolvedImplicitParams(paramNames) { Span = span };
+        return new EvalError.WithContext(new ImplicitParameterContext(paramNames, 0), inner) { Span = span };
     }
 
     /// <summary>Returns the <see cref="SourceSpan"/> of the first output expression that has one.</summary>
@@ -2856,7 +2865,7 @@ public static class Evaluator
                 if (wired.Params.Count == 0)
                     return WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
                 var blockSpan = expr.Span ?? FirstSpan(wired.Output);
-                return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
+                return MissingImplicitArguments<Result>(wired.Params, blockSpan);
             }
 
             case Expr.Resolve(var name):
@@ -2970,7 +2979,7 @@ public static class Evaluator
                 }
 
                 var blockSpan = expr.Span ?? FirstSpan(wired.Output);
-                return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
+                return MissingImplicitArguments<CountedResult>(wired.Params, blockSpan);
             }
 
             case Expr.Resolve(var name):
@@ -4005,7 +4014,7 @@ public static class Evaluator
             return EvalProgramOutput(wired, ctx, []);
 
         var blockSpan = span ?? FirstSpan(wired.Output);
-        return new EvalError.UnresolvedImplicitParams(wired.Params) { Span = blockSpan };
+        return MissingImplicitArguments<Result>(wired.Params, blockSpan);
     }
 
     /// <summary>

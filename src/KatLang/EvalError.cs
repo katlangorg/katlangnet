@@ -30,6 +30,8 @@ namespace KatLang;
 ///   | unresolvedImplicitParams : List Ident → Error
 ///   | withContext        : String → Error → Error
 /// </code>
+/// C# carries structured <see cref="ErrorContext"/> values in <see cref="WithContext"/>
+/// while preserving Lean's user-visible context wording where needed.
 /// </summary>
 public abstract record EvalError
 {
@@ -110,6 +112,30 @@ public abstract record EvalError
     /// <summary>Top-level program has unresolved implicit parameters (no arguments supplied).</summary>
     public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError;
 
-    /// <summary>Contextual wrapper attaching a description to an inner error.</summary>
-    public sealed record WithContext(string Context, EvalError Inner) : EvalError;
+    /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>
+    public sealed record WithContext : EvalError
+    {
+        public ErrorContext ErrorContext { get; }
+
+        public EvalError Inner { get; }
+
+        public string Context => ErrorContext.ToLegacyString();
+
+        public WithContext(ErrorContext errorContext, EvalError inner)
+        {
+            ErrorContext = errorContext;
+            Inner = inner;
+        }
+
+        public WithContext(string context, EvalError inner)
+            : this(new TextErrorContext(context), inner)
+        {
+        }
+
+        public void Deconstruct(out ErrorContext errorContext, out EvalError inner)
+        {
+            errorContext = ErrorContext;
+            inner = Inner;
+        }
+    }
 }
