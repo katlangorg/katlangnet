@@ -1,0 +1,4 @@
+// Derived from Eval_RepeatedEligiblePropertyWithinSingleRun in EvaluatorTests.
+// This is the most direct detector for repeated zero-argument property recomputation.
+Values = range(1, 200)
+Values.count + Values.count + Values.count + Values.count + Values.count + Values.count

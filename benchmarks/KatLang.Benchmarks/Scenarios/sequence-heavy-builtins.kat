@@ -1,0 +1,7 @@
+// Derived from the tutorial's range, filter, map, and reduce examples.
+// This isolates sequence traversal and callback dispatch without loop state machines.
+IsEven = x mod 2 == 0
+Square = x * x
+Add(x, acc) = acc + x
+
+range(1, 400).filter(IsEven).map(Square).reduce(Add, 0)

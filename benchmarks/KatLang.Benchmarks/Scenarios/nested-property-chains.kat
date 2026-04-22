@@ -1,0 +1,12 @@
+// Derived from Eval_Distinguishes_HigherOrderAlgorithmContexts in EvaluatorTests.
+// KatLang's current user-defined dot-access surface is one-hop exported property lookup,
+// so this benchmark repeats that legal nested receiver path across distinct contexts.
+Left = {
+    Step = x + 1
+    Value = Step(10)
+}
+Right = {
+    Step = x + 2
+    Value = Step(10)
+}
+Left.Value + Left.Value + Left.Value + Right.Value + Right.Value + Right.Value

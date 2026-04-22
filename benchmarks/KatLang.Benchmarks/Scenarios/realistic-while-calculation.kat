@@ -1,0 +1,6 @@
+// Lifted from Eval_While_DotCall_SumMultiplesOf3Or5 in EvaluatorTests.
+// This mixes parameterized calls, while, conditionals, dot-call, and selection.
+Algo = n - 1, result + if(n mod 3 == 0 or n mod 5 == 0, n, 0), n > 2
+Init = x, 0
+Sum = Algo.while(Init(x)) : 1
+Sum(999)

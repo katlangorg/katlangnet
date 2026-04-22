@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/DemoApp/DemoApp.csproj" />
     <Project Path="src/KatLang/KatLang.csproj" />
