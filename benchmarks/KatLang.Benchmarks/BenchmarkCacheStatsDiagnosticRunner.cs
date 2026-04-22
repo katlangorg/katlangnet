@@ -14,6 +14,7 @@ internal static class BenchmarkCacheStatsDiagnosticRunner
 	private static readonly BenchmarkScenario[] Scenarios =
 	[
 		BenchmarkScenarioCatalog.RepeatedZeroArgPropertyReuse,
+		BenchmarkScenarioCatalog.ScalarHelperSumCalls,
 		BenchmarkScenarioCatalog.PropertyRichSharedSubcomputations,
 		BenchmarkScenarioCatalog.RealisticWhileCalculation,
 		BenchmarkScenarioCatalog.NestedPropertyChains,

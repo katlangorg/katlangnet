@@ -48,6 +48,15 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.repeated-zero-arg-property-reuse.kat",
 			expectedAtoms: [1200m]));
 
+	private static readonly Lazy<BenchmarkScenario> ScalarHelperSumCallsScenario =
+		new(() => Load(
+			id: "scalar-helper-sum-calls",
+			displayName: "Scalar helper sum calls",
+			description: "A parameterized helper closes over a shared zero-arg sequence sum and is called with distinct scalar arguments.",
+			origin: "User-provided benchmark case for repeated lexical helper calls over a shared sum.",
+			resourceName: "KatLang.Benchmarks.Scenarios.scalar-helper-sum-calls.kat",
+			expectedAtoms: [10103m]));
+
 	private static readonly Lazy<BenchmarkScenario> NestedPropertyChainsScenario =
 		new(() => Load(
 			id: "nested-property-chains",
@@ -85,6 +94,8 @@ internal static class BenchmarkScenarioCatalog
 			expectedAtoms: [233168m]));
 
 	public static BenchmarkScenario RepeatedZeroArgPropertyReuse => RepeatedZeroArgPropertyReuseScenario.Value;
+
+	public static BenchmarkScenario ScalarHelperSumCalls => ScalarHelperSumCallsScenario.Value;
 
 	public static BenchmarkScenario NestedPropertyChains => NestedPropertyChainsScenario.Value;
 

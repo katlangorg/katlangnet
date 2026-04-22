@@ -1,0 +1,4 @@
+// Shared zero-arg sum captured by a parameterized helper.
+P = range(1, 100)
+F = P.sum + x
+F(1) + F(2)

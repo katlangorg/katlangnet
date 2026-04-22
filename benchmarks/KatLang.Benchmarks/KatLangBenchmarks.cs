@@ -92,6 +92,7 @@ internal static class KatLangBenchmarkRunner
 public class ParseAndEvaluateBenchmarks
 {
 	private static readonly BenchmarkScenario RepeatedZeroArgPropertyReuseScenario = BenchmarkScenarioCatalog.RepeatedZeroArgPropertyReuse;
+	private static readonly BenchmarkScenario ScalarHelperSumCallsScenario = BenchmarkScenarioCatalog.ScalarHelperSumCalls;
 	private static readonly BenchmarkScenario NestedPropertyChainsScenario = BenchmarkScenarioCatalog.NestedPropertyChains;
 	private static readonly BenchmarkScenario SequenceHeavyBuiltinsScenario = BenchmarkScenarioCatalog.SequenceHeavyBuiltins;
 	private static readonly BenchmarkScenario PropertyRichSharedSubcomputationsScenario = BenchmarkScenarioCatalog.PropertyRichSharedSubcomputations;
@@ -103,6 +104,10 @@ public class ParseAndEvaluateBenchmarks
 	[Benchmark(Baseline = true)]
 	public IReadOnlyList<decimal> RepeatedZeroArgPropertyReuse()
 		=> KatLangBenchmarkRunner.RunWithFrontEnd(RepeatedZeroArgPropertyReuseScenario, CacheMode);
+
+	[Benchmark]
+	public IReadOnlyList<decimal> ScalarHelperSumCalls()
+		=> KatLangBenchmarkRunner.RunWithFrontEnd(ScalarHelperSumCallsScenario, CacheMode);
 
 	[Benchmark]
 	public IReadOnlyList<decimal> NestedPropertyChains()
@@ -128,6 +133,7 @@ public class ParseAndEvaluateBenchmarks
 public class PreparedEvaluationBenchmarks
 {
 	private static readonly BenchmarkScenario RepeatedZeroArgPropertyReuseScenario = BenchmarkScenarioCatalog.RepeatedZeroArgPropertyReuse;
+	private static readonly BenchmarkScenario ScalarHelperSumCallsScenario = BenchmarkScenarioCatalog.ScalarHelperSumCalls;
 	private static readonly BenchmarkScenario NestedPropertyChainsScenario = BenchmarkScenarioCatalog.NestedPropertyChains;
 	private static readonly BenchmarkScenario SequenceHeavyBuiltinsScenario = BenchmarkScenarioCatalog.SequenceHeavyBuiltins;
 	private static readonly BenchmarkScenario PropertyRichSharedSubcomputationsScenario = BenchmarkScenarioCatalog.PropertyRichSharedSubcomputations;
@@ -139,6 +145,10 @@ public class PreparedEvaluationBenchmarks
 	[Benchmark(Baseline = true)]
 	public IReadOnlyList<decimal> RepeatedZeroArgPropertyReuse()
 		=> KatLangBenchmarkRunner.RunPrepared(RepeatedZeroArgPropertyReuseScenario, CacheMode);
+
+	[Benchmark]
+	public IReadOnlyList<decimal> ScalarHelperSumCalls()
+		=> KatLangBenchmarkRunner.RunPrepared(ScalarHelperSumCallsScenario, CacheMode);
 
 	[Benchmark]
 	public IReadOnlyList<decimal> NestedPropertyChains()
