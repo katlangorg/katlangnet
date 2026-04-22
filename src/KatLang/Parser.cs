@@ -828,7 +828,7 @@ public sealed class Parser
         // grouped tuple values like (a, b) as one top-level block value.
         if (exprs.Count == 1
             && exprs[0] is Expr.Block(var innerAlg)
-            && ShouldUnwrapPropertyBlock(innerAlg))
+            && innerAlg.ShouldUnwrapSingleBlockPropertyBody())
             return innerAlg with { IsParametrized = true };
 
         return new Algorithm.User(
@@ -841,16 +841,6 @@ public sealed class Parser
             IsParametrized = true
         };
     }
-
-    /// <summary>
-    /// Property bodies unwrap only when the single block clearly denotes an
-    /// algorithm value. Parenthesized grouped data like <c>(a, b)</c> must stay
-    /// wrapped so it remains distinguishable from top-level output arity 2.
-    /// </summary>
-    private static bool ShouldUnwrapPropertyBlock(Algorithm innerAlg)
-        => innerAlg.IsParametrized
-            || innerAlg.Properties.Count > 0
-            || innerAlg.Opens.Count > 0;
 
     /// <summary>
     /// Normalizes and validates open expressions.
@@ -919,7 +909,7 @@ public sealed class Parser
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
         Expr.Resolve or Expr.DotCall(_, _, null) or Expr.Combine or Expr.Block
-        || e is Expr.Call(Expr.Resolve("load"), _);
+        || e.TryGetUnresolvedLoadArguments(out _);
 
     /// <summary>
     /// Human-readable kind string for open-form validation errors.

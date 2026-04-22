@@ -92,11 +92,8 @@ public sealed class ModuleLoader
             // Unwrap only algorithm-valued single-block property bodies. This keeps
             // plain grouped values such as (a, b) wrapped as one block value while
             // still letting load-elaborated modules become direct property values.
-            processedValue = UnwrapSingleBlock(processedValue);
-            newProperties.Add(new Property(prop.Name, processedValue, prop.IsPublic, prop.Exposure)
-            {
-                DeclarationSpans = prop.DeclarationSpans
-            });
+            processedValue = processedValue.UnwrapSingleBlockPropertyBody();
+            newProperties.Add(prop.WithValue(processedValue));
         }
 
         var newOutput = new List<Expr>(alg.Output.Count);
@@ -120,39 +117,15 @@ public sealed class ModuleLoader
         return result;
     }
 
-    /// <summary>
-    /// If an algorithm has no params, opens, or properties and its only output is an
-    /// algorithm-valued Block, unwrap to use the block's algorithm directly. This mirrors
-    /// ParseOutputLine's behavior for property bodies while preserving plain grouped values.
-    /// </summary>
-    private static Algorithm UnwrapSingleBlock(Algorithm alg)
-    {
-        if (alg is Algorithm.User
-            {
-                Params.Count: 0, Opens.Count: 0, Properties.Count: 0,
-                Output: [Expr.Block(var innerAlg)]
-            }
-            && ShouldUnwrapPropertyBlock(innerAlg))
-        {
-            return innerAlg with { IsParametrized = alg.IsParametrized || innerAlg.IsParametrized };
-        }
-        return alg;
-    }
-
-    private static bool ShouldUnwrapPropertyBlock(Algorithm innerAlg)
-        => innerAlg.IsParametrized
-            || innerAlg.Properties.Count > 0
-            || innerAlg.Opens.Count > 0;
-
     // ── Expression processing ────────────────────────────────────────────────
 
     private Expr ProcessExpr(Expr expr, LoadContext context)
     {
+        if (expr.TryGetUnresolvedLoadArguments(out var loadArgs))
+            return ProcessLoad(loadArgs, context, expr.Span);
+
         switch (expr)
         {
-            case Expr.Call(Expr.Resolve("load"), var args):
-                return ProcessLoad(args, context, expr.Span);
-
             case Expr.Call(var func, var args):
                 return new Expr.Call(
                     ProcessExpr(func, LoadContext.RuntimeExpr),

@@ -12,7 +12,7 @@ internal static class LoadElaborationGuard
     {
         var diagnostics = new List<Diagnostic>();
 
-        VisitAlgorithm(root, span =>
+        VisitLoads(root, span =>
         {
             diagnostics.Add(new Diagnostic(
                 ModuleElaborationUnavailableDiagnostic,
@@ -46,7 +46,7 @@ internal static class LoadElaborationGuard
         var found = false;
         SourceSpan? firstSpan = null;
 
-        VisitAlgorithm(root, candidateSpan =>
+        VisitLoads(root, candidateSpan =>
         {
             if (found)
                 return;
@@ -59,87 +59,23 @@ internal static class LoadElaborationGuard
         return found;
     }
 
-    private static void VisitAlgorithm(Algorithm algorithm, Action<SourceSpan?> onLoad)
+    private static void VisitLoads(Algorithm root, Action<SourceSpan?> onLoad)
     {
-        switch (algorithm)
-        {
-            case Algorithm.User user:
-                foreach (var open in user.Opens)
-                    VisitExpr(open, onLoad);
-
-                foreach (var property in user.Properties)
-                    VisitAlgorithm(property.Value, onLoad);
-
-                foreach (var expr in user.Output)
-                    VisitExpr(expr, onLoad);
-                break;
-
-            case Algorithm.Conditional conditional:
-                foreach (var open in conditional.Opens)
-                    VisitExpr(open, onLoad);
-
-                foreach (var branch in conditional.Branches)
-                    VisitAlgorithm(branch.Body, onLoad);
-                break;
-
-            case Algorithm.Builtin:
-                break;
-        }
+        new LoadWalker(onLoad).VisitAlgorithm(root);
     }
 
-    private static void VisitExpr(Expr expr, Action<SourceSpan?> onLoad)
+    private sealed class LoadWalker(Action<SourceSpan?> onLoad) : AstWalker
     {
-        switch (expr)
+        public override void VisitExpr(Expr expr)
         {
-            case Expr.Call(Expr.Resolve("load"), var args):
+            if (expr.TryGetUnresolvedLoadArguments(out var args))
+            {
                 onLoad(expr.Span);
-                VisitAlgorithm(args, onLoad);
-                break;
+                VisitAlgorithm(args);
+                return;
+            }
 
-            case Expr.Call(var function, var args):
-                VisitExpr(function, onLoad);
-                VisitAlgorithm(args, onLoad);
-                break;
-
-            case Expr.Block(var algorithm):
-                VisitAlgorithm(algorithm, onLoad);
-                break;
-
-            case Expr.DotCall(var target, _, var args):
-                VisitExpr(target, onLoad);
-                if (args is not null)
-                    VisitAlgorithm(args, onLoad);
-                break;
-
-            case Expr.Unary(_, var operand):
-                VisitExpr(operand, onLoad);
-                break;
-
-            case Expr.Binary(_, var left, var right):
-                VisitExpr(left, onLoad);
-                VisitExpr(right, onLoad);
-                break;
-
-            case Expr.Index(var target, var selector):
-                VisitExpr(target, onLoad);
-                VisitExpr(selector, onLoad);
-                break;
-
-            case Expr.Combine(var left, var right):
-                VisitExpr(left, onLoad);
-                VisitExpr(right, onLoad);
-                break;
-
-            case Expr.Grace(var inner, _):
-                VisitExpr(inner, onLoad);
-                break;
-
-            case Expr.Resolve:
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.NativeCall:
-                break;
+            base.VisitExpr(expr);
         }
     }
 }

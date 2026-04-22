@@ -627,90 +627,49 @@ internal static class AlgorithmValidation
 
     public static IReadOnlyList<ExplicitParameterOutputViolation> FindExplicitParameterOutputViolations(Algorithm algorithm)
     {
-        var violations = new List<ExplicitParameterOutputViolation>();
-        CollectAlgorithmViolations(algorithm, violations);
-        return violations;
+        var walker = new ExplicitParameterOutputWalker(stopAfterFirst: false);
+        walker.VisitAlgorithm(algorithm);
+        return walker.Violations;
     }
 
     public static ExplicitParameterOutputViolation? FindFirstExplicitParameterOutputViolation(Expr expr)
     {
-        var violations = new List<ExplicitParameterOutputViolation>(capacity: 1);
-        CollectExprViolations(expr, violations);
-        return violations.Count > 0 ? violations[0] : null;
+        var walker = new ExplicitParameterOutputWalker(stopAfterFirst: true);
+        walker.VisitExpr(expr);
+        return walker.Violations.Count > 0 ? walker.Violations[0] : null;
     }
 
-    private static void CollectAlgorithmViolations(Algorithm algorithm, List<ExplicitParameterOutputViolation> violations)
+    private sealed class ExplicitParameterOutputWalker(bool stopAfterFirst) : AstWalker
     {
-        if (algorithm is Algorithm.User user && user.Params.Count > 0 && user.Output.Count == 0)
+        public List<ExplicitParameterOutputViolation> Violations { get; } = [];
+
+        public override void VisitAlgorithm(Algorithm algorithm)
         {
-            var span = user.ExplicitParameters.FirstOrDefault()?.Span;
-            violations.Add(new ExplicitParameterOutputViolation(span));
+            if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            base.VisitAlgorithm(algorithm);
         }
 
-        foreach (var openExpr in algorithm.Opens)
-            CollectExprViolations(openExpr, violations);
-
-        foreach (var property in algorithm.Properties)
-            CollectAlgorithmViolations(property.Value, violations);
-
-        foreach (var expr in algorithm.Output)
-            CollectExprViolations(expr, violations);
-
-        foreach (var branch in algorithm.Branches)
-            CollectAlgorithmViolations(branch.Body, violations);
-    }
-
-    private static void CollectExprViolations(Expr expr, List<ExplicitParameterOutputViolation> violations)
-    {
-        switch (expr)
+        public override void VisitExpr(Expr expr)
         {
-            case Expr.Param:
-            case Expr.Num:
-            case Expr.StringLiteral:
-            case Expr.Resolve:
-            case Expr.NativeCall:
+            if (stopAfterFirst && Violations.Count > 0)
                 return;
 
-            case Expr.Unary unary:
-                CollectExprViolations(unary.Operand, violations);
-                return;
+            base.VisitExpr(expr);
+        }
 
-            case Expr.Binary binary:
-                CollectExprViolations(binary.Left, violations);
-                CollectExprViolations(binary.Right, violations);
-                return;
+        protected override void VisitUserAlgorithm(Algorithm.User algorithm)
+        {
+            if (algorithm.Params.Count > 0 && algorithm.Output.Count == 0)
+            {
+                var span = algorithm.ExplicitParameters.FirstOrDefault()?.Span;
+                Violations.Add(new ExplicitParameterOutputViolation(span));
+                if (stopAfterFirst)
+                    return;
+            }
 
-            case Expr.Index index:
-                CollectExprViolations(index.Target, violations);
-                CollectExprViolations(index.Selector, violations);
-                return;
-
-            case Expr.Combine combine:
-                CollectExprViolations(combine.Left, violations);
-                CollectExprViolations(combine.Right, violations);
-                return;
-
-            case Expr.Grace grace:
-                CollectExprViolations(grace.Inner, violations);
-                return;
-
-            case Expr.Block block:
-                CollectAlgorithmViolations(block.Algorithm, violations);
-                return;
-
-            case Expr.Call call:
-                CollectExprViolations(call.Function, violations);
-                CollectAlgorithmViolations(call.Args, violations);
-                return;
-
-            case Expr.DotCall dotCall:
-                CollectExprViolations(dotCall.Target, violations);
-                if (dotCall.Args is not null)
-                    CollectAlgorithmViolations(dotCall.Args, violations);
-                return;
-
-            default:
-                throw new InvalidOperationException($"Unhandled Expr type in AlgorithmValidation: {expr.GetType().Name}");
+            base.VisitUserAlgorithm(algorithm);
         }
     }
 }
