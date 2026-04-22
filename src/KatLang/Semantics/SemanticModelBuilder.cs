@@ -45,7 +45,7 @@ public static class SemanticModelBuilder
 
     private sealed class Builder
     {
-        private static readonly Algorithm.User MathAlgorithm = CreateMathAlgorithm();
+        private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
         private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
 
@@ -830,39 +830,12 @@ public static class SemanticModelBuilder
                     .ToList();
             }
 
-            string[] parameterNames = name switch
-            {
-                "if" => ["condition", "whenTrue", "whenFalse"],
-                "while" => ["step", "initialState"],
-                "repeat" => ["step", "count", "initialState"],
-                "atoms" => ["value"],
-                "range" => ["start", "stop"],
-                "filter" => ["items...", "predicate"],
-                "map" => ["items...", "transform"],
-                "order" => ["items..."],
-                "orderDesc" => ["items..."],
-                "count" => ["items..."],
-                "contains" => ["items...", "item"],
-                "first" => ["items..."],
-                "last" => ["items..."],
-                "distinct" => ["items..."],
-                "take" => ["items...", "count"],
-                "skip" => ["items...", "count"],
-                "min" => ["items..."],
-                "max" => ["items..."],
-                "sum" => ["items..."],
-                "avg" => ["items..."],
-                "reduce" => ["items...", "step", "initial accumulator"],
-                _ => [],
-            };
+            if (algorithm is not Algorithm.Builtin(var builtin))
+                return [];
 
-            // In dot-call style, the receiver provides the leading variadic parameter.
-            if (callStyle == PropertyCallStyle.Dot
-                && parameterNames.Length > 0
-                && parameterNames[0].EndsWith("...", StringComparison.Ordinal))
-            {
-                parameterNames = parameterNames[1..];
-            }
+            var parameterNames = BuiltinRegistry.GetBuiltinParameterNames(
+                builtin,
+                callStyle == PropertyCallStyle.Dot ? BuiltinCallStyle.Dot : BuiltinCallStyle.Plain);
 
             return parameterNames
                 .Select(parameterName => new PropertyParameterInfo(
@@ -977,65 +950,13 @@ public static class SemanticModelBuilder
 
         private static ScopeFrame CreatePreludeScope()
         {
+            var preludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
             var properties = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
 
-            foreach (var builtin in Enum.GetValues<BuiltinId>())
-            {
-                var name = builtin.ToString();
-                var algorithm = new Algorithm.Builtin(builtin);
-                properties[name] = CreateBuiltinSymbol(name, algorithm, isPublic: true);
-            }
-
-            properties["load"] = CreateBuiltinSymbol(
-                "load",
-                new Algorithm.User(Parent: null, Params: ["url"], Opens: [], Properties: [], Output: []),
-                isPublic: true);
-
-            properties["Math"] = CreateBuiltinSymbol(
-                "Math",
-                MathAlgorithm,
-                isPublic: true);
+            foreach (var property in preludeAlgorithm.Properties)
+                properties[property.Name] = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
 
             return new ScopeFrame(parent: null, properties, parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal), opens: []);
-        }
-
-        private static Algorithm.User CreateMathAlgorithm()
-        {
-            static Property Constant(string name)
-                => new(name, new Algorithm.User(Parent: null, Params: [], Opens: [], Properties: [], Output: []), IsPublic: true);
-
-            static Property UnaryFunction(string name)
-                => new(name, new Algorithm.User(Parent: null, Params: ["x"], Opens: [], Properties: [], Output: []), IsPublic: true);
-
-            static Property BinaryFunction(string name)
-                => new(name, new Algorithm.User(Parent: null, Params: ["x", "y"], Opens: [], Properties: [], Output: []), IsPublic: true);
-
-            return new Algorithm.User(
-                Parent: null,
-                Params: [],
-                Opens: [],
-                Properties:
-                [
-                    Constant("Pi"),
-                    Constant("E"),
-                    UnaryFunction("Abs"),
-                    UnaryFunction("Ceil"),
-                    UnaryFunction("Floor"),
-                    UnaryFunction("Round"),
-                    UnaryFunction("Sign"),
-                    UnaryFunction("Sqrt"),
-                    UnaryFunction("Ln"),
-                    UnaryFunction("Lg"),
-                    UnaryFunction("Sin"),
-                    UnaryFunction("Asin"),
-                    UnaryFunction("Cos"),
-                    UnaryFunction("Acos"),
-                    UnaryFunction("Tan"),
-                    UnaryFunction("Atan"),
-                    BinaryFunction("Pow"),
-                    BinaryFunction("Log"),
-                ],
-                Output: []);
         }
     }
 

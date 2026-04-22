@@ -14,26 +14,6 @@ namespace KatLang;
 public static class ParameterDetector
 {
     /// <summary>
-    /// Names provided by the prelude algorithm (builtins + Math).
-    /// These are always in scope and should never be treated as implicit parameters.
-    /// Lean: preludeAlg properties are on the initial call stack.
-    /// </summary>
-    private static readonly HashSet<string> PreludeNames =
-        ["if", "while", "repeat", "atoms", "range", "filter", "map", "order", "orderDesc", "count", "contains", "first", "last", "distinct", "take", "skip", "min", "max", "sum", "avg", "reduce", "load", "Math"];
-
-    /// <summary>
-    /// Property names provided by the Math builtin algorithm.
-    /// Used during open resolution: when <c>open = Math</c> is encountered,
-    /// these names are added to the visible set so they are not mistakenly
-    /// treated as implicit parameters.
-    /// Lean: mathAlg properties.
-    /// </summary>
-    private static readonly HashSet<string> MathPropertyNames =
-        ["Pi", "E", "Abs", "Ceil", "Floor", "Round", "Sign", "Sqrt",
-         "Ln", "Lg", "Sin", "Asin", "Cos", "Acos", "Tan", "Atan",
-         "Pow", "Log"];
-
-    /// <summary>
     /// Processes a root algorithm, detecting and classifying parameters throughout the tree.
     /// Returns a new AST with correct <see cref="Expr.Param"/> nodes and populated
     /// <see cref="Algorithm.Params"/> lists, along with any diagnostics (e.g. free
@@ -44,7 +24,7 @@ public static class ParameterDetector
         var diagnostics = new List<Diagnostic>();
         var processed = ProcessAlgorithm(
             root,
-            parentPropertyNames: new(PreludeNames),
+            parentPropertyNames: new(BuiltinRegistry.ParameterDetectorPreludeNames),
             propertyAlgs: new(),
             capturedParamNames: [],
             diagnostics);
@@ -783,7 +763,7 @@ public static class ParameterDetector
             // Math is a builtin algorithm whose properties aren't in the parsed AST.
             if (expr is Expr.Resolve(var preName) && preName == "Math")
             {
-                foreach (var mathName in MathPropertyNames)
+                foreach (var mathName in BuiltinRegistry.MathMemberNames)
                     visibleNames.Add(mathName);
             }
             return;

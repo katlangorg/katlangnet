@@ -783,54 +783,6 @@ public static class Evaluator
     /// </summary>
     private readonly record struct CountedResult(Result Value, int EmittedCount);
 
-    private readonly record struct SequenceBuiltinLeadingArity(int MinCount, int? MaxCount = null)
-    {
-        public static SequenceBuiltinLeadingArity Exact(int count) => new(count, count);
-
-        public bool Accepts(int count)
-            => count >= MinCount && (!MaxCount.HasValue || count <= MaxCount.Value);
-    }
-
-    private enum SequenceBuiltinTrailingArgKind
-    {
-        Algorithm,
-        Value,
-        WholeNumber,
-    }
-
-    private readonly record struct SequenceBuiltinTrailingArgDescriptor(
-        string Label,
-        SequenceBuiltinTrailingArgKind Kind = SequenceBuiltinTrailingArgKind.Algorithm);
-
-    private enum SequenceBuiltinEmptyPolicy
-    {
-        AllowEmpty,
-        RequireAnyItem,
-        RequireEachInputNonEmpty,
-    }
-
-    private enum SequenceBuiltinItemShapeConstraint
-    {
-        Any,
-        SingleNumeric,
-    }
-
-    /// <summary>
-    /// Shared metadata for the current sequence-builtin family.
-    /// Leading arguments are always collected with per-argument boundary
-    /// preservation first, then current handlers consume the flattened
-    /// top-level item stream. Reintroduce richer prepared-view metadata only
-    /// if a concrete builtin actually needs it.
-    /// </summary>
-    private readonly record struct SequenceBuiltinMetadata(
-        SequenceBuiltinLeadingArity LeadingSequenceArity,
-        IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> TrailingArgs,
-        SequenceBuiltinEmptyPolicy EmptyPolicy,
-        SequenceBuiltinItemShapeConstraint ItemShapeConstraint)
-    {
-        public int TrailingArgCount => TrailingArgs.Count;
-    }
-
     /// <summary>
     /// Collected sequence input keeps both the real per-input boundary view and
     /// the flattened view current handlers consume.
@@ -2349,275 +2301,43 @@ public static class Evaluator
 
     // ── Built-in prelude ────────────────────────────────────────────────────
 
-    private static Property MathConstant(string name, decimal value) =>
-        new(name, new Algorithm.User(Parent: null, Params: [], Opens: [],
-            Properties: [], Output: [new Expr.Num(value)]), IsPublic: true);
-
-    private static Property MathFn1(string name) =>
-        new(name, new Algorithm.User(Parent: null, Params: ["x"], Opens: [],
-            Properties: [], Output: [new Expr.NativeCall(name, ["x"])]), IsPublic: true);
-
-    private static Property MathFn2(string name) =>
-        new(name, new Algorithm.User(Parent: null, Params: ["x", "y"], Opens: [],
-            Properties: [], Output: [new Expr.NativeCall(name, ["x", "y"])]), IsPublic: true);
-
-    private static readonly Algorithm MathAlgorithm = new Algorithm.User(
-        Parent: null,
-        Params: [],
-        Opens: [],
-        Properties:
-        [
-            // Use high-precision decimal literals instead of (decimal)Math.PI/E
-            // to avoid double→decimal truncation (15 sig digits vs decimal's 28-29).
-            // This ensures decimal→double roundtrip in EvalNativeCall preserves full
-            // double precision, critical near singularities like tan(π/2).
-            MathConstant("Pi", 3.1415926535897932384626433833m),
-            MathConstant("E",  2.7182818284590452353602874714m),
-            MathFn1("Abs"),
-            MathFn1("Ceil"),
-            MathFn1("Floor"),
-            MathFn1("Round"),
-            MathFn1("Sign"),
-            MathFn1("Sqrt"),
-            MathFn1("Ln"),
-            MathFn1("Lg"),
-            MathFn1("Sin"),
-            MathFn1("Asin"),
-            MathFn1("Cos"),
-            MathFn1("Acos"),
-            MathFn1("Tan"),
-            MathFn1("Atan"),
-            MathFn2("Pow"),
-            MathFn2("Log"),
-        ],
-        Output: []);
+    private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.Runtime);
 
     /// <summary>
     /// Prelude algorithm providing builtin operations in scope by default.
     /// Lean: preludeAlg. Builtins are injected into the initial call stack.
     /// All builtins and Math are public for use in opened contexts.
     /// </summary>
-    private static readonly Algorithm PreludeAlg = new Algorithm.User(
-        Parent: null,
-        Params: [],
-        Opens: [],
-        Properties:
-        [
-            new("if",     new Algorithm.Builtin(BuiltinId.@if),     IsPublic: true),
-            new("while",  new Algorithm.Builtin(BuiltinId.@while),  IsPublic: true),
-            new("repeat", new Algorithm.Builtin(BuiltinId.@repeat), IsPublic: true),
-            new("atoms",  new Algorithm.Builtin(BuiltinId.@atoms),  IsPublic: true),
-            new("range",  new Algorithm.Builtin(BuiltinId.@range),  IsPublic: true),
-            new("filter", new Algorithm.Builtin(BuiltinId.@filter), IsPublic: true),
-            new("map",    new Algorithm.Builtin(BuiltinId.@map),    IsPublic: true),
-            new("order",  new Algorithm.Builtin(BuiltinId.@order),  IsPublic: true),
-            new("orderDesc", new Algorithm.Builtin(BuiltinId.@orderDesc), IsPublic: true),
-            new("count",  new Algorithm.Builtin(BuiltinId.@count),  IsPublic: true),
-            new("contains", new Algorithm.Builtin(BuiltinId.@contains), IsPublic: true),
-            new("first",  new Algorithm.Builtin(BuiltinId.@first),  IsPublic: true),
-            new("last",   new Algorithm.Builtin(BuiltinId.@last),   IsPublic: true),
-            new("distinct", new Algorithm.Builtin(BuiltinId.@distinct), IsPublic: true),
-            new("take",   new Algorithm.Builtin(BuiltinId.@take),   IsPublic: true),
-            new("skip",   new Algorithm.Builtin(BuiltinId.@skip),   IsPublic: true),
-            new("min",    new Algorithm.Builtin(BuiltinId.@min),    IsPublic: true),
-            new("max",    new Algorithm.Builtin(BuiltinId.@max),    IsPublic: true),
-            new("sum",    new Algorithm.Builtin(BuiltinId.@sum),    IsPublic: true),
-            new("avg",    new Algorithm.Builtin(BuiltinId.@avg),    IsPublic: true),
-            new("reduce", new Algorithm.Builtin(BuiltinId.@reduce), IsPublic: true),
-            new("Math",   MathAlgorithm,                           IsPublic: true),
-        ],
-        Output: []);
+    private static readonly Algorithm.User PreludeAlg = BuiltinRegistry.CreateRuntimePreludeAlgorithm(MathAlgorithm);
 
-    private static readonly SequenceBuiltinLeadingArity OneOrMoreSequenceArguments = new(1);
+    private static SequenceBuiltinMetadata? GetSequenceBuiltinMetadata(BuiltinId builtin)
+        => BuiltinRegistry.TryGetSequenceMetadata(builtin, out var metadata) ? metadata : null;
 
-    private static readonly SequenceBuiltinMetadata FilterSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata MapSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("transform")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata OrderSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata OrderDescSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata CountSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata ContainsSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("item", SequenceBuiltinTrailingArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata FirstSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata LastSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata DistinctSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata TakeSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata SkipSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("count", SequenceBuiltinTrailingArgKind.WholeNumber)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static readonly SequenceBuiltinMetadata MinSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata MaxSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata SumSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata AvgSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
-
-    private static readonly SequenceBuiltinMetadata ReduceSequenceBuiltinMetadata =
-        new(OneOrMoreSequenceArguments, [new("step"), new("initial accumulator")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
-
-    private static SequenceBuiltinMetadata? GetSequenceBuiltinMetadata(BuiltinId builtin) => builtin switch
-    {
-        BuiltinId.@filter => FilterSequenceBuiltinMetadata,
-        BuiltinId.@map => MapSequenceBuiltinMetadata,
-        BuiltinId.@order => OrderSequenceBuiltinMetadata,
-        BuiltinId.@orderDesc => OrderDescSequenceBuiltinMetadata,
-        BuiltinId.@count => CountSequenceBuiltinMetadata,
-        BuiltinId.@contains => ContainsSequenceBuiltinMetadata,
-        BuiltinId.@first => FirstSequenceBuiltinMetadata,
-        BuiltinId.@last => LastSequenceBuiltinMetadata,
-        BuiltinId.@distinct => DistinctSequenceBuiltinMetadata,
-        BuiltinId.@take => TakeSequenceBuiltinMetadata,
-        BuiltinId.@skip => SkipSequenceBuiltinMetadata,
-        BuiltinId.@min => MinSequenceBuiltinMetadata,
-        BuiltinId.@max => MaxSequenceBuiltinMetadata,
-        BuiltinId.@sum => SumSequenceBuiltinMetadata,
-        BuiltinId.@avg => AvgSequenceBuiltinMetadata,
-        BuiltinId.@reduce => ReduceSequenceBuiltinMetadata,
-        _ => null,
-    };
-
-    private static string BuiltinDisplayName(BuiltinId builtin) => builtin switch
-    {
-        BuiltinId.@if => "if",
-        BuiltinId.@while => "while",
-        BuiltinId.@repeat => "repeat",
-        BuiltinId.@atoms => "atoms",
-        BuiltinId.@range => "range",
-        BuiltinId.@filter => "filter",
-        BuiltinId.@map => "map",
-        BuiltinId.@order => "order",
-        BuiltinId.@orderDesc => "orderDesc",
-        BuiltinId.@count => "count",
-        BuiltinId.@contains => "contains",
-        BuiltinId.@first => "first",
-        BuiltinId.@last => "last",
-        BuiltinId.@distinct => "distinct",
-        BuiltinId.@take => "take",
-        BuiltinId.@skip => "skip",
-        BuiltinId.@min => "min",
-        BuiltinId.@max => "max",
-        BuiltinId.@sum => "sum",
-        BuiltinId.@avg => "avg",
-        BuiltinId.@reduce => "reduce",
-        _ => builtin.ToString(),
-    };
-
-    private static string DescribeSequenceBuiltinLeadingArgs(SequenceBuiltinLeadingArity arity)
-    {
-        if (arity.MaxCount is { } maxCount)
-        {
-            if (arity.MinCount == maxCount)
-                return arity.MinCount == 1 ? "1 sequence argument" : $"{arity.MinCount} sequence arguments";
-
-            return $"between {arity.MinCount} and {maxCount} sequence arguments";
-        }
-
-        return arity.MinCount == 1
-            ? "one or more sequence arguments"
-            : $"at least {arity.MinCount} sequence arguments";
-    }
-
-    private static string DescribeSequenceBuiltinTrailingArg(SequenceBuiltinTrailingArgDescriptor descriptor) => descriptor.Kind switch
-    {
-        SequenceBuiltinTrailingArgKind.Algorithm => $"{descriptor.Label} algorithm",
-        SequenceBuiltinTrailingArgKind.Value => descriptor.Label,
-        SequenceBuiltinTrailingArgKind.WholeNumber => $"{descriptor.Label} whole-number value",
-        _ => descriptor.Label,
-    };
-
-    private static string DescribeSequenceBuiltinTrailingArgs(IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> descriptors)
-        => string.Join(", ", descriptors.Select(DescribeSequenceBuiltinTrailingArg));
-
-    private static string DescribeSequenceBuiltinTotalArgs(SequenceBuiltinLeadingArity arity, int trailingArgCount)
-    {
-        var minTotal = arity.MinCount + trailingArgCount;
-        if (arity.MaxCount is { } maxCount)
-        {
-            var maxTotal = maxCount + trailingArgCount;
-            return minTotal == maxTotal ? $"{minTotal}" : $"between {minTotal} and {maxTotal}";
-        }
-
-        return $"at least {minTotal}";
-    }
+    private static string BuiltinDisplayName(BuiltinId builtin)
+        => BuiltinRegistry.GetBuiltin(builtin).Name;
 
     /// <summary>Lean: builtinAcceptsArity. Fixed-arity builtins stay exact; sequence builtins accept one or more leading sequence args.</summary>
-    private static bool BuiltinAcceptsArity(BuiltinId b, int n)
-    {
-        if (GetSequenceBuiltinMetadata(b) is { } metadata)
-        {
-            if (n < metadata.TrailingArgCount)
-                return false;
-
-            return metadata.LeadingSequenceArity.Accepts(n - metadata.TrailingArgCount);
-        }
-
-        return (b, n) switch
-        {
-            (BuiltinId.@if, 3) => true,
-            (BuiltinId.@while, 2) => true,
-            (BuiltinId.@repeat, 3) => true,
-            (BuiltinId.@atoms, 1) => true,
-            (BuiltinId.@range, 2) => true,
-            _ => false,
-        };
-    }
+    private static bool BuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
+        => BuiltinRegistry.GetBuiltin(builtin).AcceptsArity(argumentCount);
 
     /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
-    private static string BuiltinArityDesc(BuiltinId b)
-    {
-        if (GetSequenceBuiltinMetadata(b) is { } metadata)
-        {
-            var totalArgCountDesc = DescribeSequenceBuiltinTotalArgs(metadata.LeadingSequenceArity, metadata.TrailingArgCount);
-            if (metadata.TrailingArgs.Count == 0)
-                return totalArgCountDesc;
-
-            return $"{totalArgCountDesc} arguments ({DescribeSequenceBuiltinLeadingArgs(metadata.LeadingSequenceArity)} plus {DescribeSequenceBuiltinTrailingArgs(metadata.TrailingArgs)})";
-        }
-
-        return b switch
-        {
-            BuiltinId.@if => "3",
-            BuiltinId.@while => "2",
-            BuiltinId.@repeat => "3",
-            BuiltinId.@atoms => "1",
-            BuiltinId.@range => "2",
-            _ => "?",
-        };
-    }
+    private static string BuiltinArityDesc(BuiltinId builtin)
+        => BuiltinRegistry.GetBuiltin(builtin).DescribeArity();
 
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
-        => builtin switch
+    {
+        var descriptor = BuiltinRegistry.GetBuiltin(builtin);
+
+        return builtin switch
         {
             BuiltinId.@if => new EvalError.WithContext(
-                $"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {actualCount}.",
-                new EvalError.ArityMismatch(3, actualCount)),
+                $"Builtin '{descriptor.Name}' expects {descriptor.FixedArity} arguments: {string.Join(", ", descriptor.PlainParameterNames)}. Got {actualCount}.",
+                new EvalError.ArityMismatch(descriptor.FixedArity ?? 0, actualCount)),
             _ => new EvalError.WithContext(
                 $"expected {BuiltinArityDesc(builtin)} arguments",
                 new EvalError.ArityMismatch(0, actualCount)),
         };
+    }
 
     // ── Dot-call helpers ───────────────────────────────────────────────────
 

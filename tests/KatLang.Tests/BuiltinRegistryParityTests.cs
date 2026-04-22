@@ -5,105 +5,87 @@ using KatLang.Semantics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Keeps the duplicated builtin registries in the C# front-end/runtime stack aligned
-/// until registration is centralized. These tests compare the actual runtime,
-/// semantic-model, and ParameterDetector sources so drift is caught early.
+/// Keeps evaluator, semantic-model, and parameter-detector wiring aligned with
+/// the canonical internal <see cref="BuiltinRegistry"/>.
 /// </summary>
 public class BuiltinRegistryParityTests
 {
     [Fact]
-    public void BuiltinInventory_StaysAlignedAcrossRuntimeSemanticsAndParameterDetection()
+    public void RegistryPreludeInventory_StaysAlignedAcrossRuntimeAndSemantics()
     {
-        var builtinNames = BuiltinRegistryParitySnapshot.CanonicalBuiltinNames();
-
         AssertSetParity(
-            builtinNames,
+            BuiltinRegistry.BuiltinNames,
             BuiltinRegistryParitySnapshot.RuntimePreludeBuiltinNames(),
-            "Builtins present in BuiltinId but missing from runtime prelude",
-            "Builtins present in runtime prelude but missing from BuiltinId");
+            "Builtins present in BuiltinRegistry but missing from runtime prelude",
+            "Builtins exposed by the runtime prelude but missing from BuiltinRegistry");
 
         AssertSetParity(
-            builtinNames,
+            BuiltinRegistry.BuiltinNames,
             BuiltinRegistryParitySnapshot.SemanticPreludeBuiltinNames(),
-            "Builtins present in BuiltinId but missing from semantic prelude",
-            "Builtins present in semantic prelude but missing from BuiltinId");
+            "Builtins present in BuiltinRegistry but missing from semantic prelude",
+            "Builtins exposed by the semantic prelude but missing from BuiltinRegistry");
 
         AssertSetParity(
-            builtinNames,
-            BuiltinRegistryParitySnapshot.ParameterDetectorBuiltinNames(),
-            "Builtins present in BuiltinId but missing from ParameterDetector exclusions",
-            "Builtins excluded in ParameterDetector but not present in BuiltinId");
-
-        AssertSetParity(
-            new[] { "Math" },
+            BuiltinRegistry.RuntimePreludeExtraNames,
             BuiltinRegistryParitySnapshot.RuntimePreludeExtraNames(),
             "Expected runtime-prelude non-builtin names are missing",
             "Unexpected non-builtin names exposed by runtime prelude");
 
         AssertSetParity(
-            new[] { "Math", "load" },
+            BuiltinRegistry.SemanticPreludeExtraNames,
             BuiltinRegistryParitySnapshot.SemanticPreludeExtraNames(),
             "Expected semantic-prelude non-builtin names are missing",
             "Unexpected non-builtin names exposed by semantic prelude");
-
-        AssertSetParity(
-            new[] { "Math", "load" },
-            BuiltinRegistryParitySnapshot.ParameterDetectorPreludeExtraNames(),
-            "Expected ParameterDetector prelude exclusions are missing",
-            "Unexpected non-builtin names excluded in ParameterDetector");
     }
 
     [Fact]
-    public void SemanticBuiltinMetadata_StaysAlignedWithRuntimeArityAndSequenceLabels()
+    public void RegistrySequenceMetadata_StaysAlignedWithEvaluatorDispatch()
     {
         var failures = new List<string>();
 
-        foreach (var builtin in Enum.GetValues<BuiltinId>())
+        foreach (var builtin in BuiltinRegistry.AllBuiltins)
         {
-            var name = builtin.ToString();
-            var semanticPlain = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(name, builtin, PropertyCallStyle.Plain);
-            var semanticDot = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(name, builtin, PropertyCallStyle.Dot);
+            var hasRuntimeMetadata = BuiltinRegistryParitySnapshot.TryGetRuntimeSequenceSignature(builtin.Id, out var runtimeSequence);
 
-            if (BuiltinRegistryParitySnapshot.TryGetRuntimeSequenceSignature(builtin, out var runtimeSequence))
+            if (builtin.SequenceMetadata is { } sequenceMetadata)
             {
-                if (!runtimeSequence.SupportsSemanticItemsSurface)
+                if (!hasRuntimeMetadata)
                 {
-                    failures.Add(
-                        $"Runtime sequence metadata for builtin '{name}' uses leading arity {runtimeSequence.LeadingArityDescription}; update the parity test helper before changing semantic signature expectations.");
-                    continue;
+                    failures.Add($"Evaluator sequence metadata is missing builtin '{builtin.Name}'.");
                 }
-
-                var expectedPlain = runtimeSequence.ExpectedPlainSemanticParameters();
-                var expectedDot = runtimeSequence.ExpectedDotSemanticParameters();
-
-                if (!expectedPlain.SequenceEqual(semanticPlain, StringComparer.Ordinal))
+                else
                 {
-                    failures.Add(
-                        $"Semantic plain-call metadata for builtin '{name}' does not match runtime sequence metadata. Expected: {FormatParameterList(expectedPlain)}. Actual: {FormatParameterList(semanticPlain)}.");
-                }
+                    if (sequenceMetadata.LeadingSequenceArity.MinCount != runtimeSequence.LeadingMinCount
+                        || sequenceMetadata.LeadingSequenceArity.MaxCount != runtimeSequence.LeadingMaxCount)
+                    {
+                        failures.Add(
+                            $"Evaluator sequence metadata for builtin '{builtin.Name}' has leading arity {runtimeSequence.LeadingArityDescription}, but BuiltinRegistry expects {DescribeLeadingArity(sequenceMetadata.LeadingSequenceArity)}.");
+                    }
 
-                if (!expectedDot.SequenceEqual(semanticDot, StringComparer.Ordinal))
-                {
-                    failures.Add(
-                        $"Semantic dot-call metadata for builtin '{name}' does not match runtime sequence metadata. Expected: {FormatParameterList(expectedDot)}. Actual: {FormatParameterList(semanticDot)}.");
+                    var expectedTrailingLabels = sequenceMetadata.TrailingArgs
+                        .Select(static descriptor => descriptor.Label)
+                        .ToArray();
+                    if (!expectedTrailingLabels.SequenceEqual(runtimeSequence.TrailingParameterLabels, StringComparer.Ordinal))
+                    {
+                        failures.Add(
+                            $"Evaluator sequence metadata for builtin '{builtin.Name}' has trailing labels {FormatParameterList(runtimeSequence.TrailingParameterLabels)}, but BuiltinRegistry expects {FormatParameterList(expectedTrailingLabels)}.");
+                    }
                 }
-
-                continue;
+            }
+            else if (hasRuntimeMetadata)
+            {
+                failures.Add($"Evaluator unexpectedly exposes sequence metadata for fixed-arity builtin '{builtin.Name}'.");
             }
 
-            // Fixed-arity runtime metadata only exposes exact arity, not a parallel
-            // parameter-label table, so parity here checks coverage/count only.
-            var expectedArity = BuiltinRegistryParitySnapshot.RuntimeFixedBuiltinArity(builtin);
-            if (semanticPlain.Count != expectedArity)
+            foreach (var argumentCount in Enumerable.Range(0, 16))
             {
-                failures.Add(
-                    $"Semantic plain-call metadata for builtin '{name}' has {semanticPlain.Count} parameter(s), but runtime expects arity {expectedArity}. Semantic parameters: {FormatParameterList(semanticPlain)}.");
-            }
-
-            if (!semanticPlain.SequenceEqual(semanticDot, StringComparer.Ordinal))
-            {
-                failures.Add(
-                    $"Semantic dot-call metadata for fixed-arity builtin '{name}' should match plain-call metadata. Plain: {FormatParameterList(semanticPlain)}. Dot: {FormatParameterList(semanticDot)}.");
+                var expected = builtin.AcceptsArity(argumentCount);
+                var actual = BuiltinRegistryParitySnapshot.RuntimeBuiltinAcceptsArity(builtin.Id, argumentCount);
+                if (actual != expected)
+                {
+                    failures.Add(
+                        $"Evaluator arity acceptance for builtin '{builtin.Name}' at {argumentCount} argument(s) was {actual}, but BuiltinRegistry expects {expected}.");
+                }
             }
         }
 
@@ -111,35 +93,103 @@ public class BuiltinRegistryParityTests
     }
 
     [Fact]
-    public void MathPreludeInventory_StaysAlignedAcrossRuntimeSemanticsAndParameterDetection()
+    public void RegistryBuiltinMetadata_DrivesSemanticBuiltinSignatures()
     {
+        var failures = new List<string>();
+
+        foreach (var builtin in BuiltinRegistry.AllBuiltins)
+        {
+            var semanticPlain = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Plain);
+            var semanticDot = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Dot);
+
+            if (!builtin.PlainParameterNames.SequenceEqual(semanticPlain, StringComparer.Ordinal))
+            {
+                failures.Add(
+                    $"Semantic plain-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry. Expected: {FormatParameterList(builtin.PlainParameterNames)}. Actual: {FormatParameterList(semanticPlain)}.");
+            }
+
+            if (!builtin.DotParameterNames.SequenceEqual(semanticDot, StringComparer.Ordinal))
+            {
+                failures.Add(
+                    $"Semantic dot-call metadata for builtin '{builtin.Name}' does not match BuiltinRegistry. Expected: {FormatParameterList(builtin.DotParameterNames)}. Actual: {FormatParameterList(semanticDot)}.");
+            }
+        }
+
+        AssertNoFailures(failures);
+    }
+
+    [Fact]
+    public void RegistryMathInventory_StaysAlignedAcrossRuntimeAndSemantics()
+    {
+        var expectedMath = BuiltinRegistry.MathMembers.ToDictionary(
+            static member => member.Name,
+            static member => member.Arity,
+            StringComparer.Ordinal);
         var runtimeMath = BuiltinRegistryParitySnapshot.RuntimeMathMembers();
         var semanticMath = BuiltinRegistryParitySnapshot.SemanticMathMembers();
-        var parameterDetectorMath = BuiltinRegistryParitySnapshot.ParameterDetectorMathNames();
 
         AssertSetParity(
+            expectedMath.Keys,
             runtimeMath.Keys,
+            "Math members present in BuiltinRegistry but missing from the runtime prelude",
+            "Math members exposed by the runtime prelude but missing from BuiltinRegistry");
+
+        AssertSetParity(
+            expectedMath.Keys,
             semanticMath.Keys,
-            "Math members present in runtime prelude but missing from semantic model",
-            "Math members present in semantic model but missing from runtime prelude");
-
-        AssertSetParity(
-            runtimeMath.Keys,
-            parameterDetectorMath,
-            "Math members present in runtime prelude but missing from ParameterDetector exclusions",
-            "Math members excluded in ParameterDetector but not present in runtime Math registry");
+            "Math members present in BuiltinRegistry but missing from the semantic model",
+            "Math members exposed by the semantic model but missing from BuiltinRegistry");
 
         var failures = new List<string>();
-        foreach (var name in runtimeMath.Keys.Intersect(semanticMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
+        foreach (var name in expectedMath.Keys.Intersect(runtimeMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
         {
-            if (runtimeMath[name] != semanticMath[name])
+            if (runtimeMath[name] != expectedMath[name])
             {
                 failures.Add(
-                    $"Math member '{name}' has runtime arity {runtimeMath[name]} but semantic-model arity {semanticMath[name]}.");
+                    $"Runtime Math member '{name}' has arity {runtimeMath[name]}, but BuiltinRegistry expects {expectedMath[name]}.");
+            }
+        }
+
+        foreach (var name in expectedMath.Keys.Intersect(semanticMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
+        {
+            if (semanticMath[name] != expectedMath[name])
+            {
+                failures.Add(
+                    $"Semantic Math member '{name}' has arity {semanticMath[name]}, but BuiltinRegistry expects {expectedMath[name]}.");
             }
         }
 
         AssertNoFailures(failures);
+    }
+
+    [Fact]
+    public void RegistryPreludeNames_AreExcludedByParameterDetector()
+    {
+        foreach (var name in BuiltinRegistry.ParameterDetectorPreludeNames)
+        {
+            var (root, diagnostics) = DetectSingleResolve(name);
+
+            Assert.Empty(diagnostics);
+            Assert.Empty(root.Params);
+
+            var resolve = Assert.IsType<Expr.Resolve>(Assert.Single(root.Output));
+            Assert.Equal(name, resolve.Name);
+        }
+    }
+
+    [Fact]
+    public void RegistryMathMembers_AreExcludedByParameterDetector_WhenMathIsOpened()
+    {
+        foreach (var name in BuiltinRegistry.MathMemberNames)
+        {
+            var (root, diagnostics) = DetectSingleResolve(name, opens: [new Expr.Resolve("Math")]);
+
+            Assert.Empty(diagnostics);
+            Assert.Empty(root.Params);
+
+            var resolve = Assert.IsType<Expr.Resolve>(Assert.Single(root.Output));
+            Assert.Equal(name, resolve.Name);
+        }
     }
 
     private static void AssertSetParity(
@@ -177,8 +227,32 @@ public class BuiltinRegistryParityTests
     private static SortedSet<string> ToSortedSet(IEnumerable<string> names)
         => new(names, StringComparer.Ordinal);
 
-    private static string FormatParameterList(IReadOnlyList<string> parameters)
-        => parameters.Count == 0 ? "(none)" : string.Join(", ", parameters);
+    private static string FormatParameterList(IEnumerable<string> parameters)
+    {
+        var items = parameters.ToArray();
+        return items.Length == 0 ? "(none)" : string.Join(", ", items);
+    }
+
+    private static string DescribeLeadingArity(SequenceBuiltinLeadingArity arity)
+        => arity.MaxCount is { } maxCount ? $"{arity.MinCount}..{maxCount}" : $"{arity.MinCount}+";
+
+    private static (Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics) DetectSingleResolve(
+        string name,
+        IReadOnlyList<Expr>? opens = null)
+    {
+        var root = new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: opens ?? Array.Empty<Expr>(),
+            Properties: [],
+            Output: [new Expr.Resolve(name)])
+        {
+            IsParametrized = true,
+        };
+
+        var (processed, diagnostics) = ParameterDetector.Detect(root);
+        return (Assert.IsType<Algorithm.User>(processed), diagnostics);
+    }
 
     private static class BuiltinRegistryParitySnapshot
     {
@@ -202,12 +276,6 @@ public class BuiltinRegistryParityTests
             typeof(Evaluator),
             "BuiltinAcceptsArity",
             StaticNonPublic);
-
-        public static IReadOnlyList<string> CanonicalBuiltinNames()
-            => Enum.GetValues<BuiltinId>()
-                .Select(static builtin => builtin.ToString())
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
 
         public static IReadOnlyList<string> RuntimePreludeBuiltinNames()
             => GetUserAlgorithmStaticField(typeof(Evaluator), "PreludeAlg")
@@ -237,23 +305,11 @@ public class BuiltinRegistryParityTests
                 .OrderBy(static name => name, StringComparer.Ordinal)
                 .ToArray();
 
-        public static IReadOnlyList<string> ParameterDetectorBuiltinNames()
-            => GetStringSetStaticField(typeof(ParameterDetector), "PreludeNames")
-                .Where(static name => Enum.TryParse<BuiltinId>(name, ignoreCase: false, out _))
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
-
-        public static IReadOnlyList<string> ParameterDetectorPreludeExtraNames()
-            => GetStringSetStaticField(typeof(ParameterDetector), "PreludeNames")
-                .Where(static name => !Enum.TryParse<BuiltinId>(name, ignoreCase: false, out _))
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
-
-        public static IReadOnlyList<string> SemanticBuiltinParameterNames(string name, BuiltinId builtin, PropertyCallStyle callStyle)
+        public static IReadOnlyList<string> SemanticBuiltinParameterNames(BuiltinId builtin, PropertyCallStyle callStyle)
         {
             var parameters = InvokeStatic<IReadOnlyList<PropertyParameterInfo>>(
                 SemanticCreateBuiltinParametersMethod,
-                name,
+                builtin.ToString(),
                 new Algorithm.Builtin(builtin),
                 callStyle);
 
@@ -280,33 +336,14 @@ public class BuiltinRegistryParityTests
             return true;
         }
 
-        public static int RuntimeFixedBuiltinArity(BuiltinId builtin)
-        {
-            if (TryGetRuntimeSequenceSignature(builtin, out _))
-                throw new InvalidOperationException($"Builtin '{builtin}' is sequence-based, not fixed-arity.");
-
-            var acceptedArities = Enumerable.Range(0, 16)
-                .Where(argumentCount => InvokeStatic<bool>(RuntimeBuiltinAcceptsArityMethod, builtin, argumentCount))
-                .ToArray();
-
-            return acceptedArities.Length switch
-            {
-                1 => acceptedArities[0],
-                0 => throw new InvalidOperationException($"Runtime builtin '{builtin}' did not report any accepted arity."),
-                _ => throw new InvalidOperationException($"Runtime builtin '{builtin}' unexpectedly reported multiple fixed arities: {string.Join(", ", acceptedArities)}."),
-            };
-        }
+        public static bool RuntimeBuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
+            => InvokeStatic<bool>(RuntimeBuiltinAcceptsArityMethod, builtin, argumentCount);
 
         public static IReadOnlyDictionary<string, int> RuntimeMathMembers()
             => GetAlgorithmPropertyArities(GetUserAlgorithmStaticField(typeof(Evaluator), "MathAlgorithm"));
 
         public static IReadOnlyDictionary<string, int> SemanticMathMembers()
             => GetAlgorithmPropertyArities(GetUserAlgorithmStaticField(SemanticBuilderType, "MathAlgorithm"));
-
-        public static IReadOnlyList<string> ParameterDetectorMathNames()
-            => GetStringSetStaticField(typeof(ParameterDetector), "MathPropertyNames")
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
 
         private static IReadOnlyList<string> SemanticPreludePropertyNames()
         {
@@ -330,11 +367,6 @@ public class BuiltinRegistryParityTests
 
             return arities;
         }
-
-        private static IReadOnlyList<string> GetStringSetStaticField(Type type, string fieldName)
-            => ((IEnumerable<string>)GetStaticFieldValue(type, fieldName))
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
 
         private static Algorithm.User GetUserAlgorithmStaticField(Type type, string fieldName)
         {
@@ -400,20 +432,7 @@ public class BuiltinRegistryParityTests
         int? LeadingMaxCount,
         IReadOnlyList<string> TrailingParameterLabels)
     {
-        public bool SupportsSemanticItemsSurface
-            => LeadingMinCount == 1 && LeadingMaxCount is null;
-
         public string LeadingArityDescription
             => LeadingMaxCount is { } maxCount ? $"{LeadingMinCount}..{maxCount}" : $"{LeadingMinCount}+";
-
-        public IReadOnlyList<string> ExpectedPlainSemanticParameters()
-        {
-            var parameters = new List<string> { "items..." };
-            parameters.AddRange(TrailingParameterLabels);
-            return parameters;
-        }
-
-        public IReadOnlyList<string> ExpectedDotSemanticParameters()
-            => TrailingParameterLabels.ToArray();
     }
 }
