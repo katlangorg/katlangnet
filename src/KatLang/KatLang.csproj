@@ -7,7 +7,7 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.57</Version>
+		<Version>0.8.58</Version>
 		<Authors>Mikus Vanags</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA</Copyright>
@@ -34,6 +34,7 @@
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="KatLang.Tests" />
+		<InternalsVisibleTo Include="KatLang.Benchmarks" />
 	</ItemGroup>
 
 	<ItemGroup>

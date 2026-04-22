@@ -1,3 +1,7 @@
+using System.Collections;
+using System.Runtime.CompilerServices;
+using KatLang.Evaluation.Caching;
+
 namespace KatLang;
 
 /// <summary>
@@ -22,7 +26,11 @@ namespace KatLang;
 public static class Evaluator
 {
     private readonly record struct ResolvedLexicalProperty(
+        Algorithm? Owner,
+        Property Binding,
         Algorithm ResolvedAlgorithm);
+
+    private static readonly ConditionalWeakTable<ScopeCtx, Algorithm> ScopeOwnerAlgorithms = new();
 
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
@@ -36,22 +44,25 @@ public static class Evaluator
     private readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
         IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
-        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv)
+        IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
+        IZeroArgPropertyResultCache ZeroArgPropertyResultCache)
     {
-        public static readonly EvalCtx Empty = new([], [], []);
+        public static readonly EvalCtx Empty = new([], [], [], UncachedZeroArgPropertyResultCache.Instance);
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
-        public EvalCtx Push(Algorithm alg) => new(Prepend(alg, CallStack), AlgEnv, CountedParamEnv);
+        public EvalCtx Push(Algorithm alg)
+            => new(Prepend(alg, CallStack), AlgEnv, CountedParamEnv, ZeroArgPropertyResultCache);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv) => new(CallStack, algEnv, CountedParamEnv);
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv)
+            => new(CallStack, algEnv, CountedParamEnv, ZeroArgPropertyResultCache);
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
         public EvalCtx WithCountedParamEnv(IReadOnlyList<(string, CountedResult)> countedParamEnv)
-            => new(CallStack, AlgEnv, countedParamEnv);
+            => new(CallStack, AlgEnv, countedParamEnv, ZeroArgPropertyResultCache);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -96,7 +107,16 @@ public static class Evaluator
     };
 
     private static ScopeCtx AsScopeCtx(Algorithm alg)
-        => new(alg.Parent, alg.Opens, alg.Properties);
+    {
+        var scope = new ScopeCtx(alg.Parent, alg.Opens, alg.Properties);
+        ScopeOwnerAlgorithms.Add(scope, alg);
+        return scope;
+    }
+
+    private static Algorithm? TryGetScopeOwnerAlgorithm(ScopeCtx scope)
+        => ScopeOwnerAlgorithms.TryGetValue(scope, out var owner)
+            ? owner
+            : null;
 
     /// <summary>Lean: Algorithm.childOf — wire a child algorithm to its parent's scope context.</summary>
     private static Algorithm ChildOf(Algorithm parent, Algorithm child)
@@ -511,9 +531,31 @@ public static class Evaluator
         if (hits.Count == 1)
         {
             var hit = hits[0];
-                return EvalResult<ResolvedLexicalProperty?>.Ok(new ResolvedLexicalProperty(ChildOf(hit.Lib, hit.Binding.Value)));
+            return EvalResult<ResolvedLexicalProperty?>.Ok(
+                new ResolvedLexicalProperty(
+                    hit.Lib,
+                    hit.Binding,
+                    ChildOf(hit.Lib, hit.Binding.Value)));
         }
         return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
+    }
+
+    private static ResolvedLexicalProperty? LookupInParentsDirectBinding(ScopeCtx sc, string name)
+    {
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name)
+            {
+                return new ResolvedLexicalProperty(
+                    TryGetScopeOwnerAlgorithm(sc),
+                    prop,
+                    WithParent(prop.Value, sc));
+            }
+        }
+
+        return sc.Parent is { } parent
+            ? LookupInParentsDirectBinding(parent, name)
+            : null;
     }
 
     // ── Lexical resolution (ownership-first) ────────────────────────────────
@@ -558,6 +600,110 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Resolve-only open lookup for the hot <see cref="Expr.Resolve"/> path.
+    /// This preserves the same public-only open and ambiguity rules as
+    /// <see cref="LookupOpens"/>, but avoids carrying binding metadata when the
+    /// caller only needs the wired algorithm.
+    /// </summary>
+    private static EvalResult<Algorithm?> LookupOpensResolvedAlgorithm(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        if (alg.Opens.Count == 0) return EvalResult<Algorithm?>.Ok(null);
+
+        var innerCtx = ctx.Push(alg);
+        var resolvedResult = ResolveAllOpens(alg, innerCtx);
+        if (resolvedResult.IsError) return resolvedResult.Error;
+
+        (Algorithm Lib, Algorithm Child)? firstHit = null;
+        List<string>? providers = null;
+
+        foreach (var resolvedOpen in resolvedResult.Value)
+        {
+            var child = LookupPublicProp(resolvedOpen.Lib, name);
+            if (child is null)
+                continue;
+
+            providers ??= [];
+            providers.Add(resolvedOpen.Key);
+            firstHit ??= (resolvedOpen.Lib, child);
+        }
+
+        if (providers is null)
+            return EvalResult<Algorithm?>.Ok(null);
+        if (providers.Count == 1)
+        {
+            var (lib, child) = firstHit!.Value;
+            return EvalResult<Algorithm?>.Ok(ChildOf(lib, child));
+        }
+
+        return new EvalError.AmbiguousOpen(name, providers);
+    }
+
+    private static EvalResult<Algorithm?> LookupOpensInParentChainResolvedAlgorithm(
+        ScopeCtx sc, string name, EvalCtx ctx)
+    {
+        var tempAlg = ForOpens(sc);
+        var openResult = LookupOpensResolvedAlgorithm(tempAlg, name, ctx);
+        if (openResult.IsError) return openResult.Error;
+        if (openResult.Value is not null)
+            return EvalResult<Algorithm?>.Ok(openResult.Value);
+
+        return sc.Parent is { } parent
+            ? LookupOpensInParentChainResolvedAlgorithm(parent, name, ctx)
+            : EvalResult<Algorithm?>.Ok(null);
+    }
+
+    private static EvalResult<Algorithm?> LookupOpensInChainResolvedAlgorithm(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        var openResult = LookupOpensResolvedAlgorithm(alg, name, ctx);
+        if (openResult.IsError) return openResult.Error;
+        if (openResult.Value is not null)
+            return EvalResult<Algorithm?>.Ok(openResult.Value);
+
+        return alg.Parent is { } sc
+            ? LookupOpensInParentChainResolvedAlgorithm(sc, name, ctx)
+            : EvalResult<Algorithm?>.Ok(null);
+    }
+
+    /// <summary>
+    /// Resolve-only lexical lookup for hot algorithm-resolution paths.
+    /// Mirrors <see cref="LookupLexical"/> semantics, but returns only the wired
+    /// algorithm so plain <see cref="Expr.Resolve"/> callers avoid binding/owner packaging.
+    /// </summary>
+    private static EvalResult<Algorithm> LookupLexicalResolvedAlgorithm(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        var direct = LookupLexicalDirect(alg, name);
+        if (direct is not null)
+            return EvalResult<Algorithm>.Ok(direct);
+
+        var opensResult = LookupOpensInChainResolvedAlgorithm(alg, name, ctx);
+        if (opensResult.IsError) return opensResult.Error;
+        if (opensResult.Value is { } openAlgorithm)
+            return EvalResult<Algorithm>.Ok(openAlgorithm);
+
+        return new EvalError.UnknownName(name);
+    }
+
+    /// <summary>
+    /// Fast path for plain lexical name resolution.
+    /// This keeps <see cref="ResolveAlg"/> semantics intact while letting nearby
+    /// synthetic callers resolve a name without allocating an <see cref="Expr.Resolve"/> wrapper.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveNamedAlgorithm(
+        string name, SourceSpan? span, EvalCtx ctx)
+    {
+        if (ctx.CallStack.Count == 0)
+            return new EvalError.UnknownName(name) { Span = span };
+
+        var result = LookupLexicalResolvedAlgorithm(ctx.CallStack[0], name, ctx);
+        return result.IsError && result.Error.Span is null
+            ? result.Error with { Span = span }
+            : result;
+    }
+
+    /// <summary>
     /// Full lexical lookup with ownership-first model:
     /// 1. Local properties (owned by this algorithm — any visibility)
     /// 2. Parent chain structural properties (owned by ancestors — any visibility, no opens)
@@ -569,16 +715,20 @@ public static class Evaluator
         Algorithm alg, string name, EvalCtx ctx)
     {
         // 1. Local properties (any visibility)
-            var local = LookupProp(alg, name);
+        var local = LookupPropBinding(alg, name);
         if (local is not null)
-                return EvalResult<ResolvedLexicalProperty>.Ok(new ResolvedLexicalProperty(ChildOf(alg, local)));
+            return EvalResult<ResolvedLexicalProperty>.Ok(
+                new ResolvedLexicalProperty(
+                    alg,
+                    local,
+                    ChildOf(alg, local.Value)));
 
         // 2. Parent chain structural only (any visibility, no opens)
         if (alg.Parent is { } sc)
         {
-                var structural = LookupInParentsDirect(sc, name);
+            var structural = LookupInParentsDirectBinding(sc, name);
             if (structural is not null)
-                    return EvalResult<ResolvedLexicalProperty>.Ok(new ResolvedLexicalProperty(structural));
+                return EvalResult<ResolvedLexicalProperty>.Ok(structural.Value);
         }
 
         // 3. Opens fallback across the entire chain (public only)
@@ -1198,6 +1348,93 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
         => EvalAlgOutputCountedCore(alg, ctx, valEnv, allowEmptyUserOutput: false);
+
+    private static EvalResult<ZeroArgPropertyResult> EvaluateZeroArgPropertyResult(
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var countedR = EvalAlgOutputCounted(resolvedAlgorithm, ctx, valEnv);
+        if (countedR.IsError)
+            return countedR.Error;
+
+        return EvalResult<ZeroArgPropertyResult>.Ok(
+            new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
+    }
+
+    private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResult(
+        Algorithm? owner,
+        Property binding,
+        ZeroArgPropertyAccessKind accessKind,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (owner is null)
+            return EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv);
+
+        return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
+            new ZeroArgPropertyExecution(
+                owner,
+                binding,
+                accessKind,
+                valEnv,
+                ctx.AlgEnv,
+                ctx.CountedParamEnv),
+            () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
+    }
+
+    private static EvalResult<Result> EvalZeroArgPropertyAccess(
+        Algorithm? owner,
+        Property binding,
+        ZeroArgPropertyAccessKind accessKind,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var propertyR = GetOrEvaluateZeroArgPropertyResult(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
+        return propertyR.IsError
+            ? propertyR.Error
+            : EvalResult<Result>.Ok(propertyR.Value.Value);
+    }
+
+    private static EvalResult<Result> EvalZeroArgPropertyAccess(
+        ResolvedLexicalProperty resolvedProperty,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalZeroArgPropertyAccess(
+            resolvedProperty.Owner,
+            resolvedProperty.Binding,
+            ZeroArgPropertyAccessKind.Lexical,
+            resolvedProperty.ResolvedAlgorithm,
+            ctx,
+            valEnv);
+
+    private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
+        Algorithm? owner,
+        Property binding,
+        ZeroArgPropertyAccessKind accessKind,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var propertyR = GetOrEvaluateZeroArgPropertyResult(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
+        return propertyR.IsError
+            ? propertyR.Error
+            : EvalResult<CountedResult>.Ok(new CountedResult(propertyR.Value.Value, propertyR.Value.EmittedCount));
+    }
+
+    private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
+        ResolvedLexicalProperty resolvedProperty,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalZeroArgPropertyAccessCounted(
+            resolvedProperty.Owner,
+            resolvedProperty.Binding,
+            ZeroArgPropertyAccessKind.CountedLexical,
+            resolvedProperty.ResolvedAlgorithm,
+            ctx,
+            valEnv);
 
     /// <summary>
     /// Evaluate a conditional algorithm against an already-assembled argument
@@ -2476,18 +2713,7 @@ public static class Evaluator
                 return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
 
             case Expr.Resolve(var name):
-            {
-                if (ctx.CallStack.Count > 0)
-                {
-                    var r = LookupLexical(ctx.CallStack[0], name, ctx);
-                    if (r.IsError && r.Error.Span is null)
-                        return r.Error with { Span = expr.Span };
-                    return r.IsError
-                        ? r.Error
-                        : EvalResult<Algorithm>.Ok(r.Value.ResolvedAlgorithm);
-                }
-                return new EvalError.UnknownName(name) { Span = expr.Span };
-            }
+                return ResolveNamedAlgorithm(name, expr.Span, ctx);
 
             case Expr.DotCall:
             {
@@ -2870,24 +3096,27 @@ public static class Evaluator
 
             case Expr.Resolve(var name):
             {
-                var resolvedR = ResolveAlg(expr, ctx);
+                if (ctx.CallStack.Count == 0)
+                    return new EvalError.UnknownName(name) { Span = expr.Span };
+
+                var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
                 if (resolvedR.IsError)
                 {
                     var err = resolvedR.Error;
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
 
-                if (resolvedR.Value.Params.Count != 0)
+                if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
                 {
                     return WithSpan<Result>(
                         expr.Span,
                         new EvalError.WithContext(
                             CtxProperty(name),
-                            new EvalError.ArityMismatch(resolvedR.Value.Params.Count, 0)));
+                            new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
                 }
 
                 return WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalAlgOutput(resolvedR.Value, ctx, valEnv));
+                    EvalZeroArgPropertyAccess(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -2984,24 +3213,27 @@ public static class Evaluator
 
             case Expr.Resolve(var name):
             {
-                var resolvedR = ResolveAlg(expr, ctx);
+                if (ctx.CallStack.Count == 0)
+                    return new EvalError.UnknownName(name) { Span = expr.Span };
+
+                var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
                 if (resolvedR.IsError)
                 {
                     var err = resolvedR.Error;
                     return err.Span is null ? err with { Span = expr.Span } : err;
                 }
 
-                if (resolvedR.Value.Params.Count != 0)
+                if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
                 {
                     return WithSpan<CountedResult>(
                         expr.Span,
                         new EvalError.WithContext(
                             CtxProperty(name),
-                            new EvalError.ArityMismatch(resolvedR.Value.Params.Count, 0)));
+                            new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
                 }
 
                 return WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalAlgOutputCounted(resolvedR.Value, ctx, valEnv));
+                    EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
             }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
@@ -3722,7 +3954,7 @@ public static class Evaluator
 
                 // No args: 0-param → value access, has params → arity error
                 if (wired.Params.Count == 0)
-                    return EvalAlgOutput(wired, ctx, valEnv);
+                    return EvalZeroArgPropertyAccess(targetAlg, prop, ZeroArgPropertyAccessKind.Structural, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
@@ -3805,7 +4037,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var calleeR = ResolveAlg(new Expr.Resolve(name), ctx);
+        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError
             || calleeR.Value is not Algorithm.Builtin(var builtin)
             || GetSequenceBuiltinMetadata(builtin) is null)
@@ -3865,7 +4097,9 @@ public static class Evaluator
             Parent: null, Params: [], Opens: [],
             Properties: [], Output: outputExprs);
 
-        return EvalCall(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
+        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        return EvalResolvedCall(calleeR.Value, combinedArgs, ctx, valEnv, name);
     }
 
     /// <summary>
@@ -3927,7 +4161,7 @@ public static class Evaluator
                     return new EvalError.NoMatchingBranch(name);
 
                 if (wired.Params.Count == 0)
-                    return EvalAlgOutputCounted(wired, ctx, valEnv);
+                    return EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv);
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
@@ -3978,7 +4212,9 @@ public static class Evaluator
             Parent: null, Params: [], Opens: [],
             Properties: [], Output: outputExprs);
 
-        return EvalCallCounted(new Expr.Resolve(name), combinedArgs, ctx, valEnv);
+        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        return EvalResolvedCallCounted(calleeR.Value, combinedArgs, ctx, valEnv, name);
     }
 
     /// <summary>
@@ -3997,11 +4233,18 @@ public static class Evaluator
     /// Lean: runResult → EvalM Result.
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
+        => Run(expr, new RunScopedZeroArgPropertyResultCache());
+
+    internal static EvalResult<Result> Run(
+        Expr expr,
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache)
     {
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
-        var ctx = new EvalCtx([PreludeAlg], [], []);
+        ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
+
+        var ctx = new EvalCtx([PreludeAlg], [], [], zeroArgPropertyResultCache);
         return expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
@@ -4095,10 +4338,39 @@ public static class Evaluator
     }
 
     private static IReadOnlyList<T> Prepend<T>(T item, IReadOnlyList<T> list)
+        => new PrependedReadOnlyList<T>(item, list);
+
+    private sealed class PrependedReadOnlyList<T> : IReadOnlyList<T>
     {
-        var result = new List<T>(list.Count + 1) { item };
-        result.AddRange(list);
-        return result;
+        private readonly T _head;
+        private readonly IReadOnlyList<T> _tail;
+
+        public PrependedReadOnlyList(T head, IReadOnlyList<T> tail)
+        {
+            _head = head;
+            _tail = tail;
+            Count = tail.Count + 1;
+        }
+
+        public int Count { get; }
+
+        public T this[int index]
+            => index switch
+            {
+                0 => _head,
+                > 0 when index <= _tail.Count => _tail[index - 1],
+                _ => throw new ArgumentOutOfRangeException(nameof(index)),
+            };
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            yield return _head;
+            foreach (var item in _tail)
+                yield return item;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
     }
 
     private static IReadOnlyList<T> Concat<T>(IReadOnlyList<T> a, IReadOnlyList<T> b)
