@@ -7306,7 +7306,12 @@ public class EvaluatorTests
         if (result.IsOk)
             Assert.Fail($"Expected error but got: {result.Value}");
         var error = result.Error;
-        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
+        var contextual = Assert.IsType<EvalError.WithContext>(error);
+        var implicitContext = Assert.IsType<ImplicitParameterContext>(contextual.ErrorContext);
+        Assert.Equal(["a"], implicitContext.ParamNames);
+        Assert.Equal(0, implicitContext.ProvidedArgumentCount);
+
+        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(contextual.Inner);
         Assert.Equal(["a"], uip.ParamNames);
         var formatted = KatLangError.FromEvalError(error).Message;
         Assert.Contains("Identifier 'a' does not resolve to a property or other visible name here", formatted);
@@ -7324,7 +7329,12 @@ public class EvaluatorTests
         if (result.IsOk)
             Assert.Fail($"Expected error but got: {result.Value}");
         var error = result.Error;
-        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(error);
+        var contextual = Assert.IsType<EvalError.WithContext>(error);
+        var implicitContext = Assert.IsType<ImplicitParameterContext>(contextual.ErrorContext);
+        Assert.Equal(["a", "b"], implicitContext.ParamNames);
+        Assert.Equal(0, implicitContext.ProvidedArgumentCount);
+
+        var uip = Assert.IsType<EvalError.UnresolvedImplicitParams>(contextual.Inner);
         Assert.Equal(2, uip.ParamNames.Count);
         var formatted = KatLangError.FromEvalError(error).Message;
         Assert.Contains("Identifiers 'a' and 'b' do not resolve to properties or other visible names here", formatted);

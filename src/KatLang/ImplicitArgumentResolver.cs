@@ -30,227 +30,6 @@ public static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Finds bare <see cref="Expr.Resolve"/> references to local parametrized properties
-    /// within an expression list. Used for building the dependency graph.
-    /// </summary>
-    private static HashSet<string> FindBareParametrizedRefs(
-        IReadOnlyList<Expr> exprs,
-        Dictionary<string, IReadOnlyList<string>> localParamMap)
-    {
-        var refs = new HashSet<string>();
-        foreach (var expr in exprs)
-            FindBareParametrizedRefs(expr, localParamMap, refs, inCallPosition: false);
-        return refs;
-    }
-
-    private static void FindBareParametrizedRefs(
-        Expr expr,
-        Dictionary<string, IReadOnlyList<string>> localParamMap,
-        HashSet<string> refs,
-        bool inCallPosition)
-    {
-        switch (expr)
-        {
-            case Expr.Resolve(var name):
-                if (!inCallPosition
-                    && localParamMap.TryGetValue(name, out var ps)
-                    && ps.Count > 0)
-                {
-                    refs.Add(name);
-                }
-                break;
-
-            case Expr.Call(var func, _):
-                // func in call position: if it's a Resolve, suppress lifting
-                FindBareParametrizedRefs(func, localParamMap, refs, inCallPosition: true);
-                // Do NOT recurse into call args — separate scope
-                break;
-
-            case Expr.Binary(_, var left, var right):
-                FindBareParametrizedRefs(left, localParamMap, refs, false);
-                FindBareParametrizedRefs(right, localParamMap, refs, false);
-                break;
-
-            case Expr.Unary(_, var operand):
-                FindBareParametrizedRefs(operand, localParamMap, refs, false);
-                break;
-
-            case Expr.Index(var target, var selector):
-                FindBareParametrizedRefs(target, localParamMap, refs, false);
-                FindBareParametrizedRefs(selector, localParamMap, refs, false);
-                break;
-
-            case Expr.Combine(var left, var right):
-                FindBareParametrizedRefs(left, localParamMap, refs, false);
-                FindBareParametrizedRefs(right, localParamMap, refs, false);
-                break;
-
-            case Expr.DotCall(var target, _, _):
-                // DotCall target is in algorithm position (resolveAlg, not eval)
-                FindBareParametrizedRefs(target, localParamMap, refs, inCallPosition: true);
-                break;
-
-            case Expr.Grace(var inner, _):
-                FindBareParametrizedRefs(inner, localParamMap, refs, inCallPosition);
-                break;
-
-            case Expr.Block:
-                // Nested block — own scope, do not collect
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Finds all bare (non-call-position) <see cref="Expr.Resolve"/> references to sibling
-    /// properties within an expression list. Unlike <see cref="FindBareParametrizedRefs"/>,
-    /// includes references to ALL siblings regardless of their current parameter count.
-    /// Used by <see cref="TopologicalSort"/> to ensure correct processing order for
-    /// transitive implicit argument propagation.
-    /// Lean spec: "Transitive ordering invariant" in implicit argument resolution.
-    /// </summary>
-    private static HashSet<string> FindBareSiblingRefs(
-        IReadOnlyList<Expr> exprs,
-        HashSet<string> siblingNames)
-    {
-        var refs = new HashSet<string>();
-        foreach (var expr in exprs)
-            FindBareSiblingRefs(expr, siblingNames, refs, inCallPosition: false);
-        return refs;
-    }
-
-    private static void FindBareSiblingRefs(
-        Expr expr,
-        HashSet<string> siblingNames,
-        HashSet<string> refs,
-        bool inCallPosition)
-    {
-        switch (expr)
-        {
-            case Expr.Resolve(var name):
-                if (!inCallPosition && siblingNames.Contains(name))
-                    refs.Add(name);
-                break;
-
-            case Expr.Call(var func, _):
-                FindBareSiblingRefs(func, siblingNames, refs, inCallPosition: true);
-                break;
-
-            case Expr.Binary(_, var left, var right):
-                FindBareSiblingRefs(left, siblingNames, refs, false);
-                FindBareSiblingRefs(right, siblingNames, refs, false);
-                break;
-
-            case Expr.Unary(_, var operand):
-                FindBareSiblingRefs(operand, siblingNames, refs, false);
-                break;
-
-            case Expr.Index(var target, var selector):
-                FindBareSiblingRefs(target, siblingNames, refs, false);
-                FindBareSiblingRefs(selector, siblingNames, refs, false);
-                break;
-
-            case Expr.Combine(var left, var right):
-                FindBareSiblingRefs(left, siblingNames, refs, false);
-                FindBareSiblingRefs(right, siblingNames, refs, false);
-                break;
-
-            case Expr.DotCall(var target, _, null):
-                FindBareSiblingRefs(target, siblingNames, refs, false);
-                break;
-
-            case Expr.DotCall(var target, _, _):
-                FindBareSiblingRefs(target, siblingNames, refs, inCallPosition: true);
-                break;
-
-            case Expr.Grace(var inner, _):
-                FindBareSiblingRefs(inner, siblingNames, refs, inCallPosition);
-                break;
-
-            case Expr.Block:
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Topologically sorts property indices based on sibling references.
-    /// Uses ALL bare sibling references (not just parametrized ones) to ensure
-    /// correct transitive ordering: a property with initially zero parameters
-    /// may acquire parameters through its own dependencies during resolution.
-    /// Returns indices in processing order (dependencies first).
-    /// Properties involved in cycles are appended at the end (unmodified).
-    /// </summary>
-    private static List<int> TopologicalSort(
-        IReadOnlyList<Property> properties,
-        Dictionary<string, IReadOnlyList<string>> localParamMap)
-    {
-        var nameToIndex = new Dictionary<string, int>();
-        for (var i = 0; i < properties.Count; i++)
-            nameToIndex[properties[i].Name] = i;
-
-        // Collect all sibling property names for broad dependency tracking
-        var siblingNames = new HashSet<string>(nameToIndex.Keys);
-
-        // Build adjacency: edge from i → j means property i depends on property j
-        var inDegree = new int[properties.Count];
-        var dependents = new List<int>[properties.Count];
-        for (var i = 0; i < properties.Count; i++)
-            dependents[i] = [];
-
-        for (var i = 0; i < properties.Count; i++)
-        {
-            // Use ALL sibling refs (not just parametrized) for correct transitive ordering
-            var refs = FindBareSiblingRefs(properties[i].Value.Output, siblingNames);
-            foreach (var refName in refs)
-            {
-                if (nameToIndex.TryGetValue(refName, out var j) && j != i)
-                {
-                    dependents[j].Add(i); // j must be processed before i
-                    inDegree[i]++;
-                }
-            }
-        }
-
-        // Kahn's algorithm
-        var queue = new Queue<int>();
-        for (var i = 0; i < properties.Count; i++)
-        {
-            if (inDegree[i] == 0)
-                queue.Enqueue(i);
-        }
-
-        var result = new List<int>(properties.Count);
-        while (queue.Count > 0)
-        {
-            var node = queue.Dequeue();
-            result.Add(node);
-            foreach (var dep in dependents[node])
-            {
-                inDegree[dep]--;
-                if (inDegree[dep] == 0)
-                    queue.Enqueue(dep);
-            }
-        }
-
-        // Any remaining nodes are in cycles — append them as-is
-        if (result.Count < properties.Count)
-        {
-            for (var i = 0; i < properties.Count; i++)
-            {
-                if (inDegree[i] > 0)
-                    result.Add(i);
-            }
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// Processes an algorithm: topologically sorts its properties, recursively processes each,
     /// then collects implicit deps and rewrites the algorithm's own output if parametrized.
     /// </summary>
@@ -261,6 +40,9 @@ public static class ImplicitArgumentResolver
     {
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
+        var dependencyGraph = alg is Algorithm.User userAlgorithm
+            ? PropertyDependencyGraphBuilder.Build(userAlgorithm)
+            : PropertyDependencyGraph.Empty;
 
         // Visible map = parent + local (local overrides)
         var visibleParamMap = new Dictionary<string, IReadOnlyList<string>>(parentParamMap);
@@ -268,7 +50,7 @@ public static class ImplicitArgumentResolver
             visibleParamMap[k] = v;
 
         // Topological sort of properties
-        var topoOrder = TopologicalSort(alg.Properties, localParamMap);
+        var topoOrder = dependencyGraph.TopologicalOrder;
 
         // Process properties in topological order
         var processedProperties = new Property[alg.Properties.Count];

@@ -55,6 +55,7 @@ public static class SemanticModelBuilder
     private sealed class Builder
     {
         private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
+        private static readonly Algorithm.User PreludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
         private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
 
@@ -155,6 +156,8 @@ public static class SemanticModelBuilder
             foreach (var property in algorithm.Properties)
                 propertySymbols[property.Name] = CreatePropertySymbol(property);
 
+            var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
+
             var parameterSymbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
             if (extraParameters is not null)
             {
@@ -197,7 +200,7 @@ public static class SemanticModelBuilder
             if (algorithm.ExplicitOutputSpan is { } outputSpan)
                 AddDeclaration("Output", outputSpan, OccurrenceKind.ReservedNameDefinition, IdentifierClassification.ReservedName);
 
-            return new ScopeFrame(parentScope, propertySymbols, parameterSymbols, algorithm.Opens);
+            return new ScopeFrame(parentScope, propertySymbols, parameterSymbols, propertyScope);
         }
 
         private SymbolDefinition CreatePropertySymbol(Property property)
@@ -243,7 +246,7 @@ public static class SemanticModelBuilder
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
-            if (!ReferenceEquals(owner, MathAlgorithm))
+            if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, PreludeAlgorithm))
                 return CreatePropertySymbol(property);
 
             var symbol = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
@@ -514,13 +517,10 @@ public static class SemanticModelBuilder
 
         private SymbolDefinition? ResolveLexicalProperty(ScopeFrame scope, string name)
         {
-            for (var current = scope; current is not null; current = current.Parent)
-            {
-                if (current.Properties.TryGetValue(name, out var local))
-                    return local;
-            }
-
-            return LookupOpensInChain(scope, name);
+            var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope.PropertyScope, name);
+            return hits.Count == 1
+                ? CreateLookupPropertySymbol(hits[0].Owner, hits[0].Property)
+                : null;
         }
 
         private static SymbolDefinition? ResolveParameter(ScopeFrame scope, string name)
@@ -534,85 +534,17 @@ public static class SemanticModelBuilder
             return null;
         }
 
-        private SymbolDefinition? LookupOpensInChain(ScopeFrame scope, string name)
-        {
-            for (var current = scope; current is not null; current = current.Parent)
-            {
-                if (current.Opens.Count == 0)
-                    continue;
-
-                var hits = new List<SymbolDefinition>();
-                foreach (var openExpr in current.Opens)
-                {
-                    var openTarget = TryResolveOpenExpression(openExpr, current);
-                    if (openTarget is null)
-                        continue;
-
-                    if (TryResolvePublicProperty(openTarget, name) is { } hit)
-                        hits.Add(hit);
-                }
-
-                if (hits.Count == 1)
-                    return hits[0];
-
-                if (hits.Count > 1)
-                    return null;
-            }
-
-            return null;
-        }
-
         private SymbolDefinition? ResolveOpenHead(ScopeFrame scope, string name)
         {
-            for (var current = scope; current is not null; current = current.Parent)
-            {
-                if (current.Properties.TryGetValue(name, out var symbol))
-                    return symbol;
-            }
-
-            return null;
+            var hit = ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope.PropertyScope, name);
+            return hit is null ? null : CreateLookupPropertySymbol(hit.Value.Owner, hit.Value.Property);
         }
 
         private Algorithm? TryResolveOpenExpression(Expr expr, ScopeFrame scope)
-        {
-            switch (expr)
-            {
-                case Expr.Resolve(var name):
-                {
-                    var symbol = ResolveOpenHead(scope, name);
-                    return symbol is not null && !IsIllegalOpenTarget(symbol)
-                        ? symbol.AlgorithmValue
-                        : null;
-                }
-
-                case Expr.DotCall(var target, var name, null):
-                {
-                    if (name == "Output")
-                        return null;
-
-                    var targetAlgorithm = TryResolveOpenExpression(target, scope);
-                    var symbol = targetAlgorithm is null ? null : TryResolvePublicProperty(targetAlgorithm, name);
-                    return symbol is not null && !IsIllegalOpenTarget(symbol)
-                        ? symbol.AlgorithmValue
-                        : null;
-                }
-
-                case Expr.Combine(var left, var right):
-                {
-                    var leftAlgorithm = TryResolveOpenExpression(left, scope);
-                    var rightAlgorithm = TryResolveOpenExpression(right, scope);
-                    return leftAlgorithm is not null && rightAlgorithm is not null
-                        ? CombineAlgorithms(leftAlgorithm, rightAlgorithm)
-                        : null;
-                }
-
-                case Expr.Block(var algorithm):
-                    return algorithm;
-
-                default:
-                    return null;
-            }
-        }
+            => ElaboratedScopeLookup.ResolveOpenTarget(scope.PropertyScope, expr) is { } algorithm
+                && algorithm is not Algorithm.Builtin
+                    ? algorithm
+                    : null;
 
         private Algorithm? TryResolveAlgorithmValue(Expr expr, ScopeFrame scope)
         {
@@ -659,17 +591,14 @@ public static class SemanticModelBuilder
 
         private SymbolDefinition? TryResolveDeclaredProperty(Algorithm algorithm, string name)
         {
-            var property = algorithm.Properties.FirstOrDefault(p => p.Name == name);
-            return property is null ? null : CreateLookupPropertySymbol(algorithm, property);
+            var hit = ElaboratedScopeLookup.TryLookupProperty(algorithm, name);
+            return hit is null ? null : CreateLookupPropertySymbol(hit.Value.Owner, hit.Value.Property);
         }
 
         private SymbolDefinition? TryResolvePublicProperty(Algorithm algorithm, string name)
         {
-            var property = algorithm.Properties.FirstOrDefault(
-                p => p.Name == name
-                    && p.IsPublic
-                    && p.Exposure == PropertyExposure.Exported);
-            return property is null ? null : CreateLookupPropertySymbol(algorithm, property);
+            var hit = ElaboratedScopeLookup.TryLookupPublicExportedProperty(algorithm, name);
+            return hit is null ? null : CreateLookupPropertySymbol(hit.Value.Owner, hit.Value.Property);
         }
 
         private static bool ConditionalBranchesDefineProperty(Algorithm algorithm, string name)
@@ -959,13 +888,15 @@ public static class SemanticModelBuilder
 
         private static ScopeFrame CreatePreludeScope()
         {
-            var preludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
             var properties = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
-
-            foreach (var property in preludeAlgorithm.Properties)
+            foreach (var property in PreludeAlgorithm.Properties)
                 properties[property.Name] = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
 
-            return new ScopeFrame(parent: null, properties, parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal), opens: []);
+            return new ScopeFrame(
+                parent: null,
+                properties,
+                parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
+                propertyScope: ElaboratedScopeLookup.CreateScope(PreludeAlgorithm));
         }
     }
 
@@ -993,12 +924,12 @@ public static class SemanticModelBuilder
             ScopeFrame? parent,
             IReadOnlyDictionary<string, SymbolDefinition> properties,
             IReadOnlyDictionary<string, SymbolDefinition> parameters,
-            IReadOnlyList<Expr> opens)
+            ElaboratedPropertyScope propertyScope)
         {
             Parent = parent;
             Properties = properties;
             Parameters = parameters;
-            Opens = opens;
+            PropertyScope = propertyScope;
         }
 
         public ScopeFrame? Parent { get; }
@@ -1007,7 +938,7 @@ public static class SemanticModelBuilder
 
         public IReadOnlyDictionary<string, SymbolDefinition> Parameters { get; }
 
-        public IReadOnlyList<Expr> Opens { get; }
+        public ElaboratedPropertyScope PropertyScope { get; }
     }
 
     private sealed class SpanComparer : IComparer<SourceSpan?>
