@@ -9,21 +9,30 @@ namespace KatLang.Semantics;
 public static class SemanticModelBuilder
 {
     /// <summary>
-    /// Builds a semantic model from a parsed KatLang root algorithm.
+    /// Builds a semantic model from an elaborated KatLang root algorithm.
     /// Throws if unresolved <c>load</c> syntax reaches semantic modeling.
     /// </summary>
     public static SemanticModel Build(Algorithm root)
-    {
-        LoadElaborationGuard.ThrowIfUnresolvedLoad(root, "Semantic model building");
-        return new Builder().Build(root);
-    }
+        => BuildElaborated(root);
 
     /// <summary>
-    /// Builds a semantic model from a parse result.
-    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling.
+    /// Builds a semantic model from a parse result returned by the public
+    /// front-end compatibility wrapper.
     /// </summary>
     public static SemanticModel Build(ParseResult parseResult)
-        => Build(parseResult.Root);
+        => BuildElaborated(parseResult.Root);
+
+    internal static SemanticModel Build(SyntaxParseResult syntaxParseResult)
+        => BuildElaborated(syntaxParseResult.Root);
+
+    internal static SemanticModel Build(FrontEndResult frontEndResult)
+        => BuildElaborated(frontEndResult.ElaboratedRoot);
+
+    private static SemanticModel BuildElaborated(Algorithm elaboratedRoot)
+    {
+        LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
+        return new Builder().Build(elaboratedRoot);
+    }
 
     /// <summary>
     /// Enumerates source-backed identifier references and member occurrences.

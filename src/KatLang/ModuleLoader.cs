@@ -313,11 +313,11 @@ public sealed class ModuleLoader
                 return new Expr.Num(0) { Span = span };
             }
 
-            // Parse the fetched source using the same parser (re-entrant)
-            var parseResult = Parser.ParseSyntax(source);
+            // Parse the fetched source as raw syntax, then elaborate nested loads locally.
+            var syntaxResult = Parser.ParseSyntax(source);
 
             // Propagate any parse diagnostics (with context)
-            foreach (var diag in parseResult.Diagnostics)
+            foreach (var diag in syntaxResult.Diagnostics)
             {
                 _diagnostics.Add(new Diagnostic(
                     $"[while loading {normalizedUrl}] {diag.Message}",
@@ -325,14 +325,14 @@ public sealed class ModuleLoader
                     diag.Span));
             }
 
-            if (parseResult.HasErrors)
+            if (syntaxResult.HasErrors)
             {
                 ReportError($"load: parse errors in '{normalizedUrl}'.", span);
                 return new Expr.Num(0) { Span = span };
             }
 
             // Recursively elaborate any load calls in the fetched module
-            var elaborated = ProcessAlgorithm(parseResult.Root, LoadContext.TopLevel);
+            var elaborated = ProcessAlgorithm(syntaxResult.SyntaxRoot, LoadContext.TopLevel);
 
             // Cache the result
             _cache[normalizedUrl] = elaborated;

@@ -64,26 +64,26 @@ public static class KatLangEngine
     /// </summary>
     public static RunResult Run(string source, RunOptions? options = null)
     {
-        var parseResult = Parser.Parse(source, options);
+        var frontEndResult = FrontEndPipeline.Process(source, options);
 
-        if (parseResult.HasErrors)
+        if (frontEndResult.HasErrors)
         {
-            var parseErrors = parseResult.Diagnostics
+            var parseErrors = frontEndResult.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Select(KatLangError.FromDiagnostic)
                 .ToList();
             return new RunResult.ParseFailure(parseErrors);
         }
 
-        var evalResult = Evaluator.Run(new Expr.Block(parseResult.Root));
+        var evalResult = Evaluator.Run(new Expr.Block(frontEndResult.ElaboratedRoot));
 
         if (evalResult.IsError)
         {
             var evalErrors = new[] { KatLangError.FromEvalError(evalResult.Error) };
-            return new RunResult.EvalFailure(parseResult.Root, evalErrors);
+            return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors);
         }
 
-        return new RunResult.Success(parseResult.Root, evalResult.Value, evalResult.Value.ToAtoms());
+        return new RunResult.Success(frontEndResult.ElaboratedRoot, evalResult.Value, evalResult.Value.ToAtoms());
     }
 
     /// <summary>

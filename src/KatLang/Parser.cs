@@ -2,8 +2,10 @@ namespace KatLang;
 
 /// <summary>
 /// Recursive-descent parser with precedence climbing for KatLang 0.7.
-/// Produces a raw AST where all identifiers are <see cref="Expr.Resolve"/> nodes.
-/// Use <see cref="ParameterDetector"/> afterwards to classify parameters.
+/// <see cref="ParseSyntax(string)"/> produces a raw AST where all identifiers are
+/// <see cref="Expr.Resolve"/> nodes.
+/// Public <see cref="Parse(string)"/> overloads are compatibility wrappers that
+/// delegate to <see cref="FrontEndPipeline"/> for post-parse elaboration.
 /// Clause definitions <c>Name(pattern) = body</c> are collected by same-name
 /// family during parsing and classified only after the whole family is known.
 /// A family elaborates to ordinary <see cref="Algorithm.User"/> only when it
@@ -29,7 +31,7 @@ public sealed class Parser
 
     // ── Entry points ─────────────────────────────────────────────────────────
 
-    internal static ParseResult ParseSyntax(string source)
+    internal static SyntaxParseResult ParseSyntax(string source)
     {
         var (tokens, lexDiags) = Lexer.Tokenize(source);
         var diagnostics = new List<Diagnostic>(lexDiags);
@@ -48,20 +50,19 @@ public sealed class Parser
                 violation.Span ?? new SourceSpan(1, 1, 1, 1)));
         }
 
-        return new ParseResult(root, diagnostics);
+        return new SyntaxParseResult(root, diagnostics);
     }
 
     /// <summary>
-    /// Default public front-end without module elaboration support.
-    /// Parses surface syntax, rejects any <c>load</c> directives that would require elaboration,
-    /// then detects parameters and resolves implicit arguments.
+    /// Compatibility wrapper for the default public front-end without module elaboration support.
+    /// Delegates to <see cref="FrontEndPipeline"/>.
     /// </summary>
     public static ParseResult Parse(string source)
-        => ParseWithoutModuleElaboration(source);
+        => FrontEndPipeline.Process(source).ToParseResult();
 
     /// <summary>
-    /// Full pipeline with load elaboration: parse, elaborate load directives,
-    /// detect parameters, and resolve implicit arguments.
+    /// Compatibility wrapper for the full front-end pipeline with load elaboration.
+    /// Delegates to <see cref="FrontEndPipeline"/>.
     /// </summary>
     /// <param name="source">KatLang source code.</param>
     /// <param name="downloadCode">
@@ -75,22 +76,7 @@ public sealed class Parser
         string source,
         Func<string, string>? downloadCode,
         IEnumerable<string>? allowedHosts = null)
-    {
-        var result = ParseSyntax(source);
-        var diagnostics = new List<Diagnostic>(result.Diagnostics);
-
-        // load elaboration: resolve load("url") directives before parameter detection
-        var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts);
-        var elaborated = loader.Elaborate(result.Root);
-
-        if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, out _))
-        {
-            diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(elaborated));
-            return new ParseResult(elaborated, diagnostics);
-        }
-
-        return FinalizeProcessedParse(elaborated, diagnostics);
-    }
+        => FrontEndPipeline.Process(source, downloadCode, allowedHosts).ToParseResult();
 
     /// <summary>
     /// Full pipeline with optional configuration via <see cref="RunOptions"/>.
@@ -98,35 +84,7 @@ public sealed class Parser
     /// module elaboration is unavailable and <c>load</c> syntax is rejected.
     /// </summary>
     public static ParseResult Parse(string source, RunOptions? options)
-    {
-        if (options?.DownloadCode is not null)
-            return Parse(source, options.DownloadCode, options.AllowedHosts);
-        return ParseWithoutModuleElaboration(source);
-    }
-
-    private static ParseResult ParseWithoutModuleElaboration(string source)
-    {
-        var result = ParseSyntax(source);
-        var diagnostics = new List<Diagnostic>(result.Diagnostics);
-        var loadDiagnostics = LoadElaborationGuard.CreateUnavailableDiagnostics(result.Root);
-
-        if (loadDiagnostics.Count > 0)
-        {
-            diagnostics.AddRange(loadDiagnostics);
-            return new ParseResult(result.Root, diagnostics);
-        }
-
-        return FinalizeProcessedParse(result.Root, diagnostics);
-    }
-
-    private static ParseResult FinalizeProcessedParse(Algorithm root, List<Diagnostic> diagnostics)
-    {
-        var (detected, paramDiags) = ParameterDetector.Detect(root);
-        diagnostics.AddRange(paramDiags);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
-        var exposed = PropertyExposureResolver.Resolve(resolved);
-        return new ParseResult(exposed, diagnostics);
-    }
+        => FrontEndPipeline.Process(source, options).ToParseResult();
 
     // ── Token access helpers ────────────────────────────────────────────────
 
