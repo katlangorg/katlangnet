@@ -1431,6 +1431,36 @@ public class ParserTests
         Assert.Empty(Assert.IsType<Algorithm.User>(explicitProp.Value).Params);
     }
 
+        [Fact]
+        public void Parse_NestedLocalPropertyDependencyOnCapturedSibling_PropagatesLocalOnlyExposure()
+        {
+                var result = Parser.Parse(
+                        """
+                        Algo(x) = {
+                            Captured = x + 1
+                            Wrapper = {
+                                Inner = Captured
+                                Inner
+                            }
+                            x
+                        }
+                        """);
+
+                Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+                var algo = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
+
+                var captured = Assert.Single(algo.Properties, property => property.Name == "Captured");
+                var wrapper = Assert.Single(algo.Properties, property => property.Name == "Wrapper");
+
+                Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, captured.Exposure);
+                Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, wrapper.Exposure);
+
+                var wrapperBody = Assert.IsType<Algorithm.User>(wrapper.Value);
+                var inner = Assert.Single(wrapperBody.Properties);
+                Assert.Equal("Inner", inner.Name);
+                Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, inner.Exposure);
+        }
+
     [Fact]
     public void Parse_NestedPropertyOwnsParameter_WhenOuterOutputDoesNotUseIt()
     {

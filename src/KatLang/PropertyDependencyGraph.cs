@@ -3,10 +3,16 @@ namespace KatLang;
 internal sealed record PropertyDependencyNode(
     int PropertyIndex,
     IReadOnlyList<int> SiblingDependencyIndices,
-    IReadOnlyList<string> DirectAncestorOwnedParameterNames)
+    IReadOnlyList<string> DirectAncestorOwnedParameterNames,
+    IReadOnlyList<int> SummarySiblingDependencyIndices,
+    IReadOnlyList<string> SummaryVisiblePropertyDependencyNames,
+    IReadOnlyList<string> RequiredAncestorOwnedParameterNames)
 {
     public bool DirectlyCapturesAncestorOwnedParameters
         => DirectAncestorOwnedParameterNames.Count > 0;
+
+    public bool RequiresAncestorOwnedParameters
+        => RequiredAncestorOwnedParameterNames.Count > 0;
 }
 
 internal sealed class PropertyDependencyGraph
@@ -93,6 +99,34 @@ internal sealed class PropertyDependencyGraph
 
 internal static class PropertyDependencyGraphBuilder
 {
+    private sealed class SummarySeed
+    {
+        public SummarySeed(
+            IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
+            IEnumerable<string>? visiblePropertyDependencyNames = null)
+        {
+            RequiredAncestorOwnedParameterNames = CreateNameSet(requiredAncestorOwnedParameterNames);
+            VisiblePropertyDependencyNames = CreateNameSet(visiblePropertyDependencyNames);
+        }
+
+        public HashSet<string> RequiredAncestorOwnedParameterNames { get; }
+
+        public HashSet<string> VisiblePropertyDependencyNames { get; }
+
+        public SummarySeed Clone()
+            => new(RequiredAncestorOwnedParameterNames, VisiblePropertyDependencyNames);
+
+        public void UnionWith(SummarySeed other)
+        {
+            RequiredAncestorOwnedParameterNames.UnionWith(other.RequiredAncestorOwnedParameterNames);
+            VisiblePropertyDependencyNames.UnionWith(other.VisiblePropertyDependencyNames);
+        }
+
+        public bool SetEquals(SummarySeed other)
+            => RequiredAncestorOwnedParameterNames.SetEquals(other.RequiredAncestorOwnedParameterNames)
+                && VisiblePropertyDependencyNames.SetEquals(other.VisiblePropertyDependencyNames);
+    }
+
     public static PropertyDependencyGraph Build(
         Algorithm.User algorithm,
         IEnumerable<string>? ancestorOwnedNames = null,
@@ -122,13 +156,265 @@ internal static class PropertyDependencyGraphBuilder
                 property.Value,
                 ancestorOwnedForProperties,
                 CreateNameSet());
+            var summarySeed = CollectSummarySeed(
+                property.Value,
+                ancestorOwnedForProperties,
+                CreateNameSet());
+            var summarySiblingDependencyIndices = new HashSet<int>();
+            var summaryVisiblePropertyDependencyNames = CreateNameSet();
+            foreach (var dependencyName in summarySeed.VisiblePropertyDependencyNames)
+            {
+                if (propertyNameToIndex.TryGetValue(dependencyName, out var dependencyIndex)
+                    && dependencyIndex != i)
+                    summarySiblingDependencyIndices.Add(dependencyIndex);
+                else
+                    summaryVisiblePropertyDependencyNames.Add(dependencyName);
+            }
+
             nodes[i] = new PropertyDependencyNode(
                 i,
                 siblingDependencyIndices,
-                directAncestorOwnedParameterNames);
+                directAncestorOwnedParameterNames,
+                summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
+                summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
+                summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
         }
 
         return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
+    }
+
+    private static SummarySeed CollectSummarySeed(
+        Algorithm algorithm,
+        HashSet<string> ancestorOwnedNames,
+        HashSet<string> locallyOwnedNames)
+    {
+        switch (algorithm)
+        {
+            case Algorithm.User user:
+                return CollectSummarySeed(user, ancestorOwnedNames, locallyOwnedNames);
+
+            case Algorithm.Conditional conditional:
+                return CollectSummarySeed(conditional, ancestorOwnedNames, locallyOwnedNames);
+
+            default:
+                return new SummarySeed();
+        }
+    }
+
+    private static SummarySeed CollectSummarySeed(
+        Algorithm.User algorithm,
+        HashSet<string> ancestorOwnedNames,
+        HashSet<string> locallyOwnedNames)
+    {
+        var ownedHere = CreateNameSet(locallyOwnedNames);
+        ownedHere.UnionWith(algorithm.Params);
+
+        var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
+        ancestorOwnedForChildren.UnionWith(ownedHere);
+
+        var summaryOwnedHere = algorithm.IsParametrized
+            ? ownedHere
+            : CreateNameSet(ancestorOwnedForChildren);
+
+        var currentPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
+        var propertyBaseSeeds = new SummarySeed[algorithm.Properties.Count];
+        for (var i = 0; i < algorithm.Properties.Count; i++)
+        {
+            var property = algorithm.Properties[i];
+            currentPropertySummaries[property.Name] = new SummarySeed();
+            propertyBaseSeeds[i] = CollectSummarySeed(
+                property.Value,
+                ancestorOwnedForChildren,
+                CreateNameSet());
+        }
+
+        while (true)
+        {
+            var nextPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
+            for (var i = 0; i < algorithm.Properties.Count; i++)
+            {
+                var property = algorithm.Properties[i];
+                nextPropertySummaries[property.Name] = ExpandLocalPropertyDependencies(
+                    propertyBaseSeeds[i],
+                    currentPropertySummaries);
+            }
+
+            if (SummarySeedsEqual(currentPropertySummaries, nextPropertySummaries))
+            {
+                currentPropertySummaries = nextPropertySummaries;
+                break;
+            }
+
+            currentPropertySummaries = nextPropertySummaries;
+        }
+
+        var seed = CollectSummarySeed(
+            algorithm.Opens,
+            currentPropertySummaries,
+            summaryOwnedHere,
+            ancestorOwnedForChildren);
+        seed.UnionWith(CollectSummarySeed(
+            algorithm.Output,
+            currentPropertySummaries,
+            summaryOwnedHere,
+            ancestorOwnedForChildren));
+        return seed;
+    }
+
+    private static SummarySeed ExpandLocalPropertyDependencies(
+        SummarySeed baseSeed,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries)
+    {
+        var expanded = new SummarySeed(
+            requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames);
+
+        foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
+        {
+            if (localPropertySummaries.TryGetValue(dependencyName, out var localSummary))
+            {
+                expanded.UnionWith(localSummary);
+                continue;
+            }
+
+            expanded.VisiblePropertyDependencyNames.Add(dependencyName);
+        }
+
+        return expanded;
+    }
+
+    private static SummarySeed CollectSummarySeed(
+        Algorithm.Conditional algorithm,
+        HashSet<string> ancestorOwnedNames,
+        HashSet<string> locallyOwnedNames)
+    {
+        var ownedHere = CreateNameSet(locallyOwnedNames);
+        var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
+        ancestorOwnedForChildren.UnionWith(ownedHere);
+
+        var seed = CollectSummarySeed(
+            algorithm.Opens,
+            new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+            ownedHere,
+            ancestorOwnedForChildren);
+
+        foreach (var branch in algorithm.Branches)
+        {
+            seed.UnionWith(CollectSummarySeed(
+                branch.Body,
+                ancestorOwnedForChildren,
+                CreateNameSet(branch.Pattern.BoundNames())));
+        }
+
+        return seed;
+    }
+
+    private static SummarySeed CollectSummarySeed(
+        IReadOnlyList<Expr> expressions,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        HashSet<string> ownedHere,
+        HashSet<string> ancestorOwnedForChildren)
+    {
+        var seed = new SummarySeed();
+        foreach (var expression in expressions)
+            seed.UnionWith(CollectSummarySeed(expression, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+
+        return seed;
+    }
+
+    private static SummarySeed CollectSummarySeed(
+        Expr expr,
+        IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
+        HashSet<string> ownedHere,
+        HashSet<string> ancestorOwnedForChildren)
+    {
+        switch (expr)
+        {
+            case Expr.Param(var name):
+                return ownedHere.Contains(name)
+                    ? new SummarySeed()
+                    : new SummarySeed(requiredAncestorOwnedParameterNames: [name]);
+
+            case Expr.Resolve(var name):
+                return localPropertySummaries.TryGetValue(name, out var localPropertySummary)
+                    ? localPropertySummary.Clone()
+                    : new SummarySeed(visiblePropertyDependencyNames: [name]);
+
+            case Expr.Grace(var inner, _):
+                return CollectSummarySeed(inner, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+
+            case Expr.Binary(_, var left, var right):
+            {
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                return seed;
+            }
+
+            case Expr.Unary(_, var operand):
+                return CollectSummarySeed(operand, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+
+            case Expr.Index(var target, var selector):
+            {
+                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                seed.UnionWith(CollectSummarySeed(selector, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                return seed;
+            }
+
+            case Expr.Combine(var left, var right):
+            {
+                var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                return seed;
+            }
+
+            case Expr.Block(var algorithm):
+                return CollectSummarySeed(
+                    algorithm,
+                    ancestorOwnedForChildren,
+                    CreateNameSet());
+
+            case Expr.Call(var function, var args):
+            {
+                var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                seed.UnionWith(CollectSummarySeed(
+                    args,
+                    ancestorOwnedForChildren,
+                    CreateNameSet()));
+                return seed;
+            }
+
+            case Expr.DotCall(var target, _, var argsOpt):
+            {
+                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+                if (argsOpt is not null)
+                {
+                    seed.UnionWith(CollectSummarySeed(
+                        argsOpt,
+                        ancestorOwnedForChildren,
+                        CreateNameSet()));
+                }
+
+                return seed;
+            }
+
+            default:
+                return new SummarySeed();
+        }
+    }
+
+    private static bool SummarySeedsEqual(
+        IReadOnlyDictionary<string, SummarySeed> left,
+        IReadOnlyDictionary<string, SummarySeed> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        foreach (var (name, leftSummary) in left)
+        {
+            if (!right.TryGetValue(name, out var rightSummary) || !leftSummary.SetEquals(rightSummary))
+                return false;
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<int> CollectSiblingDependencyIndices(

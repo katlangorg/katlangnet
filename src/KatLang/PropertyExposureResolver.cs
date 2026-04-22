@@ -61,6 +61,10 @@ internal static class PropertyExposureResolver
         HashSet<string> locallyOwnedNames,
         bool insideConditionalAlgorithm)
     {
+        var dependencyGraph = PropertyDependencyGraphBuilder.Build(
+            algorithm,
+            ancestorOwnedNames,
+            locallyOwnedNames);
         var ownedHere = UnionNames(locallyOwnedNames, algorithm.Params);
         var ancestorOwnedForChildren = UnionNames(ancestorOwnedNames, ownedHere);
         var summaryOwnedHere = algorithm.IsParametrized
@@ -71,38 +75,27 @@ internal static class PropertyExposureResolver
         foreach (var property in algorithm.Properties)
             currentPropertySummaries[property.Name] = AnalysisSummary.Empty;
 
-        IReadOnlyList<Property> rewrittenProperties = algorithm.Properties;
-
+        // PropertyDependencyGraph already centralizes the stable per-property seed facts:
+        // direct required ancestor-owned names plus summary edges to visible names and sibling properties.
+        // What still changes here is each property's accumulated RequiredAncestorOwnedParameterNames
+        // after following sibling summary edges through the current local summary map. That closure can
+        // be transitive or cyclic, including cases where nested local properties create summary-sibling
+        // cycles even though the direct sibling dependency graph is empty, so the exposure pass still
+        // needs a local least-fixed-point before rewriting children with the final visible summaries.
         while (true)
         {
             var visibleForChildren = MergeVisiblePropertySummaries(visiblePropertySummaries, currentPropertySummaries);
             var nextPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
-            var nextRewrittenProperties = new List<Property>(algorithm.Properties.Count);
-
-            foreach (var property in algorithm.Properties)
+            for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
             {
-                var rewrittenPropertyValue = ProcessAlgorithm(
-                    property.Value,
+                var property = algorithm.Properties[propertyIndex];
+                nextPropertySummaries[property.Name] = SummarizePropertyDependencies(
+                    dependencyGraph,
+                    propertyIndex,
                     visibleForChildren,
-                    ancestorOwnedForChildren,
-                    CreateNameSet(),
-                    insideConditionalAlgorithm);
-
-                var exposure = insideConditionalAlgorithm
-                    ? PropertyExposure.LocalOnlyConditionalAlgorithm
-                    : rewrittenPropertyValue.Summary.RequiresAncestorOwnedParameters
-                        ? PropertyExposure.LocalOnlyCapturedAncestorParameters
-                        : PropertyExposure.Exported;
-
-                nextRewrittenProperties.Add(new Property(property.Name, rewrittenPropertyValue.Algorithm, property.IsPublic, exposure)
-                {
-                    DeclarationSpans = property.DeclarationSpans
-                });
-
-                nextPropertySummaries[property.Name] = rewrittenPropertyValue.Summary;
+                    currentPropertySummaries);
             }
 
-            rewrittenProperties = nextRewrittenProperties;
             if (SummariesEqual(currentPropertySummaries, nextPropertySummaries))
             {
                 currentPropertySummaries = nextPropertySummaries;
@@ -113,6 +106,29 @@ internal static class PropertyExposureResolver
         }
 
         var finalVisiblePropertySummaries = MergeVisiblePropertySummaries(visiblePropertySummaries, currentPropertySummaries);
+        var rewrittenProperties = new List<Property>(algorithm.Properties.Count);
+        for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
+        {
+            var property = algorithm.Properties[propertyIndex];
+            var rewrittenPropertyValue = ProcessAlgorithm(
+                property.Value,
+                finalVisiblePropertySummaries,
+                ancestorOwnedForChildren,
+                CreateNameSet(),
+                insideConditionalAlgorithm);
+
+            var exposure = insideConditionalAlgorithm
+                ? PropertyExposure.LocalOnlyConditionalAlgorithm
+                : currentPropertySummaries[property.Name].RequiresAncestorOwnedParameters
+                    ? PropertyExposure.LocalOnlyCapturedAncestorParameters
+                    : PropertyExposure.Exported;
+
+            rewrittenProperties.Add(new Property(property.Name, rewrittenPropertyValue.Algorithm, property.IsPublic, exposure)
+            {
+                DeclarationSpans = property.DeclarationSpans
+            });
+        }
+
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
             finalVisiblePropertySummaries,
@@ -136,6 +152,35 @@ internal static class PropertyExposureResolver
         return new RewriteResult(
             rewrittenAlgorithm,
             MergeSummaries(rewrittenOpens.Concat(rewrittenOutput).Select(result => result.Summary)));
+    }
+
+    private static AnalysisSummary SummarizePropertyDependencies(
+        PropertyDependencyGraph dependencyGraph,
+        int propertyIndex,
+        IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
+        IReadOnlyDictionary<string, AnalysisSummary> currentPropertySummaries)
+    {
+        var node = dependencyGraph[propertyIndex];
+        var requiredAncestorOwnedParameterNames = new HashSet<string>(
+            node.RequiredAncestorOwnedParameterNames,
+            StringComparer.Ordinal);
+
+        foreach (var dependencyName in node.SummaryVisiblePropertyDependencyNames)
+        {
+            if (visiblePropertySummaries.TryGetValue(dependencyName, out var summary))
+                requiredAncestorOwnedParameterNames.UnionWith(summary.RequiredAncestorOwnedParameterNames);
+        }
+
+        foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
+        {
+            var dependencyName = dependencyGraph.Properties[dependencyIndex].Name;
+            if (currentPropertySummaries.TryGetValue(dependencyName, out var summary))
+                requiredAncestorOwnedParameterNames.UnionWith(summary.RequiredAncestorOwnedParameterNames);
+        }
+
+        return requiredAncestorOwnedParameterNames.Count == 0
+            ? AnalysisSummary.Empty
+            : new AnalysisSummary(requiredAncestorOwnedParameterNames);
     }
 
     private static RewriteResult ProcessConditionalAlgorithm(
