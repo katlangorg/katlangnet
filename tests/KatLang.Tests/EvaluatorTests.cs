@@ -1401,7 +1401,29 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Filter_RangeArgument_ExpandsTopLevelItems()
+    public void Eval_Filter_CommaSeparatedRangeArgument_PreservesOuterBoundary()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(range(3, 6), 8, IsEven)
+            """;
+
+        AssertEval(source, 8);
+    }
+
+    [Fact]
+    public void Eval_Filter_CombineInsideSingleArgument_FlattensOuterIteration()
+    {
+        var source = """
+            IsEven = x mod 2 == 0
+            filter(range(3, 6); 8, IsEven)
+            """;
+
+        AssertEval(source, 4, 6, 8);
+    }
+
+    [Fact]
+    public void Eval_Filter_RangeArgument_PreservesBoundaryShapeForPredicate()
     {
         var source = """
             KeepWholeRange((a, b, c, d, e)) = 1
@@ -1409,16 +1431,28 @@ public class EvaluatorTests
             filter(range(1, 5), KeepWholeRange)
             """;
 
-        AssertEval(source);
+        AssertEval(source, 1, 2, 3, 4, 5);
     }
 
     [Fact]
-    public void Eval_Filter_DirectCallMixedArgs_SpreadsRangeTopLevelItems()
+    public void Eval_Filter_DirectCallMixedArgs_PreservesRangeBoundaryShapeForPredicate()
     {
         var source = """
             KeepWideRange((a, b, c, d)) = 1
             KeepWideRange(x) = 0
             filter(1, 2, range(3, 6), KeepWideRange)
+            """;
+
+        AssertEval(source, 3, 4, 5, 6);
+    }
+
+    [Fact]
+    public void Eval_Filter_CombineInsideSingleArgument_ProjectsContentForGroupedPatternPredicate()
+    {
+        var source = """
+            KeepThreeGroup((a, b, c)) = 1
+            KeepThreeGroup(x) = 0
+            filter(1; range(2, 4), KeepThreeGroup)
             """;
 
         AssertEval(source);
@@ -1534,6 +1568,17 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Map_RangeArgument_PreservesOuterBoundaryForHigherOrderIteration()
+    {
+        var source = """
+            TopLevelItemCount(item) = item.count
+            map(range(3, 6), TopLevelItemCount)
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
     public void Eval_Map_PreservesOriginalOrder()
     {
         var source = """
@@ -1545,23 +1590,37 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Map_RangeArgument_TransformsEachTopLevelItem()
+    public void Eval_Map_RangeArgument_WithScalarTransform_FailsWithoutFlattening()
     {
         var source = """
             AddOne = x + 1
             map(range(1, 5), AddOne)
             """;
 
-        AssertEval(source, 2, 3, 4, 5, 6);
+        AssertBuiltinFailureWithContext(
+            source,
+            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)");
     }
 
     [Fact]
-    public void Eval_Map_DirectCallMixedArgs_SpreadsRangeTopLevelItems()
+    public void Eval_Map_DirectCallMixedArgs_PreservesRangeBoundary()
     {
         var source = """
             MarkGroupedRange((a, b, c)) = 1
             MarkGroupedRange(x) = 0
             map(1, range(2, 4), MarkGroupedRange)
+            """;
+
+        AssertEval(source, 0, 1);
+    }
+
+    [Fact]
+    public void Eval_Map_CombineInsideSingleArgument_ProjectsContentForGroupedPatternTransform()
+    {
+        var source = """
+            MarkGroupedRange((a, b, c)) = 1
+            MarkGroupedRange(x) = 0
+            map(1; range(2, 4), MarkGroupedRange)
             """;
 
         AssertEval(source, 0, 0, 0, 0);
@@ -2626,6 +2685,17 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Reduce_RangeArgument_PreservesOuterBoundaryForHigherOrderIteration()
+    {
+        var source = """
+            AddItemCount(item, acc) = item.count + acc
+            reduce(range(3, 6), AddItemCount, 0)
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
     public void Eval_Reduce_DirectCallMixedArgs_DoesNotSpreadRangeBoundary()
     {
         var source = """
@@ -2634,6 +2704,30 @@ public class EvaluatorTests
             """;
 
         AssertEval(source, 4);
+    }
+
+    [Fact]
+    public void Eval_Reduce_DirectCallMixedArgs_PreservesRangeBoundaryShapeForStep()
+    {
+        var source = """
+            AddGroupedRange((a, b, c), acc) = acc + 100
+            AddGroupedRange(x, acc) = acc + x
+            reduce(1, range(2, 4), AddGroupedRange, 0)
+            """;
+
+        AssertEval(source, 101);
+    }
+
+    [Fact]
+    public void Eval_Reduce_CombineInsideSingleArgument_ProjectsContentForStep()
+    {
+        var source = """
+            AddGroupedRange((a, b, c), acc) = acc + 100
+            AddGroupedRange(x, acc) = acc + x
+            reduce(1; range(2, 4), AddGroupedRange, 0)
+            """;
+
+        AssertEval(source, 10);
     }
 
     [Fact]
@@ -3449,8 +3543,7 @@ public class EvaluatorTests
             """,
             3,
             1,
-            3,
-            1,
+            2,
             3,
             3,
             2,
@@ -3477,7 +3570,7 @@ public class EvaluatorTests
             filter(Data:0, IsLarge).count
             """,
             2,
-            2,
+            1,
             1,
             1,
             2,
@@ -3500,7 +3593,7 @@ public class EvaluatorTests
             reduce(Data:0, Add, 0)
             """,
             4,
-            4,
+            2,
             3,
             3,
             6,
@@ -5819,7 +5912,7 @@ public class EvaluatorTests
     {
         var source = """
             OccurrenceCount(target) = {
-                MatchesTarget((tag, value)) = value == target:1
+                MatchesTarget(pair) = pair:1 == target:1
                 filter((1, 10), (2, 20), (2, 30), MatchesTarget)
             }
             OccurrenceCount((2, 20))

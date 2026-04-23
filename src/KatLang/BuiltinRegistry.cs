@@ -38,11 +38,18 @@ internal enum SequenceBuiltinItemShapeConstraint
     SingleNumeric,
 }
 
+internal enum SequenceBuiltinCollectionMode
+{
+    FlattenedTopLevelItems,
+    OuterIteration,
+}
+
 internal readonly record struct SequenceBuiltinMetadata(
     SequenceBuiltinLeadingArity LeadingSequenceArity,
     IReadOnlyList<SequenceBuiltinTrailingArgDescriptor> TrailingArgs,
     SequenceBuiltinEmptyPolicy EmptyPolicy,
-    SequenceBuiltinItemShapeConstraint ItemShapeConstraint)
+    SequenceBuiltinItemShapeConstraint ItemShapeConstraint,
+    SequenceBuiltinCollectionMode CollectionMode = SequenceBuiltinCollectionMode.FlattenedTopLevelItems)
 {
     public int TrailingArgCount => TrailingArgs.Count;
 }
@@ -138,10 +145,10 @@ internal static class BuiltinRegistry
     private static readonly SequenceBuiltinLeadingArity OneOrMoreSequenceArguments = new(1);
 
     private static readonly SequenceBuiltinMetadata FilterSequenceMetadata =
-        new(OneOrMoreSequenceArguments, [new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("predicate")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any, SequenceBuiltinCollectionMode.OuterIteration);
 
     private static readonly SequenceBuiltinMetadata MapSequenceMetadata =
-        new(OneOrMoreSequenceArguments, [new("transform")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("transform")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any, SequenceBuiltinCollectionMode.OuterIteration);
 
     private static readonly SequenceBuiltinMetadata OrderSequenceMetadata =
         new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.SingleNumeric);
@@ -183,7 +190,7 @@ internal static class BuiltinRegistry
         new(OneOrMoreSequenceArguments, [], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     private static readonly SequenceBuiltinMetadata ReduceSequenceMetadata =
-        new(OneOrMoreSequenceArguments, [new("step"), new("initial accumulator")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new(OneOrMoreSequenceArguments, [new("step"), new("initial accumulator")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any, SequenceBuiltinCollectionMode.OuterIteration);
 
     private static readonly BuiltinDescriptor[] Builtins =
     [

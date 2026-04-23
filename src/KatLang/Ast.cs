@@ -10,20 +10,18 @@ public enum UnaryOp { Minus, Not }
 
 /// <summary>
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
-/// Sequence-consuming builtins preserve leading argument boundaries: each
-/// leading argument expression contributes exactly one top-level item at the
-/// builtin call boundary, so grouped or multi-output content stays grouped as
-/// one item instead of being spread into surrounding plain-call sequence
-/// input. Sequence-builtin dot-call receivers are different: they contribute
-/// the receiver expression's counted top-level items. Resolved helpers, call
-/// receivers, projected callback params, and direct inline block receivers can
-/// therefore expose several receiver items. Dot-call strips exactly one outer
-/// inline receiver block layer, so <c>(1, 2, 3).count</c> behaves like three
-/// receiver items while <c>((1, 2, 3)).count</c> and named grouped helpers
-/// such as <c>Values = (1, 2, 3); Values.count</c> stay grouped. Direct
-/// <c>:</c> selection remains the explicit one-level projection exception, and
-/// nested grouped elements still stay grouped values rather than being
-/// flattened recursively.
+/// Plain-call sequence builtins split into two modes. Direct consumers such as
+/// <c>count</c>, <c>sum</c>, <c>order</c>, and related numeric/collection
+/// builtins read the counted top-level items contributed by each leading
+/// argument. Higher-order plain-call builtins <c>filter</c>, <c>map</c>, and
+/// <c>reduce</c> instead preserve each ordinary leading argument as one outer
+/// iteration item unless the argument explicitly projects content with
+/// <c>:</c> or combines content with <c>;</c>. Sequence-builtin dot-call
+/// receivers are different again: they contribute the receiver expression's
+/// counted top-level items. Dot-call strips exactly one outer inline receiver
+/// block layer, so <c>(1, 2, 3).count</c> behaves like three receiver items
+/// while <c>((1, 2, 3)).count</c> and named grouped helpers such as
+/// <c>Values = (1, 2, 3); Values.count</c> stay grouped.
 /// <c>filter(...items, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
 /// seeing each callback item through the same one-level projection rule as
@@ -32,10 +30,8 @@ public enum UnaryOp { Minus, Not }
 /// each callback item follows the same one-level projection rule as
 /// <c>S:i</c>, <c>transform(element)</c> must return exactly one mapped
 /// element, and grouped mapped outputs are preserved whole.
-/// <c>count(...items)</c> counts the preserved top-level sequence items left to
-/// right; each ordinary leading argument expression contributes one element,
-/// grouped values are not flattened, and a grouped empty value still counts as
-/// one argument-boundary item.
+/// <c>count(...items)</c> counts the top-level sequence items exposed by direct
+/// sequence consumption; grouped top-level values still count as one element.
 /// <c>contains(...items, item)</c> returns <c>1</c> when any top-level sequence
 /// item equals <c>item</c> under ordinary KatLang value equality, otherwise
 /// <c>0</c>; grouped values compare as grouped values and are not searched

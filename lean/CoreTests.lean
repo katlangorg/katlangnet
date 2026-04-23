@@ -1893,8 +1893,10 @@ def alwaysFalseAlg66a : Algorithm :=
 def keepTenGroupAlg66b : Algorithm :=
   .conditional none [] [
     ⟨ .group [
-        .bind "a", .bind "b", .bind "c", .bind "d", .bind "e",
-        .bind "f", .bind "g", .bind "h", .bind "i", .bind "j"
+        .group [
+          .bind "a", .bind "b", .bind "c", .bind "d", .bind "e",
+          .bind "f", .bind "g", .bind "h", .bind "i", .bind "j"
+        ]
       ],
       alg [] [] [] [.num 1] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
@@ -1902,21 +1904,21 @@ def keepTenGroupAlg66b : Algorithm :=
 
 def keepFourGroupAlg66c : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "a", .bind "b", .bind "c", .bind "d"],
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c", .bind "d"]],
       alg [] [] [] [.num 1] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
   ]
 
 def rejectFourGroupAlg66d : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "a", .bind "b", .bind "c", .bind "d"],
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c", .bind "d"]],
       alg [] [] [] [.num 0] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 1] ⟩
   ]
 
 def markThreeGroupAlg66e : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "a", .bind "b", .bind "c"],
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c"]],
       alg [] [] [] [.num 1] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
   ]
@@ -1944,7 +1946,7 @@ def emptyTruthAlg71 : Algorithm :=
     ])
   ]
 
--- Test 63: plain-call filter expands a range argument into top-level items
+-- Test 63: plain-call filter preserves a range argument as one outer item
 def test63 : Bool :=
   match runFlat (.block (algPrivate [] [] [("KeepTenGroup", keepTenGroupAlg66b)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -1952,12 +1954,12 @@ def test63 : Bool :=
       .resolve "KeepTenGroup"
     ])
   ])) with
-  | Except.ok [] => true
+  | Except.ok [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] => true
   | _ => false
 
 #eval test63  -- should be true
 
--- Test 64: descending ranges also expand to top-level items in plain-call filter
+-- Test 64: descending ranges stay grouped as one outer item in plain-call filter
 def test64 : Bool :=
   match runFlat (.block (algPrivate [] [] [("KeepTenGroup", keepTenGroupAlg66b)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -1965,12 +1967,12 @@ def test64 : Bool :=
       .resolve "KeepTenGroup"
     ])
   ])) with
-  | Except.ok [] => true
+  | Except.ok [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] => true
   | _ => false
 
 #eval test64  -- should be true
 
--- Test 65: a grouped-only predicate rejects expanded atomic range items
+-- Test 65: a grouped-only predicate now matches one grouped range item
 def test65 : Bool :=
   match runFlat (.block (algPrivate [] [] [("KeepFourGroup", keepFourGroupAlg66c)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -1978,12 +1980,12 @@ def test65 : Bool :=
       .resolve "KeepFourGroup"
     ])
   ])) with
-  | Except.ok [] => true
+  | Except.ok [1, 2, 3, 4] => true
   | _ => false
 
 #eval test65  -- should be true
 
--- Test 66: a grouped-only rejection predicate now keeps expanded atomic items
+-- Test 66: a grouped-only rejection predicate now rejects one grouped range item
 def test66 : Bool :=
   match runFlat (.block (algPrivate [] [] [("RejectFourGroup", rejectFourGroupAlg66d)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -1991,10 +1993,39 @@ def test66 : Bool :=
       .resolve "RejectFourGroup"
     ])
   ])) with
-  | Except.ok [1, 2, 3, 4] => true
+  | Except.ok [] => true
   | _ => false
 
 #eval test66  -- should be true
+
+-- Test 66aa: comma-separated higher-order args preserve outer boundaries
+def test66aa : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 3, .num 6]),
+      .num 8,
+      .resolve "IsEven"
+    ])
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#eval test66aa  -- should be true
+
+-- Test 66ab: explicit combine still flattens range content for filter
+def test66ab : Bool :=
+  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .combine
+        (.call (resolve "range") (alg [] [] [] [.num 3, .num 6]))
+        (.num 8),
+      .resolve "IsEven"
+    ])
+  ])) with
+  | Except.ok [4, 6, 8] => true
+  | _ => false
+
+#eval test66ab  -- should be true
 
 -- Test 67: filtering an already-empty grouped boundary stays empty
 def test67 : Bool :=
@@ -2113,7 +2144,7 @@ def test75 : Bool :=
     "filter"
     (some (alg [] [] [] [.num 1]))) with
   | Except.error err =>
-      hasContext "while evaluating filter predicate (filter passes each collection item through S:i-style one-level projection)" err &&
+      hasContext "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" err &&
       innermostIsArityMismatch 0 1 err
   | _ => false
 
@@ -2214,7 +2245,7 @@ def test76 : Bool :=
 
 #eval test76  -- should be true
 
--- Test 77: plain-call reduce iterates one step per expanded range item
+-- Test 77: plain-call reduce preserves one grouped range item
 def test77 : Bool :=
   match runFlat (.block (algPrivate [] [] [("Mul", mulAlg77)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -2223,12 +2254,26 @@ def test77 : Bool :=
       .num 1
     ])
   ])) with
-  | Except.ok [11111] => true
+  | Except.ok [14] => true
   | _ => false
 
 #eval test77  -- should be true
 
--- Test 78: grouped-only reduce branches no longer match expanded atomic range items
+-- Test 77a: plain-call reduce can still observe grouped range content explicitly
+def test77a : Bool :=
+  match runFlat (.block (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 3, .num 6]),
+      .resolve "AddItemCount",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [4] => true
+  | _ => false
+
+#eval test77a  -- should be true
+
+-- Test 78: grouped-only reduce branches now match one grouped range item
 def test78 : Bool :=
   match runFlat (.block (algPrivate [] [] [("Digits", digitsAlg78)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -2237,7 +2282,7 @@ def test78 : Bool :=
       .num 0
     ])
   ])) with
-  | Except.ok [0] => true
+  | Except.ok [1234] => true
   | _ => false
 
 #eval test78  -- should be true
@@ -2292,7 +2337,7 @@ def test81 : Bool :=
 
 #eval test81  -- should be true
 
--- Test 82: grouped accumulators keep their shape while expanded range items count one by one
+-- Test 82: grouped accumulators keep their shape while one grouped range item is reduced once
 def test82 : Bool :=
   match runResult (.block (algPrivate [] [] [("Stats", reduceStatsAlg80)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -2301,7 +2346,7 @@ def test82 : Bool :=
       .block (alg [] [] [] [.num 0, .num 0])
     ])
   ])) with
-  | Except.ok (.group [.atom 4, .atom 4]) => true
+  | Except.ok (.group [.atom 4, .atom 1]) => true
   | _ => false
 
 #eval test82  -- should be true
@@ -2358,7 +2403,7 @@ def doubleAlg85 : Algorithm :=
 
 def takeMiddleGroupAlg85a : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "a", .bind "b", .bind "c", .bind "d", .bind "e"],
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c", .bind "d", .bind "e"]],
       alg [] [] [] [.param "c"] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
   ]
@@ -2368,7 +2413,7 @@ def squareAlg86 : Algorithm :=
 
 def tagAlg87 : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "first", .bind "b", .bind "c", .bind "d", .bind "last"],
+    ⟨ .group [.group [.bind "first", .bind "b", .bind "c", .bind "d", .bind "last"]],
       alg [] [] [] [
         .binary .add (.binary .mul (.param "first") (.num 10)) (.param "last")
       ] ⟩,
@@ -2388,7 +2433,7 @@ def takePairValueAlg89 : Algorithm :=
 
 def pairWithSquareAlg90 : Algorithm :=
   .conditional none [] [
-    ⟨ .group [.bind "first", .bind "middle", .bind "last"],
+    ⟨ .group [.group [.bind "first", .bind "middle", .bind "last"]],
       alg [] [] [] [
         .block (alg [] [] [] [
           .param "first",
@@ -2428,7 +2473,7 @@ def test85 : Bool :=
 
 #eval test85  -- should be true
 
--- Test 86: plain-call map transforms each expanded range item
+-- Test 86: plain-call map preserves one grouped range item
 def test86 : Bool :=
   match runFlat (.block (algPrivate [] [] [("TakeMiddle", takeMiddleGroupAlg85a)] [
     .call (resolve "map") (alg [] [] [] [
@@ -2436,12 +2481,27 @@ def test86 : Bool :=
       .resolve "TakeMiddle"
     ])
   ])) with
-  | Except.ok [0, 0, 0, 0, 0] => true
+  | Except.ok [3] => true
   | _ => false
 
 #eval test86  -- should be true
 
--- Test 87: grouped-only map branches no longer match expanded atomic range items
+-- Test 86a: plain-call map does not silently flatten grouped range input for scalar transforms
+def test86a : Bool :=
+  match runResult (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+    .call (resolve "map") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+      .resolve "Double"
+    ])
+  ])) with
+  | Except.error err =>
+      hasContext "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" err
+      && innermostIsBadArity err
+  | _ => false
+
+#eval test86a  -- should be true
+
+-- Test 87: grouped-only map branches now see one grouped range item
 def test87 : Bool :=
   match runFlat (.block (algPrivate [] [] [("Tag", tagAlg87)] [
     .call (resolve "map") (alg [] [] [] [
@@ -2449,7 +2509,7 @@ def test87 : Bool :=
       .resolve "Tag"
     ])
   ])) with
-  | Except.ok [0, 0, 0, 0, 0] => true
+  | Except.ok [51] => true
   | _ => false
 
 #eval test87  -- should be true
@@ -2485,7 +2545,7 @@ def test89 : Bool :=
 
 #eval test89  -- should be true
 
--- Test 90: grouped mapped results are accepted for each expanded range item
+-- Test 90: grouped mapped results are accepted for one grouped range item
 def test90 : Bool :=
   match runResult (.block (algPrivate [] [] [("PairWithSquare", pairWithSquareAlg90)] [
     .call (resolve "map") (alg [] [] [] [
@@ -2493,11 +2553,7 @@ def test90 : Bool :=
       .resolve "PairWithSquare"
     ])
   ])) with
-  | Except.ok (.group [
-      .group [.atom 0, .atom 0],
-      .group [.atom 0, .atom 0],
-      .group [.atom 0, .atom 0]
-    ]) => true
+  | Except.ok (.group [.atom 1, .atom 3]) => true
   | _ => false
 
 #eval test90  -- should be true
@@ -3631,7 +3687,7 @@ def test151n : Bool :=
       .resolve "KeepFourGroup"
     ])
   ])) with
-  | Except.ok [] => true
+  | Except.ok [3, 4, 5, 6] => true
   | _ => false
 
 #eval test151n  -- should be true
@@ -3644,10 +3700,38 @@ def test151o : Bool :=
       .resolve "MarkThreeGroup"
     ])
   ])) with
-  | Except.ok [0, 0, 0, 0] => true
+  | Except.ok [0, 1] => true
   | _ => false
 
 #eval test151o  -- should be true
+
+def test151ob : Bool :=
+  match runFlat (.block (algPrivate [] [] [("MarkThreeGroup", markThreeGroupAlg66e)] [
+    .call (resolve "map") (alg [] [] [] [
+      .combine
+        (.num 1)
+        (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
+      .resolve "MarkThreeGroup"
+    ])
+  ])) with
+  | Except.ok [0, 0, 0, 0] => true
+  | _ => false
+
+#eval test151ob  -- should be true
+
+def test151oc : Bool :=
+  match runFlat (.block (algPrivate [] [] [("MarkThreeGroup", markThreeGroupAlg66e)] [
+    .call (resolve "filter") (alg [] [] [] [
+      .combine
+        (.num 1)
+        (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
+      .resolve "MarkThreeGroup"
+    ])
+  ])) with
+  | Except.ok [] => true
+  | _ => false
+
+#eval test151oc  -- should be true
 
 def markGroupedRangeDirectCallAlg151oa : Algorithm :=
   .conditional none [] [
@@ -3681,6 +3765,43 @@ def test151p : Bool :=
   | _ => false
 
 #eval test151p  -- should be true
+
+def addGroupedRangeAlg151pb : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c"], .bind "acc"],
+      alg [] [] [] [.binary .add (.param "acc") (.num 100)] ⟩,
+    ⟨ .group [.bind "x", .bind "acc"],
+      alg [] [] [] [.binary .add (.param "acc") (.param "x")] ⟩
+  ]
+
+def test151pb : Bool :=
+  match runFlat (.block (algPrivate [] [] [("AddGroupedRange", addGroupedRangeAlg151pb)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .num 1,
+      .call (resolve "range") (alg [] [] [] [.num 2, .num 4]),
+      .resolve "AddGroupedRange",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [101] => true
+  | _ => false
+
+#eval test151pb  -- should be true
+
+def test151pc : Bool :=
+  match runFlat (.block (algPrivate [] [] [("AddGroupedRange", addGroupedRangeAlg151pb)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .combine
+        (.num 1)
+        (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
+      .resolve "AddGroupedRange",
+      .num 0
+    ])
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test151pc  -- should be true
 
 def test151q : Bool :=
   match runResult (.block (alg [] [] [] [
@@ -5641,7 +5762,7 @@ def sequenceBuiltinDotCallMapSweep : Bool :=
     .dotCall data0 "map" (some (alg [] [] [] [resolve "AddOne"])),
     .call (resolve "map") (alg [] [] [] [data0, resolve "AddOne"])
   ])) with
-  | Except.ok [3, 1, 3, 1, 3, 3, 2, 3, 4, 2, 3, 4] => true
+  | Except.ok [3, 1, 2, 3, 3, 2, 3, 4, 2, 3, 4] => true
   | _ => false
 
 #eval sequenceBuiltinDotCallMapSweep  -- should be true
@@ -5662,7 +5783,7 @@ def sequenceBuiltinDotCallFilterSweep : Bool :=
     .dotCall (.dotCall data0 "filter" (some (alg [] [] [] [resolve "IsLarge"]))) "count" none,
     .dotCall (.call (resolve "filter") (alg [] [] [] [data0, resolve "IsLarge"])) "count" none
   ])) with
-  | Except.ok [2, 2, 1, 1, 2, 2] => true
+  | Except.ok [2, 1, 1, 1, 2, 2] => true
   | _ => false
 
 #eval sequenceBuiltinDotCallFilterSweep  -- should be true
@@ -5683,7 +5804,7 @@ def sequenceBuiltinDotCallReduceSweep : Bool :=
     .dotCall data0 "reduce" (some (alg [] [] [] [resolve "Add", .num 0])),
     .call (resolve "reduce") (alg [] [] [] [data0, resolve "Add", .num 0])
   ])) with
-  | Except.ok [4, 4, 3, 3, 6, 6] => true
+  | Except.ok [4, 2, 3, 3, 6, 6] => true
   | _ => false
 
 #eval sequenceBuiltinDotCallReduceSweep  -- should be true

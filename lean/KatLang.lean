@@ -132,6 +132,10 @@ abbrev EvalM := Except Error
 instance : Nonempty Error := Nonempty.intro Error.badArity
 instance {A : Type} : Nonempty (EvalM A) := Nonempty.intro (Except.error Error.badArity)
 
+def Error.innermost : Error -> Error
+  | .withContext _ inner => inner.innermost
+  | err => err
+
 --------------------------------------------------------------------------------
 -- Operators
 --------------------------------------------------------------------------------
@@ -190,32 +194,37 @@ inductive SequenceBuiltinItemShapeConstraint where
   | singleNumeric
   deriving Repr, BEq, DecidableEq
 
+inductive SequenceBuiltinCollectionMode where
+  | flattenedTopLevelItems
+  | outerIteration
+  deriving Repr, BEq, DecidableEq
+
 structure SequenceBuiltinMetadata where
   leadingSequenceArity : SequenceBuiltinLeadingArity := {}
   trailingArgs : List SequenceBuiltinTrailingArgDescriptor := []
   emptyPolicy : SequenceBuiltinEmptyPolicy := .allowEmpty
   itemShapeConstraint : SequenceBuiltinItemShapeConstraint := .any
+  collectionMode : SequenceBuiltinCollectionMode := .flattenedTopLevelItems
   deriving Repr, BEq
 
 def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata) : Nat :=
   metadata.trailingArgs.length
 
-/-- Metadata for sequence builtins that consume counted top-level items.
-  All leading sequence arguments contribute the counted top-level items they
-  emit. Direct grouped values therefore stay grouped because they emit exactly
-  one top-level item, while ungrouped multi-output results such as
-  `range(1, 5)` or `Values = 1, 2, 3` spread into surrounding builtin input in
-  plain-call form. Current builtins all consume that flattened top-level item
-  stream after the shared collection step, and
-  `trailingArgs` describes the fixed trailing non-sequence arguments. If a
-  future builtin genuinely needs a different prepared boundary view,
-  reintroduce that metadata alongside the concrete handler that uses it. -/
+/-- Metadata for sequence builtins.
+  Direct sequence consumers use the flattened counted top-level items of each
+  leading argument. Higher-order plain-call builtins may instead preserve each
+  ordinary leading argument as one outer iteration item, while explicit
+  content-projecting forms such as `a; b` and `S:i` still contribute their
+  top-level content. `trailingArgs` describes the fixed trailing non-sequence
+  arguments. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
       trailingArgs := [{ label := "predicate" }]
+      collectionMode := .outerIteration
     }
   | .mapBuiltin => some {
       trailingArgs := [{ label := "transform" }]
+      collectionMode := .outerIteration
     }
   | .orderBuiltin => some {
       itemShapeConstraint := .singleNumeric
@@ -262,6 +271,7 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
         { label := "step" },
         { label := "initial accumulator" }
       ]
+      collectionMode := .outerIteration
     }
   | _ => none
 
@@ -454,18 +464,11 @@ namespace Pattern
             | _ => none)
     | _ => none
 
-    /-- Return positional parameter names when a sole surface clause head
+  /-- Return positional parameter names when a sole surface clause head
       consists only of top-level plain binders.
 
       This is only an eligibility helper for the whole same-name clause-group
-      rule. Front-ends must still classify at the family level: a same-name
-      clause group elaborates as ordinary only if it contains exactly one
-      clause and that sole head qualifies here. Later clauses may force the
-      whole family to remain conditional.
-
-      Accepted shapes:
-      - `.bind x` (surface `F(x) = ...`)
-      - `.group [.bind x, .bind y, ...]` with length > 1
+      elaboration rule; it does not by itself decide ordinary-vs-conditional.
 
       Rejected on purpose:
       - `.group [.bind x]` (surface grouped singleton `F((x)) = ...`)
@@ -531,25 +534,20 @@ mutual
       ordinary lexical resolution).  No extra implicit parameters are inferred
       from free identifiers in the body.  Grace `~` is not allowed in patterns
       or branch bodies.
-
-      The top-level output arity of a branch is the number of top-level output
-      expressions in its body (`body.output.length`).  All branches of the same
-      conditional algorithm must have the same top-level output arity.
       Nested internal output structure may vary. -/
   structure CondBranch where
     pattern : Pattern
     body    : Algorithm
     deriving Repr
 
-
-  inductive Algorithm where
     /-- User-defined algorithm with properties, parameters, opens, and output.
 
-        **Unique property name invariant**: the `properties` list must not
-        contain two entries with the same `name`.  Properties are immutable
-        bindings; redefining a property is a static error detected by the
-        front-end / parser.  This invariant ensures that `lookupPropDefAny?`
-        (which returns the first match) is unambiguous. -/
+      **Unique property name invariant**: the `properties` list must not
+      contain two entries with the same `name`.  Properties are immutable
+      bindings; redefining a property is a static error detected by the
+      front-end / parser.  This invariant ensures that `lookupPropDefAny?`
+      (which returns the first match) is unambiguous. -/
+    inductive Algorithm where
     | mk :
         (parent     : Option ScopeCtx) ->
         (params     : List Ident) ->
@@ -1452,13 +1450,6 @@ partial def bindCountedCallbackParams (ps : List Ident) (args : List CountedResu
     else
       pure (List.zip boundParams boundArgs)
 
-/-- Higher-order sequence iteration projects content the same way `:` does.
-    The callback item for sequence item `i` behaves like `S:i`: atoms stay
-    atomic, grouped items project exactly one level, and nested grouped members
-    remain grouped. -/
-def projectSequenceCallbackItem (item : Result) : CountedResult :=
-  Result.projectSelectedContent item
-
 def splitSequenceBuiltinArgs (metadata : SequenceBuiltinMetadata) (args : List Algorithm)
     : Option (List Algorithm × List Algorithm) :=
   let trailingArgCount := metadata.trailingArgCount
@@ -1484,10 +1475,52 @@ def numericSequenceInputItemErrorContext
     (b : Builtin) (inputIndex itemIndex : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; input {inputIndex} item {itemIndex} was {describeSequenceItem item}"
 
+def usesExplicitOuterSequenceContent (collectionArg : Algorithm) : Bool :=
+  match collectionArg.output with
+  | [Expr.combine _ _] => true
+  | [Expr.index _ _] => true
+  | _ => false
+
+def collectSequenceBuiltinInputItems
+    (collectionMode : SequenceBuiltinCollectionMode)
+    (collectionArg : Algorithm)
+    (out : CountedResult)
+    : List Result :=
+  if collectionMode = SequenceBuiltinCollectionMode.flattenedTopLevelItems || usesExplicitOuterSequenceContent collectionArg then
+    countedTopLevelValues out
+  else if out.snd = 0 then
+    []
+  else
+    [out.fst]
+
+def collectSequenceIterationItems
+    (collectionMode : SequenceBuiltinCollectionMode)
+    (collectionArg : Algorithm)
+    (out : CountedResult)
+    : List CountedResult :=
+  if collectionMode = SequenceBuiltinCollectionMode.flattenedTopLevelItems || usesExplicitOuterSequenceContent collectionArg then
+    (countedTopLevelValues out).map (fun item => (item, 1))
+  else if out.snd = 0 then
+    []
+  else
+    [out]
+
+def shouldTreatFilterCallbackFailureAsFalse (item : CountedResult) (err : Error) : Bool :=
+  item.snd > 1 &&
+    match item.fst with
+    | .group _ =>
+        match err.innermost with
+        | Error.typeMismatch _ => true
+        | Error.noMatchingBranch _ => true
+        | Error.badArity => true
+        | _ => false
+    | _ => false
+
 /-- Shared collected view for current sequence-builtin evaluation.
     The per-input boundary view remains part of the real model because direct
-    projection handling and boundary-sensitive validation depend on it, even
-    though current builtin handlers all consume the flattened item stream. -/
+  projection handling and boundary-sensitive validation depend on it, even
+  when the prepared outer-item stream differs between direct-consumption and
+  higher-order builtins. -/
 structure CollectedSequenceBuiltinInput where
   perInputItems : List (List Result)
   deriving Repr
@@ -1709,6 +1742,63 @@ def matchCallBranches (bs : List CondBranch) (args : List Result) : Option (Cond
       match matchCallPattern b.pattern args with
       | some env => some (b, env)
       | none     => matchCallBranches bs' args
+
+def matchCountedPattern (p : Pattern) (arg : CountedResult) : Option CountedParamEnv :=
+  match p with
+  | .bind x => some [(x, arg)]
+  | .litInt n =>
+      match arg.fst with
+      | .atom v => if v = n then some [] else none
+      | _ => none
+  | .litString s =>
+      match arg.fst with
+      | .str v => if v = s then some [] else none
+      | _ => none
+  | .group ps =>
+      match arg.fst with
+      | .group rs =>
+          if ps.length != rs.length then none
+          else
+            let rec go : List Pattern -> List Result -> Option CountedParamEnv
+              | [], [] => some []
+              | p'::ps', r::rs' => do
+                  let env1 <- matchCountedPattern p' (r, Result.valueCount r)
+                  let env2 <- go ps' rs'
+                  pure (env1 ++ env2)
+              | _, _ => none
+            go ps rs
+      | _ =>
+          match ps with
+          | [p'] => matchCountedPattern p' arg
+          | _ => none
+
+def matchCountedCallPattern (p : Pattern) (args : List CountedResult) : Option CountedParamEnv :=
+  match p with
+  | .group ps =>
+      if ps.length != args.length then
+        none
+      else
+        let rec go : List Pattern -> List CountedResult -> Option CountedParamEnv
+          | [], [] => some []
+          | p'::ps', arg::args' => do
+              let env1 <- matchCountedPattern p' arg
+              let env2 <- go ps' args'
+              pure (env1 ++ env2)
+          | _, _ => none
+        go ps args
+  | _ =>
+      match args with
+      | [arg] => matchCountedPattern p arg
+      | _ => none
+
+def matchCountedCallBranches (bs : List CondBranch) (args : List CountedResult)
+    : Option (CondBranch × CountedParamEnv) :=
+  match bs with
+  | [] => none
+  | b::bs' =>
+      match matchCountedCallPattern b.pattern args with
+      | some env => some (b, env)
+      | none => matchCountedCallBranches bs' args
 
 mutual
 
@@ -2086,20 +2176,25 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
-  /-- Evaluate a higher-order sequence callback on one iterated item.
-      Sequence iteration projects content the same way `:` does, so the
-      callback item behaves like `S:i` rather than like one opaque grouped
-      value. -/
-  partial def evalSequenceCallbackCall (callee : Algorithm) (item : Result)
+  /-- Higher-order callbacks keep the collected item value shape for pattern
+      matching, while the counted callback-param view still uses the same
+      one-level projection rule as `S:i` for callback param operations like
+      `x.count`. -/
+  partial def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
+    Result.projectSelectedContent item.fst
+
+  /-- Evaluate a higher-order sequence callback on one collected iteration
+      item. -/
+  partial def evalSequenceCallbackCall (callee : Algorithm) (item : CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM Result :=
-    evalResolvedCallbackCall callee [projectSequenceCallbackItem item] ctx env calleeName
+    evalResolvedCallbackCall callee [countedSequenceCallbackItem item] ctx env calleeName
 
   /-- Counted variant of `evalSequenceCallbackCall` used by `map`. -/
-  partial def evalSequenceCallbackCallCounted (callee : Algorithm) (item : Result)
+  partial def evalSequenceCallbackCallCounted (callee : Algorithm) (item : CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult :=
-    evalResolvedCallbackCallCounted callee [projectSequenceCallbackItem item] ctx env calleeName
+    evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName
 
   /-- Evaluate an algorithm's output expressions and also count how many
       top-level values they emitted at the current algorithm boundary.
@@ -2145,6 +2240,22 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
+  partial def evalConditionalCallbackCallCounted (callee : Algorithm)
+      (args : List CountedResult)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      : EvalM CountedResult := do
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else
+      match matchCountedCallBranches (Algorithm.branches callee) args with
+      | some (branch, bindings) =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv (bindings ++ ctx.countedParamEnv)
+          let newEnv := (bindings.map fun | (name, value) => (name, value.fst)) ++ env
+          evalAlgOutputCounted wiredBody newCtx newEnv
+      | none =>
+          .error (Error.noMatchingBranch calleeName)
+
   /-- Evaluate a resolved algorithm against pre-evaluated callback arguments
       that preserve their emitted top-level counts.
 
@@ -2169,9 +2280,7 @@ mutual
               let newCtx := ctx.withCountedParamEnv (countedParamEnv ++ ctx.countedParamEnv)
               evalAlgOutputCounted simple newCtx env
         | none =>
-            evalConditionalShapeCounted callee
-              (Result.normalize (Result.group (args.map Prod.fst)))
-              ctx env calleeName
+            evalConditionalCallbackCallCounted callee args ctx env calleeName
     | _ =>
         if (Algorithm.output callee).isEmpty then
           .error Error.missingOutput
@@ -2189,14 +2298,14 @@ mutual
     let out <- evalResolvedCallbackCallCounted callee args ctx env calleeName
     pure out.fst
 
-  /-- Evaluate a `reduce` step while projecting only the current iterated item.
-      The accumulator keeps ordinary explicit-argument semantics. -/
+  /-- Evaluate a `reduce` step on one collected iteration item while the
+      accumulator keeps ordinary explicit-argument semantics. -/
   partial def evalSequenceReduceStepCounted (callee : Algorithm)
-      (element accumulator : Result)
+      (element : CountedResult) (accumulator : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult :=
     evalResolvedCallbackCallCounted callee
-      [ projectSequenceCallbackItem element
+      [ countedSequenceCallbackItem element
       , (accumulator, Result.valueCount accumulator)
       ]
       ctx env calleeName
@@ -2210,17 +2319,32 @@ mutual
       separately in plain-call form.
       Handlers call this explicitly so they can choose when leading sequence
       evaluation happens relative to any trailing-argument validation. -/
-    partial def evalCountedSequenceInputs (collectionArgs : List Algorithm)
+    partial def evalCountedSequenceInputs
+      (collectionMode : SequenceBuiltinCollectionMode)
+      (collectionArgs : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CollectedSequenceBuiltinInput := do
     let rec loop : List Algorithm -> EvalM (List (List Result))
       | [] => pure []
       | collectionAlg :: rest => do
           let out <- evalAlgOutputCounted collectionAlg ctx env
           let tail <- loop rest
-          let items := countedTopLevelValues out
+          let items := collectSequenceBuiltinInputItems collectionMode collectionAlg out
           pure (items :: tail)
     let perInputItems <- loop collectionArgs
     pure { perInputItems := perInputItems }
+
+    partial def evalCountedSequenceIterationItems
+      (collectionMode : SequenceBuiltinCollectionMode)
+      (collectionArgs : List Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM (List CountedResult) := do
+    let rec loop : List Algorithm -> EvalM (List CountedResult)
+      | [] => pure []
+      | collectionAlg :: rest => do
+          let out <- evalAlgOutputCounted collectionAlg ctx env
+          let tail <- loop rest
+          let items := collectSequenceIterationItems collectionMode collectionAlg out
+          pure (items ++ tail)
+    loop collectionArgs
 
   partial def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMetadata)
       (collected : CollectedSequenceBuiltinInput) : EvalM CollectedSequenceBuiltinInput :=
@@ -2298,7 +2422,7 @@ mutual
   partial def evalPreparedSequenceBuiltinInput (b : Builtin)
       (metadata : SequenceBuiltinMetadata) (collectionArgs : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedSequenceBuiltinInput := do
-    let collected <- evalCountedSequenceInputs collectionArgs ctx env
+    let collected <- evalCountedSequenceInputs metadata.collectionMode collectionArgs ctx env
     prepareSequenceBuiltinInput b metadata collected
 
     partial def sequenceBuiltinTrailingArgRequirementDesc
@@ -2423,22 +2547,23 @@ mutual
 
   /-- Evaluate `reduce` over one or more leading sequence arguments.
       `reduce` processes top-level collection elements from left to right.
-      `step(element, accumulator)` receives the current item through the same
-      one-level projection rule as `S:i`, while the accumulator keeps ordinary
-      explicit-argument semantics. The step must return exactly one
-      accumulator value: one atom or one grouped value is valid, while empty
-      and multi-output results are rejected.
+      `step(element, accumulator)` receives each item exactly as collected for
+      this iteration: ordinary plain-call boundaries stay whole, while explicit
+      `;`, `:`, and dot-call receiver iteration provide content items. The
+      accumulator keeps ordinary explicit-argument semantics. The step must
+      return exactly one accumulator value: one atom or one grouped value is
+      valid, while empty and multi-output results are rejected.
 
       Empty collections return the initial accumulator unchanged. -/
-  partial def evalReduceCounted (collection : List Result)
+  partial def evalReduceCounted (collection : List CountedResult)
       (stepAlg initialAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let initOut <- evalAlgOutputCounted initialAlg ctx env
-    let rec reduceLoop : List Result -> CountedResult -> EvalM CountedResult
+    let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each collection item through S:i-style one-level projection and leaves the accumulator unchanged)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected; ordinary boundaries stay whole, explicit ;/: iterate content, and the accumulator is unchanged)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
@@ -2447,46 +2572,54 @@ mutual
   /-- Evaluate `filter` over one or more leading sequence arguments.
       The final argument is the predicate.
 
-      Each iterated item is bound through the same one-level projection rule as
-      `:`. The kept output items themselves remain the original sequence items.
-      -/
-  partial def evalFilterCounted (items : List Result) (predicateAlg : Algorithm)
+      Each iterated item is passed exactly as collected for this iteration:
+      ordinary plain-call boundaries stay whole, while explicit `;`, `:`, and
+      dot-call receiver iteration provide content items. The kept output items
+      themselves remain the original sequence items. -/
+  partial def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let rec filterLoop : List Result -> EvalM (List Result)
+    let rec filterLoop : List CountedResult -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
-          let pr <- withCtx "while evaluating filter predicate (filter passes each collection item through S:i-style one-level projection)" <|
-            evalSequenceCallbackCall predicateAlg item ctx env "filter predicate"
-          match Result.singleAtomicTruthValue? pr with
-          | some true => do
-              let kept <- filterLoop rest
-              pure (item :: kept)
-          | some false =>
-              filterLoop rest
-          | none =>
-              .error (Error.withContext
-                "filter predicate must return exactly one atomic numeric value"
-                Error.badArity)
+        match withCtx "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" <|
+          evalSequenceCallbackCall predicateAlg item ctx env "filter predicate" with
+          | .error err =>
+              if shouldTreatFilterCallbackFailureAsFalse item err then
+                filterLoop rest
+              else
+                .error err
+          | .ok pr =>
+              match Result.singleAtomicTruthValue? pr with
+              | some true => do
+                  let kept <- filterLoop rest
+                  pure (item.fst :: kept)
+              | some false =>
+                  filterLoop rest
+              | none =>
+                  .error (Error.withContext
+                    "filter predicate must return exactly one atomic numeric value"
+                    Error.badArity)
     let kept <- filterLoop items
     pure (Result.normalize (Result.group kept), kept.length)
 
   /-- Evaluate `map` over one or more leading sequence arguments.
       `map` processes top-level collection elements from left to right.
-      `transform(element)` receives each item through the same one-level
-      projection rule as `S:i` and must return exactly one mapped element: one
-      atom or one grouped value is valid, while empty and multi-output results
-      are rejected.
+      `transform(element)` receives each item exactly as collected for this
+      iteration: ordinary plain-call boundaries stay whole, while explicit
+      `;`, `:`, and dot-call receiver iteration provide content items. It must
+      return exactly one mapped element: one atom or one grouped value is
+      valid, while empty and multi-output results are rejected.
 
       Grouped mapped elements are accepted as single output elements, empty
       collections stay empty, and the output preserves the original element
       order and element count. -/
-  partial def evalMapCounted (collection : List Result) (transformAlg : Algorithm)
+  partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let rec mapLoop : List Result -> EvalM (List Result)
+    let rec mapLoop : List CountedResult -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each collection item through S:i-style one-level projection)" <|
+            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" <|
             evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
@@ -2701,14 +2834,14 @@ mutual
             withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
               let predicateAlg <-
                 expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
-              withPreparedFlatItems collectionArgs fun items =>
-                evalFilterCounted items predicateAlg ctx env
+              let items <- evalCountedSequenceIterationItems metadata.collectionMode collectionArgs ctx env
+              evalFilterCounted items predicateAlg ctx env
         | .mapBuiltin =>
             withPreparedTrailingArgs trailingArgs fun preparedTrailingArgs => do
               let transformAlg <-
                 expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
-              withPreparedFlatItems collectionArgs fun items =>
-                evalMapCounted items transformAlg ctx env
+              let items <- evalCountedSequenceIterationItems metadata.collectionMode collectionArgs ctx env
+              evalMapCounted items transformAlg ctx env
         | .orderBuiltin =>
             withPreparedNumericItems collectionArgs fun numbers =>
               evalOrderCounted numbers
@@ -2763,8 +2896,8 @@ mutual
                 expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 0
               let initialAlg <-
                 expectPreparedSequenceBuiltinAlgorithmTrailingArg b metadata.trailingArgs preparedTrailingArgs 1
-              withPreparedFlatItems collectionArgs fun items =>
-                evalReduceCounted items stepAlg initialAlg ctx env
+              let items <- evalCountedSequenceIterationItems metadata.collectionMode collectionArgs ctx env
+              evalReduceCounted items stepAlg initialAlg ctx env
         | _ =>
             .error (builtinArityError b args.length)
 
