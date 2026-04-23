@@ -3649,6 +3649,24 @@ def test151o : Bool :=
 
 #eval test151o  -- should be true
 
+def markGroupedRangeDirectCallAlg151oa : Algorithm :=
+  .conditional none [] [
+    ⟨ .group [.group [.bind "a", .bind "b", .bind "c"]],
+      alg [] [] [] [.num 1] ⟩,
+    ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
+  ]
+
+def test151oa : Bool :=
+  match runFlat (.block (algPrivate [] [] [("MarkGroupedRange", markGroupedRangeDirectCallAlg151oa)] [
+    .call (resolve "MarkGroupedRange") (alg [] [] [] [
+      .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#eval test151oa  -- should be true
+
 def test151p : Bool :=
   match runFlat (.block (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
     .call (resolve "reduce") (alg [] [] [] [

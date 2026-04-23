@@ -1674,6 +1674,42 @@ def matchBranches (bs : List CondBranch) (arg : Result) : Option (CondBranch × 
       | some env => some (b, env)
       | none     => matchBranches bs' arg
 
+/-- Match a top-level conditional call head against the explicit argument list
+    supplied at the call site.
+
+    Ordinary direct conditional calls preserve explicit argument slots at the
+    top level: a non-group head expects exactly one explicit argument, while a
+    group head expects one explicit argument per group item. Nested grouped
+    structure is still matched through `matchPattern`. -/
+def matchCallPattern (p : Pattern) (args : List Result) : Option ValEnv :=
+  match p with
+  | .group ps =>
+      if ps.length != args.length then
+        none
+      else
+        let rec go : List Pattern -> List Result -> Option ValEnv
+          | [], [] => some []
+          | p::ps', arg::args' => do
+              let env1 <- matchPattern p arg
+              let env2 <- go ps' args'
+              pure (env1 ++ env2)
+          | _, _ => none
+        go ps args
+  | _ =>
+      match args with
+      | [arg] => matchPattern p arg
+      | _ => none
+
+/-- Try to match branches in order against the explicit argument list of an
+    ordinary direct conditional call. -/
+def matchCallBranches (bs : List CondBranch) (args : List Result) : Option (CondBranch × ValEnv) :=
+  match bs with
+  | []     => none
+  | b::bs' =>
+      match matchCallPattern b.pattern args with
+      | some env => some (b, env)
+      | none     => matchCallBranches bs' args
+
 mutual
 
   --------------------------------------------------------------------------
@@ -2901,8 +2937,16 @@ mutual
     let argExprs := Algorithm.output wiredArgs
     let argEvalCtx := EvalCtx.push wiredArgs ctx
     let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
-    let argShape := Result.normalize (Result.group argResults)
-    evalConditionalShapeCounted callee argShape ctx env calleeName
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else
+      match matchCallBranches (Algorithm.branches callee) argResults with
+      | some (branch, bindings) =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          let newCtx := EvalCtx.push callee ctx
+          evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
+      | none =>
+          .error (Error.noMatchingBranch calleeName)
 
   /-- Dispatch an already-resolved callee in ordinary evaluation. -/
   partial def evalResolvedCall (callee : Algorithm) (args : Algorithm)
@@ -3213,9 +3257,16 @@ mutual
     let argEvalCtx := EvalCtx.push wiredArgs ctx
     -- Evaluate all argument expressions eagerly
     let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
-    -- Assemble full argument shape: normalize group for pattern matching
-    let argShape := Result.normalize (Result.group argResults)
-    evalConditionalShape callee argShape ctx env calleeName
+    if callee.hasDuplicateBranchPatterns then
+      .error Error.duplicateBranchPattern
+    else
+      match matchCallBranches (Algorithm.branches callee) argResults with
+      | some (branch, bindings) =>
+          let wiredBody := Algorithm.childOf callee branch.body
+          let newCtx := EvalCtx.push callee ctx
+          evalAlgOutput wiredBody newCtx (bindings ++ env)
+      | none =>
+          .error (Error.noMatchingBranch calleeName)
 
   partial def evalCall (f : Expr) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do

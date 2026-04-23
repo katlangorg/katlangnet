@@ -677,6 +677,15 @@ public sealed class Parser
     /// </summary>
     private Pattern ParsePattern()
     {
+        var items = ParsePatternItems();
+        if (items.Count != 1)
+            return new Pattern.Group(items);
+
+        return items[0] is Pattern.Group ? new Pattern.Group(items) : items[0];
+    }
+
+    private List<Pattern> ParsePatternItems()
+    {
         var items = new List<Pattern>();
         items.Add(ParsePatternAtom());
 
@@ -686,7 +695,7 @@ public sealed class Parser
             items.Add(ParsePatternAtom());
         }
 
-        return items.Count == 1 ? items[0] : new Pattern.Group(items);
+        return items;
     }
 
     /// <summary>
@@ -747,12 +756,12 @@ public sealed class Parser
             case TokenKind.LParen:
             {
                 Advance(); // consume '('
-                var inner = ParsePattern();
+                var items = ParsePatternItems();
                 Expect(TokenKind.RParen);
-                // Parentheses in patterns are structural: (a, b) → Group already;
-                // (b) → Group([Bind("b")]). A singleton (x) denotes a 1-element
-                // group pattern, enforcing arity on the matched result.
-                return inner is Pattern.Group ? inner : new Pattern.Group([inner]);
+                // Parentheses in patterns are structural at every nesting level:
+                // (a, b) -> Group([a, b]); (x) -> Group([x]);
+                // ((a, b)) -> Group([Group([a, b])]).
+                return new Pattern.Group(items);
             }
 
             default:

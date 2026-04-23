@@ -6310,6 +6310,30 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_ClauseGroup_DoubleParenGroupedPattern_MatchesSingleBinderArity()
+    {
+        var source = """
+            MarkGroupedRange((a, b, c)) = 1
+            MarkGroupedRange(x) = 0
+            MarkGroupedRange(5)
+            """;
+
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_ClauseGroup_DoubleParenGroupedPattern_MatchesSingleRangeArgument()
+    {
+        var source = """
+            MarkGroupedRange((a, b, c)) = 1
+            MarkGroupedRange(x) = 0
+            MarkGroupedRange(range(1, 3))
+            """;
+
+        AssertEval(source, 1);
+    }
+
+    [Fact]
     public void Eval_ClauseGroup_LiteralThenPlainBinder_RemainsConditional()
     {
         var source = """

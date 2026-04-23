@@ -1067,6 +1067,25 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_ConditionalPropertyInfo_PreservesDoubleParenGroupedPatternShape()
+    {
+        var model = BuildModel(
+            """
+            MarkGroupedRange((a, b, c)) = 1
+            MarkGroupedRange(x) = 0
+            MarkGroupedRange(5)
+            """);
+
+        var property = SingleProperty(model, "MarkGroupedRange");
+        Assert.Equal(PropertyShape.Conditional, property.Shape);
+        Assert.Equal(2, property.ConditionalBranches.Count);
+        Assert.Equal("MarkGroupedRange((a, b, c))", property.ConditionalBranches[0].HeadText);
+        Assert.Equal(["a", "b", "c"], property.ConditionalBranches[0].BinderNames.ToList());
+        Assert.Equal("MarkGroupedRange(x)", property.ConditionalBranches[1].HeadText);
+        Assert.Equal(["x"], property.ConditionalBranches[1].BinderNames.ToList());
+    }
+
+    [Fact]
     public void Build_ConditionalBranchProperty_IsNotResolvedThroughParentDotAccess()
     {
         var model = BuildModel(

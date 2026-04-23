@@ -1073,6 +1073,53 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Match a top-level conditional call head against the explicit arguments
+    /// supplied at the call site.
+    ///
+    /// Ordinary direct conditional calls preserve explicit argument slots at
+    /// the top level: a non-group head expects exactly one explicit argument,
+    /// while a group head expects one explicit argument per group item. Nested
+    /// grouped structure is still matched through <see cref="MatchPattern"/>.
+    /// </summary>
+    private static IReadOnlyList<(string, Result)>? MatchCallPattern(
+        Pattern pattern,
+        IReadOnlyList<Result> explicitArgs)
+    {
+        if (pattern is Pattern.Group(var items))
+        {
+            if (items.Count != explicitArgs.Count)
+                return null;
+
+            var bindings = new List<(string, Result)>();
+            for (var i = 0; i < items.Count; i++)
+            {
+                var sub = MatchPattern(items[i], explicitArgs[i]);
+                if (sub is null)
+                    return null;
+                bindings.AddRange(sub);
+            }
+
+            return bindings;
+        }
+
+        return explicitArgs.Count == 1 ? MatchPattern(pattern, explicitArgs[0]) : null;
+    }
+
+    private static (CondBranch Branch, IReadOnlyList<(string, Result)> Bindings)? MatchCallBranches(
+        IReadOnlyList<CondBranch> branches,
+        IReadOnlyList<Result> explicitArgs)
+    {
+        foreach (var branch in branches)
+        {
+            var bindings = MatchCallPattern(branch.Pattern, explicitArgs);
+            if (bindings is not null)
+                return (branch, bindings);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Compatibility fallback for manually constructed core conditionals.
     /// Surface clause elaboration should already classify whole same-name
     /// plain-binder clause groups as ordinary <see cref="Algorithm.User"/>
@@ -3545,9 +3592,18 @@ public static class Evaluator
             argResults.Add(r.Value);
         }
 
-        // Assemble full argument shape: normalize for pattern matching
-        var argShape = Result.FromItems(argResults);
-        return EvalConditionalShape(callee, argShape, ctx, valEnv, calleeName);
+        if (callee.HasDuplicateBranchPatterns())
+            return new EvalError.DuplicateBranchPattern();
+
+        var match = MatchCallBranches(callee.Branches, argResults);
+        if (match is null)
+            return new EvalError.NoMatchingBranch(calleeName);
+
+        var (branch, bindings) = match.Value;
+        var wiredBody = ChildOf(callee, branch.Body);
+        var newCtx = ctx.Push(callee);
+        var newEnv = Concat(bindings, valEnv);
+        return EvalAlgOutput(wiredBody, newCtx, newEnv);
     }
 
     /// <summary>
@@ -3574,8 +3630,18 @@ public static class Evaluator
             argResults.Add(r.Value);
         }
 
-        var argShape = Result.FromItems(argResults);
-        return EvalConditionalShapeCounted(callee, argShape, ctx, valEnv, calleeName);
+        if (callee.HasDuplicateBranchPatterns())
+            return new EvalError.DuplicateBranchPattern();
+
+        var match = MatchCallBranches(callee.Branches, argResults);
+        if (match is null)
+            return new EvalError.NoMatchingBranch(calleeName);
+
+        var (branch, bindings) = match.Value;
+        var wiredBody = ChildOf(callee, branch.Body);
+        var newCtx = ctx.Push(callee);
+        var newEnv = Concat(bindings, valEnv);
+        return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
     }
 
     // ── User-defined call (Lean: evalUserCall) ────────────────────────────

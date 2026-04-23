@@ -1796,6 +1796,27 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_ClauseGroup_DoubleParenGroupedPattern_PreservesOuterSingletonGroup()
+    {
+        var source = """
+            MarkGroupedRange((a, b, c)) = 1
+            MarkGroupedRange(x) = 0
+            """;
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        Assert.Single(result.Root.Properties);
+        var cond = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.Equal(2, cond.Branches.Count);
+
+        var outerGroup = Assert.IsType<Pattern.Group>(cond.Branches[0].Pattern);
+        Assert.Single(outerGroup.Items);
+        var innerGroup = Assert.IsType<Pattern.Group>(outerGroup.Items[0]);
+        Assert.Equal(3, innerGroup.Items.Count);
+        Assert.IsType<Pattern.Bind>(cond.Branches[1].Pattern);
+    }
+
+    [Fact]
     public void Parse_Clause_LiteralPattern_RemainsConditionalAlgorithm()
     {
         var result = Parser.ParseSyntax("F(1) = 100");
