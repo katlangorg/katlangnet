@@ -12,9 +12,10 @@ public enum UnaryOp { Minus, Not }
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
 /// Plain-call sequence builtins split into two modes. Direct consumers such as
 /// <c>count</c>, <c>sum</c>, <c>order</c>, and related numeric/collection
-/// builtins read the counted top-level items contributed by each leading
-/// argument. Higher-order plain-call builtins <c>filter</c>, <c>map</c>, and
-/// <c>reduce</c> instead preserve each ordinary leading argument as one outer
+/// builtins take exactly one sequence argument in plain-call form; use
+/// <c>;</c> when several items must be combined into that one sequence input.
+/// Higher-order plain-call builtins <c>filter</c>, <c>map</c>, and
+/// <c>reduce</c> still preserve each ordinary leading argument as one outer
 /// iteration item unless the argument explicitly projects content with
 /// <c>:</c> or combines content with <c>;</c>. Sequence-builtin dot-call
 /// receivers are different again: they contribute the receiver expression's
@@ -30,46 +31,46 @@ public enum UnaryOp { Minus, Not }
 /// each callback item follows the same one-level projection rule as
 /// <c>S:i</c>, <c>transform(element)</c> must return exactly one mapped
 /// element, and grouped mapped outputs are preserved whole.
-/// <c>count(...items)</c> counts the top-level sequence items exposed by direct
+/// <c>count(sequence)</c> counts the top-level sequence items exposed by direct
 /// sequence consumption; grouped top-level values still count as one element.
-/// <c>contains(...items, item)</c> returns <c>1</c> when any top-level sequence
+/// <c>contains(sequence, item)</c> returns <c>1</c> when any top-level sequence
 /// item equals <c>item</c> under ordinary KatLang value equality, otherwise
 /// <c>0</c>; grouped values compare as grouped values and are not searched
 /// recursively.
-/// <c>order(...items)</c> sorts top-level numeric sequence items in ascending
+/// <c>order(sequence)</c> sorts top-level numeric sequence items in ascending
 /// order; duplicates are preserved, grouped values are not flattened,
 /// strings are invalid, and empty collections stay empty.
-/// <c>orderDesc(...items)</c> sorts top-level numeric sequence items in
+/// <c>orderDesc(sequence)</c> sorts top-level numeric sequence items in
 /// descending order; duplicates are preserved, grouped values are not
 /// flattened, strings are invalid, and empty collections stay empty.
-/// <c>first(...items)</c> returns the first preserved top-level sequence item
+/// <c>first(sequence)</c> returns the first preserved top-level sequence item
 /// unchanged; atoms, strings, and grouped values each count as one element,
 /// and grouped values stay grouped.
-/// <c>last(...items)</c> returns the last preserved top-level sequence item
+/// <c>last(sequence)</c> returns the last preserved top-level sequence item
 /// unchanged; atoms, strings, and grouped values each count as one element,
 /// and grouped values stay grouped.
-/// <c>distinct(...items)</c> removes later duplicate top-level sequence items
+/// <c>distinct(sequence)</c> removes later duplicate top-level sequence items
 /// while preserving the original order of first occurrence; grouped values
 /// stay grouped and duplicate detection follows ordinary KatLang value
 /// semantics.
-/// <c>take(...items, count)</c> returns the first <c>count</c> extracted
+/// <c>take(sequence, count)</c> returns the first <c>count</c> extracted
 /// top-level sequence items unchanged; non-positive counts return an empty
 /// sequence, oversized counts return the whole sequence, and grouped values
 /// stay grouped.
-/// <c>skip(...items, count)</c> returns the extracted top-level sequence items
+/// <c>skip(sequence, count)</c> returns the extracted top-level sequence items
 /// after the first <c>count</c>; non-positive counts leave the sequence
 /// unchanged, oversized counts return an empty sequence, and grouped values
 /// stay grouped.
-/// <c>min(...items)</c> compares top-level numeric sequence items left to
+/// <c>min(sequence)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>max(...items)</c> compares top-level numeric sequence items left to
+/// <c>max(sequence)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and grouped values are not flattened.
-/// <c>sum(...items)</c> adds preserved top-level numeric sequence items left to
+/// <c>sum(sequence)</c> adds preserved top-level numeric sequence items left to
 /// right; each item must be exactly one atomic numeric value, and grouped
 /// values are not flattened.
-/// <c>avg(...items)</c> averages top-level numeric sequence items left to
+/// <c>avg(sequence)</c> averages top-level numeric sequence items left to
 /// right using the Lean core's floor-style integer quotient rule; each item
 /// must be exactly one atomic numeric value, and grouped values are not
 /// flattened.

@@ -2394,6 +2394,116 @@ def test84a : Bool :=
 
 #eval test84a  -- should be true
 
+-- Test 84b: count rejects comma-separated direct sequence-consumer args
+def test84b : Bool :=
+  match runResult (.call (resolve "count") (alg [] [] [] [
+    .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+    .num 4
+  ])) with
+  | Except.error err =>
+      hasContext "Builtin 'count' expects 1 argument: sequence. Got 2. Use ';' to combine content explicitly." err
+      && innermostIsArityMismatch 1 2 err
+  | _ => false
+
+#eval test84b  -- should be true
+
+-- Test 84c: count still accepts one explicitly combined sequence expression
+def test84c : Bool :=
+  match runFlat (.call (resolve "count") (alg [] [] [] [
+    .combine
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 3]))
+      (.num 4)
+  ])) with
+  | Except.ok [4] => true
+  | _ => false
+
+#eval test84c  -- should be true
+
+-- Test 84d: sum rejects comma-separated direct sequence-consumer args
+def test84d : Bool :=
+  match runResult (.call (resolve "sum") (alg [] [] [] [.num 1, .num 2, .num 3])) with
+  | Except.error err =>
+      hasContext "Builtin 'sum' expects 1 argument: sequence. Got 3. Use ';' to combine content explicitly." err
+      && innermostIsArityMismatch 1 3 err
+  | _ => false
+
+#eval test84d  -- should be true
+
+-- Test 84e: sum still accepts one explicitly combined sequence expression
+def test84e : Bool :=
+  match runFlat (.call (resolve "sum") (alg [] [] [] [
+    .combine (.num 1) (.combine (.num 2) (.num 3))
+  ])) with
+  | Except.ok [6] => true
+  | _ => false
+
+#eval test84e  -- should be true
+
+-- Test 84f: avg still accepts one explicitly combined sequence expression
+def test84f : Bool :=
+  match runFlat (.call (resolve "avg") (alg [] [] [] [
+    .combine (.num 1) (.combine (.num 2) (.num 3))
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#eval test84f  -- should be true
+
+-- Test 84g: min still accepts one explicitly combined sequence expression
+def test84g : Bool :=
+  match runFlat (.call (resolve "min") (alg [] [] [] [
+    .combine
+      (.call (resolve "range") (alg [] [] [] [.num 3, .num 6]))
+      (.num 2)
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#eval test84g  -- should be true
+
+-- Test 84h: max rejects comma-separated direct sequence-consumer args
+def test84h : Bool :=
+  match runResult (.call (resolve "max") (alg [] [] [] [
+    .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+    .num 10
+  ])) with
+  | Except.error err =>
+      hasContext "Builtin 'max' expects 1 argument: sequence. Got 2. Use ';' to combine content explicitly." err
+      && innermostIsArityMismatch 1 2 err
+  | _ => false
+
+#eval test84h  -- should be true
+
+-- Test 84i: max still accepts one explicitly combined sequence expression
+def test84i : Bool :=
+  match runFlat (.call (resolve "max") (alg [] [] [] [
+    .combine
+      (.call (resolve "range") (alg [] [] [] [.num 1, .num 3]))
+      (.num 10)
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval test84i  -- should be true
+
+-- Test 84j: count still accepts a single direct sequence value
+def test84j : Bool :=
+  match runFlat (.call (resolve "count") (alg [] [] [] [
+    .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#eval test84j  -- should be true
+
+-- Test 84k: sequence builtin dot-calls still consume one direct sequence value
+def test84k : Bool :=
+  match runFlat (.dotCall (.call (resolve "range") (alg [] [] [] [.num 1, .num 3])) "sum" none) with
+  | Except.ok [6] => true
+  | _ => false
+
+#eval test84k  -- should be true
+
 --------------------------------------------------------------------------------
 -- map builtin tests
 --------------------------------------------------------------------------------
@@ -3346,16 +3456,29 @@ def test137 : Bool :=
 -- order builtins tests
 --------------------------------------------------------------------------------
 
+def orderedValuesAlg138 : Algorithm :=
+  alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]
+
+def orderedValuesAlg151c : Algorithm :=
+  alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3]
+
+def groupedPairValuesAlg : Algorithm :=
+  alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ]
+
+def tenTwentyThirtyValuesAlg : Algorithm :=
+  alg [] [] [] [.num 10, .num 20, .num 30]
+
+def tenFourSevenValuesAlg : Algorithm :=
+  alg [] [] [] [.num 10, .num 4, .num 7]
+
 -- Test 138: ordinary builtin-call order sorts direct multi-argument inputs ascending and preserves duplicates
 def test138 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", orderedValuesAlg138)] [
     .call (resolve "order") (alg [] [] [] [
-      .num 3,
-      .num 4,
-      .num 2,
-      .num 1,
-      .num 3,
-      .num 3
+      .resolve "Values"
     ])
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
@@ -3396,9 +3519,9 @@ def test141 : Bool :=
 
 #eval test141  -- should be true
 
--- Test 142: dot-call order rejects empty receiver outputs with ordinary arity rules
+-- Test 142: dot-call order on an empty receiver returns an empty sequence
 def test142 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .dotCall
       (.call (resolve "filter") (alg [] [] [] [
         .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
@@ -3407,9 +3530,7 @@ def test142 : Bool :=
       "order"
       none
   ])) with
-  | Except.error err =>
-      hasContext "while evaluating dotCall .order of (call)" err
-        && innermostIsArityMismatch 0 0 err
+  | Except.ok [] => true
   | _ => false
 
 #eval test142  -- should be true
@@ -3547,8 +3668,8 @@ def test151 : Bool :=
 -- Additional sequence-input builtin regression tests
 
 def test151a : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+  match runFlat (.block (algPrivate [] [] [("Values", orderedValuesAlg138)] [
+    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
   | _ => false
@@ -3556,8 +3677,8 @@ def test151a : Bool :=
 #eval test151a  -- should be true
 
 def test151b : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+  match runFlat (.block (algPrivate [] [] [("Values", orderedValuesAlg138)] [
+    .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [4, 3, 3, 3, 2, 1] => true
   | _ => false
@@ -3565,8 +3686,8 @@ def test151b : Bool :=
 #eval test151b  -- should be true
 
 def test151c : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2])] [
-    .call (resolve "order") (alg [] [] [] [.resolve "Values", .num 1, .num 3])
+  match runFlat (.block (algPrivate [] [] [("Values", orderedValuesAlg151c)] [
+    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [1, 2, 3, 3, 4] => true
   | _ => false
@@ -3574,11 +3695,8 @@ def test151c : Bool :=
 #eval test151c  -- should be true
 
 def test151d : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
+    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -3586,11 +3704,8 @@ def test151d : Bool :=
 #eval test151d  -- should be true
 
 def test151e : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
+    .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -3598,11 +3713,8 @@ def test151e : Bool :=
 #eval test151e  -- should be true
 
 def test151f : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "first") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
+    .call (resolve "first") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok (.group [.atom 1, .atom 2]) => true
   | _ => false
@@ -3610,11 +3722,8 @@ def test151f : Bool :=
 #eval test151f  -- should be true
 
 def test151g : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "last") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
+    .call (resolve "last") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok (.group [.atom 3, .atom 4]) => true
   | _ => false
@@ -3622,8 +3731,8 @@ def test151g : Bool :=
 #eval test151g  -- should be true
 
 def test151h : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [.num 10, .num 20, .num 30])
+  match runFlat (.block (algPrivate [] [] [("Values", tenTwentyThirtyValuesAlg)] [
+    .call (resolve "count") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -3631,11 +3740,8 @@ def test151h : Bool :=
 #eval test151h  -- should be true
 
 def test151i : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runFlat (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
+    .call (resolve "count") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -3643,8 +3749,8 @@ def test151i : Bool :=
 #eval test151i  -- should be true
 
 def test151j : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [.num 10, .num 20, .num 30])
+  match runFlat (.block (algPrivate [] [] [("Values", tenTwentyThirtyValuesAlg)] [
+    .call (resolve "sum") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [60] => true
   | _ => false
@@ -3652,8 +3758,8 @@ def test151j : Bool :=
 #eval test151j  -- should be true
 
 def test151k : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [.num 10, .num 4, .num 7])
+  match runFlat (.block (algPrivate [] [] [("Values", tenFourSevenValuesAlg)] [
+    .call (resolve "min") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -3661,8 +3767,8 @@ def test151k : Bool :=
 #eval test151k  -- should be true
 
 def test151l : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [.num 10, .num 4, .num 7])
+  match runFlat (.block (algPrivate [] [] [("Values", tenFourSevenValuesAlg)] [
+    .call (resolve "max") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -3670,8 +3776,8 @@ def test151l : Bool :=
 #eval test151l  -- should be true
 
 def test151m : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [.num 10, .num 20, .num 30])
+  match runFlat (.block (algPrivate [] [] [("Values", tenTwentyThirtyValuesAlg)] [
+    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [20] => true
   | _ => false
@@ -4111,9 +4217,27 @@ def test167 : Bool :=
 
 #eval test167  -- should be true
 
+def oneTwoValuesAlg : Algorithm :=
+  alg [] [] [] [.num 1, .num 2]
+
+def negOneNegTwoValuesAlg : Algorithm :=
+  alg [] [] [] [.num (-1), .num (-2)]
+
+def oneTwoThreeValuesAlg : Algorithm :=
+  alg [] [] [] [.num 1, .num 2, .num 3]
+
+def oneToFiveValuesAlg : Algorithm :=
+  alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]
+
+def mixedNumericGroupedValuesAlg : Algorithm :=
+  alg [] [] [] [
+    .num 1,
+    .block (alg [] [] [] [.num 2, .num 3])
+  ]
+
 def test168 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [.num 1, .num 2])
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoValuesAlg)] [
+    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -4121,8 +4245,8 @@ def test168 : Bool :=
 #eval test168  -- should be true
 
 def test169 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [.num (-1), .num (-2)])
+  match runFlat (.block (algPrivate [] [] [("Values", negOneNegTwoValuesAlg)] [
+    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [-2] => true
   | _ => false
@@ -4130,11 +4254,8 @@ def test169 : Bool :=
 #eval test169  -- should be true
 
 def test170 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4142,11 +4263,8 @@ def test170 : Bool :=
 #eval test170  -- should be true
 
 def test171 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4154,11 +4272,8 @@ def test171 : Bool :=
 #eval test171  -- should be true
 
 def test172 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "min") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4166,11 +4281,8 @@ def test172 : Bool :=
 #eval test172  -- should be true
 
 def test173 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "max") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4178,11 +4290,8 @@ def test173 : Bool :=
 #eval test173  -- should be true
 
 def test174 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "sum") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4190,11 +4299,8 @@ def test174 : Bool :=
 #eval test174  -- should be true
 
 def test175 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [
-      .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", mixedNumericGroupedValuesAlg)] [
+    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 1 was grouped value" err && innermostIsBadArity err
   | _ => false
@@ -4202,13 +4308,9 @@ def test175 : Bool :=
 #eval test175  -- should be true
 
 def test176 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneToFiveValuesAlg)] [
     .call (resolve "take") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
-      .num 4,
-      .num 5,
+      .resolve "Values",
       .num 3
     ])
   ])) with
@@ -4218,13 +4320,9 @@ def test176 : Bool :=
 #eval test176  -- should be true
 
 def test177 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneToFiveValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
-      .num 4,
-      .num 5,
+      .resolve "Values",
       .num 3
     ])
   ])) with
@@ -4234,11 +4332,9 @@ def test177 : Bool :=
 #eval test177  -- should be true
 
 def test178 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "take") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num 0
     ])
   ])) with
@@ -4248,11 +4344,9 @@ def test178 : Bool :=
 #eval test178  -- should be true
 
 def test179 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num 0
     ])
   ])) with
@@ -4262,11 +4356,9 @@ def test179 : Bool :=
 #eval test179  -- should be true
 
 def test180 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "take") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num (-2)
     ])
   ])) with
@@ -4276,11 +4368,9 @@ def test180 : Bool :=
 #eval test180  -- should be true
 
 def test181 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num (-2)
     ])
   ])) with
@@ -4290,11 +4380,9 @@ def test181 : Bool :=
 #eval test181  -- should be true
 
 def test182 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "take") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num 10
     ])
   ])) with
@@ -4304,11 +4392,9 @@ def test182 : Bool :=
 #eval test182  -- should be true
 
 def test183 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", oneTwoThreeValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3,
+      .resolve "Values",
       .num 10
     ])
   ])) with
@@ -4348,10 +4434,9 @@ def test185 : Bool :=
 #eval test185  -- should be true
 
 def test186 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
     .call (resolve "take") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4]),
+      .resolve "Values",
       .num 1
     ])
   ])) with
@@ -4361,10 +4446,9 @@ def test186 : Bool :=
 #eval test186  -- should be true
 
 def test187 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("Values", groupedPairValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4]),
+      .resolve "Values",
       .num 1
     ])
   ])) with
@@ -4463,10 +4547,9 @@ def test193 : Bool :=
 #eval test193  -- should be true
 
 def test194 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("Values", oneTwoValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 1,
-      .num 2,
+      .resolve "Values",
       .stringLiteral "hello"
     ])
   ])) with
@@ -4476,10 +4559,9 @@ def test194 : Bool :=
 #eval test194  -- should be true
 
 def test195 : Bool :=
-  match runResult (.block (alg [] [] [] [
+  match runResult (.block (algPrivate [] [] [("Values", oneTwoValuesAlg)] [
     .call (resolve "skip") (alg [] [] [] [
-      .num 3,
-      .num 4,
+      .resolve "Values",
       .call (resolve "range") (alg [] [] [] [.num 1, .num 2])
     ])
   ])) with
@@ -4488,16 +4570,25 @@ def test195 : Bool :=
 
 #eval test195  -- should be true
 
+def distinctValuesAlg196 : Algorithm :=
+  alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2]
+
+def distinctValuesAlg197 : Algorithm :=
+  alg [] [] [] [.num 4, .num 4, .num 4, .num 4]
+
+def distinctValuesAlg198 : Algorithm :=
+  alg [] [] [] [.num 1, .num 2, .num 3]
+
+def distinctGroupedValuesAlg200 : Algorithm :=
+  alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ]
+
 def test196 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [
-      .num 3,
-      .num 1,
-      .num 3,
-      .num 2,
-      .num 1,
-      .num 2
-    ])
+  match runFlat (.block (algPrivate [] [] [("Values", distinctValuesAlg196)] [
+    .call (resolve "distinct") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [3, 1, 2] => true
   | _ => false
@@ -4505,13 +4596,8 @@ def test196 : Bool :=
 #eval test196  -- should be true
 
 def test197 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [
-      .num 4,
-      .num 4,
-      .num 4,
-      .num 4
-    ])
+  match runFlat (.block (algPrivate [] [] [("Values", distinctValuesAlg197)] [
+    .call (resolve "distinct") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -4519,12 +4605,8 @@ def test197 : Bool :=
 #eval test197  -- should be true
 
 def test198 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [
-      .num 1,
-      .num 2,
-      .num 3
-    ])
+  match runFlat (.block (algPrivate [] [] [("Values", distinctValuesAlg198)] [
+    .call (resolve "distinct") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -4546,12 +4628,8 @@ def test199 : Bool :=
 #eval test199  -- should be true
 
 def test200 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ])
+  match runResult (.block (algPrivate [] [] [("Values", distinctGroupedValuesAlg200)] [
+    .call (resolve "distinct") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok (.group [
       .group [.atom 1, .atom 2],
@@ -5084,12 +5162,17 @@ def test219 : Bool :=
 -- Sequence-boundary cleanup regressions
 --------------------------------------------------------------------------------
 
-def test228 : Bool :=
-  match runFlat (.call (resolve "count") (alg [] [] [] [
+def cleanupValuesAlg228 : Algorithm :=
+  alg [] [] [] [
     .num 3,
     .num 4,
     .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
     .num 7
+  ]
+
+def test228 : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Values", cleanupValuesAlg228)] [
+    .call (resolve "count") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [8] => true
   | _ => false
@@ -5098,19 +5181,13 @@ def test228 : Bool :=
 
 def test229 : Bool :=
   let groupedRange := .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.block (algPrivate [] [] [("Values", cleanupValuesAlg228)] [
     .call (resolve "contains") (alg [] [] [] [
-      .num 3,
-      .num 4,
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
-      .num 7,
+      .resolve "Values",
       .num 5
     ]),
     .call (resolve "contains") (alg [] [] [] [
-      .num 3,
-      .num 4,
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
-      .num 7,
+      .resolve "Values",
       groupedRange
     ])
   ])) with
@@ -5120,11 +5197,8 @@ def test229 : Bool :=
 #eval test229  -- should be true
 
 def test230 : Bool :=
-  match runFlat (.call (resolve "order") (alg [] [] [] [
-    .num 3,
-    .num 4,
-    .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
-    .num 7
+  match runFlat (.block (algPrivate [] [] [("Values", cleanupValuesAlg228)] [
+    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
   ])) with
   | Except.ok [1, 2, 3, 3, 4, 4, 5, 7] => true
   | _ => false

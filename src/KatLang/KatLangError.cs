@@ -233,6 +233,9 @@ public sealed class KatLangError
     {
         message = string.Empty;
 
+        if (TryFormatBuiltinArityContext(error, out message))
+            return true;
+
         if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.ArityMismatch propertyArity })
         {
             message = FormatNamedArityMismatch(propertyContext.PropertyName, propertyArity.Expected, propertyArity.Actual, preferPropertyName: true);
@@ -284,6 +287,30 @@ public sealed class KatLangError
             message = legacyArity.Span is null
                 ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(legacyArity.Expected, "parameter")}, but was called with {FormatCount(legacyArity.Actual, "argument")}."
                 : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryFormatBuiltinArityContext(EvalError error, out string message)
+    {
+        message = string.Empty;
+
+        if (TryGetTextContext(error, out var directContext, out var directInner)
+            && directInner is EvalError.ArityMismatch
+            && directContext.StartsWith("Builtin '", StringComparison.Ordinal))
+        {
+            message = directContext;
+            return true;
+        }
+
+        if (error is EvalError.WithContext { Inner: var nested }
+            && TryGetTextContext(nested, out var nestedContext, out var nestedInner)
+            && nestedInner is EvalError.ArityMismatch
+            && nestedContext.StartsWith("Builtin '", StringComparison.Ordinal))
+        {
+            message = nestedContext;
             return true;
         }
 

@@ -147,6 +147,22 @@ public class EvaluatorTests
         Assert.DoesNotContain("while evaluating", formatted);
     }
 
+    private static void AssertArityMismatchContains(string source, string expectedSubstring)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains(expectedSubstring, formatted);
+
+        var error = result.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        Assert.IsType<EvalError.ArityMismatch>(error);
+    }
+
     private static void AssertUnknownDotMember(string source, string expectedName)
     {
         var result = EvalFull(source);
@@ -1550,7 +1566,9 @@ public class EvaluatorTests
             error = wc.Inner;
         }
 
-        Assert.Contains(contexts, context => context.Contains("expected at least 2 arguments"));
+        Assert.Contains(
+            contexts,
+            context => context.Contains("Builtin 'filter' expects 2 arguments: sequence, predicate. Got 1."));
         Assert.IsType<EvalError.ArityMismatch>(error);
     }
 
@@ -1703,11 +1721,11 @@ public class EvaluatorTests
     // ── Order builtins ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_Order_DirectCallMultiArgs_SortsAscending()
-        => AssertEval("order(3, 4, 2, 1, 3, 3)", 1, 2, 3, 3, 3, 4);
+    public void Eval_Order_ExplicitCombineExpression_SortsAscending()
+        => AssertEval("order(3; 4; 2; 1; 3; 3)", 1, 2, 3, 3, 3, 4);
 
     [Fact]
-    public void Eval_Order_WrapperMultiOutputArg_ExpandsTopLevelItems()
+    public void Eval_Order_PropertyMultipleOutput_ExpandsTopLevelItems()
     {
         var source = """
             Values = 3, 4, 2, 1, 3, 3
@@ -1743,8 +1761,8 @@ public class EvaluatorTests
             7);
 
     [Fact]
-    public void Eval_Order_DirectCallMixedArgs_ExpandsRangeTopLevelItems()
-        => AssertEval("order(3, 4, range(1, 5), 7)", 1, 2, 3, 3, 4, 4, 5, 7);
+    public void Eval_Order_ExplicitCombineExpression_ExpandsRangeTopLevelItems()
+        => AssertEval("order(3; 4; range(1, 5); 7)", 1, 2, 3, 3, 4, 4, 5, 7);
 
     [Fact]
     public void Eval_Order_DotCall_RangeBoundaryMatchesPlainCallFailure()
@@ -1763,21 +1781,24 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Order_UnsupportedElement_FailsWithContext()
         => AssertBuiltinFailureWithExactContext(
-            "order(1, 'hello')",
+            "order(1; 'hello')",
             "order expects each collection element to be a single numeric value; item 1 was string value \"hello\"");
 
     [Fact]
-    public void Eval_Order_GroupedMultiArgs_FailWithContext()
+    public void Eval_Order_GroupedWrapperOutput_FailsWithContext()
         => AssertBuiltinFailureWithExactContext(
-            "order((1, 2), (3, 4))",
+            """
+            Values = (1, 2), (3, 4)
+            order(Values)
+            """,
             "order expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
-    public void Eval_OrderDesc_DirectCallMultiArgs_SortsDescending()
-        => AssertEval("orderDesc(3, 4, 2, 1, 3, 3)", 4, 3, 3, 3, 2, 1);
+    public void Eval_OrderDesc_ExplicitCombineExpression_SortsDescending()
+        => AssertEval("orderDesc(3; 4; 2; 1; 3; 3)", 4, 3, 3, 3, 2, 1);
 
     [Fact]
-    public void Eval_OrderDesc_WrapperMultiOutputArg_ExpandsTopLevelItems()
+    public void Eval_OrderDesc_PropertyMultipleOutput_ExpandsTopLevelItems()
     {
         var source = """
             Values = 3, 4, 2, 1, 3, 3
@@ -1794,21 +1815,30 @@ public class EvaluatorTests
             "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
-    public void Eval_OrderDesc_GroupedMultiArgs_FailWithContext()
+    public void Eval_OrderDesc_GroupedWrapperOutput_FailsWithContext()
         => AssertBuiltinFailureWithExactContext(
-            "orderDesc((1, 2), (3, 4))",
+            """
+            Values = (1, 2), (3, 4)
+            orderDesc(Values)
+            """,
             "orderDesc expects each collection element to be a single numeric value; item 0 was grouped value");
 
     [Fact]
     public void Eval_Order_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "order(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            order(Values)
+            """,
             "order expects each collection element to be a single numeric value; item 1 was grouped value");
 
     [Fact]
     public void Eval_OrderDesc_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "orderDesc(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            orderDesc(Values)
+            """,
             "orderDesc expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Count builtin ────────────────────────────────────────────────────────
@@ -1838,20 +1868,25 @@ public class EvaluatorTests
         => AssertEval("count('hello')", 1);
 
     [Fact]
-    public void Eval_Count_DirectCallMultiArgs_CountsTopLevelItems()
-        => AssertEval("count(1, 7)", 2);
+    public void Eval_Count_ExplicitCombineExpression_CountsTopLevelItems()
+        => AssertEval("count(1; 7)", 2);
 
     [Fact]
-    public void Eval_Count_DirectCallMixedArgs_CountsExpandedRangeTopLevelItems()
-        => AssertEval("count(3, 4, range(1, 5), 7)", 8);
+    public void Eval_Count_ExplicitCombineExpression_CountsExpandedRangeTopLevelItems()
+        => AssertEval("count(3; 4; range(1, 5); 7)", 8);
 
     [Fact]
     public void Eval_Count_SingleGroupedArg_CountsOneTopLevelItem()
         => AssertEval("count((1, 7))", 1);
 
     [Fact]
-    public void Eval_Count_GroupedMultiArgs_CountTopLevelGroups()
-        => AssertEval("count((1, 2), (3, 4))", 2);
+    public void Eval_Count_GroupedWrapperOutput_CountsTopLevelGroups()
+        => AssertEval(
+            """
+            Groups = (1, 2), (3, 4)
+            count(Groups)
+            """,
+            2);
 
     [Fact]
     public void Eval_Count_InlineParenReceiver_DotCallPreservesBoundary()
@@ -1893,6 +1928,16 @@ public class EvaluatorTests
         AssertEval(source, 5, 5);
     }
 
+    [Fact]
+    public void Eval_Count_RejectsMultipleLeadingSequenceArguments()
+        => AssertArityMismatchContains(
+            "count(range(1, 3), 4)",
+            "Builtin 'count' expects 1 argument: sequence. Got 2. Use ';' to combine content explicitly.");
+
+    [Fact]
+    public void Eval_Count_ExplicitCombineExpression_CountsCombinedContent()
+        => AssertEval("count(range(1, 3); 4)", 4);
+
     // ── Contains builtin ─────────────────────────────────────────────────────
 
     [Fact]
@@ -1908,12 +1953,12 @@ public class EvaluatorTests
         => AssertEval("range(1, 5).contains(4)", 1);
 
     [Fact]
-    public void Eval_Contains_DirectCallMixedArgs_SearchesExpandedRangeTopLevelItems()
-        => AssertEval("contains(3, 4, range(1, 5), 7, 5)", 1);
+    public void Eval_Contains_ExplicitCombineExpression_SearchesExpandedRangeTopLevelItems()
+        => AssertEval("contains(3; 4; range(1, 5); 7, 5)", 1);
 
     [Fact]
-    public void Eval_Contains_DirectCallMixedArgs_DoesNotMatchGroupedRangeValue()
-        => AssertEval("contains(3, 4, range(1, 5), 7, (1, 2, 3, 4, 5))", 0);
+    public void Eval_Contains_ExplicitCombineExpression_DoesNotMatchGroupedRangeValue()
+        => AssertEval("contains(3; 4; range(1, 5); 7, (1, 2, 3, 4, 5))", 0);
 
     [Fact]
     public void Eval_Contains_GroupedItem_UsesOrdinaryValueEquality()
@@ -1948,21 +1993,9 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Contains_ArityMismatch_RequiresSequenceAndItem()
-    {
-        var result = EvalFull("contains(1)");
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
-
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("expected at least 2 arguments (one or more sequence arguments plus item)", formatted);
-        Assert.Contains("while evaluating call to contains", formatted);
-
-        var error = result.Error;
-        while (error is EvalError.WithContext wc)
-            error = wc.Inner;
-
-        Assert.IsType<EvalError.ArityMismatch>(error);
-    }
+        => AssertArityMismatchMessage(
+            "contains(1)",
+            "Builtin 'contains' expects 2 arguments: sequence, item. Got 1.");
 
     // ── First/last builtins ────────────────────────────────────────────────
 
@@ -1983,12 +2016,12 @@ public class EvaluatorTests
         => AssertEval("range(1, 5).last", 5);
 
     [Fact]
-    public void Eval_First_DirectCallMultiResult_Shorthand_ReturnsFirstOutput()
-        => AssertEval("first(1, 2, 3)", 1);
+    public void Eval_First_ExplicitCombineExpression_ReturnsFirstOutput()
+        => AssertEval("first(1; 2; 3)", 1);
 
     [Fact]
-    public void Eval_Last_DirectCallMultiResult_Shorthand_ReturnsLastOutput()
-        => AssertEval("last(1, 2, 3)", 3);
+    public void Eval_Last_ExplicitCombineExpression_ReturnsLastOutput()
+        => AssertEval("last(1; 2; 3)", 3);
 
     [Fact]
     public void Eval_First_SingleGroupedArg_PreservesGroup()
@@ -2001,9 +2034,13 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_First_MultiArgGroupedInputs_PreservesFirstGroup()
+    public void Eval_First_GroupedWrapperOutput_PreservesFirstGroup()
     {
-        var result = EvalFull("first((1, 2), (3, 4))");
+        var result = EvalFull(
+            """
+            Groups = (1, 2), (3, 4)
+            first(Groups)
+            """);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -2021,9 +2058,13 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Last_MultiArgGroupedInputs_PreservesLastGroup()
+    public void Eval_Last_GroupedWrapperOutput_PreservesLastGroup()
     {
-        var result = EvalFull("last((1, 2), (3, 4))");
+        var result = EvalFull(
+            """
+            Groups = (1, 2), (3, 4)
+            last(Groups)
+            """);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -2089,8 +2130,8 @@ public class EvaluatorTests
     // ── Distinct builtin ───────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_Distinct_OrdinaryBuiltinCall_RemovesLaterDuplicatesPreservingFirstOccurrence()
-        => AssertEval("distinct(3, 1, 3, 2, 1, 2)", 3, 1, 2);
+    public void Eval_Distinct_ExplicitCombineExpression_RemovesLaterDuplicatesPreservingFirstOccurrence()
+        => AssertEval("distinct(3; 1; 3; 2; 1; 2)", 3, 1, 2);
 
     [Fact]
     public void Eval_Distinct_DotCall_PreservesNamedBoundaryItem()
@@ -2104,17 +2145,21 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Distinct_AllEqualInput_ReturnsSingleValue()
-        => AssertEval("distinct(4, 4, 4, 4)", 4);
+    public void Eval_Distinct_ExplicitCombineExpression_AllEqualInput_ReturnsSingleValue()
+        => AssertEval("distinct(4; 4; 4; 4)", 4);
 
     [Fact]
-    public void Eval_Distinct_AlreadyDistinctInput_PreservesOrder()
-        => AssertEval("distinct(1, 2, 3)", 1, 2, 3);
+    public void Eval_Distinct_ExplicitCombineExpression_AlreadyDistinctInput_PreservesOrder()
+        => AssertEval("distinct(1; 2; 3)", 1, 2, 3);
 
     [Fact]
-    public void Eval_Distinct_GroupedItems_RemoveDuplicateGroupsByValue()
+    public void Eval_Distinct_GroupedWrapperOutput_RemoveDuplicateGroupsByValue()
     {
-        var result = EvalFull("distinct((1, 2), (1, 2), (3, 4))");
+        var result = EvalFull(
+            """
+            Groups = (1, 2), (1, 2), (3, 4)
+            distinct(Groups)
+            """);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -2173,12 +2218,12 @@ public class EvaluatorTests
     // ── Take/skip builtins ────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_Take_OrdinaryBuiltinCall_ReturnsLeadingItems()
-        => AssertEval("take(1, 2, 3, 4, 5, 3)", 1, 2, 3);
+    public void Eval_Take_ExplicitCombineExpression_ReturnsLeadingItems()
+        => AssertEval("take(1; 2; 3; 4; 5, 3)", 1, 2, 3);
 
     [Fact]
-    public void Eval_Skip_OrdinaryBuiltinCall_ReturnsRemainingItems()
-        => AssertEval("skip(1, 2, 3, 4, 5, 3)", 4, 5);
+    public void Eval_Skip_ExplicitCombineExpression_ReturnsRemainingItems()
+        => AssertEval("skip(1; 2; 3; 4; 5, 3)", 4, 5);
 
     [Fact]
     public void Eval_Take_DotCall_PreservesRangeBoundaryItem()
@@ -2224,32 +2269,36 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Take_ZeroCount_ReturnsEmpty()
-        => AssertEval("take(1, 2, 3, 0)");
+        => AssertEval("take(1; 2; 3, 0)");
 
     [Fact]
     public void Eval_Skip_ZeroCount_ReturnsOriginalSequence()
-        => AssertEval("skip(1, 2, 3, 0)", 1, 2, 3);
+        => AssertEval("skip(1; 2; 3, 0)", 1, 2, 3);
 
     [Fact]
     public void Eval_Take_NegativeCount_ReturnsEmpty()
-        => AssertEval("take(1, 2, 3, -2)");
+        => AssertEval("take(1; 2; 3, -2)");
 
     [Fact]
     public void Eval_Skip_NegativeCount_ReturnsOriginalSequence()
-        => AssertEval("skip(1, 2, 3, -2)", 1, 2, 3);
+        => AssertEval("skip(1; 2; 3, -2)", 1, 2, 3);
 
     [Fact]
     public void Eval_Take_CountLargerThanLength_ReturnsWholeSequence()
-        => AssertEval("take(1, 2, 3, 10)", 1, 2, 3);
+        => AssertEval("take(1; 2; 3, 10)", 1, 2, 3);
 
     [Fact]
     public void Eval_Skip_CountLargerThanLength_ReturnsEmpty()
-        => AssertEval("skip(1, 2, 3, 10)");
+        => AssertEval("skip(1; 2; 3, 10)");
 
     [Fact]
-    public void Eval_Take_GroupedItems_PreservesFirstGroup()
+    public void Eval_Take_GroupedWrapperOutput_PreservesFirstGroup()
     {
-        var result = EvalFull("take((1, 2), (3, 4), 1)");
+        var result = EvalFull(
+            """
+            Groups = (1, 2), (3, 4)
+            take(Groups, 1)
+            """);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -2257,9 +2306,13 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Skip_GroupedItems_PreservesSecondGroup()
+    public void Eval_Skip_GroupedWrapperOutput_PreservesSecondGroup()
     {
-        var result = EvalFull("skip((1, 2), (3, 4), 1)");
+        var result = EvalFull(
+            """
+            Groups = (1, 2), (3, 4)
+            skip(Groups, 1)
+            """);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -2341,25 +2394,25 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Take_EmptyCountArgument_FailsWithContext()
         => AssertBuiltinFailureWithContext(
-            "take(1, 2, take(1, 0))",
+            "take(1; 2, take(1, 0))",
             "take count must be exactly one whole-number value");
 
     [Fact]
     public void Eval_Take_GroupedCountArgument_FailsWithContext()
         => AssertBuiltinFailureWithExactContext(
-            "take(3, 4, (1, 2))",
+            "take(3; 4, (1, 2))",
             "take count must be exactly one whole-number value");
 
     [Fact]
     public void Eval_Take_FractionalCountArgument_FailsWithContext()
         => AssertBuiltinFailureWithContext(
-            "take(1, 2, 1.5)",
+            "take(1; 2, 1.5)",
             "take count must be exactly one whole-number value");
 
     [Fact]
     public void Eval_Skip_StringCountArgument_FailsWithContext()
         => AssertBuiltinFailureWithExactContext(
-            "skip(1, 2, 'hello')",
+            "skip(1; 2, 'hello')",
             "skip count must be exactly one whole-number value");
 
     [Fact]
@@ -2367,7 +2420,7 @@ public class EvaluatorTests
     {
         var source = """
             Bad = 1, 2
-            skip(3, 4, Bad)
+            skip(3; 4, Bad)
             """;
 
         AssertBuiltinFailureWithContext(source, "skip count must be exactly one whole-number value");
@@ -2417,8 +2470,8 @@ public class EvaluatorTests
         => AssertEval("min(5)", 5);
 
     [Fact]
-    public void Eval_Min_DirectCallMultiArgs_FindsMinimum()
-        => AssertEval("min(10, 4, 7)", 4);
+    public void Eval_Min_ExplicitCombineExpression_FindsMinimum()
+        => AssertEval("min(10; 4; 7)", 4);
 
     [Fact]
     public void Eval_Min_GroupedElements_FailWithContext()
@@ -2435,7 +2488,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Min_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "min(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            min(Values)
+            """,
             "min expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Max builtin ──────────────────────────────────────────────────────────
@@ -2482,8 +2538,8 @@ public class EvaluatorTests
         => AssertEval("max(5)", 5);
 
     [Fact]
-    public void Eval_Max_DirectCallMultiArgs_FindsMaximum()
-        => AssertEval("max(10, 4, 7)", 10);
+    public void Eval_Max_ExplicitCombineExpression_FindsMaximum_FromExplicitCombine()
+        => AssertEval("max(10; 4; 7)", 10);
 
     [Fact]
     public void Eval_Max_GroupedElements_FailWithContext()
@@ -2500,8 +2556,21 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Max_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "max(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            max(Values)
+            """,
             "max expects each collection element to be a single numeric value; item 1 was grouped value");
+
+    [Fact]
+    public void Eval_Max_RejectsMultipleLeadingSequenceArguments()
+        => AssertArityMismatchContains(
+            "max(range(1, 3), 10)",
+            "Builtin 'max' expects 1 argument: sequence. Got 2. Use ';' to combine content explicitly.");
+
+    [Fact]
+    public void Eval_Max_ExplicitCombineExpression_FindsMaximum_WithRangeAndScalar()
+        => AssertEval("max(range(1, 3); 10)", 10);
 
     // ── Sum builtin ──────────────────────────────────────────────────────────
 
@@ -2568,8 +2637,8 @@ public class EvaluatorTests
         => AssertEval("sum(5)", 5);
 
     [Fact]
-    public void Eval_Sum_DirectCallMultiArgs_AddsValues()
-        => AssertEval("sum(10, 20, 30)", 60);
+    public void Eval_Sum_ExplicitCombineExpression_AddsValues_FromScalars()
+        => AssertEval("sum(10; 20; 30)", 60);
 
     [Fact]
     public void Eval_Sum_GroupedElements_FailWithContext()
@@ -2586,7 +2655,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Sum_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "sum(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            sum(Values)
+            """,
             "sum expects each collection element to be a single numeric value; item 1 was grouped value");
 
     [Fact]
@@ -2597,6 +2669,16 @@ public class EvaluatorTests
             sum(A:0)
             """,
             "sum expects each collection element to be a single numeric value; item 0 was grouped value");
+
+    [Fact]
+    public void Eval_Sum_RejectsMultipleLeadingSequenceArguments()
+        => AssertArityMismatchContains(
+            "sum(1, 2, 3)",
+            "Builtin 'sum' expects 1 argument: sequence. Got 3. Use ';' to combine content explicitly.");
+
+    [Fact]
+    public void Eval_Sum_ExplicitCombineExpression_AddsValues_WithTopLevelContent()
+        => AssertEval("sum(1; 2; 3)", 6);
 
     // ── Avg builtin ──────────────────────────────────────────────────────────
 
@@ -2638,20 +2720,20 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Avg_NonExactPositiveMean_UsesLeanFloorSemantics()
-        => AssertEval("avg(1, 2)", 1);
+    public void Eval_Avg_ExplicitCombineExpression_NonExactPositiveMean_UsesLeanFloorSemantics()
+        => AssertEval("avg(1; 2)", 1);
 
     [Fact]
-    public void Eval_Avg_NonExactNegativeMean_UsesLeanFloorSemantics()
-        => AssertEval("avg(-1, -2)", -2);
+    public void Eval_Avg_ExplicitCombineExpression_NonExactNegativeMean_UsesLeanFloorSemantics()
+        => AssertEval("avg(-1; -2)", -2);
 
     [Fact]
     public void Eval_Avg_SingleAtomicInput_ReturnsSameValue()
         => AssertEval("avg(5)", 5);
 
     [Fact]
-    public void Eval_Avg_DirectCallMultiArgs_ComputesMean()
-        => AssertEval("avg(10, 20, 30)", 20);
+    public void Eval_Avg_ExplicitCombineExpression_ComputesMean()
+        => AssertEval("avg(10; 20; 30)", 20);
 
     [Fact]
     public void Eval_Avg_GroupedElements_FailWithContext()
@@ -2668,7 +2750,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Avg_IndexedNumericDiagnostic_IncludesItemIndex()
         => AssertBuiltinFailureWithContext(
-            "avg(1, (2, 3))",
+            """
+            Values = 1, (2, 3)
+            avg(Values)
+            """,
             "avg expects each collection element to be a single numeric value; item 1 was grouped value");
 
     // ── Reduce builtin ───────────────────────────────────────────────────────
@@ -2753,9 +2838,7 @@ public class EvaluatorTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("expected at least 3 arguments", formatted);
-        Assert.Contains("while evaluating call to reduce", formatted);
-
+        Assert.Contains("Builtin 'reduce' expects 3 arguments: sequence, step, initial accumulator. Got 2.", formatted);
         var error = result.Error;
         while (error is EvalError.WithContext wc)
             error = wc.Inner;

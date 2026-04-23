@@ -186,7 +186,6 @@ structure SequenceBuiltinTrailingArgDescriptor where
 inductive SequenceBuiltinEmptyPolicy where
   | allowEmpty
   | requireAnyItem
-  | requireEachInputNonEmpty
   deriving Repr, BEq, DecidableEq
 
 inductive SequenceBuiltinItemShapeConstraint where
@@ -211,12 +210,13 @@ def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata
   metadata.trailingArgs.length
 
 /-- Metadata for sequence builtins.
-  Direct sequence consumers use the flattened counted top-level items of each
-  leading argument. Higher-order plain-call builtins may instead preserve each
-  ordinary leading argument as one outer iteration item, while explicit
-  content-projecting forms such as `a; b` and `S:i` still contribute their
-  top-level content. `trailingArgs` describes the fixed trailing non-sequence
-  arguments. -/
+  `leadingSequenceArity` describes how many leading sequence arguments
+  plain-call syntax accepts. Direct plain-call consumers normally pair exact-1
+  leading arity with flattened collection, while higher-order plain-call
+  builtins pair one-or-more leading arity with outer iteration so each
+  ordinary leading argument stays one collected item unless `a; b` or `S:i`
+  explicitly project content. `trailingArgs` describes the fixed trailing
+  non-sequence arguments. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
       trailingArgs := [{ label := "predicate" }]
@@ -227,42 +227,55 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
       collectionMode := .outerIteration
     }
   | .orderBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       itemShapeConstraint := .singleNumeric
     }
   | .orderDescBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       itemShapeConstraint := .singleNumeric
     }
   | .countBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
     }
   | .containsBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       trailingArgs := [{ label := "item", kind := .value }]
     }
   | .firstBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       emptyPolicy := .requireAnyItem
     }
   | .lastBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       emptyPolicy := .requireAnyItem
     }
   | .distinctBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
     }
   | .takeBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       trailingArgs := [{ label := "count", kind := .wholeNumber }]
     }
   | .skipBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       trailingArgs := [{ label := "count", kind := .wholeNumber }]
     }
   | .minBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       emptyPolicy := .requireAnyItem
       itemShapeConstraint := .singleNumeric
     }
   | .maxBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       emptyPolicy := .requireAnyItem
       itemShapeConstraint := .singleNumeric
     }
   | .sumBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       itemShapeConstraint := .singleNumeric
     }
   | .avgBuiltin => some {
+      leadingSequenceArity := SequenceBuiltinLeadingArity.exact 1
       emptyPolicy := .requireAnyItem
       itemShapeConstraint := .singleNumeric
     }
@@ -301,6 +314,10 @@ private def sequenceBuiltinTrailingArgDescriptorDesc
 private def sequenceBuiltinTrailingArgsDesc
     (descriptors : List SequenceBuiltinTrailingArgDescriptor) : String :=
   String.intercalate ", " (descriptors.map sequenceBuiltinTrailingArgDescriptorDesc)
+
+private def sequenceBuiltinPlainParameterNames
+    (metadata : SequenceBuiltinMetadata) : List String :=
+  "sequence" :: metadata.trailingArgs.map (·.label)
 
 private def sequenceBuiltinTotalArgCountDesc
     (leadingSequenceArity : SequenceBuiltinLeadingArity) (trailingArgCount : Nat) : String :=
@@ -354,7 +371,50 @@ def builtinArityDesc : Builtin -> String
           | _ => "?"
 
 def builtinArityError (b : Builtin) (actual : Nat) : Error :=
-  Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 actual)
+  match sequenceBuiltinMetadata? b with
+  | some metadata =>
+      match metadata.leadingSequenceArity.maxCount? with
+      | some maxCount =>
+          let expectedCount := maxCount + metadata.trailingArgCount
+          let parameterNames := sequenceBuiltinPlainParameterNames metadata
+          let builtinName :=
+            match b with
+            | .ifBuiltin => "if"
+            | .whileBuiltin => "while"
+            | .repeatBuiltin => "repeat"
+            | .atomsBuiltin => "atoms"
+            | .rangeBuiltin => "range"
+            | .filterBuiltin => "filter"
+            | .mapBuiltin => "map"
+            | .orderBuiltin => "order"
+            | .orderDescBuiltin => "orderDesc"
+            | .countBuiltin => "count"
+            | .containsBuiltin => "contains"
+            | .firstBuiltin => "first"
+            | .lastBuiltin => "last"
+            | .distinctBuiltin => "distinct"
+            | .takeBuiltin => "take"
+            | .skipBuiltin => "skip"
+            | .minBuiltin => "min"
+            | .maxBuiltin => "max"
+            | .sumBuiltin => "sum"
+            | .avgBuiltin => "avg"
+            | .reduceBuiltin => "reduce"
+          let combineHint :=
+            if metadata.leadingSequenceArity.minCount = 1 && maxCount = 1 && actual > expectedCount then
+              if metadata.trailingArgs.isEmpty then
+                " Use ';' to combine content explicitly."
+              else
+                " Use ';' to combine content explicitly into the sequence argument."
+            else
+              ""
+          Error.withContext
+            s!"Builtin '{builtinName}' expects {expectedCount} {if expectedCount = 1 then "argument" else "arguments"}: {String.intercalate ", " parameterNames}. Got {actual}.{combineHint}"
+            (Error.arityMismatch expectedCount actual)
+      | none =>
+          Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 actual)
+  | none =>
+      Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 actual)
 
 def builtinDisplayName : Builtin -> String
   | .ifBuiltin => "if"
@@ -1471,10 +1531,6 @@ def describeSequenceItem : Result -> String
 def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
 
-def numericSequenceInputItemErrorContext
-    (b : Builtin) (inputIndex itemIndex : Nat) (item : Result) : String :=
-  s!"{builtinDisplayName b} expects each collection element to be a single numeric value; input {inputIndex} item {itemIndex} was {describeSequenceItem item}"
-
 def usesExplicitOuterSequenceContent (collectionArg : Algorithm) : Bool :=
   match collectionArg.output with
   | [Expr.combine _ _] => true
@@ -1517,25 +1573,15 @@ def shouldTreatFilterCallbackFailureAsFalse (item : CountedResult) (err : Error)
     | _ => false
 
 /-- Shared collected view for current sequence-builtin evaluation.
-    The per-input boundary view remains part of the real model because direct
-  projection handling and boundary-sensitive validation depend on it, even
-  when the prepared outer-item stream differs between direct-consumption and
-  higher-order builtins. -/
+    The collected stream has already applied collection-time projection rules,
+    so direct-consumption builtins only need the flattened outer-item view. -/
 structure CollectedSequenceBuiltinInput where
-  perInputItems : List (List Result)
+  flattenedItems : List Result
   deriving Repr
-
-def CollectedSequenceBuiltinInput.flattenedItems
-    (input : CollectedSequenceBuiltinInput) : List Result :=
-  input.perInputItems.foldr List.append []
 
 def CollectedSequenceBuiltinInput.totalItemCount
     (input : CollectedSequenceBuiltinInput) : Nat :=
   input.flattenedItems.length
-
-def CollectedSequenceBuiltinInput.anyInputEmpty
-    (input : CollectedSequenceBuiltinInput) : Bool :=
-  input.perInputItems.any List.isEmpty
 
 structure PreparedSequenceBuiltinInput where
   collected : CollectedSequenceBuiltinInput
@@ -2018,7 +2064,7 @@ mutual
         | a::_ => lookupLexical a n ctx
         | []   => .error (Error.unknownName n)
     | .dotCall o n args =>
-        -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all semantics
+        -- Lift a.f / a.f(args) to a forwarding helper algorithm; evalDotCall handles all semantics
       -- (builtin property special cases, structural property, receiver injection, lexical fallback)
         pure (wireToCaller ctx (Algorithm.ofExpr (.dotCall o n args)))
     -- Explicit errors for syntactic forms that cannot resolve to algorithms
@@ -2289,7 +2335,7 @@ mutual
           let newCtx := ctx.withCountedParamEnv (countedParamEnv ++ ctx.countedParamEnv)
           evalAlgOutputCounted callee newCtx env
 
-  /-- Non-counted wrapper for callback calls that still preserve projected item
+    /-- Non-counted helper for callback calls that still preserve projected item
       emitted counts internally where later operations depend on them. -/
   partial def evalResolvedCallbackCall (callee : Algorithm)
       (args : List CountedResult)
@@ -2310,28 +2356,32 @@ mutual
       ]
       ctx env calleeName
 
-    /-- Evaluate the leading sequence arguments for a sequence builtin while
-      preserving per-input boundaries.
+    /-- Evaluate the validated leading sequence inputs for a sequence builtin
+      into the collection view required by that builtin.
 
-      Direct grouped values still stay grouped because they emit exactly one
-      top-level item, while ungrouped multi-output results such as
+      Direct-consumption plain-call builtins collect one flattened outer-item
+      stream from their single sequence input. Higher-order plain-call
+      builtins instead preserve each ordinary leading argument as one outer
+      iteration item unless it explicitly projects or combines content with
+      `:` or `;`. Direct grouped values still stay grouped because they emit
+      exactly one top-level item, while ungrouped multi-output results such as
       `range(1, 5)` or `Values = 1, 2, 3` contribute each emitted item
-      separately in plain-call form.
+      separately.
       Handlers call this explicitly so they can choose when leading sequence
       evaluation happens relative to any trailing-argument validation. -/
     partial def evalCountedSequenceInputs
       (collectionMode : SequenceBuiltinCollectionMode)
       (collectionArgs : List Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CollectedSequenceBuiltinInput := do
-    let rec loop : List Algorithm -> EvalM (List (List Result))
+      let rec loop : List Algorithm -> EvalM (List Result)
       | [] => pure []
       | collectionAlg :: rest => do
           let out <- evalAlgOutputCounted collectionAlg ctx env
           let tail <- loop rest
           let items := collectSequenceBuiltinInputItems collectionMode collectionAlg out
-          pure (items :: tail)
-    let perInputItems <- loop collectionArgs
-    pure { perInputItems := perInputItems }
+          pure (items ++ tail)
+      let flattenedItems <- loop collectionArgs
+      pure { flattenedItems := flattenedItems }
 
     partial def evalCountedSequenceIterationItems
       (collectionMode : SequenceBuiltinCollectionMode)
@@ -2358,13 +2408,6 @@ mutual
             Error.badArity)
         else
           pure collected
-    | .requireEachInputNonEmpty =>
-        if collected.anyInputEmpty then
-          .error (Error.withContext
-            s!"{builtinDisplayName b} requires each input collection to be non-empty"
-            Error.badArity)
-        else
-          pure collected
 
   /-- Collect top-level collection elements as single atomic numeric values.
       Used by numeric ordering and aggregation builtins, which reject strings
@@ -2384,19 +2427,6 @@ mutual
         | none =>
             .error (Error.withContext
               (numericSequenceItemErrorContext b index item)
-              Error.badArity)
-
-  partial def collectSingleAtomicNumbersInInput (b : Builtin) (inputIndex : Nat)
-      : Nat -> List Result -> EvalM (List Int)
-    | _, [] => pure []
-    | itemIndex, item :: rest =>
-        match Result.singleAtomicNumber? item with
-        | some n => do
-            let tail <- collectSingleAtomicNumbersInInput b inputIndex (itemIndex + 1) rest
-            pure (n :: tail)
-        | none =>
-            .error (Error.withContext
-              (numericSequenceInputItemErrorContext b inputIndex itemIndex item)
               Error.badArity)
 
   partial def prepareSequenceBuiltinInput (b : Builtin) (metadata : SequenceBuiltinMetadata)
@@ -2545,7 +2575,8 @@ mutual
           s!"internal sequence metadata for {builtinDisplayName b} did not produce numeric items"
           Error.badArity)
 
-  /-- Evaluate `reduce` over one or more leading sequence arguments.
+    /-- Evaluate `reduce` over the collected items from one or more
+      higher-order plain-call sequence arguments.
       `reduce` processes top-level collection elements from left to right.
       `step(element, accumulator)` receives each item exactly as collected for
       this iteration: ordinary plain-call boundaries stay whole, while explicit
@@ -2569,7 +2600,8 @@ mutual
           reduceLoop rest (next, 1)
     reduceLoop collection initOut
 
-  /-- Evaluate `filter` over one or more leading sequence arguments.
+    /-- Evaluate `filter` over the collected items from one or more higher-order
+      plain-call sequence arguments.
       The final argument is the predicate.
 
       Each iterated item is passed exactly as collected for this iteration:
@@ -2602,7 +2634,8 @@ mutual
     let kept <- filterLoop items
     pure (Result.normalize (Result.group kept), kept.length)
 
-  /-- Evaluate `map` over one or more leading sequence arguments.
+    /-- Evaluate `map` over the collected items from one or more higher-order
+      plain-call sequence arguments.
       `map` processes top-level collection elements from left to right.
       `transform(element)` receives each item exactly as collected for this
       iteration: ordinary plain-call boundaries stay whole, while explicit
@@ -2627,7 +2660,7 @@ mutual
     let mapped <- mapLoop collection
     pure (Result.normalize (Result.group mapped), mapped.length)
 
-    /-- Evaluate `order` over one or more leading sequence arguments.
+    /-- Evaluate `order` over a single sequence argument.
       `order` eagerly evaluates the full top-level sequence, sorts its numeric
       items ascending, preserves duplicates, and returns a normal KatLang
       multi-output sequence.
@@ -2639,7 +2672,7 @@ mutual
     let sorted := sortIntsAsc numbers
     pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
 
-  /-- Evaluate `orderDesc` over one or more leading sequence arguments.
+  /-- Evaluate `orderDesc` over a single sequence argument.
       `orderDesc` eagerly evaluates the full top-level sequence, sorts its
       numeric items descending, preserves duplicates, and returns a normal
       KatLang multi-output sequence.
@@ -2651,7 +2684,7 @@ mutual
     let sorted := sortIntsDesc numbers
     pure (Result.normalize (Result.group (sorted.map Result.atom)), sorted.length)
 
-  /-- Evaluate `count` over one or more leading sequence arguments.
+  /-- Evaluate `count` over a single sequence argument.
       `count` processes top-level collection elements from left to right and
       increments once per element.
 
@@ -2661,7 +2694,7 @@ mutual
   partial def evalCountCounted (items : List Result) : EvalM CountedResult := do
     pure (Result.atom (Int.ofNat items.length), 1)
 
-  /-- Evaluate `contains` over one or more leading sequence arguments.
+  /-- Evaluate `contains` over a single sequence argument.
       `contains` checks whether any extracted top-level item equals the searched
       item using ordinary KatLang value equality.
 
@@ -2671,7 +2704,7 @@ mutual
     let found := items.any (fun item => item == searched)
     pure (Result.atom (if found then 1 else 0), 1)
 
-  /-- Evaluate `distinct` over one or more leading sequence arguments.
+  /-- Evaluate `distinct` over a single sequence argument.
       `distinct` removes later duplicate top-level items while preserving the
       first occurrence of each item and the original left-to-right order.
 
@@ -2683,7 +2716,7 @@ mutual
     let distinctItems := dedupList items
     pure (Result.normalize (Result.group distinctItems), distinctItems.length)
 
-  /-- Evaluate `first` over one or more leading sequence arguments.
+  /-- Evaluate `first` over a single sequence argument.
       `first` evaluates the full top-level sequence and
       returns its first top-level element unchanged.
 
@@ -2695,7 +2728,7 @@ mutual
     | first :: _ => pure (first, 1)
     | [] => .error Error.badArity
 
-  /-- Evaluate `last` over one or more leading sequence arguments.
+  /-- Evaluate `last` over a single sequence argument.
       `last` evaluates the full top-level sequence and
       returns its last top-level element unchanged.
 
@@ -2707,7 +2740,7 @@ mutual
     | some last => pure (last, 1)
     | none => .error Error.badArity
 
-  /-- Evaluate `take` over one or more leading sequence arguments.
+  /-- Evaluate `take` over a single sequence argument.
       `take` returns the first `count` extracted top-level items unchanged.
 
       Non-positive counts return an empty result. Counts larger than the
@@ -2721,7 +2754,7 @@ mutual
         items.take (Int.toNat count)
     pure (Result.normalize (Result.group taken), taken.length)
 
-  /-- Evaluate `skip` over one or more leading sequence arguments.
+  /-- Evaluate `skip` over a single sequence argument.
       `skip` returns the extracted top-level items after the first `count`
       items, preserving item identity and original order.
 
@@ -2735,7 +2768,7 @@ mutual
         items.drop (Int.toNat count)
     pure (Result.normalize (Result.group remaining), remaining.length)
 
-    /-- Evaluate `min` over one or more leading sequence arguments.
+    /-- Evaluate `min` over a single sequence argument.
       `min` compares top-level sequence items from left to right and
       returns the smallest numeric element.
 
@@ -2753,7 +2786,7 @@ mutual
         let minimum <- minLoop rest first
         pure (Result.atom minimum, 1)
 
-    /-- Evaluate `max` over one or more leading sequence arguments.
+    /-- Evaluate `max` over a single sequence argument.
       `max` compares top-level sequence items from left to right and
       returns the largest numeric element.
 
@@ -2771,7 +2804,7 @@ mutual
         let maximum <- maxLoop rest first
         pure (Result.atom maximum, 1)
 
-    /-- Evaluate `sum` over one or more leading sequence arguments.
+    /-- Evaluate `sum` over a single sequence argument.
       `sum` processes top-level sequence items from left to right and adds them
       into one numeric total.
 
@@ -2782,7 +2815,7 @@ mutual
     let total := numbers.foldl (fun acc n => acc + n) 0
     pure (Result.atom total, 1)
 
-  /-- Evaluate `avg` over one or more leading sequence arguments.
+  /-- Evaluate `avg` over a single sequence argument.
       `avg` processes top-level sequence items from left to right,
       accumulates their numeric total, and divides by the element count.
 
@@ -3127,13 +3160,13 @@ mutual
       like `(1, 2, 3).take(2)` while still keeping `((1, 2, 3)).take(2)` and
       named grouped helpers grouped.
 
-      The receiver expression is then evaluated once, its counted top-level
-      items are reified as one ordinary leading argument per item, and any
-      extra dot-call arguments still follow the plain-call argument path.
-
-      This keeps plain-call boundary preservation unchanged while making
-      `receiver.builtin(...)` operate on the same top-level collection that
-      `receiver:i` and higher-order callback projection observe. -/
+      The receiver expression is evaluated once under dot-call receiver
+      normalization. Direct-consumption builtins then collapse those counted
+      top-level items back into one synthetic leading sequence argument so
+      exact-1 arity still works while `.count`, `.sum`, and similar builtins
+      still observe the receiver's projected items. Higher-order builtins keep
+        synthesizing one ordinary leading argument per receiver item so callback iteration
+      continues to follow the existing dot-call item semantics. -/
   partial def evalSequenceBuiltinDotReceiverCounted (receiver : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM CountedResult := do
     match receiver with
@@ -3146,10 +3179,24 @@ mutual
     | _ =>
         evalCounted receiver ctx env
 
-  partial def sequenceBuiltinDotReceiverArgs (receiver : Expr) (ctx : EvalCtx)
-      (env : ValEnv) : EvalM (List Algorithm) := do
+  partial def sequenceBuiltinDotReceiverArgs (metadata : SequenceBuiltinMetadata)
+      (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Algorithm) := do
     let receiverOut <- evalSequenceBuiltinDotReceiverCounted receiver ctx env
-    pure (countedTopLevelItemAlgorithms receiverOut)
+    let useSyntheticArg :=
+      if metadata.collectionMode = .flattenedTopLevelItems then
+        if metadata.leadingSequenceArity.minCount = 1 then
+          if metadata.leadingSequenceArity.maxCount? = some 1 then
+            true
+          else
+            false
+        else
+          false
+      else
+        false
+    if useSyntheticArg then
+      pure [countedArgAlgorithm receiverOut]
+    else
+      pure (countedTopLevelItemAlgorithms receiverOut)
 
   partial def trySequenceBuiltinDotCall
       (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
@@ -3157,8 +3204,8 @@ mutual
     match resolveAlg (.resolve name) ctx with
     | .ok (.builtin b) =>
         match sequenceBuiltinMetadata? b with
-        | some _ =>
-            let receiverArgAlgs <- sequenceBuiltinDotReceiverArgs receiver ctx env
+        | some metadata =>
+            let receiverArgAlgs <- sequenceBuiltinDotReceiverArgs metadata receiver ctx env
             let extraArgAlgs <-
               match extraArgs with
               | some args => resolveArgAlgs args ctx

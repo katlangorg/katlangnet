@@ -942,25 +942,21 @@ public static class Evaluator
     /// </summary>
     private readonly record struct CountedResult(Result Value, int EmittedCount);
 
-    private readonly record struct SequenceIterationItem(Result Value, int EmittedCount);
-
     /// <summary>
-    /// Collected sequence input keeps both the real per-input boundary view and
-    /// the prepared outer-item stream used by the current builtin.
+    /// Collected direct-consumer sequence input keeps the flattened outer-item
+    /// stream after collection-time projection and dot-receiver normalization
+    /// have already been applied.
     /// </summary>
     private readonly record struct CollectedSequenceBuiltinInput(
-        IReadOnlyList<IReadOnlyList<Result>> PerInputItems,
         IReadOnlyList<Result> FlattenedItems)
     {
         public int TotalItemCount => FlattenedItems.Count;
-
-        public bool AnyInputEmpty => PerInputItems.Any(static items => items.Count == 0);
     }
 
     /// <summary>
-    /// Prepared input for current sequence builtin handlers.
-    /// Numeric builtins cache the flattened numeric projection of the collected
-    /// top-level items.
+    /// Prepared input for direct-consumption sequence builtin handlers.
+    /// Numeric builtins cache the numeric projection of the collected
+    /// flattened item stream.
     /// </summary>
     private readonly record struct PreparedSequenceBuiltinInput(
         CollectedSequenceBuiltinInput Collected,
@@ -1351,7 +1347,7 @@ public static class Evaluator
     /// one-level projection rule as <c>S:i</c> for callback param operations
     /// like <c>x.count</c>.
     /// </summary>
-    private static CountedResult CountedSequenceCallbackItem(SequenceIterationItem item)
+    private static CountedResult CountedSequenceCallbackItem(CountedResult item)
     {
         var projected = item.Value.ProjectIteratedContent();
         return new CountedResult(projected.Value, projected.EmittedCount);
@@ -1407,7 +1403,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Non-counted wrapper for callback dispatch that still preserves projected
+    /// Non-counted helper for callback dispatch that still preserves projected
     /// item emitted counts internally where downstream operations depend on
     /// them.
     /// </summary>
@@ -1429,7 +1425,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result> EvalSequenceCallbackCall(
         Algorithm callee,
-        SequenceIterationItem item,
+        CountedResult item,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
@@ -1440,7 +1436,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceCallbackCallCounted(
         Algorithm callee,
-        SequenceIterationItem item,
+        CountedResult item,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
@@ -1627,7 +1623,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
         Algorithm callee,
-        SequenceIterationItem element,
+        CountedResult element,
         Result accumulator,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
@@ -1659,10 +1655,11 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Explicit content projection for higher-order plain-call arguments.
-    /// A selected value (<c>S:i</c>) and an explicit combine (<c>a; b</c>)
-    /// still contribute their denoted top-level items when a builtin is using
-    /// ordinary-argument outer iteration.
+    /// Explicit content projection for higher-order plain-call collection.
+    /// When outer iteration would normally keep one ordinary leading argument
+    /// as one collected item, a selected value (<c>S:i</c>) or an explicit
+    /// combine (<c>a; b</c>) instead contributes the top-level items it
+    /// denotes.
     /// </summary>
     private static bool UsesExplicitOuterSequenceContent(Algorithm collectionArg)
         => collectionArg is Algorithm.User { Params.Count: 0, Output.Count: 1 } user
@@ -1684,7 +1681,7 @@ public static class Evaluator
             : [output.Value];
     }
 
-    private static IReadOnlyList<SequenceIterationItem> CollectSequenceIterationItems(
+    private static IReadOnlyList<CountedResult> CollectSequenceIterationItems(
         SequenceBuiltinCollectionMode collectionMode,
         Algorithm collectionArg,
         CountedResult output)
@@ -1693,13 +1690,13 @@ public static class Evaluator
             || UsesExplicitOuterSequenceContent(collectionArg))
         {
             return CountedTopLevelValues(output)
-                .Select(item => new SequenceIterationItem(item, 1))
+                .Select(item => new CountedResult(item, 1))
                 .ToList();
         }
 
         return output.EmittedCount == 0
             ? []
-            : [new SequenceIterationItem(output.Value, output.EmittedCount)];
+            : [output];
     }
 
     private static (IReadOnlyList<Algorithm> SequenceArgs, IReadOnlyList<Algorithm> TrailingArgs)? SplitSequenceBuiltinArgs(
@@ -1736,11 +1733,12 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate the leading sequence arguments for a sequence builtin.
-    /// Direct-consumption builtins read counted top-level items, while
-    /// higher-order plain-call builtins can preserve each ordinary argument as
-    /// one outer iteration item unless the argument explicitly projects or
-    /// combines sequence content.
+    /// Evaluate the validated leading sequence inputs for a sequence builtin.
+    /// Direct-consumption plain-call builtins collect one flattened outer-item
+    /// stream from their single sequence input, while higher-order plain-call
+    /// builtins can preserve each ordinary leading argument as one outer
+    /// iteration item unless that argument explicitly projects or combines
+    /// content with <c>:</c> or <c>;</c>.
     /// Handlers call this explicitly so they can choose when leading sequence
     /// evaluation happens relative to any trailing-argument validation.
     /// </summary>
@@ -1750,7 +1748,6 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var perInputItems = new List<IReadOnlyList<Result>>(collectionArgs.Count);
         var flattenedItems = new List<Result>();
         foreach (var collectionArg in collectionArgs)
         {
@@ -1758,21 +1755,20 @@ public static class Evaluator
             if (outputR.IsError) return outputR.Error;
 
             var items = CollectSequenceBuiltinInputItems(collectionMode, collectionArg, outputR.Value);
-            perInputItems.Add(items);
             flattenedItems.AddRange(items);
         }
 
         return EvalResult<CollectedSequenceBuiltinInput>.Ok(
-            new CollectedSequenceBuiltinInput(perInputItems, flattenedItems));
+            new CollectedSequenceBuiltinInput(flattenedItems));
     }
 
-    private static EvalResult<IReadOnlyList<SequenceIterationItem>> EvalSequenceIterationItems(
+    private static EvalResult<IReadOnlyList<CountedResult>> EvalSequenceIterationItems(
         SequenceBuiltinCollectionMode collectionMode,
         IReadOnlyList<Algorithm> collectionArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var items = new List<SequenceIterationItem>();
+        var items = new List<CountedResult>();
         foreach (var collectionArg in collectionArgs)
         {
             var outputR = EvalAlgOutputCounted(collectionArg, ctx, valEnv);
@@ -1781,7 +1777,7 @@ public static class Evaluator
             items.AddRange(CollectSequenceIterationItems(collectionMode, collectionArg, outputR.Value));
         }
 
-        return EvalResult<IReadOnlyList<SequenceIterationItem>>.Ok(items);
+        return EvalResult<IReadOnlyList<CountedResult>>.Ok(items);
     }
 
     private static EvalResult<CollectedSequenceBuiltinInput> ApplySequenceBuiltinEmptyPolicy(
@@ -1794,9 +1790,6 @@ public static class Evaluator
             SequenceBuiltinEmptyPolicy.AllowEmpty => EvalResult<CollectedSequenceBuiltinInput>.Ok(collected),
             SequenceBuiltinEmptyPolicy.RequireAnyItem when collected.TotalItemCount == 0 => new EvalError.WithContext(
                 $"{BuiltinDisplayName(builtin)} requires a non-empty collection",
-                new EvalError.BadArity()),
-            SequenceBuiltinEmptyPolicy.RequireEachInputNonEmpty when collected.AnyInputEmpty => new EvalError.WithContext(
-                $"{BuiltinDisplayName(builtin)} requires each input collection to be non-empty",
                 new EvalError.BadArity()),
             _ => EvalResult<CollectedSequenceBuiltinInput>.Ok(collected),
         };
@@ -1815,9 +1808,9 @@ public static class Evaluator
         => $"{BuiltinDisplayName(builtin)} expects each collection element to be a single numeric value; item {index} was {DescribeSequenceItem(item)}";
 
     /// <summary>
-    /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
-    /// preserving the accumulator's emitted-value count for the empty-sequence
-    /// case.
+    /// Evaluate <c>reduce</c> over the collected items from one or more
+    /// higher-order plain-call sequence arguments while preserving the
+    /// accumulator's emitted-value count for the empty-sequence case.
     /// The current item is passed exactly as collected for this iteration:
     /// ordinary plain-call boundaries stay whole, while explicit <c>;</c>,
     /// <c>:</c>, and dot-call receiver iteration provide content items.
@@ -1825,7 +1818,7 @@ public static class Evaluator
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
-        IReadOnlyList<SequenceIterationItem> items,
+        IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
         Algorithm initialAlg,
         EvalCtx ctx,
@@ -1852,7 +1845,8 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>filter</c> over one or more leading sequence arguments.
+    /// Evaluate <c>filter</c> over the collected items from one or more
+    /// higher-order plain-call sequence arguments.
     /// The final argument is the predicate.
     /// Each iterated item is passed exactly as collected for this iteration:
     /// ordinary plain-call boundaries stay whole, while explicit <c>;</c>,
@@ -1860,7 +1854,7 @@ public static class Evaluator
     /// Kept outputs remain the original sequence items.
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
-        IReadOnlyList<SequenceIterationItem> items,
+        IReadOnlyList<CountedResult> items,
         Algorithm predicateAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
@@ -1895,15 +1889,16 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>map</c> over one or more leading sequence arguments while
-    /// preserving the number of top-level mapped elements.
+    /// Evaluate <c>map</c> over the collected items from one or more
+    /// higher-order plain-call sequence arguments while preserving the number
+    /// of top-level mapped elements.
     /// Each callback item is passed exactly as collected for this iteration:
     /// ordinary plain-call boundaries stay whole, while explicit <c>;</c>,
     /// <c>:</c>, and dot-call receiver iteration provide content items.
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
-        IReadOnlyList<SequenceIterationItem> items,
+        IReadOnlyList<CountedResult> items,
         Algorithm transformAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
@@ -2010,7 +2005,7 @@ public static class Evaluator
         return error;
     }
 
-    private static bool ShouldTreatFilterCallbackFailureAsFalse(SequenceIterationItem item, EvalError error)
+    private static bool ShouldTreatFilterCallbackFailureAsFalse(CountedResult item, EvalError error)
         => item.EmittedCount > 1
             && item.Value is Result.Group
             && InnermostError(error) is EvalError.TypeMismatch or EvalError.NoMatchingBranch or EvalError.BadArity;
@@ -2226,7 +2221,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>order</c> over one or more leading sequence arguments by
+    /// Evaluate <c>order</c> over a single sequence argument by
     /// eagerly sorting the top-level numeric sequence items in ascending order.
     /// Duplicates are preserved, groups are not flattened, strings are
     /// rejected, and empty collections stay empty.
@@ -2242,7 +2237,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>orderDesc</c> over one or more leading sequence arguments by
+    /// Evaluate <c>orderDesc</c> over a single sequence argument by
     /// eagerly sorting the top-level numeric sequence items in descending order.
     /// Duplicates are preserved, groups are not flattened, strings are
     /// rejected, and empty collections stay empty.
@@ -2258,7 +2253,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>count</c> over one or more leading sequence arguments by counting the top-level sequence
+    /// Evaluate <c>count</c> over a single sequence argument by counting the top-level sequence
     /// elements from left to right.
     /// Each atom, string, or grouped value counts as one top-level element;
     /// groups are not flattened or inspected recursively, and empty collections
@@ -2270,7 +2265,7 @@ public static class Evaluator
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(items.Count), 1));
 
     /// <summary>
-    /// Evaluate <c>contains</c> over one or more leading sequence arguments by
+    /// Evaluate <c>contains</c> over a single sequence argument by
     /// checking whether any extracted top-level item equals the searched item
     /// under ordinary KatLang value semantics.
     /// Search is top-level only: grouped values compare structurally as grouped
@@ -2284,7 +2279,7 @@ public static class Evaluator
             1));
 
     /// <summary>
-    /// Evaluate <c>distinct</c> over one or more leading sequence arguments by
+    /// Evaluate <c>distinct</c> over a single sequence argument by
     /// removing later duplicate top-level items while preserving the original
     /// order of first occurrence. Duplicate detection follows KatLang value
     /// semantics, so atoms compare by numeric value, strings by exact string
@@ -2305,7 +2300,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>first</c> over one or more leading sequence arguments by returning the first top-level
+    /// Evaluate <c>first</c> over a single sequence argument by returning the first top-level
     /// collection element unchanged.
     /// Atoms, strings, and grouped values each count as one top-level element;
     /// grouped values are preserved whole, and the collection must be non-empty.
@@ -2320,7 +2315,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>last</c> over one or more leading sequence arguments by returning the last top-level
+    /// Evaluate <c>last</c> over a single sequence argument by returning the last top-level
     /// collection element unchanged.
     /// Atoms, strings, and grouped values each count as one top-level element;
     /// grouped values are preserved whole, and the collection must be non-empty.
@@ -2335,7 +2330,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>take</c> over one or more leading sequence arguments by
+    /// Evaluate <c>take</c> over a single sequence argument by
     /// returning the first <paramref name="count"/> extracted top-level items.
     /// Non-positive counts return an empty sequence, oversized counts return
     /// the whole sequence, grouped values stay grouped, and original order is
@@ -2353,7 +2348,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>skip</c> over one or more leading sequence arguments by
+    /// Evaluate <c>skip</c> over a single sequence argument by
     /// returning the extracted top-level items after the first
     /// <paramref name="count"/> items. Non-positive counts leave the sequence
     /// unchanged, oversized counts return an empty sequence, grouped values
@@ -2371,7 +2366,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>min</c> over one or more leading sequence arguments by comparing top-level sequence
+    /// Evaluate <c>min</c> over a single sequence argument by comparing top-level sequence
     /// elements from left to right and returning the smallest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -2395,7 +2390,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>max</c> over one or more leading sequence arguments by comparing top-level sequence
+    /// Evaluate <c>max</c> over a single sequence argument by comparing top-level sequence
     /// elements from left to right and returning the largest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -2419,7 +2414,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>sum</c> over one or more leading sequence arguments by adding the top-level sequence
+    /// Evaluate <c>sum</c> over a single sequence argument by adding the top-level sequence
     /// elements from left to right.
     /// Each element must be exactly one atomic numeric value; groups are not
     /// flattened, strings are rejected, and empty collections return <c>0</c>.
@@ -2447,8 +2442,8 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>sum</c> over one or more leading sequence arguments by
-    /// adding the prepared numeric elements from left to right.
+    /// Evaluate <c>sum</c> over a single collected sequence input by adding the
+    /// prepared numeric elements from left to right.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSumCounted(IReadOnlyList<decimal> numbers)
@@ -2460,7 +2455,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>avg</c> over one or more leading sequence arguments by averaging the top-level sequence
+    /// Evaluate <c>avg</c> over a single sequence argument by averaging the top-level sequence
     /// elements from left to right.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; groups are not flattened and strings
@@ -2791,6 +2786,21 @@ public static class Evaluator
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
 
+        if (descriptor.SequenceMetadata is { } sequenceMetadata)
+        {
+            var expectedCount = descriptor.PlainParameterNames.Count;
+            var hint = sequenceMetadata.LeadingSequenceArity is { MinCount: 1, MaxCount: 1 }
+                && actualCount > expectedCount
+                ? sequenceMetadata.TrailingArgCount == 0
+                    ? " Use ';' to combine content explicitly."
+                    : " Use ';' to combine content explicitly into the sequence argument."
+                : string.Empty;
+
+            return new EvalError.WithContext(
+                $"Builtin '{descriptor.Name}' expects {expectedCount} {(expectedCount == 1 ? "argument" : "arguments")}: {string.Join(", ", descriptor.PlainParameterNames)}. Got {actualCount}.{hint}",
+                new EvalError.ArityMismatch(expectedCount, actualCount));
+        }
+
         return builtin switch
         {
             BuiltinId.@if => new EvalError.WithContext(
@@ -2934,7 +2944,7 @@ public static class Evaluator
 
             case Expr.DotCall:
             {
-                // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
+                // Lean: resolveAlg (.dotCall o n args) — lift to a forwarding helper algorithm;
                 // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
                 var wrapper = new Algorithm.User(
                     Parent: null, Params: [], Opens: [],
@@ -4232,12 +4242,12 @@ public static class Evaluator
     /// count, which strips exactly one receiver-scoping block layer for forms
     /// like <c>(1, 2, 3).take(2)</c> while still keeping
     /// <c>((1, 2, 3)).take(2)</c> and named grouped helpers grouped.
-    /// The resulting counted top-level items are then reified as one ordinary
-    /// leading argument per item, and any extra dot-call arguments still
-    /// follow the plain-call argument path.
-    /// This keeps plain-call boundary preservation unchanged while making
-    /// <c>receiver.builtin(...)</c> operate on the same top-level collection
-    /// that <c>receiver:i</c> and higher-order callback projection observe.
+    /// The receiver expression is evaluated once under dot-call receiver
+    /// normalization. Direct-consumption builtins then collapse those counted
+    /// top-level items into one synthetic leading sequence argument so exact-1
+    /// plain-call arity still works, while higher-order builtins still
+    /// synthesize one ordinary leading argument per receiver item so callback
+    /// iteration follows the same item semantics.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceBuiltinDotReceiverCounted(
         Expr receiver,
@@ -4255,12 +4265,22 @@ public static class Evaluator
     }
 
     private static EvalResult<IReadOnlyList<Algorithm>> SequenceBuiltinDotReceiverArgs(
+        SequenceBuiltinMetadata metadata,
         Expr receiver,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError) return receiverR.Error;
+
+        if (metadata.CollectionMode == SequenceBuiltinCollectionMode.FlattenedTopLevelItems
+            && metadata.LeadingSequenceArity.MinCount == 1
+            && metadata.LeadingSequenceArity.MaxCount is 1)
+        {
+            return EvalResult<IReadOnlyList<Algorithm>>.Ok([
+                CountedArgAlgorithm(receiverR.Value)
+            ]);
+        }
 
         return EvalResult<IReadOnlyList<Algorithm>>.Ok(
             CountedTopLevelItemAlgorithms(receiverR.Value));
@@ -4276,12 +4296,12 @@ public static class Evaluator
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError
             || calleeR.Value is not Algorithm.Builtin(var builtin)
-            || GetSequenceBuiltinMetadata(builtin) is null)
+            || GetSequenceBuiltinMetadata(builtin) is not SequenceBuiltinMetadata metadata)
         {
             return EvalResult<SequenceBuiltinDotCall?>.Ok(null);
         }
 
-        var receiverArgAlgsR = SequenceBuiltinDotReceiverArgs(receiver, ctx, valEnv);
+        var receiverArgAlgsR = SequenceBuiltinDotReceiverArgs(metadata, receiver, ctx, valEnv);
         if (receiverArgAlgsR.IsError) return receiverArgAlgsR.Error;
 
         var argAlgs = new List<Algorithm>(receiverArgAlgsR.Value);
