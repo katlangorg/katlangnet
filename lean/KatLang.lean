@@ -201,11 +201,12 @@ def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata
   metadata.trailingArgs.length
 
 /-- Metadata for sequence builtins that consume counted top-level items.
-  All leading sequence arguments first pass through the shared argument-
-  boundary rule: each argument expression contributes exactly one top-level
-  item, so grouped or multi-output content stays grouped as one item instead of
-  spreading into surrounding builtin input. Current builtins all consume the
-  flattened top-level item stream after that collection step, and
+  All leading sequence arguments contribute the counted top-level items they
+  emit. Direct grouped values therefore stay grouped because they emit exactly
+  one top-level item, while ungrouped multi-output results such as
+  `range(1, 5)` or `Values = 1, 2, 3` spread into surrounding builtin input in
+  plain-call form. Current builtins all consume that flattened top-level item
+  stream after the shared collection step, and
   `trailingArgs` describes the fixed trailing non-sequence arguments. If a
   future builtin genuinely needs a different prepared boundary view,
   reintroduce that metadata alongside the concrete handler that uses it. -/
@@ -1396,31 +1397,6 @@ def countedTopLevelValues : CountedResult -> List Result
   | (value, 1) => [value]
   | (value, _) => value.toItems
 
-/-- Sequence-builtin argument passing preserves the first-level boundary of
-    each leading argument expression.
-
-    Empty outputs become the empty grouped value, single outputs stay as-is,
-    and multi-output results become one grouped item. This shared helper is the
-    only place where leading sequence arguments are converted into builtin input
-    items. -/
-def sequenceBuiltinArgumentItem (arg : CountedResult) : Result :=
-  Result.normalize (Result.group (countedTopLevelValues arg))
-
-/-- This check is intentionally syntax-shaped today.
-    Only a zero-parameter algorithm whose sole output is a direct `:`
-    selection (`.index`) counts as already projected sequence input.
-    Wrapped or rewritten equivalents do not count automatically.
-    If projection preservation ever needs to survive more lowering or
-    elaboration shapes, revisit this helper explicitly instead of broadening
-    it accidentally. -/
-def sequenceBuiltinArgMatchesDirectIndexProjectionSyntax (arg : Algorithm) : Bool :=
-  arg.params.isEmpty &&
-    arg.opens.isEmpty &&
-    arg.props.isEmpty &&
-    match arg.output with
-    | [.index _ _] => true
-    | _ => false
-
 /-- Reify a counted argument shape as a zero-parameter algorithm that preserves
     the same value and emitted top-level count when evaluated. -/
 def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
@@ -2192,14 +2168,10 @@ mutual
     /-- Evaluate the leading sequence arguments for a sequence builtin while
       preserving per-input boundaries.
 
-      Ordinary argument passing contributes exactly one top-level item at the
-      call boundary. Grouped or multi-output content therefore stays grouped as
-      one item instead of spreading into the surrounding sequence builtin
-      input. Only direct `:` selections that still have this exact syntax
-      shape are treated as the existing explicit projection rule, so their
-      projected content remains visible as multiple top-level items. Wrapped
-      or rewritten equivalents still follow the ordinary argument-boundary
-      rule until this logic is revisited explicitly.
+      Direct grouped values still stay grouped because they emit exactly one
+      top-level item, while ungrouped multi-output results such as
+      `range(1, 5)` or `Values = 1, 2, 3` contribute each emitted item
+      separately in plain-call form.
       Handlers call this explicitly so they can choose when leading sequence
       evaluation happens relative to any trailing-argument validation. -/
     partial def evalCountedSequenceInputs (collectionArgs : List Algorithm)
@@ -2209,11 +2181,7 @@ mutual
       | collectionAlg :: rest => do
           let out <- evalAlgOutputCounted collectionAlg ctx env
           let tail <- loop rest
-          let items :=
-            if sequenceBuiltinArgMatchesDirectIndexProjectionSyntax collectionAlg then
-              countedTopLevelValues out
-            else
-              [sequenceBuiltinArgumentItem out]
+          let items := countedTopLevelValues out
           pure (items :: tail)
     let perInputItems <- loop collectionArgs
     pure { perInputItems := perInputItems }

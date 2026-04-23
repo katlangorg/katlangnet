@@ -1499,35 +1499,6 @@ public static class Evaluator
         return items;
     }
 
-    /// <summary>
-    /// Sequence-builtin argument passing preserves the first-level boundary of
-    /// each leading argument expression.
-    /// Empty outputs become the empty grouped value, single outputs stay as-is,
-    /// and multi-output results become one grouped item.
-    /// </summary>
-    private static Result SequenceBuiltinArgumentItem(CountedResult output)
-        => Result.FromItems(CountedTopLevelValues(output));
-
-    /// <summary>
-    /// This check is intentionally syntax-shaped today.
-    /// Only a zero-parameter algorithm whose sole output is a direct
-    /// <c>:</c> selection (<c>Expr.Index</c>) counts as already projected
-    /// sequence input. Wrapped or rewritten equivalents do not count
-    /// automatically.
-    /// If projection preservation ever needs to survive more lowering or
-    /// elaboration shapes, revisit this check explicitly instead of
-    /// broadening it accidentally.
-    /// </summary>
-    private static bool SequenceBuiltinArgMatchesDirectIndexProjectionSyntax(Algorithm arg)
-        => arg is Algorithm.User
-        {
-            Params.Count: 0,
-            Opens.Count: 0,
-            Properties.Count: 0,
-            Output.Count: 1,
-        }
-        && arg.Output[0] is Expr.Index;
-
     private static (IReadOnlyList<Algorithm> SequenceArgs, IReadOnlyList<Algorithm> TrailingArgs)? SplitSequenceBuiltinArgs(
         SequenceBuiltinMetadata metadata,
         IReadOnlyList<Algorithm> args)
@@ -1562,16 +1533,12 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate the leading sequence arguments for a sequence builtin while
-    /// preserving the first-level boundary of each input expression.
-    /// Ordinary argument passing contributes exactly one top-level item at the
-    /// call boundary, so grouped or multi-output content stays grouped as one
-    /// item instead of spreading into surrounding sequence-builtin input.
-    /// Only direct <c>:</c> selections that still have this exact syntax shape
-    /// are treated as the existing explicit projection rule, so their
-    /// projected content remains visible as multiple top-level items.
-    /// Wrapped or rewritten equivalents still follow ordinary
-    /// argument-boundary grouping until this logic is revisited explicitly.
+    /// Evaluate the leading sequence arguments for a sequence builtin by
+    /// consuming each argument's emitted top-level items.
+    /// Direct grouped values still stay grouped because they emit exactly one
+    /// top-level item, while ungrouped multi-output results such as
+    /// <c>range(1, 5)</c> or <c>Values = 1, 2, 3</c> contribute each emitted
+    /// item separately in plain-call form.
     /// Handlers call this explicitly so they can choose when leading sequence
     /// evaluation happens relative to any trailing-argument validation.
     /// </summary>
@@ -1587,9 +1554,7 @@ public static class Evaluator
             var outputR = EvalAlgOutputCounted(collectionArg, ctx, valEnv);
             if (outputR.IsError) return outputR.Error;
 
-            var items = SequenceBuiltinArgMatchesDirectIndexProjectionSyntax(collectionArg)
-                ? CountedTopLevelValues(outputR.Value)
-                : [SequenceBuiltinArgumentItem(outputR.Value)];
+            var items = CountedTopLevelValues(outputR.Value);
             perInputItems.Add(items);
             flattenedItems.AddRange(items);
         }
