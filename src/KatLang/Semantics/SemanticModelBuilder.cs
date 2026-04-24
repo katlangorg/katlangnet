@@ -789,12 +789,11 @@ public static class SemanticModelBuilder
             PropertyCallStyle callStyle)
         {
             var parameterList = string.Join(", ", parameters.Select(parameter => parameter.Name));
-            const string receiverPlaceholder = "sequence";
 
             return callStyle switch
             {
-                PropertyCallStyle.Dot when parameters.Count == 0 => $"{receiverPlaceholder}.{name}",
-                PropertyCallStyle.Dot => $"{receiverPlaceholder}.{name}({parameterList})",
+                PropertyCallStyle.Dot when parameters.Count == 0 => $"items.{name}",
+                PropertyCallStyle.Dot => $"items.{name}({parameterList})",
                 _ when parameters.Count == 0 => name,
                 _ => $"{name}({parameterList})",
             };
