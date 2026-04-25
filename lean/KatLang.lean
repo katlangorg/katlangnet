@@ -1395,6 +1395,18 @@ def countedTopLevelValues : CountedResult -> List Result
   | (value, 1) => [value]
   | (value, _) => value.toItems
 
+/-- Flatten a `combine` subtree into its ordered leaves without changing
+    grouped/block values inside those leaves. -/
+partial def combineLeavesLoop : List Expr -> List Expr -> List Expr
+  | [], acc => acc.reverse
+  | current :: rest, acc =>
+      match current with
+      | .combine left right => combineLeavesLoop (left :: right :: rest) acc
+      | leaf => combineLeavesLoop rest (leaf :: acc)
+
+def combineLeaves (expr : Expr) : List Expr :=
+  combineLeavesLoop [expr] []
+
 /-- Reify a counted argument shape as a zero-parameter algorithm that preserves
     the same value and emitted top-level count when evaluated. -/
 def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
@@ -3233,6 +3245,20 @@ mutual
         callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error e => .error e
 
+  /-- Evaluate a `combine` subtree by flattening the syntax spine first, then
+      evaluating each leaf once from left to right.  Each leaf contributes the
+      top-level items it emitted, so grouped values emitted as one item stay
+      grouped while multi-output leaves still expand one level. -/
+  partial def evalCombineCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let rec loop : List Expr -> List Result -> Nat -> EvalM CountedResult
+      | [], items, emitted =>
+          pure (Result.normalize (Result.group items.reverse), emitted)
+      | leaf :: rest, items, emitted => do
+          let out <- evalCounted leaf ctx env
+          loop rest ((countedTopLevelValues out).reverse ++ items) (emitted + out.snd)
+    loop (combineLeaves e) [] 0
+
   /-- Evaluate an expression together with the number of top-level values it
       emits at the current algorithm boundary.
 
@@ -3257,10 +3283,8 @@ mutual
                     else
                       .error (Error.arityMismatch (Algorithm.params alg).length 0)
                 | none => .error (Error.unknownName x)
-    | .combine e1 e2 => do
-        let (r1, c1) <- evalCounted e1 ctx env
-        let (r2, c2) <- evalCounted e2 ctx env
-        pure (Result.normalize (Result.group (r1.toItems ++ r2.toItems)), c1 + c2)
+    | .combine _ _ =>
+        evalCombineCounted e ctx env
     | .block a => do
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
@@ -3573,10 +3597,9 @@ mutual
               | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
               | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
 
-    | .combine e1 e2 => do
-        let r1 <- eval e1 ctx env
-        let r2 <- eval e2 ctx env
-        pure (Result.normalize (Result.group (r1.toItems ++ r2.toItems)))
+    | .combine _ _ => do
+        let out <- evalCombineCounted e ctx env
+        pure out.fst
 
     | .block a =>
         let wired := wireToCaller ctx a

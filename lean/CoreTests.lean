@@ -1549,6 +1549,46 @@ def test25 : Bool :=
 #eval test25  -- should be true
 #eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3)))
 
+def combine1234 : KatLang.Expr :=
+  .combine (.combine (.combine (.num 1) (.num 2)) (.num 3)) (.num 4)
+
+def test25a : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "sum") (alg [] [] [] [combine1234]),
+    .call (resolve "count") (alg [] [] [] [combine1234]),
+    .call (resolve "first") (alg [] [] [] [combine1234]),
+    .call (resolve "last") (alg [] [] [] [combine1234])
+  ])) with
+  | Except.ok [10, 4, 1, 4] => true
+  | _ => false
+
+#eval test25a  -- should be true
+
+def test25b : Bool :=
+  let groupedLeft := .combine (.block (alg [] [] [] [.num 1, .num 2])) (.num 3)
+  let groupedRight := .combine (.num 1) (.block (alg [] [] [] [.num 2, .num 3]))
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [groupedLeft]),
+    .call (resolve "count") (alg [] [] [] [groupedRight])
+  ])) with
+  | Except.ok [2, 2] => true
+  | _ => false
+
+#eval test25b  -- should be true
+
+def test25c : Bool :=
+  let pThenMore := .combine (.combine (.combine (resolve "P") (.num 3)) (.num 4)) (.num 5)
+  match runFlat (.block (algPrivate [] [] [
+    ("P", alg [] [] [] [.num 1, .num 2]),
+    ("X", alg [] [] [] [.call (resolve "sum") (alg [] [] [] [pThenMore])])
+  ] [
+    resolve "X"
+  ])) with
+  | Except.ok [15] => true
+  | _ => false
+
+#eval test25c  -- should be true
+
 -- Test 26: Nested 3-arg if uses the selected inner branch
 -- if(1, if(1, 5, 6), 9) → [5]
 def test26 : Bool :=

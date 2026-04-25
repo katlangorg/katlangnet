@@ -1647,15 +1647,68 @@ public static class Evaluator
     /// </summary>
     private static List<Result> CountedTopLevelValues(CountedResult output)
     {
+        var items = new List<Result>();
+        AddCountedTopLevelValues(items, output);
+        return items;
+    }
+
+    private static void AddCountedTopLevelValues(List<Result> into, CountedResult output)
+    {
         if (output.EmittedCount == 0)
-            return [];
+            return;
 
         if (output.EmittedCount == 1)
-            return [output.Value];
+        {
+            into.Add(output.Value);
+            return;
+        }
 
-        var items = new List<Result>();
-        ResultItems(items, output.Value);
-        return items;
+        ResultItems(into, output.Value);
+    }
+
+    private static List<Expr> CombineLeaves(Expr expr)
+    {
+        var leaves = new List<Expr>();
+        var stack = new Stack<Expr>();
+        stack.Push(expr);
+
+        while (stack.Count != 0)
+        {
+            var current = stack.Pop();
+            if (current is Expr.Combine(var left, var right))
+            {
+                stack.Push(right);
+                stack.Push(left);
+                continue;
+            }
+
+            leaves.Add(current);
+        }
+
+        return leaves;
+    }
+
+    private static EvalResult<CountedResult> EvalCombineCounted(
+        Expr expr,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var leaves = CombineLeaves(expr);
+        var items = new List<Result>(leaves.Count);
+        var emittedCount = 0;
+
+        foreach (var leaf in leaves)
+        {
+            var leafR = EvalCounted(leaf, ctx, valEnv);
+            if (leafR.IsError) return leafR.Error;
+
+            AddCountedTopLevelValues(items, leafR.Value);
+            emittedCount += leafR.Value.EmittedCount;
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(
+            Result.FromItems(items),
+            emittedCount));
     }
 
     /// <summary>
@@ -3290,16 +3343,12 @@ public static class Evaluator
                 return EvalResult<Result>.Ok(new Result.Atom(result));
             }
 
-            case Expr.Combine(var e1, var e2):
+            case Expr.Combine:
             {
-                var r1 = Eval(e1, ctx, valEnv);
-                if (r1.IsError) return r1.Error;
-                var r2 = Eval(e2, ctx, valEnv);
-                if (r2.IsError) return r2.Error;
-                var items = new List<Result>();
-                ResultItems(items, r1.Value);
-                ResultItems(items, r2.Value);
-                return EvalResult<Result>.Ok(Result.FromItems(items));
+                var combineR = EvalCombineCounted(expr, ctx, valEnv);
+                return combineR.IsError
+                    ? combineR.Error
+                    : EvalResult<Result>.Ok(combineR.Value.Value);
             }
 
             case Expr.Block(var alg):
@@ -3399,20 +3448,8 @@ public static class Evaluator
                 return new EvalError.UnknownName(name) { Span = expr.Span };
             }
 
-            case Expr.Combine(var left, var right):
-            {
-                var leftR = EvalCounted(left, ctx, valEnv);
-                if (leftR.IsError) return leftR.Error;
-                var rightR = EvalCounted(right, ctx, valEnv);
-                if (rightR.IsError) return rightR.Error;
-
-                var items = new List<Result>();
-                ResultItems(items, leftR.Value.Value);
-                ResultItems(items, rightR.Value.Value);
-                return EvalResult<CountedResult>.Ok(new CountedResult(
-                    Result.FromItems(items),
-                    leftR.Value.EmittedCount + rightR.Value.EmittedCount));
-            }
+            case Expr.Combine:
+                return EvalCombineCounted(expr, ctx, valEnv);
 
             case Expr.Block(var alg):
             {

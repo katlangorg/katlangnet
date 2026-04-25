@@ -5712,6 +5712,98 @@ public class EvaluatorTests
         AssertEval("1 + 2, 2 + 3; 3 + 4; 4 + 5, 5 + 6, 6 + 7", 3, 5, 7, 9, 11, 13);
     }
 
+    [Fact]
+    public void Eval_Combine_LongChain_IsStackSafeForFlatAndCountedEvaluation()
+    {
+        const int itemCount = 8192;
+        var chain = LongOneChain(itemCount);
+
+        var flatR = Evaluator.RunFlat(chain);
+        if (flatR.IsError)
+            Assert.Fail($"Expected success but got error: {flatR.Error}");
+        Assert.Equal(Enumerable.Repeat(1m, itemCount), flatR.Value);
+
+        var countedRoot = new Expr.Block(new Algorithm.User(
+            Parent: null,
+            Params: [],
+            Opens: [],
+            Properties: [new Property("Values", new Algorithm.User(
+                Parent: null,
+                Params: [],
+                Opens: [],
+                Properties: [],
+                Output: [chain]))],
+            Output:
+            [
+                BuiltinCall("sum", new Expr.Resolve("Values")),
+                BuiltinCall("count", new Expr.Resolve("Values"))
+            ]));
+
+        var countedR = Evaluator.RunFlat(countedRoot);
+        if (countedR.IsError)
+            Assert.Fail($"Expected success but got error: {countedR.Error}");
+        Assert.Equal([(decimal)itemCount, (decimal)itemCount], countedR.Value);
+
+        static Expr LongOneChain(int count)
+        {
+            Expr expr = new Expr.Num(1);
+            for (var i = 1; i < count; i++)
+                expr = new Expr.Combine(expr, new Expr.Num(1));
+            return expr;
+        }
+
+        static Expr BuiltinCall(string name, Expr arg) =>
+            new Expr.Call(
+                new Expr.Resolve(name),
+                new Algorithm.User(
+                    Parent: null,
+                    Params: [],
+                    Opens: [],
+                    Properties: [],
+                    Output: [arg]));
+    }
+
+    [Fact]
+    public void Eval_Combine_SequenceBuiltins_ConsumeFlatTopLevelItems()
+    {
+        AssertEval("sum(1; 2; 3; 4)", 10);
+        AssertEval("count(1; 2; 3; 4)", 4);
+        AssertEval("first(1; 2; 3; 4)", 1);
+        AssertEval("last(1; 2; 3; 4)", 4);
+    }
+
+    [Fact]
+    public void Eval_Combine_GroupedLeaves_CountAsOneTopLevelItem()
+    {
+        AssertEval("count((1, 2); 3)", 2);
+        AssertEval("count(1; (2, 3))", 2);
+    }
+
+    [Fact]
+    public void Eval_Combine_MixedPropertyAndMultiOutput_SumsExpandedItems()
+    {
+        var source = """
+            P = 1, 2
+            X = sum(P; 3; 4; 5)
+            X
+            """;
+        AssertEval(source, 15);
+    }
+
+    [Fact]
+    public void Eval_Combine_ErrorOrder_StopsAtEarlierLeaf()
+    {
+        var error = GetEvalError("1; Math.Nope; 1 / 0");
+        Assert.NotNull(error);
+
+        var inner = error!;
+        while (inner is EvalError.WithContext context)
+            inner = context.Inner;
+
+        var unknown = Assert.IsType<EvalError.UnknownName>(inner);
+        Assert.Equal("Nope", unknown.Name);
+    }
+
     // D. Combining algorithms by reference
 
     [Fact]

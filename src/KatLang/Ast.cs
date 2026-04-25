@@ -652,7 +652,35 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
+            if (expr is Expr.Combine)
+            {
+                VisitCombineExpr(expr);
+                return;
+            }
+
             base.VisitExpr(expr);
+        }
+
+        private void VisitCombineExpr(Expr expr)
+        {
+            var stack = new Stack<Expr>();
+            stack.Push(expr);
+
+            while (stack.Count != 0)
+            {
+                if (stopAfterFirst && Violations.Count > 0)
+                    return;
+
+                var current = stack.Pop();
+                if (current is Expr.Combine(var left, var right))
+                {
+                    stack.Push(right);
+                    stack.Push(left);
+                    continue;
+                }
+
+                VisitExpr(current);
+            }
         }
 
         protected override void VisitUserAlgorithm(Algorithm.User algorithm)
