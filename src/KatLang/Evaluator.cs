@@ -847,6 +847,11 @@ public static class Evaluator
         _ => [],
     };
 
+    private static bool PreserveCallArgBoundary(IReadOnlyList<bool>? preserveArgBoundaries, int index) =>
+        preserveArgBoundaries is not null
+        && index < preserveArgBoundaries.Count
+        && preserveArgBoundaries[index];
+
     // ── Result helpers ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -3939,11 +3944,14 @@ public static class Evaluator
     /// has parameters. Earlier explicit argument positions remain distinct on
     /// the eager value side even if some later arguments bind only through
     /// AlgEnv.
+    /// Dot-call lexical fallback may mark its injected receiver argument as a
+    /// preserved boundary so it cannot be unpacked by the final-argument rule.
     /// </summary>
     private static EvalResult<Result> EvalUserCall(
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
@@ -3984,6 +3992,7 @@ public static class Evaluator
             }
 
             var isFinalExplicitArg = i == argExprs.Count - 1;
+            var preserveBoundary = PreserveCallArgBoundary(preserveArgBoundaries, i);
             var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
             if (evalR.IsOk)
             {
@@ -3995,8 +4004,15 @@ public static class Evaluator
                         for (var paramIndex = i; paramIndex < paramCount; paramIndex++)
                             valueParams.Add(callee.Params[paramIndex]);
 
-                        foreach (var unpacked in UnpackArgs(evalR.Value))
-                            valueResults.Add(unpacked);
+                        if (preserveBoundary)
+                        {
+                            valueResults.Add(evalR.Value);
+                        }
+                        else
+                        {
+                            foreach (var unpacked in UnpackArgs(evalR.Value))
+                                valueResults.Add(unpacked);
+                        }
                     }
                     else
                     {
@@ -4044,7 +4060,8 @@ public static class Evaluator
         Algorithm argsAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName)
+        string calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -4054,12 +4071,12 @@ public static class Evaluator
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalUserCall(simpleCallee, argsAlg, ctx, valEnv);
+            return EvalUserCall(simpleCallee, argsAlg, ctx, valEnv, preserveArgBoundaries);
 
         if (callee is Algorithm.Conditional)
             return EvalConditionalCall(callee, argsAlg, ctx, valEnv, calleeName);
 
-        return EvalUserCall(callee, argsAlg, ctx, valEnv);
+        return EvalUserCall(callee, argsAlg, ctx, valEnv, preserveArgBoundaries);
     }
 
     /// <summary>
@@ -4071,7 +4088,8 @@ public static class Evaluator
     private static EvalResult<CountedResult> EvalUserCallCounted(
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         var wiredArgs = WireToCaller(ctx, args);
         var argExprs = wiredArgs.Output;
@@ -4102,6 +4120,7 @@ public static class Evaluator
             }
 
             var isFinalExplicitArg = i == argExprs.Count - 1;
+            var preserveBoundary = PreserveCallArgBoundary(preserveArgBoundaries, i);
             var evalR = Eval(argExprs[i], argEvalCtx, valEnv);
             if (evalR.IsOk)
             {
@@ -4113,8 +4132,15 @@ public static class Evaluator
                         for (var paramIndex = i; paramIndex < paramCount; paramIndex++)
                             valueParams.Add(callee.Params[paramIndex]);
 
-                        foreach (var unpacked in UnpackArgs(evalR.Value))
-                            valueResults.Add(unpacked);
+                        if (preserveBoundary)
+                        {
+                            valueResults.Add(evalR.Value);
+                        }
+                        else
+                        {
+                            foreach (var unpacked in UnpackArgs(evalR.Value))
+                                valueResults.Add(unpacked);
+                        }
                     }
                     else
                     {
@@ -4160,7 +4186,8 @@ public static class Evaluator
         Algorithm argsAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName)
+        string calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -4170,12 +4197,12 @@ public static class Evaluator
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalUserCallCounted(simpleCallee, argsAlg, ctx, valEnv);
+            return EvalUserCallCounted(simpleCallee, argsAlg, ctx, valEnv, preserveArgBoundaries);
 
         if (callee is Algorithm.Conditional)
             return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, calleeName);
 
-        return EvalUserCallCounted(callee, argsAlg, ctx, valEnv);
+        return EvalUserCallCounted(callee, argsAlg, ctx, valEnv, preserveArgBoundaries);
     }
 
     // ── DotCall evaluation ────────────────────────────────────────────────
@@ -4210,6 +4237,7 @@ public static class Evaluator
         //   e.P      → P(e)
         //   e.P(a,b) → P(e, a, b)
         // works for any receiver expression, including literals and parenthesized expressions.
+        // The injected receiver remains one argument boundary.
         // Other errors (e.g. UnknownName) propagate as before.
         var targetResult = ResolveAlg(target, ctx);
         if (targetResult.IsError)
@@ -4272,6 +4300,8 @@ public static class Evaluator
 
     /// <summary>
     /// Resolves name lexically and calls with receiver prepended to args.
+    /// The injected receiver is marked as a preserved argument boundary, so the
+    /// normal final-argument unpacking rule cannot spread it into fixed params.
     /// Delegates to EvalCall to get builtin dispatch for free.
     ///
     /// For dotCall lexical fallback to "while" and "repeat", extra args beyond the
@@ -4374,8 +4404,13 @@ public static class Evaluator
             return ApplyBuiltin(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
 
         var outputExprs = new List<Expr> { receiver };
+        var preserveArgBoundaries = new List<bool> { true };
         if (extraArgs is not null)
+        {
             outputExprs.AddRange(extraArgs.Output);
+            for (var i = 0; i < extraArgs.Output.Count; i++)
+                preserveArgBoundaries.Add(false);
+        }
 
         // Package multi-item init for while/repeat dotCall fallback.
         // receiver is already at index 0 (the step algorithm).
@@ -4386,6 +4421,7 @@ public static class Evaluator
             // Step.while(s1, s2, ...) → while(Step, block([s1, s2, ...]))
             var initExprs = outputExprs.GetRange(1, outputExprs.Count - 1);
             outputExprs = [receiver, MakeInitBlock(initExprs)];
+            preserveArgBoundaries = [true, false];
         }
         else if (name == "repeat" && explicitCount >= 3)
         {
@@ -4393,6 +4429,7 @@ public static class Evaluator
             var countExpr = outputExprs[1]; // first explicit arg = count
             var initExprs = outputExprs.GetRange(2, outputExprs.Count - 2);
             outputExprs = [receiver, countExpr, MakeInitBlock(initExprs)];
+            preserveArgBoundaries = [true, false, false];
         }
 
         var combinedArgs = new Algorithm.User(
@@ -4401,7 +4438,7 @@ public static class Evaluator
 
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCall(calleeR.Value, combinedArgs, ctx, valEnv, name);
+        return EvalResolvedCall(calleeR.Value, combinedArgs, ctx, valEnv, name, preserveArgBoundaries);
     }
 
     /// <summary>
@@ -4493,8 +4530,13 @@ public static class Evaluator
             return ApplyBuiltinCounted(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
 
         var outputExprs = new List<Expr> { receiver };
+        var preserveArgBoundaries = new List<bool> { true };
         if (extraArgs is not null)
+        {
             outputExprs.AddRange(extraArgs.Output);
+            for (var i = 0; i < extraArgs.Output.Count; i++)
+                preserveArgBoundaries.Add(false);
+        }
 
         var explicitCount = extraArgs?.Output.Count ?? 0;
 
@@ -4502,12 +4544,14 @@ public static class Evaluator
         {
             var initExprs = outputExprs.GetRange(1, outputExprs.Count - 1);
             outputExprs = [receiver, MakeInitBlock(initExprs)];
+            preserveArgBoundaries = [true, false];
         }
         else if (name == "repeat" && explicitCount >= 3)
         {
             var countExpr = outputExprs[1];
             var initExprs = outputExprs.GetRange(2, outputExprs.Count - 2);
             outputExprs = [receiver, countExpr, MakeInitBlock(initExprs)];
+            preserveArgBoundaries = [true, false, false];
         }
 
         var combinedArgs = new Algorithm.User(
@@ -4516,7 +4560,7 @@ public static class Evaluator
 
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCallCounted(calleeR.Value, combinedArgs, ctx, valEnv, name);
+        return EvalResolvedCallCounted(calleeR.Value, combinedArgs, ctx, valEnv, name, preserveArgBoundaries);
     }
 
     /// <summary>

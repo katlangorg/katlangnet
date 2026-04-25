@@ -30,6 +30,8 @@
 - `open Name` may target a lexically visible private head, but `open` only exposes public members.
 - `open 'url'` is front-end sugar for load elaboration, not a core AST construct.
 - Dot-call uses structural lookup first and lexical fallback second. Structural lookup, receiver injection, fallback order, and diagnostics must stay consistent across Lean and C#.
+- Ordinary lexical dot-call passes the receiver as one leading argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`.
+- Only sequence/variadic builtin dot-call paths may opt into receiver top-level expansion, and that expansion must remain explicit in builtin metadata/evaluator handling.
 
 ## Lean/C# Consistency Requirements
 

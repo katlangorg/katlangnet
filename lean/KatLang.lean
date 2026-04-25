@@ -1306,6 +1306,11 @@ def unpackArgs (r : Result) : List Result :=
   | .str _  => [r]
   | .group rs => rs
 
+def preserveCallArgBoundary : List Bool -> Nat -> Bool
+  | [], _ => false
+  | b :: _, 0 => b
+  | _ :: rest, Nat.succ n => preserveCallArgBoundary rest n
+
 /-- Bind algorithm-typed parameters: zip parameter names with algorithms.
     Only includes entries where the argument resolved to an algorithm.
     Result entries are skipped (they go through bindParams / ValEnv). -/
@@ -3048,7 +3053,8 @@ mutual
       Call semantics are unchanged; only the final emitted output count of the
       callee is preserved. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      : EvalM CountedResult := do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
     if (Algorithm.output callee).isEmpty then
@@ -3061,35 +3067,41 @@ mutual
         let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
         let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
         let argEvalCtx := EvalCtx.push wiredArgs ctx
+        let argBoundaryFlags :=
+          (List.range argExprs.length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
         let rec collectValues
             (ps : List Ident) (es : List Expr)
-            (mas : List (Option Algorithm))
+            (mas : List (Option Algorithm)) (preserveFlags : List Bool)
             : EvalM (List Ident × List Result) :=
-          match ps, es, mas with
-          | [], _, _ => pure ([], [])
-          | ps, [], _ => pure (ps, [])
-          | p :: ps', [e], [ma] =>
+          match ps, es, mas, preserveFlags with
+          | [], _, _, _ => pure ([], [])
+          | ps, [], _, _ => pure (ps, [])
+          | p :: ps', [e], [ma], [preserveBoundary] =>
             match eval e argEvalCtx env with
             | .ok value =>
               match ps' with
               | [] => pure ([p], [value])
-              | _  => pure (p :: ps', unpackArgs value)
+              | _  =>
+                  if preserveBoundary then
+                    pure (p :: ps', [value])
+                  else
+                    pure (p :: ps', unpackArgs value)
             | .error err =>
               match ma with
               | some _ => pure (ps', [])
               | none => .error err
-          | p :: ps', e :: es', ma :: mas' =>
+          | p :: ps', e :: es', ma :: mas', _ :: preserveFlags' =>
               match eval e argEvalCtx env with
               | .ok value => do
-                  let (rps, rvs) <- collectValues ps' es' mas'
+                  let (rps, rvs) <- collectValues ps' es' mas' preserveFlags'
                   pure (p :: rps, value :: rvs)
               | .error err =>
                   match ma with
-                  | some _ => collectValues ps' es' mas'
+                  | some _ => collectValues ps' es' mas' preserveFlags'
                   | none => .error err
-          | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+          | _, _, _, _ => .error (Error.arityMismatch paramCount argExprs.length)
         let (valueParams, valueResults) <- collectValues
-            (Algorithm.params callee) argExprs maybeAlgs
+            (Algorithm.params callee) argExprs maybeAlgs argBoundaryFlags
         let argEnv <- bindParams valueParams valueResults
         let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
         evalAlgOutputCounted callee newCtx (argEnv ++ env)
@@ -3116,29 +3128,31 @@ mutual
 
   /-- Dispatch an already-resolved callee in ordinary evaluation. -/
   partial def evalResolvedCall (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      (preserveArgBoundaries : List Bool := []) : EvalM Result := do
     match callee with
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltin b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCall simple args ctx env
+      | some simple => evalUserCall simple args ctx env preserveArgBoundaries
       | none => evalConditionalCall callee args ctx env calleeName
-    | _ => evalUserCall callee args ctx env
+    | _ => evalUserCall callee args ctx env preserveArgBoundaries
 
   /-- Dispatch an already-resolved callee in counted evaluation. -/
   partial def evalResolvedCallCounted (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
     match callee with
     | .builtin b => do
         let argAlgs <- resolveArgAlgs args ctx
         applyBuiltinCounted b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCallCounted simple args ctx env
+      | some simple => evalUserCallCounted simple args ctx env preserveArgBoundaries
       | none => evalConditionalCallCounted callee args ctx env calleeName
-    | _ => evalUserCallCounted callee args ctx env
+    | _ => evalUserCallCounted callee args ctx env preserveArgBoundaries
 
   /-- Counted call evaluation for `reduce` step validation. -/
   partial def evalCallCounted (f : Expr) (args : Algorithm)
@@ -3202,18 +3216,41 @@ mutual
     | _ =>
         pure none
 
-  /-- Counted lexical fallback with receiver injection. -/
+  partial def makeInitBlockExpr (exprs : List Expr) : Expr :=
+    .block (Algorithm.mk none [] [] [] exprs)
+
+  partial def prepareLexicalDotCallArgs
+      (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
+      : Algorithm × List Bool :=
+    let explicitArgs := match extraArgs with
+      | some args => Algorithm.output args
+      | none => []
+    let outputExprs := [receiver] ++ explicitArgs
+    let preserveBoundaries := [true] ++ explicitArgs.map (fun _ => false)
+    if name = "while" && explicitArgs.length >= 2 then
+      (Algorithm.mk none [] [] [] [receiver, makeInitBlockExpr explicitArgs], [true, false])
+    else if name = "repeat" && explicitArgs.length >= 3 then
+      match explicitArgs with
+      | countExpr :: initExprs =>
+          (Algorithm.mk none [] [] [] [receiver, countExpr, makeInitBlockExpr initExprs],
+            [true, false, false])
+      | [] =>
+          (Algorithm.mk none [] [] [] outputExprs, preserveBoundaries)
+    else
+      (Algorithm.mk none [] [] [] outputExprs, preserveBoundaries)
+
+  /-- Counted lexical fallback with receiver injection.
+      The injected receiver is a preserved argument boundary; sequence builtin
+      dot-call expansion is handled before this path. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
       (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match <- trySequenceBuiltinDotCall name receiver extraArgs ctx env with
     | some (b, args) =>
         applyBuiltinCounted b args ctx env
     | none =>
-    let outputExprs := [receiver] ++ match extraArgs with
-      | some ea => Algorithm.output ea
-      | none => []
-    let combinedArgs := Algorithm.mk none [] [] [] outputExprs
-    evalCallCounted (.resolve name) combinedArgs ctx env
+    let (combinedArgs, preserveArgBoundaries) := prepareLexicalDotCallArgs name receiver extraArgs
+    let callee <- resolveAlg (.resolve name) ctx
+    evalResolvedCallCounted callee combinedArgs ctx env name preserveArgBoundaries
 
   /-- Counted dotCall evaluation for `reduce` step validation. -/
   partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
@@ -3359,7 +3396,8 @@ mutual
           values and also prevents extra higher-order arguments from being silently
           ignored by zipped AlgEnv binding. -/
   partial def evalUserCall (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      : EvalM Result := do
     let wiredArgs := wireToCaller ctx args
     let argExprs := Algorithm.output wiredArgs
     if (Algorithm.output callee).isEmpty then
@@ -3372,39 +3410,45 @@ mutual
         let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
         let algBindings := bindAlgParams (Algorithm.params callee) maybeAlgs
         let argEvalCtx := EvalCtx.push wiredArgs ctx
+        let argBoundaryFlags :=
+          (List.range argExprs.length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
         -- For each (param, argExpr, maybeAlg) triple, independently try eval.
         -- Collect (param, value) for args whose eval succeeds.
         -- If eval fails but the arg resolved as algorithm, skip value binding.
         -- If eval fails and no algorithm, propagate the error.
         let rec collectValues
             (ps : List Ident) (es : List Expr)
-            (mas : List (Option Algorithm))
+            (mas : List (Option Algorithm)) (preserveFlags : List Bool)
             : EvalM (List Ident × List Result) :=
-          match ps, es, mas with
-          | [], _, _ => pure ([], [])
-          | ps, [], _ => pure (ps, [])
-          | p :: ps', [e], [ma] =>
+          match ps, es, mas, preserveFlags with
+          | [], _, _, _ => pure ([], [])
+          | ps, [], _, _ => pure (ps, [])
+          | p :: ps', [e], [ma], [preserveBoundary] =>
             match eval e argEvalCtx env with
             | .ok value =>
               match ps' with
               | [] => pure ([p], [value])
-              | _  => pure (p :: ps', unpackArgs value)
+              | _  =>
+                  if preserveBoundary then
+                    pure (p :: ps', [value])
+                  else
+                    pure (p :: ps', unpackArgs value)
             | .error err =>
               match ma with
               | some _ => pure (ps', [])
               | none => .error err
-          | p :: ps', e :: es', ma :: mas' =>
+          | p :: ps', e :: es', ma :: mas', _ :: preserveFlags' =>
               match eval e argEvalCtx env with
               | .ok value => do
-                  let (rps, rvs) <- collectValues ps' es' mas'
+                  let (rps, rvs) <- collectValues ps' es' mas' preserveFlags'
                   pure (p :: rps, value :: rvs)
               | .error err =>
                   match ma with
-                  | some _ => collectValues ps' es' mas'
+                  | some _ => collectValues ps' es' mas' preserveFlags'
                   | none => .error err
-          | _, _, [] => .error (Error.arityMismatch paramCount argExprs.length)
+          | _, _, _, _ => .error (Error.arityMismatch paramCount argExprs.length)
         let (valueParams, valueResults) <- collectValues
-            (Algorithm.params callee) argExprs maybeAlgs
+            (Algorithm.params callee) argExprs maybeAlgs argBoundaryFlags
         let argEnv <- bindParams valueParams valueResults
         let newCtx := ctx.withAlgEnv (algBindings ++ ctx.algEnv)
         evalAlgOutput callee newCtx (argEnv ++ env)
@@ -3458,18 +3502,17 @@ mutual
     withCtx (CtxMsg.call f) <| evalResolvedCall callee args ctx env (openExprName f)
 
   /-- Resolve name lexically and call with receiver prepended to args.
-      Delegates to evalCall to get builtin dispatch for free. -/
+      The injected receiver is a preserved argument boundary; sequence builtin
+      dot-call expansion is handled before this path. -/
   partial def callLexicalWithReceiver (name : Ident) (receiver : Expr)
       (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     match <- trySequenceBuiltinDotCall name receiver extraArgs ctx env with
     | some (b, args) =>
         applyBuiltin b args ctx env
     | none =>
-    let outputExprs := [receiver] ++ match extraArgs with
-      | some ea => Algorithm.output ea
-      | none => []
-    let combinedArgs := Algorithm.mk none [] [] [] outputExprs
-    evalCall (.resolve name) combinedArgs ctx env
+    let (combinedArgs, preserveArgBoundaries) := prepareLexicalDotCallArgs name receiver extraArgs
+    let callee <- resolveAlg (.resolve name) ctx
+    evalResolvedCall callee combinedArgs ctx env name preserveArgBoundaries
 
   /-- Evaluate dotCall: a.f or a.f(args)
       Smart dispatch:

@@ -1061,6 +1061,104 @@ def test16 : Bool :=
   .call (resolve "UsePair") (alg [] [] [] [resolve "Inc", .block pairArg16])
 ]))
 
+-- Test 16a: ordinary dot-call fallback preserves receiver as one argument boundary.
+def dotCallBoundaryAddAlg16a : Algorithm :=
+  alg ["a", "b"] [] [] [
+    .binary .add (.param "a") (.param "b")
+  ]
+
+def dotCallBoundaryPairReceiverAlg16a : Algorithm :=
+  alg [] [] [] [.num 3, .num 7]
+
+def dotCallBoundaryNormalCallsStillWork16a : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .call (resolve "F") (alg [] [] [] [.num 3, .num 7]),
+    .call (resolve "F") (alg [] [] [] [.block dotCallBoundaryPairReceiverAlg16a])
+  ])) with
+  | Except.ok [10, 10] => true
+  | _ => false
+
+#eval dotCallBoundaryNormalCallsStillWork16a  -- should be true
+
+def dotCallBoundaryScalarReceiverStillWorks16a : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.num 3) "F" (some (alg [] [] [] [.num 7]))
+  ])) with
+  | Except.ok [10] => true
+  | _ => false
+
+#eval dotCallBoundaryScalarReceiverStillWorks16a  -- should be true
+
+def dotCallBoundaryMultiOutputReceiverNoArgsFails16a : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" none
+  ])) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval dotCallBoundaryMultiOutputReceiverNoArgsFails16a  -- should be true
+
+def dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" (some (alg [] [] [] []))
+  ])) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a  -- should be true
+
+def dotCallBoundaryCountedPathDoesNotSpread16a : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall
+      (.dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" none)
+      "count"
+      none
+  ])) with
+  | Except.error _ => true
+  | Except.ok _ => false
+
+#eval dotCallBoundaryCountedPathDoesNotSpread16a  -- should be true
+
+def dotCallBoundaryGroupReceiverAlg16a : Algorithm :=
+  alg ["x"] [] [] [.param "x"]
+
+def dotCallBoundaryOneParamGetsGroupedReceiver16a : Bool :=
+  match runResult (.block (algPrivate [] [] [("G", dotCallBoundaryGroupReceiverAlg16a)] [
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "G" none
+  ])) with
+  | Except.ok (.group [.atom 3, .atom 7]) => true
+  | _ => false
+
+#eval dotCallBoundaryOneParamGetsGroupedReceiver16a  -- should be true
+
+def dotCallBoundaryFinalExplicitArgStillUnpacks16a : Bool :=
+  let hAlg := alg ["a", "b", "c"] [] [] [
+    .binary .add
+      (.binary .add (.param "a") (.param "b"))
+      (.param "c")
+  ]
+  match runFlat (.block (algPrivate [] [] [("H", hAlg)] [
+    .dotCall (.num 3) "H" (some (alg [] [] [] [
+      .block (alg [] [] [] [.num 4, .num 5])
+    ]))
+  ])) with
+  | Except.ok [12] => true
+  | _ => false
+
+#eval dotCallBoundaryFinalExplicitArgStillUnpacks16a  -- should be true
+
+def dotCallBoundarySequenceBuiltinsStillExpand16a : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "sum" none,
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "count" none,
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "first" none,
+    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "last" none
+  ])) with
+  | Except.ok [10, 2, 3, 7] => true
+  | _ => false
+
+#eval dotCallBoundarySequenceBuiltinsStillExpand16a  -- should be true
+
 -- Test 17: extra higher-order args are not silently ignored
 -- TakeFunc(f) called with two algorithm args should raise arity mismatch.
 def takeFuncAlg17 : Algorithm :=

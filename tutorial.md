@@ -488,7 +488,7 @@ count(A)
 3
 ```
 
-Grouped values count as one top-level item when they are emitted as one grouped result. Sequence builtins now consume each argument's counted top-level items, so named helpers such as `A = 1, 2, 3; count(A)` and `A.count` both return `3`. Dot-call also strips one outer inline receiver block layer, so `(1, 2, 3).count` and `{1, 2, 3}.count` return `3`, while `T = (1, 2, 3); count(T)`, `T.count`, and `((1, 2, 3)).count` stay grouped and return `1`. See `count` below for the full sequence-input rules.
+Grouped values count as one top-level item when they are emitted as one grouped result. Sequence builtins now consume each argument's counted top-level items, so named helpers such as `A = 1, 2, 3; count(A)` and `A.count` both return `3`. Sequence-builtin dot-call also strips one outer inline receiver block layer, so `(1, 2, 3).count` and `{1, 2, 3}.count` return `3`, while `T = (1, 2, 3); count(T)`, `T.count`, and `((1, 2, 3)).count` stay grouped and return `1`. See `count` below for the full sequence-input rules.
 
 ### Output Selection
 
@@ -560,6 +560,20 @@ Add = a + b
 ```
 
 **Result:** `15`
+
+Ordinary dot-call preserves the receiver as one leading argument boundary. A grouped or multi-output receiver is not automatically spread across fixed parameters:
+
+```
+Add = a + b
+
+Add(3, 7)      // 10
+(3).Add(7)     // 10
+(3, 7).Add     // error: receiver stays one argument
+```
+
+Use direct multi-argument syntax, or put one scalar receiver before the dot and the remaining arguments after the property name, when a user-defined algorithm expects several fixed parameters.
+
+As an invariant, `A.B(C, D)` means `B(A, C, D)` for ordinary properties, not a call where `A`'s top-level values are spread before `C` and `D`.
 
 **Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to lexical lookup in the current scope — this is how extension-style calls work.
 
@@ -931,9 +945,9 @@ With that rule, `map((1, 2), (3, 4), Swap)` calls `Swap` once per pair and produ
 
 - Each leading sequence argument contributes the counted top-level items it emits
 - Single-output grouped arguments therefore remain one top-level item, while multi-output arguments such as `range(1, 5)` or `Values = 1, 2, 3` expand into several sequence items
-- Sequence-builtin dot-call receivers follow the same counted-top-level-items rule after contributing the receiver expression's items
+- For sequence/variadic builtins only, dot-call may consume the receiver's top-level values as sequence items
 - Resolved helpers, call receivers, and selections can therefore all expose several items: `Values = 1, 2, 3; count(Values)` is `3`, `P = range(1, 5); count(P)` is `5`, and `Items = range(1, 3), 7; Items.count` is `2`
-- Dot-call strips exactly one outer inline receiver block layer. Inline receivers such as `(1, 2, 3).count`, `(3, 1, 2).order`, and `{1, 2, 3}.sum` therefore expose several receiver items, while named grouped helpers such as `Values = (1, 2, 3); Values.count` and extra-paren receivers such as `((1, 2, 3)).count` stay grouped
+- Sequence-builtin dot-call strips exactly one outer inline receiver block layer. Inline receivers such as `(1, 2, 3).count`, `(3, 1, 2).order`, and `{1, 2, 3}.sum` therefore expose several receiver items, while named grouped helpers such as `Values = (1, 2, 3); Values.count` and extra-paren receivers such as `((1, 2, 3)).count` stay grouped
 - Direct multi-argument syntax is how you intentionally pass several top-level items to a sequence builtin: `count(1, 2, 3)` is `3`, `order(3, 4, 2, 1)` works, and `sum(10, 20, 30)` is valid
 - Grouped arguments remain grouped top-level items: `order((1, 2, 3))`, `sum((1, 2, 3))`, and `count((1, 2, 3))` treat that grouped value as one item
 - `:` selection projects one level of content before the builtin consumes the emitted items. `Pairs = (1, 2), (3, 4)` gives `count(Pairs:0) = 2` and `(Pairs:0).count = 2`. `Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)` gives `order(Data:0)` and `(Data:0).order` as `1, 2, 4, 6, 7`
@@ -997,7 +1011,7 @@ order(Data:0)
 ```
 
 Applying `order` or `orderDesc` to a collection like `(1, 'hello')` is invalid because KatLang does not define a loose mixed-type ordering rule. `order((1, 2, 3))` is invalid because the single grouped argument remains one grouped top-level item, not three sortable atoms in plain-call form. `order((1, 2), (3, 4))` is also invalid, because each grouped argument is a separate top-level item and grouped items are not sortable atoms.
-Named multi-output helpers and call receivers such as `Values = 1, 2, 3; order(Values)`, `Values.order`, `P = range(5, 1); order(P)`, and `range(5, 1).order` therefore sort successfully. Inline block receivers such as `(1, 2, 3).order` and `{1, 2, 3}.order` do the same because dot-call strips one outer inline receiver block layer before consuming receiver items. `Values = (1, 2, 3); Values.order` and `((1, 2, 3)).order` are still invalid because those receivers denote one grouped value. Selection already projects one level of content, so `order(Data:0)` and `(Data:0).order` both sort `7, 6, 4, 2, 1` to `1, 2, 4, 6, 7`.
+Named multi-output helpers and call receivers such as `Values = 1, 2, 3; order(Values)`, `Values.order`, `P = range(5, 1); order(P)`, and `range(5, 1).order` therefore sort successfully. Inline block receivers such as `(1, 2, 3).order` and `{1, 2, 3}.order` do the same because sequence-builtin dot-call strips one outer inline receiver block layer before consuming receiver items. `Values = (1, 2, 3); Values.order` and `((1, 2, 3)).order` are still invalid because those receivers denote one grouped value. Selection already projects one level of content, so `order(Data:0)` and `(Data:0).order` both sort `7, 6, 4, 2, 1` to `1, 2, 4, 6, 7`.
 
 ### Counting: `count`
 
@@ -2024,7 +2038,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 
 ### Builtin Algorithms, Intrinsics, and Keywords
 
-For the sequence builtins below, plain-call grouped arguments remain single items. Dot-call uses the same receiver-normalization rule: remove one outer receiver-scoping block layer, but keep named grouped receivers and extra grouped layers grouped. Selection already projects one level of selected content, so `A:0` follows the ordinary sequence rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not auto-expand grouped receivers beyond that.
+For the sequence builtins below, plain-call grouped arguments remain single items. Sequence-builtin dot-call uses the same receiver-normalization rule: remove one outer receiver-scoping block layer, but keep named grouped receivers and extra grouped layers grouped. Selection already projects one level of selected content, so `A:0` follows the ordinary sequence rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not auto-expand grouped receivers beyond that.
 
 | Keyword | Usage |
 |---|---|

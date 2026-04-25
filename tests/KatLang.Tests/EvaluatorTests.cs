@@ -4561,6 +4561,102 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_DotCall_ReceiverBoundary_NormalCallStillUnpacksFinalArg()
+    {
+        AssertEval(
+            """
+            F = a + b
+            F(3, 7)
+            """,
+            10);
+
+        AssertEval(
+            """
+            F = a + b
+            F((3, 7))
+            """,
+            10);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_ScalarReceiverWithExplicitArgStillWorks()
+    {
+        var source = """
+            F = a + b
+            (3).F(7)
+            """;
+
+        AssertEval(source, 10);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_MultiOutputReceiverDoesNotSpread()
+    {
+        var source = """
+            F = a + b
+            (3, 7).F
+            """;
+
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_EmptyArgsDoNotSpreadMultiOutputReceiver()
+    {
+        var source = """
+            F = a + b
+            (3, 7).F()
+            """;
+
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_CountedPathDoesNotSpreadMultiOutputReceiver()
+    {
+        var source = """
+            F = a + b
+            ((3, 7).F).count
+            """;
+
+        AssertEvalFails(source);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_OneParamReceivesGroupedReceiver()
+    {
+        var result = EvalFull(
+            """
+            G = x
+            (3, 7).G
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        AssertGroupedAtoms(result.Value, 3, 7);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_FinalExplicitArgStillUnpacks()
+    {
+        var source = """
+            H = a + b + c
+            (3).H((4, 5))
+            """;
+
+        AssertEval(source, 12);
+    }
+
+    [Fact]
+    public void Eval_DotCall_ReceiverBoundary_SequenceBuiltinsStillExpandReceiverContent()
+    {
+        AssertEval("(3, 7).sum", 10);
+        AssertEval("(3, 7).count", 2);
+        AssertEval("(3, 7).first", 3);
+        AssertEval("(3, 7).last", 7);
+    }
+
+    [Fact]
     public void Eval_DotCall_StructuralProperty_ArityMismatch_Propagated()
     {
         // X.Inc: Inc has params but no args -> ArityMismatch propagated through dotCall
