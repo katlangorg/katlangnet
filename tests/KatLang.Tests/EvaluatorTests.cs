@@ -2764,6 +2764,59 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_Reduce_ParameterizedInitialAccumulator_ReportsCallSiteWithHint()
+    {
+        var result = EvalFull("Add = x + total\nreduce(1, 2, 3, Add)");
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error);
+        Assert.Equal(2, formatted.StartLine);
+        Assert.Equal(1, formatted.StartColumn);
+        Assert.Contains("`reduce` is `reduce(items..., step, initial)`", formatted.Message);
+        Assert.Contains("'x' and 'total'", formatted.Message);
+        Assert.Contains("add an initial accumulator", formatted.Message);
+        Assert.DoesNotContain("Unknown name: x", formatted.Message);
+        Assert.DoesNotContain("Bad arity", formatted.Message);
+
+        var error = result.Error;
+        while (error is EvalError.WithContext context)
+        {
+            if (context.ErrorContext is ReduceInitialAccumulatorContext)
+            {
+                Assert.IsType<EvalError.BadArity>(context.Inner);
+                return;
+            }
+
+            error = context.Inner;
+        }
+
+        Assert.Fail("Expected reduce initial-accumulator context.");
+    }
+
+    [Fact]
+    public void Eval_Reduce_DotCallParameterizedInitialAccumulator_ReportsCallSiteWithHint()
+    {
+        var result = EvalFull(
+            """
+            Add = x + total
+            Values = 1, 2, 3
+            Values.reduce(Add)
+            """);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error);
+        Assert.Equal(3, formatted.StartLine);
+        Assert.Equal(1, formatted.StartColumn);
+        Assert.Contains("`reduce` is `reduce(items..., step, initial)`", formatted.Message);
+        Assert.Contains("'x' and 'total'", formatted.Message);
+        Assert.Contains("add an initial accumulator", formatted.Message);
+        Assert.DoesNotContain("Unknown name: x", formatted.Message);
+        Assert.DoesNotContain("Bad arity", formatted.Message);
+    }
+
+    [Fact]
     public void Eval_Reduce_GroupedElements_ArePassedWhole()
     {
         var source = """

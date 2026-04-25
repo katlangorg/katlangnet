@@ -32,6 +32,11 @@ public sealed record CallContext(string CalleeDescription) : ErrorContext
     public override string ToLegacyString() => $"while evaluating call to {CalleeDescription}";
 }
 
+public sealed record ReduceInitialAccumulatorContext(IReadOnlyList<string> RequiredParameterNames) : ErrorContext
+{
+    public override string ToLegacyString() => "while preparing reduce initial accumulator";
+}
+
 public sealed record OpenResolutionContext(string OpenDescription) : ErrorContext
 {
     public override string ToLegacyString() => $"while resolving open: {OpenDescription}";

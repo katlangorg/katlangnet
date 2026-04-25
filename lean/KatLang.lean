@@ -136,6 +136,12 @@ def Error.innermost : Error -> Error
   | .withContext _ inner => inner.innermost
   | err => err
 
+def Error.referencesAnyName (names : List Ident) : Error -> Bool
+  | .unknownName name => names.contains name
+  | .unresolvedImplicitParams paramNames => paramNames.any (fun name => names.contains name)
+  | .withContext _ inner => Error.referencesAnyName names inner
+  | _ => false
+
 --------------------------------------------------------------------------------
 -- Operators
 --------------------------------------------------------------------------------
@@ -2557,6 +2563,14 @@ mutual
           s!"internal sequence metadata for {builtinDisplayName b} did not produce numeric items"
           Error.badArity)
 
+  partial def reduceInitialAccumulatorRequiresValueError : Error :=
+    Error.withContext "while preparing reduce initial accumulator" Error.badArity
+
+  partial def isLikelyUnevaluatedParameterError (algorithm : Algorithm) (err : Error) : Bool :=
+    match Algorithm.params algorithm with
+    | [] => false
+    | paramNames => Error.referencesAnyName paramNames err
+
   /-- Evaluate `reduce` over one or more leading sequence arguments.
       `reduce` processes top-level collection elements from left to right.
       `step(element, accumulator)` receives each item exactly as collected for
@@ -2570,7 +2584,14 @@ mutual
   partial def evalReduceCounted (collection : List CountedResult)
       (stepAlg initialAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let initOut <- evalAlgOutputCounted initialAlg ctx env
+    let initOut <-
+      match evalAlgOutputCounted initialAlg ctx env with
+      | .ok value => pure value
+      | .error err =>
+          if isLikelyUnevaluatedParameterError initialAlg err then
+            .error reduceInitialAccumulatorRequiresValueError
+          else
+            .error err
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do

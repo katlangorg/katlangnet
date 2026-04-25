@@ -1867,6 +1867,29 @@ public static class Evaluator
     private static string NumericSequenceItemErrorContext(BuiltinId builtin, int index, Result item)
         => $"{BuiltinDisplayName(builtin)} expects each collection element to be a single numeric value; item {index} was {DescribeSequenceItem(item)}";
 
+    private static EvalError ReduceInitialAccumulatorRequiresValueError(Algorithm initialAlg)
+        => new EvalError.WithContext(
+            new ReduceInitialAccumulatorContext(initialAlg.Params.ToList()),
+            new EvalError.BadArity());
+
+    private static bool IsLikelyUnevaluatedParameterError(Algorithm algorithm, EvalError error)
+    {
+        if (algorithm.Params.Count == 0)
+            return false;
+
+        var parameterNames = algorithm.Params.ToHashSet(StringComparer.Ordinal);
+        return ErrorReferencesAnyName(error, parameterNames);
+    }
+
+    private static bool ErrorReferencesAnyName(EvalError error, IReadOnlySet<string> names)
+        => error switch
+        {
+            EvalError.UnknownName(var name) => names.Contains(name),
+            EvalError.UnresolvedImplicitParams(var paramNames) => paramNames.Any(names.Contains),
+            EvalError.WithContext(_, var inner) => ErrorReferencesAnyName(inner, names),
+            _ => false,
+        };
+
     /// <summary>
     /// Evaluate <c>reduce</c> over one or more leading sequence arguments while
     /// preserving the accumulator's emitted-value count for the empty-sequence
@@ -1885,7 +1908,13 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var initialR = EvalAlgOutputCounted(initialAlg, ctx, valEnv);
-        if (initialR.IsError) return initialR.Error;
+        if (initialR.IsError)
+        {
+            if (IsLikelyUnevaluatedParameterError(initialAlg, initialR.Error))
+                return ReduceInitialAccumulatorRequiresValueError(initialAlg);
+
+            return initialR.Error;
+        }
 
         var accumulator = initialR.Value;
         foreach (var item in items)

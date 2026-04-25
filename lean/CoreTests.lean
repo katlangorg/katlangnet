@@ -2434,6 +2434,23 @@ def test84a : Bool :=
 
 #eval test84a  -- should be true
 
+-- Test 84b: reduce reports a missing initial accumulator before evaluating the step as the accumulator
+def test84b : Bool :=
+  match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
+    .call (resolve "reduce") (alg [] [] [] [
+      .num 1,
+      .num 2,
+      .num 3,
+      .resolve "Add"
+    ])
+  ])) with
+  | Except.error err =>
+      hasContext "while preparing reduce initial accumulator" err
+      && innermostIsBadArity err
+  | _ => false
+
+#eval test84b  -- should be true
+
 --------------------------------------------------------------------------------
 -- map builtin tests
 --------------------------------------------------------------------------------

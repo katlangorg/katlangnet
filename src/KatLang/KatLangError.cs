@@ -46,6 +46,8 @@ public sealed class KatLangError
             return formattedArityMismatch;
         if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
             return formattedImplicitParams;
+        if (TryFormatReduceInitialAccumulator(error, out var formattedReduceInitialAccumulator))
+            return formattedReduceInitialAccumulator;
 
         return error switch
         {
@@ -301,6 +303,34 @@ public sealed class KatLangError
         return true;
     }
 
+    private static bool TryFormatReduceInitialAccumulator(EvalError error, out string message)
+    {
+        if (FindReduceInitialAccumulatorContext(error) is { } context)
+        {
+            message = FormatReduceInitialAccumulator(context.RequiredParameterNames);
+            return true;
+        }
+
+        message = string.Empty;
+        return false;
+    }
+
+    private static ReduceInitialAccumulatorContext? FindReduceInitialAccumulatorContext(EvalError error)
+    {
+        while (error is EvalError.WithContext context)
+        {
+            if (context.ErrorContext is ReduceInitialAccumulatorContext reduceContext
+                && context.Inner is EvalError.BadArity)
+            {
+                return reduceContext;
+            }
+
+            error = context.Inner;
+        }
+
+        return null;
+    }
+
     private static bool TryParseCallContext(string context, out string calleeDesc)
     {
         const string prefix = "while evaluating call to ";
@@ -388,8 +418,26 @@ public sealed class KatLangError
     private static string FormatGenericArityMismatch(int expected, int actual)
         => $"Expected {FormatCount(expected, "parameter")}, but was called with {FormatCount(actual, "argument")}.";
 
+    private static string FormatReduceInitialAccumulator(IReadOnlyList<string> requiredParameterNames)
+    {
+        var parameterDetail = requiredParameterNames.Count == 0
+            ? "The last argument cannot be evaluated as the starting accumulator."
+            : $"The last argument is an algorithm that still needs {FormatQuotedList(requiredParameterNames)}, so it cannot be evaluated as the starting accumulator.";
+
+        return $"`reduce` is `reduce(items..., step, initial)`: the last argument must be an initial accumulator value. {parameterDetail} If that algorithm is the step function, add an initial accumulator after it, for example `reduce(..., step, 0)`.";
+    }
+
     private static string FormatCount(int count, string singularNoun)
         => count == 1 ? $"1 {singularNoun}" : $"{count} {singularNoun}s";
+
+    private static string FormatQuotedList(IReadOnlyList<string> values)
+        => values.Count switch
+        {
+            0 => string.Empty,
+            1 => $"'{values[0]}'",
+            2 => $"'{values[0]}' and '{values[1]}'",
+            _ => string.Join(", ", values.Take(values.Count - 1).Select(value => $"'{value}'")) + $", and '{values[^1]}'",
+        };
 
     private static bool IsSimpleIdentifier(string value)
     {
