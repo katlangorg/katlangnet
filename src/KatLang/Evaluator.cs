@@ -226,7 +226,7 @@ public static class Evaluator
         Expr.Unary => "unary",
         Expr.Binary => "binary",
         Expr.Index => "index",
-        Expr.Combine => "combine",
+        Expr.ResultJoin => "resultJoin",
         Expr.Resolve => "resolve",
         Expr.Block => "block",
         Expr.Call => "call",
@@ -242,7 +242,7 @@ public static class Evaluator
     /// Lean: Expr.isOpenForm.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Combine or Expr.Block or Expr.Resolve or Expr.DotCall(_, _, null);
+        Expr.Block or Expr.Resolve or Expr.DotCall(_, _, null);
 
     /// <summary>
     /// Extract a descriptive name from an open expression for error messages.
@@ -270,7 +270,7 @@ public static class Evaluator
             ? "~" + OpenExprName(inner)
             : OpenExprName(inner) + "~",
         Expr.Block => "(inline library)",
-        Expr.Combine(var a, var b) => OpenExprName(a) + " + " + OpenExprName(b),
+        Expr.ResultJoin(var a, var b) => OpenExprName(a) + "; " + OpenExprName(b),
         _ => $"({ExprKind(e)})",
     };
 
@@ -1671,7 +1671,88 @@ public static class Evaluator
         ResultItems(into, output.Value);
     }
 
-    private static List<Expr> CombineLeaves(Expr expr)
+    private enum ResultJoinSide
+    {
+        Left,
+        Right
+    }
+
+    private static string ResultJoinSideName(ResultJoinSide side)
+        => side == ResultJoinSide.Left ? "left" : "right";
+
+    private static EvalError ResultJoinMissingOutput(ResultJoinSide side, SourceSpan? span)
+        => new EvalError.ResultJoinMissingOutput(ResultJoinSideName(side)) { Span = span };
+
+    private static bool IsMissingOutputError(EvalError error) => error switch
+    {
+        EvalError.MissingOutput => true,
+        EvalError.WithContext(_, var inner) => IsMissingOutputError(inner),
+        _ => false,
+    };
+
+    private static EvalResult<IReadOnlyList<Result>> EvalAlgorithmOutputJoinItems(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        ResultJoinSide side,
+        SourceSpan? span)
+    {
+        var dupProp = alg.FindDuplicatePropName();
+        if (dupProp is not null)
+            return new EvalError.DuplicateProperty(dupProp);
+
+        if (alg is Algorithm.User { Output.Count: 0 })
+            return ResultJoinMissingOutput(side, span);
+
+        var innerCtx = ctx.Push(alg);
+        var items = new List<Result>();
+
+        foreach (var expr in alg.Output)
+        {
+            var countedR = EvalCounted(expr, innerCtx, valEnv);
+            if (countedR.IsError)
+                return IsMissingOutputError(countedR.Error)
+                    ? ResultJoinMissingOutput(side, expr.Span ?? span)
+                    : countedR.Error;
+
+            AddCountedTopLevelValues(items, countedR.Value);
+        }
+
+        if (items.Count == 0)
+            return ResultJoinMissingOutput(side, span);
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(items);
+    }
+
+    private static EvalResult<IReadOnlyList<Result>> EvalResultJoinOperandItems(
+        Expr expr,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        ResultJoinSide side)
+    {
+        if (expr is Expr.Block(var alg))
+        {
+            var wired = WireToCaller(ctx, alg);
+            var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+            if (wired.Params.Count != 0)
+                return MissingImplicitArguments<IReadOnlyList<Result>>(wired.Params, blockSpan);
+
+            return EvalAlgorithmOutputJoinItems(wired, ctx, valEnv, side, blockSpan);
+        }
+
+        var outputR = EvalCounted(expr, ctx, valEnv);
+        if (outputR.IsError)
+            return IsMissingOutputError(outputR.Error)
+                ? ResultJoinMissingOutput(side, expr.Span)
+                : outputR.Error;
+
+        if (outputR.Value.EmittedCount == 0)
+            return ResultJoinMissingOutput(side, expr.Span);
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(outputR.Value.Value.ToItems());
+    }
+
+    private static List<Expr> ResultJoinLeaves(Expr expr)
     {
         var leaves = new List<Expr>();
         var stack = new Stack<Expr>();
@@ -1680,7 +1761,7 @@ public static class Evaluator
         while (stack.Count != 0)
         {
             var current = stack.Pop();
-            if (current is Expr.Combine(var left, var right))
+            if (current is Expr.ResultJoin(var left, var right))
             {
                 stack.Push(right);
                 stack.Push(left);
@@ -1693,38 +1774,38 @@ public static class Evaluator
         return leaves;
     }
 
-    private static EvalResult<CountedResult> EvalCombineCounted(
+    private static EvalResult<CountedResult> EvalResultJoinCounted(
         Expr expr,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var leaves = CombineLeaves(expr);
+        var leaves = ResultJoinLeaves(expr);
         var items = new List<Result>(leaves.Count);
-        var emittedCount = 0;
 
-        foreach (var leaf in leaves)
+        for (var index = 0; index < leaves.Count; index++)
         {
-            var leafR = EvalCounted(leaf, ctx, valEnv);
+            var leaf = leaves[index];
+            var side = index == 0 ? ResultJoinSide.Left : ResultJoinSide.Right;
+            var leafR = EvalResultJoinOperandItems(leaf, ctx, valEnv, side);
             if (leafR.IsError) return leafR.Error;
 
-            AddCountedTopLevelValues(items, leafR.Value);
-            emittedCount += leafR.Value.EmittedCount;
+            items.AddRange(leafR.Value);
         }
 
         return EvalResult<CountedResult>.Ok(new CountedResult(
             Result.FromItems(items),
-            emittedCount));
+            items.Count));
     }
 
     /// <summary>
     /// Explicit content projection for higher-order plain-call arguments.
-    /// A selected value (<c>S:i</c>) and an explicit combine (<c>a; b</c>)
+    /// A selected value (<c>S:i</c>) and an explicit result join (<c>a; b</c>)
     /// still contribute their denoted top-level items when a builtin is using
     /// ordinary-argument outer iteration.
     /// </summary>
     private static bool UsesExplicitOuterSequenceContent(Algorithm collectionArg)
         => collectionArg is Algorithm.User { Params.Count: 0, Output.Count: 1 } user
-            && user.Output[0] is Expr.Combine or Expr.Index;
+            && user.Output[0] is Expr.ResultJoin or Expr.Index;
 
     private static IReadOnlyList<Result> CollectSequenceBuiltinInputItems(
         SequenceBuiltinCollectionMode collectionMode,
@@ -1798,7 +1879,7 @@ public static class Evaluator
     /// Direct-consumption builtins read counted top-level items, while
     /// higher-order plain-call builtins can preserve each ordinary argument as
     /// one outer iteration item unless the argument explicitly projects or
-    /// combines sequence content.
+    /// joins sequence result content.
     /// Handlers call this explicitly so they can choose when leading sequence
     /// evaluation happens relative to any trailing-argument validation.
     /// </summary>
@@ -1925,7 +2006,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; ordinary boundaries stay whole, explicit ;/: iterate content, and the accumulator is unchanged)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected; ordinary boundaries stay whole, explicit result join/: iterate content, and the accumulator is unchanged)",
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 
@@ -1956,7 +2037,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var predicateR = WithCtx(
-                "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)",
+                "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)",
                 EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
             if (predicateR.IsError)
             {
@@ -1999,7 +2080,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)",
+                "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)",
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
             if (transformR.IsError) return transformR.Error;
 
@@ -2813,42 +2894,6 @@ public static class Evaluator
         }
     }
 
-    // ── Combine algorithms ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Policy controlling how opens are handled when combining two algorithms.
-    /// Lean: OpenPolicy inductive.
-    /// </summary>
-    private enum OpenPolicy
-    {
-        /// <summary>Merge opens from both algorithms (a.opens ++ b.opens).</summary>
-        Merge,
-        /// <summary>Discard all opens (result has opens = []).
-        /// Enforces isolation: libraries cannot smuggle in transitive opens.</summary>
-        Closed
-    }
-
-    /// <summary>
-    /// Lean: combineAlg. Merges params, properties, output.
-    /// Opens handling is controlled by <paramref name="openPolicy"/>:
-    /// <c>Merge</c> concatenates opens; <c>Closed</c> discards them.
-    /// </summary>
-    private static Algorithm CombineAlg(Algorithm a, Algorithm b, OpenPolicy openPolicy = OpenPolicy.Merge)
-    {
-        var opens = openPolicy switch
-        {
-            OpenPolicy.Merge => a.Opens.Concat(b.Opens).ToList(),
-            OpenPolicy.Closed => new List<Expr>(),
-            _ => throw new InvalidOperationException($"Unknown OpenPolicy: {openPolicy}")
-        };
-        return new Algorithm.User(
-            Parent: null, // wired later by ResolveAlg
-            Params: a.Params.Concat(b.Params).ToList(),
-            Opens: opens,
-            Properties: a.Properties.Concat(b.Properties).ToList(),
-            Output: [new Expr.Block(a), new Expr.Block(b)]);
-    }
-
     // ── Built-in prelude ────────────────────────────────────────────────────
 
     private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.Runtime);
@@ -2926,13 +2971,11 @@ public static class Evaluator
     {
         switch (expr)
         {
-            case Expr.Combine(var e1, var e2):
+            case Expr.ResultJoin(var e1, var e2):
             {
-                var aResult = ResolveAlgForOpen(e1, ctx);
-                if (aResult.IsError) return aResult.Error;
-                var bResult = ResolveAlgForOpen(e2, ctx);
-                if (bResult.IsError) return bResult.Error;
-                return EvalResult<Algorithm>.Ok(CombineAlg(aResult.Value, bResult.Value, OpenPolicy.Closed));
+                _ = e1;
+                _ = e2;
+                return new EvalError.BadOpenForm("result join expressions cannot be opened") { Span = expr.Span };
             }
 
             case Expr.Block(var alg):
@@ -3003,14 +3046,11 @@ public static class Evaluator
     {
         switch (expr)
         {
-            case Expr.Combine(var e1, var e2):
+            case Expr.ResultJoin(var e1, var e2):
             {
-                var aResult = ResolveAlg(e1, ctx);
-                if (aResult.IsError) return aResult.Error;
-                var bResult = ResolveAlg(e2, ctx);
-                if (bResult.IsError) return bResult.Error;
-                return EvalResult<Algorithm>.Ok(
-                    WireToCaller(ctx, CombineAlg(aResult.Value, bResult.Value)));
+                _ = e1;
+                _ = e2;
+                return new EvalError.NotAnAlgorithm("result join expression") { Span = expr.Span };
             }
 
             case Expr.Block(var alg):
@@ -3377,12 +3417,12 @@ public static class Evaluator
                 return EvalResult<Result>.Ok(new Result.Atom(result));
             }
 
-            case Expr.Combine:
+            case Expr.ResultJoin:
             {
-                var combineR = EvalCombineCounted(expr, ctx, valEnv);
-                return combineR.IsError
-                    ? combineR.Error
-                    : EvalResult<Result>.Ok(combineR.Value.Value);
+                var resultJoinR = EvalResultJoinCounted(expr, ctx, valEnv);
+                return resultJoinR.IsError
+                    ? resultJoinR.Error
+                    : EvalResult<Result>.Ok(resultJoinR.Value.Value);
             }
 
             case Expr.Block(var alg):
@@ -3449,8 +3489,8 @@ public static class Evaluator
     /// Evaluate an expression together with the number of top-level values it
     /// emits at the current algorithm boundary.
     /// Calls and name resolution propagate the callee's emitted output count.
-    /// Block expressions count as one grouped value when non-empty. Combine adds
-    /// both sides because it concatenates top-level outputs. All other value
+    /// Block expressions count as one grouped value when non-empty. Result join
+    /// emits the immediate joined items from each operand. All other value
     /// expressions emit either zero values (empty result) or one value.
     /// Lean: <c>evalCounted</c>.
     /// </summary>
@@ -3482,8 +3522,8 @@ public static class Evaluator
                 return new EvalError.UnknownName(name) { Span = expr.Span };
             }
 
-            case Expr.Combine:
-                return EvalCombineCounted(expr, ctx, valEnv);
+            case Expr.ResultJoin:
+                return EvalResultJoinCounted(expr, ctx, valEnv);
 
             case Expr.Block(var alg):
             {

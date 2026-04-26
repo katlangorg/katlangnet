@@ -281,14 +281,14 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_CombineExpr_ParamsFromBothSides()
+    public void Detect_ResultJoinExpr_ParamsFromBothSides()
     {
         var ast = ParseAndDetect("a; b");
 
         Assert.Equal(2, ast.Params.Count);
-        var combine = Assert.IsType<Expr.Combine>(ast.Output[0]);
-        Assert.IsType<Expr.Param>(combine.Left);
-        Assert.IsType<Expr.Param>(combine.Right);
+        var resultJoin = Assert.IsType<Expr.ResultJoin>(ast.Output[0]);
+        Assert.IsType<Expr.Param>(resultJoin.Left);
+        Assert.IsType<Expr.Param>(resultJoin.Right);
     }
 
     [Fact]
@@ -485,7 +485,7 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_OpenCombine_CollectsFromBothSides()
+    public void Detect_OpenResultJoin_DoesNotCollectProperties()
     {
         var source = """
             A = (public foo = 1)
@@ -495,9 +495,7 @@ public class ParameterDetectorTests
             """;
         var ast = ParseAndDetect(source);
 
-        // Combine(A, B) â†’ collects public props from both
-        Assert.Single(ast.Params);
-        Assert.Equal("z", ast.Params[0]);
+        Assert.Equal(["foo", "bar", "z"], ast.Params);
     }
 
     [Fact]

@@ -359,7 +359,7 @@ internal static class PropertyDependencyGraphBuilder
                 return seed;
             }
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
             {
                 var seed = CollectSummarySeed(left, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
                 seed.UnionWith(CollectSummarySeed(right, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
@@ -468,7 +468,7 @@ internal static class PropertyDependencyGraphBuilder
                 CollectSiblingDependencyIndices(selector, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
                 CollectSiblingDependencyIndices(left, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 CollectSiblingDependencyIndices(right, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
@@ -611,7 +611,7 @@ internal static class PropertyDependencyGraphBuilder
                 CollectDirectAncestorOwnedParameterNames(selector, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
                 break;
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
                 CollectDirectAncestorOwnedParameterNames(left, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
                 CollectDirectAncestorOwnedParameterNames(right, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
                 break;

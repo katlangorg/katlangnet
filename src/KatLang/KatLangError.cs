@@ -69,6 +69,7 @@ public sealed class KatLangError
             EvalError.SpecialOutputAccess => FormatSpecialOutputAccess(receiverDesc: null),
             EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
             EvalError.MissingOutput => FormatGenericMissingOutput(),
+            EvalError.ResultJoinMissingOutput e => FormatResultJoinMissingOutput(e.Side),
             EvalError.NumericOverflow => "Numeric overflow",
             EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
@@ -414,6 +415,9 @@ public sealed class KatLangError
 
     private static string FormatGenericMissingOutput()
         => "This algorithm or group has no output here. Add an Output expression inside it, or use one of its properties.";
+
+    private static string FormatResultJoinMissingOutput(string side)
+        => $"Cannot join results because the {side} side does not produce output.";
 
     private static string FormatGenericArityMismatch(int expected, int actual)
         => $"Expected {FormatCount(expected, "parameter")}, but was called with {FormatCount(actual, "argument")}.";

@@ -26,6 +26,11 @@ def innermostIsMissingOutput : Error -> Bool
   | .missingOutput => true
   | _ => false
 
+def innermostIsResultJoinMissingOutput (side : String) : Error -> Bool
+  | .withContext _ inner => innermostIsResultJoinMissingOutput side inner
+  | .resultJoinMissingOutput actual => actual = side
+  | _ => false
+
 def innermostIsExplicitParamsRequireOutput : Error -> Bool
   | .withContext _ inner => innermostIsExplicitParamsRequireOutput inner
   | .explicitParamsRequireOutput => true
@@ -55,6 +60,11 @@ def innermostIsLocalOnlyProperty (owner : String) (name : String) (exposure : Pr
 def innermostIsIllegalInOpen (msg : String) : Error -> Bool
   | .withContext _ inner => innermostIsIllegalInOpen msg inner
   | .illegalInOpen actual => actual = msg
+  | _ => false
+
+def innermostIsBadOpenForm (msg : String) : Error -> Bool
+  | .withContext _ inner => innermostIsBadOpenForm msg inner
+  | .badOpenForm actual => actual = msg
   | _ => false
 
 -- Test 1: Structural property access (0-param) → value access
@@ -1637,25 +1647,25 @@ def test24 : Bool :=
   .num 1
 ])))
 
--- Test 25: Combine with 3-arg if selects the else branch
+-- Test 25: Result join with 3-arg if selects the else branch
 -- 1, if(0, 2, 9), 3 → [1, 9, 3]
 def test25 : Bool :=
-  match runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3))) with
+  match runFlat (.resultJoin (.num 1) (.resultJoin (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3))) with
   | Except.ok [1, 9, 3] => true
   | _ => false
 
 #eval test25  -- should be true
-#eval runFlat (.combine (.num 1) (.combine (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3)))
+#eval runFlat (.resultJoin (.num 1) (.resultJoin (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9])) (.num 3)))
 
-def combine1234 : KatLang.Expr :=
-  .combine (.combine (.combine (.num 1) (.num 2)) (.num 3)) (.num 4)
+def resultJoin1234 : KatLang.Expr :=
+  .resultJoin (.resultJoin (.resultJoin (.num 1) (.num 2)) (.num 3)) (.num 4)
 
 def test25a : Bool :=
   match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [combine1234]),
-    .call (resolve "count") (alg [] [] [] [combine1234]),
-    .call (resolve "first") (alg [] [] [] [combine1234]),
-    .call (resolve "last") (alg [] [] [] [combine1234])
+    .call (resolve "sum") (alg [] [] [] [resultJoin1234]),
+    .call (resolve "count") (alg [] [] [] [resultJoin1234]),
+    .call (resolve "first") (alg [] [] [] [resultJoin1234]),
+    .call (resolve "last") (alg [] [] [] [resultJoin1234])
   ])) with
   | Except.ok [10, 4, 1, 4] => true
   | _ => false
@@ -1663,19 +1673,45 @@ def test25a : Bool :=
 #eval test25a  -- should be true
 
 def test25b : Bool :=
-  let groupedLeft := .combine (.block (alg [] [] [] [.num 1, .num 2])) (.num 3)
-  let groupedRight := .combine (.num 1) (.block (alg [] [] [] [.num 2, .num 3]))
+  let groupedLeft := .resultJoin (.block (alg [] [] [] [.num 1, .num 2])) (.num 3)
+  let groupedRight := .resultJoin (.num 1) (.block (alg [] [] [] [.num 2, .num 3]))
   match runFlat (.block (alg [] [] [] [
     .call (resolve "count") (alg [] [] [] [groupedLeft]),
     .call (resolve "count") (alg [] [] [] [groupedRight])
   ])) with
-  | Except.ok [2, 2] => true
+  | Except.ok [3, 3] => true
   | _ => false
 
 #eval test25b  -- should be true
 
+def test25bNestedGroups : Bool :=
+  let nestedLeft := .resultJoin (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])])) (.num 3)
+  let nestedMiddle := .resultJoin (.block (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])) (.num 4)
+  match runResult (.block (alg [] [] [] [nestedLeft, nestedMiddle])) with
+  | Except.ok value =>
+      value == Result.group [
+        Result.group [Result.group [Result.atom 1, Result.atom 2], Result.atom 3],
+        Result.group [Result.atom 1, Result.group [Result.atom 2, Result.atom 3], Result.atom 4]
+      ]
+  | _ => false
+
+#eval test25bNestedGroups  -- should be true
+
+def test25bCommaSimilarity : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 1, .num 2]),
+    ("B", alg [] [] [] [.resultJoin (.num 1) (.num 2)])
+  ] [
+    .dotCall (resolve "A") "count" none,
+    .dotCall (resolve "B") "count" none
+  ])) with
+  | Except.ok [2, 2] => true
+  | _ => false
+
+#eval test25bCommaSimilarity  -- should be true
+
 def test25c : Bool :=
-  let pThenMore := .combine (.combine (.combine (resolve "P") (.num 3)) (.num 4)) (.num 5)
+  let pThenMore := .resultJoin (.resultJoin (.resultJoin (resolve "P") (.num 3)) (.num 4)) (.num 5)
   match runFlat (.block (algPrivate [] [] [
     ("P", alg [] [] [] [.num 1, .num 2]),
     ("X", alg [] [] [] [.call (resolve "sum") (alg [] [] [] [pThenMore])])
@@ -1686,6 +1722,91 @@ def test25c : Bool :=
   | _ => false
 
 #eval test25c  -- should be true
+
+def test25dResultShape : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 1, .num 2]),
+    ("F", alg ["a"] [] [] [.param "a", .num 3])
+  ] [
+    .dotCall (resolve "A") "F" none
+  ])) with
+  | Except.ok value =>
+      value == Result.group [Result.group [Result.atom 1, Result.atom 2], Result.atom 3]
+  | _ => false
+
+#eval test25dResultShape  -- should be true
+
+def test25e : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 1, .num 2]),
+    ("F", alg ["a"] [] [] [.resultJoin (.param "a") (.num 3)])
+  ] [
+    .dotCall (resolve "A") "F" none
+  ])) with
+  | Except.ok [1, 2, 3] => true
+  | _ => false
+
+#eval test25e  -- should be true
+
+def test25f : Bool :=
+  let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.num 10]
+  let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] [.num 20]
+  match runFlat (.block (algPrivate [] [] [
+    ("A", a),
+    ("B", b),
+    ("C", alg [] [] [] [.resultJoin (resolve "A") (resolve "B")])
+  ] [
+    resolve "C"
+  ])) with
+  | Except.ok [10, 20] => true
+  | _ => false
+
+#eval test25f  -- should be true
+
+def test25g : Bool :=
+  let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.num 10]
+  let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] [.num 20]
+  match runFlat (.block (algPrivate [] [] [
+    ("A", a),
+    ("B", b),
+    ("C", alg [] [] [] [.resultJoin (resolve "A") (resolve "B")])
+  ] [
+    .dotCall (resolve "C") "X" none
+  ])) with
+  | Except.error err => innermostIsUnknownName "X" err
+  | _ => false
+
+#eval test25g  -- should be true
+
+def test25h : Bool :=
+  let bad := .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
+  match runFlat (.resultJoin bad (.num 3)) with
+  | Except.error err => innermostIsResultJoinMissingOutput "left" err
+  | _ => false
+
+#eval test25h  -- should be true
+
+def test25i : Bool :=
+  let bad := .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
+  match runFlat (.resultJoin (.num 3) bad) with
+  | Except.error err => innermostIsResultJoinMissingOutput "right" err
+  | _ => false
+
+#eval test25i  -- should be true
+
+def test25j : Bool :=
+  let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []
+  let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] []
+  match runFlat (.block (algPrivate [] [.resultJoin (resolve "A") (resolve "B")] [
+    ("A", a),
+    ("B", b)
+  ] [
+    .binary .add (resolve "X") (resolve "Y")
+  ])) with
+  | Except.error err => innermostIsBadOpenForm "resultJoin: A; B" err
+  | _ => false
+
+#eval test25j  -- should be true
 
 -- Test 26: Nested 3-arg if uses the selected inner branch
 -- if(1, if(1, 5, 6), 9) → [5]
@@ -2150,11 +2271,11 @@ def test66aa : Bool :=
 
 #eval test66aa  -- should be true
 
--- Test 66ab: explicit combine still flattens range content for filter
+-- Test 66ab: explicit result join projects range content for filter
 def test66ab : Bool :=
   match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
     .call (resolve "filter") (alg [] [] [] [
-      .combine
+      .resultJoin
         (.call (resolve "range") (alg [] [] [] [.num 3, .num 6]))
         (.num 8),
       .resolve "IsEven"
@@ -2282,7 +2403,7 @@ def test75 : Bool :=
     "filter"
     (some (alg [] [] [] [.num 1]))) with
   | Except.error err =>
-      hasContext "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" err &&
+      hasContext "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)" err &&
       innermostIsArityMismatch 0 1 err
   | _ => false
 
@@ -2650,7 +2771,7 @@ def test86a : Bool :=
     ])
   ])) with
   | Except.error err =>
-      hasContext "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" err
+      hasContext "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)" err
       && innermostIsBadArity err
   | _ => false
 
@@ -3863,7 +3984,7 @@ def test151o : Bool :=
 def test151ob : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeGroup", markThreeGroupAlg66e)] [
     .call (resolve "map") (alg [] [] [] [
-      .combine
+      .resultJoin
         (.num 1)
         (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
       .resolve "MarkThreeGroup"
@@ -3877,7 +3998,7 @@ def test151ob : Bool :=
 def test151oc : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeGroup", markThreeGroupAlg66e)] [
     .call (resolve "filter") (alg [] [] [] [
-      .combine
+      .resultJoin
         (.num 1)
         (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
       .resolve "MarkThreeGroup"
@@ -3946,7 +4067,7 @@ def test151pb : Bool :=
 def test151pc : Bool :=
   match runFlat (.block (algPrivate [] [] [("AddGroupedRange", addGroupedRangeAlg151pb)] [
     .call (resolve "reduce") (alg [] [] [] [
-      .combine
+      .resultJoin
         (.num 1)
         (.call (resolve "range") (alg [] [] [] [.num 2, .num 4])),
       .resolve "AddGroupedRange",

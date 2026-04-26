@@ -48,7 +48,7 @@
 11. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
     - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
-12. [Structural Composition with semicolon operator](#structural-composition-with-semicolon-operator)
+12. [Result Join with semicolon operator](#result-join-with-semicolon-operator)
 13. [Atoms](#atoms)
 14. [Conditional Algorithms](#conditional-algorithms)
     - [Basic Pattern Matching](#basic-pattern-matching)
@@ -355,9 +355,9 @@ You can mix commas and newlines freely:
 | Syntax | Meaning |
 |---|---|
 | `1, 2` | Single algorithm with 2 outputs |
-| `1; 2` | Two separate algorithms, structurally combined |
+| `1; 2` | Evaluate both sides and join their immediate results at the current output level |
 
-For simple values the result looks the same, but the distinction matters when composing algorithms — see [Structural Composition with `;`](#structural-composition-with-semicolon-operator).
+For simple values the result looks the same, but the distinction matters when composing evaluated results — see [Result Join with `;`](#result-join-with-semicolon-operator).
 
 ---
 
@@ -1627,11 +1627,11 @@ When a block has no free parameters, `{}` and `()` produce the same result:
 
 ---
 
-## Structural Composition with semicolon operator
+## Result Join with semicolon operator
 
-The `;` operator joins two algorithms into one, concatenating their output sequences. This is different from comma: comma separates outputs *within* a single algorithm, while `;` combines two *separate* algorithms into a composite.
+The `;` operator is KatLang's result join operator. It evaluates both sides and joins their immediate results at the current output level.
 
-Why does this matter? When an algorithm has properties and parameters, the `;` boundary preserves each side's scope. Each algorithm fragment keeps its own parameter inference and property definitions.
+This is different from comma: comma separates output expressions syntactically, while `;` joins already evaluated result content semantically. The operator does not create a new structural group, does not preserve or merge properties, and does not recursively flatten nested groups. If either side produces no output, evaluation fails.
 
 ```
 First = 1, 2
@@ -1648,14 +1648,38 @@ First; Second
 4
 ```
 
-Inline combining works similarly:
+Simple comma and semicolon results can therefore have the same top-level count:
 
 ```
-1; 2, 3
+A = 1, 2
+B = 1; 2
+
+A.count
+B.count
 ```
 
 **Results:**
 ```
+2
+2
+```
+
+Result join projects only one immediate level:
+
+```
+(1, 2); 3
+1; (2, 3)
+((1, 2)); 3
+```
+
+**Results:**
+```
+1
+2
+3
+1
+2
+3
 (1, 2)
 3
 ```
@@ -1663,7 +1687,9 @@ Inline combining works similarly:
 | Expression | Interpretation |
 |---|---|
 | `1, 2, 3` | Single algorithm producing 3 outputs |
-| `1; 2, 3` | Parsed as `(1; 2), 3` — the combine `1; 2` produces a group `(1, 2)`, followed by a separate output `3` |
+| `1; 2, 3` | Parsed as `(1; 2), 3` — the result join emits `1` and `2`, followed by the separate output `3` |
+| `(1, 2); 3` | Joins the immediate results of the left group with `3`, producing `1, 2, 3` |
+| `((1, 2)); 3` | Preserves the nested group, producing `(1, 2), 3` |
 
 ---
 
@@ -2032,7 +2058,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `-` | Arithmetic negation (prefix) | — |
 | `:` | Output selection (zero-based index, one-level content projection) | Postfix |
 | `.` | Dot-call / property access | Postfix |
-| `;` | Structural composition (combine algorithms) | — |
+| `;` | Result join (join immediate evaluated results) | — |
 | `~` (prefix) | Grace: move parameter one position earlier | — |
 | `~` (postfix) | Grace: move parameter one position later | — |
 

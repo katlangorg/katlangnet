@@ -131,7 +131,7 @@ public abstract class AstWalker
                 VisitExpr(target);
                 VisitExpr(selector);
                 break;
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
                 VisitExpr(left);
                 VisitExpr(right);
                 break;

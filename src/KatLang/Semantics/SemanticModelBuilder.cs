@@ -366,7 +366,7 @@ public static class SemanticModelBuilder
                     break;
                 }
 
-                case Expr.Combine(var left, var right):
+                case Expr.ResultJoin(var left, var right):
                     VisitOpenExpression(left, scope);
                     VisitOpenExpression(right, scope);
                     break;
@@ -431,7 +431,7 @@ public static class SemanticModelBuilder
                     VisitExpr(selector, scope);
                     break;
 
-                case Expr.Combine(var left, var right):
+                case Expr.ResultJoin(var left, var right):
                     VisitExpr(left, scope);
                     VisitExpr(right, scope);
                     break;
@@ -556,13 +556,11 @@ public static class SemanticModelBuilder
                 case Expr.Block(var algorithm):
                     return algorithm;
 
-                case Expr.Combine(var left, var right):
+                case Expr.ResultJoin(var left, var right):
                 {
-                    var leftAlgorithm = TryResolveAlgorithmValue(left, scope);
-                    var rightAlgorithm = TryResolveAlgorithmValue(right, scope);
-                    return leftAlgorithm is not null && rightAlgorithm is not null
-                        ? CombineAlgorithms(leftAlgorithm, rightAlgorithm)
-                        : null;
+                    _ = left;
+                    _ = right;
+                    return null;
                 }
 
                 case Expr.DotCall dotCall:
@@ -877,14 +875,6 @@ public static class SemanticModelBuilder
             AddResolution(declaration, classification, declaration, propertyInfo);
             return declaration;
         }
-
-        private static Algorithm CombineAlgorithms(Algorithm left, Algorithm right)
-            => new Algorithm.User(
-                Parent: null,
-                Params: left.Params.Concat(right.Params).ToList(),
-                Opens: left.Opens.Concat(right.Opens).ToList(),
-                Properties: left.Properties.Concat(right.Properties).ToList(),
-                Output: [new Expr.Block(left), new Expr.Block(right)]);
 
         private static ScopeFrame CreatePreludeScope()
         {

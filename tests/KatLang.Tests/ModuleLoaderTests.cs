@@ -74,7 +74,7 @@ public class ModuleLoaderTests
             Expr.Unary(_, var operand) => ContainsRawLoad(operand),
             Expr.Binary(_, var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
             Expr.Index(var target, var selector) => ContainsRawLoad(target) || ContainsRawLoad(selector),
-            Expr.Combine(var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
+            Expr.ResultJoin(var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
             Expr.Grace(var inner, _) => ContainsRawLoad(inner),
             _ => false,
         };

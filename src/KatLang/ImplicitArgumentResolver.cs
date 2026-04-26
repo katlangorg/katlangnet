@@ -196,7 +196,7 @@ public static class ImplicitArgumentResolver
                 CollectImplicitDeps(selector, paramMap, seen, deps, false);
                 break;
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
                 CollectImplicitDeps(left, paramMap, seen, deps, false);
                 CollectImplicitDeps(right, paramMap, seen, deps, false);
                 break;
@@ -275,8 +275,8 @@ public static class ImplicitArgumentResolver
                     RewriteImplicitCalls(target, paramMap, false),
                     RewriteImplicitCalls(selector, paramMap, false)) { Span = expr.Span };
 
-            case Expr.Combine(var left, var right):
-                return new Expr.Combine(
+            case Expr.ResultJoin(var left, var right):
+                return new Expr.ResultJoin(
                     RewriteImplicitCalls(left, paramMap, false),
                     RewriteImplicitCalls(right, paramMap, false)) { Span = expr.Span };
 
@@ -325,7 +325,7 @@ public static class ImplicitArgumentResolver
             Expr.Index(var t, var s) => new Expr.Index(
                 ProcessExprNested(t, paramMap),
                 ProcessExprNested(s, paramMap)) { Span = expr.Span },
-            Expr.Combine(var l, var r) => new Expr.Combine(
+            Expr.ResultJoin(var l, var r) => new Expr.ResultJoin(
                 ProcessExprNested(l, paramMap),
                 ProcessExprNested(r, paramMap)) { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(

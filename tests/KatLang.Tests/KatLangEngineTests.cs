@@ -203,7 +203,7 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content", error.Message);
+        Assert.Contains("filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content", error.Message);
         Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 

@@ -6,7 +6,7 @@ AlgorithmItem   = OpenDeclaration | PropertyDefinition | ConditionalBranch | Exp
 OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
-                | CombineItem ;              (* full expression with ; for combine *)
+                | ResultJoinItem ;              (* full expression with ; result join syntax *)
 
 PropertyDefinition = [ "public" ] NonOutputIdentifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
@@ -28,8 +28,8 @@ PatternAtom        = Identifier                   (* bind      *)
 
 OutputLine      = OutputBundle ;
 OutputBundle    = OutputList ;
-OutputList      = CombineItem { "," CombineItem } ;
-CombineItem     = Expression { ";" Expression } ;
+OutputList      = ResultJoinItem { "," ResultJoinItem } ;
+ResultJoinItem     = Expression { ";" Expression } ;
 
 Expression      = OrExpr ;
 OrExpr          = XorExpr { "or" XorExpr } ;

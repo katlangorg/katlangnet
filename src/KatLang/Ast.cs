@@ -16,7 +16,7 @@ public enum UnaryOp { Minus, Not }
 /// argument. Higher-order plain-call builtins <c>filter</c>, <c>map</c>, and
 /// <c>reduce</c> instead preserve each ordinary leading argument as one outer
 /// iteration item unless the argument explicitly projects content with
-/// <c>:</c> or combines content with <c>;</c>. Sequence-builtin dot-call
+/// <c>:</c> or joins result content with <c>;</c>. Sequence-builtin dot-call
 /// receivers are different again: they contribute the receiver expression's
 /// counted top-level items. Dot-call strips exactly one outer inline receiver
 /// block layer, so <c>(1, 2, 3).count</c> behaves like three receiver items
@@ -130,8 +130,8 @@ public abstract record Expr
     /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> from evaluated output of <c>a</c> and projects that item's content one level.</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;
 
-    /// <summary>Combines two algorithms into one (structural combination via <c>;</c>).</summary>
-    public sealed record Combine(Expr Left, Expr Right) : Expr;
+    /// <summary>Result join expression written with <c>;</c>.</summary>
+    public sealed record ResultJoin(Expr Left, Expr Right) : Expr;
 
     /// <summary>Resolves a named algorithm by lexical lookup.</summary>
     public sealed record Resolve(string Name) : Expr;
@@ -652,16 +652,16 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
-            if (expr is Expr.Combine)
+            if (expr is Expr.ResultJoin)
             {
-                VisitCombineExpr(expr);
+                VisitResultJoinExpr(expr);
                 return;
             }
 
             base.VisitExpr(expr);
         }
 
-        private void VisitCombineExpr(Expr expr)
+        private void VisitResultJoinExpr(Expr expr)
         {
             var stack = new Stack<Expr>();
             stack.Push(expr);
@@ -672,7 +672,7 @@ internal static class AlgorithmValidation
                     return;
 
                 var current = stack.Pop();
-                if (current is Expr.Combine(var left, var right))
+                if (current is Expr.ResultJoin(var left, var right))
                 {
                     stack.Push(right);
                     stack.Push(left);

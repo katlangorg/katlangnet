@@ -14,7 +14,6 @@
 --     - identifier:     `open Math`            → Resolve("Math")
 --     - dotted path:    `open Lib.Sub`         → DotCall(Resolve("Lib"), "Sub", none)
 --     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block (surface-only, not in core Expr)
---     - combine:        `open A; B`            → Combine(Resolve("A"), Resolve("B"))
 --     - inline block:   `open (public X = 1)`  → Block(...)
 --
 --   Exact-syntax sugar (parser-only, not in core model):
@@ -67,8 +66,7 @@
 --
 --   Semantic rules (enforced by evaluator, not parser):
 --     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
---     - Strict isolation: opening a library does NOT import its transitive opens
---       (combineAlg .closed closes opens).
+--     - Strict isolation: opening a library does NOT import its transitive opens.
 --     - Ambiguity: if multiple open targets provide the same public name, and no
 --       owned/local/parent property shadows it, `ambiguousOpen` is raised.
 --     - Owned/local/parent lookup takes precedence over opens (ownership-first).
@@ -121,6 +119,7 @@ inductive Error where
   | specialOutputAccess : Error                -- external property-style access to designated Output is invalid
   | explicitParamsRequireOutput : Error        -- explicit algorithm params require an algorithm output
   | missingOutput    : Error                   -- forced user-defined algorithm does not define output
+  | resultJoinMissingOutput : String -> Error  -- left/right result join operand produced no output
   | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
   deriving Repr
@@ -220,8 +219,8 @@ def SequenceBuiltinMetadata.trailingArgCount (metadata : SequenceBuiltinMetadata
   Direct sequence consumers use the flattened counted top-level items of each
   leading argument. Higher-order plain-call builtins may instead preserve each
   ordinary leading argument as one outer iteration item, while explicit
-  content-projecting forms such as `a; b` and `S:i` still contribute their
-  top-level content. `trailingArgs` describes the fixed trailing non-sequence
+  result-joining/projection forms such as `a; b` and `S:i` still contribute
+  their top-level content. `trailingArgs` describes the fixed trailing non-sequence
   arguments. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
@@ -516,7 +515,7 @@ mutual
     | unary   : UnaryOp -> Expr -> Expr
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
-    | combine : Expr -> Expr -> Expr
+    | resultJoin : Expr -> Expr -> Expr
     | resolve : Ident -> Expr
     | block   : Algorithm -> Expr
     | call    : Expr -> Algorithm -> Expr
@@ -1125,7 +1124,7 @@ mutual
     | .index target selector => do
         validateExplicitParamOutputInvariantExpr target
         validateExplicitParamOutputInvariantExpr selector
-    | .combine left right => do
+    | .resultJoin left right => do
         validateExplicitParamOutputInvariantExpr left
         validateExplicitParamOutputInvariantExpr right
     | .block alg =>
@@ -1355,6 +1354,11 @@ def withMissingOutputCtx (ctx : String) : EvalM A -> EvalM A
   | .error .missingOutput => .error (.withContext ctx .missingOutput)
   | result => result
 
+def isMissingOutputError : Error -> Bool
+  | .missingOutput => true
+  | .withContext _ inner => isMissingOutputError inner
+  | _ => false
+
 /-- Reify a normalized Result as an expression that evaluates back to the same
     value/shape. Grouped results become block expressions so nested structure is
     preserved exactly. -/
@@ -1406,17 +1410,17 @@ def countedTopLevelValues : CountedResult -> List Result
   | (value, 1) => [value]
   | (value, _) => value.toItems
 
-/-- Flatten a `combine` subtree into its ordered leaves without changing
+/-- Flatten a `resultJoin` subtree into its ordered leaves without changing
     grouped/block values inside those leaves. -/
-partial def combineLeavesLoop : List Expr -> List Expr -> List Expr
+partial def resultJoinLeavesLoop : List Expr -> List Expr -> List Expr
   | [], acc => acc.reverse
   | current :: rest, acc =>
       match current with
-      | .combine left right => combineLeavesLoop (left :: right :: rest) acc
-      | leaf => combineLeavesLoop rest (leaf :: acc)
+      | .resultJoin left right => resultJoinLeavesLoop (left :: right :: rest) acc
+      | leaf => resultJoinLeavesLoop rest (leaf :: acc)
 
-def combineLeaves (expr : Expr) : List Expr :=
-  combineLeavesLoop [expr] []
+def resultJoinLeaves (expr : Expr) : List Expr :=
+  resultJoinLeavesLoop [expr] []
 
 /-- Reify a counted argument shape as a zero-parameter algorithm that preserves
     the same value and emitted top-level count when evaluated. -/
@@ -1500,7 +1504,7 @@ def numericSequenceInputItemErrorContext
 
 def usesExplicitOuterSequenceContent (collectionArg : Algorithm) : Bool :=
   match collectionArg.output with
-  | [Expr.combine _ _] => true
+  | [Expr.resultJoin _ _] => true
   | [Expr.index _ _] => true
   | _ => false
 
@@ -1579,29 +1583,6 @@ def intPow (b : Int) : Nat -> Int
   | 0 => 1
   | n + 1 => b * intPow b n
 
-/-- Policy controlling how opens are handled when combining two algorithms. -/
-inductive OpenPolicy where
-  /-- Merge opens from both algorithms (`a.opens ++ b.opens`). -/
-  | merge
-  /-- Discard all opens (result has `opens = []`).
-      Enforces isolation: libraries cannot smuggle in transitive opens. -/
-  | closed
-  deriving Repr, BEq
-
-/-- Combine two algorithms, using `policy` to control open handling.
-    - `OpenPolicy.merge`:  opens are concatenated (normal combination).
-    - `OpenPolicy.closed`: opens are discarded (strict isolation for open resolution). -/
-def combineAlg (policy : OpenPolicy := .merge) (a b : Algorithm) : Algorithm :=
-  let opens := match policy with
-    | .merge  => a.opens ++ b.opens
-    | .closed => []
-  Algorithm.mk
-    none
-    (a.params ++ b.params)           -- params merged
-    opens                            -- opens per policy
-    (a.props  ++ b.props)            -- properties merged
-    [ Expr.block a, Expr.block b ]   -- output preserves boundaries
-
 /-- Predicate defining which expression forms are allowed in open position
     **after elaboration**.  Only structural references to libraries are permitted.
 
@@ -1621,13 +1602,11 @@ def combineAlg (policy : OpenPolicy := .merge) (a b : Algorithm) : Algorithm :=
     in the canonical open list.  The load elaboration pass then rewrites
     `Call(Resolve("load"), ...)` into `Block(parsed module)` as usual. -/
 inductive OpenForm where
-  | combine : Expr -> Expr -> OpenForm
   | block   : Algorithm -> OpenForm
   | resolve : Ident -> OpenForm
   | dotCall : Expr -> Ident -> OpenForm     -- a.f (no-arg dotCall)
 
 def Expr.openForm? : Expr -> Option OpenForm
-  | .combine a b     => some (.combine a b)
   | .block a         => some (.block a)
   | .resolve n       => some (.resolve n)
   | .dotCall o n none => some (.dotCall o n)
@@ -1644,7 +1623,7 @@ def Expr.kind : Expr -> String
   | .unary _ _    => "unary"
   | .binary _ _ _ => "binary"
   | .index _ _    => "index"
-  | .combine _ _  => "combine"
+  | .resultJoin _ _  => "resultJoin"
   | .resolve _    => "resolve"
   | .block _      => "block"
   | .call _ _     => "call"
@@ -1656,7 +1635,7 @@ def openExprName (e : Expr) : String :=
   | .resolve n => n
   | .dotCall o n _ => openExprName o ++ "." ++ n
   | .block _ => "(inline library)"
-  | .combine a b => openExprName a ++ " + " ++ openExprName b
+  | .resultJoin a b => openExprName a ++ "; " ++ openExprName b
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
 namespace CtxMsg
@@ -1859,10 +1838,6 @@ mutual
       - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
   partial def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
     match Expr.openForm? e with
-    | some (.combine e1 e2) => do
-      let a <- resolveAlgForOpen e1 ctx
-      let b <- resolveAlgForOpen e2 ctx
-      pure (combineAlg .closed a b)  -- * no wiring, no open merging (strict isolation)
     | some (.block a) => pure a       -- * no wiring for opens
     | some (.resolve n) =>
       match ctx.callStack with
@@ -2031,10 +2006,8 @@ mutual
 
   partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
     match e with
-    | .combine e1 e2 => do
-        let a <- resolveAlg e1 ctx
-        let b <- resolveAlg e2 ctx
-        pure (wireToCaller ctx (combineAlg .merge a b))
+    | .resultJoin _ _ =>
+      .error (Error.notAnAlgorithm "result join expression")
     | .block a => pure (wireToCaller ctx a)
     | .resolve n =>
         match ctx.callStack with
@@ -2580,7 +2553,7 @@ mutual
       `reduce` processes top-level collection elements from left to right.
       `step(element, accumulator)` receives each item exactly as collected for
       this iteration: ordinary plain-call boundaries stay whole, while explicit
-      `;`, `:`, and dot-call receiver iteration provide content items. The
+      result join, `:`, and dot-call receiver iteration provide content items. The
       accumulator keeps ordinary explicit-argument semantics. The step must
       return exactly one accumulator value: one atom or one grouped value is
       valid, while empty and multi-output results are rejected.
@@ -2601,7 +2574,7 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected; ordinary boundaries stay whole, explicit ;/: iterate content, and the accumulator is unchanged)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected; ordinary boundaries stay whole, explicit result join/: iterate content, and the accumulator is unchanged)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
@@ -2611,15 +2584,15 @@ mutual
       The final argument is the predicate.
 
       Each iterated item is passed exactly as collected for this iteration:
-      ordinary plain-call boundaries stay whole, while explicit `;`, `:`, and
-      dot-call receiver iteration provide content items. The kept output items
+      ordinary plain-call boundaries stay whole, while explicit result join,
+      `:`, and dot-call receiver iteration provide content items. The kept output items
       themselves remain the original sequence items. -/
   partial def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec filterLoop : List CountedResult -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
-        match withCtx "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" <|
+        match withCtx "while evaluating filter predicate (filter passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)" <|
           evalSequenceCallbackCall predicateAlg item ctx env "filter predicate" with
           | .error err =>
               if shouldTreatFilterCallbackFailureAsFalse item err then
@@ -2644,7 +2617,7 @@ mutual
       `map` processes top-level collection elements from left to right.
       `transform(element)` receives each item exactly as collected for this
       iteration: ordinary plain-call boundaries stay whole, while explicit
-      `;`, `:`, and dot-call receiver iteration provide content items. It must
+      result join, `:`, and dot-call receiver iteration provide content items. It must
       return exactly one mapped element: one atom or one grouped value is
       valid, while empty and multi-output results are rejected.
 
@@ -2657,7 +2630,7 @@ mutual
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)" <|
+            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)" <|
             evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
@@ -3303,27 +3276,73 @@ mutual
         callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error e => .error e
 
-  /-- Evaluate a `combine` subtree by flattening the syntax spine first, then
-      evaluating each leaf once from left to right.  Each leaf contributes the
-      top-level items it emitted, so grouped values emitted as one item stay
-      grouped while multi-output leaves still expand one level. -/
-  partial def evalCombineCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
+  partial def evalAlgorithmOutputJoinItems (a : Algorithm) (ctx : EvalCtx)
+      (env : ValEnv) (side : String) : EvalM (List Result) := do
+    match a.findDuplicatePropName with
+    | some n => .error (Error.duplicateProperty n)
+    | none =>
+      match a with
+      | .mk _ _ _ _ [] => .error (Error.resultJoinMissingOutput side)
+      | _ =>
+        let innerCtx := EvalCtx.push a ctx
+        let rec loop : List Expr -> List Result -> EvalM (List Result)
+          | [], acc =>
+              match acc with
+              | [] => .error (Error.resultJoinMissingOutput side)
+              | _ => pure acc.reverse
+          | expr :: rest, acc =>
+              match evalCounted expr innerCtx env with
+              | .ok out => loop rest ((countedTopLevelValues out).reverse ++ acc)
+              | .error err =>
+                  if isMissingOutputError err then
+                    .error (Error.resultJoinMissingOutput side)
+                  else
+                    .error err
+        loop (Algorithm.output a) []
+
+  partial def evalResultJoinOperandItems (e : Expr) (ctx : EvalCtx)
+      (env : ValEnv) (side : String) : EvalM (List Result) :=
+    match e with
+    | .block a =>
+        let wired := wireToCaller ctx a
+        if (Algorithm.params wired).length = 0 then
+          evalAlgorithmOutputJoinItems wired ctx env side
+        else
+          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+    | _ =>
+        match evalCounted e ctx env with
+        | .ok out =>
+            if out.snd = 0 then
+              .error (Error.resultJoinMissingOutput side)
+            else
+              pure out.fst.toItems
+        | .error err =>
+            if isMissingOutputError err then
+              .error (Error.resultJoinMissingOutput side)
+            else
+              .error err
+
+  /-- Evaluate a `resultJoin` subtree by flattening the syntax spine first, then
+      evaluating each leaf once from left to right. Each leaf contributes the
+      immediate result content joined by `;`; nested grouped members are not
+      recursively flattened. -/
+  partial def evalResultJoinCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
-    let rec loop : List Expr -> List Result -> Nat -> EvalM CountedResult
-      | [], items, emitted =>
-          pure (Result.normalize (Result.group items.reverse), emitted)
-      | leaf :: rest, items, emitted => do
-          let out <- evalCounted leaf ctx env
-          loop rest ((countedTopLevelValues out).reverse ++ items) (emitted + out.snd)
-    loop (combineLeaves e) [] 0
+    let rec loop : List Expr -> Nat -> List Result -> EvalM CountedResult
+      | [], _, items =>
+          pure (Result.normalize (Result.group items.reverse), items.length)
+      | leaf :: rest, index, items => do
+          let side := if index == 0 then "left" else "right"
+          let joined <- evalResultJoinOperandItems leaf ctx env side
+          loop rest (index + 1) (joined.reverse ++ items)
+    loop (resultJoinLeaves e) 0 []
 
   /-- Evaluate an expression together with the number of top-level values it
       emits at the current algorithm boundary.
 
       Calls and name resolution propagate the callee's emitted output count.
-      Block expressions count as one grouped value when non-empty. `combine`
-      adds the counts of both sides because it concatenates their top-level
-      outputs. All other value expressions emit either zero values (empty
+      Block expressions count as one grouped value when non-empty. `resultJoin`
+      emits the immediate joined items from each operand. All other value expressions emit either zero values (empty
       result) or one value. -/
   partial def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match e with
@@ -3341,8 +3360,8 @@ mutual
                     else
                       .error (Error.arityMismatch (Algorithm.params alg).length 0)
                 | none => .error (Error.unknownName x)
-    | .combine _ _ =>
-        evalCombineCounted e ctx env
+    | .resultJoin _ _ =>
+        evalResultJoinCounted e ctx env
     | .block a => do
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
@@ -3661,8 +3680,8 @@ mutual
               | .or   => if x != 0 then 1 else (if y != 0 then 1 else 0)
               | .xor  => if x != 0 then (if y = 0 then 1 else 0) else (if y != 0 then 1 else 0))
 
-    | .combine _ _ => do
-        let out <- evalCombineCounted e ctx env
+    | .resultJoin _ _ => do
+        let out <- evalResultJoinCounted e ctx env
         pure out.fst
 
     | .block a =>
@@ -4041,7 +4060,7 @@ def resolve (n : Ident) : Expr := .resolve n
 def block (a : Algorithm) : Expr := .block a
 def call (f : Expr) (a : Algorithm) : Expr := .call f a
 def dotCall (o : Expr) (n : Ident) : Expr := .dotCall o n none
-def combine (a b : Expr) : Expr := .combine a b
+def resultJoin (a b : Expr) : Expr := .resultJoin a b
 
 /-- Convenience constructor for algorithms with private properties by default.
     To make properties public, use `publicProp` when building the props list. -/
@@ -4150,7 +4169,7 @@ partial def postElabInvariant : Expr -> Bool
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b
   | .index a b       => postElabInvariant a && postElabInvariant b
-  | .combine a b     => postElabInvariant a && postElabInvariant b
+  | .resultJoin a b     => postElabInvariant a && postElabInvariant b
   | .call (.resolve "load") _ => false  -- unresolved load call
   | .call f args     => postElabInvariant f && postElabInvariantAlg args
   | .dotCall _ "Output" _ => false

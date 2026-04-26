@@ -61,7 +61,7 @@ public abstract record EvalError
     /// <summary>Syntactic form not allowed in open position.</summary>
     public sealed record BadOpenForm(string Reason) : EvalError;
 
-    /// <summary>Expression form not evaluable to a value (e.g. name literal, combine).</summary>
+    /// <summary>Expression form not evaluable to a value (e.g. name literal, result join in algorithm position).</summary>
     public sealed record IllegalInEval(string Reason) : EvalError;
 
     /// <summary>Multiple opens provide the same name publicly.</summary>
@@ -105,6 +105,9 @@ public abstract record EvalError
 
     /// <summary>Forced user-defined algorithm value does not define an output.</summary>
     public sealed record MissingOutput() : EvalError;
+
+    /// <summary>Result join operand did not produce output.</summary>
+    public sealed record ResultJoinMissingOutput(string Side) : EvalError;
 
     /// <summary>Arithmetic result exceeds the representable decimal range.</summary>
     public sealed record NumericOverflow() : EvalError;

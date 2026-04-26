@@ -47,7 +47,7 @@ public class EvaluatorTests
         Expr.Binary(var op, var l, var r) => new Expr.Binary(op, MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
         Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
-        Expr.Combine(var l, var r) => new Expr.Combine(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
+        Expr.ResultJoin(var l, var r) => new Expr.ResultJoin(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         _ => expr,
     };
 
@@ -181,6 +181,23 @@ public class EvaluatorTests
             error = context.Inner;
 
         Assert.IsType<EvalError.MissingOutput>(error);
+    }
+
+    private static void AssertResultJoinMissingOutput(string source, string expectedSide)
+    {
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Equal($"Cannot join results because the {expectedSide} side does not produce output.", formatted);
+
+        var error = result.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        var joinError = Assert.IsType<EvalError.ResultJoinMissingOutput>(error);
+        Assert.Equal(expectedSide, joinError.Side);
     }
 
     private static void AssertInnermostSpecialOutputAccess(EvalError error)
@@ -342,6 +359,9 @@ public class EvaluatorTests
                 Assert.Equal(expected[itemIndex], Assert.IsType<Result.Atom>(group.Items[itemIndex]).Value);
         }
     }
+
+    private static void AssertAtomValue(Result value, decimal expected)
+        => Assert.Equal(expected, Assert.IsType<Result.Atom>(value).Value);
 
     [Fact]
     public void Eval_RepeatedEligiblePropertyWithinSingleRun()
@@ -1385,7 +1405,7 @@ public class EvaluatorTests
         => AssertEvalFailsWithIllegalInEval("range(1, 5.2)", "range stop must be an integer");
 
     [Fact]
-    public void Eval_Range_Combine_PreservesOrdering()
+    public void Eval_Range_ResultJoin_PreservesOrdering()
         => AssertEval("range(3, 1); 0", 3, 2, 1, 0);
 
     // ── Filter builtin ───────────────────────────────────────────────────────
@@ -1412,7 +1432,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Filter_CombineInsideSingleArgument_FlattensOuterIteration()
+    public void Eval_Filter_ResultJoinInsideSingleArgument_FlattensOuterIteration()
     {
         var source = """
             IsEven = x mod 2 == 0
@@ -1447,7 +1467,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Filter_CombineInsideSingleArgument_ProjectsContentForGroupedPatternPredicate()
+    public void Eval_Filter_ResultJoinInsideSingleArgument_ProjectsContentForGroupedPatternPredicate()
     {
         var source = """
             KeepThreeGroup((a, b, c)) = 1
@@ -1599,7 +1619,7 @@ public class EvaluatorTests
 
         AssertBuiltinFailureWithContext(
             source,
-            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit ;/: iterate content)");
+            "while evaluating map transform (map passes each iterated collection item as collected; ordinary boundaries stay whole and explicit result join/: iterate content)");
     }
 
     [Fact]
@@ -1615,7 +1635,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Map_CombineInsideSingleArgument_ProjectsContentForGroupedPatternTransform()
+    public void Eval_Map_ResultJoinInsideSingleArgument_ProjectsContentForGroupedPatternTransform()
     {
         var source = """
             MarkGroupedRange((a, b, c)) = 1
@@ -2719,7 +2739,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Reduce_CombineInsideSingleArgument_ProjectsContentForStep()
+    public void Eval_Reduce_ResultJoinInsideSingleArgument_ProjectsContentForStep()
     {
         var source = """
             AddGroupedRange((a, b, c), acc) = acc + 100
@@ -3745,10 +3765,10 @@ public class EvaluatorTests
         AssertEval("if(2 > 7, (2), (7))", 7);
     }
 
-    // â”€â”€ Combine (semicolon) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ Result join (semicolon) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_Combine_MergesAlgorithms()
+    public void Eval_ResultJoin_JoinsReferencedResults()
     {
         var source = """
             A = 1, 2
@@ -4088,7 +4108,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_CombineOpens()
+    public void Eval_Open_ResultJoinTargetFails()
     {
         var source = """
             A = (public X = 1
@@ -4098,7 +4118,7 @@ public class EvaluatorTests
             open A; B
             X + Y
             """;
-        AssertEvalAllPublic(source, 3);
+        AssertEvalAllPublicFails(source);
     }
 
     [Fact]
@@ -5213,16 +5233,15 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_CombinedLibrary()
+    public void Eval_Open_ResultJoinDoesNotMergeLibraries()
     {
-        // Semicolon merges two libs into one import (no ambiguity)
         var source = """
             A = (public X = 1)
             B = (public Y = 2)
             open A; B
             X + Y
             """;
-        AssertEvalAllPublic(source, 3);
+        AssertEvalAllPublicFails(source);
     }
 
     [Fact]
@@ -5823,7 +5842,7 @@ public class EvaluatorTests
         AssertEval(source, 119.04m);
     }
 
-    // ── Semicolon: structural combining operator ────────────────────────────
+    // ── Semicolon: result join operator ─────────────────────────────────────
 
     // A. Existing property detection still works
 
@@ -5847,22 +5866,22 @@ public class EvaluatorTests
         AssertEval("1 + 2, 2 + 3", 3, 5);
     }
 
-    // C. Structural combining flattens
+    // C. Result join emits immediate results
 
     [Fact]
-    public void Eval_Combine_TwoFragments()
+    public void Eval_ResultJoin_TwoFragments()
     {
         AssertEval("1 + 2, 2 + 3; 3 + 4", 3, 5, 7);
     }
 
     [Fact]
-    public void Eval_Combine_MultipleFragments()
+    public void Eval_ResultJoin_MultipleFragments()
     {
         AssertEval("1 + 2, 2 + 3; 3 + 4; 4 + 5, 5 + 6, 6 + 7", 3, 5, 7, 9, 11, 13);
     }
 
     [Fact]
-    public void Eval_Combine_LongChain_IsStackSafeForFlatAndCountedEvaluation()
+    public void Eval_ResultJoin_LongChain_IsStackSafeForFlatAndCountedEvaluation()
     {
         const int itemCount = 8192;
         var chain = LongOneChain(itemCount);
@@ -5897,7 +5916,7 @@ public class EvaluatorTests
         {
             Expr expr = new Expr.Num(1);
             for (var i = 1; i < count; i++)
-                expr = new Expr.Combine(expr, new Expr.Num(1));
+                expr = new Expr.ResultJoin(expr, new Expr.Num(1));
             return expr;
         }
 
@@ -5913,7 +5932,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Combine_SequenceBuiltins_ConsumeFlatTopLevelItems()
+    public void Eval_ResultJoin_SequenceBuiltins_ConsumeFlatTopLevelItems()
     {
         AssertEval("sum(1; 2; 3; 4)", 10);
         AssertEval("count(1; 2; 3; 4)", 4);
@@ -5922,14 +5941,65 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Combine_GroupedLeaves_CountAsOneTopLevelItem()
+    public void Eval_ResultJoin_CommaSimilarityForSimpleConstants()
     {
-        AssertEval("count((1, 2); 3)", 2);
-        AssertEval("count(1; (2, 3))", 2);
+        var source = """
+            A = 1, 2
+            B = 1; 2
+            A.count
+            B.count
+            """;
+
+        AssertEval(source, 2, 2);
     }
 
     [Fact]
-    public void Eval_Combine_MixedPropertyAndMultiOutput_SumsExpandedItems()
+    public void Eval_ResultJoin_GroupsJoinOneLevel()
+    {
+        AssertEval("(1, 2); 3", 1, 2, 3);
+        AssertEval("1; (2, 3)", 1, 2, 3);
+        AssertEval("(1, 2); (3, 4)", 1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_NestedGroupsArePreserved()
+    {
+        var nestedLeft = EvalFull("((1, 2)); 3");
+        if (nestedLeft.IsError)
+            Assert.Fail($"Expected success but got error: {nestedLeft.Error}");
+
+        var leftGroup = Assert.IsType<Result.Group>(nestedLeft.Value);
+        Assert.Equal(2, leftGroup.Items.Count);
+        AssertGroupedAtoms(leftGroup.Items[0], 1, 2);
+        AssertAtomValue(leftGroup.Items[1], 3);
+
+        var nestedMiddle = EvalFull("(1, (2, 3)); 4");
+        if (nestedMiddle.IsError)
+            Assert.Fail($"Expected success but got error: {nestedMiddle.Error}");
+
+        var middleGroup = Assert.IsType<Result.Group>(nestedMiddle.Value);
+        Assert.Equal(3, middleGroup.Items.Count);
+        AssertAtomValue(middleGroup.Items[0], 1);
+        AssertGroupedAtoms(middleGroup.Items[1], 2, 3);
+        AssertAtomValue(middleGroup.Items[2], 4);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_InlineDotCallCountMatchesComma()
+    {
+        AssertEval("(1; 2).count", 2);
+        AssertEval("(1, 2).count", 2);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_GroupedLeaves_CountJoinedTopLevelItems()
+    {
+        AssertEval("count((1, 2); 3)", 3);
+        AssertEval("count(1; (2, 3))", 3);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_MixedPropertyAndMultiOutput_SumsExpandedItems()
     {
         var source = """
             P = 1, 2
@@ -5940,7 +6010,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Combine_ErrorOrder_StopsAtEarlierLeaf()
+    public void Eval_ResultJoin_ErrorOrder_StopsAtEarlierLeaf()
     {
         var error = GetEvalError("1; Math.Nope; 1 / 0");
         Assert.NotNull(error);
@@ -5953,10 +6023,10 @@ public class EvaluatorTests
         Assert.Equal("Nope", unknown.Name);
     }
 
-    // D. Combining algorithms by reference
+    // D. Result joining by reference
 
     [Fact]
-    public void Eval_Combine_ByReference()
+    public void Eval_ResultJoin_ByReference()
     {
         var source = """
             Property1 = 1
@@ -5966,13 +6036,13 @@ public class EvaluatorTests
         AssertEval(source, 1, 2, 3);
     }
 
-    // E. Structural extension of algorithm fragments
+    // E. Result joining call outputs with additional expressions
 
     [Fact]
-    public void Eval_Combine_StructuralExtension()
+    public void Eval_ResultJoin_Extension()
     {
         // Simplified version of the motivating pattern:
-        // Combine calls with additional expressions
+        // Result join calls with additional expressions.
         var source = """
             Next = if(a > 5, (a - 1, b + 1), (b - 1, a + 1))
             Result = Next(10, 0); 10 > 5
@@ -5981,19 +6051,19 @@ public class EvaluatorTests
         AssertEval(source, 9, 1, 1);
     }
 
-    // F. Nested algorithm with semicolon
+    // F. Nested algorithm with semicolon result join
 
     [Fact]
-    public void Eval_Combine_InParenAlgorithm()
+    public void Eval_ResultJoin_InParenAlgorithm()
     {
-        // (1 + 2; 3 + 4) is a parameterless nested algorithm with semicolon
+        // (1 + 2; 3 + 4) is a parameterless nested algorithm with result join.
         AssertEval("(1 + 2; 3 + 4)", 3, 7);
     }
 
     [Fact]
-    public void Eval_Combine_AsFunctionArg()
+    public void Eval_ResultJoin_AsFunctionArg()
     {
-        // Foo receives a multi-output argument via semicolon combining
+        // Foo receives a multi-output argument via semicolon result join.
         var source = """
             Foo = x, y
             Foo(1 + 2; 3 + 4)
@@ -6001,10 +6071,10 @@ public class EvaluatorTests
         AssertEval(source, 3, 7);
     }
 
-    // G. Capturing algorithm with semicolon
+    // G. Capturing algorithm with semicolon result join
 
     [Fact]
-    public void Eval_Combine_InBraceAlgorithm()
+    public void Eval_ResultJoin_InBraceAlgorithm()
     {
         var source = "{ X = 10 X + 1; X + 2 }";
         AssertEval(source, 11, 12);
@@ -6021,7 +6091,7 @@ public class EvaluatorTests
     // I. Multiline formatting remains irrelevant
 
     [Fact]
-    public void Eval_Combine_MultilineEquivalentToOneline()
+    public void Eval_ResultJoin_MultilineEquivalentToOneline()
     {
         var multiline = """
             1 + 2, 2 + 3;
@@ -6034,16 +6104,118 @@ public class EvaluatorTests
         Assert.Equal(r1.Value, r2.Value);
     }
 
-    // Additional: simple combine of two literals
-
     [Fact]
-    public void Eval_Combine_SimpleLiterals()
+    public void Eval_ResultJoin_DotCallReceiverBoundaryCanBeJoined()
     {
-        AssertEval("1; 2", 1, 2);
+        var commaSource = """
+            A = 1, 2
+            F = a, 3
+            A.F
+            """;
+
+        var commaResult = EvalFull(commaSource);
+        if (commaResult.IsError)
+            Assert.Fail($"Expected success but got error: {commaResult.Error}");
+
+        var commaGroup = Assert.IsType<Result.Group>(commaResult.Value);
+        Assert.Equal(2, commaGroup.Items.Count);
+        AssertGroupedAtoms(commaGroup.Items[0], 1, 2);
+        AssertAtomValue(commaGroup.Items[1], 3);
+
+        var joinSource = """
+            A = 1, 2
+            F = a; 3
+            A.F
+            """;
+
+        AssertEval(joinSource, 1, 2, 3);
     }
 
     [Fact]
-    public void Eval_Combine_PropertyBody()
+    public void Eval_ResultJoin_DoesNotPreserveOrMergeProperties()
+    {
+        var valueSource = """
+            A = {
+                X = 1
+                10
+            }
+
+            B = {
+                Y = 2
+                20
+            }
+
+            C = A; B
+            C
+            """;
+        AssertEval(valueSource, 10, 20);
+
+        var xSource = """
+            A = {
+                X = 1
+                10
+            }
+
+            B = {
+                Y = 2
+                20
+            }
+
+            C = A; B
+            C.X
+            """;
+        AssertEvalFails(xSource);
+
+        var ySource = """
+            A = {
+                X = 1
+                10
+            }
+
+            B = {
+                Y = 2
+                20
+            }
+
+            C = A; B
+            C.Y
+            """;
+        AssertEvalFails(ySource);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_NoOutputOperandFails()
+    {
+        var leftSource = """
+            Bad = {
+                X = 1
+            }
+
+            Bad; 3
+            """;
+        AssertResultJoinMissingOutput(leftSource, "left");
+
+        var rightSource = """
+            Bad = {
+                X = 1
+            }
+
+            3; Bad
+            """;
+        AssertResultJoinMissingOutput(rightSource, "right");
+    }
+
+    // Additional: simple result join of two literals
+
+    [Fact]
+    public void Eval_ResultJoin_SimpleLiterals()
+    {
+        AssertEval("1; 2", 1, 2);
+        AssertEval("1; 2; 3", 1, 2, 3);
+    }
+
+    [Fact]
+    public void Eval_ResultJoin_PropertyBody()
     {
         AssertEval("A = 1; 2 A", 1, 2);
     }

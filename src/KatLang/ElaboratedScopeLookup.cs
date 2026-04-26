@@ -91,13 +91,11 @@ internal static class ElaboratedScopeLookup
                     : TryLookupPublicExportedProperty(targetAlgorithm, name)?.Property.Value;
             }
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
             {
-                var leftAlgorithm = ResolveOpenTarget(scope, left);
-                var rightAlgorithm = ResolveOpenTarget(scope, right);
-                return leftAlgorithm is not null && rightAlgorithm is not null
-                    ? CombineAlgorithms(leftAlgorithm, rightAlgorithm)
-                    : null;
+                _ = left;
+                _ = right;
+                return null;
             }
 
             case Expr.Block(var algorithm):
@@ -167,11 +165,4 @@ internal static class ElaboratedScopeLookup
             Properties: scope.Properties,
             Output: []);
 
-    private static Algorithm CombineAlgorithms(Algorithm left, Algorithm right)
-        => new Algorithm.User(
-            Parent: null,
-            Params: left.Params.Concat(right.Params).ToList(),
-            Opens: left.Opens.Concat(right.Opens).ToList(),
-            Properties: left.Properties.Concat(right.Properties).ToList(),
-            Output: [new Expr.Block(left), new Expr.Block(right)]);
 }

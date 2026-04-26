@@ -319,6 +319,40 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_ResultJoinDoesNotMergePropertySurface()
+    {
+        var model = BuildModel(
+            """
+            public A = {
+            public X = 1
+            10
+            }
+            public B = {
+            public Y = 2
+            20
+            }
+            C = A; B
+            C.X
+            C.Y
+            """);
+
+        Assert.Single(model.FindDeclarations("X"));
+        Assert.Single(model.FindDeclarations("Y"));
+
+        var xReference = ResolutionAt(model, 10, 3);
+        Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Unresolved, xReference.Classification);
+        Assert.Null(xReference.ResolvedDeclaration);
+        Assert.Null(xReference.ResolvedProperty);
+
+        var yReference = ResolutionAt(model, 11, 3);
+        Assert.Equal(OccurrenceKind.DotMemberReference, yReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.Unresolved, yReference.Classification);
+        Assert.Null(yReference.ResolvedDeclaration);
+        Assert.Null(yReference.ResolvedProperty);
+    }
+
+    [Fact]
     public void Build_DotCall_ArityOnImplicitParameter_RemainsUnresolved()
     {
         var model = BuildModel(

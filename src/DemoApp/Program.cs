@@ -119,8 +119,8 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write(')');
             break;
 
-        case Expr.Combine(var left, var right):
-            Console.Write("Combine(");
+        case Expr.ResultJoin(var left, var right):
+            Console.Write("ResultJoin(");
             PrintExpr(left, indent);
             Console.Write(", ");
             PrintExpr(right, indent);

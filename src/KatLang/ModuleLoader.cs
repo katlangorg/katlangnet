@@ -151,8 +151,8 @@ public sealed class ModuleLoader
                     ProcessExpr(selector, LoadContext.RuntimeExpr))
                 { Span = expr.Span };
 
-            case Expr.Combine(var left, var right):
-                return new Expr.Combine(
+            case Expr.ResultJoin(var left, var right):
+                return new Expr.ResultJoin(
                     ProcessExpr(left, context),
                     ProcessExpr(right, context))
                 { Span = expr.Span };

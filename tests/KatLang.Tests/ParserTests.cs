@@ -442,25 +442,25 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Semicolon_ReturnsCombineExpr()
+    public void Parse_Semicolon_ReturnsResultJoinExpr()
     {
         var result = Parser.ParseSyntax("A; B");
 
         Assert.False(result.HasErrors);
-        var combine = Assert.IsType<Expr.Combine>(result.Root.Output[0]);
-        Assert.IsType<Expr.Resolve>(combine.Left);
-        Assert.IsType<Expr.Resolve>(combine.Right);
+        var resultJoin = Assert.IsType<Expr.ResultJoin>(result.Root.Output[0]);
+        Assert.IsType<Expr.Resolve>(resultJoin.Left);
+        Assert.IsType<Expr.Resolve>(resultJoin.Right);
     }
 
     [Fact]
-    public void Parse_Semicolon_ChainedCombine()
+    public void Parse_Semicolon_ChainedResultJoin()
     {
-        // 1 + 2; 3 + 4; 5 + 6 → Combine(Combine(1+2, 3+4), 5+6) left-assoc
+        // 1 + 2; 3 + 4; 5 + 6 → ResultJoin(ResultJoin(1+2, 3+4), 5+6) left-assoc
         var result = Parser.ParseSyntax("1 + 2; 3 + 4; 5 + 6");
         Assert.False(result.HasErrors);
-        Assert.Single(result.Root.Output); // one combine item in output
-        var outer = Assert.IsType<Expr.Combine>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Combine>(outer.Left);
+        Assert.Single(result.Root.Output); // one result join item in output
+        var outer = Assert.IsType<Expr.ResultJoin>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.ResultJoin>(outer.Left);
         Assert.IsType<Expr.Binary>(inner.Left);
         Assert.IsType<Expr.Binary>(inner.Right);
         Assert.IsType<Expr.Binary>(outer.Right);
@@ -469,18 +469,18 @@ public class ParserTests
     [Fact]
     public void Parse_CommaAndSemicolon_CorrectStructure()
     {
-        // 1, 2; 3 → output list has two items: [Num(1), Combine(Num(2), Num(3))]
+        // 1, 2; 3 → output list has two items: [Num(1), ResultJoin(Num(2), Num(3))]
         var result = Parser.ParseSyntax("1, 2; 3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         Assert.IsType<Expr.Num>(result.Root.Output[0]);
-        var combine = Assert.IsType<Expr.Combine>(result.Root.Output[1]);
+        var resultJoin = Assert.IsType<Expr.ResultJoin>(result.Root.Output[1]);
     }
 
     [Fact]
     public void Parse_PropertyDetectionWithSemicolon()
     {
-        // A = 1; 2 B = 3 → two properties, A has output [Combine(1, 2)]
+        // A = 1; 2 B = 3 → two properties, A has output [ResultJoin(1, 2)]
         var result = Parser.ParseSyntax("A = 1; 2 B = 3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Properties.Count);

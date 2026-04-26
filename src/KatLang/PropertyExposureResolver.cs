@@ -336,7 +336,7 @@ internal static class PropertyExposureResolver
                     MergeSummaries([rewrittenTarget.Summary, rewrittenSelector.Summary]));
             }
 
-            case Expr.Combine(var left, var right):
+            case Expr.ResultJoin(var left, var right):
             {
                 var rewrittenLeft = RewriteExpr(
                     left,
@@ -351,7 +351,7 @@ internal static class PropertyExposureResolver
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
                 return new ExprRewriteResult(
-                    new Expr.Combine(rewrittenLeft.Expr, rewrittenRight.Expr) { Span = expr.Span },
+                    new Expr.ResultJoin(rewrittenLeft.Expr, rewrittenRight.Expr) { Span = expr.Span },
                     MergeSummaries([rewrittenLeft.Summary, rewrittenRight.Summary]));
             }
 

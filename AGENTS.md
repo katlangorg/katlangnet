@@ -44,15 +44,15 @@
 - C# evaluator memoization is an implementation optimization boundary, not a Lean-level language feature.
 - Lean core numeric semantics use `Int`; the current C# runtime uses `decimal`. Do not silently widen or reinterpret numeric behavior without checking Lean first.
 
-## Builtins And Sequence/Combining Conventions
+## Builtins And Sequence/Result Join Conventions
 
 - `arity` means the structural count of top-level output slots.
 - `count` means the number of evaluated top-level values.
 - Do not treat `arity` and `count` as interchangeable.
-- Semicolon `;` is the structural combining operator, not a normal argument separator.
+- Semicolon `;` is the result join operator: it joins immediate evaluated results and is not a normal argument separator.
 - Comma `,` separates output slots and call arguments.
 - This convention especially matters for sequence builtins such as `filter`, `map`, `order`, `orderDesc`, `count`, `first`, `last`, `min`, `max`, `sum`, `avg`, and `reduce`.
-- Sequence builtins and combining behavior must stay consistent across Lean and C#.
+- Sequence builtins and result-join behavior must stay consistent across Lean and C#.
 - Keep plain-call and dot-call sequence behavior aligned, including receiver expansion rules and grouped-value behavior.
 - Changes to builtins, preludes, or intrinsic metadata may require synchronized updates in evaluator, front-end assumptions, semantics, tests, tutorial, and generator guidance.
 

@@ -472,7 +472,7 @@ public sealed class Parser
 
     /// <summary>
     /// Parses the comma-separated target list after the <c>open</c> keyword.
-    /// Each target is a combine item (expression with optional semicolons).
+    /// Each target is a result-join item (expression with optional semicolons).
     /// String literal targets are desugared to <c>load('url')</c> calls.
     /// </summary>
     private List<Expr> ParseOpenTargetList()
@@ -490,7 +490,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses a single open target (which may include semicolons for combine).
+    /// Parses a single open target (which may include semicolon syntax).
     /// If the target is a string literal, desugars it to <c>load('url')</c>.
     /// </summary>
     private Expr ParseOpenTarget()
@@ -512,7 +512,7 @@ public sealed class Parser
             return new Expr.Call(loadResolve, loadArgs) { Span = TokenSpan(token) };
         }
 
-        return ParseCombineItem();
+        return ParseResultJoinItem();
     }
 
     /// <summary>
@@ -660,7 +660,7 @@ public sealed class Parser
         Expr.Binary(_, var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
         Expr.Unary(_, var o) => FindGraceSpan(o),
         Expr.Index(var t, var s) => FindGraceSpan(t) ?? FindGraceSpan(s),
-        Expr.Combine(var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
+        Expr.ResultJoin(var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
         Expr.DotCall(var t, _, var a) => FindGraceSpan(t) ?? (a is not null ? FindGraceSpan(a.Output) : null),
         Expr.Call(var f, var a) => FindGraceSpan(f) ?? FindGraceSpan(a.Output),
         Expr.Block(var alg) => FindGraceSpan(alg.Output),
@@ -775,7 +775,7 @@ public sealed class Parser
 
     // ── Output line parsing ─────────────────────────────────────────────────
     // Corresponds to 0.6's ReadFirstOrderAlgorithm.
-    // Reads comma-separated expressions (with semicolons for combine).
+    // Reads comma-separated expressions (with semicolon result joins).
 
     /// <summary>
     /// Parses a property body as an algorithm: the comma-separated expressions
@@ -813,7 +813,7 @@ public sealed class Parser
     /// Normalizes and validates open expressions.
     /// DotCall(obj, name, null) is the canonical form for dotted paths in opens.
     /// Rejects DotCall with args as invalid.
-    /// Lean: Expr.openForm? — only Resolve, DotCall(none), Combine, Block are open forms.
+    /// Lean: Expr.openForm? — only Resolve, DotCall(none), ResultJoin, Block are open forms.
     /// </summary>
     private void NormalizeAndValidateOpenForms(List<Expr> exprs)
     {
@@ -834,7 +834,7 @@ public sealed class Parser
     /// Recursively normalizes an open expression:
     /// - DotCall(obj, name, null) is the canonical no-arg form (kept as-is)
     /// - DotCall(obj, name, args) → report error (call-like syntax not allowed in opens)
-    /// - Recurse through Combine, DotCall target, Block.
+    /// - Recurse through ResultJoin, DotCall target, Block.
     /// </summary>
     private Expr NormalizeOpenExpr(Expr expr)
     {
@@ -852,8 +852,8 @@ public sealed class Parser
                 // Return as-is; validation will also flag it
                 return expr;
 
-            case Expr.Combine(var left, var right):
-                return new Expr.Combine(NormalizeOpenExpr(left), NormalizeOpenExpr(right)) { Span = expr.Span };
+            case Expr.ResultJoin(var left, var right):
+                return new Expr.ResultJoin(NormalizeOpenExpr(left), NormalizeOpenExpr(right)) { Span = expr.Span };
 
             case Expr.Block(var alg):
                 // Block in open position: normalize opens within the block's own opens
@@ -866,7 +866,7 @@ public sealed class Parser
 
     /// <summary>
     /// Predicate for valid open forms at parse time.
-    /// Lean: Expr.openForm? — only Resolve, DotCall(none), Combine, Block post-elaboration.
+    /// Lean: Expr.openForm? — only Resolve, DotCall(none), ResultJoin, Block post-elaboration.
     /// DotCall with args is NOT a valid open form.
     /// load calls (Call(Resolve("load"), _)) are allowed as *surface* open forms because
     /// the load elaboration pass will rewrite them to Block nodes before open resolution.
@@ -875,7 +875,7 @@ public sealed class Parser
     /// load is NOT a core Expr constructor; it is surface syntax only.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.Combine or Expr.Block
+        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.ResultJoin or Expr.Block
         || e.TryGetUnresolvedLoadArguments(out _);
 
     /// <summary>
@@ -898,28 +898,28 @@ public sealed class Parser
 
     /// <summary>
     /// Parses comma-separated expressions for an output line.
-    /// Semicolons create <see cref="Expr.Combine"/> nodes.
+    /// Semicolons create <see cref="Expr.ResultJoin"/> result-join nodes.
     /// Returns the list of expressions (each comma-separated item is one entry).
     /// </summary>
     private List<Expr> ParseOutputLineExprs()
     {
         var exprs = new List<Expr>();
-        exprs.Add(ParseCombineItem());
+        exprs.Add(ParseResultJoinItem());
 
         while (Current.Kind == TokenKind.Comma)
         {
             Advance(); // consume ','
-            exprs.Add(ParseCombineItem());
+            exprs.Add(ParseResultJoinItem());
         }
 
         return exprs;
     }
 
     /// <summary>
-    /// Parses a single item that may contain semicolons for combine.
-    /// <c>expr ; expr</c> → <see cref="Expr.Combine"/>.
+    /// Parses a single item that may contain semicolon result joins.
+    /// <c>expr ; expr</c> → <see cref="Expr.ResultJoin"/>.
     /// </summary>
-    private Expr ParseCombineItem()
+    private Expr ParseResultJoinItem()
     {
         var left = ParseExpression();
 
@@ -927,7 +927,7 @@ public sealed class Parser
         {
             Advance(); // consume ';'
             var right = ParseExpression();
-            left = new Expr.Combine(left, right) { Span = SpanFrom(left) };
+            left = new Expr.ResultJoin(left, right) { Span = SpanFrom(left) };
         }
 
         return left;
