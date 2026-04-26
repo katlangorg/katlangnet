@@ -3111,6 +3111,32 @@ def test107 : Bool :=
 
 #eval test107  -- should be true
 
+-- Test 107a: dot-call count of an empty filtered receiver is zero
+def test107a : Bool :=
+  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .dotCall
+      (.dotCall
+        (.block (alg [] [] [] [.num 1, .num 5, .num 3]))
+        "filter"
+        (some (alg [] [] [] [.resolve "AlwaysFalse"])))
+      "count"
+      none
+  ])) with
+  | Except.ok [0] => true
+  | _ => false
+
+#eval test107a  -- should be true
+
+-- Test 107b: count with no collection argument is still invalid
+def test107b : Bool :=
+  match runFlat (.block (alg [] [] [] [
+    .call (resolve "count") (alg [] [] [] [])
+  ])) with
+  | Except.error _ => true
+  | _ => false
+
+#eval test107b  -- should be true
+
 -- Test 108: a single grouped sequence argument counts as one top-level item
 def test108 : Bool :=
   let groupedPairs := .block (alg [] [] [] [

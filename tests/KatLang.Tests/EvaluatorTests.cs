@@ -1842,6 +1842,37 @@ public class EvaluatorTests
         => AssertEval("range(1, 5).count", 5);
 
     [Fact]
+    public void Eval_Count_DotCall_EmptyFilterReceiver_ReturnsZero()
+        => AssertEval("(1, 5, 3).filter{ n mod 2 == 0 }.count", 0);
+
+    [Fact]
+    public void Eval_Count_DotCall_EmptyFilterReceiverWithNamedPredicate_ReturnsZero()
+    {
+        var source = """
+            IsEven = n mod 2 == 0
+            (1, 5, 3).filter(IsEven).count
+            """;
+
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_Count_NoArguments_Fails()
+        => AssertEvalFails("count()");
+
+    [Fact]
+    public void Eval_SequenceBuiltinDotCall_EmptyFilterReceiver_RespectsEmptyPolicies()
+    {
+        AssertEval("(1, 5, 3).filter{ n mod 2 == 0 }.sum", 0);
+        AssertBuiltinFailureWithExactContext(
+            "(1, 5, 3).filter{ n mod 2 == 0 }.first",
+            "first requires a non-empty collection");
+        AssertBuiltinFailureWithExactContext(
+            "(1, 5, 3).filter{ n mod 2 == 0 }.last",
+            "last requires a non-empty collection");
+    }
+
+    [Fact]
     public void Eval_Count_DescendingRange_CountsTopLevelItems()
         => AssertEval("count(range(5, 1))", 5);
 

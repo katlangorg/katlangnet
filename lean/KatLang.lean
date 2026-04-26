@@ -1437,7 +1437,9 @@ def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
     through the ordinary leading-argument boundary rule when the builtin runs.
     -/
 def countedTopLevelItemAlgorithms (arg : CountedResult) : List Algorithm :=
-  (countedTopLevelValues arg).map (fun item => countedArgAlgorithm (item, 1))
+  match arg with
+  | (_, 0) => [countedArgAlgorithm arg]
+  | _ => (countedTopLevelValues arg).map (fun item => countedArgAlgorithm (item, 1))
 
 /-- Ordinary call-style unpacking for a pre-evaluated explicit argument whose
     expression-level emitted count is already known.

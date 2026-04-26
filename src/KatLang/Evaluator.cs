@@ -1299,9 +1299,11 @@ public static class Evaluator
     /// runs.
     /// </summary>
     private static IReadOnlyList<Algorithm> CountedTopLevelItemAlgorithms(CountedResult arg)
-        => CountedTopLevelValues(arg)
-            .Select(item => CountedArgAlgorithm(new CountedResult(item, 1)))
-            .ToList();
+        => arg.EmittedCount == 0
+            ? [CountedArgAlgorithm(arg)]
+            : CountedTopLevelValues(arg)
+                .Select(item => CountedArgAlgorithm(new CountedResult(item, 1)))
+                .ToList();
 
     /// <summary>
     /// Ordinary call-style unpacking for a pre-evaluated explicit callback
