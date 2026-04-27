@@ -1,14 +1,15 @@
 ﻿using KatLang;
 
 var source = """
-    Quadratic = {
-        Discriminant = b ^ 2 - 4 * a * c
-        Root1 = (-b + Math.Sqrt(Discriminant)) / (2 * a)
-        Root2 = (-b - Math.Sqrt(Discriminant)) / (2 * a)
-
-        Root1, Root2
+    reduceCollection(values) = {
+        list = atoms(values)
+        if(
+            list.count <= 1,
+            list,
+            list.skip(1).reduceCollection
+        )
     }
-    Quadratic(1, -5, 6)
+    reduceCollection((1,2,3,4))
     """;
 
 switch (KatLangEngine.Run(source))

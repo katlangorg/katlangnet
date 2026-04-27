@@ -3699,13 +3699,24 @@ public static class Evaluator
                 Properties: [],
                 Output: [expr]));
 
+    private static bool ShouldWrapBuiltinArgExprAsValue(
+        Expr expr,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => ShouldWrapArgExprAsValue(expr)
+            || expr is Expr.Param(var name)
+                && (LookupCountedParam(ctx.CountedParamEnv, name) is not null
+                    || LookupVal(valEnv, name) is not null);
+
     private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
-        Algorithm argsAlg, EvalCtx ctx)
+        Algorithm argsAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
     {
         var result = new List<Algorithm>(argsAlg.Output.Count);
         foreach (var argExpr in argsAlg.Output)
         {
-            if (ShouldWrapArgExprAsValue(argExpr))
+            if (ShouldWrapBuiltinArgExprAsValue(argExpr, ctx, valEnv))
             {
                 result.Add(WrapArgExprAsValue(argExpr, ctx));
                 continue;
@@ -4107,7 +4118,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltin(builtinId, argAlgsR.Value, ctx, valEnv);
         }
@@ -4233,7 +4244,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgs(argsAlg, ctx);
+            var argAlgsR = ResolveArgAlgs(argsAlg, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinCounted(builtinId, argAlgsR.Value, ctx, valEnv);
         }
@@ -4426,7 +4437,7 @@ public static class Evaluator
 
         if (extraArgs is not null)
         {
-            var extraArgAlgsR = ResolveArgAlgs(extraArgs, ctx);
+            var extraArgAlgsR = ResolveArgAlgs(extraArgs, ctx, valEnv);
             if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
             argAlgs.AddRange(extraArgAlgsR.Value);
         }

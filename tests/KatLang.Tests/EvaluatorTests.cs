@@ -471,6 +471,24 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_RecursiveDotCallArgumentUsesCurrentValueBinding()
+    {
+        var source = """
+            reduceCollection(values) = {
+                list = atoms(values)
+                if(
+                    list.count <= 1,
+                    list,
+                    list.skip(1).reduceCollection
+                )
+            }
+            reduceCollection((1,2,3,4))
+            """;
+
+        AssertEval(source, 4);
+    }
+
+    [Fact]
     public void Eval_Distinguishes_HigherOrderAlgorithmContexts()
     {
         var source = """

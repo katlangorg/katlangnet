@@ -2068,9 +2068,13 @@ mutual
 
       Non-builtin call paths are unaffected — user-defined calls still evaluate
       arguments eagerly through `evalCall`. -/
-  partial def resolveArgAlgs (args : Algorithm) (ctx : EvalCtx) : EvalM (List Algorithm) :=
+  partial def resolveArgAlgs (args : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Algorithm) :=
     (Algorithm.output args).mapM (fun e => do
-      if shouldWrapArgExprAsValue e then
+      let shouldUseValueSide :=
+        match e with
+        | .param name => (ctx.countedParamEnv.lookup name).isSome || (env.lookup name).isSome
+        | _ => false
+      if shouldWrapArgExprAsValue e || shouldUseValueSide then
         pure (wireToCaller ctx (Algorithm.ofExpr e))
       else
         match resolveAlg e ctx with
@@ -3107,7 +3111,7 @@ mutual
       (preserveArgBoundaries : List Bool := []) : EvalM Result := do
     match callee with
     | .builtin b => do
-        let argAlgs <- resolveArgAlgs args ctx
+        let argAlgs <- resolveArgAlgs args ctx env
         applyBuiltin b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
@@ -3121,7 +3125,7 @@ mutual
       (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
     match callee with
     | .builtin b => do
-        let argAlgs <- resolveArgAlgs args ctx
+        let argAlgs <- resolveArgAlgs args ctx env
         applyBuiltinCounted b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
@@ -3183,7 +3187,7 @@ mutual
             let receiverArgAlgs <- sequenceBuiltinDotReceiverArgs receiver ctx env
             let extraArgAlgs <-
               match extraArgs with
-              | some args => resolveArgAlgs args ctx
+              | some args => resolveArgAlgs args ctx env
               | none => pure []
             pure (some (b, receiverArgAlgs ++ extraArgAlgs))
         | none =>

@@ -966,6 +966,40 @@ def test12 : Bool :=
 -- EXPECTED: Except.ok [3]
 #eval runFlat (.block testAlg12)
 
+-- Regression: recursive dot-call arguments bind both value and algorithm views,
+-- but builtin argument preparation must use the current parameter value when it
+-- exists. Otherwise atoms(values) re-enters list.skip(1) while list is computing.
+def recursiveDotCallListAlg : Algorithm :=
+  alg [] [] [] [
+    .call (resolve "atoms") (alg [] [] [] [.param "values"])
+  ]
+
+def recursiveDotCallReduceCollectionAlg : Algorithm :=
+  algPrivate ["values"] [] [("list", recursiveDotCallListAlg)] [
+    .call (resolve "if") (alg [] [] [] [
+      .binary .le (.dotCall (resolve "list") "count" none) (.num 1),
+      resolve "list",
+      .dotCall
+        (.dotCall (resolve "list") "skip" (some (alg [] [] [] [.num 1])))
+        "reduceCollection"
+        none
+    ])
+  ]
+
+def recursiveDotCallRoot : Algorithm :=
+  algPrivate [] [] [("reduceCollection", recursiveDotCallReduceCollectionAlg)] [
+    .call (resolve "reduceCollection") (alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])
+    ])
+  ]
+
+def test12a : Bool :=
+  match runFlat (.block recursiveDotCallRoot) with
+  | Except.ok [4] => true
+  | _ => false
+
+#eval test12a  -- should be true
+
 -- Test 13: named multi-output receiver no longer exposes arity
 def arityRemovedRoot13 : Algorithm :=
   algPrivate [] [] [("Data", alg [] [] [] [.num 1, .num 7])] [
