@@ -477,8 +477,10 @@ internal static class PropertyDependencyGraphBuilder
                 CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
-            case Expr.DotCall(var target, _, _):
+            case Expr.DotCall(var target, var name, var args):
                 CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+                if (args is not null && IsMathValueDotCall(target, name))
+                    CollectArgumentSiblingDependencyIndices(args, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex);
                 break;
 
             case Expr.Grace(var inner, _):
@@ -492,6 +494,32 @@ internal static class PropertyDependencyGraphBuilder
                 break;
         }
     }
+
+    private static void CollectArgumentSiblingDependencyIndices(
+        Algorithm args,
+        HashSet<string> siblingNames,
+        IReadOnlyDictionary<string, int> propertyNameToIndex,
+        HashSet<int> dependencyIndices,
+        int propertyIndex)
+    {
+        if (args.IsParametrized)
+            return;
+
+        foreach (var expression in args.Output)
+        {
+            CollectSiblingDependencyIndices(
+                expression,
+                siblingNames,
+                propertyNameToIndex,
+                dependencyIndices,
+                propertyIndex,
+                inCallPosition: false);
+        }
+    }
+
+    private static bool IsMathValueDotCall(Expr target, string name)
+        => target is Expr.Resolve { Name: "Math" }
+            && BuiltinRegistry.IsMathFunctionMember(name);
 
     private static IReadOnlyList<string> CollectDirectAncestorOwnedParameterNames(
         Algorithm algorithm,

@@ -1,9 +1,14 @@
 ﻿using KatLang;
 
 var source = """
-    Values = range(1, 100)
-    SquaresTotal = Values.map{x*x}.sum
-    Values.sum ^ 2 - SquaresTotal
+    Quadratic = {
+        Discriminant = b ^ 2 - 4 * a * c
+        Root1 = (-b + Math.Sqrt(Discriminant)) / (2 * a)
+        Root2 = (-b - Math.Sqrt(Discriminant)) / (2 * a)
+
+        Root1, Root2
+    }
+    Quadratic(1, -5, 6)
     """;
 
 switch (KatLangEngine.Run(source))

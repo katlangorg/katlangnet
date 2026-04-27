@@ -899,6 +899,27 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_ImplicitQuadratic_ExposesDotCallArgumentDependenciesInPropertyInfo()
+    {
+        var model = BuildModel(
+            """
+            Quadratic = {
+                Discriminant = b ^ 2 - 4 * a * c
+                Root1 = (-b + Math.Sqrt(Discriminant)) / (2 * a)
+                Root2 = (-b - Math.Sqrt(Discriminant)) / (2 * a)
+
+                Root1, Root2
+            }
+            Quadratic(1, -5, 6)
+            """);
+
+        Assert.Equal(["b", "a", "c"], SingleProperty(model, "Quadratic").Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["b", "a", "c"], SingleProperty(model, "Discriminant").Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["b", "a", "c"], SingleProperty(model, "Root1").Parameters.Select(parameter => parameter.Name).ToList());
+        Assert.Equal(["b", "a", "c"], SingleProperty(model, "Root2").Parameters.Select(parameter => parameter.Name).ToList());
+    }
+
+    [Fact]
     public void Build_OrdinaryPropertyInfo_ExposesMixedExplicitAndImplicitParameters()
     {
         var model = BuildModel("Add(x) = x + y");

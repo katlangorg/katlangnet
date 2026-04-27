@@ -149,6 +149,34 @@ public class ImplicitArgumentResolverTests
         Assert.Empty(y.Params);
     }
 
+    [Fact]
+    public void Resolve_DotCallArgumentDependenciesLiftThroughContainingProperty()
+    {
+        var source = """
+            Quadratic = {
+                Discriminant = b ^ 2 - 4 * a * c
+                Root1 = (-b + Math.Sqrt(Discriminant)) / (2 * a)
+                Root2 = (-b - Math.Sqrt(Discriminant)) / (2 * a)
+
+                Root1, Root2
+            }
+            Quadratic(1, -5, 6)
+            """;
+        var root = Resolve(source);
+
+        var quadratic = root.Properties.Single(p => p.Name == "Quadratic").Value;
+        Assert.Equal(["b", "a", "c"], quadratic.Params);
+
+        var discriminant = quadratic.Properties.Single(p => p.Name == "Discriminant").Value;
+        Assert.Equal(["b", "a", "c"], discriminant.Params);
+
+        var root1 = quadratic.Properties.Single(p => p.Name == "Root1").Value;
+        Assert.Equal(["b", "a", "c"], root1.Params);
+
+        var root2 = quadratic.Properties.Single(p => p.Name == "Root2").Value;
+        Assert.Equal(["b", "a", "c"], root2.Params);
+    }
+
     // â”€â”€ End-to-end evaluation tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
@@ -238,6 +266,23 @@ public class ImplicitArgumentResolverTests
             G(1, 2, 3)
             """;
         AssertEval(source, 6);
+    }
+
+    [Fact]
+    public void Eval_ImplicitQuadratic_DotCallArgumentDependencies_ReturnsRoots()
+    {
+        var source = """
+            Quadratic = {
+                Discriminant = b ^ 2 - 4 * a * c
+                Root1 = (-b + Math.Sqrt(Discriminant)) / (2 * a)
+                Root2 = (-b - Math.Sqrt(Discriminant)) / (2 * a)
+
+                Root1, Root2
+            }
+            Quadratic(1, -5, 6)
+            """;
+
+        AssertEval(source, -1, 1.2m);
     }
 
     // â”€â”€ Transitive ordering: zero-param intermediaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

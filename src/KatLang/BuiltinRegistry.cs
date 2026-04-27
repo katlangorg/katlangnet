@@ -261,6 +261,9 @@ internal static class BuiltinRegistry
         .Select(static member => member.Name)
         .ToArray();
 
+    public static bool IsMathFunctionMember(string name)
+        => MathMemberDescriptors.Any(member => member.Name == name && member.Kind != MathMemberKind.Constant);
+
     public static IReadOnlyList<string> LoadParameterNames { get; } = ["url"];
 
     public static BuiltinDescriptor GetBuiltin(BuiltinId builtin)

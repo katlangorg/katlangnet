@@ -179,7 +179,6 @@ public static class ImplicitArgumentResolver
                     CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true);
                 else
                     CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: false);
-                // Do NOT recurse into call args — separate scope
                 break;
 
             case Expr.Binary(_, var left, var right):
@@ -201,9 +200,11 @@ public static class ImplicitArgumentResolver
                 CollectImplicitDeps(right, paramMap, seen, deps, false);
                 break;
 
-            case Expr.DotCall(var target, _, _):
+            case Expr.DotCall(var target, var name, var dotArgs):
                 // DotCall target is in algorithm position (resolveAlg, not eval)
                 CollectImplicitDeps(target, paramMap, seen, deps, inCallPosition: true);
+                if (dotArgs is not null && IsMathValueDotCall(target, name))
+                    CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps);
                 break;
 
             case Expr.Grace(var inner, _):
@@ -217,6 +218,19 @@ public static class ImplicitArgumentResolver
             default:
                 break;
         }
+    }
+
+    private static void CollectArgumentImplicitDeps(
+        Algorithm args,
+        Dictionary<string, IReadOnlyList<string>> paramMap,
+        HashSet<string> seen,
+        List<(string Name, IReadOnlyList<string> Params)> deps)
+    {
+        if (args.IsParametrized)
+            return;
+
+        foreach (var argExpr in args.Output)
+            CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false);
     }
 
     /// <summary>
@@ -258,7 +272,6 @@ public static class ImplicitArgumentResolver
                     ? func
                     : RewriteImplicitCalls(func, paramMap, inCallPosition: false);
 
-                // Process args algorithm recursively (it's a separate scope)
                 var newArgs = ProcessAlgorithm(args, paramMap);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
 
@@ -285,7 +298,11 @@ public static class ImplicitArgumentResolver
                 return new Expr.DotCall(
                     RewriteImplicitCalls(target, paramMap, inCallPosition: true),
                     name,
-                    dotArgs is not null ? ProcessAlgorithm(dotArgs, paramMap) : null)
+                    dotArgs is not null
+                        ? IsMathValueDotCall(target, name)
+                            ? ProcessArgumentAlgorithm(dotArgs, paramMap)
+                            : ProcessAlgorithm(dotArgs, paramMap)
+                        : null)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
@@ -301,6 +318,32 @@ public static class ImplicitArgumentResolver
                 return expr;
         }
     }
+
+    private static Algorithm ProcessArgumentAlgorithm(
+        Algorithm args,
+        Dictionary<string, IReadOnlyList<string>> paramMap)
+    {
+        if (args.IsParametrized)
+            return ProcessAlgorithm(args, paramMap);
+
+        var newOutput = new List<Expr>(args.Output.Count);
+        foreach (var expr in args.Output)
+            newOutput.Add(RewriteImplicitCalls(expr, paramMap, inCallPosition: false));
+
+        var newProperties = new List<Property>(args.Properties.Count);
+        foreach (var prop in args.Properties)
+            newProperties.Add(prop.WithValue(ProcessAlgorithm(prop.Value, paramMap)));
+
+        return args with
+        {
+            Properties = newProperties,
+            Output = newOutput,
+        };
+    }
+
+    private static bool IsMathValueDotCall(Expr target, string name)
+        => target is Expr.Resolve { Name: "Math" }
+            && BuiltinRegistry.IsMathFunctionMember(name);
 
     /// <summary>
     /// Processes an expression in a non-parametrized context:
