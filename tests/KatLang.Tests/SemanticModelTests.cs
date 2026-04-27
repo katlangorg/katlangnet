@@ -85,6 +85,29 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_SourceCoordinates_AreOneBasedAndEndInclusive()
+    {
+        var model = BuildModel("Alpha = 123\nAlpha");
+
+        var alphaDeclaration = Assert.Single(model.FindDeclarations("Alpha"));
+        Assert.Equal(OccurrenceKind.PropertyDefinition, alphaDeclaration.Kind);
+        AssertSpan(alphaDeclaration.Span, 1, 1, 1, 5);
+
+        var alphaReference = Assert.Single(
+            model.IdentifierResolutions,
+            resolution => resolution.Occurrence.Name == "Alpha"
+                && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
+        Assert.Equal(IdentifierClassification.PropertyReference, alphaReference.Classification);
+        Assert.Equal(alphaDeclaration, alphaReference.ResolvedDeclaration);
+        AssertSpan(alphaReference.Occurrence.Span, 2, 1, 2, 5);
+
+        Assert.Equal(alphaReference, model.FindResolutionAt(2, 1));
+        Assert.Equal(alphaReference, model.FindResolutionAt(2, 3));
+        Assert.Equal(alphaReference, model.FindResolutionAt(2, 5));
+        Assert.Null(model.FindResolutionAt(2, 6));
+    }
+
+    [Fact]
     public void Build_OrdinaryAlgorithm_TracksExactDeclarationsAndReferences()
     {
         var model = BuildModel(

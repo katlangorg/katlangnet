@@ -83,7 +83,8 @@ public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @or
 // ── Source span ──────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Source location of an expression or error. All values are 1-based.
+/// Source location of an expression or error. Lines and columns are 1-based,
+/// and end positions are inclusive.
 /// </summary>
 public sealed record SourceSpan(
     int StartLineNumber, int StartColumn,
