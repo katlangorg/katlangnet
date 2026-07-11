@@ -36,7 +36,7 @@ public class BuiltinRuntimeParityTests
     {
         var error = AssertEvalFails(source, out var message);
 
-        // Rest-shaped builtins are item streams (unbounded max), so the arity floor reads
+        // Rest-shaped builtins are item supplies (unbounded max), so the arity floor reads
         // "expects at least N item(s)".
         Assert.Equal(
             $"while evaluating call to {builtinName}: Builtin '{builtinName}' expects at least {expectedMinimum} item(s) for {signatureDisplay}, but received {actual}.",

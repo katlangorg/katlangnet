@@ -170,9 +170,9 @@ public class SequenceSpreadTests
             """);
 
     // A postfix spread never consumes a following binary operator, so an opened
-    // item stream cannot be a binary operand. `A... == A...` is a parse error
+    // item supply cannot be a binary operand. `A... == A...` is a parse error
     // rather than an elementwise comparison — structural `==`/`!=` operate on whole
-    // values, never on opened streams. Compare regrouped values with `(A...) == A`.
+    // values, never on opened item supplies. Compare regrouped values with `(A...) == A`.
     [Fact]
     public void PostfixEllipsisFollowedByEqualityOperator_IsParseError()
         => AssertParseFailure(
@@ -230,11 +230,11 @@ public class SequenceSpreadTests
 
     // `Values...7` is not a binary spread: `...` is postfix and takes no right
     // operand, so it parses as the expression list `Values..., 7` = three slots
-    // [10, 20, 7], bound by the item-stream matcher (sum 37).
+    // [10, 20, 7], bound by the item-supply matcher (sum 37).
     [Theory]
     [InlineData("Sum(Values...7)")]
     [InlineData("Sum(Values ...7)")]
-    public void PostfixSpreadThenJoinInsideCall_BindsItemStream(string call)
+    public void PostfixSpreadThenJoinInsideCall_BindsItemSupply(string call)
         => AssertEval(
             $$"""
             Values = 10, 20
@@ -267,26 +267,25 @@ public class SequenceSpreadTests
             37m);
 
     [Fact]
-    public void VariadicSuffixBinding_NormalArgumentOpensSingleGroupedValue()
-        // One grouped sequence-value argument is opened by rule 4 into [10, 20]:
-        // val binds 20 and the variadic captures [10], giving 10 + 20 = 30.
-        => AssertEval(
+    public void VariadicSuffixBinding_NormalArgumentPreservesSingleGroupedValue()
+        // One grouped sequence-value argument is not implicitly opened for a
+        // mixed variadic call; val receives the sequence value and the numeric
+        // body fails. Use Values... to open it explicitly.
+        => AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(values..., val) = values.sum + val
             Sum(Values)
-            """,
-            30m);
+            """);
 
     [Fact]
-    public void VariadicSuffixBinding_DotCallReceiverOpensSingleGroupedValue()
-        => AssertEval(
+    public void VariadicSuffixBinding_DotCallReceiverPreservesSingleGroupedValue()
+        => AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(values..., val) = values.sum + val
             Values.Sum
-            """,
-            30m);
+            """);
 
     [Fact]
     public void VariadicSuffixBinding_DotCallReceiverWithSuffixSpreadsVariadicSlot()
@@ -529,9 +528,9 @@ public class SequenceSpreadTests
             2m);
 
     [Fact]
-    public void SequenceBuiltin_ExplicitSpreadJoinsItemStream()
-        // A rest-shaped builtin consumes an item stream like a user variadic, so explicit
-        // spread opens its items into the same stream (it no longer over-supplies).
+    public void SequenceBuiltin_ExplicitSpreadJoinsItemSupply()
+        // A rest-shaped builtin consumes an item supply like a user variadic, so explicit
+        // spread opens its items into the same supply (it no longer over-supplies).
         => AssertEval(
             """
             Values = 10, 20
@@ -549,7 +548,7 @@ public class SequenceSpreadTests
             30m);
 
     [Fact]
-    public void SequenceBuiltin_NumericExplicitSpreadJoinsItemStream()
+    public void SequenceBuiltin_NumericExplicitSpreadJoinsItemSupply()
         => AssertEval(
             """
             Values = 10, 20
@@ -596,10 +595,10 @@ public class SequenceSpreadTests
             """,
             1m, 2m, 3m);
 
-    // `(Values...)` spreads the receiver into the item stream, so `Sum(values...)`
+    // `(Values...)` spreads the receiver into the item supply, so `Sum(values...)`
     // binds [10, 20] and sums to 30.
     [Fact]
-    public void DotCall_ExplicitSequenceSpreadReceiverBindsItemStream()
+    public void DotCall_ExplicitSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
             """
             Values = 10, 20
@@ -620,10 +619,10 @@ public class SequenceSpreadTests
             """,
             call.Contains('7', StringComparison.Ordinal) ? 37m : 30m);
 
-    // `(Pair...)` spreads the receiver items into the item stream, so
+    // `(Pair...)` spreads the receiver items into the item supply, so
     // `Sum(values...)` binds [10, 20] and sums to 30.
     [Fact]
-    public void DotCall_GroupSequenceSpreadReceiverBindsItemStream()
+    public void DotCall_GroupSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
             """
             Pair = (10, 20)
@@ -702,9 +701,10 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceSpread_VersusVariadicCapture_AreDistinct()
     {
-        // Definition side: `values...` is a VARIADIC (rest) CAPTURE that consumes
-        // exactly one argument slot — NOT a spread. A named sequence value passes
-        // as that one slot, and the capture binds its immediate items.
+        // Definition side: `values...` is a VARIADIC (rest) CAPTURE — NOT a spread.
+        // A named sequence value is still supplied as one call argument; the rest-only
+        // capture plus the builtin `sum(values)` can display the same result as an
+        // explicit spread, so fixed and mixed signatures are the boundary proof.
         const string variadicDef = """
             Sum(values...) = sum(values)
             Vals = (1, 2, 3)
@@ -718,8 +718,7 @@ public class SequenceSpreadTests
         Assert.Equal(ParameterKind.Variadic, capture.Kind);
 
         // Use site: `Pair...` is a SPREAD expression (Expr.SequenceSpread) that opens
-        // a multi-output into a fixed-arity call's argument slots. (Spreading into the
-        // strict one-slot variadic above would instead over-supply it — they differ.)
+        // a multi-output into a fixed-arity call's argument slots.
         const string useSiteSpread = """
             Pair = 10, 20
             Add(x, y) = x + y

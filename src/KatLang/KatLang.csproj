@@ -7,7 +7,7 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.129</Version>
+		<Version>0.8.134</Version>
 		<Authors>katlangorg</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA and contributors</Copyright>
@@ -27,7 +27,7 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes>Core formalized in Lean 4. Algorithms separated from Results domain. Shifted to ownership-first resolution. Redesigned algorithm opening mechanism and other improvements.</PackageReleaseNotes>
+		<PackageReleaseNotes>Core formalized in Lean 4. Algorithms separated from Results domain. Shifted to ownership-first resolution. Redesigned algorithm opening mechanism and other improvements. Compatibility note for semantic-AST consumers: an undocumented C#-only strict-variadic suffix reshape of manually constructed lone Expr.SequenceConstruct builtin arguments was removed; KatLang source programs are unaffected, and externally constructed nodes now follow the ordinary grouped-value argument path, aligned with the Lean model (see docs/design/sequence-boundary-audit-2026-07.md section 7).</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>

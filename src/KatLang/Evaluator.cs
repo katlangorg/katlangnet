@@ -376,7 +376,8 @@ public static class Evaluator
         Expr.SequenceConstruct(var a, var b) => "(" + OpenExprName(a) + ", " + OpenExprName(b) + ")",
         // Postfix spread renders as `a...` over its single operand.
         Expr.SequenceSpread(var a) => OpenExprName(a) + "...",
-        // Empty sequence value `()` and its nested forms `(())`, `((()))`, ...
+        // Empty sequence core nodes render by depth for diagnostics; evaluation
+        // canonicalizes repeated ordinary parentheses back to `()`.
         Expr.EmptySequence(var depth) => new string('(', depth + 1) + new string(')', depth + 1),
         _ => $"({ExprKind(e)})",
     };
@@ -1218,7 +1219,7 @@ public static class Evaluator
         }
 
         // The default minimum is the structural parameter count (loop-state binding,
-        // where the rest captures at least one slot). Item-stream callers — user calls
+        // where the rest captures at least one slot). Item-supply callers — user calls
         // and rest-shaped builtins — pass the fixed (non-variadic) count so the rest
         // may capture zero items.
         var requiredNormalItemCount = minimumItemCount ?? signature.RequiredNormalParameterCount;
@@ -1328,18 +1329,27 @@ public static class Evaluator
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
             {
+                // A nested zero-parameter block is one written grouping level: it
+                // materializes exactly one item, combined with the same shallow
+                // singleton-erasing rule as ordinary block evaluation
+                // (CombineOutputSlots). A singleton group such as `(A)` IS its
+                // single already-evaluated item and an all-spread-empty group is
+                // `()` — never a literal-unwritable orphan such as `(5)`.
                 var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
-                return nestedItemsR.Value.Count == 0
-                    ? EvalResult<IReadOnlyList<Result>>.Ok([])
-                    : EvalResult<IReadOnlyList<Result>>.Ok([new Result.SequenceValue(nestedItemsR.Value)]);
+                return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
             }
         }
 
         var countedR = EvalCounted(expr, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
+        if (countedR.IsError) return countedR.Error;
+
+        // Mirror the output-slot rule of the algorithm-output accumulator: a
+        // non-spread item expression is one item even when it evaluates to the
+        // empty sequence value `()`; only an explicit spread contributes zero items.
+        return expr is not Expr.SequenceSpread && countedR.Value.EmittedCount == 0
+            ? EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value])
             : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
     }
 
@@ -1384,7 +1394,7 @@ public static class Evaluator
             case SequenceValueParameterPattern group:
             {
                 var itemsR = GetSequenceValuePatternItems(input);
-                // A non-grouped scalar value is a one-item stream for the
+                // A non-grouped scalar value is a one-item supply for the
                 // prefix/rest/suffix matcher (the same normalization the function
                 // deconstruction path applies via rule 4). This lets a scalar
                 // right-hand side bind a rest pattern that captures zero items,
@@ -1720,46 +1730,42 @@ public static class Evaluator
 
 
     /// <summary>
-    /// True when a callable's top-level parameter list consumes an item stream:
-    /// any top-level variadic capture (a rest-only <c>name...</c> or a comma
-    /// deconstruction such as <c>x, y..., z</c>). These callables bind through the
-    /// shared item-stream matcher, with rest-only being the degenerate single-rest
-    /// case of the same model. Checked only after patterned (sequence-value /
-    /// repeated-name) binding has been ruled out.
-    /// Lean: <c>Algorithm.usesItemStreamBinding</c>.
+    /// True when a callable's top-level parameter list captures the supplied call
+    /// argument stream: any top-level variadic capture, including rest-only
+    /// <c>name...</c> and mixed fixed/rest shapes such as <c>x, y..., z</c>.
+    /// Checked only after patterned (sequence-value / repeated-name) binding has
+    /// been ruled out.
+    /// Lean: <c>Algorithm.usesItemSupplyBinding</c>.
     /// </summary>
     private static bool IsDeconstructionUserCallShape(CallableSignature signature)
         => signature.HasVariadicParameter;
 
     /// <summary>
-    /// Singleton-boundary normalization for item-stream binding: while the supplied
-    /// stream is exactly one grouped sequence value, replace it with that value's
-    /// contents. This removes unambiguous singleton sequence boundaries (so
-    /// <c>[(1, 2, 3)]</c> and <c>[((1, 2, 3))]</c> both become <c>[1, 2, 3]</c>)
-    /// without flattening multiple sibling grouped values or scalars. It is NOT
-    /// recursive flattening: a stream of two or more items is returned unchanged
-    /// unless the caller opened them with <c>...</c>.
-    /// Lean: <c>normalizeSingletonBoundaryForItemStream</c>.
+    /// Singleton-boundary normalization for sequence-builtin collection binding:
+    /// while the supplied item supply is exactly one grouped sequence value, replace it
+    /// with that value's contents. Function-call parameter binding does not use this
+    /// normalization; it consumes the supplied item supply as given, preserving a
+    /// plain sequence-valued argument as one supplied item unless <c>...</c> is
+    /// written. Assignment deconstruction does not use this path either: it is an
+    /// unpacking receiver elaborated through the sequence-value parameter pattern,
+    /// which opens its single received right-hand-side value.
+    /// Lean: <c>normalizeSingletonBoundaryForItemSupply</c>.
     /// </summary>
-    private static IReadOnlyList<BindingInputSlot> NormalizeSingletonBoundaryForItemStream(
+    private static IReadOnlyList<BindingInputSlot> NormalizeSingletonBoundaryForItemSupply(
         IReadOnlyList<BindingInputSlot> items)
-        => NormalizeSingletonBoundaryForItemStream(
+        => NormalizeSingletonBoundaryForItemSupply(
             items,
             static slot => slot.Value,
             static value => BindingInputSlot.FromUserCallItem(value, algorithm: null, valueError: null));
 
     /// <summary>
-    /// Generic singleton-boundary normalization shared by user-call item-stream
-    /// binding and builtin item-stream binding: when the stream is exactly one
-    /// grouped sequence value, that value IS the collection, so it is opened once
-    /// into its immediate items. Opening happens at most once — the single grouped
-    /// argument's own items become the stream and are not reopened — so explicit
-    /// sequence structure is preserved one level: <c>count(())</c> is <c>0</c>
-    /// while <c>count((()))</c> is <c>1</c> (the outer sequence holds one item, the
-    /// empty sequence value). Multiple sibling grouped values are preserved.
-    /// Lean: <c>normalizeSingletonBoundaryForItemStream</c>.
+    /// Generic singleton-boundary normalization for receiver-style item supplies:
+    /// when the item supply is exactly one grouped sequence value, that value IS the
+    /// receiver collection, so it is opened once into its immediate items. Opening
+    /// happens at most once; multiple sibling grouped values are preserved.
+    /// Lean: <c>normalizeSingletonBoundaryForItemSupply</c>.
     /// </summary>
-    private static IReadOnlyList<T> NormalizeSingletonBoundaryForItemStream<T>(
+    private static IReadOnlyList<T> NormalizeSingletonBoundaryForItemSupply<T>(
         IReadOnlyList<T> items,
         Func<T, Result?> valueOf,
         Func<Result, T> fromValue)
@@ -1768,12 +1774,10 @@ public static class Evaluator
             : items;
 
     /// <summary>
-    /// Binds a call to an item-stream parameter list (any top-level variadic). It
-    /// collects the call's item stream, applies singleton-boundary normalization,
-    /// then matches against the parameter patterns with the shared flat
-    /// prefix/rest/suffix matcher. So for <c>G(x...)</c>, <c>F(x..., y)</c>, and
-    /// <c>H(x, y..., z)</c> alike, <c>(A)</c>, <c>(A...)</c>, the inline item stream,
-    /// and a single grouped value all bind the same way.
+    /// Binds a call to an item-supply parameter list (any top-level variadic).
+    /// The call argument stream is already the receiver for parameter binding:
+    /// a plain sequence-valued argument contributes one item, while explicit
+    /// spread contributes the opened items.
     /// Lean: <c>bindDeconstructionUserCall</c>.
     /// </summary>
     private static EvalResult<UserCallBindings> BindDeconstructionUserCall(
@@ -1787,9 +1791,8 @@ public static class Evaluator
         var itemsR = BuildVariadicBindingInputSlots(wiredArgs, ctx, valEnv, preserveArgBoundaries);
         if (itemsR.IsError) return itemsR.Error;
 
-        var items = NormalizeSingletonBoundaryForItemStream(itemsR.Value);
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
-        var inputs = items
+        var inputs = itemsR.Value
             .Select(static slot => new ParameterPatternInput(
                 slot.Value, slot.Algorithm, slot.ValueError, ExplicitSequenceValueItems: null))
             .ToList();
@@ -1986,11 +1989,10 @@ public static class Evaluator
     {
         Result.Atom(var n) => new Expr.Num(n),
         Result.Str(var s) => new Expr.StringLiteral(s),
-        // The empty sequence value and its nested forms are reified with the
-        // structure-preserving EmptySequence node so `()` and `(())` round-trip
-        // back to distinct values.
-        Result.SequenceValue when NestedEmptySequenceDepth(result) is { } depth
-            => new Expr.EmptySequence(depth),
+        // Repeated ordinary parentheses around the empty sequence are redundant
+        // surface structure, so any empty-sequence chain reifies as `()`.
+        Result.SequenceValue when IsEmptySequenceChain(result)
+            => new Expr.EmptySequence(0),
         Result.SequenceValue(var items) => new Expr.Block(new Algorithm.User(
             Parent: null,
             Parameters: [],
@@ -2001,37 +2003,28 @@ public static class Evaluator
     };
 
     /// <summary>
-    /// Builds the empty sequence value for an <see cref="Expr.EmptySequence"/>
-    /// of the given depth. Depth 0 is <c>()</c> = <c>SequenceValue([])</c>; each
-    /// extra level wraps the previous value in a one-item sequence so depth 1 is
-    /// <c>(())</c> = <c>SequenceValue([SequenceValue([])])</c>.
+    /// Builds the canonical empty sequence value for an <see cref="Expr.EmptySequence"/>.
+    /// Repeated ordinary parentheses around <c>()</c> do not create higher-order
+    /// empty sequence values.
     /// </summary>
-    private static Result BuildEmptySequenceValue(int depth)
-    {
-        Result value = new Result.SequenceValue([]);
-        for (var i = 0; i < depth; i++)
-            value = new Result.SequenceValue([value]);
-        return value;
-    }
+    private static Result BuildEmptySequenceValue(int _)
+        => new Result.SequenceValue([]);
 
     /// <summary>
-    /// Returns the nesting depth when <paramref name="result"/> is the empty
-    /// sequence value or a chain of one-item sequences ending in it (the values
-    /// produced by <see cref="Expr.EmptySequence"/>), otherwise <c>null</c>.
+    /// Returns true when <paramref name="result"/> is the empty sequence value or
+    /// a redundant chain of one-item sequences ending in it.
     /// </summary>
-    private static int? NestedEmptySequenceDepth(Result result)
+    private static bool IsEmptySequenceChain(Result result)
     {
-        var depth = 0;
         var current = result;
         while (true)
         {
             if (current is not Result.SequenceValue(var items))
-                return null;
+                return false;
             if (items.Count == 0)
-                return depth;
+                return true;
             if (items.Count != 1)
-                return null;
-            depth++;
+                return false;
             current = items[0];
         }
     }
@@ -2065,7 +2058,7 @@ public static class Evaluator
 
     /// <summary>
     /// Collected sequence input records the items captured by <c>values...</c>
-    /// plus the prepared outer-item stream used by the current builtin.
+    /// plus the prepared outer-item supply used by the current builtin.
     /// </summary>
     private readonly record struct CollectedSequenceBuiltinInput(
         IReadOnlyList<IReadOnlyList<Result>> PerInputItems,
@@ -2668,10 +2661,10 @@ public static class Evaluator
 
                 // Callback deconstruction is intentionally deferred. A deconstruction-shaped
                 // callback (`Rows.map(F)` with `F(x, y..., z)`) is not UsesPatternBinding, so it
-                // routes here to flat callback binding rather than the shared item-stream
+                // routes here to flat callback binding rather than the shared item-supply
                 // deconstruction matcher. Flat callback binding projects each callback item into
                 // slots and binds those slots to the algorithm's flat parameter names (the final
-                // item is unpacked across any remaining names); it does not apply item-stream rest
+                // item is unpacked across any remaining names); it does not apply item-supply rest
                 // grouping or singleton-boundary normalization. This preserves existing callback
                 // semantics and covers simple row cases with matching projected arity. Scalar
                 // callback deconstruction stays deferred so the counted callback path keeps
@@ -2777,42 +2770,42 @@ public static class Evaluator
     }
 
     // Combine collected top-level output slots into one value. A single slot is
-    // returned as-is so its structure is preserved (this is what keeps `(())`
-    // distinct from `()`); multiple slots form one sequence value. Unlike
-    // <see cref="Result.FromItems"/>, this does NOT singleton-collapse or
-    // recursively renormalize slot values — slots are already evaluated values
-    // and renormalizing would erase explicitly-constructed empty-sequence nesting.
+    // returned as-is so useful sequence structure is preserved; multiple slots
+    // form one sequence value. Unlike <see cref="Result.FromItems"/>, this does
+    // NOT singleton-collapse or recursively renormalize slot values — slots are
+    // already evaluated values.
     private static Result CombineOutputSlots(IReadOnlyList<Result> slots)
         => slots.Count == 1 ? slots[0] : new Result.SequenceValue(slots);
 
     // Combine a collection-producing builtin's kept/projected items into one
-    // result value, preserving item boundaries. A single scalar (atom/string)
-    // item collapses to that scalar so existing scalar output stays compatible,
-    // but every other case — including a single sequence-valued item such as `()`
-    // — is wrapped in a sequence value that keeps each item intact. Unlike
-    // <see cref="Result.FromItems"/>, this never singleton-collapses or
-    // recursively renormalizes a sequence-valued item, so a kept `(())` stays
-    // `(())` (SequenceValue([SequenceValue([])])) instead of collapsing to `()`.
-    // The caller still records the item count separately.
+    // result value with the same shallow singleton-boundary erasure every other
+    // value construction path applies (ordinary construction via
+    // <see cref="Result.Normalize"/>, variadic capture grouping,
+    // <see cref="CombineOutputSlots"/>): zero items form the empty sequence
+    // value `()`, a single kept item IS the result (the one-item collection
+    // boundary is erased, so `take(((1, 2), (3, 4)), 1)` yields `(1, 2)` and a
+    // lone kept `()` yields `()` — never a literal-unwritable orphan such as
+    // `((1, 2))` or `(())`), and two or more items form one sequence value that
+    // keeps every sibling item intact, including empty-sequence items. Unlike
+    // <see cref="Result.FromItems"/>, this is shallow: it never recursively
+    // renormalizes item internals and never drops empty items, so meaningful
+    // sibling boundaries such as `((), ())` are preserved. The caller still
+    // records the item count separately.
     // Lean: combineCollectionResult.
     private static Result CombineCollectionResult(IReadOnlyList<Result> items)
-        => items switch
-        {
-            [Result.Atom or Result.Str] => items[0],
-            _ => new Result.SequenceValue(items),
-        };
+        => items.Count == 1 ? items[0] : new Result.SequenceValue(items);
 
     // Re-count a counted result at a public property/call/builtin RESULT boundary.
     // A property/call boundary always returns ONE value: the body may internally
-    // produce an item stream of count 0, 1, or many, but the caller observes the
+    // produce an item supply of count 0, 1, or many, but the caller observes the
     // same structural value with emitted count <see cref="Result.ValueCount"/>
     // (0 for the empty sequence value, otherwise 1). A multi-output body therefore
     // becomes one sequence value at the boundary; only an explicit caller-site
     // postfix `...` re-opens it (via ToItems, which reads the value, not this count).
     //
-    // This preserves the structural value EXACTLY — it never normalizes or rebuilds
-    // it — so singleton and nested empty sequence values (`(())`, `((()))`) are not
-    // collapsed. It is applied only to public result boundaries, never to internal
+    // This re-counts without normalizing or rebuilding the value; ordinary value
+    // construction has already canonicalized redundant unary empty structure.
+    // It is applied only to public result boundaries, never to internal
     // body/root output accumulation (EvalAlgOutputCountedCore) or to raw variadic
     // parameter storage, both of which must keep their multi-item counts. Lexical
     // zero-arg property access (EvalCounted Expr.Resolve) and the `if` builtin
@@ -3077,6 +3070,18 @@ public static class Evaluator
         return leaves;
     }
 
+    /// <summary>
+    /// Evaluate the INTERNAL <see cref="Expr.SequenceConstruct"/> join node as
+    /// one sequence value. Join semantics, not written-parentheses semantics:
+    /// a non-spread leaf whose value is <c>()</c> contributes NO item (an
+    /// empty join contribution), a spread leaf splices its operand's items,
+    /// and the result is recursively normalized. Written parentheses parse to
+    /// <see cref="Expr.Block"/> and always keep a non-spread <c>()</c> item
+    /// visible — surface syntax must never route through this node
+    /// (enforced by <c>SequenceConstructContainmentTests</c>).
+    /// Lean: <c>evalSequenceConstructCounted</c>; plain evaluation is this
+    /// function's value projection on both sides.
+    /// </summary>
     private static EvalResult<CountedResult> EvalSequenceConstructCounted(
         Expr expr,
         EvalCtx ctx,
@@ -3236,146 +3241,6 @@ public static class Evaluator
     private static IReadOnlyList<ResolvedArgumentAlgorithm> WithoutSequenceSpread(
         IReadOnlyList<Algorithm> args)
         => args.Select(static arg => new ResolvedArgumentAlgorithm(arg, SpreadsSequence: false)).ToList();
-
-    private static SourceSpan? CombineSpans(SourceSpan? left, SourceSpan? right)
-        => left is null
-            ? right
-            : right is null
-                ? left
-                : new SourceSpan(
-                    left.StartLineNumber,
-                    left.StartColumn,
-                    right.EndLineNumber,
-                    right.EndColumn);
-
-    private static bool TryGetMaterializedExpressionListItems(Expr expr, out IReadOnlyList<Expr> items)
-    {
-        if (expr is Expr.Block(Algorithm.User
-            {
-                Parameters.Count: 0,
-                Opens.Count: 0,
-                Properties.Count: 0,
-                Output: var output,
-                IsParametrized: false
-            }))
-        {
-            items = output;
-            return true;
-        }
-
-        items = [];
-        return false;
-    }
-
-    private static Expr ConstructSequenceExpr(IReadOnlyList<Expr> exprs)
-    {
-        if (exprs.Count == 1)
-            return exprs[0];
-
-        var sequence = exprs[0];
-        for (var index = 1; index < exprs.Count; index++)
-            sequence = new Expr.SequenceConstruct(sequence, exprs[index])
-            {
-                Span = CombineSpans(sequence.Span, exprs[index].Span)
-            };
-
-        return sequence;
-    }
-
-    private static Expr MaterializeExpressionListExpr(IReadOnlyList<Expr> exprs)
-    {
-        if (exprs.Count == 1)
-            return exprs[0];
-
-        var items = exprs.ToArray();
-        return new Expr.Block(new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: items)
-        {
-            IsParametrized = false
-        })
-        {
-            Span = CombineSpans(items[0].Span, items[^1].Span)
-        };
-    }
-
-    private static Algorithm SplitStrictVariadicSuffixArgument(CallableSignature signature, Algorithm argsAlg)
-    {
-        if (signature.VariadicParameterIndex < 0 || argsAlg is not Algorithm.User userArgs)
-            return argsAlg;
-
-        var variadicIndex = signature.VariadicParameterIndex;
-        var suffixCount = signature.Parameters.Count - variadicIndex - 1;
-        if (variadicIndex == 0 && suffixCount == 0)
-            return argsAlg;
-
-        if (userArgs.Output.Count != 1)
-            return argsAlg;
-
-        var sequenceArg = userArgs.Output[0];
-        if (sequenceArg is not Expr.SequenceConstruct)
-            return argsAlg;
-
-        var sequenceLeaves = SequenceConstructLeaves(sequenceArg).ToList();
-        if (sequenceLeaves.Count == 0)
-            return argsAlg;
-
-        static IReadOnlyList<Expr> LeafSlots(Expr leaf)
-            => TryGetMaterializedExpressionListItems(leaf, out var items) ? items : [leaf];
-
-        var prefixItems = new List<Expr>(variadicIndex);
-        while (prefixItems.Count < variadicIndex)
-        {
-            if (sequenceLeaves.Count == 0)
-                return argsAlg;
-
-            var needed = variadicIndex - prefixItems.Count;
-            var slots = LeafSlots(sequenceLeaves[0]);
-            if (slots.Count <= needed)
-            {
-                prefixItems.AddRange(slots);
-                sequenceLeaves.RemoveAt(0);
-                continue;
-            }
-
-            prefixItems.AddRange(slots.Take(needed));
-            sequenceLeaves[0] = MaterializeExpressionListExpr(slots.Skip(needed).ToArray());
-        }
-
-        var suffixItems = new List<Expr>(suffixCount);
-        while (suffixItems.Count < suffixCount)
-        {
-            if (sequenceLeaves.Count == 0)
-                return argsAlg;
-
-            var needed = suffixCount - suffixItems.Count;
-            var lastIndex = sequenceLeaves.Count - 1;
-            var slots = LeafSlots(sequenceLeaves[lastIndex]);
-            if (slots.Count <= needed)
-            {
-                suffixItems.InsertRange(0, slots);
-                sequenceLeaves.RemoveAt(lastIndex);
-                continue;
-            }
-
-            var splitIndex = slots.Count - needed;
-            suffixItems.InsertRange(0, slots.Skip(splitIndex));
-            sequenceLeaves[lastIndex] = MaterializeExpressionListExpr(slots.Take(splitIndex).ToArray());
-        }
-
-        if (sequenceLeaves.Count == 0)
-            return argsAlg;
-
-        var output = prefixItems
-            .Append(ConstructSequenceExpr(sequenceLeaves))
-            .Concat(suffixItems)
-            .ToArray();
-
-        return userArgs with { Output = output };
-    }
 
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
@@ -3808,25 +3673,23 @@ public static class Evaluator
         var itemsR = BuildCallableCallItems(args, ctx, valEnv);
         if (itemsR.IsError) return itemsR.Error;
 
-        // A builtin whose public signature is `values...` consumes an item stream, exactly
+        // A builtin whose public signature is `values...` consumes an item supply, exactly
         // like a user-defined variadic: singleton sequence boundaries are normalized, the
         // rest captures the collection, and suffix parameters bind from the back. Multiple
         // sibling grouped values are preserved (not flattened).
         //
         // Singleton-boundary normalization is applied exactly once to obtain the collection.
-        // When the whole stream is one grouped value, that value IS the collection and is
-        // opened here (so its items become the stream and can also expose suffix slots);
-        // its rest capture is then already at item level and must NOT be reopened — otherwise
-        // an explicitly nested empty like `(())` would collapse and `count((()))` would be 0
-        // instead of 1. When the stream has several slots (e.g. `contains((1, 2, 3), 2)` or
-        // `take((()), 1)`, where the suffix occupies a separate slot), the rest may itself be
-        // one grouped collection value and is opened once via the same singleton-boundary
-        // rule below. That rule opens exactly one boundary without recursively renormalizing,
-        // so a kept `(())` rest stays `(())` instead of collapsing to `()`.
-        var streamIsSingleGroupedValue =
+        // When the whole supply is one grouped value, that value IS the collection and is
+        // opened here (so its items become the supply and can also expose suffix slots);
+        // its rest capture is then already at item level and must NOT be reopened. When
+        // the supply has several slots (e.g. `contains((1, 2, 3), 2)`), the rest may
+        // itself be one grouped collection value and is opened once via the same
+        // singleton-boundary rule below. That rule opens exactly one boundary without
+        // recursively flattening useful nested sequence values such as `(1, (2, 3))`.
+        var supplyIsSingleGroupedValue =
             itemsR.Value.Count == 1 && itemsR.Value[0].Value is Result.SequenceValue;
 
-        var items = NormalizeSingletonBoundaryForItemStream(
+        var items = NormalizeSingletonBoundaryForItemSupply(
             itemsR.Value,
             static item => item.Value,
             static value => new VariadicCallItem(value, Algorithm: null, ValueError: null));
@@ -3850,9 +3713,9 @@ public static class Evaluator
             restValues.Add(restItem.Value);
         }
 
-        var collectionValues = streamIsSingleGroupedValue
+        var collectionValues = supplyIsSingleGroupedValue
             ? restValues
-            : NormalizeSingletonBoundaryForItemStream(
+            : NormalizeSingletonBoundaryForItemSupply(
                 restValues,
                 static value => value,
                 static value => value).ToList();
@@ -4715,8 +4578,8 @@ public static class Evaluator
     /// (the value projection of <see cref="EvalAlgOutputCountedCore"/>). Output slots
     /// are combined with the structure-preserving <see cref="CombineOutputSlots"/>, not a
     /// general normalize: each non-spread output is one visible slot even when it is the
-    /// empty sequence value <c>()</c>, only an explicit spread contributes its expanded
-    /// items, and nested empties such as <c>(())</c> are preserved rather than collapsed.
+    /// empty sequence value <c>()</c>, and only an explicit spread contributes its expanded
+    /// items. Redundant empty-sequence nesting has already canonicalized to <c>()</c>.
     /// User-defined algorithms may exist structurally without output, but forcing
     /// them in value position raises <see cref="EvalError.MissingOutput"/>.
     /// Lean: evalAlgOutput → EvalM Result.
@@ -6218,11 +6081,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var signature = CallableSignature.FromBuiltin(builtinId);
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(
-                SplitStrictVariadicSuffixArgument(signature, argsAlg),
-                ctx,
-                valEnv);
+            var argAlgsR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinResolved(builtinId, argAlgsR.Value, ctx, valEnv);
         }
@@ -6318,11 +6177,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var signature = CallableSignature.FromBuiltin(builtinId);
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(
-                SplitStrictVariadicSuffixArgument(signature, argsAlg),
-                ctx,
-                valEnv);
+            var argAlgsR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinCountedResolved(builtinId, argAlgsR.Value, ctx, valEnv);
         }

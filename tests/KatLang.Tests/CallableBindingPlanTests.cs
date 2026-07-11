@@ -98,7 +98,7 @@ public class CallableBindingPlanTests
         Assert.Same(values, topLevel.VariadicCapture);
         Assert.Empty(topLevel.Prefix);
         Assert.Empty(topLevel.Suffix);
-        // Rest-only item stream: no fixed bindings, so min 0 and unbounded max.
+        // Rest-only item supply: no fixed bindings, so min 0 and unbounded max.
         Assert.Equal(0, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
         Assert.True(topLevel.HasVariadicAtThisLevel);
@@ -179,7 +179,7 @@ public class CallableBindingPlanTests
         Assert.NotNull(map.TopLevelPatternList.VariadicCapture);
         AssertVariadic(map.TopLevelPatternList.VariadicCapture, "values", CallableParameterSource.Builtin, isTopLevel: true);
         AssertCapture(Assert.Single(map.TopLevelPatternList.Suffix), "mapper", CallableParameterSource.Builtin);
-        // Rest-shaped builtins are item streams: min = fixed (suffix) count, max unbounded.
+        // Rest-shaped builtins are item supplies: min = fixed (suffix) count, max unbounded.
         Assert.Equal(1, map.TopLevelPatternList.MinSlotCount);
         Assert.Null(map.TopLevelPatternList.MaxSlotCount);
 

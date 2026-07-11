@@ -212,13 +212,13 @@ public sealed record PatternListBindingPlan
         // more plain captures and one rest (rest-only or comma deconstruction), whether
         // user-defined or a rest-shaped builtin, accepts the fixed captures plus any number
         // of rest items, so it has a fixed-count minimum and an unbounded maximum.
-        var isItemStreamShape = isTopLevel
+        var isItemSupplyShape = isTopLevel
             && variadicCount == 1
             && nodes.Count >= 1
             && nodes.All(static node => node is CaptureBindingNode or VariadicCaptureBindingNode);
 
-        var minSlotCount = isItemStreamShape ? nodes.Count - 1 : nodes.Count;
-        int? maxSlotCount = isItemStreamShape ? null : nodes.Count;
+        var minSlotCount = isItemSupplyShape ? nodes.Count - 1 : nodes.Count;
+        int? maxSlotCount = isItemSupplyShape ? null : nodes.Count;
 
         return new PatternListBindingPlan(
             nodes,

@@ -2,14 +2,14 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// After Aspect 2, a builtin whose public signature is rest-shaped (`sum(values...)`,
-/// `contains(values..., item)`) consumes an item stream exactly like a user-defined
-/// variadic: item-stream binding opens a single grouped sequence boundary where required
+/// `contains(values..., item)`) consumes an item supply exactly like a user-defined
+/// variadic: item-supply binding opens a single grouped sequence boundary where required
 /// (it does not repeatedly normalize nested sequence structure), the rest captures the
 /// collection, suffix parameters bind from the back, and multiple sibling grouped values
 /// are preserved rather than flattened. These tests pin that symmetry through the same
-/// shared item-stream binding the user-call path uses.
+/// shared item-supply binding the user-call path uses.
 /// </summary>
-public class BuiltinItemStreamBindingTests
+public class BuiltinItemSupplyBindingTests
 {
     private static decimal[] Atoms(string source)
         => KatLangEngine.EvaluateToAtoms(source).ToArray();
@@ -23,7 +23,7 @@ public class BuiltinItemStreamBindingTests
     // ───────────────────────── Rest-only collection builtins ─────────────────────
 
     [Fact]
-    public void Sum_ConsumesItemStream_InlineGroupedAndNestedAllAgree()
+    public void Sum_ConsumesItemSupply_InlineGroupedAndNestedAllAgree()
     {
         AssertAtoms("sum()", 0);
         AssertAtoms("sum(3, 4, 2, 1, 3, 3)", 16);
@@ -32,7 +32,7 @@ public class BuiltinItemStreamBindingTests
     }
 
     [Fact]
-    public void RestOnlyBuiltins_AcceptInlineItemStream()
+    public void RestOnlyBuiltins_AcceptInlineItemSupply()
     {
         AssertAtoms("count(3, 4, 2, 1, 3, 3)", 6);
         AssertAtoms("min(3, 4, 2, 1, 3, 3)", 1);
@@ -47,7 +47,7 @@ public class BuiltinItemStreamBindingTests
     [Fact]
     public void Builtin_MatchesUserVariadicWithSameParameterShape()
     {
-        // The shared item-stream binder makes the builtin and an equivalent user variadic agree.
+        // The shared item-supply binder makes the builtin and an equivalent user variadic agree.
         AssertAtoms("G(values...) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);
         AssertAtoms("sum(3, 4, 2, 1, 3, 3)", 16);
     }
@@ -63,7 +63,7 @@ public class BuiltinItemStreamBindingTests
     }
 
     [Fact]
-    public void ExplicitSpread_OpensSiblingsIntoOneStream()
+    public void ExplicitSpread_OpensSiblingsIntoOneItemSupply()
         => AssertAtoms("A = 1, 2\nB = 3, 4\nsum(A..., B...)", 10);
 
     // ───────────────────────── Suffix builtins ──────────────────────────────────

@@ -987,38 +987,151 @@ def spreadOfEmptyContributesNoItems : Bool :=
 
 #guard spreadOfEmptyContributesNoItems
 
--- () and (()) are structurally distinct: () == () is 1, () == (()) is 0, () != (()) is 1.
+-- A written sequence value with a spread beside a sibling slot splices the
+-- spread items: source `A = 1, 2` then `(A..., 99)` is `(1, 2, 99)`, never the
+-- grouped `((1, 2), 99)`. This pins `evalAlgOutputCore` as the value
+-- projection of `evalAlgOutputCountedCore` (July 2026 fix): the plain and
+-- counted evaluators must agree on value-position block output.
+def valuePositionSpreadWithSiblingSplices : Bool :=
+  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
+    .block (alg [] [] [] [sequenceSpread (.resolve "A"), .num 99])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 99]) => true
+  | _ => false
+
+#guard valuePositionSpreadWithSiblingSplices
+
+-- The same splicing holds for the root program output observed through the
+-- plain `runResult` path: `A..., 99` is three root slots `1, 2, 99`.
+def rootSpreadWithSiblingSplices : Bool :=
+  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
+    sequenceSpread (.resolve "A"), .num 99
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 99]) => true
+  | _ => false
+
+#guard rootSpreadWithSiblingSplices
+
+-- Splicing spreads never erases a written non-spread `()` slot between them:
+-- `(1..., (), 2...)` keeps the empty sequence value as a visible item.
+def spreadSiblingsKeepWrittenEmptySlot : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .block (alg [] [] [] [sequenceSpread (.num 1), explicitEmptyExpr, sequenceSpread (.num 2)])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .sequenceValue [], .atom 2]) => true
+  | _ => false
+
+#guard spreadSiblingsKeepWrittenEmptySlot
+
+-- Structural equality observes the spliced value through the plain
+-- (non-counted) evaluation path used for binary operands.
+def spreadSeqLiteralEqualsFlatLiteral : Bool :=
+  match runFlat (.block (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
+    .binary .eq (.block (alg [] [] [] [sequenceSpread (.resolve "P"), .num 99]))
+      (.block (alg [] [] [] [.num 1, .num 2, .num 99]))
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#guard spreadSeqLiteralEqualsFlatLiteral
+
+-- INTERNAL-NODE CONTAINMENT (July 2026 audit). `sequenceConstruct` is an
+-- internal join node — NOT the representation of written parentheses, which
+-- parse to zero-parameter blocks. Its value evaluation DROPS `()` leaves
+-- (join semantics: an empty contribution adds no items); written parentheses
+-- always keep a non-spread `()` item visible. The guards below pin that
+-- intentional difference structurally so any change to either side —
+-- including a parser/desugaring change that routes surface syntax through
+-- the internal node — is caught. C# twins live in
+-- SequenceConstructContainmentTests; Lean/C# agreement on these exact ASTs
+-- is enforced by the generated SemanticExplorerCases internal-node section.
+
+-- sequenceConstruct ((), 1) drops the `()` leaf and singleton-collapses to 1 …
+def internalSequenceConstructDropsEmptyLeafAndCollapses : Bool :=
+  match runResult (.sequenceConstruct (.emptySequence 0) (.num 1)) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard internalSequenceConstructDropsEmptyLeafAndCollapses
+
+-- … while the written form `((), 1)` (a zero-parameter block) keeps the
+-- empty item visible. This pair is the intentional-difference contrast.
+def writtenParenthesesKeepEmptyItemVisible : Bool :=
+  match runResult (.block (alg [] [] [] [.emptySequence 0, .num 1])) with
+  | Except.ok (.sequenceValue [.sequenceValue [], .atom 1]) => true
+  | _ => false
+
+#guard writtenParenthesesKeepEmptyItemVisible
+
+-- sequenceConstruct ((), ()) drops both leaves to the empty sequence value.
+def internalSequenceConstructBothEmptyLeavesDropToEmpty : Bool :=
+  match runResult (.sequenceConstruct (.emptySequence 0) (.emptySequence 0)) with
+  | Except.ok (.sequenceValue []) => true
+  | _ => false
+
+#guard internalSequenceConstructBothEmptyLeavesDropToEmpty
+
+-- sequenceConstruct ((1, 2), ()) drops `()` and collapses to the pair; the
+-- written `((1, 2), ())` keeps both items.
+def internalSequenceConstructDropsEmptyBesidePair : Bool :=
+  match
+    runResult (.sequenceConstruct (.block (alg [] [] [] [.num 1, .num 2])) (.emptySequence 0)),
+    runResult (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2]), .emptySequence 0]))
+  with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]),
+    Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .sequenceValue []]) => true
+  | _, _ => false
+
+#guard internalSequenceConstructDropsEmptyBesidePair
+
+-- A lone sequenceConstruct argument to a builtin is an ordinary value
+-- expression: it evaluates to ONE grouped value and follows the ordinary
+-- grouped-argument rules (singleton opening, suffix from the back) — the
+-- same as the written grouped form. (C# once had a legacy reshape that
+-- special-cased this shape and diverged; it was removed in the July 2026
+-- containment audit.)
+def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
+  match
+    runResult (.call (.resolve "take") (alg [] [] [] [
+      .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])),
+    runResult (.call (.resolve "sum") (alg [] [] [] [
+      .sequenceConstruct (.num 1) (.num 2)]))
+  with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]), Except.ok (.atom 3) => true
+  | _, _ => false
+
+#guard internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm
+
+-- Repeated ordinary parentheses around the empty sequence canonicalize to `()`.
 def emptyVsNestedEmptyEquality : Bool :=
   match runFlat (.block (alg [] [] [] [
     .binary .eq (.emptySequence 0) (.emptySequence 0),
     .binary .eq (.emptySequence 0) (.emptySequence 1),
     .binary .ne (.emptySequence 0) (.emptySequence 1)
   ])) with
-  | Except.ok [1, 0, 1] => true
+  | Except.ok [1, 1, 0] => true
   | _ => false
 
 #guard emptyVsNestedEmptyEquality
 
--- The empty sequence value has zero items; the nested empty holds one item (the empty
--- sequence value): count(()) = 0 while count((())) = 1.
+-- The empty sequence value has zero items; redundant empty nesting does too.
 def emptyAndNestedEmptyCount : Bool :=
   match runFlat (.block (alg [] [] [] [
     .call (.resolve "count") (alg [] [] [] [.emptySequence 0]),
     .call (.resolve "count") (alg [] [] [] [.emptySequence 1])
   ])) with
-  | Except.ok [0, 1] => true
+  | Except.ok [0, 0] => true
   | _ => false
 
 #guard emptyAndNestedEmptyCount
 
--- (()) evaluates to a one-item sequence value holding the empty sequence value, and
--- never collapses to ().
-def nestedEmptyStructureIsPreserved : Bool :=
+-- (()) and ((())) evaluate to the canonical empty sequence value.
+def nestedEmptyStructureCanonicalizes : Bool :=
   match runResult (.emptySequence 1) with
-  | Except.ok (.sequenceValue [.sequenceValue []]) => true
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
-#guard nestedEmptyStructureIsPreserved
+#guard nestedEmptyStructureCanonicalizes
 
 -- `empty` is no longer reserved: it is an ordinary identifier that can be defined.
 def emptyIsOrdinaryIdentifier : Bool :=
@@ -1030,10 +1143,9 @@ def emptyIsOrdinaryIdentifier : Bool :=
 
 #guard emptyIsOrdinaryIdentifier
 
--- Blocker 1 regression: block/root output preserves nested empty sequence structure.
--- Output slots combine via `combineOutputSlots` (not the general `Result.normalize`), so a
--- single `emptySequence` output keeps its exact depth and `(())` never collapses to `()`.
-def blockOutputPreservesNestedEmptyDepth : Bool :=
+-- Block/root output preserves visible empty sequence slots, but redundant empty
+-- nesting has already canonicalized to `()`.
+def blockOutputCanonicalizesNestedEmptyDepth : Bool :=
   match
     runResult (.emptySequence 0),
     runResult (.emptySequence 1),
@@ -1042,13 +1154,13 @@ def blockOutputPreservesNestedEmptyDepth : Bool :=
     runResult (.block (alg [] [] [] [.emptySequence 2]))
   with
   | Except.ok (.sequenceValue []),
-    Except.ok (.sequenceValue [.sequenceValue []]),
     Except.ok (.sequenceValue []),
-    Except.ok (.sequenceValue [.sequenceValue []]),
-    Except.ok (.sequenceValue [.sequenceValue [.sequenceValue []]]) => true
+    Except.ok (.sequenceValue []),
+    Except.ok (.sequenceValue []),
+    Except.ok (.sequenceValue []) => true
   | _, _, _, _, _ => false
 
-#guard blockOutputPreservesNestedEmptyDepth
+#guard blockOutputCanonicalizesNestedEmptyDepth
 
 -- Mixed output: a normal non-spread `()` output is a VISIBLE slot, not dropped, so it sits
 -- beside other outputs. (Only an explicit spread `()...` contributes zero items.) These would
@@ -1076,57 +1188,57 @@ def mixedOutputSpreadOfEmptyContributesNoSlot : Bool :=
 
 #guard mixedOutputSpreadOfEmptyContributesNoSlot
 
--- Blocker 2 regression: collection-producing builtins keep a single sequence-valued item as a
--- one-item collection. `(())` is a one-item collection whose item is `()`; keeping/projecting it
--- must yield `(())` (`sequenceValue [sequenceValue []]`), not collapse to `()`.
+-- Redundant empty nesting is not a surface way to construct a one-item
+-- collection containing `()`; collection builtins see it as the empty collection.
 def collectionBuiltinAlwaysTrue : KatLang.Expr := .block (alg ["x"] [] [] [.num 1])
 
-def filterKeepsNestedEmptyItem : Bool :=
+def filterNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "filter")
       (alg [] [] [] [.emptySequence 1, collectionBuiltinAlwaysTrue])) with
-  | Except.ok (.sequenceValue [.sequenceValue []]) => true
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
-#guard filterKeepsNestedEmptyItem
+#guard filterNestedEmptyInputCanonicalizesToEmptyCollection
 
-def countFilterKeepsNestedEmptyItem : Bool :=
+def countFilterNestedEmptyInputCanonicalizesToZero : Bool :=
   match runResult (.call (.resolve "count")
       (alg [] [] [] [
         .call (.resolve "filter") (alg [] [] [] [.emptySequence 1, collectionBuiltinAlwaysTrue])
       ])) with
-  | Except.ok (.atom 1) => true
+  | Except.ok (.atom 0) => true
   | _ => false
 
-#guard countFilterKeepsNestedEmptyItem
+#guard countFilterNestedEmptyInputCanonicalizesToZero
 
-def takeKeepsNestedEmptyItem : Bool :=
+def takeNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "take")
       (alg [] [] [] [.emptySequence 1, .num 1])) with
-  | Except.ok (.sequenceValue [.sequenceValue []]) => true
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
-#guard takeKeepsNestedEmptyItem
+#guard takeNestedEmptyInputCanonicalizesToEmptyCollection
 
-def skipKeepsNestedEmptyItem : Bool :=
+def skipNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "skip")
       (alg [] [] [] [.emptySequence 1, .num 0])) with
-  | Except.ok (.sequenceValue [.sequenceValue []]) => true
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
-#guard skipKeepsNestedEmptyItem
+#guard skipNestedEmptyInputCanonicalizesToEmptyCollection
 
-def distinctKeepsNestedEmptyItem : Bool :=
+def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "distinct")
       (alg [] [] [] [.emptySequence 1])) with
-  | Except.ok (.sequenceValue [.sequenceValue []]) => true
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
-#guard distinctKeepsNestedEmptyItem
+#guard distinctNestedEmptyInputCanonicalizesToEmptyCollection
 
--- A literal `((1, 2))` collapses to the two-item collection `(1, 2)` (only empty sequences
--- nest), so the single non-empty sequence-valued kept item is exercised by filtering a
--- two-item collection down to one. The kept `(1, 2)` stays the one-item collection `((1, 2))`.
-def filterKeepsSingleNonEmptySequenceValueItem : Bool :=
+-- Filtering a two-item collection down to one kept `(1, 2)` erases the one-item
+-- collection boundary: the result IS `(1, 2)`, matching ordinary construction where a
+-- literal `((1, 2))` also collapses to the two-item collection `(1, 2)`. Builtin results
+-- never mint the literal-unwritable orphan `((1, 2))`.
+def filterSingleKeptSequenceValueItemErasesBoundary : Bool :=
   let keepFirstPair : KatLang.Expr := .block (alg ["pair"] [] [] [
     .binary .eq (.index (.param "pair") (.num 0)) (.num 1)
   ])
@@ -1138,10 +1250,10 @@ def filterKeepsSingleNonEmptySequenceValueItem : Bool :=
         ],
         keepFirstPair
       ])) with
-  | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2]]) => true
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
-#guard filterKeepsSingleNonEmptySequenceValueItem
+#guard filterSingleKeptSequenceValueItemErasesBoundary
 
 -- An internal `sequenceConstruct (sequenceSpread A) B` is ONE sequence-value argument in
 -- fixed-arity call-argument position and therefore fails to bind a two-parameter
@@ -1267,7 +1379,7 @@ def sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm : Bool :=
 
 #guard sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm
 
--- Rest-only `X(values...)` consumes an item stream, so both the explicit-spread
+-- Rest-only `X(values...)` consumes an item supply, so both the explicit-spread
 -- form `X((1, b)...)` and the constructed sequence-value form `X((1, b))` bind the
 -- same two top-level items [1, (2, 3)]: count 2.
 def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :=
@@ -1485,7 +1597,7 @@ def flatVariadicSlotQmeanExplicitRoot : Algorithm :=
     .call (.resolve "Qmean") (alg [] [] [] [sequenceSpread (.resolve "Vector")])
   ]
 
--- Rest-only `Qmean(values...)` consumes an item stream, so the explicit-spread
+-- Rest-only `Qmean(values...)` consumes an item supply, so the explicit-spread
 -- form `Qmean(Vector...)` binds the same items as `Qmean(Vector)`: both give 2.
 def flatVariadicSlotQmeanExplicitSpreadMatchesNormalCall : Bool :=
   match runFlat (.block flatVariadicSlotQmeanExplicitRoot) with
@@ -1578,12 +1690,12 @@ def flatVariadicSlotSumSingleNormalRoot : Algorithm :=
     .call (.resolve "Sum") (alg [] [] [] [.resolve "Values"])
   ]
 
--- Sum(values..., last) is a comma deconstruction parameter list, so a lone
--- grouped sequence-value argument is opened by rule 4: `last` binds 20 and the
--- variadic captures [10], giving sum 10 + 20 = 30.
+-- Sum(values..., last) receives one sequence-valued argument. Function-call
+-- binding does not implicitly open it, so `last` receives the sequence value and
+-- the old numeric body no longer succeeds.
 def flatVariadicSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=
   match runResult (.block flatVariadicSlotSumSingleNormalRoot) with
-  | Except.ok (.atom 30) => true
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard flatVariadicSlotNormalSegmentDoesNotSatisfySuffixBySpreading
@@ -1593,11 +1705,11 @@ def flatVariadicSlotSumDotMissingSuffixRoot : Algorithm :=
     .dotCall (.resolve "Values") "Sum" none
   ]
 
--- Same deconstruction opening through a dot-call receiver: Values.Sum opens the
--- one grouped receiver value into [10, 20], so the call yields 30.
+-- Same boundary through a dot-call receiver: Values.Sum passes the receiver as
+-- one leading argument unless explicit spread is used.
 def flatVariadicSlotDotReceiverDoesNotSatisfySuffixBySpreading : Bool :=
   match runResult (.block flatVariadicSlotSumDotMissingSuffixRoot) with
-  | Except.ok (.atom 30) => true
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard flatVariadicSlotDotReceiverDoesNotSatisfySuffixBySpreading
@@ -3800,7 +3912,7 @@ def test25bCommaSimilarity : Bool :=
 
 def test25c : Bool :=
   -- Internal sequence `(P..., 3, 4, 5)` where P = 1, 2 is one grouped value, opened by
-  -- singleton-boundary normalization into the item stream; sum 15.
+  -- singleton-boundary normalization into the item supply; sum 15.
   let pThenMore := sequenceItems [sequenceSpread (resolve "P"), .num 3, .num 4, .num 5]
   match runFlat (.block (algPrivate [] [] [
     ("P", alg [] [] [] [.num 1, .num 2]),
@@ -4564,7 +4676,7 @@ def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
 #guard sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands
 
 -- A named multi-output source `Data` is opened by singleton-boundary normalization into the
--- item stream, so filter's collection is [3, 4, 5, 6].
+-- item supply, so filter's collection is [3, 4, 5, 6].
 def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
@@ -4580,7 +4692,7 @@ def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
 
 #guard sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary
 
--- A dot-call receiver `Data` is the leading item in the stream, opened by singleton-boundary
+-- A dot-call receiver `Data` is the leading item in the supply, opened by singleton-boundary
 -- normalization, so filter iterates [3, 4, 5, 6].
 def sequenceBoundaryLawFilterDotReceiverExpands : Bool :=
   match runFlat (.block (algPrivate [] [] [
@@ -5047,7 +5159,7 @@ def test84a : Bool :=
 
 #guard test84a
 
--- Test 84b: reduce(values..., reducer, initial) is an item stream, so the two suffix slots
+-- Test 84b: reduce(values..., reducer, initial) is an item supply, so the two suffix slots
 -- bind reducer = (1, 2, 3) and initial = Add from the back, leaving an empty collection. Add
 -- is parameterized, so it cannot be the starting accumulator and the initial-accumulator
 -- error fires (rather than a generic arity error).
@@ -5547,7 +5659,7 @@ def test107a : Bool :=
 
 #guard test107a
 
--- Test 107b: count(values...) is an item stream with no suffix, so an empty call binds an
+-- Test 107b: count(values...) is an item supply with no suffix, so an empty call binds an
 -- empty collection and counts zero (rather than reporting an arity error).
 def test107b : Bool :=
   match runFlat (.block (alg [] [] [] [
@@ -5559,14 +5671,14 @@ def test107b : Bool :=
 #guard test107b
 
 --------------------------------------------------------------------------------
--- Aspect 2 builtin item-stream binding (mirrors C# BuiltinItemStreamBindingTests):
+-- Aspect 2 builtin item-supply binding (mirrors C# BuiltinItemSupplyBindingTests):
 -- a rest-shaped builtin (`sum(values...)`, `contains(values..., item)`) consumes an
--- item stream like a user variadic, through the same shared binder.
+-- item supply like a user variadic, through the same shared binder.
 --------------------------------------------------------------------------------
 
 -- sum(values...): inline items, a single grouped value, an empty call, and an explicit
--- spread all bind the same item stream.
-def builtinSumConsumesItemStream : Bool :=
+-- spread all bind the same item supply.
+def builtinSumConsumesItemSupply : Bool :=
   let inline :=
     match runFlat (.block (alg [] [] [] [
       .call (resolve "sum") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
@@ -5585,11 +5697,11 @@ def builtinSumConsumesItemStream : Bool :=
     | _ => false
   inline && grouped && empty
 
-#guard builtinSumConsumesItemStream
+#guard builtinSumConsumesItemSupply
 
 -- Multiple sibling grouped values are preserved (not flattened): sum(A, B) with A = (1, 2)
 -- and B = (3, 4) rejects the grouped items rather than summing 1 + 2 + 3 + 4 = 10. An
--- explicit spread opens them into one numeric stream and sums to 10.
+-- explicit spread opens them into one numeric item supply and sums to 10.
 def builtinSumSiblingsNotFlattened : Bool :=
   let preservedFails :=
     match runResult (.block (algPrivate [] [] [
@@ -5611,7 +5723,7 @@ def builtinSumSiblingsNotFlattened : Bool :=
 
 -- contains(values..., item): the rest captures the collection and the suffix binds the item,
 -- so inline and grouped collections agree.
-def builtinContainsItemStream : Bool :=
+def builtinContainsItemSupply : Bool :=
   let inline :=
     match runFlat (.block (alg [] [] [] [
       .call (resolve "contains") (alg [] [] [] [.num 1, .num 2, .num 3, .num 2])
@@ -5626,9 +5738,9 @@ def builtinContainsItemStream : Bool :=
     | _ => false
   inline && grouped
 
-#guard builtinContainsItemStream
+#guard builtinContainsItemSupply
 
--- The shared item-stream binder makes a rest-shaped builtin agree with an equivalent user
+-- The shared item-supply binder makes a rest-shaped builtin agree with an equivalent user
 -- variadic: sum(3, 4, 2, 1, 3, 3) and G(values...) = values.sum applied to the same items.
 def builtinMatchesUserVariadic : Bool :=
   let viaBuiltin :=
@@ -6314,7 +6426,7 @@ def test147 : Bool :=
 
 #guard test147
 
--- Test 148: first returns the first item of the grouped collection (opened into the item stream)
+-- Test 148: first returns the first item of the grouped collection (opened into the item supply)
 def test148 : Bool :=
   let sequenceValuePairs := .block (alg [] [] [] [
     .block (alg [] [] [] [.num 1, .num 2]),
@@ -6328,7 +6440,7 @@ def test148 : Bool :=
 
 #guard test148
 
--- Test 149: last returns the last item of the grouped collection (opened into the item stream)
+-- Test 149: last returns the last item of the grouped collection (opened into the item supply)
 def test149 : Bool :=
   let sequenceValuePairs := .block (alg [] [] [] [
     .block (alg [] [] [] [.num 1, .num 2]),
@@ -6531,7 +6643,7 @@ def test151o : Bool :=
 #guard test151o
 
 -- SequenceValue source `map((1, range(2, 4)...), MarkThreeSequenceValue)`: postfix spread
--- contributes inside the single grouped value, opened into the item stream.
+-- contributes inside the single grouped value, opened into the item supply.
 def test151ob : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "map") (alg [] [] [] [
@@ -6545,7 +6657,7 @@ def test151ob : Bool :=
 #guard test151ob
 
 -- SequenceValue source `filter((1, range(2, 4)...), MarkThreeSequenceValue)`: postfix spread
--- contributes inside the single grouped value, opened into the item stream.
+-- contributes inside the single grouped value, opened into the item supply.
 def test151oc : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -6611,7 +6723,7 @@ def test151pb : Bool :=
 #guard test151pb
 
 -- SequenceValue source `reduce((1, range(2, 4)...), AddSequenceValueRange, 0)`: postfix
--- spread contributes inside the single grouped value, opened into the item stream.
+-- spread contributes inside the single grouped value, opened into the item supply.
 def test151pc : Bool :=
   match runFlat (.block (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -6731,9 +6843,9 @@ def test152 : Bool :=
       .resolve "KeepSecondEven"
     ])
   ])) with
-  -- One sequence-valued item is kept, so the collection-result combiner preserves
-  -- its boundary as a one-item collection `((1, 2))` instead of collapsing to `(1, 2)`.
-  | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2]]) => true
+  -- One sequence-valued item is kept, so the collection-result combiner erases the
+  -- one-item collection boundary: the kept `(1, 2)` IS the result, never `((1, 2))`.
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
 #guard test152
@@ -7166,8 +7278,9 @@ def test186 : Bool :=
       .num 1
     ])
   ])) with
-  -- Taking one sequence-valued item keeps it as a one-item collection `((1, 2))`.
-  | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2]]) => true
+  -- Taking one sequence-valued item erases the one-item collection boundary:
+  -- the result is the item itself, `(1, 2)`, agreeing with `first`.
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
 #guard test186
@@ -7180,12 +7293,129 @@ def test187 : Bool :=
       .num 1
     ])
   ])) with
-  -- Skipping to one remaining sequence-valued item keeps it as a one-item
-  -- collection `((3, 4))`.
-  | Except.ok (.sequenceValue [.sequenceValue [.atom 3, .atom 4]]) => true
+  -- Skipping to one remaining sequence-valued item erases the one-item collection
+  -- boundary: the result is the item itself, `(3, 4)`, agreeing with `last`.
+  | Except.ok (.sequenceValue [.atom 3, .atom 4]) => true
   | _ => false
 
 #guard test187
+
+-- Regression block for the former builtin singleton-boundary orphan:
+-- `T = take(((1, 2), (3, 4)), 1)` must be the writable value `(1, 2)` — equal to
+-- the literal `(1, 2)` (and to the grouping form `((1, 2))`, which constructs the
+-- same value), counted as two items by `count(T)` and `T.count` alike.
+def takeSingleKeptItemProgram (output : KatLang.Expr) : KatLang.Expr :=
+  .block (algPrivate [] [] [
+    ("T", alg [] [] [] [
+      .call (resolve "take") (alg [] [] [] [
+        sequenceItems [
+          .block (alg [] [] [] [.num 1, .num 2]),
+          .block (alg [] [] [] [.num 3, .num 4])
+        ],
+        .num 1
+      ])
+    ])
+  ] [output])
+
+def takeSingleKeptItemIsWritableValue : Bool :=
+  match runResult (takeSingleKeptItemProgram (.resolve "T")) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | _ => false
+
+#guard takeSingleKeptItemIsWritableValue
+
+def takeSingleKeptItemCount : Bool :=
+  match runResult (takeSingleKeptItemProgram
+      (.call (resolve "count") (alg [] [] [] [.resolve "T"]))) with
+  | Except.ok (.atom 2) => true
+  | _ => false
+
+#guard takeSingleKeptItemCount
+
+def takeSingleKeptItemDotCount : Bool :=
+  match runResult (takeSingleKeptItemProgram (.dotCall (.resolve "T") "count" none)) with
+  | Except.ok (.atom 2) => true
+  | _ => false
+
+#guard takeSingleKeptItemDotCount
+
+def takeSingleKeptItemEqualsFlatLiteral : Bool :=
+  match runResult (takeSingleKeptItemProgram
+      (.binary .eq (.resolve "T") (sequenceItems [.num 1, .num 2]))) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard takeSingleKeptItemEqualsFlatLiteral
+
+def takeSingleKeptItemEqualsWrappedLiteral : Bool :=
+  match runResult (takeSingleKeptItemProgram
+      (.binary .eq (.resolve "T")
+        (.block (alg [] [] [] [sequenceItems [.num 1, .num 2]])))) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard takeSingleKeptItemEqualsWrappedLiteral
+
+-- A single kept empty-sequence item also erases its one-item collection boundary:
+-- `distinct((), ())` dedups two equal `()` items to one kept item and yields `()`
+-- itself (count 0), never the literal-unwritable orphan `(())`.
+def distinctSingleKeptEmptyItemErasesBoundary : Bool :=
+  match runResult (.call (resolve "distinct")
+      (alg [] [] [] [.emptySequence 0, .emptySequence 0])) with
+  | Except.ok (.sequenceValue []) => true
+  | _ => false
+
+#guard distinctSingleKeptEmptyItemErasesBoundary
+
+def distinctSingleKeptEmptyItemCountsZero : Bool :=
+  match runResult (.call (resolve "count") (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [.emptySequence 0, .emptySequence 0])
+  ])) with
+  | Except.ok (.atom 0) => true
+  | _ => false
+
+#guard distinctSingleKeptEmptyItemCountsZero
+
+def distinctSingleKeptEmptyItemEqualsEmpty : Bool :=
+  match runResult (.binary .eq
+      (.call (resolve "distinct") (alg [] [] [] [.emptySequence 0, .emptySequence 0]))
+      (.emptySequence 0)) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard distinctSingleKeptEmptyItemEqualsEmpty
+
+-- Guard against over-normalization: multiple kept empty-sequence items keep their
+-- sibling boundaries. `take((), (), 2)` stays the two-item collection `((), ())`
+-- with count 2 — the combiner is shallow and never collapses or drops meaningful
+-- sibling items.
+def takeMultipleEmptyItemsPreservesSiblingBoundaries : Bool :=
+  match runResult (.call (resolve "take")
+      (alg [] [] [] [.emptySequence 0, .emptySequence 0, .num 2])) with
+  | Except.ok (.sequenceValue [.sequenceValue [], .sequenceValue []]) => true
+  | _ => false
+
+#guard takeMultipleEmptyItemsPreservesSiblingBoundaries
+
+def takeMultipleEmptyItemsCountsTwo : Bool :=
+  match runResult (.call (resolve "count") (alg [] [] [] [
+    .call (resolve "take") (alg [] [] [] [.emptySequence 0, .emptySequence 0, .num 2])
+  ])) with
+  | Except.ok (.atom 2) => true
+  | _ => false
+
+#guard takeMultipleEmptyItemsCountsTwo
+
+-- The collection-result combiner itself shares `combineOutputSlots`' shallow
+-- singleton-erasing shape: one item IS the result, everything else wraps raw.
+#guard KatLang.combineCollectionResult [] == Result.sequenceValue []
+#guard KatLang.combineCollectionResult [.atom 7] == Result.atom 7
+#guard KatLang.combineCollectionResult [.str "a"] == Result.str "a"
+#guard KatLang.combineCollectionResult [.sequenceValue [.atom 1, .atom 2]]
+  == Result.sequenceValue [.atom 1, .atom 2]
+#guard KatLang.combineCollectionResult [.sequenceValue []] == Result.sequenceValue []
+#guard KatLang.combineCollectionResult [.sequenceValue [], .sequenceValue []]
+  == Result.sequenceValue [.sequenceValue [], .sequenceValue []]
 
 def test188 : Bool :=
   match runResult (.block (algPrivate [] [] [
@@ -7850,8 +8080,9 @@ def test218 : Bool :=
     ]))
   let filterOk :=
     match filterResult with
-    -- Filtering keeps one sequence-valued item, preserved as a one-item collection `((1, 2))`.
-    | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2]]) => true
+    -- Filtering keeps one sequence-valued item; the one-item collection boundary
+    -- is erased, so the result is the kept `(1, 2)` itself.
+    | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
     | _ => false
   let mapOk :=
     match mapResult with
@@ -7968,9 +8199,9 @@ def test232 : Bool :=
       .resolve "IsSafe"
     ])
   ])) with
-  -- Only the first report is kept; as a single sequence-valued item the result is the
-  -- one-item collection `((7, 6, 4, 2, 1))` rather than the collapsed `(7, 6, 4, 2, 1)`.
-  | Except.ok (.sequenceValue [.sequenceValue [.atom 7, .atom 6, .atom 4, .atom 2, .atom 1]]) => true
+  -- Only the first report is kept; the one-item collection boundary is erased, so
+  -- the result is the kept report `(7, 6, 4, 2, 1)` itself.
+  | Except.ok (.sequenceValue [.atom 7, .atom 6, .atom 4, .atom 2, .atom 1]) => true
   | _ => false
 
 #guard test232
@@ -8894,9 +9125,9 @@ def variadicNamedMultiOutputDotCallWithSuffixStillWorks : Bool :=
 
 #guard variadicNamedMultiOutputDotCallWithSuffixStillWorks
 
--- Both the named multi-output receiver (one grouped slot opened by rule 4) and
--- the inline block spread receiver (three exposed items) bind through the
--- deconstruction matcher to 65, so the two rows agree.
+-- The named multi-output receiver is one grouped argument whose captured value
+-- is consumed by `values.sum`; the inline block spread receiver supplies three
+-- exposed items. Both rows produce 65, but through distinct argument streams.
 def variadicInlineTupleDotCallMatchesNamedReceiver : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
@@ -8956,7 +9187,7 @@ def sequenceBuiltinInlineTupleDotCallBehaviorUnchanged : Bool :=
 
 -- Internal sequence `(Arg....Scale(10), Arg.map{n * 10})...`: a postfix spread
 -- over the constructed result of the variadic-scale dot-call and the builtin map,
--- spreading the concatenated streams.
+-- spreading the concatenated results.
 def variadicScaleMatchesBuiltinMap : Bool :=
   let builtinMap := .dotCall (resolve "Arg") "map" (some (alg [] [] [] [
     .block (alg ["n"] [] [] [.binary .mul (.param "n") (.num 10)])
@@ -9181,6 +9412,223 @@ def sequenceValueVariadicWithSuffixInsideSequenceValueRequiresSuffixValue : Bool
 
 #guard sequenceValueVariadicWithSuffixInsideSequenceValueRequiresSuffixValue
 
+def sequenceValuePairFirstAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }, .capture { name := "y" }]
+  ] [] [] [.param "x"]
+
+/-- Regression: `F(((A), 6))` with `A = 5`. The written grouping `(A)` is one
+    grouping level around a single already-evaluated item, so pattern binding
+    receives the scalar `5` itself -- never a literal-unwritable orphan
+    sequence value `(5)` that would compare unequal to `5`. Mirrors assignment
+    deconstruction of the same right-hand side. -/
+def sequenceValuePatternParenScalarPropertyItemIsNotOrphan : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 5]),
+    ("F", sequenceValuePairFirstAlg)
+  ] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.resolve "A"]),
+        .num 6
+      ])
+    ])
+  ])) with
+  | Except.ok (.atom 5) => true
+  | _ => false
+
+#guard sequenceValuePatternParenScalarPropertyItemIsNotOrphan
+
+/-- Regression: `F(((A), 6))` with `A = (1, 2)`. The grouped property reference
+    supplies the canonical `(1, 2)` as one item -- not an orphan `((1, 2))`. -/
+def sequenceValuePatternParenSequencePropertyItemStaysCanonical : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.num 1, .num 2]),
+    ("F", sequenceValuePairFirstAlg)
+  ] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.resolve "A"]),
+        .num 6
+      ])
+    ])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | _ => false
+
+#guard sequenceValuePatternParenSequencePropertyItemStaysCanonical
+
+/-- Regression: `F(((), 6))`. A non-spread `()` item is one visible item,
+    exactly as in ordinary sequence-value construction, so the pattern sees
+    `((), 6)` and binds `x` to the empty sequence value. -/
+def sequenceValuePatternEmptySequenceSiblingItemIsPreserved : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .emptySequence 0,
+        .num 6
+      ])
+    ])
+  ])) with
+  | Except.ok (.sequenceValue []) => true
+  | _ => false
+
+#guard sequenceValuePatternEmptySequenceSiblingItemIsPreserved
+
+/-- Regression: only an explicit spread contributes zero items. `F((E..., 6))`
+    with `E = ()` spreads away the empty value, so the pattern sees the single
+    item `6`. -/
+def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
+  match runFlat (.block (algPrivate [] [] [
+    ("E", alg [] [] [] [.emptySequence 0]),
+    ("F", sequenceValueVariadicCountAlg)
+  ] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .sequenceSpread (.resolve "E"),
+        .num 6
+      ])
+    ])
+  ])) with
+  | Except.ok [1] => true
+  | _ => false
+
+#guard sequenceValuePatternSpreadOfEmptyStillContributesNoItems
+
+/-- Regression: `F(((1, 2)))` with `F((x, y)) = x`. The inline-written argument
+    `((1, 2))` is one written grouping level around the canonical item
+    `(1, 2)`, so the pattern receives exactly ONE written slot and reports
+    `arityMismatch 2 1`. Written slots stay authoritative for inline-written
+    pattern arguments: binding neither mints an orphan `((1, 2))` nor silently
+    opens the single written item. -/
+def sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2])
+      ])
+    ])
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | Except.ok _ => false
+
+#guard sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity
+
+/-- Regression: redundant grouping depth canonicalizes away shallowly at each
+    level, so `F((((1, 2))))` still writes exactly one slot -- the canonical
+    `(1, 2)` -- and reports the same `arityMismatch 2 1`. -/
+def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [
+          .block (alg [] [] [] [.num 1, .num 2])
+        ])
+      ])
+    ])
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | Except.ok _ => false
+
+#guard sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity
+
+/-- Regression: `A = ((1, 2))` canonicalizes at property construction to
+    `(1, 2)`; `F(A)` then opens the stored canonical sequence value for the
+    pattern, so `F((x, y)) = x` binds `x = 1`. No hidden orphan `((1, 2))`
+    distinguishes the stored value from the writable literal `(1, 2)`. -/
+def sequenceValuePatternPropertyStoredWrappedPairOpensCanonically : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]),
+    ("F", sequenceValuePairFirstAlg)
+  ] [
+    .call (resolve "F") (alg [] [] [] [.resolve "A"])
+  ])) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard sequenceValuePatternPropertyStoredWrappedPairOpensCanonically
+
+def sequenceValuePairFirstWithFixedSuffixAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }, .capture { name := "y" }],
+    .capture { name := "z" }
+  ] [] [] [.param "x"]
+
+/-- Regression: `KeepFirst(((1, 2)), 3)` with `KeepFirst((x, y), z) = x`. The
+    trailing fixed argument binds normally; the sequence-value pattern still
+    receives one written slot for `((1, 2))` and reports `arityMismatch 2 1`. -/
+def sequenceValuePatternWrappedPairWithFixedSuffixReportsWrittenSlotArity : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2])
+      ]),
+      .num 3
+    ])
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | Except.ok _ => false
+
+#guard sequenceValuePatternWrappedPairWithFixedSuffixReportsWrittenSlotArity
+
+def sequenceValueSingleCaptureAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }]
+  ] [] [] [.param "x"]
+
+/-- Regression: `IdSeq(((1, 2)))` with `IdSeq((x)) = x`. The one-capture
+    sequence pattern consumes the single written slot, and that slot is the
+    CANONICAL item `(1, 2)`: the shallow singleton-erasing combiner never
+    materializes a literal-unwritable orphan `((1, 2))` around it. The
+    structural match pins the exact shape. -/
+def sequenceValuePatternSingleCaptureBindsWrappedPairAsCanonicalItem : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2])
+      ])
+    ])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | _ => false
+
+#guard sequenceValuePatternSingleCaptureBindsWrappedPairAsCanonicalItem
+
+def sequenceValueSingleCaptureCountAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }]
+  ] [] [] [.dotCall (.param "x") "count" none]
+
+/-- Regression: the canonically bound item observes consistently -- `x.count`
+    for the `IdSeq(((1, 2)))` binding is 2, matching the structural shape
+    `(1, 2)` (an orphan `((1, 2))` would count 1). -/
+def sequenceValuePatternSingleCaptureWrappedPairCountsItems : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", sequenceValueSingleCaptureCountAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2])
+      ])
+    ])
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#guard sequenceValuePatternSingleCaptureWrappedPairCountsItems
+
+/-- Guard: the shallow combiner never drops empty-sequence siblings.
+    `F(((), ()))` writes two items, so the pair pattern binds both empties
+    positionally and `x` is the real empty sequence value. -/
+def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [.emptySequence 0, .emptySequence 0])
+    ])
+  ])) with
+  | Except.ok (.sequenceValue []) => true
+  | _ => false
+
+#guard sequenceValuePatternTwoEmptySiblingItemsBindPositionally
+
 def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
   let sequenceValueCall :=
     runFlat (.block (algPrivate [] [] [("F", algWithParameterPatterns [
@@ -9210,18 +9658,21 @@ def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
 #guard sequenceValueVariadicIsNotTopLevelVariadic
 
 -- Source `Step((history...), previous) = (history..., previous + 1), previous + 1`,
--- matching the C# regression `Eval_LoopStep_SequenceValueCommaHistorySlotPreservedAcrossRepeat`.
--- The first output slot is the sequence-value pair `(history..., previous + 1)` — a block whose
--- comma outputs are `history...` (a spread spreading history's items) and
--- `previous + 1`. A block is naturally one top-level value, so it is one next-state slot
--- and the accumulated history survives across `repeat`.
---   `(history..., next)`  is a sequence-value pair whose first element is a sequence-spread history.
---   an internal `sequenceConstruct history next` wrapped in `...` is a sequence
---                         spread over the constructed sequence.
--- Both are source-faithful but model DIFFERENT source shapes; this guard models the
--- comma-sequenceValue `(history..., next)` source, not a spread over an internal
--- constructed sequence.
-def sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot : Bool :=
+-- matching the C# regression `Eval_LoopStep_SequenceValueCommaHistorySlotUsesExplicitSpreadAcrossRepeat`.
+-- The first output slot is the written sequence value `(history..., previous + 1)`:
+-- a block whose comma outputs are `history...` (an explicit spread opening the
+-- captured history one level) and `previous + 1`. The written spread splices its
+-- items before the sibling slot — the same `(A..., 99)` = `(1, 2, 99)` rule as
+-- every written sequence value — so the history slot GROWS FLAT by one item per
+-- step. Starting from `(1, 2)` and stepping twice, `:0` selects the flat
+-- `(1, 2, 3, 4)`. To deepen instead of flattening, write the history as a
+-- non-spread item: `(history, previous + 1)`.
+-- (Before the July 2026 alignment fix, `evalAlgOutputCore` kept a non-empty
+-- spread output slot grouped as one un-expanded slot, so this program nested to
+-- `(((1, 2), 3), 4)` — diverging from `evalAlgOutputCountedCore`, from the C#
+-- evaluator, and from written-sequence spread semantics. This guard pins the
+-- aligned flat behavior at the exact structural level.)
+def sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat : Bool :=
   let step := algWithParameterPatterns [
     .sequenceValue [.capture { name := "history", kind := .variadic }],
     .capture { name := "previous" }
@@ -9229,16 +9680,6 @@ def sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot : Bool :=
     .block (alg [] [] [] [sequenceSpread (.param "history"), .binary .add (.param "previous") (.num 1)]),
     .binary .add (.param "previous") (.num 1)
   ]
-  -- Checked at the EXACT structural level (like the strengthened C# regression):
-  -- postfix `...` spreads the sequence-value slot as ONE top-level value and never opens
-  -- a sequence-value boundary, so the comma nests it beside the new value. The sequence-value slot
-  -- therefore deepens by one level per step rather than flattening. Starting from
-  -- `(1, 2)` and stepping twice, `:0` selects the exact nested structure
-  -- `(((1, 2), 3), 4)` — NOT the flat `(1, 2, 3, 4)`. (Flattening requires
-  -- opening the slot via a normal-parameter `history...`; see
-  -- `loopBoundarySpreadHistoryStepAlg` below.) Asserting the
-  -- exact `Result` here (not just `runFlat` atoms) pins the nesting and would catch
-  -- a flattening regression that atom flattening alone hides.
   match runResult (.block (algPrivate [] [] [("Step", step)] [
     .index
       (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
@@ -9248,13 +9689,13 @@ def sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot : Bool :=
       ])))
       (.num 0)
   ])) with
-  | Except.ok (.sequenceValue [.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3], .atom 4]) => true
+  | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
   | _ => false
 
-#guard sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot
+#guard sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat
 
 -- Source `Step((history..., previous), current) = (history..., current), current`.
--- Same shape as `sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot`: the first output
+-- Same shape as `sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat`: the first output
 -- slot is the sequence-value pair `(history..., current)` — a block whose comma outputs are
 -- `history...` (sequence-spread) and `current` — so it is one next-state slot.
 -- (Contrast a spread over `sequenceConstruct history current`, which is a different shape.)
@@ -9273,9 +9714,10 @@ def sequenceValueVariadicLoopStepWithSuffixInsideSequenceValuePreservesStateShap
   -- DESTRUCTURES the slot `(1, 2)` into atoms — history captures the leading atom
   -- `1` and `previous` the trailing `2` — so `history...` spreads a bare atom, not
   -- a nested sequence value. The next slot is therefore the FLAT pair `(1, 3)`, and it stays
-  -- flat across iterations. Contrast the variadic-only `(history...)` capture in
-  -- `sequenceValueVariadicLoopStepPreservesSequenceValueHistorySlot`, which keeps the slot as
-  -- one sequence value and nests. Asserting the exact `Result` pins this flat shape.
+  -- flat across iterations (dropping the previous `previous`, unlike the
+  -- variadic-only `(history...)` capture in
+  -- `sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat`, which accumulates).
+  -- Asserting the exact `Result` pins this flat shape.
   match runResult (.block (algPrivate [] [] [("Step", step)] [
     .index
       (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
@@ -9369,7 +9811,7 @@ def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :
 #guard sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots
 
 -- Aspect 2 loop-state variadic binding (mirrors C# EvaluatorTests.Eval_VariadicLoopStep_*).
--- A top-level variadic loop interface binds state as an item stream: the fixed prefix
+-- A top-level variadic loop interface binds state as an item supply: the fixed prefix
 -- and suffix bind from the ends, and the rest captures the remaining middle state slots
 -- as one grouped value. The structural minimum is the parameter count (so 2 slots fail
 -- for first/middle.../last) and the max is unbounded (extra middle slots are accepted).
@@ -9598,7 +10040,7 @@ def loopInitialManyExplicitArgsCreateManySlots : Bool :=
 
 #guard loopInitialManyExplicitArgsCreateManySlots
 
--- A rest-only variadic loop step binds many separate init slots as its item stream
+-- A rest-only variadic loop step binds many separate init slots as its item supply
 -- (Aspect 2: matches C#). Step(values...) = values with repeat(1, 1, 2, 3) captures
 -- values = (1, 2, 3) rather than rejecting the extra slots as the old strict path did.
 def loopInitialExplicitVariadicStepCapturesManySlots : Bool :=
@@ -9687,7 +10129,7 @@ def loopInitialMultiOutputPropertyArgIsOneSlot : Bool :=
 #guard loopInitialMultiOutputPropertyArgIsOneSlot
 
 -- Explicit selections that split a multi-output property into separate init slots are
--- bound by the rest-only variadic step as its item stream (Aspect 2: matches C#), so the
+-- bound by the rest-only variadic step as its item supply (Aspect 2: matches C#), so the
 -- three split slots are captured as values = (1, 2, 4) instead of being rejected.
 def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
   match runResult (.block (algPrivate [] [] [
@@ -9956,20 +10398,20 @@ def sequenceValueReceiverLeadingVariadicIsOneSlot : Bool :=
 #guard sequenceValueReceiverLeadingVariadicIsOneSlot
 
 -- Pair... spreads two slots; rest-only `NItems(values...)` consumes an item
--- stream, so it binds those two slots into one sequence value of count 2.
-def sequenceValueReceiverSpreadFeedsItemStream : Bool :=
+-- supply, so it binds those two slots into one sequence value of count 2.
+def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "NItems" none)) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.call (resolve "NItems") (alg [] [] [] [sequenceSpread (resolve "Pair")]))) [2]
 
-#guard sequenceValueReceiverSpreadFeedsItemStream
+#guard sequenceValueReceiverSpreadFeedsItemSupply
 
--- BeforeLastCount(values..., last) is a comma deconstruction parameter list, so
--- it binds via the deconstruction matcher: Pair.BeforeLastCount(99) and the
--- canonical call pass one sequence-valued slot plus the suffix; the spread forms
--- now over-supply the variadic instead of erroring, so all four forms agree on 2.
+-- BeforeLastCount(values..., last) binds the supplied item supply:
+-- Pair.BeforeLastCount(99) and the canonical call pass one sequence-valued slot
+-- plus the suffix; the spread forms open Pair before suffix allocation. All four
+-- forms agree on a variadic capture whose collection count is 2.
 def sequenceValueReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
   let suffixArgs := alg [] [] [] [.num 99]
@@ -9985,7 +10427,7 @@ def sequenceValueReceiverWithSuffixMatchesCanonicalCalls : Bool :=
 #guard sequenceValueReceiverWithSuffixMatchesCanonicalCalls
 
 -- Values emits two top-level values. Rest-only `NItems(values...)` consumes an
--- item stream, so the ordinary forms (one sequence-valued slot) and the explicit
+-- item supply, so the ordinary forms (one sequence-valued slot) and the explicit
 -- spread forms (two slots) all bind to a sequence value of count 2.
 def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
@@ -10000,9 +10442,9 @@ def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
 
 #guard multiOutputReceiverCountsMatchCanonicalCalls
 
--- BeforeLastCount(values..., last) binds via the deconstruction matcher. The
--- ordinary and canonical forms pass one sequence-valued slot plus the suffix; the
--- spread forms over-supply the variadic instead of erroring. All four agree on 2.
+-- BeforeLastCount(values..., last) binds the supplied item supply. The ordinary
+-- and canonical forms pass one sequence-valued slot plus the suffix; the spread
+-- forms open Values before suffix allocation. All four agree on 2.
 def multiOutputReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
   let suffixArgs := alg [] [] [] [.num 99]
@@ -10017,17 +10459,15 @@ def multiOutputReceiverWithSuffixMatchesCanonicalCalls : Bool :=
 
 #guard multiOutputReceiverWithSuffixMatchesCanonicalCalls
 
--- SumPlusLast(values..., last) binds via the deconstruction matcher. With no
--- extra argument the ordinary receiver / canonical call supply exactly one
--- grouped sequence value, so rule 4 opens it into [10, 20]: `last` binds 20 and
--- the variadic captures [10], giving 10 + 20 = 30. This now agrees with the
--- explicit-spread form below.
+-- SumPlusLast(values..., last) with no extra argument receives exactly one
+-- grouped sequence value, so `last` gets that value and the numeric body fails.
+-- Explicit spread below is the successful path.
 def ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation : Bool :=
   let callee := ("SumPlusLast", receiverSymmetrySumAlg)
-  expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (resolve "Values") "SumPlusLast" none)) [30] &&
-  expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "SumPlusLast") (alg [] [] [] [resolve "Values"]))) [30]
+  expectInnermostTypeMismatch (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
+    (.dotCall (resolve "Values") "SumPlusLast" none)) &&
+  expectInnermostTypeMismatch (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
+    (.call (resolve "SumPlusLast") (alg [] [] [] [resolve "Values"])))
 
 #guard ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation
 
@@ -10057,7 +10497,7 @@ def inlineBlockReceiverExposesTopLevelItemsToLeadingVariadic : Bool :=
 -- Deconstruction parameter binding (movable rest, single grouped opening)
 --------------------------------------------------------------------------------
 -- F(x, y..., z) is a comma deconstruction parameter list (two or more captures
--- containing one rest), so the supplied item stream is matched prefix/rest/suffix
+-- containing one rest), so the supplied item supply is matched prefix/rest/suffix
 -- and a single grouped argument is opened element-by-element by rule 4.
 
 def deconstructSumAlg : Algorithm :=
@@ -10071,26 +10511,28 @@ def deconstructFiveArg : Algorithm :=
   alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]
 
 -- F(1, 2, 3, 4, 5): five direct item slots.
-def deconstructionDirectItemStream : Bool :=
+def deconstructionDirectItemSupply : Bool :=
   match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
     .call (resolve "F") deconstructFiveArg
   ])) with
   | Except.ok [15] => true
   | _ => false
 
-#guard deconstructionDirectItemStream
+#guard deconstructionDirectItemSupply
 
--- F(A) where A = 1, 2, 3, 4, 5: one grouped sequence value, opened by rule 4.
-def deconstructionSingleGroupedArgument : Bool :=
+-- F(A) where A = 1, 2, 3, 4, 5: one sequence-valued argument is supplied.
+-- Function-call binding does not implicitly open it, so the mixed fixed/rest
+-- shape is under-supplied.
+def deconstructionSingleGroupedArgumentRequiresSpread : Bool :=
   match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
     .call (resolve "F") (alg [] [] [] [resolve "A"])
   ])) with
-  | Except.ok [15] => true
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
 
-#guard deconstructionSingleGroupedArgument
+#guard deconstructionSingleGroupedArgumentRequiresSpread
 
--- F(A...): explicit spread supplies five slots and matches the same as F(A).
+-- F(A...): explicit spread supplies five slots.
 def deconstructionSpreadArgument : Bool :=
   match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
     .call (resolve "F") (alg [] [] [] [sequenceSpread (resolve "A")])
@@ -10128,7 +10570,7 @@ def deconstructionMatchingAlgorithm : Bool :=
 
 #guard deconstructionMatchingAlgorithm
 
--- A single scalar argument is a one-item stream: F(first, tail...) with 1 binds
+-- A single scalar argument is a one-item supply: F(first, tail...) with 1 binds
 -- first = 1 and the rest captures zero items (tail.count = 0).
 def deconstructFirstTailAlg : Algorithm :=
   algWithParameters [{ name := "first" }, { name := "tail", kind := .variadic }] [] [] [
@@ -10145,7 +10587,7 @@ def deconstructionScalarArgument : Bool :=
 #guard deconstructionScalarArgument
 
 -- A sequence-value parameter pattern also normalizes a scalar to a one-item
--- stream: F((first, tail...)) with the scalar 1 binds first = 1, tail = ().
+-- supply: F((first, tail...)) with the scalar 1 binds first = 1, tail = ().
 def deconstructSequenceValueFirstTailAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .variadic }]
@@ -10204,15 +10646,15 @@ def deconstructionCallbackOnSequenceValueRows : Bool :=
 
 #guard deconstructionCallbackOnSequenceValueRows
 
--- A lone rest-only parameter is the degenerate item-stream case: a single grouped
--- argument is opened by singleton-boundary normalization (Sum(A) = 15), and
--- separate slots are bound as the same item stream (Sum(1, 2, 3) = 6).
+-- A lone rest-only parameter captures the supplied call arguments. Its captured
+-- value may display/count like the grouped value it captured, but the supplied
+-- argument boundary still differs from explicit spread in mixed shapes below.
 def restOnlyCollectAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .variadic }] [] [] [
     .dotCall (.param "values") "sum" none
   ]
 
-def restOnlyConsumesItemStream : Bool :=
+def restOnlyConsumesItemSupply : Bool :=
   let singleGroupedArg :=
     match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
       .call (resolve "Sum") (alg [] [] [] [resolve "A"])
@@ -10227,20 +10669,43 @@ def restOnlyConsumesItemStream : Bool :=
     | _ => false
   singleGroupedArg && multipleSlots
 
-#guard restOnlyConsumesItemStream
+#guard restOnlyConsumesItemSupply
 
-def itemStreamSumAlg : Algorithm :=
+def mixedVariadicBoundaryAlg : Algorithm :=
+  algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [
+    .dotCall (.param "first") "count" none,
+    .dotCall (.param "rest") "count" none
+  ]
+
+def mixedVariadicPlainSequenceArgumentPreservesBoundary : Bool :=
+  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
+    .call (resolve "G") (alg [] [] [] [resolve "A"])
+  ])) with
+  | Except.ok [2, 0] => true
+  | _ => false
+
+#guard mixedVariadicPlainSequenceArgumentPreservesBoundary
+
+def mixedVariadicExplicitSpreadOpensSequenceArgument : Bool :=
+  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
+    .call (resolve "G") (alg [] [] [] [sequenceSpread (resolve "A")])
+  ])) with
+  | Except.ok [1, 1] => true
+  | _ => false
+
+#guard mixedVariadicExplicitSpreadOpensSequenceArgument
+
+def itemSupplySumAlg : Algorithm :=
   algWithParameters [{ name := "x", kind := .variadic }] [] [] [
     .dotCall (.param "x") "sum" none
   ]
 
--- Aspect 2: rest-only `G(x...)` is the degenerate item-stream case. A single
--- grouped value `G(A)`, an explicit spread `G(A...)`, the inline item stream
--- `G(1, 2, 3, 4, 5)`, and a parenthesized sequence value `G((1, 2, 3, 4, 5))` all
--- bind the same item stream and sum to 15.
-def restOnlyItemStreamAllFormsSumTo15 : Bool :=
+-- Rest-only `G(x...)` may display the same captured value for `G(A)` and
+-- `G(A...)`, but those are different supplied argument streams. Mixed-shape
+-- guards above make the boundary visible.
+def restOnlyItemSupplyAllFormsSumTo15 : Bool :=
   let withArgs (args : Algorithm) : Bool :=
-    match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemStreamSumAlg)] [
+    match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
       .call (resolve "G") args
     ])) with
     | Except.ok [15] => true
@@ -10250,11 +10715,11 @@ def restOnlyItemStreamAllFormsSumTo15 : Bool :=
     && withArgs deconstructFiveArg
     && withArgs (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
 
-#guard restOnlyItemStreamAllFormsSumTo15
+#guard restOnlyItemSupplyAllFormsSumTo15
 
--- An empty call binds an empty item stream (min arity 0): `G()` sums to 0.
+-- An empty call binds an empty item supply (min arity 0): `G()` sums to 0.
 def restOnlyEmptyCallSumsToZero : Bool :=
-  match runFlat (.block (algPrivate [] [] [("G", itemStreamSumAlg)] [
+  match runFlat (.block (algPrivate [] [] [("G", itemSupplySumAlg)] [
     .call (resolve "G") (alg [] [] [] [])
   ])) with
   | Except.ok [0] => true
@@ -10262,20 +10727,20 @@ def restOnlyEmptyCallSumsToZero : Bool :=
 
 #guard restOnlyEmptyCallSumsToZero
 
-def itemStreamCountAlg : Algorithm :=
+def itemSupplyCountAlg : Algorithm :=
   algWithParameters [{ name := "x", kind := .variadic }] [] [] [
     .dotCall (.param "x") "count" none
   ]
 
 -- Multiple sibling grouped values are preserved (G(A, B) binds x = ((1, 2), (3, 4)),
--- count 2), not auto-flattened; only explicit `...` opens them into one stream
+-- count 2), not auto-flattened; only explicit `...` opens them into one item supply
 -- (G(A..., B...) binds x = (1, 2, 3, 4), count 4).
 def restOnlyPreservesSiblingGroupedValues : Bool :=
   let twoItemRoot (argExprs : List KatLang.Expr) : Algorithm :=
     algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4]),
-      ("G", itemStreamCountAlg)
+      ("G", itemSupplyCountAlg)
     ] [ .call (resolve "G") (alg [] [] [] argExprs) ]
   let preserved :=
     match runFlat (.block (twoItemRoot [resolve "A", resolve "B"])) with
@@ -10299,21 +10764,24 @@ def restPrefixSumAlg : Algorithm :=
 def nestedSingletonFive : KatLang.Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
 
--- Singleton-boundary normalization repeats through nested grouped values:
--- (((1, 2, 3, 4, 5))) is opened twice down to the same five-item stream, so
--- rest-only `G(x...)`, rest+suffix `F(x..., y)`, and prefix+rest+suffix
--- `H(x, y..., z)` all reach 15. Mirrors C#
--- DeconstructionBindingTests.RepeatedSingletonBoundary_IsNormalizedThroughNesting.
-def repeatedSingletonBoundaryNormalizes : Bool :=
-  let run (callee : Algorithm) : Bool :=
-    match runFlat (.block (algPrivate [] [] [("F", callee)] [
+-- Repeated singleton grouping is useful-structure canonicalized as a value, but
+-- a function call still receives one argument unless `...` is written.
+def repeatedSingletonBoundaryDoesNotImplicitlyOpenCallArgument : Bool :=
+  let plainMixed :=
+    match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
       .call (resolve "F") (alg [] [] [] [nestedSingletonFive])
+    ])) with
+    | Except.error err => innermostIsArityMismatch 2 1 err
+    | _ => false
+  let spreadMixed :=
+    match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
+      .call (resolve "F") (alg [] [] [] [sequenceSpread nestedSingletonFive])
     ])) with
     | Except.ok [15] => true
     | _ => false
-  run itemStreamSumAlg && run restPrefixSumAlg && run deconstructSumAlg
+  plainMixed && spreadMixed
 
-#guard repeatedSingletonBoundaryNormalizes
+#guard repeatedSingletonBoundaryDoesNotImplicitlyOpenCallArgument
 
 --------------------------------------------------------------------------------
 -- Conditional branch arity invariants are Lean-enforced before evaluation
@@ -10777,7 +11245,7 @@ def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
 -- property/call/builtin boundary arity = 1 (reCountValueBoundary)
 --------------------------------------------------------------------------------
 -- A property/call/builtin RESULT boundary always returns ONE value: a body or
--- collection that internally produces an item stream is observed by the caller
+-- collection that internally produces an item supply is observed by the caller
 -- as one sequence value (emitted count 1). Only explicit caller-site postfix
 -- `...` re-opens it. Root output is NOT a call boundary and keeps its slot count;
 -- `while`/`repeat` loop state and the strict map/reduce callback paths are also
@@ -10905,8 +11373,8 @@ def boundaryRangeIsOneValue : Bool :=
 #guard boundaryRangeIsOneValue
 
 /-- Internal variadic forwarding is unaffected: `F(a...) = a.sum` still sums the
-    raw captured item stream. -/
-def boundaryVariadicForwardingPreservesRawStream : Bool :=
+    raw captured item supply. -/
+def boundaryVariadicForwardingPreservesRawSupply : Bool :=
   match runCountedProgram (.block (algPrivate [] []
       [("F", algWithParameters [{ name := "a", kind := .variadic }] [] []
         [.dotCall (.param "a") "sum" none])]
@@ -10914,7 +11382,7 @@ def boundaryVariadicForwardingPreservesRawStream : Bool :=
   | .ok (Result.atom 14, 1) => true
   | _ => false
 
-#guard boundaryVariadicForwardingPreservesRawStream
+#guard boundaryVariadicForwardingPreservesRawSupply
 
 /-- Regression: root output is NOT a call boundary and stays multi-output. -/
 def boundaryRootOutputStaysMultiOutput : Bool :=
@@ -10924,17 +11392,17 @@ def boundaryRootOutputStaysMultiOutput : Bool :=
 
 #guard boundaryRootOutputStaysMultiOutput
 
-/-- Regression: the boundary re-count preserves nested empty sequence structure
-    `(())` instead of collapsing or rebuilding it. -/
-def boundaryPreservesNestedEmptySequence : Bool :=
+/-- Regression: redundant empty sequence nesting canonicalizes before the
+    boundary re-count observes it. -/
+def boundaryCanonicalizesNestedEmptySequence : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("F", alg [] [] [] [.emptySequence 1])] [.resolve "F"])) with
-  | .ok (Result.sequenceValue [Result.sequenceValue []], 1) => true
+  | .ok (Result.sequenceValue [], 1) => true
   | _ => false
 
-#guard boundaryPreservesNestedEmptySequence
+#guard boundaryCanonicalizesNestedEmptySequence
 
 -- Collection-producing builtin parity: each returns one sequence value (count 1)
--- at the call/property boundary; caller-site `...` opens it into an item stream.
+-- at the call/property boundary; caller-site `...` opens it into an item supply.
 -- (`order` and `range` are covered by the guards above.)
 
 def boundaryDesc312 : Algorithm := alg [] [] [] [.num 3, .num 1, .num 2]
@@ -11159,13 +11627,13 @@ def dotCallParityCases : List DotCallParityCase :=
     { label := "B/sequenceValue-receiver-one-slot", target := resolve "Pair", name := "NItems",
       expectedAtoms := some [2] },
     -- C: explicit spread of a multi-output property spreads its emitted top-level
-    -- values into the rest-only `NItems(values...)` item stream: (Values...).NItems
+    -- values into the rest-only `NItems(values...)` item supply: (Values...).NItems
     -- binds the two values, count 2.
     { label := "C/spread-multi-output-receiver",
       target := sequenceSpreadReceiver (resolve "Values"), name := "NItems",
       expectedAtoms := some [2] },
     -- D: explicit spread of a sequence-valued property opens it into the item
-    -- stream the same way: (Pair...).NItems binds the two elements, count 2.
+    -- supply the same way: (Pair...).NItems binds the two elements, count 2.
     { label := "D/spread-sequenceValue-receiver-stays-sequenceValue",
       target := sequenceSpreadReceiver (resolve "Pair"), name := "NItems",
       expectedAtoms := some [2] },

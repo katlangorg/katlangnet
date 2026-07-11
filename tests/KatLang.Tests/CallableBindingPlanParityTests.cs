@@ -207,7 +207,7 @@ public class CallableBindingPlanParityTests
         AssertPlanDisplay(plan, "CountValues(values...)");
         AssertTopLevelNodes(plan, "Variadic(values:Explicit:top)");
         AssertCaptures(plan, "values...:Explicit");
-        // Rest-only item stream: no fixed bindings, so min 0 and unbounded max.
+        // Rest-only item supply: no fixed bindings, so min 0 and unbounded max.
         AssertArity(plan, min: 0, max: null, hasTopLevelVariadic: true);
         Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
         Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
@@ -500,7 +500,7 @@ public class CallableBindingPlanParityTests
         Assert.Equal("values", plan.TopLevelPatternList.VariadicCapture.Name);
         Assert.Equal(CallableParameterSource.Builtin, plan.TopLevelPatternList.VariadicCapture.Source);
         Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
-        // Rest-shaped builtins are item streams: fixed-count minimum, unbounded maximum.
+        // Rest-shaped builtins are item supplies: fixed-count minimum, unbounded maximum.
         AssertArity(plan, min, max: null, hasTopLevelVariadic: true);
 
         if (suffixName is null)

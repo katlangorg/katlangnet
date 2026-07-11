@@ -177,12 +177,11 @@ public class SemanticModelTests
         Assert.Equal(OccurrenceKind.PropertyDefinition, zDeclaration.Kind);
         AssertSpan(zDeclaration.Span, 2, 10, 2, 10);
 
-        // The synthetic shared-source property that carries the right-hand side is
-        // not source-backed, so it never surfaces as a declaration or as property
-        // metadata, while the real deconstructed variables remain visible.
-        Assert.Empty(model.FindDeclarations("$deconstruct$0"));
-        Assert.Empty(model.FindProperties("$deconstruct$0"));
-        Assert.DoesNotContain(model.PropertyInfos, propertyInfo => propertyInfo.Name == "$deconstruct$0");
+        // The synthetic shared-source property and the helper constructs that bind
+        // the right-hand side carry no source spans, so no synthetic property ever
+        // surfaces as a declaration or as property metadata, while the real
+        // deconstructed variables remain visible.
+        Assert.DoesNotContain(model.PropertyInfos, propertyInfo => propertyInfo.Name.StartsWith('$'));
         Assert.Single(model.FindProperties("x"));
         Assert.Single(model.FindProperties("y"));
         Assert.Single(model.FindProperties("z"));

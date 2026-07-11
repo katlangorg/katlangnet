@@ -2,9 +2,13 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// Deconstruction binding patterns: a comma binding pattern with one movable rest
-/// binding, shared by assignment binding (<c>x, y..., z = RHS</c>) and function
-/// parameter binding (<c>F(x, y..., z)</c>). The rest binding captures its items as
-/// one grouped sequence value and may appear at the start, middle, or end.
+/// binding. Assignment deconstruction (<c>x, y..., z = RHS</c>) is an unpacking
+/// receiver (Python-style): a single sequence-valued right-hand side <c>A</c> is
+/// unpacked element-by-element, so <c>x, y, z = A</c> splits <c>A</c> and explicit
+/// <c>x, y, z = A...</c> supplies the same items. This unpacking is
+/// deconstruction-specific: a function call <c>F(A)</c> still passes <c>A</c> as one
+/// argument and needs <c>F(A...)</c> to open it. The rest binding captures its items
+/// as one grouped sequence value and may appear at the start, middle, or end.
 /// </summary>
 public class DeconstructionBindingTests
 {
@@ -20,8 +24,10 @@ public class DeconstructionBindingTests
     // ───────────────────────── Assignment deconstruction ─────────────────────
 
     [Fact]
-    public void Assignment_MovableRest_BindsAroundCapturedMiddle()
+    public void Assignment_MovableRest_UnpacksAroundCapturedMiddle()
     {
+        // The deconstruction pattern unpacks a stored sequence value (no spread
+        // needed). The rest binding captures the middle items as one grouped value.
         const string define = "A = 1, 2, 3, 4, 5\nx, y..., z = A\n";
         AssertAtoms(define + "x", 1);
         AssertAtoms(define + "y", 2, 3, 4);
@@ -31,17 +37,56 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_GroupedSequenceValue_IsConsumedElementByElement()
-        // Deconstructing a single grouped value consumes its elements (rule 4).
-        => AssertAtoms("A = 1, 2, 3, 4, 5\nx, y..., z = A\nx, y.count, z", 1, 3, 5);
+    public void Assignment_MovableRest_ExplicitSpread_SuppliesSameItems()
+        // Explicit `...` supplies the same items as the bare unpack above.
+        => AssertAtoms("A = 1, 2, 3, 4, 5\nx, y..., z = A...\nx, y.count, z", 1, 3, 5);
 
     [Fact]
-    public void Assignment_DirectItemStream_BindsLikeGroupedValue()
+    public void Assignment_StoredSequenceValue_AgainstFixedTargets_IsUnpacked()
+    {
+        // Python-style: `x, y, z = A` unpacks the stored sequence value A.
+        const string define = "A = 1, 2, 3\nx, y, z = A\n";
+        AssertAtoms(define + "x", 1);
+        AssertAtoms(define + "y", 2);
+        AssertAtoms(define + "z", 3);
+    }
+
+    [Fact]
+    public void Assignment_StoredSequenceValue_ExplicitSpread_BindsFixedTargets()
+    {
+        // Explicit `...` supplies the same items as the bare unpack above.
+        const string define = "A = 1, 2, 3\nx, y, z = A...\n";
+        AssertAtoms(define + "x", 1);
+        AssertAtoms(define + "y", 2);
+        AssertAtoms(define + "z", 3);
+    }
+
+    [Fact]
+    public void Assignment_DirectItemSupply_Deconstructs()
     {
         const string define = "x, y..., z = 1, 2, 3, 4, 5\n";
         AssertAtoms(define + "x", 1);
         AssertAtoms(define + "y", 2, 3, 4);
         AssertAtoms(define + "z", 5);
+    }
+
+    [Fact]
+    public void Assignment_RestForStoredSequenceValue_Unpacks()
+    {
+        // `first, rest... = A` unpacks A: first = 1, rest = (2, 3).
+        const string define = "A = 1, 2, 3\nfirst, rest... = A\n";
+        AssertAtoms(define + "first", 1);
+        AssertAtoms(define + "rest", 2, 3);
+        AssertAtoms(define + "rest.count", 2);
+    }
+
+    [Fact]
+    public void Assignment_RestForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
+    {
+        // `first, rest... = A...` supplies the same items as the bare unpack above.
+        const string define = "A = 1, 2, 3\nfirst, rest... = A...\n";
+        AssertAtoms(define + "first", 1);
+        AssertAtoms(define + "rest", 2, 3);
     }
 
     [Fact]
@@ -62,10 +107,77 @@ public class DeconstructionBindingTests
         AssertAtoms("x, y = 1, 2\ny", 2);
     }
 
+    [Theory]
+    [InlineData("A = 1, 2, 3\nx, y, z = A")]
+    [InlineData("A = 1, 2, 3\nw, x, y, z = A")]   // more targets still share one source
+    [InlineData("A = 1, 2, 3\nfirst, rest... = A")]
+    public void Assignment_RightHandSide_IsHoistedIntoSingleSharedSource(string source)
+    {
+        // Deterministic structural guard for once-evaluation: the elaborator hoists the
+        // right-hand side into exactly one synthetic `$deconstruct$N` source property,
+        // and every target binds from that shared source — regardless of how many
+        // targets there are. A re-evaluation regression (inlining the RHS into each
+        // target, or hoisting one source per target) would produce zero shared sources
+        // or several, which this catches without relying on runtime non-determinism.
+        var root = (Algorithm.User)Parser.Parse(source).Root;
+
+        var shared = Assert.Single(
+            root.Properties, p => p.Name.StartsWith("$deconstruct$", StringComparison.Ordinal));
+
+        // The single shared source carries the right-hand side itself (the `A` reference).
+        var sharedBody = Assert.IsType<Algorithm.User>(shared.Value);
+        var rhs = Assert.Single(sharedBody.Output);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(rhs).Name);
+    }
+
+    [Fact]
+    public void Assignment_RightHandSide_IsEvaluatedOnce()
+    {
+        // Runtime complement to Assignment_RightHandSide_IsHoistedIntoSingleSharedSource:
+        // that test proves the elaboration shares one source; this one proves the shared
+        // source is actually evaluated only once at run time (via the zero-arg property
+        // cache). KatLang has no deterministic side-effect/counter primitive to observe
+        // evaluation count directly, so we use the one observable non-determinism —
+        // Math.RandomInt — as a probe: the right-hand side is evaluated once, not
+        // re-evaluated per target, so an ordered pair stays ordered. (Re-evaluating per
+        // target would draw independent pairs, making x <= y hold only by chance.)
+        // Repeated to make a per-target re-evaluation regression statistically certain
+        // to fail (false-pass probability under a regression is ~2^-25).
+        const string source =
+            "x, y = order((Math.RandomInt(1, 1000000), Math.RandomInt(1, 1000000)))\nx, y";
+        for (var i = 0; i < 25; i++)
+        {
+            var atoms = Atoms(source);
+            Assert.Equal(2, atoms.Length);
+            Assert.True(atoms[0] <= atoms[1], "deconstruction right-hand side must be evaluated once");
+        }
+    }
+
     [Fact]
     public void Assignment_RestAtStart_CapturesLeadingItems()
     {
         const string define = "head..., last = 1, 2, 3\n";
+        AssertAtoms(define + "head", 1, 2);
+        AssertAtoms(define + "head.count", 2);
+        AssertAtoms(define + "last", 3);
+    }
+
+    [Fact]
+    public void Assignment_RestAtStart_ForStoredSequenceValue_Unpacks()
+    {
+        // Head-position rest also unpacks a stored sequence value (Option A applies
+        // at head, middle, and tail rest positions). `head..., last = A` opens A.
+        const string define = "A = 1, 2, 3\nhead..., last = A\n";
+        AssertAtoms(define + "head", 1, 2);
+        AssertAtoms(define + "head.count", 2);
+        AssertAtoms(define + "last", 3);
+    }
+
+    [Fact]
+    public void Assignment_RestAtStart_ForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
+    {
+        // `head..., last = A...` supplies the same items as the bare unpack above.
+        const string define = "A = 1, 2, 3\nhead..., last = A...\n";
         AssertAtoms(define + "head", 1, 2);
         AssertAtoms(define + "head.count", 2);
         AssertAtoms(define + "last", 3);
@@ -93,21 +205,21 @@ public class DeconstructionBindingTests
     public void Assignment_DeconstructionAfterOutputLine_DoesNotAbsorbIntoOutput()
     {
         // An implicit output line ends at a following deconstruction assignment:
-        // the output stays the single `F(A)` row (15), and `x, y..., z = A` defines
+        // the output stays the single `F(A...)` row (15), and `x, y..., z = A` defines
         // its own (unused) properties instead of being swallowed as more output.
         AssertAtoms(
             """
             A = 1, 2, 3, 4, 5
             F(x, y..., z) = x + y.sum + z
 
-            F(A)
+            F(A...)
 
             x, y..., z = A
             """,
             15);
 
         // The deconstructed properties remain usable when referenced after the
-        // output line.
+        // output line. `= A` unpacks the stored sequence value.
         AssertAtoms(
             """
             A = 1, 2, 3, 4, 5
@@ -120,7 +232,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void Assignment_ScalarRhs_RestAtEndCapturesZeroItems()
     {
-        // A scalar right-hand side is a one-item stream, so the fixed `first` binds
+        // A scalar right-hand side is a one-item supply, so the fixed `first` binds
         // it and the rest captures zero items.
         const string define = "first, tail... = 1\n";
         AssertAtoms(define + "first", 1);
@@ -156,7 +268,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void Assignment_TooFewItems_ReportsArityMismatch()
     {
-        // A scalar right-hand side is a one-item stream; matching it against two
+        // A scalar right-hand side is a one-item supply; matching it against two
         // fixed targets is an arity mismatch (expected 2, actual 1), not a generic
         // shape/BadArity failure.
         var result = Evaluator.Run(new Expr.Block(Parser.Parse("x, y = 1\nx").Root));
@@ -186,15 +298,15 @@ public class DeconstructionBindingTests
     // ───────────────────── Function-parameter deconstruction ──────────────────
 
     [Fact]
-    public void Parameter_SingleGroupedArgument_IsOpenedAndDeconstructed()
-        => AssertAtoms("A = 1, 2, 3, 4, 5\nF(x, y..., z) = x + y.sum + z\nF(A)", 15);
+    public void Parameter_SingleGroupedArgument_IsNotImplicitlyDeconstructed()
+        => Assert.True(Fails("A = 1, 2, 3, 4, 5\nF(x, y..., z) = x + y.sum + z\nF(A)"));
 
     [Fact]
     public void Parameter_SpreadArgument_IsDeconstructed()
         => AssertAtoms("A = 1, 2, 3, 4, 5\nF(x, y..., z) = x + y.sum + z\nF(A...)", 15);
 
     [Fact]
-    public void Parameter_DirectItemStream_IsDeconstructed()
+    public void Parameter_DirectItemSupply_IsDeconstructed()
         => AssertAtoms("F(x, y..., z) = x + y.sum + z\nF(1, 2, 3, 4, 5)", 15);
 
     [Fact]
@@ -210,8 +322,21 @@ public class DeconstructionBindingTests
 
     [Fact]
     public void Parameter_ScalarArgument_RestCapturesZeroItems()
-        // A single scalar argument is a one-item stream: first = 1, tail = ().
+        // A single scalar argument is a one-item supply: first = 1, tail = ().
         => AssertAtoms("F(first, tail...) = first, tail.count\nF(1)", 1, 0);
+
+    [Fact]
+    public void Parameter_MixedRestShape_DistinguishesPlainArgumentFromSpread()
+    {
+        // G(first, rest...): a plain stored sequence value A is one supplied argument,
+        // so first captures the whole value (count 2) and rest is empty (count 0).
+        // Explicit spread opens A into two supplied arguments, so first = 1 (count 1)
+        // and rest = (2) (count 1). Flattened atoms alone cannot see this difference,
+        // so the body exposes the structural counts.
+        const string g = "A = 1, 2\nG(first, rest...) = first.count, rest.count\n";
+        AssertAtoms(g + "G(A)", 2, 0);      // first = (1, 2), rest = ()
+        AssertAtoms(g + "G(A...)", 1, 1);   // first = 1, rest = (2)
+    }
 
     // ─────────────── Existing behavior preserved (regression guards) ──────────
 
@@ -220,10 +345,11 @@ public class DeconstructionBindingTests
         => AssertAtoms("c = 1, 2, 3\nc.count", 3);
 
     [Fact]
-    public void RestOnlyVariadicCall_ConsumesItemStream()
+    public void RestOnlyVariadicCall_ConsumesItemSupply()
     {
-        // Rest-only `Sum(values...)` is the degenerate item-stream case: a single
-        // grouped argument is opened, and separate slots bind the same stream.
+        // Rest-only `Sum(values...)` captures the supplied argument stream. A single
+        // grouped argument and separate slots display the same sum here, but mixed
+        // fixed/rest shapes below make the boundary difference observable.
         AssertAtoms("c = 1, 2, 3\nSum(values...) = values.sum\nSum(c)", 6);
         AssertAtoms("Sum(values...) = values.sum\nSum(1, 2, 3)", 6);
     }
@@ -235,12 +361,15 @@ public class DeconstructionBindingTests
         AssertAtoms("A = 1, 2, 3\nB = 4, 5\n(A..., B...).count", 5);
     }
 
-    // ─────────────────── Aspect 2: unified item-stream binding ─────────────────
+    // ─────────────────── Aspect 2: unified item-supply binding ─────────────────
 
     [Fact]
-    public void RestOnly_AllCallFormsConsumeSameItemStream()
+    public void RestOnly_AllCallFormsCanDisplaySameCollectionResult()
     {
-        // G(x...) = x.sum binds an item stream; all four supply forms give 15.
+        // G(x...) = x.sum can hide call-boundary differences: plain A and
+        // grouped `(1, 2, 3, 4, 5)` each supply one sequence-valued argument,
+        // while A... and inline items supply five arguments. The rest capture
+        // plus collection-style .sum makes all four display 15.
         const string g = "A = 1, 2, 3, 4, 5\nG(x...) = x.sum\n";
         AssertAtoms(g + "G(A)", 15);
         AssertAtoms(g + "G(A...)", 15);
@@ -249,29 +378,30 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void RestOnly_EmptyCallBindsEmptyStream()
-        // An empty call binds an empty item stream (min arity 0): sum is 0.
+    public void RestOnly_EmptyCallBindsEmptyItemSupply()
+        // An empty call binds an empty item supply (min arity 0): sum is 0.
         => AssertAtoms("G(x...) = x.sum\nG()", 0);
 
     [Fact]
-    public void RestWithSuffix_AllCallFormsConsumeSameItemStream()
+    public void RestWithSuffix_PlainSequenceArgumentPreservesBoundary()
     {
-        // x = (1, 2, 3, 4), y = 5; x.sum + y = 15 for every supply form.
+        // Plain A supplies one sequence-valued argument, so y receives that value
+        // and the numeric body fails. Explicit spread and direct item supplies work.
         const string f = "A = 1, 2, 3, 4, 5\nF(x..., y) = x.sum + y\n";
-        AssertAtoms(f + "F(A)", 15);
+        Assert.True(Fails(f + "F(A)"));
         AssertAtoms(f + "F(A...)", 15);
         AssertAtoms("F(x..., y) = x.sum + y\nF(1, 2, 3, 4, 5)", 15);
-        AssertAtoms("F(x..., y) = x.sum + y\nF((1, 2, 3, 4, 5))", 15);
+        Assert.True(Fails("F(x..., y) = x.sum + y\nF((1, 2, 3, 4, 5))"));
     }
 
     [Fact]
-    public void RestWithPrefixAndSuffix_AllCallFormsConsumeSameItemStream()
+    public void RestWithPrefixAndSuffix_PlainSequenceArgumentPreservesBoundary()
     {
         const string h = "A = 1, 2, 3, 4, 5\nH(x, y..., z) = x + y.sum + z\n";
-        AssertAtoms(h + "H(A)", 15);
+        Assert.True(Fails(h + "H(A)"));
         AssertAtoms(h + "H(A...)", 15);
         AssertAtoms("H(x, y..., z) = x + y.sum + z\nH(1, 2, 3, 4, 5)", 15);
-        AssertAtoms("H(x, y..., z) = x + y.sum + z\nH((1, 2, 3, 4, 5))", 15);
+        Assert.True(Fails("H(x, y..., z) = x + y.sum + z\nH((1, 2, 3, 4, 5))"));
     }
 
     [Fact]
@@ -279,19 +409,56 @@ public class DeconstructionBindingTests
     {
         // Multiple sibling grouped values are preserved (count 2), not flattened.
         AssertAtoms("A = 1, 2\nB = 3, 4\nG(x...) = x.count\nG(A, B)", 2);
-        // Only explicit `...` opens them into one stream (count 4).
+        // Only explicit `...` opens them into one item supply (count 4).
         AssertAtoms("A = 1, 2\nB = 3, 4\nG(x...) = x.count\nG(A..., B...)", 4);
     }
 
     [Fact]
-    public void RepeatedSingletonBoundary_IsNormalizedThroughNesting()
+    public void RepeatedSingletonBoundary_DoesNotImplicitlyOpenCallArgument()
     {
-        // Singleton-boundary normalization repeats through nested grouped values:
-        // (((1, 2, 3, 4, 5))) is opened twice down to the same five-item stream.
-        // Rest-only, rest+suffix, and prefix+rest+suffix all reach 15.
+        // Redundant unary grouping canonicalizes the value, but function calls still
+        // receive one argument unless explicit spread is written.
         AssertAtoms("G(x...) = x.sum\nG(((1, 2, 3, 4, 5)))", 15);
-        AssertAtoms("F(x..., y) = x.sum + y\nF(((1, 2, 3, 4, 5)))", 15);
-        AssertAtoms("H(x, y..., z) = x + y.sum + z\nH(((1, 2, 3, 4, 5)))", 15);
+        Assert.True(Fails("F(x..., y) = x.sum + y\nF(((1, 2, 3, 4, 5)))"));
+        AssertAtoms("F(x..., y) = x.sum + y\nF(((1, 2, 3, 4, 5))...)", 15);
+        Assert.True(Fails("H(x, y..., z) = x + y.sum + z\nH(((1, 2, 3, 4, 5)))"));
+        AssertAtoms("H(x, y..., z) = x + y.sum + z\nH(((1, 2, 3, 4, 5))...)", 15);
+    }
+
+    [Fact]
+    public void ParenthesizedScalarPropertyItem_PatternCallMatchesAssignmentDeconstruction()
+    {
+        // `(A)` inside a written sequence value is one grouping level around a
+        // single already-evaluated item, so both binding forms receive the
+        // scalar 5 — never a literal-unwritable orphan `(5)`.
+        AssertAtoms("A = 5\nx, y = ((A), 6)\nx == 5", 1);
+        AssertAtoms("A = 5\nF((x, y)) = x == 5\nF(((A), 6))", 1);
+    }
+
+    [Fact]
+    public void ParenthesizedSequencePropertyItem_PatternCallMatchesAssignmentDeconstruction()
+    {
+        // With A = (1, 2) both binding forms receive the canonical (1, 2) as
+        // one item, so x:0 selects 1 in both.
+        AssertAtoms("A = 1, 2\nx, y = ((A), 6)\nx:0, y", 1, 6);
+        AssertAtoms("A = 1, 2\nF((x, y)) = x:0, y\nF(((A), 6))", 1, 6);
+    }
+
+    [Fact]
+    public void LiteralWrappedPair_DeconstructionOpensWhilePatternCallReadsWrittenSlots()
+    {
+        // Assignment deconstruction is an unpacking receiver: ((1, 2))
+        // evaluates once to the canonical (1, 2) and its items match the
+        // targets element-by-element.
+        AssertAtoms("x, y = ((1, 2))\nx, y", 1, 2);
+
+        // A sequence-value parameter pattern reads the inline-written
+        // argument's slots instead: ((1, 2)) writes one item, so binding
+        // (x, y) arity-errors rather than opening the single written item.
+        Assert.True(Fails("F((x, y)) = x\nF(((1, 2)))"));
+
+        // The same value stored in a property opens canonically at the call.
+        AssertAtoms("A = ((1, 2))\nF((x, y)) = x\nF(A)", 1);
     }
 
     [Fact]

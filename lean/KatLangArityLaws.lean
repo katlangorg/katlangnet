@@ -1,0 +1,510 @@
+import KatLang
+
+open KatLang
+
+/-
+# KatLangArityLaws
+
+Selected arity laws proved directly over the authoritative `KatLang.lean` model.
+
+`CoreArityAlgebra.lean` defines the small paper-facing algebra, while
+`CoreArityAlgebraProofs.lean` proves its small laws and executable checks.
+This file is the bridge: it proves the load-bearing laws over real KatLang
+`Result` constructors, normalization, item-supply normalization, and real binding
+helpers.
+-/
+
+/--
+Paper-facing alias for the real `Result` expression used to canonicalize captured
+item supplies: `Result.normalize (Result.sequenceValue xs)`.
+
+This alias lets the bridge file state compact laws over the authoritative
+`Result` constructors. The binder-path theorem below should be used when citing
+that real rest/variadic binding applies this capture expression.
+-/
+def captureForArityLaw (xs : List Result) : Result :=
+  Result.normalize (Result.sequenceValue xs)
+
+/-- Single rest-shaped signature used to expose the non-opaque variadic splitter. -/
+def singleVariadicSignatureForArityLaw : CallableSignature :=
+  { name := "F", parameters := [{ name := "x", kind := .variadic }] }
+
+theorem empty_sequence_is_sequenceValue_empty :
+    buildEmptySequenceValue 0 = Result.sequenceValue [] := by
+  rfl
+
+theorem normalize_empty_sequenceValue :
+    Result.normalize (Result.sequenceValue []) = Result.sequenceValue [] := by
+  simp [Result.normalize]
+
+theorem empty_sequence_depth_is_canonical :
+    buildEmptySequenceValue 1 = Result.sequenceValue [] := by
+  rfl
+
+theorem normalize_nested_empty_sequence :
+    Result.normalize (Result.sequenceValue [Result.sequenceValue []]) = Result.sequenceValue [] := by
+  simp [Result.normalize]
+
+theorem toItems_sequenceValue (xs : List Result) :
+    Result.toItems (Result.sequenceValue xs) = xs := by
+  rfl
+
+/-
+The real model uses capture = Result.normalize after Result.sequenceValue.
+This alias theorem is intentionally small; `bindParameterPatternList_single_rest_binds_capture`
+is the theorem that connects the real binder path to this expression. Capture is
+not raw grouping: singleton capture collapses.
+-/
+theorem captureForArityLaw_eq_normalize_sequenceValue (xs : List Result) :
+    captureForArityLaw xs = Result.normalize (Result.sequenceValue xs) := by
+  rfl
+
+theorem capture_eq_normalize_sequenceValue (xs : List Result) :
+    captureForArityLaw xs = Result.normalize (Result.sequenceValue xs) := by
+  rfl
+
+theorem capture_singleton (v : Result) :
+    captureForArityLaw [v] = Result.normalize v := by
+  simp [captureForArityLaw, Result.normalize]
+
+theorem normalize_sequenceValue_singleton (v : Result) :
+    Result.normalize (Result.sequenceValue [v]) = Result.normalize v := by
+  simp [Result.normalize]
+
+theorem capture_pair (a b : Result) :
+    captureForArityLaw [a, b] =
+      Result.sequenceValue [Result.normalize a, Result.normalize b] := by
+  simp [captureForArityLaw, Result.normalize]
+
+theorem normalize_sequenceValue_pair (a b : Result) :
+    Result.normalize (Result.sequenceValue [a, b]) =
+      Result.sequenceValue [Result.normalize a, Result.normalize b] := by
+  simp [Result.normalize]
+
+/-
+The real model opens a single grouped collection boundary for sequence-builtin
+binding (`count(A)`, `sum(A)`). This is not arbitrary recursive flattening. It is
+NOT used by function-call parameter binding — a call keeps a single sequence
+argument as one item. Assignment deconstruction also opens its single right-hand
+side value, but through a different mechanism: the sequence-value parameter pattern
+(`.sequenceValue`), not this builtin singleton normalization (see the deconstruction
+bridge laws at the end of this file).
+-/
+theorem normalizeSupply_single_sequenceValue (xs : List Result) :
+    normalizeSingletonBoundaryForItemSupplyOf
+      (fun value => some value) (fun value => value) [Result.sequenceValue xs]
+      = xs := by
+  simp [normalizeSingletonBoundaryForItemSupplyOf]
+
+theorem normalizeSupply_nested_pair_opens_one_boundary :
+    normalizeSingletonBoundaryForItemSupplyOf
+      (fun value => some value) (fun value => value)
+      [Result.sequenceValue [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]]]
+      = [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]] := by
+  rfl
+
+private theorem collectValues_valueInputs (xs : List Result) :
+    bindParameterPatternList.collectValues
+      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
+      = pure xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+      simp [bindParameterPatternList.collectValues, ih]
+
+private theorem drop_length_valueInputs (xs : List Result) :
+    List.drop xs.length
+      (xs.map (fun value => { value? := some value : ParameterPatternInput })) = [] := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [ih]
+
+private theorem take_length_valueInputs (xs : List Result) :
+    List.take xs.length
+      (xs.map (fun value => { value? := some value : ParameterPatternInput })) =
+      xs.map (fun value => { value? := some value : ParameterPatternInput }) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [ih]
+
+private theorem bindPairs_nil_nil
+    (outerPatterns : List ParameterPattern) (outerInputs : List ParameterPatternInput)
+    (allowAlgorithmBindings : Bool)
+    (merge : ParameterPatternBindings -> ParameterPatternBindings -> EvalM ParameterPatternBindings) :
+    bindParameterPatternList.bindPairs outerPatterns outerInputs allowAlgorithmBindings merge [] [] =
+      pure {} := by
+  simp [bindParameterPatternList.bindPairs]
+
+/--
+The real parameter-pattern binder uses the capture expression directly for a
+single top-level variadic/rest capture. This is the binder-path bridge theorem:
+the successful binding records `x` as `Result.normalize (Result.sequenceValue xs)`.
+-/
+theorem bindParameterPatternList_single_rest_binds_capture
+    (xs : List Result) (allowAlgorithmBindings : Bool) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .variadic }]
+      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
+      allowAlgorithmBindings)
+      = .ok { argEnv := [("x", Result.normalize (Result.sequenceValue xs))],
+              countedParamEnv := [("x", (Result.normalize (Result.sequenceValue xs), xs.length))],
+              variadicSupplyEnv := [("x", (Result.normalize (Result.sequenceValue xs), xs.length))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindPairs_nil_nil, collectValues_valueInputs, drop_length_valueInputs, take_length_valueInputs,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup]
+  rfl
+
+theorem variadic_single_rest_binds_capture (xs : List Result) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .variadic }]
+      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
+      false)
+      = .ok { argEnv := [("x", captureForArityLaw xs)],
+              countedParamEnv := [("x", (captureForArityLaw xs, xs.length))],
+              variadicSupplyEnv := [("x", (captureForArityLaw xs, xs.length))],
+              algEnv := [] } := by
+  simpa [captureForArityLaw] using
+    bindParameterPatternList_single_rest_binds_capture xs false
+
+theorem bindCallableArguments_single_variadic_items (xs : List Result) :
+    bindCallableArguments
+      singleVariadicSignatureForArityLaw
+      xs
+      (fun required actual => Error.arityMismatch required actual)
+      (some 0)
+      = .ok { normalBindings := [], variadicName? := some "x", variadicItems := xs } := by
+  unfold singleVariadicSignatureForArityLaw
+  have hvalid :
+      CallableSignature.validationError?
+        { name := "F", parameters := [{ name := "x", kind := .variadic }] } = none := by
+    decide
+  simp [bindCallableArguments, CallableSignature.validate, hvalid,
+    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
+
+theorem bindCallableArguments_variadic_items_then_capture (xs : List Result) :
+    (match bindCallableArguments
+        singleVariadicSignatureForArityLaw
+        xs
+        (fun required actual => Error.arityMismatch required actual)
+        (some 0) with
+    | .ok bindings => Except.ok (Result.normalize (Result.sequenceValue bindings.variadicItems))
+    | .error err => Except.error err)
+      = Except.ok (Result.normalize (Result.sequenceValue xs)) := by
+  simp [bindCallableArguments_single_variadic_items]
+
+/-
+## Deconstruction bridge laws (Python-style unpacking receiver)
+
+Assignment deconstruction (`x, y..., z = RHS`) is parser-elaborated into a helper
+whose single parameter is a sequence-value pattern (`.sequenceValue [captures]`)
+applied to the right-hand side value as one argument. Binding through the real
+`bindParameterPatternList`, that pattern OPENS its single received value into items
+and matches them element-by-element — so `x, y, z = A` unpacks a stored sequence
+value `A`. This opening is deconstruction-specific.
+
+Function-call parameter binding, by contrast, is a flat capture list
+(`[.capture x, .capture y]`) bound over the SUPPLIED argument stream, which does NOT
+open a single sequence argument. The two groups of laws below pin that contrast over
+the real binder: deconstruction (the `.sequenceValue` pattern) opens, while a call
+(the flat capture list) preserves the single argument.
+
+The single supplied item is the value `A` (a stored sequence value).
+-/
+
+-- Function calls: a flat capture list does NOT open a single sequence argument.
+
+/-- `Add(A)`: one supplied item (the stored sequence value) against two fixed
+parameters is an arity mismatch. The call binder does not open `A`. -/
+theorem call_fixed_single_sequence_rejected :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "x", kind := .normal }, .capture { name := "y", kind := .normal }]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .error (Error.arityMismatch 2 1) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
+  rfl
+
+/-- `G(A)` mixed fixed/rest call: one supplied item, so `first` receives the whole
+stored sequence value and `rest` captures nothing — calls never implicitly open. -/
+theorem call_rest_single_sequence_preserved :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("first", Result.sequenceValue [Result.atom 1, Result.atom 2]),
+                         ("rest", Result.sequenceValue [])],
+              countedParamEnv := [("rest", (Result.sequenceValue [], 0))],
+              variadicSupplyEnv := [("rest", (Result.sequenceValue [], 0))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    Result.normalize]
+  rfl
+
+-- Assignment deconstruction: the `.sequenceValue` pattern OPENS its single value.
+
+/-- `x, y = A`: the deconstruction sequence-value pattern opens the single
+right-hand-side value, binding `x = 1`, `y = 2`. -/
+theorem deconstruct_fixed_single_sequence_opens :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "x", kind := .normal },
+                         .capture { name := "y", kind := .normal }]]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
+              countedParamEnv := [], variadicSupplyEnv := [], algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    mergeEqualValEnv, mergeEqualCountedParamEnv, mergePatternAlgEnv,
+    lookupAssoc, ValEnv.lookup]
+  rfl
+
+/-- `first, rest... = A`: the deconstruction sequence-value pattern opens `A`, so
+`first = 1` and `rest` captures the remaining items as one grouped value `(2, 3)`. -/
+theorem deconstruct_rest_single_sequence_opens :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "first", kind := .normal },
+                         .capture { name := "rest", kind := .variadic }]]
+        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
+        true)
+      = .ok { argEnv := [("first", Result.atom 1),
+                         ("rest", Result.sequenceValue [Result.atom 2, Result.atom 3])],
+              countedParamEnv := [("rest", (Result.sequenceValue [Result.atom 2, Result.atom 3], 2))],
+              variadicSupplyEnv := [("rest", (Result.sequenceValue [Result.atom 2, Result.atom 3], 2))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+    Result.normalize]
+  rfl
+
+/-
+## Canonical-form laws (general theorems over the real model)
+
+The laws above pin specific shapes over the real binder paths; the theorems
+below establish the general canonical-form story of `Result.normalize` over the
+authoritative model:
+
+* `normalize_idempotent` — `Result.normalize` is a projection onto canonical
+  values;
+* `orphanFree_normalize` — canonical values contain no redundant singleton
+  sequence boundary anywhere in their tree (no literal-unwritable "orphans");
+* `captureForArityLaw_canonical` / `captureForArityLaw_orphanFree` — the real
+  capture expression only ever produces canonical, orphan-free values;
+* `capture_toItems_of_canonical` — capture after spread reproduces canonical
+  values exactly (the spread/capture round-trip).
+-/
+
+private theorem normalize_sequenceValue_of_map_nil {rs : List Result}
+    (h : rs.map Result.normalize = []) :
+    Result.normalize (Result.sequenceValue rs) = Result.sequenceValue [] := by
+  simp [Result.normalize, h]
+
+private theorem normalize_sequenceValue_of_map_singleton {rs : List Result} {r : Result}
+    (h : rs.map Result.normalize = [r]) :
+    Result.normalize (Result.sequenceValue rs) = r := by
+  simp [Result.normalize, h]
+
+private theorem normalize_sequenceValue_of_map_multi {rs : List Result} {a b : Result}
+    {tl : List Result} (h : rs.map Result.normalize = a :: b :: tl) :
+    Result.normalize (Result.sequenceValue rs) = Result.sequenceValue (a :: b :: tl) := by
+  simp [Result.normalize, h]
+
+mutual
+  /-- General idempotence over the real model: `Result.normalize` is a
+  projection, so normalizing an already-normalized value changes nothing.
+  Canonical values are exactly the fixed points of `Result.normalize`. -/
+  theorem normalize_idempotent : ∀ r : Result, r.normalize.normalize = r.normalize
+    | .atom _ => by simp [Result.normalize]
+    | .str _ => by simp [Result.normalize]
+    | .sequenceValue rs => by
+        have hl := normalize_map_idempotent rs
+        cases h : rs.map Result.normalize with
+        | nil =>
+            rw [normalize_sequenceValue_of_map_nil h]
+            exact normalize_empty_sequenceValue
+        | cons a tl =>
+            cases tl with
+            | nil =>
+                rw [normalize_sequenceValue_of_map_singleton h]
+                rw [h] at hl
+                simpa using hl
+            | cons b tl2 =>
+                rw [normalize_sequenceValue_of_map_multi h]
+                rw [h] at hl
+                exact normalize_sequenceValue_of_map_multi hl
+  termination_by r => sizeOf r
+
+  /-- Element-wise idempotence of mapped normalization, the list companion of
+  `normalize_idempotent`. -/
+  theorem normalize_map_idempotent : ∀ rs : List Result,
+      (rs.map Result.normalize).map Result.normalize = rs.map Result.normalize
+    | [] => rfl
+    | r :: rs => by
+        have h1 := normalize_idempotent r
+        have h2 := normalize_map_idempotent rs
+        simp only [List.map_cons, List.cons.injEq]
+        exact ⟨h1, h2⟩
+  termination_by rs => sizeOf rs
+end
+
+mutual
+  /-- Orphan-freedom over the real model: `true` iff no singleton sequence
+  boundary `Result.sequenceValue [x]` appears anywhere in the value. A
+  singleton boundary is a literal-unwritable "orphan" (a stored `(5)` distinct
+  from `5`): normalization erases such boundaries at every ordinary
+  construction/capture site, so no canonical value contains one
+  (`orphanFree_normalize`). Local tooling definition for these laws, not part
+  of the authoritative model. -/
+  def orphanFreeResult : Result -> Bool
+    | .atom _ => true
+    | .str _ => true
+    | .sequenceValue rs => rs.length != 1 && orphanFreeResultList rs
+
+  /-- List traversal for `orphanFreeResult`. -/
+  def orphanFreeResultList : List Result -> Bool
+    | [] => true
+    | r :: rs => orphanFreeResult r && orphanFreeResultList rs
+end
+
+example : orphanFreeResult (Result.atom 5) = true := by decide
+example : orphanFreeResult (Result.str "s") = true := by decide
+example : orphanFreeResult (Result.sequenceValue []) = true := by decide
+example : orphanFreeResult (Result.sequenceValue [Result.atom 1]) = false := by decide
+example : orphanFreeResult
+    (Result.sequenceValue [Result.atom 1, Result.sequenceValue [Result.atom 2]]) = false := by
+  decide
+example : orphanFreeResult
+    (Result.sequenceValue [Result.atom 1, Result.sequenceValue []]) = true := by decide
+
+mutual
+  /-- Orphan-freedom of canonical values over the real model: normalization
+  never leaves a redundant singleton sequence boundary anywhere in the tree. -/
+  theorem orphanFree_normalize : ∀ r : Result, orphanFreeResult r.normalize = true
+    | .atom _ => by simp [Result.normalize, orphanFreeResult]
+    | .str _ => by simp [Result.normalize, orphanFreeResult]
+    | .sequenceValue rs => by
+        have hl := orphanFreeList_map_normalize rs
+        cases h : rs.map Result.normalize with
+        | nil =>
+            rw [normalize_sequenceValue_of_map_nil h]
+            simp [orphanFreeResult, orphanFreeResultList]
+        | cons a tl =>
+            cases tl with
+            | nil =>
+                rw [normalize_sequenceValue_of_map_singleton h]
+                rw [h] at hl
+                simpa [orphanFreeResultList] using hl
+            | cons b tl2 =>
+                rw [normalize_sequenceValue_of_map_multi h]
+                rw [h] at hl
+                have hlen : ((a :: b :: tl2).length != 1) = true := by
+                  simp only [List.length_cons, bne_iff_ne, ne_eq]
+                  omega
+                show ((a :: b :: tl2).length != 1 && orphanFreeResultList (a :: b :: tl2)) = true
+                rw [hlen, hl]
+                rfl
+  termination_by r => sizeOf r
+
+  /-- Every element of a normalized item list is orphan-free, the list
+  companion of `orphanFree_normalize`. -/
+  theorem orphanFreeList_map_normalize : ∀ rs : List Result,
+      orphanFreeResultList (rs.map Result.normalize) = true
+    | [] => rfl
+    | r :: rs => by
+        have h1 := orphanFree_normalize r
+        have h2 := orphanFreeList_map_normalize rs
+        show (orphanFreeResult r.normalize
+            && orphanFreeResultList (rs.map Result.normalize)) = true
+        rw [h1, h2]
+        rfl
+  termination_by rs => sizeOf rs
+end
+
+/-- Capture canonicity over the real capture expression: a captured item supply
+is already canonical, so capture is a fixed point of `Result.normalize`
+(corollary of `normalize_idempotent`, since
+`captureForArityLaw xs = Result.normalize (Result.sequenceValue xs)`). -/
+theorem captureForArityLaw_canonical (xs : List Result) :
+    (captureForArityLaw xs).normalize = captureForArityLaw xs :=
+  normalize_idempotent (Result.sequenceValue xs)
+
+/-- The real capture expression never mints an orphan: every captured value is
+orphan-free (corollary of `orphanFree_normalize`). -/
+theorem captureForArityLaw_orphanFree (xs : List Result) :
+    orphanFreeResult (captureForArityLaw xs) = true :=
+  orphanFree_normalize (Result.sequenceValue xs)
+
+/-- Spread/capture round-trip over the real model: on a canonical value,
+re-capturing the item view (`Result.toItems`, the supply an explicit spread
+`...` provides) reproduces the value exactly. Opening a canonical value and
+grouping it back is lossless. -/
+theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
+    captureForArityLaw r.toItems = r := by
+  cases r with
+  | atom n =>
+      show captureForArityLaw [Result.atom n] = Result.atom n
+      rw [capture_singleton]
+      exact h
+  | str s =>
+      show captureForArityLaw [Result.str s] = Result.str s
+      rw [capture_singleton]
+      exact h
+  | sequenceValue rs =>
+      rw [toItems_sequenceValue]
+      exact h
+
+/-- Capture/spread/capture collapse: since captured values are canonical, a
+second capture of a captured value's items is just the first capture. -/
+theorem capture_toItems_capture (xs : List Result) :
+    captureForArityLaw (captureForArityLaw xs).toItems = captureForArityLaw xs :=
+  capture_toItems_of_canonical _ (captureForArityLaw_canonical xs)
+
+/-- Spreading the empty sequence value supplies zero items: postfix `...` opens
+a value via `Result.toItems`, so `()...` contributes nothing to the surrounding
+item supply. This is the toItems-layer statement of the visible-empty spread
+law (the empty instance of `toItems_sequenceValue`). -/
+theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
+
+/-
+## Result-boundary re-count laws
+
+`reCountValueBoundary` is the shared helper applied at every public
+property/call/builtin RESULT boundary: the caller observes the same structural
+value with emitted count `Result.valueCount` (0 for the empty sequence value,
+otherwise 1), whatever internal item-supply count the body produced.
+-/
+
+/-- `reCountValueBoundary` in closed form: a result boundary re-counts the
+value as `Result.valueCount` and discards the body's internal count. This is
+the general law for any counted pair. -/
+theorem reCountValueBoundary_recounts (r : Result) (n : Nat) :
+    reCountValueBoundary (r, n) = (r, r.valueCount) := rfl
+
+/-- A result boundary never rebuilds the value: only the count changes. -/
+theorem reCountValueBoundary_fst (p : CountedResult) :
+    (reCountValueBoundary p).fst = p.fst := rfl
+
+/-- Boundary re-counting is idempotent: a value boundary inside a value
+boundary re-counts to the same pair. -/
+theorem reCountValueBoundary_idempotent (p : CountedResult) :
+    reCountValueBoundary (reCountValueBoundary p) = reCountValueBoundary p := rfl
+
+/-- The structural emitted count of one value is at most one: only the empty
+sequence value emits 0; every other value emits exactly 1. -/
+theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
+  | .atom _ => Nat.le_refl 1
+  | .str _ => Nat.le_refl 1
+  | .sequenceValue [] => Nat.zero_le 1
+  | .sequenceValue (_ :: _) => Nat.le_refl 1
+
+/-- A result boundary emits at most one value: after `reCountValueBoundary`
+the count is 0 (empty sequence value) or 1, never a multi-item count. -/
+theorem reCountValueBoundary_count_le_one (p : CountedResult) :
+    (reCountValueBoundary p).snd ≤ 1 :=
+  valueCount_le_one p.fst

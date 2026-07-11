@@ -40,8 +40,23 @@ try {
     $enteredLean = $true
     Invoke-Native -FilePath "lake" -Arguments @("build", "CoreTests")
 
+    Write-Section "Lean KatLangArityLaws"
+    Invoke-Native -FilePath "lake" -Arguments @("build", "KatLangArityLaws")
+
     Write-Section "Lean AstDemo"
     Invoke-Native -FilePath "lake" -Arguments @("build", "AstDemo")
+
+    Write-Section "Lean CoreArityAlgebra"
+    Invoke-Native -FilePath "lake" -Arguments @("build", "CoreArityAlgebra")
+
+    Write-Section "Lean CoreArityAlgebraProofs"
+    Invoke-Native -FilePath "lake" -Arguments @("build", "CoreArityAlgebraProofs")
+
+    Write-Section "Lean SemanticExplorerCases (Lean/C# differential corpus)"
+    Invoke-Native -FilePath "lake" -Arguments @("build", "SemanticExplorerCases")
+
+    Write-Section "Lean LanguageSpecCases (canonical executable language specification)"
+    Invoke-Native -FilePath "lake" -Arguments @("build", "LanguageSpecCases")
 
     Pop-Location
     $enteredLean = $false

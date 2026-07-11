@@ -175,13 +175,15 @@ internal static class SequencePipelineOptimizer
             return false;
         }
 
-        // The plain-count filter-count fusion computes the number of items that
-        // pass the filter. That equals generic `count(...)` semantics ONLY when
-        // count's own argument is a spread — `count(filter(...)...)` or
-        // `count((src...).filter(p)...)` — so the filter's sequence-value result is
-        // SPREAD into count. For a bare `count(filter(...))` the filter result is
-        // ONE sequence value and generic counts 1 (cf. `count((1, 2, 3))` = 1), so
-        // the fusion must not fire; fall back to the generic path.
+        // The plain-count filter-count fusion only fires when count's own
+        // argument is a spread — `count(filter(...)...)` or
+        // `count((src...).filter(p)...)` — a conservative gate: the bare
+        // `count(filter(...))` form falls back to the generic path. (Since
+        // singleton-boundary normalization, generic bare `count(filter(...))`
+        // opens the filter's one sequence-value result and counts its items —
+        // `count((1, 2, 3))` is 3 — so with the single-kept-item handling in
+        // ExecuteGenericFilterCount the fused count would now match the bare
+        // form too; the gate is kept for conservatism, not semantics.)
         if (!TryGetSpreadOperand(args.Output[0], out var countSource))
             return false;
 
@@ -620,6 +622,7 @@ internal static class SequencePipelineOptimizer
 
         long predicateCalls = 0;
         long keptCount = 0;
+        Result? soleKeptValue = null;
 
         for (var index = 0; index < sourcePlan.SourceItems.Count; index++)
         {
@@ -641,21 +644,32 @@ internal static class SequencePipelineOptimizer
             }
 
             if (predicateR.Value)
+            {
+                soleKeptValue = keptCount == 0 ? sourcePlan.SourceItems[index].Value : null;
                 keptCount++;
+            }
         }
+
+        // Match the generic composition: CombineCollectionResult erases the
+        // one-item collection boundary, so when exactly one item is kept and it
+        // is a sequence value, `count` opens that lone kept value's items (0 for
+        // a kept `()`). Every other kept shape still counts one per kept item.
+        var fusedCount = soleKeptValue is Result.SequenceValue(var soleItems)
+            ? soleItems.Count
+            : keptCount;
 
         diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
         diagnostics?.RecordPipelineExecution(
             diagnosticKey,
             sourcePlan.SourceItems.Count,
             predicateCalls,
-            keptCount,
+            fusedCount,
             avoidedFilteredResultMaterializationCount: keptCount,
             avoidedSourceMaterializationCount: 0);
         diagnostics?.RecordAvoidedFilteredResultMaterialization(keptCount);
 
         return EvalResult<Evaluator.CountedResult>.Ok(
-            new Evaluator.CountedResult(new Result.Atom(keptCount), 1));
+            new Evaluator.CountedResult(new Result.Atom(fusedCount), 1));
     }
 
     private static EvalResult<Evaluator.CountedResult> ExecuteRangeFilterCount(

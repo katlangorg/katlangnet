@@ -98,13 +98,13 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_EmptySequenceForms_DisplayStructurally()
+    public void Run_EmptySequenceForms_DisplayCanonically()
     {
         AssertDisplay("()", "()");
         AssertDisplay("x = ()\nx", "()");
-        AssertDisplay("(())", "(())");
-        AssertDisplay("x = (())\nx", "(())");
-        AssertDisplay("((()))", "((()))");
+        AssertDisplay("(())", "()");
+        AssertDisplay("x = (())\nx", "()");
+        AssertDisplay("((()))", "()");
     }
 
     [Fact]
@@ -118,11 +118,10 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_EmptyAndNestedEmptySpread_Differ()
+    public void Run_EmptyAndNestedEmptySpread_Canonicalize()
     {
-        // () spreads to zero items; (()) holds one item (the empty sequence value).
         AssertDisplay("1, ()..., 2", "1\n2");
-        AssertDisplay("(())...", "()");
+        AssertDisplay("1, (())..., 2", "1\n2");
     }
 
     [Fact]
@@ -853,7 +852,7 @@ public class KatLangEngineTests
     public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsSingleSequenceValueResult()
     {
         // A call boundary always returns one value. Even a variadic callee that
-        // forwards its captured item stream (`Collect(list...) = list`) yields one
+        // forwards its captured item supply (`Collect(list...) = list`) yields one
         // sequence value at the call boundary, displayed as a single row.
         var result = KatLangEngine.Run(
             """
@@ -868,7 +867,7 @@ public class KatLangEngineTests
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
         // Explicit caller-site postfix `...` re-opens the returned sequence value
-        // into the surrounding item stream, so it displays as separate rows.
+        // into the surrounding item supply, so it displays as separate rows.
         var result = KatLangEngine.Run(
             """
             Collect(list...) = list

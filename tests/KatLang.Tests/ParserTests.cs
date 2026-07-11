@@ -87,17 +87,17 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_NestedEmptyParens_AddOneStructuralLevel()
+    public void Parse_NestedEmptyParens_CanonicalizeToEmptySequence()
     {
         var nested = Parser.ParseSyntax("(())");
         Assert.False(nested.HasErrors);
         var nestedEmpty = Assert.IsType<Expr.EmptySequence>(Assert.Single(nested.Root.Output));
-        Assert.Equal(1, nestedEmpty.Depth);
+        Assert.Equal(0, nestedEmpty.Depth);
 
         var deeper = Parser.ParseSyntax("((()))");
         Assert.False(deeper.HasErrors);
         var deeperEmpty = Assert.IsType<Expr.EmptySequence>(Assert.Single(deeper.Root.Output));
-        Assert.Equal(2, deeperEmpty.Depth);
+        Assert.Equal(0, deeperEmpty.Depth);
     }
 
     [Fact]

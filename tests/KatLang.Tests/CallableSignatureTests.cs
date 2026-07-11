@@ -151,7 +151,7 @@ public class CallableSignatureTests
         Assert.False(signature.HasSequenceValueParameterPattern);
         Assert.Equal(1, signature.TopLevelParameterCount);
         Assert.Equal(1, signature.VariadicParameterCount);
-        // Rest-only is the degenerate item-stream case: min 0, unbounded max.
+        // Rest-only is the degenerate item-supply case: min 0, unbounded max.
         Assert.Equal(0, facts.MinTopLevelArgumentCount);
         Assert.Null(facts.MaxTopLevelArgumentCount);
         Assert.True(facts.HasTopLevelVariadic);
@@ -197,7 +197,7 @@ public class CallableSignatureTests
         Assert.Equal(2, noRest.MaxTopLevelArgumentCount);
         Assert.False(noRest.HasTopLevelVariadic);
 
-        // A lone rest-only parameter is the degenerate item-stream case: min 0,
+        // A lone rest-only parameter is the degenerate item-supply case: min 0,
         // unbounded max (empty calls are accepted).
         var restOnly = SignatureFor("Sum(values...) = values.sum", "Sum").ArityFacts;
         Assert.Equal(0, restOnly.MinTopLevelArgumentCount);
@@ -243,7 +243,7 @@ public class CallableSignatureTests
         var map = CallableSignature.FromBuiltin(BuiltinId.map);
         var take = CallableSignature.FromBuiltin(BuiltinId.take);
 
-        // Rest-shaped builtins are item streams: min = fixed (suffix) count, max unbounded.
+        // Rest-shaped builtins are item supplies: min = fixed (suffix) count, max unbounded.
         Assert.Equal("map(values..., mapper)", map.DisplayText);
         Assert.Equal(1, map.ArityFacts.MinTopLevelArgumentCount);
         Assert.Null(map.ArityFacts.MaxTopLevelArgumentCount);

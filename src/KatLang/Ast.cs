@@ -207,17 +207,33 @@ public abstract record Expr
     /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> from evaluated output of <c>a</c> and projects that item's content one level.</summary>
     public sealed record Index(Expr Target, Expr Selector) : Expr;
 
-    /// <summary>Internal sequence construction expression retained for semantic AST compatibility.</summary>
+    /// <summary>
+    /// INTERNAL sequence-join node retained for semantic AST compatibility
+    /// (the encoding of the removed binary spread-join, before surface
+    /// <c>A...B</c> became the expression-list slots <c>A..., B</c>).
+    ///
+    /// This is NOT the AST representation of written sequence-value syntax:
+    /// the parser and all production transformations have ZERO ORIGIN SITES
+    /// for it — parenthesized lists parse to <see cref="Block"/> and <c>()</c>
+    /// to <see cref="EmptySequence"/>; elaboration visitors may REBUILD an
+    /// existing node but cannot introduce one into an AST that did not
+    /// already contain it. This public constructor (with the public
+    /// <c>Evaluator.Run(Expr)</c>) is the intentional EXTERNAL origin
+    /// mechanism. Its value evaluation DROPS <c>()</c> leaves (join
+    /// semantics: an empty contribution adds no items), which written
+    /// parentheses never do, so routing surface syntax through this node
+    /// would silently violate the visible-empty rule;
+    /// <c>SequenceConstructContainmentTests</c> and the semantic explorer's
+    /// internal-node cases enforce that surface syntax and elaboration keep
+    /// zero origin sites and that its semantics stay pinned and Lean-aligned.
+    /// Lean: <c>Expr.sequenceConstruct</c>.
+    /// </summary>
     public sealed record SequenceConstruct(Expr Left, Expr Right) : Expr;
 
     /// <summary>
-    /// Empty sequence value <c>()</c> and its structurally-nested forms.
-    /// <c>Depth</c> 0 is the empty sequence value <c>SequenceValue([])</c>; each
-    /// additional level wraps the previous value in a one-item sequence, so
-    /// <c>Depth</c> 1 is <c>(())</c> = <c>SequenceValue([SequenceValue([])])</c>.
-    /// The nesting is preserved explicitly: <c>()</c> and <c>(())</c> are distinct
-    /// values and never collapse into each other.
-    /// Lean: <c>emptySequence : Nat → Expr</c>.
+    /// Empty sequence value <c>()</c>. Repeated ordinary parentheses around the
+    /// empty sequence are useful-structure canonicalized back to <c>()</c>.
+    /// Lean: <c>emptySequence : Nat -> Expr</c>.
     /// </summary>
     public sealed record EmptySequence(int Depth) : Expr;
 

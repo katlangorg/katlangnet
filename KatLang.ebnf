@@ -46,16 +46,19 @@ BindingTarget            = NonOutputIdentifier [ "..." ] ;
                         definition position only when the left-hand side has a comma
                         (two or more targets); a plain `name = ...` stays an ordinary
                         PropertyDefinition, and a single rest target `all... = ...` is
-                        not a binding pattern (rest-only item-stream binding belongs
-                        to function parameters, not assignment). If the right-hand
-                        side is exactly one grouped sequence value it is opened and
-                        matched element-by-element, e.g. `x, y..., z = A` deconstructs
-                        the elements of A; otherwise the supplied item stream is
-                        matched as-is, e.g. `x, y..., z = 1, 2, 3, 4, 5`. More than one
-                        rest target is a parse error. The same item-stream matcher
-                        governs function parameter lists with a top-level rest, e.g.
-                        F(x, y..., z); a lone rest-only F(values...) is the degenerate
-                        single-rest case (it binds the whole item stream). *)
+                        not a binding pattern (rest-only item-supply binding belongs
+                        to function parameters, not assignment). Assignment
+                        deconstruction is an unpacking receiver (Python-style): a
+                        single sequence-valued right-hand side is unpacked into its
+                        items. So `x, y..., z = A` (A a stored sequence value) unpacks
+                        A, and `x, y..., z = A...` and `x, y..., z = 1, 2, 3, 4, 5`
+                        supply the same items. This unpacking is assignment-specific
+                        and does NOT change function calls, which still pass A as one
+                        argument unless `...` is written. More than one rest target is
+                        a parse error. A function parameter list with a top-level rest,
+                        e.g. F(x, y..., z), uses the item-supply matcher over the
+                        supplied arguments (no implicit opening); a lone rest-only
+                        F(values...) is the degenerate single-rest case. *)
 
 ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
@@ -257,11 +260,14 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      on the previous line's identifier. *)
 ParenBundleExpr = "(" Algorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
-                     displayed as (). Parentheses around an empty-sequence literal
-                     add one structural level, so "(())" is a one-item sequence
-                     holding the empty sequence value; () and (()) are distinct
-                     values and never collapse. By contrast "{}" is an empty
-                     no-output body (BraceAlgorithmExpr), not a value. *)
+                     displayed as (). Ordinary repeated parentheses around the empty
+                     sequence are redundant grouping and canonicalize to "()". Thus
+                     "()", "(())", and "((()))" denote the same empty sequence value
+                     in surface KatLang. Parentheses still create useful sequence
+                     structure for multi-item expressions such as "(1, 2)" and
+                     preserve meaningful nested non-empty sequence values such as
+                     "(1, (2, 3))". By contrast "{}" is an empty no-output body
+                     (BraceAlgorithmExpr), not a value. *)
 BraceAlgorithmExpr = "{" Algorithm "}" ;
 
 NumberLiteral   = Number ;

@@ -160,19 +160,6 @@ public class EvaluatorTests
         Assert.Empty(group.Items);
     }
 
-    // Asserts the program evaluates to the nested empty sequence value `(())` =
-    // SequenceValue([SequenceValue([])]): a one-item collection whose single item is `()`.
-    private static void AssertEvalNestedEmptyOutput(string source)
-    {
-        var result = EvalFull(source);
-        if (result.IsError)
-            Assert.Fail($"Expected success but got error: {result.Error}");
-
-        var outer = Assert.IsType<Result.SequenceValue>(result.Value);
-        var inner = Assert.IsType<Result.SequenceValue>(Assert.Single(outer.Items));
-        Assert.Empty(inner.Items);
-    }
-
     private static void AssertEvalApprox(string source, decimal expected, int precision = 10)
     {
         var result = Eval(source);
@@ -1265,13 +1252,99 @@ public class EvaluatorTests
     [Theory]
     [InlineData("X(values...) = values.count\nX(1 2)")]
     [InlineData("X(values...) = values.count\nX (1 2)")]
+    public void Eval_CallArgumentAdjacency_BindsAsItemSupply(string source)
+        // X(values...) consumes an item supply. The adjacency form `1 2` supplies
+        // two slots, so the rest parameter captures two supplied arguments.
+        => AssertEval(source, 2);
+
+    [Theory]
     [InlineData("X(values...) = values.count\nX((1, 2))")]
     [InlineData("X(values...) = values.count\nX ((1, 2))")]
-    public void Eval_CallArgumentAdjacency_BindsAsItemStream(string source)
-        // X(values...) consumes an item stream. The adjacency form `1 2` supplies
-        // two slots and `(1, 2)` supplies one grouped value opened by
-        // singleton-boundary normalization; both bind a sequence of count 2.
+    public void Eval_CallArgumentGroupedSequence_RestOnlyDisplaysCapturedSequence(string source)
+        // The call supplies one sequence-valued argument. A rest-only capture then
+        // stores a value that displays/counts like the opened pair, so this case
+        // does not prove implicit call unpacking.
         => AssertEval(source, 2);
+
+    [Fact]
+    public void Eval_RestOnlyVariadicWithCollectionOperation_CanHideCallBoundary()
+    {
+        // F((1, 2)) supplies one argument: the sequence value (1, 2).
+        // The rest-only capture stores that supplied item supply as x, and x.sum is a
+        // collection-style builtin operation that sums the sequence value's items.
+        // F((1, 2)...) supplies two arguments. Both return 3, but mixed fixed/rest
+        // shapes below reveal that only the spread form opens the call boundary.
+        AssertEval(
+            """
+            F(x...) = x.sum
+            F((1, 2))
+            """,
+            3);
+
+        AssertEval(
+            """
+            F(x...) = x.sum
+            F((1, 2)...)
+            """,
+            3);
+    }
+
+    [Fact]
+    public void Eval_FixedCall_InlineSequenceValueArgumentRequiresExplicitSpread()
+    {
+        AssertEvalFailsWithArityMismatch(
+            """
+            Add(x, y) = x + y
+            Add((1, 2))
+            """,
+            expected: 2,
+            actual: 1);
+
+        AssertEval(
+            """
+            Add(x, y) = x + y
+            Add((1, 2)...)
+            """,
+            3);
+    }
+
+    [Fact]
+    public void Eval_MixedVariadicCall_PlainSequenceArgumentPreservesBoundary()
+    {
+        AssertEval(
+            """
+            A = 1, 2
+            G(first, rest...) = first.count, rest.count
+            G(A)
+            """,
+            2, 0);
+
+        AssertEval(
+            """
+            G(first, rest...) = first.count, rest.count
+            G((1, 2))
+            """,
+            2, 0);
+    }
+
+    [Fact]
+    public void Eval_MixedVariadicCall_ExplicitSpreadOpensSequenceArgument()
+    {
+        AssertEval(
+            """
+            A = 1, 2
+            G(first, rest...) = first.count, rest.count
+            G(A...)
+            """,
+            1, 1);
+
+        AssertEval(
+            """
+            G(first, rest...) = first.count, rest.count
+            G((1, 2)...)
+            """,
+            1, 1);
+    }
 
     [Theory]
     [InlineData("Add(a, b) = a + b\nAdd(1 2)")]
@@ -1384,9 +1457,9 @@ public class EvaluatorTests
     [Theory]
     [InlineData("X(values...) = values.count\nX(1, 2 3)")]
     [InlineData("X(values...) = values.count\nX(1, (2, 3))")]
-    public void Eval_CallArgumentMixedCommaAndAdjacency_BindsItemStream(string source)
+    public void Eval_CallArgumentMixedCommaAndAdjacency_BindsItemSupply(string source)
     {
-        // X(values...) consumes the item stream. `1, 2 3` is three slots
+        // X(values...) consumes the item supply. `1, 2 3` is three slots
         // (count 3); `1, (2, 3)` is two slots, the second a grouped value
         // preserved as a sibling (count 2).
         if (source.Contains("(2, 3)", StringComparison.Ordinal))
@@ -1407,9 +1480,9 @@ public class EvaluatorTests
     [Theory]
     [InlineData("X(a b...)")]
     [InlineData("X(a\nb...)")]
-    public void Eval_CallArgumentAdjacencyBeforePostfixSequenceSpread_BindsItemStream(string source)
+    public void Eval_CallArgumentAdjacencyBeforePostfixSequenceSpread_BindsItemSupply(string source)
     {
-        // `a b...` is three slots (1, 2, 3); X(values...) binds them as one stream.
+        // `a b...` is three slots (1, 2, 3); X(values...) binds them as one item supply.
         var program = "a = 1\nb = 2, 3\nX(values...) = values.count\n" + source;
         AssertEval(program, 3);
     }
@@ -1900,13 +1973,13 @@ public class EvaluatorTests
 
     // ── Property / call / builtin boundary arity = 1 ──────────────────────────
     // A property/call/builtin RESULT boundary always returns ONE value: a body or
-    // collection that internally produces an item stream is observed by the caller
+    // collection that internally produces an item supply is observed by the caller
     // as one sequence value (emitted count 1). Only explicit caller-site postfix
-    // `...` re-opens it into the surrounding item stream. This generalizes the
+    // `...` re-opens it into the surrounding item supply. This generalizes the
     // lexical property-access and `if`-branch behavior to every value boundary.
     // Lean: reCountValueBoundary.
 
-    // User-defined variadic call: the captured item stream is reified to one value.
+    // User-defined variadic call: the captured item supply is reified to one value.
     [Fact]
     public void Eval_UserCall_VariadicReturn_IsOneSequenceValue()
         => AssertEvalCounted("F(a...) = a\nF(5, 9)", 1, ResultFromAtoms(5, 9));
@@ -1924,12 +1997,12 @@ public class EvaluatorTests
             Result.FromItems([SequenceValue(Atom(5), Atom(9)), Atom(0)]));
 
     // Body `a..., 0`: the body spread flattens the capture into sibling slots, and
-    // the boundary still returns the whole flat stream as one value.
+    // the boundary still returns the whole flat item supply as one value.
     [Fact]
     public void Eval_UserCall_VariadicBodySpreadThenSlot_IsOneFlatSequenceValue()
         => AssertEvalCounted("F(a...) = a..., 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
 
-    // Caller-site spread re-opens the returned value into an item stream.
+    // Caller-site spread re-opens the returned value into an item supply.
     [Fact]
     public void Eval_UserCall_CallerSpread_OpensReturnedValue()
         => AssertEvalCounted("F(a...) = a\nF(5, 9)...", 2, ResultFromAtoms(5, 9));
@@ -1951,13 +2024,13 @@ public class EvaluatorTests
         => AssertEvalCounted("M = {\n  Public P = 1, 2, 3\n  P\n}\nM.P", 1, ResultFromAtoms(1, 2, 3));
 
     // Internal variadic forwarding is unaffected: the body still sees the raw item
-    // stream, so sum/count/spread-forwarding keep working across the boundary.
+    // supply, so sum/count/spread-forwarding keep working across the boundary.
     [Theory]
     [InlineData("F(a...) = sum(a)\nF(5, 9)", 14)]
     [InlineData("F(a...) = count(a)\nF(5, 9)", 2)]
     [InlineData("G(a...) = a...\nsum(G(5, 9))", 14)]
     [InlineData("F(a...) = a\nsum(F(5, 9))", 14)]
-    public void Eval_VariadicForwarding_PreservesRawItemStream(string source, int expected)
+    public void Eval_VariadicForwarding_PreservesRawItemSupply(string source, int expected)
         => AssertEval(source, expected);
 
     // Collection-producing builtins return one sequence value; spread opens it.
@@ -2075,11 +2148,11 @@ public class EvaluatorTests
     public void Eval_Repeat_MultiSlotLoopState_StaysMultiSlot()
         => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)", 2, ResultFromAtoms(3, 3));
 
-    // Regression: singleton/empty/nested sequence structure is preserved at the
-    // boundary (the re-count never normalizes or rebuilds the value).
+    // Regression: redundant empty-sequence nesting is canonicalized before the
+    // public boundary is observed.
     [Fact]
-    public void Eval_Boundary_PreservesNestedEmptySequence()
-        => AssertEvalCounted("F = (())\nF", 1, SequenceValue(SequenceValue()));
+    public void Eval_Boundary_CanonicalizesNestedEmptySequence()
+        => AssertEvalCounted("F = (())\nF", 1, SequenceValue());
 
     [Fact]
     public void Eval_Boundary_PreservesSingletonSequenceValue()
@@ -3505,6 +3578,49 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_SequencePipelineS1_FilterCount_SingleKeptSequenceItem_CountsOpenedItems()
+    {
+        // filter keeps exactly one sequence-valued item. The generic composition
+        // erases the one-item collection boundary (the kept `(1, 2)` IS the filter
+        // result), so `count` opens the kept item itself: 2 items, not 1. The fused
+        // filter.count path must agree.
+        var source = """
+            KeepFirstPair(pair) = pair:0 == 1
+            (((1, 2), (3, 4))).filter(KeepFirstPair).count
+            """;
+
+        AssertEvalSequenceModes(source, 2);
+
+        var (result, stats) = EvalFullWithSequenceDiagnostics(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([2m], result.Value.ToAtoms());
+        Assert.Equal(1, stats.FilterCountFusionHits);
+    }
+
+    [Fact]
+    public void Eval_SequencePipelineS1_FilterCount_SingleKeptEmptyItem_CountsZero()
+    {
+        // A lone kept `()` erases to `()` itself, so the count is 0 in both the
+        // generic composition and the fused filter.count path.
+        var source = """
+            KeepEmpty(x) = x.count == 0
+            Values = (), 1
+            Values.filter(KeepEmpty).count
+            """;
+
+        AssertEvalSequenceModes(source, 0);
+
+        var (result, stats) = EvalFullWithSequenceDiagnostics(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.Equal([0m], result.Value.ToAtoms());
+        Assert.Equal(1, stats.FilterCountFusionHits);
+    }
+
+    [Fact]
     public void Eval_SequencePipelineS1_FilterCount_FusesPlainCountDotFilter()
     {
         var source = """
@@ -4131,9 +4247,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequencePipelineS1_FilterCount_CountConsumesMultipleArgumentsAsItemStream()
+    public void Eval_SequencePipelineS1_FilterCount_CountConsumesMultipleArgumentsAsItemSupply()
     {
-        // count(values...) is an item stream, so extra top-level arguments join the
+        // count(values...) is an item supply, so extra top-level arguments join the
         // collection rather than over-supplying a strict one-slot signature:
         // count(filteredSequence, 0) counts the two top-level items.
         var source = """
@@ -4147,7 +4263,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequencePipelineS1_FilterExtraArgument_JoinsCollectionAndFailsOnNonNumericItem()
     {
-        // filter(values..., predicate) is an item stream: the extra `0` joins the collection
+        // filter(values..., predicate) is an item supply: the extra `0` joins the collection
         // alongside the range value, so the predicate runs against a non-numeric grouped
         // item and fails with a type mismatch (rather than a strict arity rejection).
         var source = """
@@ -4658,14 +4774,16 @@ public class EvaluatorTests
         => AssertEvalEmptyOutput("()");
 
     [Fact]
-    public void Eval_EmptySequence_AndNestedEmpty_AreStructurallyDistinct()
+    public void Eval_EmptySequence_AndNestedEmpty_CanonicalizeToSameValue()
     {
         var empty = Assert.IsType<Result.SequenceValue>(EvalFull("()").Value);
         Assert.Empty(empty.Items);
 
         var nested = Assert.IsType<Result.SequenceValue>(EvalFull("(())").Value);
-        var inner = Assert.IsType<Result.SequenceValue>(Assert.Single(nested.Items));
-        Assert.Empty(inner.Items);
+        Assert.Empty(nested.Items);
+
+        var deeper = Assert.IsType<Result.SequenceValue>(EvalFull("((()))").Value);
+        Assert.Empty(deeper.Items);
     }
 
     [Fact]
@@ -4677,54 +4795,54 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_NestedEmptySequence_CountsAsOneItem()
+    public void Eval_NestedEmptySequence_CanonicalizesToZeroItems()
     {
-        AssertEval("(()).count", 1);
-        AssertEval("count((()))", 1);
+        AssertEval("(()).count", 0);
+        AssertEval("count((()))", 0);
         AssertEval("A = ()\nA.count", 0);
-        AssertEval("A = (())\nA.count", 1);
+        AssertEval("A = (())\nA.count", 0);
     }
 
-    // ── Collection builtins preserve a kept/projected nested empty `(())` item ──
-    // The input `(())` is a one-item collection whose single item is `()`. When a
-    // collection builtin keeps/projects that item the result must still be a one-item
-    // collection `(())`, not collapse to the empty collection `()`.
+    // ── Collection builtins erase the one-item collection boundary: a single
+    //    kept item IS the result, matching ordinary construction/capture, so no
+    //    literal-unwritable orphan like ((1, 2)) or (()) is ever produced ──
 
     [Fact]
-    public void Eval_Filter_KeepsNestedEmptyItem_PreservesBoundary()
-        => AssertEvalNestedEmptyOutput(
+    public void Eval_Filter_NestedEmptyInput_CanonicalizesToEmptyCollection()
+        => AssertEvalEmptyOutput(
             """
             AlwaysTrue(x) = 1
             filter((()), AlwaysTrue)
             """);
 
     [Fact]
-    public void Eval_Count_FilterKeepsNestedEmptyItem_CountsOneItem()
+    public void Eval_Count_FilterNestedEmptyInput_CountsZeroItems()
         => AssertEval(
             """
             AlwaysTrue(x) = 1
             count(filter((()), AlwaysTrue))
             """,
-            1);
+            0);
 
     [Fact]
-    public void Eval_Take_NestedEmptyItem_PreservesBoundary()
-        => AssertEvalNestedEmptyOutput("take((()), 1)");
+    public void Eval_Take_SingleSequenceValueItem_ErasesBoundary()
+        => AssertEvalCounted("take(((1, 2), (3, 4)), 1)", 1, SequenceValue(Atom(1), Atom(2)));
 
     [Fact]
-    public void Eval_Skip_NestedEmptyItem_PreservesBoundary()
-        => AssertEvalNestedEmptyOutput("skip((()), 0)");
+    public void Eval_Skip_SingleSequenceValueItem_ErasesBoundary()
+        => AssertEvalCounted("skip(((1, 2), (3, 4)), 1)", 1, SequenceValue(Atom(3), Atom(4)));
 
     [Fact]
-    public void Eval_Distinct_NestedEmptyItem_PreservesBoundary()
-        => AssertEvalNestedEmptyOutput("distinct((()))");
+    public void Eval_Distinct_SingleSequenceValueItem_ErasesBoundary()
+        => AssertEvalCounted("distinct(((1, 2), (1, 2)))", 1, SequenceValue(Atom(1), Atom(2)));
 
     [Fact]
-    public void Eval_Filter_KeepsSingleNonEmptySequenceValueItem_PreservesBoundary()
+    public void Eval_Filter_KeepsSingleNonEmptySequenceValueItem_ErasesBoundary()
     {
-        // A literal `((1, 2))` collapses to the two-item collection `(1, 2)` (only empty
-        // sequences nest), so the single-kept-item case is exercised by filtering a
-        // two-item collection down to one sequence-valued item.
+        // Filtering a two-item collection down to one kept sequence-valued item
+        // erases the one-item collection boundary: the kept `(1, 2)` IS the result,
+        // matching ordinary construction where a literal `((1, 2))` also collapses
+        // to the two-item collection `(1, 2)`.
         var result = EvalFull(
             """
             KeepFirstPair(pair) = pair:0 == 1
@@ -4733,9 +4851,64 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // The single kept item is the sequence (1, 2); it stays the one-item collection
-        // `((1, 2))` and is not flattened into two collection items.
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m]);
+        AssertSequenceValueAtoms(result.Value, 1, 2);
+    }
+
+    [Fact]
+    public void Eval_Take_SingleKeptItem_ReproAgreesAcrossObservations()
+    {
+        // Regression for the former builtin singleton-boundary orphan: T must be
+        // the writable value (1, 2), so display, equality, count(T), and T.count
+        // all agree on the same observable shape.
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 2);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT.count", 2);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", 1);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", 1);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT:0", 1);
+    }
+
+    [Fact]
+    public void Eval_Distinct_SingleKeptEmptyItem_ErasesBoundary()
+    {
+        // distinct((), ()) dedups two equal `()` items to one kept item; the
+        // one-item collection boundary is erased, so the result is `()` itself
+        // (count 0), never the literal-unwritable orphan `(())`. At the root it
+        // is still one visible output slot, like any other non-spread `()` row.
+        AssertEvalCounted("distinct((), ())", 1, SequenceValue());
+        AssertEval("count(distinct((), ()))", 0);
+        AssertEval("distinct((), ()) == ()", 1);
+    }
+
+    [Fact]
+    public void Eval_Take_MultipleEmptyItems_PreservesSiblingBoundaries()
+    {
+        // Guard against over-normalization: multiple kept empty-sequence items keep
+        // their sibling boundaries. The combiner is shallow — it never collapses or
+        // drops meaningful sibling items, so take((), (), 2) stays ((), ()).
+        AssertEvalCounted("take((), (), 2)", 1, SequenceValue(SequenceValue(), SequenceValue()));
+        AssertEval("count(take((), (), 2))", 2);
+        AssertEvalCounted("distinct((), (), 1)", 1, SequenceValue(SequenceValue(), Atom(1)));
+    }
+
+    [Fact]
+    public void Eval_Filter_SingleKeptEmptyItem_ErasesBoundary()
+    {
+        // Filtering down to exactly one kept `()` item returns `()` itself
+        // (one visible output slot at the root, value the empty sequence).
+        AssertEvalCounted(
+            """
+            KeepEmpty(x) = x.count == 0
+            filter((), 1, KeepEmpty)
+            """,
+            1,
+            SequenceValue());
+        AssertEval(
+            """
+            KeepEmpty(x) = x.count == 0
+            count(filter((), 1, KeepEmpty))
+            """,
+            0);
     }
 
     [Fact]
@@ -4819,8 +4992,8 @@ public class EvaluatorTests
     {
         AssertEval("() == ()", 1);
         AssertEval("() != ()", 0);
-        AssertEval("() == (())", 0);
-        AssertEval("() != (())", 1);
+        AssertEval("() == (())", 1);
+        AssertEval("() != (())", 0);
         AssertEval("(()) == (())", 1);
         AssertEval("A = ()\nA == ()", 1);
         AssertEval(
@@ -5070,7 +5243,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_BareSequenceSpread_AdjacentExpressionBindsItemStream()
+    public void Eval_BareSequenceSpread_AdjacentExpressionBindsItemSupply()
     {
         // A...B is three slots (1, 2, (3, 4)); F(values...) binds them as one
         // sequence value of count 3.
@@ -5107,18 +5280,17 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_UserDefinedVariadicDotCallReceiver_OpensSingleGroupedValueBeforeSuffixAllocation()
+    public void Eval_UserDefinedVariadicDotCallReceiver_PreservesSingleGroupedValueBeforeSuffixAllocation()
     {
-        // Sum(values..., last) is a comma deconstruction parameter list, so the
-        // lone grouped receiver value is opened by rule 4 into [10, 20]: `last`
-        // binds 20 and the variadic captures [10], giving 10 + 20 = 30.
+        // Sum(values..., last) receives Values as one argument. `last` receives
+        // the sequence value, so the numeric body fails unless Values... is used.
         var source = """
             Values = 10, 20
             Sum(values..., last) = values.sum + last
             Values.Sum
             """;
 
-        AssertEval(source, 30);
+        AssertEvalFails(source);
     }
 
     // Dot-call receiver symmetry: receiver.F(args...) == F(receiver, args...)
@@ -5145,9 +5317,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemStream()
+    public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemSupply()
     {
-        // NItems(values...) consumes an item stream: (Pair...) spreads into two
+        // NItems(values...) consumes an item supply: (Pair...) spreads into two
         // slots [10, 20], bound as a sequence value of count 2.
         var source = """
             NItems(values...) = values.count
@@ -5214,7 +5386,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_MultiOutputReceiver_DotCallMatchesCanonicalCalls()
     {
-        // NItems(values...) consumes an item stream: the ordinary forms pass one
+        // NItems(values...) consumes an item supply: the ordinary forms pass one
         // sequence-valued slot and the spread forms pass two separate slots; all
         // four bind a sequence value of count 2.
         var define = """
@@ -5236,10 +5408,10 @@ public class EvaluatorTests
             Values = 10, 20
 
             """;
-        // BeforeLastCount(values..., last) is a comma deconstruction parameter
-        // list. The ordinary forms pass one sequence-valued slot plus the suffix;
-        // the spread forms now over-supply the variadic instead of erroring. All
-        // four agree on a variadic capture of count 2.
+        // BeforeLastCount(values..., last) binds the supplied item supply. The
+        // ordinary forms pass one sequence-valued slot plus the suffix; the spread
+        // forms open the receiver before suffix allocation. All four agree on a
+        // variadic capture whose collection count is 2.
         AssertEval(define + "Values.BeforeLastCount(99)", 2);
         AssertEval(define + "BeforeLastCount(Values, 99)", 2);
         AssertEval(define + "(Values...).BeforeLastCount(99)", 2);
@@ -5247,20 +5419,17 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_OrdinaryMultiOutputArgument_OpensSingleGroupedValueAtSuffixAllocation()
+    public void Eval_OrdinaryMultiOutputArgument_PreservesSingleGroupedValueAtSuffixAllocation()
     {
-        // Sum(values..., last) is a comma deconstruction parameter list. The
-        // canonical-call twin of
-        // Eval_UserDefinedVariadicDotCallReceiver_OpensSingleGroupedValueBeforeSuffixAllocation:
-        // the lone grouped argument is opened by rule 4 into [10, 20], so `last`
-        // binds 20 and the variadic captures [10], giving 10 + 20 = 30.
+        // Sum(values..., last) receives Values as one argument. `last` receives
+        // the sequence value, so the numeric body fails unless Values... is used.
         var source = """
             Sum(values..., last) = values.sum + last
             Values = 10, 20
             Sum(Values)
             """;
 
-        AssertEval(source, 30);
+        AssertEvalFails(source);
     }
 
     [Fact]
@@ -5439,7 +5608,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Contains_OneArgumentSearchesEmptySequence()
     {
-        // contains(values..., item) is an item stream: with one argument the rest captures
+        // contains(values..., item) is an item supply: with one argument the rest captures
         // nothing, so the item is searched in an empty collection and the result is false (0).
         AssertEval("contains(1)", 0m);
     }
@@ -5675,17 +5844,15 @@ public class EvaluatorTests
             5);
 
     [Fact]
-    public void Eval_LoopOptimizer_PreservesNestedEmptyStateSlot_MatchesGenericMode()
-        // A loop whose next-state slot becomes the nested empty `(())` (via the fallback
-        // `a.take(1)` over a `(())` state) must carry it verbatim, matching the generic loop.
-        // If the optimizer recursively normalized the committed slot, `(())` would collapse to
-        // `()` and the next iteration's `count(a)` would read 0 instead of 1.
+    public void Eval_LoopOptimizer_CanonicalizesNestedEmptyStateSlot_MatchesGenericMode()
+        // A loop whose next-state slot becomes `(())` now carries the canonical
+        // empty sequence value, matching the generic loop.
         => AssertEvalLoopModes(
             """
             Step(a, b) = if(a == 1, (()), a.take(1)), count(a)
             Step.repeat(2, 1, 0)
             """,
-            1);
+            0);
 
     [Fact]
     public void Eval_Take_DotCall_WhileReceiverUsesFinalStateSlots()
@@ -5874,25 +6041,27 @@ public class EvaluatorTests
         => AssertEval("skip((1, 2, 3), 10)");
 
     [Fact]
-    public void Eval_Take_SequenceValueItems_PreservesFirstGroup()
+    public void Eval_Take_SequenceValueItems_ReturnsFirstGroupItself()
     {
         var result = EvalFull("take(((1, 2), (3, 4)), 1)");
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // One kept sequence-valued item keeps its boundary as a one-item collection `((1, 2))`.
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m]);
+        // The one kept sequence-valued item IS the result: the one-item collection
+        // boundary is erased, so take(..., 1) agrees with first(...).
+        AssertSequenceValueAtoms(result.Value, 1, 2);
     }
 
     [Fact]
-    public void Eval_Skip_SequenceValueItems_PreservesSecondGroup()
+    public void Eval_Skip_SequenceValueItems_ReturnsSecondGroupItself()
     {
         var result = EvalFull("skip(((1, 2), (3, 4)), 1)");
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // One remaining sequence-valued item keeps its boundary as a one-item collection `((3, 4))`.
-        AssertNestedSequenceValueAtoms(result.Value, [3m, 4m]);
+        // The one remaining sequence-valued item IS the result: the one-item
+        // collection boundary is erased, so skip to one item agrees with last(...).
+        AssertSequenceValueAtoms(result.Value, 3, 4);
     }
 
     [Fact]
@@ -5992,10 +6161,10 @@ public class EvaluatorTests
             "skip count must be exactly one whole-number value");
 
     [Fact]
-    public void Eval_Skip_SpreadArgumentsJoinItemStream()
+    public void Eval_Skip_SpreadArgumentsJoinItemSupply()
     {
-        // skip(values..., count) is an item stream: the spread opens its items into the call
-        // stream, the last item binds `count`, and the rest is the collection. Here the
+        // skip(values..., count) is an item supply: the spread opens its items into the call's
+        // item supply, the last item binds `count`, and the rest is the collection. Here the
         // collection is ((3, 4), 1) and skipping 2 leaves nothing.
         var source = """
             Bad = 1, 2
@@ -6416,7 +6585,7 @@ public class EvaluatorTests
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        // reduce(values..., reducer, initial) is an item stream: the two suffix slots bind
+        // reduce(values..., reducer, initial) is an item supply: the two suffix slots bind
         // reducer = (1, 2, 3) and initial = Add from the back, leaving an empty collection.
         // Add is parameterized, so it cannot be the starting accumulator and the call-site
         // hint fires (rather than a generic arity error).
@@ -6642,7 +6811,7 @@ public class EvaluatorTests
             """;
 
         // Top-level variadic callbacks are current legacy behavior: each callback
-        // invocation receives one projected item, not the whole source stream.
+        // invocation receives one projected item, not the whole source collection.
         // This freezes current behavior without endorsing it as final language design.
         AssertEvalSequenceModes(source, 1, 1, 1);
     }
@@ -6669,7 +6838,7 @@ public class EvaluatorTests
             """;
 
         // Reducer callbacks receive the current projected item plus accumulator
-        // callback arguments, not the whole source stream.
+        // callback arguments, not the whole source collection.
         AssertEvalSequenceModes(source, 30);
     }
 
@@ -6848,9 +7017,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (1, 2) is kept; as a single sequence-valued item it stays the one-item
-        // collection `((1, 2))` instead of collapsing to `(1, 2)`.
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m]);
+        // Only (1, 2) is kept; the one-item collection boundary is erased, so the
+        // kept `(1, 2)` itself is the result.
+        AssertSequenceValueAtoms(result.Value, 1, 2);
     }
 
     [Fact]
@@ -6921,7 +7090,9 @@ public class EvaluatorTests
             Items.filter{x.count == 3}.count
             """;
 
-        AssertEval(source, 1, 7, 1);
+        // filter keeps only the (1, 2, 3) item; the one-item collection boundary is
+        // erased, so .count opens the kept sequence itself: 3 items, not 1.
+        AssertEval(source, 1, 7, 3);
     }
 
     [Fact]
@@ -6981,9 +7152,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only the first report is kept; one sequence-valued item stays the one-item
-        // collection `((7, 6, 4, 2, 1))`.
-        AssertNestedSequenceValueAtoms(result.Value, [7m, 6m, 4m, 2m, 1m]);
+        // Only the first report is kept; the one-item collection boundary is erased,
+        // so the kept report `(7, 6, 4, 2, 1)` itself is the result.
+        AssertSequenceValueAtoms(result.Value, 7, 6, 4, 2, 1);
     }
 
     [Fact]
@@ -7016,8 +7187,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (1, 2) is kept; one sequence-valued item stays the one-item collection `((1, 2))`.
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m]);
+        // Only (1, 2) is kept; the one-item collection boundary is erased, so the
+        // kept `(1, 2)` itself is the result.
+        AssertSequenceValueAtoms(result.Value, 1, 2);
     }
 
     [Fact]
@@ -9163,15 +9335,15 @@ public class EvaluatorTests
             """,
             1);
 
-    // Opened item streams must not be silently vectorized by equality. A spread
+    // Opened item supplies must not be silently vectorized by equality. A spread
     // `A...` cannot be a binary operand: `A... == A...` is a parse error (the
     // spread ends its expression, so the following `==` is unexpected). This
     // boundary is owned by the parser and is unchanged by structural equality —
-    // equality never turns an opened stream into an elementwise comparison. The
+    // equality never turns an opened item supply into an elementwise comparison. The
     // grouped form `(A...) == A` (covered above) is the supported way to compare
     // an opened-then-regrouped sequence value.
     [Fact]
-    public void Eval_Equal_OpenedStreams_NotSilentlyVectorized_IsParseError()
+    public void Eval_Equal_OpenedItemSupplies_NotSilentlyVectorized_IsParseError()
     {
         var parseResult = Parser.Parse(
             """
@@ -9593,6 +9765,18 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_VariadicParameter_ExplicitReceiverSpreadCapturesReceiverTopLevelItems()
+    {
+        AssertEval(
+            """
+            Arg = 1, 2, 3
+            Collect(list...) = list
+            Output = (Arg...).Collect.count
+            """,
+            3);
+    }
+
+    [Fact]
     public void Eval_NormalParameter_DotCallStillPreservesReceiverBoundary()
     {
         AssertEval(
@@ -9789,6 +9973,18 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_VariadicParameter_ExplicitSpreadCapturesSourceItems()
+    {
+        AssertEval(
+            """
+            Arg = range(1, 3)
+            Qmean(values...) = values.sum / values.count
+            Qmean(Arg...)
+            """,
+            2);
+    }
+
+    [Fact]
     public void Eval_VariadicParameter_DotCallCapturesRangeItems()
     {
         AssertEval(
@@ -9820,7 +10016,7 @@ public class EvaluatorTests
     public void Eval_VariadicParameter_ReportsBindingErrorWhenNormalParametersCannotBind()
     {
         // F(first, rest..., last) is a comma deconstruction parameter list. F(1)
-        // supplies one scalar item (not opened by rule 4), but the two fixed
+        // supplies one scalar item (not implicitly opened), but the two fixed
         // bindings first and last need at least two items.
         var result = EvalFull(
             """
@@ -9924,6 +10120,249 @@ public class EvaluatorTests
             CountSequenceValue2(((Inner)))
             """,
             3, 3, 3);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_ParenthesizedScalarPropertyItemIsNotAnOrphanSequenceValue()
+    {
+        // `(A)` is one written grouping level around a single already-evaluated
+        // item, so the bound item is the scalar 5 itself — never a
+        // literal-unwritable orphan sequence value displaying as `(5)`.
+        var result = EvalFull(
+            """
+            A = 5
+            F((x, y)) = x
+            F(((A), 6))
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.True(
+            Result.ValueComparer.Equals(new Result.Atom(5), result.Value),
+            $"Expected 5 but got {result.Value}");
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_ParenthesizedScalarPropertyItemComparesEqualToScalar()
+    {
+        AssertEval(
+            """
+            A = 5
+            F((x, y)) = x == 5
+            F(((A), 6))
+            """,
+            1);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_ParenthesizedSequencePropertyItemStaysOneCanonicalItem()
+    {
+        // With A = (1, 2), the written grouping `(A)` supplies the canonical
+        // value (1, 2) as one item — not an orphan ((1, 2)) — matching
+        // assignment deconstruction of the same right-hand side.
+        var result = EvalFull(
+            """
+            A = 1, 2
+            F((x, y)) = x
+            F(((A), 6))
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.True(
+            Result.ValueComparer.Equals(ResultFromAtoms(1, 2), result.Value),
+            $"Expected (1, 2) but got {result.Value}");
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_EmptySequenceSiblingItemIsPreserved()
+    {
+        // A non-spread `()` item is one visible item, exactly as in ordinary
+        // sequence-value construction: the pattern sees ((), 6), so x binds ()
+        // and y binds 6.
+        var result = EvalFull(
+            """
+            F((x, y)) = x
+            F(((), 6))
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.True(
+            Result.ValueComparer.Equals(new Result.SequenceValue([]), result.Value),
+            $"Expected () but got {result.Value}");
+
+        AssertEval(
+            """
+            F((x, y)) = y
+            F(((), 6))
+            """,
+            6);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_GroupedEmptySequenceItemCanonicalizesLikeEmptySequence()
+    {
+        // `(())` canonicalizes to `()`, so as a written item it behaves exactly
+        // like a bare `()` item.
+        AssertEval(
+            """
+            F((x, y)) = y
+            F(((()), 6))
+            """,
+            6);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_SpreadOfEmptyStillContributesNoItems()
+    {
+        // Only an explicit spread contributes zero items: E... with E = ()
+        // vanishes, so the pattern sees the single item 6.
+        AssertEval(
+            """
+            E = ()
+            F((xs...)) = xs.count
+            F((E..., 6))
+            """,
+            1);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_LiteralWrappedPairArgumentReportsWrittenSlotArity()
+    {
+        // `((1, 2))` is one written grouping level around the canonical item
+        // (1, 2): the sequence-value pattern receives exactly ONE written slot,
+        // so binding (x, y) reports arity 2 vs 1 — it neither mints an orphan
+        // ((1, 2)) nor silently opens the single written item.
+        AssertEvalFailsWithArityMismatch(
+            """
+            Wrap((x, y)) = x
+            Wrap(((1, 2)))
+            """,
+            expected: 2,
+            actual: 1);
+
+        // Redundant deeper grouping canonicalizes away shallowly at each level
+        // and still writes exactly one slot.
+        AssertEvalFailsWithArityMismatch(
+            """
+            Wrap((x, y)) = x
+            Wrap((((1, 2))))
+            """,
+            expected: 2,
+            actual: 1);
+
+        // A trailing fixed argument binds normally; the pattern slot itself
+        // still reads one written item.
+        AssertEvalFailsWithArityMismatch(
+            """
+            KeepFirst((x, y), z) = x
+            KeepFirst(((1, 2)), 3)
+            """,
+            expected: 2,
+            actual: 1);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_PropertyStoredWrappedPairOpensCanonically()
+    {
+        // A = ((1, 2)) canonicalizes at construction to (1, 2); Wrap(A) opens
+        // the stored canonical value, binds x = 1, and every observation —
+        // display, count, .count, equality against both writable spellings,
+        // and navigation — agrees on the scalar 1.
+        AssertEval(
+            """
+            Wrap((x, y)) = x
+            A = ((1, 2))
+            R = Wrap(A)
+            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
+            """,
+            1, 1, 1, 0, 0, 1);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_SingleCapturePatternBindsWrappedPairAsCanonicalItem()
+    {
+        // IdSeq((x)) consumes the single written slot of ((1, 2)), and that
+        // slot is the canonical (1, 2) — the shallow singleton-erasing combiner
+        // never materializes a literal-unwritable orphan ((1, 2)) around it.
+        // The structural comparison pins the exact shape.
+        var result = EvalFull(
+            """
+            IdSeq((x)) = x
+            IdSeq(((1, 2)))
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.True(
+            Result.ValueComparer.Equals(ResultFromAtoms(1, 2), result.Value),
+            $"Expected (1, 2) but got {result.Value}");
+
+        // count, .count, equality against both writable literal spellings, and
+        // navigation all agree with the canonical (1, 2).
+        AssertEval(
+            """
+            IdSeq((x)) = x
+            R = IdSeq(((1, 2)))
+            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
+            """,
+            1, 2, 2, 2, 1, 1, 1);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_TwoEmptySequenceSiblingItemsBindPositionally()
+    {
+        // The shallow combiner never drops empty-sequence siblings: ((), ())
+        // writes two items, so (x, y) binds both empties positionally and x is
+        // the real empty sequence value.
+        AssertEval(
+            """
+            F((x, y)) = x == (), y == ()
+            F(((), ()))
+            """,
+            1, 1);
+
+        var result = EvalFull(
+            """
+            F((x, y)) = x
+            F(((), ()))
+            """);
+
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        Assert.True(
+            Result.ValueComparer.Equals(new Result.SequenceValue([]), result.Value),
+            $"Expected () but got {result.Value}");
+    }
+
+    [Fact]
+    public void Eval_SequenceValueParameterBinding_WrappedPairReprosAgreeAcrossOptimizerModes()
+    {
+        // Post-#133 audit follow-up: with the orphan shape unconstructable, the
+        // generic, loop-optimized, and sequence-pipeline paths observe
+        // identical results through the sequence-value pattern binding repros.
+        const string singleCaptureRepro =
+            """
+            IdSeq((x)) = x
+            IdSeq(((1, 2)))
+            """;
+        AssertEvalResultLoopModes(singleCaptureRepro, ResultFromAtoms(1, 2));
+        AssertEvalResultSequenceModes(singleCaptureRepro, ResultFromAtoms(1, 2));
+
+        const string propertyStoredRepro =
+            """
+            Wrap((x, y)) = x
+            A = ((1, 2))
+            Wrap(A)
+            """;
+        AssertEvalResultLoopModes(propertyStoredRepro, Atom(1));
+        AssertEvalResultSequenceModes(propertyStoredRepro, Atom(1));
     }
 
     [Fact]
@@ -10165,6 +10604,18 @@ public class EvaluatorTests
 
         Assert.NotNull(arity.Signature);
         Assert.Equal("Add(x, y)", arity.Signature.DisplayText);
+    }
+
+    [Fact]
+    public void Eval_FlatFixedUserCall_ExplicitSpreadOpensMultiOutputPropertyReference()
+    {
+        AssertEval(
+            """
+            Pair = 10, 20
+            Add(x, y) = x + y
+            Add(Pair...)
+            """,
+            30);
     }
 
     [Fact]
@@ -12400,6 +12851,7 @@ public class EvaluatorTests
     public void Eval_SequenceSpread_OfEmptySequenceContributesNoItems()
     {
         AssertEval("1, ()..., 2", 1, 2);
+        AssertEval("1, (())..., 2", 1, 2);
         AssertEval("()..., 1", 1);
         AssertEval("1, ()...", 1);
         AssertEvalEmptyOutput("()...");
@@ -12456,7 +12908,11 @@ public class EvaluatorTests
     [InlineData("Sum((1, 2, 3))")]
     [InlineData("Seq = (1, 2, 3)\nSum(Seq)")]
     [InlineData("Seq = 1, 2, 3\nSum(Seq)")]
-    public void Eval_StrictVariadic_DestructuresOneSequenceValuedArgument(string call)
+    public void Eval_RestOnlyVariadic_CapturedSequenceMayDisplayLikeOpenedItems(string call)
+        // The rest-only capture stores the supplied item supply, and values.count
+        // is collection-style enough to hide whether the caller supplied one
+        // sequence-valued argument or several opened arguments. Fixed and mixed
+        // variadic tests above pin the actual boundary-preserving call binding.
         => AssertEval(
             $$"""
             Sum(values...) = values.count
@@ -12467,9 +12923,9 @@ public class EvaluatorTests
     [Theory]
     [InlineData("Sum(1, 2, 3)")]
     [InlineData("Sum(1 2 3)")]
-    public void Eval_RestOnlyVariadic_InlineCommaOrAdjacencyBindsItemStream(string call)
+    public void Eval_RestOnlyVariadic_InlineCommaOrAdjacencyBindsItemSupply(string call)
         // Inline comma and adjacency both supply three argument slots, bound by the
-        // item-stream matcher as one sequence value of count 3 — the same as the
+        // item-supply matcher as one sequence value of count 3 — the same as the
         // grouped form `Sum((1, 2, 3))`.
         => AssertEval(
             $$"""
@@ -12503,7 +12959,10 @@ public class EvaluatorTests
 
     [Theory]
     [InlineData("F((1, 2, 3), 99)")]
-    public void Eval_StrictVariadicWithSuffix_DestructuresOneSequenceArgument(string call)
+    public void Eval_VariadicWithSuffix_SequenceCaptureCanHideSingleArgumentBoundary(string call)
+        // F((1, 2, 3), 99) supplies one sequence-valued argument plus the suffix.
+        // values.count inspects the captured sequence value, so this succeeds
+        // without making ordinary calls implicitly open sequence arguments.
         => AssertEval(
             $$"""
             F(values..., last) = values.count, last
@@ -12695,7 +13154,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter_WithoutUnwrappingSequenceValueResult()
+    public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter_ReturnsKeptItemItself()
     {
         var source = """
             OccurrenceCount(target) = {
@@ -12709,9 +13168,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (2, 20) matches; the single kept sequence-valued item stays the one-item
-        // collection `((2, 20))` and is not unwrapped.
-        AssertNestedSequenceValueAtoms(result.Value, [2m, 20m]);
+        // Only (2, 20) matches; the one-item collection boundary is erased, so the
+        // kept `(2, 20)` itself passes through the user-call boundary unchanged.
+        AssertSequenceValueAtoms(result.Value, 2, 20);
     }
 
     [Fact]
