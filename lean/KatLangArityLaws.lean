@@ -10,8 +10,8 @@ Selected arity laws proved directly over the authoritative `KatLang.lean` model.
 `CoreArityAlgebra.lean` defines the small paper-facing algebra, while
 `CoreArityAlgebraProofs.lean` proves its small laws and executable checks.
 This file is the bridge: it proves the load-bearing laws over real KatLang
-`Result` constructors, normalization, item-supply normalization, and real binding
-helpers.
+`Result` constructors, normalization, lone-sequence item-supply opening, and
+real binding helpers.
 -/
 
 /--
@@ -87,16 +87,16 @@ binding (`count(A)`, `sum(A)`). This is not arbitrary recursive flattening. It i
 NOT used by function-call parameter binding — a call keeps a single sequence
 argument as one item. Assignment deconstruction also opens its single right-hand
 side value, but through a different mechanism: the sequence-value parameter pattern
-(`.sequenceValue`), not this builtin singleton normalization (see the deconstruction
+(`.sequenceValue`), not this builtin singleton opening (see the deconstruction
 bridge laws at the end of this file).
 -/
-theorem normalizeSupply_single_sequenceValue (xs : List Result) :
+theorem openLoneSequence_single_sequenceValue (xs : List Result) :
     normalizeSingletonBoundaryForItemSupplyOf
       (fun value => some value) (fun value => value) [Result.sequenceValue xs]
       = xs := by
   simp [normalizeSingletonBoundaryForItemSupplyOf]
 
-theorem normalizeSupply_nested_pair_opens_one_boundary :
+theorem openLoneSequence_nested_pair_opens_one_boundary :
     normalizeSingletonBoundaryForItemSupplyOf
       (fun value => some value) (fun value => value)
       [Result.sequenceValue [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]]]
@@ -195,7 +195,7 @@ theorem bindCallableArguments_variadic_items_then_capture (xs : List Result) :
   simp [bindCallableArguments_single_variadic_items]
 
 /-
-## Deconstruction bridge laws (Python-style unpacking receiver)
+## Deconstruction bridge laws (unpacking receiver)
 
 Assignment deconstruction (`x, y..., z = RHS`) is parser-elaborated into a helper
 whose single parameter is a sequence-value pattern (`.sequenceValue [captures]`)

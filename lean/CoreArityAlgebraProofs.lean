@@ -34,7 +34,7 @@ end
 
 instance : DecidableEq Val := Val.decEq
 
-theorem spread_seq (xs : Supply) : spread (Val.seq xs) = some xs := rfl
+theorem sequenceItems?_seq (xs : Supply) : sequenceItems? (Val.seq xs) = some xs := rfl
 
 theorem items_seq (xs : Supply) : items (Val.seq xs) = xs := rfl
 
@@ -44,7 +44,7 @@ theorem seq_items_atom (n : Int) : Val.seq (items (Val.atom n)) = Val.seq [Val.a
 
 example : Val.seq (items (Val.atom 7)) ≠ Val.atom 7 := by decide
 
-theorem items_eq_spread (v : Val) : items v = (spread v).getD [v] := by
+theorem items_eq_sequenceItems? (v : Val) : items v = (sequenceItems? v).getD [v] := by
   cases v <;> rfl
 
 example : (Val.seq [Val.atom 1, Val.atom 2]) = (Val.seq [Val.atom 1, Val.atom 2]) := rfl
@@ -87,28 +87,29 @@ theorem capture_singleton_atom_ne_seq :
     capture [Val.atom 1] ≠ Val.seq [Val.atom 1] := by
   decide
 
-theorem spread_capture_pair :
-    spread (capture [Val.atom 1, Val.atom 2])
+theorem sequenceItems?_capture_pair :
+    sequenceItems? (capture [Val.atom 1, Val.atom 2])
       = some [Val.atom 1, Val.atom 2] := by
   decide
 
-theorem spread_capture_singleton_atom :
-    spread (capture [Val.atom 1]) = none := by
+theorem sequenceItems?_capture_singleton_atom :
+    sequenceItems? (capture [Val.atom 1]) = none := by
   decide
 
-theorem normalizeSupply_empty : normalizeSupply [] = [] := rfl
+theorem openLoneSequence_empty : openLoneSequence [] = [] := rfl
 
-theorem normalizeSupply_singleSeq (xs : Supply) :
-    normalizeSupply [Val.seq xs] = xs := rfl
+theorem openLoneSequence_singleSeq (xs : Supply) :
+    openLoneSequence [Val.seq xs] = xs := rfl
 
-theorem normalizeSupply_singleAtom (n : Int) :
-    normalizeSupply [Val.atom n] = [Val.atom n] := rfl
+theorem openLoneSequence_singleAtom (n : Int) :
+    openLoneSequence [Val.atom n] = [Val.atom n] := rfl
 
-theorem normalizeSupply_multi (a b : Val) (rest : Supply) :
-    normalizeSupply (a :: b :: rest) = a :: b :: rest := rfl
+theorem openLoneSequence_multi (a b : Val) (rest : Supply) :
+    openLoneSequence (a :: b :: rest) = a :: b :: rest := by
+  cases a <;> rfl
 
-theorem normalizeSupply_nested_empty_opens_one_boundary :
-    normalizeSupply [Val.seq [Val.seq []]] = [Val.seq []] := rfl
+theorem openLoneSequence_nested_empty_opens_one_boundary :
+    openLoneSequence [Val.seq [Val.seq []]] = [Val.seq []] := rfl
 
 theorem variadic_empty : captureVariadic [] = Val.seq [] := rfl
 
@@ -158,14 +159,14 @@ theorem rest_singleton_collapses :
       = some [("x", Val.atom 1), ("rest", Val.atom 2)] := by
   decide
 
-theorem call_bind_rest_does_not_normalize_supply :
+theorem call_bind_rest_does_not_open_lone_sequence :
     bindArgs [Pat.name "x", Pat.rest "rest"] [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
       = some [("x", Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]), ("rest", Val.seq [])] := by
   decide
 
--- Assignment deconstruction is an unpacking receiver (Option A, Python-style): a
--- single stored sequence value is opened and matched element-by-element. Function
--- calls (`bindArgs`) do NOT open. These checks pin that contrast.
+-- Assignment deconstruction is an unpacking receiver: a single stored sequence
+-- value is opened and matched element-by-element. Function calls (`bindArgs`)
+-- do NOT open. These checks pin that contrast.
 
 /-- `Add(A)` / function parameter binding: a single sequence-valued argument against
 two fixed parameters is an arity error — the call binder does not open `A`. -/
@@ -267,7 +268,7 @@ theorem mem_ne_seq {w : Val} {ys : List Val} (h : w ∈ ys) : w ≠ Val.seq ys :
 /-- The deconstruction receiver's implicit opening of a single-value supply is
 the total item view `items` — the same item supply the surface spread `...`
 provides. -/
-theorem normalizeSupply_singleton (v : Val) : normalizeSupply [v] = items v := by
+theorem openLoneSequence_singleton (v : Val) : openLoneSequence [v] = items v := by
   cases v <;> rfl
 
 /-- Localization: the call and deconstruction receivers agree on every supply
@@ -275,7 +276,7 @@ that is not a single sequence value. -/
 theorem receivers_agree_of_not_lone_seq (ps : List Pat) (xs : Supply)
     (h : ∀ ys : List Val, xs ≠ [Val.seq ys]) :
     bindDeconstruct ps xs = bindArgs ps xs := by
-  have hn : normalizeSupply xs = xs := by
+  have hn : openLoneSequence xs = xs := by
     cases xs with
     | nil => rfl
     | cons a t =>
@@ -284,7 +285,7 @@ theorem receivers_agree_of_not_lone_seq (ps : List Pat) (xs : Supply)
         cases a with
         | atom n => rfl
         | seq ys => exact absurd rfl (h ys)
-      | cons b t2 => rfl
+      | cons b t2 => cases a <;> rfl
   unfold bindDeconstruct bindArgs
   rw [hn]
 
@@ -293,7 +294,7 @@ what a call binds on the value's item view. -/
 theorem deconstruct_singleton_eq_args_items (ps : List Pat) (v : Val) :
     bindDeconstruct ps [v] = bindArgs ps (items v) := by
   unfold bindDeconstruct bindArgs
-  rw [normalizeSupply_singleton]
+  rw [openLoneSequence_singleton]
 
 /-- `variadic_is_single_rest`, generalized to an arbitrary rest name. -/
 theorem bindArgs_lone_rest (r : String) (xs : Supply) :
@@ -307,7 +308,7 @@ theorem lone_rest_agrees_on_lone_seq (r : String) (ys : List Val) :
     bindArgs [Pat.rest r] [Val.seq ys] = bindDeconstruct [Pat.rest r] [Val.seq ys] := by
   have h1 : bindDeconstruct [Pat.rest r] [Val.seq ys] = bindArgs [Pat.rest r] ys := by
     unfold bindDeconstruct bindArgs
-    rw [normalizeSupply_singleSeq]
+    rw [openLoneSequence_singleSeq]
   have hcap : captureVariadic [Val.seq ys] = captureVariadic ys := by
     show normalize (Val.seq [Val.seq ys]) = normalize (Val.seq ys)
     exact normalize_singleton (Val.seq ys)
@@ -333,7 +334,7 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
     (hA : bindArgs ps [Val.seq ys] = some env)
     (hD : bindDeconstruct ps [Val.seq ys] = some env) :
     ∃ r, ps = [Pat.rest r] := by
-  rw [bindDeconstruct, normalizeSupply_singleSeq] at hD
+  rw [bindDeconstruct, openLoneSequence_singleSeq] at hD
   cases ps with
   | nil =>
     simp [bindArgs, bindPats] at hA
