@@ -38,6 +38,15 @@ theorem sequenceItems?_seq (xs : Supply) : sequenceItems? (Val.seq xs) = some xs
 
 theorem items_seq (xs : Supply) : items (Val.seq xs) = xs := rfl
 
+/-- Spreading the empty sequence contributes no items. -/
+theorem items_empty :
+    items (Val.seq []) = [] := rfl
+
+/-- An empty spread contributes nothing to a surrounding item supply. -/
+theorem spread_empty_neutral (before after : Supply) :
+    before ++ items (Val.seq []) ++ after = before ++ after := by
+  simp [items]
+
 theorem seq_items_seq (xs : Supply) : Val.seq (items (Val.seq xs)) = Val.seq xs := rfl
 
 theorem seq_items_atom (n : Int) : Val.seq (items (Val.atom n)) = Val.seq [Val.atom n] := rfl
