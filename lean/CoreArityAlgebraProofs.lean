@@ -105,6 +105,41 @@ theorem sequenceItems?_capture_singleton_atom :
     sequenceItems? (capture [Val.atom 1]) = none := by
   decide
 
+/-! ## Empty spread neutrality
+
+`Val.seq []` is the empty sequence value `()`, and `items (Val.seq [])` is
+the item supply of the explicit spread `()...`: it contributes zero items
+(`items_empty`, `spread_empty_neutral`). The theorems below lift that
+neutrality to `capture`, the canonical written-construction boundary. The
+core model does not model root output, so the claims here are about item
+supplies and captured values, not output emission.
+-/
+
+/-- An empty spread is neutral at a canonical capture or written-construction
+boundary: `()...` contributes no items to the surrounding supply, so the
+captured value is unchanged wherever the empty spread is inserted. -/
+theorem capture_empty_spread_neutral
+    (before after : Supply) :
+    capture (before ++ items (Val.seq []) ++ after) =
+      capture (before ++ after) :=
+  congrArg capture (spread_empty_neutral before after)
+
+/-- `(n, ()...) == n`. `Val.seq []` is the empty sequence value `()`,
+`items (Val.seq [])` is its explicit spread `()...`, and the surrounding
+`capture` is the canonical written-construction boundary. The spread
+contributes zero items, so the boundary captures the one-item supply
+`[Val.atom n]`, and singleton normalization returns the number itself
+(`capture_singleton_atom`). The claim would not hold for the raw constructor:
+`Val.seq [Val.atom n]` is deliberately distinct from `Val.atom n` before
+canonicalization (`capture_singleton_atom_ne_seq`). -/
+theorem capture_atom_empty_spread (n : Int) :
+    capture ([Val.atom n] ++ items (Val.seq [])) = Val.atom n := by
+  calc
+    capture ([Val.atom n] ++ items (Val.seq []))
+        = capture [Val.atom n] := by
+          simpa using capture_empty_spread_neutral [Val.atom n] []
+    _ = Val.atom n := capture_singleton_atom n
+
 theorem openLoneSequence_empty : openLoneSequence [] = [] := rfl
 
 theorem openLoneSequence_singleSeq (xs : Supply) :
@@ -130,10 +165,23 @@ theorem variadic_singleton_scalar (n : Int) :
 theorem variadic_two_scalars (m n : Int) :
     captureVariadic [Val.atom m, Val.atom n] = Val.seq [Val.atom m, Val.atom n] := rfl
 
+/-- Universal value-level form of the grouped/spread agreement: variadic
+capture of one grouped sequence value equals variadic capture of its stored
+items — the item supply an explicit spread provides (`items_seq`). The
+boundary is erased by canonical capture (`normalize_singleton`), not by any
+opening of the supply. The binding-level paper theorem is
+`variadic_capture_unchanged_by_spread`. -/
+theorem captureVariadic_lone_seq (ys : Supply) :
+    captureVariadic [Val.seq ys] = captureVariadic ys := by
+  show normalize (Val.seq [Val.seq ys]) = normalize (Val.seq ys)
+  exact normalize_singleton (Val.seq ys)
+
+/-- Concrete `(1, 2, 3)` regression instance of `captureVariadic_lone_seq`
+(kept under its original name for compatibility). -/
 theorem variadic_grouped_eq_spread :
     captureVariadic [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
-      = captureVariadic (items (Val.seq [Val.atom 1, Val.atom 2, Val.atom 3])) := by
-  decide
+      = captureVariadic (items (Val.seq [Val.atom 1, Val.atom 2, Val.atom 3])) :=
+  captureVariadic_lone_seq [Val.atom 1, Val.atom 2, Val.atom 3]
 
 theorem variadic_grouped_eq_spread_value :
     captureVariadic [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
@@ -473,6 +521,54 @@ theorem agree_on_lone_seq_iff_lone_rest (ps : List Pat) (ys : List Val) :
     subst hp
     refine ⟨[(r, captureVariadic [Val.seq ys])], bindArgs_lone_rest r _, ?_⟩
     rw [← lone_rest_agrees_on_lone_seq, bindArgs_lone_rest]
+
+/-! ## Variadic capture under explicit spread (paper theorem)
+
+For a rest-only variadic function such as `Sum(items...) = items.sum`, the
+grouped call `Sum(A)` and the explicitly spread call `Sum(A...)` bind the
+parameter identically. In the model, `[Pat.rest r]` is the rest-only variadic
+parameter, the one-item supply `[Val.seq ys]` is the grouped call's argument
+stream (`A` passed as one sequence-valued argument), and `items (Val.seq ys)`
+is the item supply the explicit spread provides. The agreement is a
+canonical-capture fact (`captureVariadic_lone_seq`): `bindArgs` never opens a
+lone sequence argument (`call_bind_rest_does_not_open_lone_sequence`); both
+supplies simply capture to the same canonical value. It is specific to the
+rest-only shape — with fixed parameters present, grouped and spread supplies
+bind differently (`agree_on_lone_seq_iff_lone_rest` pins rest-only as exactly
+the coincidence shape). The same proposition also follows by composing
+`lone_rest_agrees_on_lone_seq` with `deconstruct_singleton_eq_args_items`;
+the direct proofs below keep the capture-based explanation primary.
+-/
+
+/-- Paper theorem, universal over the parameter name and the stored items: a
+rest-only variadic parameter captures the same value whether a sequence value
+is supplied as one grouped argument (`Sum(A)`) or explicitly spread into its
+items (`Sum(A...)`). `variadic_grouped_eq_spread` is a concrete instance of
+the underlying capture law. Mixed fixed/rest parameter lists are not covered. -/
+theorem variadic_capture_unchanged_by_spread
+    (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] [Val.seq ys] =
+      bindArgs [Pat.rest r] (items (Val.seq ys)) := by
+  rw [items_seq, bindArgs_lone_rest, bindArgs_lone_rest,
+      captureVariadic_lone_seq]
+
+/-- Exact bound value, grouped side: `Sum(A)` binds `r` to `capture ys`, the
+canonical grouped value of `A`'s stored items. -/
+theorem variadic_capture_value
+    (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] [Val.seq ys] =
+      some [(r, capture ys)] := by
+  rw [bindArgs_lone_rest, captureVariadic_lone_seq]
+  rfl
+
+/-- Exact bound value, spread side: `Sum(A...)` binds `r` to the same
+`capture ys`. -/
+theorem variadic_capture_value_spread
+    (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] (items (Val.seq ys)) =
+      some [(r, capture ys)] :=
+  (variadic_capture_unchanged_by_spread r ys).symm.trans
+    (variadic_capture_value r ys)
 
 /-! ## Canonical-form theorems (general)
 

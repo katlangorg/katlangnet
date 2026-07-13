@@ -62,6 +62,16 @@ The headline laws in `CoreArityAlgebraProofs.lean` (all proved, no `sorry`):
 * rest / variadic capture use `capture xs = normalize (Val.seq xs)` — no second
   collection kind is introduced. (`capture` is *not* the raw constructor: it canonicalizes, so
   `sequenceItems? (capture [1]) = none` while `sequenceItems? (Val.seq [1]) = some [1]`.)
+* `bindArgs [Pat.rest r] [Val.seq ys] = bindArgs [Pat.rest r] (items (Val.seq ys))`
+  — a rest-only variadic parameter binds a grouped sequence value and its
+  explicit spread identically, both to `capture ys`
+  (`variadic_capture_unchanged_by_spread`, `variadic_capture_value`): the
+  `Sum(A)` / `Sum(A...)` agreement, specific to the rest-only shape.
+* `capture (before ++ items (Val.seq []) ++ after) = capture (before ++ after)`
+  — the empty spread `()...` contributes zero items to the surrounding supply,
+  so it is neutral at the canonical capture boundary
+  (`capture_empty_spread_neutral`); the concrete KatLang consequence is
+  `(n, ()...) == n` (`capture_atom_empty_spread`).
 
 `Val.seq` is deliberately the *raw* constructor: the algebra needs it to state
 section laws such as `sequenceItems? (Val.seq xs) = some xs` and to model
