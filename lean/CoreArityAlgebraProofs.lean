@@ -310,7 +310,8 @@ values. The theorems below establish the contrast in general:
   an explicit spread provides (`x, y = A` binds as `x, y = A...`);
 * `agree_on_lone_seq_iff_lone_rest` — on a lone sequence value the two
   receivers produce the same successful binding exactly when the pattern list
-  is a single rest binding (the `Sum(A) = Sum(A...)` coincidence, and only it).
+  is a single rest binding; together with `deconstruct_singleton_eq_args_items`,
+  this implies the rest-only grouped/spread call coincidence.
 -/
 
 /-- No value is an element of its own payload list: an element of `ys` is
@@ -528,16 +529,18 @@ For a rest-only variadic function such as `Sum(items...) = items.sum`, the
 grouped call `Sum(A)` and the explicitly spread call `Sum(A...)` bind the
 parameter identically. In the model, `[Pat.rest r]` is the rest-only variadic
 parameter, the one-item supply `[Val.seq ys]` is the grouped call's argument
-stream (`A` passed as one sequence-valued argument), and `items (Val.seq ys)`
+supply (`A` passed as one sequence-valued argument), and `items (Val.seq ys)`
 is the item supply the explicit spread provides. The agreement is a
 canonical-capture fact (`captureVariadic_lone_seq`): `bindArgs` never opens a
 lone sequence argument (`call_bind_rest_does_not_open_lone_sequence`); both
 supplies simply capture to the same canonical value. It is specific to the
-rest-only shape — with fixed parameters present, grouped and spread supplies
-bind differently (`agree_on_lone_seq_iff_lone_rest` pins rest-only as exactly
-the coincidence shape). The same proposition also follows by composing
-`lone_rest_agrees_on_lone_seq` with `deconstruct_singleton_eq_args_items`;
-the direct proofs below keep the capture-based explanation primary.
+rest-only shape. The theorem `agree_on_lone_seq_iff_lone_rest` characterizes
+successful call/deconstruction agreement on a lone sequence value, while
+`deconstruct_singleton_eq_args_items` bridges deconstruction of that value to
+call binding on its item view; together they pin rest-only as exactly the
+successful grouped/spread coincidence shape. The equality direction also
+follows by composing `lone_rest_agrees_on_lone_seq` with that bridge; the direct
+proofs below keep the capture-based explanation primary.
 -/
 
 /-- Paper theorem, universal over the parameter name and the stored items: a
