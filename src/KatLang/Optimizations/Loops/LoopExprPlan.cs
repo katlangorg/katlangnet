@@ -400,7 +400,7 @@ internal static partial class LoopOptimizer
         SourceSpan? span)
     {
         if (operand.EmittedCount == 0)
-            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(new Result.SequenceValue([]), 0));
+            return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(Result.SequenceValue.TakeOwnership([]), 0));
 
         if (operand.AsNum() is { } value)
         {

@@ -129,24 +129,29 @@ public static class SemanticExplorerHarness
     /// <summary>
     /// Neutral raw-structure encoding, deliberately distinct from display
     /// syntax so orphan singleton wrappers stay visible:
-    /// atom -&gt; 1, string -&gt; 'x', sequence -&gt; S[a, b], empty -&gt; S[].
+    /// atom -&gt; 1, string -&gt; 'x', sequence -&gt; S[a, b], empty -&gt; S[],
+    /// exact list -&gt; L[a, b].
     /// </summary>
     public static string Neutral(Result result) => result switch
     {
         Result.Atom a => a.Value.ToString(CultureInfo.InvariantCulture),
         Result.Str s => "'" + s.Value + "'",
         Result.SequenceValue g => "S[" + string.Join(", ", g.Items.Select(Neutral)) + "]",
+        Result.ListValue l => "L[" + string.Join(", ", l.Items.Select(Neutral)) + "]",
         _ => "?",
     };
 
     /// <summary>
     /// Count sequence nodes with exactly one item anywhere in the tree.
     /// Such nodes are unwritable as literals under current canonicalization,
-    /// so any occurrence is an orphan-wrapper invariant violation.
+    /// so any occurrence is an orphan-wrapper invariant violation. Exact
+    /// list values carry no singleton rule (`[x]` IS literal-writable), but
+    /// their elements are still traversed for nested sequence orphans.
     /// </summary>
     public static int SingletonNodeCount(Result result) => result switch
     {
         Result.SequenceValue g => (g.Items.Count == 1 ? 1 : 0) + g.Items.Sum(SingletonNodeCount),
+        Result.ListValue l => l.Items.Sum(SingletonNodeCount),
         _ => 0,
     };
 

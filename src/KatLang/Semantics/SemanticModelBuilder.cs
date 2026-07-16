@@ -472,6 +472,11 @@ public static class SemanticModelBuilder
                     VisitExpr(right, scope);
                     break;
 
+                case Expr.ListLiteral(var items):
+                    foreach (var item in items)
+                        VisitExpr(item, scope);
+                    break;
+
                 case Expr.DotCall dotCall:
                     VisitExpr(dotCall.Target, scope);
                     var (classification, declaration, propertyInfo) = ResolveDotMember(dotCall, scope);
@@ -660,7 +665,8 @@ public static class SemanticModelBuilder
                 or Expr.Index
                 or Expr.Call
                 or Expr.NativeCall
-                or Expr.DotCall;
+                or Expr.DotCall
+                or Expr.ListLiteral;
 
         private static bool IsIllegalOpenTarget(SymbolDefinition symbol)
             => symbol.AlgorithmValue is Algorithm.Builtin;

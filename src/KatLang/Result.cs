@@ -11,7 +11,8 @@ public abstract record Result
     /// <summary>
     /// KatLang value-semantic comparer for <see cref="Result"/>.
     /// Atoms compare by numeric value, strings by exact string value, and
-    /// sequence values structurally by ordered child results.
+    /// sequence and list values structurally by ordered child results.
+    /// Different value kinds compare unequal (a list never equals a sequence).
     /// </summary>
     public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer();
 
@@ -21,11 +22,117 @@ public abstract record Result
     /// <summary>A first-class string value. Lean: Result.str.</summary>
     public sealed record Str(string Value) : Result;
 
-    /// <summary>A sequence value containing ordered child results.</summary>
-    public sealed record SequenceValue(IReadOnlyList<Result> Items) : Result;
+    /// <summary>
+    /// A sequence value containing ordered child results.
+    ///
+    /// Sequence values are OBSERVABLY immutable, following the same model as
+    /// <see cref="ListValue"/>: public construction snapshots the supplied
+    /// items (mutating the constructor input afterwards cannot change the
+    /// value), and <see cref="Items"/> exposes only a read-only view whose
+    /// mutation members throw without changing the value. Trusted internal
+    /// construction may instead transfer exclusive ownership of freshly built
+    /// storage via <see cref="TakeOwnership"/>; internal mutation of sequence
+    /// storage is permitted only before the value is published or under proven
+    /// exclusive ownership where no previously observable value can change.
+    /// Note: C# record equality is not KatLang language equality — KatLang
+    /// structural equality uses <see cref="ValueComparer"/>.
+    /// </summary>
+    public sealed record SequenceValue : Result
+    {
+        private readonly IReadOnlyList<Result> items;
+
+        /// <summary>
+        /// Snapshot construction for host-facing / untrusted input: copies
+        /// <paramref name="items"/>, so the caller retains no alias through
+        /// which this value could later be mutated.
+        /// </summary>
+        public SequenceValue(IEnumerable<Result> items)
+            : this(items.ToArray())
+        {
+        }
+
+        private SequenceValue(Result[] exclusivelyOwnedItems)
+            => items = Array.AsReadOnly(exclusivelyOwnedItems);
+
+        /// <summary>
+        /// Trusted ownership-transfer construction: wraps
+        /// <paramref name="exclusivelyOwnedItems"/> without copying.
+        /// Invariant: after this call the storage belongs to the sequence
+        /// value — the caller must never mutate, reuse, retain a mutable alias
+        /// to, or expose the transferred array. Use only for storage that
+        /// provably has no other owner (e.g. a freshly materialized array).
+        /// </summary>
+        internal static SequenceValue TakeOwnership(Result[] exclusivelyOwnedItems)
+            => new(exclusivelyOwnedItems);
+
+        /// <summary>
+        /// Ordered items as a read-only view. The view never exposes the
+        /// backing storage: casting it to a mutable collection interface
+        /// yields an object that rejects every mutation operation.
+        /// </summary>
+        public IReadOnlyList<Result> Items => items;
+
+        public void Deconstruct(out IReadOnlyList<Result> items) => items = this.items;
+    }
 
     /// <summary>
-    /// Normalize: unwrap single-element sequence values recursively.
+    /// An exact immutable list value <c>[a, b, c]</c>. Unlike sequence values,
+    /// list structure is never singleton-normalized: <c>[7]</c> and <c>7</c>
+    /// are distinct values, <c>[]</c> is distinct from the empty sequence
+    /// value <c>()</c>, and nesting is preserved exactly.
+    ///
+    /// List values are OBSERVABLY immutable: public construction snapshots the
+    /// supplied items (mutating the constructor input afterwards cannot change
+    /// the value), and <see cref="Items"/> exposes only a read-only view whose
+    /// mutation members throw without changing the value. Trusted internal
+    /// construction may instead transfer exclusive ownership of freshly built
+    /// storage via <see cref="TakeOwnership"/>; internal mutation of list
+    /// storage is permitted only before the value is published or under proven
+    /// exclusive ownership where no previously observable value can change.
+    /// Lean: <c>Result.listValue</c>.
+    /// </summary>
+    public sealed record ListValue : Result
+    {
+        private readonly IReadOnlyList<Result> items;
+
+        /// <summary>
+        /// Snapshot construction for host-facing / untrusted input: copies
+        /// <paramref name="items"/>, so the caller retains no alias through
+        /// which this value could later be mutated.
+        /// </summary>
+        public ListValue(IEnumerable<Result> items)
+            : this(items.ToArray())
+        {
+        }
+
+        private ListValue(Result[] exclusivelyOwnedItems)
+            => items = Array.AsReadOnly(exclusivelyOwnedItems);
+
+        /// <summary>
+        /// Trusted ownership-transfer construction: wraps
+        /// <paramref name="exclusivelyOwnedItems"/> without copying.
+        /// Invariant: after this call the storage belongs to the list value —
+        /// the caller must never mutate, reuse, or expose the transferred
+        /// array. Use only for storage that provably has no other owner
+        /// (e.g. a freshly materialized array).
+        /// </summary>
+        internal static ListValue TakeOwnership(Result[] exclusivelyOwnedItems)
+            => new(exclusivelyOwnedItems);
+
+        /// <summary>
+        /// Ordered elements as a read-only view. The view never exposes the
+        /// backing storage: casting it to a mutable collection interface
+        /// yields an object that rejects every mutation operation.
+        /// </summary>
+        public IReadOnlyList<Result> Items => items;
+
+        public void Deconstruct(out IReadOnlyList<Result> items) => items = this.items;
+    }
+
+    /// <summary>
+    /// Normalize: unwrap single-element sequence values recursively. Lists are
+    /// exact: their elements normalize (redundant SEQUENCE structure inside a
+    /// list still canonicalizes) but the list boundary itself never collapses.
     /// Lean: Result.normalize
     /// </summary>
     public Result Normalize()
@@ -35,18 +142,20 @@ public abstract record Result
             Atom _ => this,
             Str _ => this,
             SequenceValue(var items) =>
-                items.Select(r => r.Normalize()).ToList() switch
+                items.Select(r => r.Normalize()).ToArray() switch
                 {
                     [var single] => single,
-                    var normalized => new SequenceValue(normalized),
+                    var normalized => SequenceValue.TakeOwnership(normalized),
                 },
+            ListValue(var items) => ListValue.TakeOwnership(items.Select(r => r.Normalize()).ToArray()),
             _ => this,
         };
     }
 
     /// <summary>
     /// Flatten result to a list of numbers.
-    /// Lean: Result.atoms — strings are silently omitted from atom lists.
+    /// Lean: Result.atoms — strings are silently omitted from atom lists, and
+    /// list values are opaque to numeric flattening (omitted like strings).
     /// </summary>
     public IReadOnlyList<decimal> ToAtoms()
     {
@@ -55,6 +164,7 @@ public abstract record Result
             Atom(var n) => [n],
             Str _ => [],
             SequenceValue(var items) => items.SelectMany(r => r.ToAtoms()).ToList(),
+            ListValue _ => [],
             _ => [],
         };
     }
@@ -62,7 +172,9 @@ public abstract record Result
     /// <summary>
     /// Count emitted top-level values when this result is already in hand.
     /// Empty results emit 0. Any non-empty atomic, string, or sequence value
-    /// counts as one value.
+    /// counts as one value. List values ALWAYS count as one visible value,
+    /// including the empty list <c>[]</c> — only the empty SEQUENCE value
+    /// <c>()</c> is the invisible-able empty result.
     ///
     /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> and <c>map</c>
     /// so sequence-value accumulator / mapped values count as one value.
@@ -126,6 +238,7 @@ public abstract record Result
     /// <summary>
     /// Try to get as a single number.
     /// Returns null if the result is not a single atom (after normalization).
+    /// List values never coerce to numbers, not even <c>[5]</c>.
     /// Lean: Result.asInt?
     /// </summary>
     public decimal? AsNum()
@@ -139,6 +252,7 @@ public abstract record Result
                 Atom(var n) => n,
                 _ => null,
             },
+            ListValue _ => null,
             _ => null,
         };
     }
@@ -146,6 +260,11 @@ public abstract record Result
     /// <summary>
     /// Extract top-level items from a result.
     /// Atom/string -> singleton list; sequence value -> its items.
+    /// A list value stays OPAQUE here: it is one item, so non-spread consumers
+    /// (indexing <c>:</c> projection, boundary re-counting, builtin item
+    /// views) treat a list as a single exact value. Only postfix spread
+    /// (<see cref="SpreadItems"/>) and deconstruction binding open a list
+    /// boundary.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>
     public IReadOnlyList<Result> ToItems()
@@ -154,7 +273,42 @@ public abstract record Result
         {
             Atom or Str => [this],
             SequenceValue(var items) => items,
+            ListValue _ => [this],
             _ => [],
+        };
+    }
+
+    /// <summary>
+    /// Item view used by postfix spread <c>...</c>: spread opens exactly ONE
+    /// structure boundary. Sequence values and exact list values open to
+    /// their immediate items; atoms and strings supply themselves as one item.
+    /// Lean: <c>Result.spreadItems</c>.
+    /// </summary>
+    public IReadOnlyList<Result> SpreadItems()
+    {
+        return this switch
+        {
+            ListValue(var items) => items,
+            _ => ToItems(),
+        };
+    }
+
+    /// <summary>
+    /// Deconstruction-openable structure view shared by the sequence-value
+    /// parameter pattern binders: a received sequence value or exact list
+    /// value opens to its immediate items; atoms and strings are not openable
+    /// (the binders apply their own scalar one-item fallback). Function-call
+    /// argument binding never uses this view — a list argument stays one
+    /// argument.
+    /// Lean: <c>Result.structureItems?</c>.
+    /// </summary>
+    public IReadOnlyList<Result>? StructureItems()
+    {
+        return this switch
+        {
+            SequenceValue(var items) => items,
+            ListValue(var items) => items,
+            _ => null,
         };
     }
 
@@ -219,8 +373,7 @@ public abstract record Result
     /// </summary>
     public static Result FromItems(IEnumerable<Result> items)
     {
-        var list = items.ToList();
-        return new SequenceValue(list).Normalize();
+        return SequenceValue.TakeOwnership(items.ToArray()).Normalize();
     }
 
     private sealed class ValueSemanticComparer : IEqualityComparer<Result>
@@ -235,6 +388,10 @@ public abstract record Result
                 (Atom(var left), Atom(var right)) => left == right,
                 (Str(var left), Str(var right)) => StringComparer.Ordinal.Equals(left, right),
                 (SequenceValue(var leftItems), SequenceValue(var rightItems)) =>
+                    leftItems.Count == rightItems.Count && ItemsEqual(leftItems, rightItems),
+                // Lists compare structurally and recursively; a list never
+                // equals a sequence value, even with equal elements.
+                (ListValue(var leftItems), ListValue(var rightItems)) =>
                     leftItems.Count == rightItems.Count && ItemsEqual(leftItems, rightItems),
                 _ => false,
             };
@@ -274,6 +431,13 @@ public abstract record Result
 
                 case SequenceValue(var items):
                     hash.Add(2);
+                    hash.Add(items.Count);
+                    foreach (var item in items)
+                        AddHashCode(ref hash, item);
+                    break;
+
+                case ListValue(var items):
+                    hash.Add(3);
                     hash.Add(items.Count);
                     foreach (var item in items)
                         AddHashCode(ref hash, item);

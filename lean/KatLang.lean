@@ -754,9 +754,20 @@ mutual
     --   so `sequenceSpread expr` spreads the top-level output items of `expr`.
     --   A following expression is a separate expression-list item; semicolon is
     --   not surface expression syntax. Source `A...B` is `A..., B`. Nested spread
-    --   such as `A......` is `sequenceSpread (sequenceSpread A)` and is peeled by
-    --   `peelSequenceSpread` so evaluation does not recurse once per postfix layer.
+    --   such as `A......` is `sequenceSpread (sequenceSpread A)`; evaluation
+    --   unwraps the chain iteratively (`peelSequenceSpreadLayers`, stack-safe)
+    --   and applies each written layer compositionally — one boundary opening
+    --   per `...` — so `A......` agrees with `(A...)...` (a fixed point for
+    --   sequence values, one more list boundary per layer for exact lists).
     | sequenceSpread : Expr -> Expr
+    -- * listLiteral: surface list literal `[e1, ..., en]`. Evaluates to exactly
+    --   ONE exact immutable list value (`Result.listValue`). Element slots follow
+    --   the same expression-list rules as written parentheses (an explicit spread
+    --   slot opens its operand's immediate items, a non-spread `()` slot stays one
+    --   visible element), but the collected elements are stored EXACTLY: no
+    --   singleton erasure and no empty canonicalization, so `[7]`, `[[7]]`, and
+    --   `[]` are all distinct values. C#: `Expr.ListLiteral`.
+    | listLiteral : List Expr -> Expr
     | resolve : Ident -> Expr
     | block   : Algorithm -> Expr
     | call    : Expr -> Algorithm -> Expr
@@ -901,6 +912,11 @@ inductive Result where
   | atom  : Int -> Result
   | str   : String -> Result     -- first-class string value (exact equality, no ordering/coercion)
   | sequenceValue : List Result -> Result
+  -- Exact immutable list value `[a, b, c]`. Unlike sequence values, list
+  -- structure is never singleton-normalized: `listValue [r]` and `r` are
+  -- distinct values, `listValue []` is distinct from the empty sequence
+  -- value, and nesting is preserved exactly. C#: `Result.ListValue`.
+  | listValue : List Result -> Result
   deriving Repr, BEq
 
 namespace Result
@@ -912,11 +928,16 @@ namespace Result
         match rs' with
         | [r] => r
         | _   => sequenceValue rs'
+    -- Lists are exact: normalize their elements (redundant SEQUENCE structure
+    -- inside a list still canonicalizes) but never collapse the list boundary
+    -- itself — `[7]` stays `[7]`, never `7`.
+    | listValue rs => listValue (rs.map normalize)
 
   def atoms : Result -> List Int
     | atom n    => [n]
     | str _     => []       -- strings are not numeric; silently omitted from atom lists
     | sequenceValue rs => rs.flatMap atoms
+    | listValue _ => []     -- lists are opaque values to numeric flattening, like strings
 
   /-- KatLang truth testing used by builtins like `if`.
       Zero is false, any other numeric atom is true.
@@ -960,13 +981,42 @@ namespace Result
         match normalize (sequenceValue rs) with
         | atom n => some n
         | _      => none
+    | listValue _ => none   -- lists never coerce to numbers, not even `[5]`
 
   /-- Extract top-level items from a result.
-      Atom/string -> singleton list; sequence value -> its items. -/
+      Atom/string -> singleton list; sequence value -> its items.
+      A list value stays OPAQUE here: it is one item, so non-spread consumers
+      (indexing `:` projection, boundary re-counting, builtin item views) treat
+      a list as a single exact value. Only postfix spread (`spreadItems`) and
+      deconstruction binding (`structureItems?`) open a list boundary. -/
   def toItems : Result -> List Result
     | atom n   => [atom n]
     | str s    => [str s]
     | sequenceValue rs => rs
+    | listValue rs => [listValue rs]
+
+  /-- Item view used by postfix spread `...`: spread opens exactly ONE
+      structure boundary. Sequence values and exact list values open to their
+      immediate items; atoms and strings supply themselves as one item.
+      C#: `Result.SpreadItems`. -/
+  def spreadItems : Result -> List Result
+    | listValue rs => rs
+    | r => r.toItems
+
+  /-- Deconstruction-openable structure view shared by the sequence-value
+      parameter pattern binders: a received sequence value or exact list value
+      opens to its immediate items; atoms and strings are not openable (the
+      binders apply their own scalar one-item fallback). Function-call argument
+      binding never uses this view — a list argument stays one argument.
+      C#: `GetSequenceValuePatternItems` / `BindCountedParameterPattern`. -/
+  def structureItems? : Result -> Option (List Result)
+    | sequenceValue rs => some rs
+    | listValue rs => some rs
+    | _ => none
+
+  def isListValue : Result -> Bool
+    | listValue _ => true
+    | _ => false
 
   /-- Construction preserves structure; selection projects content.
       Project one selected value to the top-level content it denotes at the
@@ -981,7 +1031,9 @@ namespace Result
 
   /-- Count emitted top-level values when a result is already in hand.
       Empty results emit 0. Any non-empty atomic, string, or sequence value
-      counts as one value.
+      counts as one value. List values ALWAYS count as one visible value,
+      including the empty list `[]` — only the empty SEQUENCE value `()` is
+      the invisible-able empty result.
 
       This is used by `reduce` and `map`, where sequence-value accumulator / mapped
       values are valid as long as the step / transform returns exactly one
@@ -1573,6 +1625,8 @@ mutual
     | .emptySequence _ => pure ()
     | .sequenceSpread operand => do
         validateExplicitParamOutputInvariantExpr operand
+    | .listLiteral items =>
+        items.forM validateExplicitParamOutputInvariantExpr
     | .block alg =>
         validateExplicitParamOutputInvariant alg
     | .call fn args => do
@@ -1663,11 +1717,13 @@ partial def resultDiagnosticString : Result -> String
   | .atom value => toString value
   | .str value => "'" ++ value ++ "'"
   | .sequenceValue items => "(" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ ")"
+  | .listValue items => "[" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ "]"
 
 def numericScalarOperandDescription : Result -> String
   | .sequenceValue items => s!"a sequence value with {items.length} sequence element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.sequenceValue items)}"
   | .str value => "a string: '" ++ value ++ "'"
   | .atom value => s!"numeric value {value}"
+  | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
 
 def requireNumericScalarOperand (op : BinaryOp) (side : String) (value : Result) : EvalM Int :=
   match Result.asInt? value with
@@ -1769,12 +1825,15 @@ def mergePatternAlgEnv (leftValues rightValues : ValEnv)
 
 /-- Argument passing rule: a single atom is wrapped in a one-element list;
     a sequence value is unpacked into its elements.  This is the canonical ABI for
-    translating an evaluated Result into positional arguments for bindParams. -/
+    translating an evaluated Result into positional arguments for bindParams.
+    Exact list values are NOT unpacked: call-argument binding preserves a list
+    as one argument; only explicit caller-site `...` opens it. -/
 def unpackArgs (r : Result) : List Result :=
   match r with
   | .atom _ => [r]
   | .str _  => [r]
   | .sequenceValue rs => rs
+  | .listValue _ => [r]
 
 def preserveCallArgBoundary : List Bool -> Nat -> Bool
   | [], _ => false
@@ -1929,6 +1988,9 @@ def resultToExpr : Result -> Expr
         .emptySequence 0
       else
         .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
+  -- Exact list values reify as list literals so they round-trip losslessly
+  -- (a reified `()` element stays one visible list element).
+  | .listValue rs => .listLiteral (rs.map resultToExpr)
 
 /-- Validate the output shape required by counted builtins that must emit
     exactly one top-level value.
@@ -2001,7 +2063,7 @@ def combineCollectionResult : List Result -> Result
     same structural value with emitted count `Result.valueCount value` (0 for the
     empty sequence value, otherwise 1). A multi-output body therefore becomes one
     sequence value at the boundary; only an explicit caller-site postfix `...`
-    re-opens it (via `Result.toItems`, which reads the value, not this count).
+    re-opens it (via `Result.spreadItems`, which reads the value, not this count).
 
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already canonicalized redundant unary empty structure. It is
@@ -2037,15 +2099,25 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
   sequenceConstructLeavesLoop [expr] []
 
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
-    Each `sequenceSpread` level spreads exactly the items of its operand, so
-    `sequenceSpread (sequenceSpread A)` is value-equivalent to `sequenceSpread A`.
-    Peeling iteratively (this is tail-recursive) keeps deeply-nested postfix
-    spread such as source `A......` stack-safe, matching the C# evaluator. This
-    is NOT binary spine flattening: there is no right operand, it only unwraps
+    Used by evaluation together with `peelSequenceSpreadLayers`: each written
+    `...` layer opens exactly one structure boundary, applied compositionally
+    and iteratively (stack-safe for deep `A......` chains, matching the C#
+    evaluator). For sequence values the extra layers are fixed points (the
+    re-captured sequence reopens to the same items), so stacked spread is
+    value-equivalent to one spread; for exact LIST values each layer opens one
+    more list boundary (`[[7]]......` is `7`, like `([[7]]...)...`). This is
+    NOT binary spine flattening: there is no right operand, it only unwraps
     the single-operand chain. -/
 partial def peelSequenceSpread : Expr -> Expr
   | .sequenceSpread operand => peelSequenceSpread operand
   | e => e
+
+/-- Peel directly-nested spreads while counting the written layers.
+    Returns the innermost non-spread operand and the number of `...` layers
+    (at least 1 when called on a spread node). -/
+partial def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
+  | .sequenceSpread operand, n => peelSequenceSpreadLayers operand (n + 1)
+  | e, n => (e, n)
 
 /-- Reify a counted argument shape as a zero-parameter algorithm that preserves
     the same value and emitted top-level count when evaluated. -/
@@ -2104,8 +2176,11 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
       | .variadic => .error Error.badArity
   | .sequenceValue items =>
       let sequenceValueItems? :=
-        match input.fst with
-        | .sequenceValue sequenceValueItems => some sequenceValueItems
+        -- A received sequence value or exact list value opens to its
+        -- immediate items (`Result.structureItems?`): the deconstruction
+        -- receiver opens ONE lone structure boundary of either kind.
+        match Result.structureItems? input.fst with
+        | some structureItems => some structureItems
         -- This counted matcher is the callback binding path. Callback
         -- deconstruction is intentionally deferred; counted callback binding
         -- remains strict to preserve existing callback semantics and Lean/C#
@@ -2113,7 +2188,7 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
         -- `BindCountedParameterPattern`. The scalar one-item normalization for
         -- assignment and function-parameter deconstruction lives in the
         -- non-counted `bindParameterPattern` instead.
-        | value => if items.length == 1 then some [value] else none
+        | none => if items.length == 1 then some [input.fst] else none
       match sequenceValueItems? with
       | none => .error Error.badArity
       | some sequenceValueItems =>
@@ -2175,6 +2250,8 @@ def describeSequenceItem : Result -> String
   | .str s => s!"string value {repr s}"
   | .sequenceValue [] => "empty sequence value"
   | .sequenceValue _ => "sequence value"
+  | .listValue [] => "empty list value"
+  | .listValue _ => "list value"
 
 def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
@@ -2288,6 +2365,7 @@ def Expr.kind : Expr -> String
   | .sequenceConstruct _ _ => "sequenceConstruct"
   | .emptySequence _ => "emptySequence"
   | .sequenceSpread _    => "spread"
+  | .listLiteral _ => "listLiteral"
   | .resolve _    => "resolve"
   | .block _      => "block"
   | .call _ _     => "call"
@@ -2327,6 +2405,8 @@ partial def exprDiagnosticName : Expr -> String
   | .emptySequence depth => emptySequenceText depth
   -- Postfix spread renders as `operand...` over its single operand.
   | .sequenceSpread operand => exprDiagnosticName operand ++ "..."
+  -- Exact list literal `[a, b, c]`.
+  | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
   | .block algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
   | .call fn _ => exprDiagnosticName fn ++ "(...)"
@@ -3393,6 +3473,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       | none     => .error (Error.notAnAlgorithm s!"param({x})")
   | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
   | .emptySequence _ => .error (Error.notAnAlgorithm "empty sequence value")
+  | .listLiteral _ => .error (Error.notAnAlgorithm "list literal")
   | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
   | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
   | .index _ _ => .error (Error.notAnAlgorithm "index expression")
@@ -3524,10 +3605,14 @@ mutual
           | some sequenceValueItems => some sequenceValueItems
           | none =>
             match input.value? with
-            | some (.sequenceValue sequenceValueItems) => some sequenceValueItems
-            -- A non-grouped scalar is a one-item supply for the prefix/rest/suffix
-            -- matcher (the same normalization the function deconstruction path applies).
-            | some value => some [value]
+            -- A received sequence value or exact list value opens to its
+            -- immediate items (`Result.structureItems?`): the deconstruction
+            -- receiver opens ONE lone structure boundary of either kind, so
+            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]...`.
+            -- A non-grouped scalar is a one-item supply for the
+            -- prefix/rest/suffix matcher (the same normalization the function
+            -- deconstruction path applies).
+            | some value => some ((Result.structureItems? value).getD [value])
             | none => none
         match sequenceValueItems? with
         | none => .error (input.error?.getD Error.badArity)
@@ -4057,6 +4142,16 @@ mutual
     let collectionValues :=
       if supplyIsSingleGroupedValue then restValues
       else normalizeSingletonBoundaryForItemSupplyOf (fun value => some value) (fun value => value) restValues
+    -- Exact list values are not yet supported inside builtin item supplies:
+    -- singleton-boundary normalization deliberately does not open a lone list
+    -- (a list is one opaque value everywhere outside spread/deconstruction),
+    -- and final builtin list semantics are deferred to the follow-up builtin
+    -- work. Until then a list in the collection is a targeted type error;
+    -- explicit caller-site spread (`count([1, 2, 3]...)`) already supplies the
+    -- opened items and stays fully supported.
+    if collectionValues.any Result.isListValue then
+      .error (Error.typeMismatch
+        s!"{builtinDisplayName b} does not support list values yet; spread the list with `...` to supply its items")
     let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
     let preparedInput <- prepareSequenceBuiltinInput b metadata collected
     let rec prepareSuffix :
@@ -4911,13 +5006,13 @@ mutual
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
           let value <- evalAlgOutput wired ctx env
-          pure value.toItems
+          pure value.spreadItems
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ =>
         match <- evalAttempt (eval e ctx env) with
         | .ok value =>
-            pure value.toItems
+            pure value.spreadItems
         | .error err =>
             if isMissingOutputError err then
               .error Error.spreadMissingOutput
@@ -4925,16 +5020,47 @@ mutual
               .error err
 
     /-- Evaluate a unary `sequenceSpread` node by evaluating its single operand
-      and spreading that operand's immediate top-level items. Nested sequence-value
+      once and spreading immediate top-level items. Nested sequence-value
       members are not recursively flattened. Directly-nested spreads (`A......`)
-      are unwrapped iteratively by `peelSequenceSpread` so deep nesting stays
-      stack-safe; each level spreads the same items as the innermost operand,
-      so peeling to that operand and spreading once is value-equivalent. -/
+      are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
+      nesting) and then each written layer is applied COMPOSITIONALLY: every
+      `...` opens exactly one boundary of the value the previous layer would
+      have captured, so `A......` agrees with `(A...)...`. For sequence values
+      the extra layers are fixed points (value-equivalent to a single spread);
+      for exact LIST values each layer opens one more list boundary
+      (`[[7]]......` supplies `7`). -/
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
-    let operand := peelSequenceSpread e
+    let (operand, layers) := peelSequenceSpreadLayers e 0
     let supplied <- evalSequenceSpreadOperandItems operand ctx env
-    pure (Result.normalize (Result.sequenceValue supplied), supplied.length)
+    let rec reopen : Nat -> List Result -> List Result
+      | 0, items => items
+      | n + 1, items =>
+          reopen n (Result.spreadItems (Result.normalize (Result.sequenceValue items)))
+    let items := reopen (layers - 1) supplied
+    pure (Result.normalize (Result.sequenceValue items), items.length)
+
+  /-- Evaluate a surface list literal `[e1, ..., en]` as exactly ONE exact
+      immutable list value. Element slots reuse the written-parentheses
+      expression-list slot rules (`evalExplicitSequenceValueExprSlots`): an
+      explicit spread slot opens its operand's immediate items into the list
+      being constructed (an empty spread contributes no elements), a non-spread
+      slot is one element even when it evaluates to the empty sequence value
+      `()`, and a nested zero-parameter block is one written grouping level.
+      Unlike sequence construction the collected elements are stored EXACTLY:
+      no singleton erasure and no empty canonicalization, so `[7]`, `[[7]]`,
+      `[]`, and `[()]` are all distinct list values. A list literal always
+      emits one value. C#: `EvalListLiteralCounted`; plain `eval` is this
+      function's value projection on both sides. -/
+  partial def evalListLiteralCounted (elements : List Expr) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let rec collect : List Expr -> List Result -> EvalM (List Result)
+      | [], acc => pure acc.reverse
+      | e :: rest, acc => do
+          let values <- evalExplicitSequenceValueExprSlots e ctx env
+          collect rest (values.reverse ++ acc)
+    let items <- collect elements []
+    pure (Result.listValue items, 1)
 
   /-- Evaluate the INTERNAL `sequenceConstruct` join node as one sequence
       value. Join semantics, not written-parentheses semantics: a non-spread
@@ -5003,6 +5129,8 @@ mutual
         pure (value, Result.valueCount value)
     | .sequenceSpread _ =>
         evalSequenceSpreadCounted e ctx env
+    | .listLiteral elements =>
+        evalListLiteralCounted elements ctx env
     | .block a => do
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
@@ -5262,6 +5390,10 @@ mutual
 
     | .sequenceSpread _ => do
         let out <- evalSequenceSpreadCounted e ctx env
+        pure out.fst
+
+    | .listLiteral elements => do
+        let out <- evalListLiteralCounted elements ctx env
         pure out.fst
 
     | .block a =>
@@ -5640,6 +5772,7 @@ def call (f : Expr) (a : Algorithm) : Expr := .call f a
 def dotCall (o : Expr) (n : Ident) : Expr := .dotCall o n none
 def sequenceConstruct (a b : Expr) : Expr := .sequenceConstruct a b
 def sequenceSpread (a : Expr) : Expr := .sequenceSpread a
+def listLiteral (items : List Expr) : Expr := .listLiteral items
 
 /-- Convenience constructor for algorithms with private properties by default.
     To make properties public, use `publicProp` when building the props list. -/
@@ -5758,6 +5891,7 @@ partial def postElabInvariant : Expr -> Bool
   | .index a b       => postElabInvariant a && postElabInvariant b
   | .sequenceConstruct a b  => postElabInvariant a && postElabInvariant b
   | .sequenceSpread a       => postElabInvariant a
+  | .listLiteral items      => items.all postElabInvariant
   | .call (.resolve "load") _ => false  -- unresolved load call
   | .call f args     => postElabInvariant f && postElabInvariantAlg args
   | .dotCall _ "Output" _ => false

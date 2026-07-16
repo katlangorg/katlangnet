@@ -376,6 +376,14 @@ internal static class PropertyDependencyGraphBuilder
                 return seed;
             }
 
+            case Expr.ListLiteral(var listItems):
+            {
+                var seed = new SummarySeed();
+                foreach (var item in listItems)
+                    seed.UnionWith(CollectSummarySeed(item, localPropertySummaries, ownedHere, ancestorOwnedForChildren));
+                return seed;
+            }
+
             case Expr.Block(var algorithm):
                 return CollectSummarySeed(
                     algorithm,
@@ -485,6 +493,11 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.SequenceConstruct(var left, var right):
                 CollectSiblingDependencyIndices(left, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 CollectSiblingDependencyIndices(right, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
+                break;
+
+            case Expr.ListLiteral(var listItems):
+                foreach (var item in listItems)
+                    CollectSiblingDependencyIndices(item, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
             case Expr.DotCall(var target, _, null):
@@ -660,6 +673,11 @@ internal static class PropertyDependencyGraphBuilder
             case Expr.SequenceConstruct(var left, var right):
                 CollectDirectAncestorOwnedParameterNames(left, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
                 CollectDirectAncestorOwnedParameterNames(right, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
+                break;
+
+            case Expr.ListLiteral(var listItems):
+                foreach (var item in listItems)
+                    CollectDirectAncestorOwnedParameterNames(item, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
                 break;
 
             case Expr.Block(var algorithm):

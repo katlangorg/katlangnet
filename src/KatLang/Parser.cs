@@ -1114,6 +1114,7 @@ public sealed class Parser
         Expr.Index(var t, var s) => FindGraceSpan(t) ?? FindGraceSpan(s),
         Expr.SequenceConstruct(var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
         Expr.SequenceSpread(var operand) => FindGraceSpan(operand),
+        Expr.ListLiteral(var items) => FindGraceSpan(items),
         Expr.DotCall(var t, _, var a) => FindGraceSpan(t) ?? (a is not null ? FindGraceSpan(a.Output) : null),
         Expr.Call(var f, var a) => FindGraceSpan(f) ?? FindGraceSpan(a.Output),
         Expr.Block(var alg) => FindGraceSpan(alg.Output),
@@ -1450,6 +1451,7 @@ public sealed class Parser
         Expr.Binary => "binary",
         Expr.SequenceConstruct => "sequenceConstruct",
         Expr.SequenceSpread => "spread",
+        Expr.ListLiteral => "listLiteral",
         Expr.Index => "index",
         Expr.Call => "call",
         Expr.DotCall => "dotCall",
@@ -1591,6 +1593,11 @@ public sealed class Parser
         or TokenKind.Tilde
         or TokenKind.LParen
         or TokenKind.LBrace
+        // '[' always starts a NEW list-literal expression; it is deliberately
+        // absent from the continuation policy table, so `A[1]` is the
+        // adjacency expression list `A, [1]` (indexing is ':', never brackets)
+        // and `F[1]` is never a call form.
+        or TokenKind.LBracket
         or TokenKind.KeywordOpen => true,
         _ => false,
     };
@@ -1938,6 +1945,23 @@ public sealed class Parser
                 var alg = ParseAlgorithm(isParametrized: true);
                 Expect(TokenKind.RBrace);
                 return new Expr.Block(alg) { Span = MakeSpan(start) };
+            }
+
+            case TokenKind.LBracket:
+            {
+                // Exact immutable list literal `[e1, ..., en]`. The bracket
+                // content is a pure expression list (spread slots included) —
+                // never an algorithm context, so declarations are not legal
+                // inside brackets and `[]`/`[x]`/`[[x]]` all stay distinct
+                // (no `()`-style canonicalization or singleton unwrap).
+                // An already-open '[' spans physical lines like '(' and '{'.
+                var start = Current;
+                Advance(); // consume '['
+                List<Expr> items = Current.Kind == TokenKind.RBracket
+                    ? []
+                    : ParseExpressionListOperand(allowNewlineImplicitExpressionListSeparator: true);
+                Expect(TokenKind.RBracket);
+                return new Expr.ListLiteral(items) { Span = MakeSpan(start) };
             }
 
             case TokenKind.KeywordOpen:

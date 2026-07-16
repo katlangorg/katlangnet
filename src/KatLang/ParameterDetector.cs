@@ -186,6 +186,11 @@ public static class ParameterDetector
                     ProcessOpenExpr(left, openParentScope, diagnostics),
                     ProcessOpenExpr(right, openParentScope, diagnostics)) { Span = expr.Span };
 
+            case Expr.ListLiteral(var items):
+                return new Expr.ListLiteral(
+                    items.Select(item => ProcessOpenExpr(item, openParentScope, diagnostics)).ToList())
+                { Span = expr.Span };
+
             case Expr.Call(var function, var args):
                 return new Expr.Call(
                     ProcessOpenExpr(function, openParentScope, diagnostics),
@@ -355,6 +360,11 @@ public static class ParameterDetector
                     RewriteBinderRefs(left, binderNames, scope, capturedParamNames),
                     RewriteBinderRefs(right, binderNames, scope, capturedParamNames)) { Span = expr.Span };
 
+            case Expr.ListLiteral(var items):
+                return new Expr.ListLiteral(
+                    items.Select(item => RewriteBinderRefs(item, binderNames, scope, capturedParamNames)).ToList())
+                { Span = expr.Span };
+
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
                     RewriteBinderRefs(target, binderNames, scope, capturedParamNames),
@@ -507,6 +517,13 @@ public static class ParameterDetector
                 CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
 
+            case Expr.ListLiteral(var items):
+                // List-literal elements are transparent to the enclosing
+                // parameter scope, like spread operands and sequence joins.
+                foreach (var item in items)
+                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                break;
+
             case Expr.DotCall(var target, _, null):
                 CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
@@ -645,6 +662,11 @@ public static class ParameterDetector
                     RewriteParams(left, paramNames, scope, capturedParamNames),
                     RewriteParams(right, paramNames, scope, capturedParamNames)) { Span = expr.Span };
 
+            case Expr.ListLiteral(var items):
+                return new Expr.ListLiteral(
+                    items.Select(item => RewriteParams(item, paramNames, scope, capturedParamNames)).ToList())
+                { Span = expr.Span };
+
             case Expr.DotCall(var target, var name, null):
                 return new Expr.DotCall(
                     RewriteParams(target, paramNames, scope, capturedParamNames),
@@ -757,6 +779,9 @@ public static class ParameterDetector
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExpr(l, scope, capturedParamNames),
                 ProcessExpr(r, scope, capturedParamNames)) { Span = expr.Span },
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                items.Select(item => ProcessExpr(item, scope, capturedParamNames)).ToList())
+            { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExpr(t, scope, capturedParamNames),
                 n,
@@ -807,6 +832,7 @@ public static class ParameterDetector
             Expr.Index(var t, var s) => FindResolveSpan(t, name) ?? FindResolveSpan(s, name),
             Expr.SequenceConstruct(var l, var r) => FindResolveSpan(l, name) ?? FindResolveSpan(r, name),
             Expr.SequenceSpread(var operand) => FindResolveSpan(operand, name),
+            Expr.ListLiteral(var items) => FindResolveSpan(items, name),
             Expr.DotCall(var t, _, var da) => FindResolveSpan(t, name) ?? (da is not null ? FindResolveSpan(da.Output, name) : null),
             Expr.Block(var alg) => FindResolveSpan(alg.Output, name),
             Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args.Output, name),

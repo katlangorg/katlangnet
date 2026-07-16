@@ -259,8 +259,8 @@ theorem deconstruct_fixed_single_sequence_opens :
               countedParamEnv := [], variadicSupplyEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    mergeEqualValEnv, mergeEqualCountedParamEnv, mergePatternAlgEnv,
-    lookupAssoc, ValEnv.lookup]
+    Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
   rfl
 
 /-- `first, rest... = A`: the deconstruction sequence-value pattern opens `A`, so
@@ -278,10 +278,186 @@ theorem deconstruct_rest_single_sequence_opens :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
+    mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
+    CountedParamEnv.lookup, ValEnv.lookup, Result.normalize]
+  rfl
+
+/-
+## List bridge laws (exact list values)
+
+Exact list values (`Result.listValue`) join the deconstruction opening rule but
+are preserved everywhere else: `Result.toItems` keeps a list opaque (one item),
+only postfix spread (`Result.spreadItems`) and the deconstruction pattern
+(`Result.structureItems?`) open a list boundary, and builtin singleton-boundary
+opening deliberately does NOT open a lone list. The laws below pin each of
+those decisions over the real model, mirroring the sequence laws above.
+-/
+
+/-- Spread opens exactly one list boundary: `[1, 2, 3]...` supplies the items. -/
+theorem spreadItems_listValue (xs : List Result) :
+    (Result.listValue xs).spreadItems = xs := rfl
+
+/-- Spreading the empty list supplies zero items (`[]...` is neutral). -/
+theorem spreadItems_empty_list : (Result.listValue []).spreadItems = [] := rfl
+
+/-- Spread on sequence values is unchanged by the list extension. -/
+theorem spreadItems_sequenceValue (xs : List Result) :
+    (Result.sequenceValue xs).spreadItems = xs := rfl
+
+/-- The non-spread item view keeps a list OPAQUE: a list is one item, so
+value boundaries, indexing projection, and builtin item views never open it. -/
+theorem toItems_listValue_opaque (xs : List Result) :
+    (Result.listValue xs).toItems = [Result.listValue xs] := rfl
+
+/-- The deconstruction structure view opens a received list to its items. -/
+theorem structureItems_listValue (xs : List Result) :
+    Result.structureItems? (Result.listValue xs) = some xs := rfl
+
+/-- The deconstruction structure view opens a received sequence value. -/
+theorem structureItems_sequenceValue (xs : List Result) :
+    Result.structureItems? (Result.sequenceValue xs) = some xs := rfl
+
+/-- Atoms are not openable structures for deconstruction. -/
+theorem structureItems_atom (n : Int) :
+    Result.structureItems? (Result.atom n) = none := rfl
+
+/-- Builtin singleton-boundary opening does NOT open a lone list: builtin
+collection binding keeps a list argument as one opaque item (final builtin list
+semantics are deferred; only explicit `...` supplies list items to builtins). -/
+theorem builtin_singleton_boundary_preserves_list (xs : List Result) :
+    normalizeSingletonBoundaryForItemSupplyOf
+      (fun value => some value) (fun value => value) [Result.listValue xs]
+      = [Result.listValue xs] := rfl
+
+/-- Normalization preserves list structure exactly: elements canonicalize but
+the list boundary never collapses (`[7]` stays `[7]`). -/
+theorem normalize_listValue (xs : List Result) :
+    Result.normalize (Result.listValue xs) = Result.listValue (xs.map Result.normalize) := by
+  simp [Result.normalize]
+
+/-- A singleton SEQUENCE boundary around a list still collapses: `([1, 2])` is
+`[1, 2]`. Parenthesized grouping stays redundant even when the value is a list. -/
+theorem normalize_singleton_sequence_of_list (xs : List Result) :
+    Result.normalize (Result.sequenceValue [Result.listValue xs])
+      = Result.listValue (xs.map Result.normalize) := by
+  simp [Result.normalize]
+
+/-- Rest capture stays sequence-shaped: capturing opened list ITEMS groups them
+as one canonical sequence value, never a list (`x, rest... = [1, 2, 3]` gives
+`rest = (2, 3)`). -/
+theorem capture_of_list_items_is_sequence_shaped (a b : Result) :
+    captureForArityLaw [a, b] =
+      Result.sequenceValue [Result.normalize a, Result.normalize b] :=
+  capture_pair a b
+
+-- Function calls: a lone list argument is ONE argument; calls never open lists.
+
+/-- `Add(A)` with a stored LIST `A`: one supplied item against two fixed
+parameters is an arity mismatch — the call binder does not open the list. -/
+theorem call_fixed_single_list_rejected :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "x", kind := .normal }, .capture { name := "y", kind := .normal }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .error (Error.arityMismatch 2 1) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
+  rfl
+
+/-- `G(A)` mixed fixed/rest call with a stored LIST `A`: `first` receives the
+whole list value and `rest` captures nothing — calls never implicitly open. -/
+theorem call_rest_single_list_preserved :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("first", Result.listValue [Result.atom 1, Result.atom 2]),
+                         ("rest", Result.sequenceValue [])],
+              countedParamEnv := [("rest", (Result.sequenceValue [], 0))],
+              variadicSupplyEnv := [("rest", (Result.sequenceValue [], 0))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
     Result.normalize]
   rfl
+
+-- Assignment deconstruction: the pattern opens a lone LIST exactly like a
+-- lone sequence value.
+
+/-- `x, y = [1, 2]`: the deconstruction pattern opens the lone list, binding
+`x = 1`, `y = 2` — identical bindings to `x, y = [1, 2]...`. -/
+theorem deconstruct_fixed_single_list_opens :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "x", kind := .normal },
+                         .capture { name := "y", kind := .normal }]]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
+              countedParamEnv := [], variadicSupplyEnv := [], algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
+  rfl
+
+/-- `first, rest... = [1, 2, 3]`: the deconstruction pattern opens the lone
+list; `first = 1` and `rest` captures the remaining ITEMS as one canonical
+SEQUENCE value `(2, 3)` — rest capture never reconstructs the source list. -/
+theorem deconstruct_rest_single_list_opens :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "first", kind := .normal },
+                         .capture { name := "rest", kind := .variadic }]]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
+        true)
+      = .ok { argEnv := [("first", Result.atom 1),
+                         ("rest", Result.sequenceValue [Result.atom 2, Result.atom 3])],
+              countedParamEnv := [("rest", (Result.sequenceValue [Result.atom 2, Result.atom 3], 2))],
+              variadicSupplyEnv := [("rest", (Result.sequenceValue [Result.atom 2, Result.atom 3], 2))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
+    mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
+    CountedParamEnv.lookup, ValEnv.lookup, Result.normalize]
+  rfl
+
+/-- Lone-list DISAGREEMENT, lone-rest shape: on a lone list supply the lone-rest
+pattern — the ONE shape where call binding and deconstruction agree for a lone
+sequence value — produces DIFFERENT bindings: call binding captures the list
+itself (`rest = [1, 2]`), deconstruction captures its opened items as a
+sequence (`rest = (1, 2)`). Lists never satisfy the lone-sequence agreement. -/
+theorem lone_rest_list_call_and_deconstruct_differ :
+    runEvalM (bindParameterPatternList
+        [.capture { name := "rest", kind := .variadic }]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
+              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
+              variadicSupplyEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
+              algEnv := [] }
+    ∧ runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "rest", kind := .variadic }]]
+        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
+        true)
+      = .ok { argEnv := [("rest", Result.sequenceValue [Result.atom 1, Result.atom 2])],
+              countedParamEnv := [("rest", (Result.sequenceValue [Result.atom 1, Result.atom 2], 2))],
+              variadicSupplyEnv := [("rest", (Result.sequenceValue [Result.atom 1, Result.atom 2], 2))],
+              algEnv := [] } := by
+  constructor
+  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+      mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
+      Result.normalize]
+    rfl
+  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
+      mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
+      CountedParamEnv.lookup, ValEnv.lookup, Result.normalize]
+    rfl
 
 /-
 ## Canonical-form laws (general theorems over the real model)
@@ -296,8 +472,13 @@ authoritative model:
   sequence boundary anywhere in their tree (no literal-unwritable "orphans");
 * `captureForArityLaw_canonical` / `captureForArityLaw_orphanFree` — the real
   capture expression only ever produces canonical, orphan-free values;
-* `capture_toItems_of_canonical` — capture after spread reproduces canonical
-  values exactly (the spread/capture round-trip).
+* `capture_toItems_of_canonical` — re-capturing the NON-spread item view
+  (`Result.toItems`, which keeps lists opaque) reproduces canonical values
+  exactly, for every value kind including lists;
+* `capture_spreadItems_of_canonical_non_list` / `capture_spreadItems_of_list`
+  — the SPREAD/capture round-trip holds exactly on canonical non-list values;
+  spreading a list opens its boundary, so re-capture yields the canonical
+  capture of its elements instead of the list.
 -/
 
 private theorem normalize_sequenceValue_of_map_nil {rs : List Result}
@@ -338,6 +519,9 @@ mutual
                 rw [normalize_sequenceValue_of_map_multi h]
                 rw [h] at hl
                 exact normalize_sequenceValue_of_map_multi hl
+    | .listValue rs => by
+        have hl := normalize_map_idempotent rs
+        rw [normalize_listValue, normalize_listValue, hl]
   termination_by r => sizeOf r
 
   /-- Element-wise idempotence of mapped normalization, the list companion of
@@ -365,6 +549,10 @@ mutual
     | .atom _ => true
     | .str _ => true
     | .sequenceValue rs => rs.length != 1 && orphanFreeResultList rs
+    -- Exact lists carry NO singleton-orphan rule: `[x]` is literal-writable,
+    -- so only the elements are checked (a sequence orphan nested inside a
+    -- list still counts).
+    | .listValue rs => orphanFreeResultList rs
 
   /-- List traversal for `orphanFreeResult`. -/
   def orphanFreeResultList : List Result -> Bool
@@ -381,6 +569,12 @@ example : orphanFreeResult
   decide
 example : orphanFreeResult
     (Result.sequenceValue [Result.atom 1, Result.sequenceValue []]) = true := by decide
+example : orphanFreeResult (Result.listValue []) = true := by decide
+example : orphanFreeResult (Result.listValue [Result.atom 1]) = true := by decide
+example : orphanFreeResult
+    (Result.listValue [Result.listValue [Result.atom 1]]) = true := by decide
+example : orphanFreeResult
+    (Result.listValue [Result.sequenceValue [Result.atom 1]]) = false := by decide
 
 mutual
   /-- Orphan-freedom of canonical values over the real model: normalization
@@ -409,6 +603,11 @@ mutual
                 show ((a :: b :: tl2).length != 1 && orphanFreeResultList (a :: b :: tl2)) = true
                 rw [hlen, hl]
                 rfl
+    | .listValue rs => by
+        have hl := orphanFreeList_map_normalize rs
+        rw [normalize_listValue]
+        show orphanFreeResultList (rs.map Result.normalize) = true
+        exact hl
   termination_by r => sizeOf r
 
   /-- Every element of a normalized item list is orphan-free, the list
@@ -440,10 +639,10 @@ theorem captureForArityLaw_orphanFree (xs : List Result) :
     orphanFreeResult (captureForArityLaw xs) = true :=
   orphanFree_normalize (Result.sequenceValue xs)
 
-/-- Spread/capture round-trip over the real model: on a canonical value,
-re-capturing the item view (`Result.toItems`, the supply an explicit spread
-`...` provides) reproduces the value exactly. Opening a canonical value and
-grouping it back is lossless. -/
+/-- Item-view/capture round-trip over the real model: on a canonical value,
+re-capturing the non-spread item view (`Result.toItems`) reproduces the value
+exactly. Lists included: `toItems` keeps a list opaque (one item), and
+singleton capture collapses back to that same list. -/
 theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
     captureForArityLaw r.toItems = r := by
   cases r with
@@ -458,6 +657,43 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
   | sequenceValue rs =>
       rw [toItems_sequenceValue]
       exact h
+  | listValue rs =>
+      show captureForArityLaw [Result.listValue rs] = Result.listValue rs
+      rw [capture_singleton]
+      exact h
+
+/-- The SPREAD/capture round-trip is sequence-specific: it holds exactly on
+canonical values that are not lists. Spreading a list opens its boundary, and
+re-capturing the opened items groups them as a sequence value — spread-then-
+capture converts a list to a sequence (`x = A...` with `A = [1, 2, 3]` gives
+`x = (1, 2, 3)`), losslessly for every other value kind. -/
+theorem capture_spreadItems_of_canonical_non_list (r : Result)
+    (h : r.normalize = r) (hl : ∀ xs, r ≠ Result.listValue xs) :
+    captureForArityLaw r.spreadItems = r := by
+  cases r with
+  | atom n =>
+      show captureForArityLaw [Result.atom n] = Result.atom n
+      rw [capture_singleton]
+      exact h
+  | str s =>
+      show captureForArityLaw [Result.str s] = Result.str s
+      rw [capture_singleton]
+      exact h
+  | sequenceValue rs =>
+      show captureForArityLaw rs = Result.sequenceValue rs
+      exact h
+  | listValue rs =>
+      exact absurd rfl (hl rs)
+
+/-- Spread-then-capture on a list yields the canonical capture of its
+ELEMENTS — never the same list back: the concrete conversion law behind
+`x = A...` re-grouping list items as `(1, 2, 3)`. Singleton normalization
+applies to the re-capture as usual, so a one-element payload collapses to
+that lone element (`[7]` round-trips to `7`, and `[[7]]` to the inner
+`[7]`), while multi-element payloads become one sequence value. -/
+theorem capture_spreadItems_of_list (xs : List Result) :
+    captureForArityLaw (Result.listValue xs).spreadItems
+      = Result.normalize (Result.sequenceValue xs) := rfl
 
 /-- Capture/spread/capture collapse: since captured values are canonical, a
 second capture of a captured value's items is just the first capture. -/
@@ -466,9 +702,11 @@ theorem capture_toItems_capture (xs : List Result) :
   capture_toItems_of_canonical _ (captureForArityLaw_canonical xs)
 
 /-- Spreading the empty sequence value supplies zero items: postfix `...` opens
-a value via `Result.toItems`, so `()...` contributes nothing to the surrounding
-item supply. This is the toItems-layer statement of the visible-empty spread
-law (the empty instance of `toItems_sequenceValue`). -/
+a value via `Result.spreadItems`, which agrees with `Result.toItems` on
+sequence values, so `()...` contributes nothing to the surrounding item
+supply. This is the item-view statement of the visible-empty spread law (the
+empty instance of `toItems_sequenceValue` / `spreadItems_sequenceValue`;
+`spreadItems_empty_list` is the list twin). -/
 theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
 
 /-
@@ -496,12 +734,18 @@ theorem reCountValueBoundary_idempotent (p : CountedResult) :
     reCountValueBoundary (reCountValueBoundary p) = reCountValueBoundary p := rfl
 
 /-- The structural emitted count of one value is at most one: only the empty
-sequence value emits 0; every other value emits exactly 1. -/
+sequence value emits 0; every other value — including the empty list `[]`,
+which is a visible exact value — emits exactly 1. -/
 theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .atom _ => Nat.le_refl 1
   | .str _ => Nat.le_refl 1
   | .sequenceValue [] => Nat.zero_le 1
   | .sequenceValue (_ :: _) => Nat.le_refl 1
+  | .listValue _ => Nat.le_refl 1
+
+/-- The empty list is a visible value: `[]` emits count 1 at every value
+boundary, unlike the empty sequence value `()` which emits 0. -/
+theorem valueCount_empty_list : (Result.listValue []).valueCount = 1 := rfl
 
 /-- A result boundary emits at most one value: after `reCountValueBoundary`
 the count is 0 (empty sequence value) or 1, never a multi-item count. -/

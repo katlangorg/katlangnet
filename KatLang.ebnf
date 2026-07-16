@@ -131,10 +131,13 @@ SequenceAtom          = Expression { "..." } ;
                         starts a new expression-list slot, so A...B,
                         A...(), A... B, and A... <newline> B all parse as
                         A..., B (whitespace
-                        before "..." stays insignificant). Postfix x... spreads
-                        the evaluated sequence value of x into the surrounding
-                        slot context and does not continue onto the next
-                        physical line. The source token after the dots is
+                        before "..." stays insignificant). Postfix x... opens
+                        one item-producing boundary of the evaluated value
+                        (sequence and list values supply their contained items;
+                        an atom or string supplies itself as one item) and
+                        contributes the items to the surrounding slot context —
+                        it does not create a sequence value by itself — and
+                        does not continue onto the next physical line. The source token after the dots is
                         an ordinary expression-list contribution, never a right operand;
                         internally x... is a unary spread node over its single
                         operand, with no right operand. `X(a b...)` parses as X(a, b...).
@@ -252,7 +255,8 @@ Primary         = NumberLiteral
                 | StringLiteral
                 | GraceIdentifier
                 | ParenBundleExpr
-                | BraceAlgorithmExpr ;
+                | BraceAlgorithmExpr
+                | ListLiteral ;
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
                   (* postfix "~" is same-physical-line only: a "~"-led line
@@ -269,6 +273,25 @@ ParenBundleExpr = "(" Algorithm ")" ;
                      "(1, (2, 3))". By contrast "{}" is an empty no-output body
                      (BraceAlgorithmExpr), not a value. *)
 BraceAlgorithmExpr = "{" Algorithm "}" ;
+ListLiteral     = "[" [ ExpressionList ] "]" ;
+                  (* Exact immutable list value, displayed as [1, 2, 3]. The
+                     bracket content is a pure expression list — declarations
+                     are not legal inside brackets — and spread elements insert
+                     their item supply into the list being constructed
+                     ([0, A..., 4]). UNLIKE ParenBundleExpr, no canonicalization
+                     applies to list structure: "[]", "[7]", and "[[7]]" are
+                     three distinct exact values ("[7]" never collapses to "7"
+                     and "[]" is a different value from "()"). Ordinary
+                     parentheses AROUND a list remain redundant sequence
+                     grouping: "([1, 2])" is the same value as "[1, 2]".
+                     "[" always begins a NEW expression: it is not a call or
+                     indexing delimiter, so same-line "A[1]" is the adjacency
+                     expression list "A, [1]" (indexing is ":"). An already-open
+                     "[" spans physical lines exactly like "(" and "{" until
+                     its "]" closes. Postfix "..." after "]" follows the normal
+                     same-physical-line spread rule and opens exactly one list
+                     boundary: "[1, 2, 3]..." supplies 1, 2, 3 and "[]..."
+                     supplies zero items. *)
 
 NumberLiteral   = Number ;
 Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;

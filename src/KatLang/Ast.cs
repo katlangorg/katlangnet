@@ -246,6 +246,18 @@ public abstract record Expr
     /// </summary>
     public sealed record SequenceSpread(Expr Operand) : Expr;
 
+    /// <summary>
+    /// Surface list literal <c>[e1, ..., en]</c>. Evaluates to exactly ONE
+    /// exact immutable list value (<see cref="Result.ListValue"/>). Element
+    /// slots follow the same expression-list rules as written parentheses (an
+    /// explicit spread slot opens its operand's immediate items, a non-spread
+    /// <c>()</c> slot stays one visible element), but the collected elements
+    /// are stored EXACTLY: no singleton erasure and no empty canonicalization,
+    /// so <c>[7]</c>, <c>[[7]]</c>, and <c>[]</c> are all distinct values.
+    /// Lean: <c>listLiteral : List Expr → Expr</c>.
+    /// </summary>
+    public sealed record ListLiteral(IReadOnlyList<Expr> Items) : Expr;
+
     /// <summary>Resolves a named algorithm by lexical lookup.</summary>
     public sealed record Resolve(string Name) : Expr;
 

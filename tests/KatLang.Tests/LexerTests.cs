@@ -92,6 +92,19 @@ public class LexerTests
     }
 
     [Fact]
+    public void Tokenize_Brackets_ReturnsBracketTokens()
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize("[1, 2]");
+
+        Assert.Empty(diagnostics);
+        Assert.Equal(TokenKind.LBracket, tokens[0].Kind);
+        Assert.Equal(TokenKind.Number, tokens[1].Kind);
+        Assert.Equal(TokenKind.Comma, tokens[2].Kind);
+        Assert.Equal(TokenKind.Number, tokens[3].Kind);
+        Assert.Equal(TokenKind.RBracket, tokens[4].Kind);
+    }
+
+    [Fact]
     public void Tokenize_Ellipsis_ReturnsEllipsisToken()
     {
         var (tokens, diagnostics) = Lexer.Tokenize("A...B");

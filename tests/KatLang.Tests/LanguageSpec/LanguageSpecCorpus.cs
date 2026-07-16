@@ -37,6 +37,7 @@ public static class LanguageSpecCorpus
         "parser-layout",
         "errors",
         "strings",
+        "lists",
     ];
 
     // ----- Lean program text helpers (same encoding as SemanticExplorerCorpus:
@@ -1801,6 +1802,290 @@ public static class LanguageSpecCorpus
             LeanProgram = LProg([LProp("x", "(.stringLiteral \"ab\")")], [".resolve \"x\""]),
             Notes = "String display intentionally drops quotes (documented display non-roundtrip).",
             Explanation = "String values display without quotes.",
+        },
+
+        // ==================== lists ====================
+        new()
+        {
+            Id = "list-literal",
+            Category = "lists",
+            Source = "[1, 2, 3]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]",
+            ExpectedRaw = "L[1, 2, 3]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [".listLiteral [.num 1, .num 2, .num 3]"]),
+            Probes =
+            [
+                new SpecProbe("[[1, 2], [3, 4]]", "ok raw=L[L[1, 2], L[3, 4]] n=1"),
+                new SpecProbe("[()]", "ok raw=L[S[]] n=1"),
+                new SpecProbe("[(1, 2)]", "ok raw=L[S[1, 2]] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`[1, 2, 3]` is an exact immutable list value: one value whose elements are stored exactly, displayed with brackets.",
+        },
+        new()
+        {
+            Id = "list-exactness",
+            Category = "lists",
+            Source = "[7] == 7\n[[1, 2]] == [1, 2]\n[[]] == []",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0\n0\n0",
+            ExpectedRaw = "S[0, 0, 0]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg(
+                [],
+                [".binary .eq (.listLiteral [.num 7]) (.num 7)",
+                 ".binary .eq (.listLiteral [.listLiteral [.num 1, .num 2]]) (.listLiteral [.num 1, .num 2])",
+                 ".binary .eq (.listLiteral [.listLiteral []]) (.listLiteral [])"]),
+            Probes =
+            [
+                new SpecProbe("[1, 2] == [1, 2]", "ok raw=1 n=1"),
+                new SpecProbe("[[1], [2, 3]] == [[1], [2, 3]]", "ok raw=1 n=1"),
+                new SpecProbe("[1, [2]] == [1, 2]", "ok raw=0 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Lists preserve exact cardinality and nesting: `[7]` is not `7`, `[[1, 2]]` is not `[1, 2]`, `[[]]` is not `[]`; equality is structural and recursive.",
+        },
+        new()
+        {
+            Id = "list-vs-sequence-kind",
+            Category = "lists",
+            Source = "[] == ()\n[1, 2] == (1, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0\n0",
+            ExpectedRaw = "S[0, 0]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [],
+                [".binary .eq (.listLiteral []) (.emptySequence 0)",
+                 ".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"]),
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.",
+        },
+        new()
+        {
+            Id = "list-redundant-parens-canonicalize",
+            Category = "lists",
+            Source = "([1, 2]) == [1, 2]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [],
+                [".binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])"]),
+            Probes =
+            [
+                new SpecProbe("(([1]))", "ok raw=L[1] n=1"),
+            ],
+            Explanation = "Ordinary parentheses stay a redundant sequence grouping even around lists: `([1, 2])` canonicalizes to the exact list itself.",
+        },
+        new()
+        {
+            Id = "list-spread-capture",
+            Category = "lists",
+            Source = "A = [1, 2, 3]\n\nx = A\ny = A...\n\nx\ny",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]\n(1, 2, 3)",
+            ExpectedRaw = "S[L[1, 2, 3], S[1, 2, 3]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
+                 LProp("x", ".resolve \"A\""),
+                 LProp("y", ".sequenceSpread (.resolve \"A\")")],
+                [".resolve \"x\"", ".resolve \"y\""]),
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Single-name capture preserves the list; postfix spread opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.",
+        },
+        new()
+        {
+            Id = "list-spread-edges",
+            Category = "lists",
+            Source = "A = []\nB = [7]\nC = [[7]]\n\nA...\nB...\nC...",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n[7]",
+            ExpectedRaw = "S[7, L[7]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("A", "(.listLiteral [])"),
+                 LProp("B", "(.listLiteral [.num 7])"),
+                 LProp("C", "(.listLiteral [.listLiteral [.num 7]])")],
+                [".sequenceSpread (.resolve \"A\")",
+                 ".sequenceSpread (.resolve \"B\")",
+                 ".sequenceSpread (.resolve \"C\")"]),
+            Probes =
+            [
+                new SpecProbe("A = []\nx = A...\nx", "ok raw=S[] n=1"),
+            ],
+            Explanation = "Spread opens ONE boundary: `[]...` supplies zero items (the row vanishes), `[7]...` supplies `7`, and `[[7]]...` supplies the inner list `[7]` intact.",
+        },
+        new()
+        {
+            Id = "list-literal-spread-elements",
+            Category = "lists",
+            Source = "A = 1, 2, 3\n\n[A...]\n[0, A..., 4]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]\n[0, 1, 2, 3, 4]",
+            ExpectedRaw = "S[L[1, 2, 3], L[0, 1, 2, 3, 4]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("A", LNums(1, 2, 3))],
+                [".listLiteral [.sequenceSpread (.resolve \"A\")]",
+                 ".listLiteral [.num 0, .sequenceSpread (.resolve \"A\"), .num 4]"]),
+            IncludeInGeneratorPrompt = true,
+            Explanation = "List-literal elements use the ordinary expression-list model: a spread element inserts its item supply into the list being constructed.",
+        },
+        new()
+        {
+            Id = "list-elements-preserve-boundaries",
+            Category = "lists",
+            Source = "A = [1, 2]\nB = [3, 4]\n\n[A, B]\n[A..., B...]\n[A, B...]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[1, 2], [3, 4]]\n[1, 2, 3, 4]\n[[1, 2], 3, 4]",
+            ExpectedRaw = "S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg(
+                [LProp("A", "(.listLiteral [.num 1, .num 2])"),
+                 LProp("B", "(.listLiteral [.num 3, .num 4])")],
+                [".listLiteral [.resolve \"A\", .resolve \"B\"]",
+                 ".listLiteral [.sequenceSpread (.resolve \"A\"), .sequenceSpread (.resolve \"B\")]",
+                 ".listLiteral [.resolve \"A\", .sequenceSpread (.resolve \"B\")]"]),
+            Explanation = "Non-spread list values stay single elements; only explicit `...` opens a list into the surrounding list literal.",
+        },
+        new()
+        {
+            Id = "list-empty-spread-neutral",
+            Category = "lists",
+            Source = "[1, []..., 2]\n[1, ()..., 2]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]\n[1, 2]",
+            ExpectedRaw = "S[L[1, 2], L[1, 2]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [],
+                [".listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2]",
+                 ".listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]"]),
+            Probes =
+            [
+                new SpecProbe("F(a, b) = a + b\nF(1, []..., 2)", "ok raw=3 n=1"),
+                new SpecProbe("[1, [], 2]", "ok raw=L[1, L[], 2] n=1"),
+            ],
+            Explanation = "Spreading an empty list contributes zero elements, exactly like `()...`; a NON-spread `[]` element stays one visible list element.",
+        },
+        new()
+        {
+            Id = "list-call-boundary",
+            Category = "lists",
+            Source = "F(a, b, c) = a + b + c\nOne(x) = 7\n\nA = [1, 2, 3]\n\nOne(A)\nF(A...)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n6",
+            ExpectedRaw = "S[7, 6]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFn("F", ["a", "b", "c"], ".binary .add (.binary .add (.param \"a\") (.param \"b\")) (.param \"c\")"),
+                 LFn("One", ["x"], ".num 7"),
+                 LProp("A", "(.listLiteral [.num 1, .num 2, .num 3])")],
+                [LCall("One", ".resolve \"A\""),
+                 LCall("F", ".sequenceSpread (.resolve \"A\")")]),
+            Probes =
+            [
+                new SpecProbe("F(a) = a\nF([]...)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A...)` explicitly supplies its three elements, and `F([]...)` supplies zero arguments.",
+        },
+        new()
+        {
+            Id = "list-lone-deconstruction",
+            Category = "lists",
+            Source = "x, y, z = [1, 2, 3]\n\nx\ny\nz",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n3",
+            ExpectedRaw = "S[1, 2, 3]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg(
+                [LProp("d", "(.listLiteral [.num 1, .num 2, .num 3])"),
+                 LDecon("d", [], ["x", "y", "z"], -1, "x"),
+                 LDecon("d", [], ["x", "y", "z"], -1, "y"),
+                 LDecon("d", [], ["x", "y", "z"], -1, "z")],
+                [".resolve \"x\"", ".resolve \"y\"", ".resolve \"z\""]),
+            Probes =
+            [
+                new SpecProbe("x, y, z = [1, 2, 3]...\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("A = [1, 2, 3]\nx, y, z = A\nx, y, z", "ok raw=S[1, 2, 3] n=3"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A multi-target deconstruction whose right-hand side is exactly one list value opens the list, binding identically to the explicit spread.",
+        },
+        new()
+        {
+            Id = "list-deconstruction-not-recursive",
+            Category = "lists",
+            Source = "x, y = [[1, 2], 3]\n\nx\ny",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]\n3",
+            ExpectedRaw = "S[L[1, 2], 3]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("d", "(.listLiteral [.listLiteral [.num 1, .num 2], .num 3])"),
+                 LDecon("d", [], ["x", "y"], -1, "x"),
+                 LDecon("d", [], ["x", "y"], -1, "y")],
+                [".resolve \"x\"", ".resolve \"y\""]),
+            Probes =
+            [
+                new SpecProbe("x, y = [1, 2], 3\nx, y", "ok raw=S[L[1, 2], 3] n=2"),
+            ],
+            Explanation = "Only the outer lone structure opens: nested lists stay intact, and a list that is one item of an already multi-item supply stays one value.",
+        },
+        new()
+        {
+            Id = "list-rest-capture-is-sequence",
+            Category = "lists",
+            Source = "x, rest... = [1, 2, 3]\n\nx\nrest",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n(2, 3)",
+            ExpectedRaw = "S[1, S[2, 3]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("d", "(.listLiteral [.num 1, .num 2, .num 3])"),
+                 LDecon("d", [], ["x", "rest"], 1, "x"),
+                 LDecon("d", [], ["x", "rest"], 1, "rest")],
+                [".resolve \"x\"", ".resolve \"rest\""]),
+            Probes =
+            [
+                new SpecProbe("x, rest... = [1]\nrest == ()", "ok raw=1 n=1"),
+                new SpecProbe("x, rest... = [1, 2]\nrest", "ok raw=2 n=1"),
+                new SpecProbe("x, rest... = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("x, rest... = 1, [2, 3], 4\nrest", "ok raw=S[L[2, 3], 4] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Rest capture groups the unmatched items as one canonical SEQUENCE value regardless of source container: it never reconstructs the list.",
+        },
+        new()
+        {
+            Id = "list-lone-rest-assignment-rejected",
+            Category = "lists",
+            Source = "items... = [1, 2, 3]\nitems",
+            Outcome = SpecOutcome.ParseError,
+            Explanation = "Rest-only assignment stays forbidden for lists exactly as for sequences; the explicit opening form is producer-side spread `items = value...`.",
+        },
+        new()
+        {
+            Id = "list-builtins-deferred",
+            Category = "lists",
+            Source = "count([1, 2, 3])",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            LeanProgram = LProg([], [LCall("count", "(.listLiteral [.num 1, .num 2, .num 3])")]),
+            Probes =
+            [
+                new SpecProbe("count([1, 2, 3]...)", "ok raw=3 n=1"),
+                new SpecProbe("sum([1, 2, 3]...)", "ok raw=6 n=1"),
+                new SpecProbe("A = [1, 2]\nA.count", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Builtin collection binding does not open list values yet (deferred to the follow-up builtin work): a list in an item supply is a targeted type error, while explicit spread `count([1, 2, 3]...)` supplies the elements and is fully supported.",
         },
 
         // ==================== implementation-only (C# decimal runtime) ====================

@@ -217,6 +217,8 @@ public class TutorialSpecTests
 
     private static bool IsValueLiteral(string claim) =>
         claim == "()"
+        || claim == "[]"
         || Regex.IsMatch(claim, @"^-?[0-9]+(\.[0-9]+)?$")
-        || (claim.StartsWith('(') && claim.EndsWith(')') && Regex.IsMatch(claim, @"^[0-9,()'\-. ]+$"));
+        || (claim.StartsWith('(') && claim.EndsWith(')') && Regex.IsMatch(claim, @"^[0-9,()\[\]'\-. ]+$"))
+        || (claim.StartsWith('[') && claim.EndsWith(']') && Regex.IsMatch(claim, @"^[0-9,()\[\]'\-. ]+$"));
 }

@@ -61,6 +61,7 @@ public class EvaluatorTests
         Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
         Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(MakeAllPublicExpr(operand)) { Span = expr.Span },
+        Expr.ListLiteral(var items) => new Expr.ListLiteral(items.Select(MakeAllPublicExpr).ToList()) { Span = expr.Span },
         _ => expr,
     };
 

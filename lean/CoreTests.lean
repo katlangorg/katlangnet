@@ -11717,4 +11717,246 @@ def dotCallParityCacheCasesWriteCache : Bool :=
 
 #guard dotCallParityCacheCasesWriteCache
 
+--------------------------------------------------------------------------------
+-- Exact immutable list values (`[]` syntax)
+--------------------------------------------------------------------------------
+-- C# parity: tests/KatLang.Tests/ListValueTests.cs. Binder laws:
+-- KatLangArityLaws.lean list bridge laws (exact list values are
+-- intentionally not modeled in the CoreArityAlgebra paper artifact).
+
+-- `[1, 2, 3]` constructs ONE exact list value.
+def listLiteralConstructsExactValue : Bool :=
+  match runResult (.block (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+  | _ => false
+
+#guard listLiteralConstructsExactValue
+
+-- `[]`, `[7]`, and `[[7]]` keep exact cardinality and nesting: no singleton
+-- erasure and no empty canonicalization applies to list structure.
+def listExactnessPreserved : Bool :=
+  (match runResult (.block (alg [] [] [] [.listLiteral []])) with
+   | Except.ok (Result.listValue []) => true | _ => false) &&
+  (match runResult (.block (alg [] [] [] [.listLiteral [.num 7]])) with
+   | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
+  (match runResult (.block (alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])) with
+   | Except.ok (Result.listValue [Result.listValue [Result.atom 7]]) => true | _ => false)
+
+#guard listExactnessPreserved
+
+-- Equality is structural, recursive, and kind-exact: a list never equals a
+-- sequence value or the lone item it contains.
+def listEqualityIsKindExact : Bool :=
+  expectFlat (runFlat (.block (alg [] [] [] [
+    .binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]),
+    .binary .eq (.listLiteral []) (.emptySequence 0),
+    .binary .eq (.listLiteral [.num 7]) (.num 7),
+    .binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))])))
+    [1, 0, 0, 0]
+
+#guard listEqualityIsKindExact
+
+-- Ordinary parentheses stay a redundant SEQUENCE grouping around lists:
+-- `([1, 2])` canonicalizes to the exact list itself.
+def redundantParensAroundListCanonicalize : Bool :=
+  match runResult (.block (alg [] [] [] [.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard redundantParensAroundListCanonicalize
+
+-- A non-spread `()` element stays one visible list element.
+def listKeepsVisibleEmptyElement : Bool :=
+  match runResult (.block (alg [] [] [] [.listLiteral [.num 1, .emptySequence 0, .num 2]])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.sequenceValue [], Result.atom 2]) => true
+  | _ => false
+
+#guard listKeepsVisibleEmptyElement
+
+-- Postfix spread opens exactly ONE list boundary; capturing the spread yields
+-- the canonical sequence of the elements.
+def spreadCaptureConvertsListToSequence : Bool :=
+  match runResult (.block (algPrivate [] []
+    [("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]]),
+     ("B", alg [] [] [] [sequenceSpread (.resolve "A")])]
+    [.resolve "B"])) with
+  | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+  | _ => false
+
+#guard spreadCaptureConvertsListToSequence
+
+-- Spread edge cases: `[]...` supplies zero items (captures as `()`),
+-- `[7]...` supplies the item, `[[7]]...` supplies the inner list intact.
+def listSpreadEdgeCasesOpenOneBoundary : Bool :=
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral []])] [sequenceSpread (.resolve "A")])) with
+   | Except.ok (Result.sequenceValue []) => true | _ => false) &&
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral [.num 7]])] [sequenceSpread (.resolve "A")])) with
+   | Except.ok (Result.atom 7) => true | _ => false) &&
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])] [sequenceSpread (.resolve "A")])) with
+   | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false)
+
+#guard listSpreadEdgeCasesOpenOneBoundary
+
+-- List-literal elements use the ordinary expression-list model: spread
+-- elements insert their item supply into the constructed list.
+def listLiteralSpreadElements : Bool :=
+  match runResult (.block (algPrivate [] []
+    [("A", alg [] [] [] [.num 1, .num 2, .num 3])]
+    [.listLiteral [.num 0, sequenceSpread (.resolve "A"), .num 4]])) with
+  | Except.ok (Result.listValue
+      [Result.atom 0, Result.atom 1, Result.atom 2, Result.atom 3, Result.atom 4]) => true
+  | _ => false
+
+#guard listLiteralSpreadElements
+
+-- Empty spreads contribute no elements; a NON-spread `[]` stays one element.
+def emptyListSpreadIsNeutralInListLiteral : Bool :=
+  (match runResult (.block (alg [] [] []
+      [.listLiteral [.num 1, sequenceSpread (.listLiteral []), .num 2]])) with
+   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
+  (match runResult (.block (alg [] [] []
+      [.listLiteral [.num 1, .listLiteral [], .num 2]])) with
+   | Except.ok (Result.listValue [Result.atom 1, Result.listValue [], Result.atom 2]) => true
+   | _ => false)
+
+#guard emptyListSpreadIsNeutralInListLiteral
+
+-- Calls preserve list boundaries: a list without spread is ONE argument.
+def callPreservesListBoundary : Bool :=
+  match runResult (.block (algPrivate [] []
+    [("F", alg ["a"] [] [] [.param "a"]),
+     ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
+    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard callPreservesListBoundary
+
+-- Explicit spread supplies the elements as separate arguments.
+def spreadOpensListIntoCallArguments : Bool :=
+  expectFlat (runFlat (.block (algPrivate [] []
+    [("F", alg ["a", "b", "c"] [] []
+        [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]),
+     ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
+    [.call (.resolve "F") (alg [] [] [] [sequenceSpread (.resolve "A")])]))) [6]
+
+#guard spreadOpensListIntoCallArguments
+
+-- A fixed-arity callee rejects an unspread list (calls never open lists).
+-- The list behaves exactly like any other single non-openable argument
+-- (scalar, string): the Lean final-arg binding path reports the remaining
+-- parameter/argument counts after the first binding step (`2 0`), a
+-- pre-existing payload shape shared by `F(5)` and `F('xy')`; the C# runtime
+-- reports the full signature counts (`3 1`). Both are category `arity`.
+def callDoesNotImplicitlyOpenList : Bool :=
+  expectInnermostArityMismatch 2 0 (runFlat (.block (algPrivate [] []
+    [("F", alg ["a", "b", "c"] [] []
+        [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]),
+     ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
+    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])))
+
+#guard callDoesNotImplicitlyOpenList
+
+-- Mixed fixed/rest call: a lone list argument stays whole — `first` receives
+-- the entire list, `rest` captures nothing.
+def mixedRestCallKeepsLoneListWhole : Bool :=
+  match runResult (.block (algPrivate [] []
+    [("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] []
+        [.param "first"]),
+     ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
+    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard mixedRestCallKeepsLoneListWhole
+
+-- Deconstruction (the sequence-value parameter pattern) opens a lone LIST
+-- exactly like a lone sequence value: `x, y, z = [1, 2, 3]` binds elementwise.
+def deconstructionOpensLoneList : Bool :=
+  let helper := KatLang.Expr.block (algWithParameterPatterns
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]]
+    [] [] [.param "y"])
+  expectFlat (runFlat (.block (algPrivate [] []
+    [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
+    [.call helper (alg [] [] [] [.resolve "d"])]))) [2]
+
+#guard deconstructionOpensLoneList
+
+-- Rest capture in deconstruction stays SEQUENCE-shaped: it never
+-- reconstructs the source list.
+def listRestCaptureIsSequenceShaped : Bool :=
+  let helper := KatLang.Expr.block (algWithParameterPatterns
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]]
+    [] [] [.param "rest"])
+  match runResult (.block (algPrivate [] []
+    [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
+    [.call helper (alg [] [] [] [.resolve "d"])])) with
+  | Except.ok (Result.sequenceValue [Result.atom 2, Result.atom 3]) => true
+  | _ => false
+
+#guard listRestCaptureIsSequenceShaped
+
+-- Deconstruction opens only the OUTER lone structure: nested lists stay whole.
+def deconstructionDoesNotOpenListRecursively : Bool :=
+  let helper := KatLang.Expr.block (algWithParameterPatterns
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]
+    [] [] [.param "x"])
+  match runResult (.block (algPrivate [] []
+    [("d", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]
+    [.call helper (alg [] [] [] [.resolve "d"])])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard deconstructionDoesNotOpenListRecursively
+
+-- Builtin collection binding does not open lists yet (deferred): a list in
+-- the bound item supply is a targeted type error, while explicit spread
+-- supplies the opened elements and is fully supported.
+def builtinListCollectionRejected : Bool :=
+  expectInnermostTypeMismatch (runFlat (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])])))
+
+#guard builtinListCollectionRejected
+
+def builtinSpreadListSupported : Bool :=
+  expectFlat (runFlat (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])]))) [3] &&
+  expectFlat (runFlat (.block (alg [] [] []
+    [.call (.resolve "sum") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])]))) [6]
+
+#guard builtinSpreadListSupported
+
+-- Indexing keeps lists opaque: selecting a list ITEM from a sequence
+-- preserves the list (projection does not erase listness).
+def indexingPreservesSelectedList : Bool :=
+  match runResult (.block (algPrivate [] []
+    [("A", alg [] [] [] [.block (alg [] [] [] [.num 0, .listLiteral [.num 1, .num 2]])])]
+    [.index (.resolve "A") (.num 1)])) with
+  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard indexingPreservesSelectedList
+
+-- Each written spread layer opens exactly one boundary: stacked spread on a
+-- nested list agrees with the value-boundary-separated form (`A......` is
+-- `(A...)...`), and extra layers on sequence values stay fixed points.
+def stackedSpreadOpensOneListBoundaryPerLayer : Bool :=
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])]
+      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
+   | Except.ok (Result.atom 7) => true | _ => false) &&
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2]]])]
+      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
+   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
+  (match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])])]
+      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
+   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false)
+
+#guard stackedSpreadOpensOneListBoundaryPerLayer
+
 end KatLangTests

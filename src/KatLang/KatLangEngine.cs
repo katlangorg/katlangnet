@@ -93,6 +93,7 @@ public abstract record RunResult
         Result.Atom a => FormatAtom(a.Value, displayOptions),
         Result.Str s => s.Value,
         Result.SequenceValue g => $"({string.Join(", ", g.Items.Select(item => Format(item, displayOptions)))})",
+        Result.ListValue l => $"[{string.Join(", ", l.Items.Select(item => Format(item, displayOptions)))}]",
         _ => "",
     };
 

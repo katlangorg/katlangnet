@@ -22,12 +22,16 @@ public abstract record ExplorerValue
     /// <summary>Redundant parentheses around one written value: <c>(x)</c>.</summary>
     public sealed record Wrap(ExplorerValue Inner) : ExplorerValue;
 
+    /// <summary>An exact immutable list literal <c>[a, b]</c> (any element count).</summary>
+    public sealed record ListOf(IReadOnlyList<ExplorerValue> Items) : ExplorerValue;
+
     public string Source => this switch
     {
         Num n => n.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
         Empty => "()",
         Seq s => "(" + string.Join(", ", s.Items.Select(i => i.Source)) + ")",
         Wrap w => "(" + w.Inner.Source + ")",
+        ListOf l => "[" + string.Join(", ", l.Items.Select(i => i.Source)) + "]",
         _ => throw new InvalidOperationException(),
     };
 
@@ -35,7 +39,8 @@ public abstract record ExplorerValue
     /// Lean Expr text for this written value. Parenthesized lists become
     /// zero-parameter blocks whose output slots are the items (the same
     /// elaboration the C# parser applies); a redundant wrap is a nested
-    /// single-output block (one written grouping level).
+    /// single-output block (one written grouping level); a bracket list
+    /// literal is the dedicated exact <c>.listLiteral</c> node.
     /// </summary>
     public string LeanExpr => this switch
     {
@@ -43,6 +48,7 @@ public abstract record ExplorerValue
         Empty => "(.emptySequence 0)",
         Seq s => $"(.block (alg [] [] [] [{string.Join(", ", s.Items.Select(i => i.LeanExpr))}]))",
         Wrap w => $"(.block (alg [] [] [] [{w.Inner.LeanExpr}]))",
+        ListOf l => $"(.listLiteral [{string.Join(", ", l.Items.Select(i => i.LeanExpr))}])",
         _ => throw new InvalidOperationException(),
     };
 }
@@ -98,6 +104,7 @@ public static class SemanticExplorerCorpus
     private static readonly ExplorerValue E = new ExplorerValue.Empty();
     private static ExplorerValue S(params ExplorerValue[] items) => new ExplorerValue.Seq(items);
     private static ExplorerValue W(ExplorerValue inner) => new ExplorerValue.Wrap(inner);
+    private static ExplorerValue L(params ExplorerValue[] items) => new ExplorerValue.ListOf(items);
 
     /// <summary>The bounded value space (deduplicated by source form).</summary>
     public static readonly IReadOnlyList<(string Id, ExplorerValue Value)> Values =
@@ -119,6 +126,18 @@ public static class SemanticExplorerCorpus
         ("ppe", W(E)),                         // (())
         ("pp1", W(W(N(1)))),                   // ((1))
         ("ppp12", W(W(S(N(1), N(2))))),        // (((1, 2)))
+        // Exact immutable list values: empty, singleton, multi, list-in-list,
+        // sequence-in-list, list-in-sequence, and wrapped list (redundant
+        // parens around a list still canonicalize away).
+        ("le", L()),                           // []
+        ("l7", L(N(7))),                       // [7]
+        ("l12", L(N(1), N(2))),                // [1, 2]
+        ("l12_3", L(L(N(1), N(2)), N(3))),     // [[1, 2], 3]
+        ("lle", L(L())),                       // [[]]
+        ("l_e", L(E)),                         // [()]
+        ("l_p12", L(S(N(1), N(2)))),           // [(1, 2)]
+        ("p_l12", S(L(N(1), N(2)), N(3))),     // ([1, 2], 3)
+        ("pl1", W(L(N(1)))),                   // ([1])
     ];
 
     // ----- Lean program snippets ---------------------------------------------
@@ -480,16 +499,71 @@ public static class SemanticExplorerCorpus
         ("strEq", "'ab' == 'ab'", LProg([], [".binary .eq (.stringLiteral \"ab\") (.stringLiteral \"ab\")"])),
         ("strCount", "count('ab')", LProg([], [LCall("count", "(.stringLiteral \"ab\")")])),
         ("strCapture", "x = 'ab'\nx", LProg([LVal("x", "(.stringLiteral \"ab\")")], [".resolve \"x\""])),
+        // Exact list values: spread inside list literals, list/sequence kind
+        // distinctions, empty-list-spread neutrality, and list arguments at
+        // call boundaries. These pin the July 2026 list-value semantics.
+        ("listSpreadOfSeqProp", "A = 1, 2, 3\n[A...]",
+            LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
+                [".listLiteral [.sequenceSpread (.resolve \"A\")]"])),
+        ("listSpreadBetween", "A = 1, 2, 3\n[0, A..., 4]",
+            LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
+                [".listLiteral [.num 0, .sequenceSpread (.resolve \"A\"), .num 4]"])),
+        ("listOfLists", "A = [1, 2]\nB = [3, 4]\n[A, B]",
+            LProg([LVal("A", List12), LVal("B", List34)],
+                [".listLiteral [.resolve \"A\", .resolve \"B\"]"])),
+        ("listSpreadConcat", "A = [1, 2]\nB = [3, 4]\n[A..., B...]",
+            LProg([LVal("A", List12), LVal("B", List34)],
+                [".listLiteral [.sequenceSpread (.resolve \"A\"), .sequenceSpread (.resolve \"B\")]"])),
+        ("listMixedSpread", "A = [1, 2]\nB = [3, 4]\n[A, B...]",
+            LProg([LVal("A", List12), LVal("B", List34)],
+                [".listLiteral [.resolve \"A\", .sequenceSpread (.resolve \"B\")]"])),
+        ("listEmptyListSpreadBetween", "[1, []..., 2]",
+            LProg([], [".listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2]"])),
+        ("listEmptySeqSpreadBetween", "[1, ()..., 2]",
+            LProg([], [".listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]"])),
+        ("listNeSeq", "[1, 2] == (1, 2)",
+            LProg([], [".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"])),
+        ("listEmptyNeEmptySeq", "[] == ()",
+            LProg([], [".binary .eq (.listLiteral []) (.emptySequence 0)"])),
+        ("listSingletonNeItem", "[7] == 7",
+            LProg([], [".binary .eq (.listLiteral [.num 7]) (.num 7)"])),
+        ("listWrapCanonicalizes", "([1, 2]) == [1, 2]",
+            LProg([], [".binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])"])),
+        ("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A...\nB == (1, 2, 3)",
+            LProg(
+                [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
+                 "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
+                [".binary .eq (.resolve \"B\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
+        ("listRestCaptureIsSequence", "x, rest... = [1, 2, 3]\nrest == (2, 3)",
+            LProg(
+                [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
+                [".binary .eq (.resolve \"rest\") (.block (alg [] [] [] [.num 2, .num 3]))"])),
+        ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)...",
+            LProg([LVal("A", List12)],
+                [".sequenceSpread (.block (alg [] [] [] [.resolve \"A\", .num 9]))"])),
+        ("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)",
+            LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
+                [LCall("F", List12, ".num 3")])),
+        ("listVariadicSpreadCall", "F(a...) = a\nA = [1, 2]\nF(A..., 9)",
+            LProg([LVariadicF, LVal("A", List12)],
+                [LCall("F", ".sequenceSpread (.resolve \"A\")", ".num 9")])),
         // C#-only parse-level cases (no comparable Lean program).
         ("trailingComma", "(3,)", null),
         ("spreadAsBinaryOperand", "A = (1, 2)\nA... == A...", null),
         ("semicolonSeparator", "1 ; 2", null),
+        ("listUnterminated", "[1, 2", null),
+        ("listDefinitionInside", "[x = 1]", null),
+        ("listLoneRestAssignment", "items... = [1, 2, 3]", null),
     ];
 
     private const string PairOfPairs =
         "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))";
 
     private const string Pair12 = "(.block (alg [] [] [] [.num 1, .num 2]))";
+
+    private const string List12 = "(.listLiteral [.num 1, .num 2])";
+
+    private const string List34 = "(.listLiteral [.num 3, .num 4])";
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
     //

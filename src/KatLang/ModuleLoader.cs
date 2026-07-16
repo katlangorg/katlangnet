@@ -162,6 +162,15 @@ public sealed class ModuleLoader
                     ProcessExpr(right, context))
                 { Span = expr.Span };
 
+            // List-literal elements inherit the surrounding load context,
+            // exactly like parenthesized-group output slots (Expr.Block) and
+            // internal sequence joins: `X = [load('url')]` elaborates where
+            // `X = (load('url'), 1)` does.
+            case Expr.ListLiteral(var items):
+                return new Expr.ListLiteral(
+                    items.Select(item => ProcessExpr(item, context)).ToList())
+                { Span = expr.Span };
+
             case Expr.DotCall(var target, var name, var args):
                 return new Expr.DotCall(
                     ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr),

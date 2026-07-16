@@ -139,6 +139,17 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write(')');
             break;
 
+        case Expr.ListLiteral(var listItems):
+            Console.Write("ListLiteral(");
+            for (var i = 0; i < listItems.Count; i++)
+            {
+                if (i > 0)
+                    Console.Write(", ");
+                PrintExpr(listItems[i], indent);
+            }
+            Console.Write(')');
+            break;
+
         case Expr.DotCall(var target, var name, var dotArgs):
             Console.Write("DotCall(");
             PrintExpr(target, indent);
@@ -194,6 +205,10 @@ static string ResultToString(Result result)
 
         return text.ToString();
     }
+    if (result is Result.ListValue listValue)
+    {
+        return ListValueToString(listValue);
+    }
 
     return string.Empty;
 }
@@ -206,7 +221,32 @@ static string InlineResultToString(Result result)
     if (result is Result.SequenceValue sequenceValue)
         return string.Join(",", sequenceValue.Items.Select(InlineResultToString));
 
+    if (result is Result.ListValue listValue)
+        return ListValueToString(listValue);
+
     return string.Empty;
+}
+
+static string ListValueToString(Result.ListValue listValue)
+{
+    var text = new System.Text.StringBuilder();
+    text.Append("[");
+    for (var i = 0; i < listValue.Items.Count; i++)
+    {
+        if (i > 0)
+            text.Append(", ");
+
+        text.Append(listValue.Items[i] switch
+        {
+            Result.Atom atom => atom.Value.ToString(),
+            Result.SequenceValue nested => SequenceValueToString(nested),
+            Result.ListValue nested => ListValueToString(nested),
+            var other => InlineResultToString(other),
+        });
+    }
+    text.Append("]");
+
+    return text.ToString();
 }
 
 static string SequenceValueToString(Result.SequenceValue sequenceValue)
@@ -222,6 +262,10 @@ static string SequenceValueToString(Result.SequenceValue sequenceValue)
         if (item is Result.SequenceValue nestedSequenceValue)
         {
             text.Append(SequenceValueToString(nestedSequenceValue));
+        }
+        if (item is Result.ListValue nestedListValue)
+        {
+            text.Append(ListValueToString(nestedListValue));
         }
         text.Append(",");
     }

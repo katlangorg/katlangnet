@@ -138,6 +138,10 @@ public abstract class AstWalker
             case Expr.SequenceSpread(var operand):
                 VisitExpr(operand);
                 break;
+            case Expr.ListLiteral(var items):
+                foreach (var item in items)
+                    VisitExpr(item);
+                break;
             case Expr.DotCall(var target, _, var args):
                 VisitExpr(target);
                 if (expr is Expr.DotCall dotCall && dotCall.MemberSpan is { } memberSpan)

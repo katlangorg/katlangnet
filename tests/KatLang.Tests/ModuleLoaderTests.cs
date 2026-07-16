@@ -626,4 +626,26 @@ public class ModuleLoaderTests
         Assert.IsType<Result.Str>(evalResult.Value);
         Assert.Equal("hello", ((Result.Str)evalResult.Value).Value);
     }
+
+    [Fact]
+    public void Load_InsideListLiteral_InheritsSurroundingContext()
+    {
+        // List-literal elements inherit the surrounding load context exactly
+        // like parenthesized-group output slots: a load in a property-RHS list
+        // elaborates, and no raw load call survives elaboration.
+        var source = """
+            X = [load('https://katlang.org/m')]
+            X
+            """;
+        var remoteFiles = new Dictionary<string, string>
+        {
+            ["https://katlang.org/m"] = "public Answer = 42",
+        };
+
+        var result = ParseWithLoad(source, remoteFiles);
+        Assert.False(
+            result.HasErrors,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+        Assert.False(ContainsRawLoad(result.Root));
+    }
 }

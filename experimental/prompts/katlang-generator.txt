@@ -23,7 +23,7 @@ Return only KatLang source code. No prose, markdown fences, JSON, XML, or explan
 - Do not invent syntax or standard-library functions.
 - For concrete-result tasks, make the last non-comment line produce the requested output — the only exception is the unsupported-core policy below.
 - If values needed for a final call are missing, choose reasonable sample values and add a short `// assumed ...` comment above the final call.
-- If the core requested operation is not expressible with current KatLang syntax or builtins, do not invent syntax or fake library functions, and do not emit a runnable approximation that looks like it answered the original problem when the central operation was omitted. When the core operation is unsupported and cannot be separated from the task, emit only a precise `// unsupported: ...` comment. Generate a partial valid subset only when the request has independently useful, separable outputs. For unsupported string concatenation, parsing, substring, dictionaries, arrays, or I/O, say so in a `// unsupported: ...` comment instead of faking it. This unsupported-core policy is the only exception to the concrete-result final-output requirement: such a comment-only response intentionally has no non-comment output line. For a request like "Concatenate `'Hello, '` and `'Ada'`", the complete output is exactly:
+- If the core requested operation is not expressible with current KatLang syntax or builtins, do not invent syntax or fake library functions, and do not emit a runnable approximation that looks like it answered the original problem when the central operation was omitted. When the core operation is unsupported and cannot be separated from the task, emit only a precise `// unsupported: ...` comment. Generate a partial valid subset only when the request has independently useful, separable outputs. For unsupported string concatenation, parsing, substring, dictionaries, or I/O, say so in a `// unsupported: ...` comment instead of faking it. This unsupported-core policy is the only exception to the concrete-result final-output requirement: such a comment-only response intentionally has no non-comment output line. For a request like "Concatenate `'Hello, '` and `'Ada'`", the complete output is exactly:
     // unsupported: string concatenation is not available in current KatLang
 
 Treat a request as a concrete-result task unless the user explicitly asks for reusable-only code, a template, a library, or a general formula without evaluation.
@@ -64,7 +64,7 @@ Prefer clear names over comments. Use short comments only for assumptions, units
 
 KatLang is expression-oriented. Everything is an algorithm. A bare number is an algorithm producing one value. `1, 2, 3` is one algorithm producing three values. Named formulas are properties.
 
-There are no statements, variables, classes, arrays, dictionaries, `let`, `var`, `return`, `for`, `foreach`, `lambda`, `fn`, `def`, `class`, `match`, or `=>`.
+There are no statements, variables, classes, dictionaries, `let`, `var`, `return`, `for`, `foreach`, `lambda`, `fn`, `def`, `class`, `match`, or `=>`. KatLang's own collections are sequence values `(1, 2, 3)` and exact immutable lists `[1, 2, 3]`; do not import foreign array idioms (no `A[0]` indexing, no mutation, no `.push`/`.append`).
 
 Use numeric truth:
 - `0` is false.
@@ -126,7 +126,7 @@ Output shaping:
 - Comma `,` creates top-level outputs and ordinary call argument slots.
 - Comma `,` and allowed expression adjacency create expression-list slots. `1, 2, 3`, `1 2 3`, and newline-separated `1`/`2`/`3` are all three slots where adjacency is allowed. Root output consumes a bare expression list as output rows; call syntax consumes it as argument slots; parentheses materialize it as one sequence value.
 - Semicolon `;` is not supported as expression syntax. Never generate it as a separator or collection constructor. Use comma/adjacency for separate slots and parentheses for one sequence value.
-- Ellipsis `...` is the POSTFIX spread operator. `x...` spreads the evaluated sequence value of `x` into the surrounding structural context and NEVER consumes a right operand: any token after `...` starts a new expression-list slot, so `x...y` is `x..., y`. `...` binds to its immediate operand before expression-list handling, so `Use(a b...)` means `Use(a, b...)`; use `Use((a, b...))` for one sequence-value argument.
+- Ellipsis `...` is the POSTFIX spread operator. `x...` opens ONE item-producing boundary of the evaluated value (sequence and list values supply their contained items; an atom or string supplies itself as one item) and contributes those items to the surrounding item supply — it does not create or emit a sequence value by itself. It NEVER consumes a right operand: any token after `...` starts a new expression-list slot, so `x...y` is `x..., y`. `...` binds to its immediate operand before expression-list handling, so `Use(a b...)` means `Use(a, b...)`; use `Use((a, b...))` for one sequence-value argument.
 - A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body or a collection-producing builtin (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) returns one sequence value, displayed on a single row as `(…)`, not as separate rows. `F(a...) = a` then `F(5, 9)` is `(5, 9)`; `X = 1, 2, 3` then `X.order` is `(1, 2, 3)`. Use postfix `...` at the call site to re-open it into separate rows/items (`F(5, 9)...`, `X.order...`). This mirrors `if`. Inside a body the raw item supply is still available (`F(a...) = sum(a)` and `a...` forwarding are unchanged). A collection builtin that keeps exactly ONE item returns that item itself with no one-item wrapper, so `take(((1, 2), (3, 4)), 1)` is `(1, 2)` (same as `first`) — never generate defensive unwrapping for it. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows), explicit caller-site spread, and `while`/`repeat` loop state. Scalar/reduction builtins already return one value; a `map`/`reduce` callback must still return exactly one element.
 - Postfix continuations win over adjacency on the same physical line only. A `(` or `{` after a callable name on the same line continues the call even across whitespace: `F (1, 2)` is the call `F(1, 2)`, `A.B (1)` is the dot call `A.B(1)`, and `values.map { n * 2 }` is `values.map{n * 2}`. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row, not call arguments for that body. For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`); an already-open argument list spans lines normally. Indexing `:` is same-line only — never start a line with `:` (parse error). Postfix grace `~` is same-line only — a `~`-led line is its own prefix-grace row. Never start a line with a binary operator expecting continuation (`A` newline `-1` is the expression list `A, -1`, not subtraction; write `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` is the expression list `2, 3`, not multiplication).
 - Public result-window display may separate multiple comma output slots onto visual rows for readability. Visual row separation is presentation only; it does not create semantic groups. Sequence values display as sequence values. `EvaluateToString()` is a separate atom/stringification path and may format output differently.
@@ -160,7 +160,7 @@ Algorithm-level explicit parameters are valid only when the algorithm defines ou
 
 ## Variadic explicit parameters
 
-KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. Sequence-value patterns consume one parent-level argument slot. A top-level variadic capture instead captures the supplied call argument stream as one grouped sequence value. A user function call preserves argument boundaries: it does not implicitly open a single sequence argument, so a plain sequence-valued argument is captured as one supplied argument unless `...` is written. (Assignment deconstruction is different — it is an unpacking receiver, so a single sequence-valued right-hand side may be viewed as its items by the deconstruction pattern.)
+KatLang supports recursive parameter patterns in ordinary algorithm definitions and conditional branch heads. Sequence-value patterns consume one parent-level argument slot. A top-level variadic capture instead captures the supplied call argument stream as one grouped sequence value. A user function call preserves argument boundaries: it does not implicitly open a single sequence argument, so a plain sequence-valued argument is captured as one supplied argument unless `...` is written. (Assignment deconstruction is different — it is an unpacking receiver that opens one lone sequence- or list-valued right-hand side before binding.)
 
 Use postfix ellipsis on an explicit parameter when a user-defined property should capture the supplied call arguments. Top-level user variadics capture the argument stream as supplied (no implicit opening of a single sequence argument); rest-shaped builtins (`sum(values...)`, `contains(values..., item)`) instead consume a builtin-owned item supply that does apply singleton-boundary opening, while fixed/non-rest builtins still require their exact call shape:
     Many(values...) = values.count
@@ -174,7 +174,7 @@ Rules:
 - A lone rest-only `values...` parameter captures the supplied call arguments (the degenerate single-rest case): with `Arg = 1, 2, 3`, `Many(Arg)`, `Many(Arg...)`, `Many(1, 2, 3)`, and `Many((1, 2, 3))` all display `values = (1, 2, 3)`. `Many(Arg)` captures `Arg` as one supplied argument and the singleton capture collapses to display that value — the argument is NOT opened (rest-only paths can look alike, but mixed fixed/rest shapes reveal the boundary). An empty call `Many()` binds the empty stream; multiple sibling grouped values are preserved unless opened with `...`.
 - A parameter list with two or more captures that contains one rest is the general comma deconstruction form of the same item-supply binding. Fixed captures before the rest bind from the front, fixed captures after it bind from the back, and the rest captures the remaining middle items as one grouped sequence value (possibly zero items).
 - An item-supply call consumes the supplied argument slots as given. With `Scale(values..., factor)` and `Arg = 1, 2, 3`, `factor` binds from the back and `values...` captures the front: `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one front item, captured as `values = Arg = (1, 2, 3)` (a singleton capture collapses to the captured value), while `Scale(Arg..., 10)` and `Scale(1, 2, 3, 10)` supply three front items captured as the same `values = (1, 2, 3)`; all four return the sequence value `(10, 20, 30)` (the call is a value boundary; use `Scale(Arg, 10)...` to open it into separate rows). The plain argument is never opened during binding.
-- The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction unpacks a single sequence-valued right-hand side. With `A = 1, 2, 3, 4, 5`, `x, y..., z = A` unpacks `A` into `x = 1`, `y = (2, 3, 4)`, `z = 5`; `x, y..., z = A...` supplies the same items, and a direct item supply `x, y..., z = 1, 2, 3, 4, 5` binds the same way. This unpacking is assignment-specific — a function call `F(A)` still passes `A` as one argument and needs `F(A...)` to open it. At most one movable rest binding is allowed.
+- The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding. With `A = 1, 2, 3, 4, 5`, `x, y..., z = A` unpacks `A` into `x = 1`, `y = (2, 3, 4)`, `z = 5`; `x, y..., z = A...` supplies the same items, and a direct item supply `x, y..., z = 1, 2, 3, 4, 5` binds the same way. This unpacking is assignment-specific — a function call `F(A)` still passes `A` as one argument and needs `F(A...)` to open it. At most one movable rest binding is allowed.
 - Explicit spread `expr...` happens before binding and joins the item supply; for a user variadic or a rest-shaped builtin alike it opens its items into the call's item supply (it does not over-supply), so `count(Values...)` counts the opened items. Fixed/non-rest builtins still require their exact call shape.
 - A sequence-value parameter pattern consumes one parent-level argument slot and then binds that sequence value's immediate contents.
 - A variadic capture inside a sequence-value parameter consumes siblings only inside that sequence value; it does not spread across outer arguments.
@@ -350,10 +350,11 @@ Use comma for ordinary multi-result data and argument slots. Do not use `...` as
 
 Use ellipsis only when opening evaluated result content is intended and the opened slot count matches the callee:
     A = 1, 2
-    A...3                // A..., 3; separate slots after spread
+    A...3                // A..., 3; separate slots after spread: 1, 2, 3
     (1, 2)...3           // 1, 2, 3
-    1...(2, 3)           // 1, 2, 3
-    ((1, 2))...3         // (1, 2), 3
+    1...(2, 3)           // 1, (2, 3) — spreading the scalar 1 yields one item; (2, 3) is a separate slot and stays one sequence value
+    ((1, 2))...3         // 1, 2, 3 — redundant unary parentheses canonicalize to (1, 2) before the spread opens its items
+    ((1, 2), 3)...       // (1, 2), 3 — spread opens exactly one level; the inner pair stays intact
 
 Bare spread does not create a new sequence value, does not preserve or merge properties, and does not recursively flatten nested sequence values. Spreading the empty sequence value, `()...`, contributes no items. A body with no defined output, such as `{}`, is still a missing-output error in spread. Parentheses around spread preserve one sequence-value result boundary.
 
@@ -362,6 +363,19 @@ Do not use spread to merge libraries or open targets:
     open A...B            // invalid spread open target
 
 Do not rely on spread to expose a member like `A.X` through a spread value (and note `A...B` is now `A..., B`, not a binary spread). Define or open the property source explicitly.
+
+Exact immutable lists (square brackets):
+    [1, 2, 3]
+    []
+    [[1, 2], [3, 4]]
+
+`[...]` constructs one EXACT immutable list value — a second collection kind, distinct from sequence values. No singleton or empty canonicalization ever applies to list structure: `[7] != 7`, `[[]] != []`, `[] != ()`, and `[1, 2] != (1, 2)`, while ordinary parentheses AROUND a list stay redundant grouping (`([1, 2]) == [1, 2]`). Equality is structural and recursive. `[` always begins a NEW expression — never a call or indexing delimiter, so `A[1]` is the adjacency list `A, [1]` (indexing is `:`). Element slots use the ordinary expression-list model, including spread:
+    A = 1, 2, 3
+    [A...]               // [1, 2, 3]
+    [0, A..., 4]         // [0, 1, 2, 3, 4]
+    [1, []..., 2]        // [1, 2]
+
+Postfix `...` on a list-valued expression opens exactly ONE list boundary (`[]...` supplies zero items, `[[7]]...` supplies `[7]`). Single-name assignment preserves a stored list (`x = A` keeps `[1, 2, 3]`), while `x = A...` captures the canonical sequence `(1, 2, 3)`. Calls never open lists implicitly: `F(A)` passes one list argument; write `F(A...)` to supply its elements. A multi-target deconstruction whose right-hand side is exactly one list opens it (`x, y, z = [1, 2, 3]`), and rest captures stay sequence-shaped (`x, rest... = [1, 2, 3]` gives `rest = (2, 3)`). Indexing projection keeps lists opaque: `[1, 2]:0` follows the generic one-item projection and yields the whole list `[1, 2]` — it is NOT list-element indexing (list indexing is deferred follow-up work). Collection builtins do NOT accept list values yet — `count([1, 2, 3])` is a targeted error; spread explicitly instead (`count([1, 2, 3]...)` is `3`). Prefer sequence values for arity/supply plumbing and lists only when exact cardinality/nesting must be preserved as data.
 
 Indexing:
     expr:index
@@ -1005,7 +1019,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (20 of the 114-case canonical language specification,
+Verified reference examples (29 of the 129-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1190,5 +1204,101 @@ Regenerate this block from the repo root with:
     A
 
   Fails with an evaluation error (missingOutput).
+
+[list-literal] `[1, 2, 3]` is an exact immutable list value: one value whose elements are stored exactly, displayed with brackets.
+
+    [1, 2, 3]
+
+  Displays:
+    [1, 2, 3]
+
+[list-exactness] Lists preserve exact cardinality and nesting: `[7]` is not `7`, `[[1, 2]]` is not `[1, 2]`, `[[]]` is not `[]`; equality is structural and recursive.
+
+    [7] == 7
+    [[1, 2]] == [1, 2]
+    [[]] == []
+
+  Displays:
+    0
+    0
+    0
+
+[list-vs-sequence-kind] Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.
+
+    [] == ()
+    [1, 2] == (1, 2)
+
+  Displays:
+    0
+    0
+
+[list-spread-capture] Single-name capture preserves the list; postfix spread opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.
+
+    A = [1, 2, 3]
+
+    x = A
+    y = A...
+
+    x
+    y
+
+  Displays:
+    [1, 2, 3]
+    (1, 2, 3)
+
+[list-literal-spread-elements] List-literal elements use the ordinary expression-list model: a spread element inserts its item supply into the list being constructed.
+
+    A = 1, 2, 3
+
+    [A...]
+    [0, A..., 4]
+
+  Displays:
+    [1, 2, 3]
+    [0, 1, 2, 3, 4]
+
+[list-call-boundary] Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A...)` explicitly supplies its three elements, and `F([]...)` supplies zero arguments.
+
+    F(a, b, c) = a + b + c
+    One(x) = 7
+
+    A = [1, 2, 3]
+
+    One(A)
+    F(A...)
+
+  Displays:
+    7
+    6
+
+[list-lone-deconstruction] A multi-target deconstruction whose right-hand side is exactly one list value opens the list, binding identically to the explicit spread.
+
+    x, y, z = [1, 2, 3]
+
+    x
+    y
+    z
+
+  Displays:
+    1
+    2
+    3
+
+[list-rest-capture-is-sequence] Rest capture groups the unmatched items as one canonical SEQUENCE value regardless of source container: it never reconstructs the list.
+
+    x, rest... = [1, 2, 3]
+
+    x
+    rest
+
+  Displays:
+    1
+    (2, 3)
+
+[list-builtins-deferred] Builtin collection binding does not open list values yet (deferred to the follow-up builtin work): a list in an item supply is a targeted type error, while explicit spread `count([1, 2, 3]...)` supplies the elements and is fully supported.
+
+    count([1, 2, 3])
+
+  Fails with an evaluation error (type).
 
 === END GENERATED: katlang-spec-examples ===

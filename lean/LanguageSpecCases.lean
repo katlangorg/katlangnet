@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 114
-- excluded parse-level cases (Lean has no surface parser): 6
+- specification surface cases: 129
+- excluded parse-level cases (Lean has no surface parser): 7
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 107
-- probe observations (C#-only by design): 63
+- Lean-guarded cases: 121
+- probe observations (C#-only by design): 84
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -31,11 +31,13 @@ namespace LanguageSpecCases
 open KatLang
 
 /-- Neutral raw-structure encoding shared with the C# harness:
-    atom -> `1`, string -> `'x'`, sequence -> `S[a, b]`, empty -> `S[]`. -/
+    atom -> `1`, string -> `'x'`, sequence -> `S[a, b]`, empty -> `S[]`,
+    exact list -> `L[a, b]`. -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
   | .sequenceValue rs => "S[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
+  | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
 
 /-- Innermost-error category shared with the C# harness
     (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -632,7 +634,77 @@ def case_string_displays_unquoted : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.stringLiteral "ab")])] [.resolve "x"])
 #guard obs case_string_displays_unquoted == "ok raw='ab' n=1"
 
--- 107 canonical Lean-guarded specification cases.
+-- list-literal [lists]: [1, 2, 3]
+def case_list_literal : Expr :=
+  .block (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])
+#guard obs case_list_literal == "ok raw=L[1, 2, 3] n=1"
+
+-- list-exactness [lists]: [7] == 7 \n [[1, 2]] == [1, 2] \n [[]] == []
+def case_list_exactness : Expr :=
+  .block (alg [] [] [] [.binary .eq (.listLiteral [.num 7]) (.num 7), .binary .eq (.listLiteral [.listLiteral [.num 1, .num 2]]) (.listLiteral [.num 1, .num 2]), .binary .eq (.listLiteral [.listLiteral []]) (.listLiteral [])])
+#guard obs case_list_exactness == "ok raw=S[0, 0, 0] n=3"
+
+-- list-vs-sequence-kind [lists]: [] == () \n [1, 2] == (1, 2)
+def case_list_vs_sequence_kind : Expr :=
+  .block (alg [] [] [] [.binary .eq (.listLiteral []) (.emptySequence 0), .binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))])
+#guard obs case_list_vs_sequence_kind == "ok raw=S[0, 0] n=2"
+
+-- list-redundant-parens-canonicalize [lists]: ([1, 2]) == [1, 2]
+def case_list_redundant_parens_canonicalize : Expr :=
+  .block (alg [] [] [] [.binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])])
+#guard obs case_list_redundant_parens_canonicalize == "ok raw=1 n=1"
+
+-- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = A... \n  \n x \n y
+def case_list_spread_capture : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [.sequenceSpread (.resolve "A")])] [.resolve "x", .resolve "y"])
+#guard obs case_list_spread_capture == "ok raw=S[L[1, 2, 3], S[1, 2, 3]] n=2"
+
+-- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A... \n B... \n C...
+def case_list_spread_edges : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "C" (alg [] [] [] [(.listLiteral [.listLiteral [.num 7]])])] [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B"), .sequenceSpread (.resolve "C")])
+#guard obs case_list_spread_edges == "ok raw=S[7, L[7]] n=2"
+
+-- list-literal-spread-elements [lists]: A = 1, 2, 3 \n  \n [A...] \n [0, A..., 4]
+def case_list_literal_spread_elements : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.listLiteral [.sequenceSpread (.resolve "A")], .listLiteral [.num 0, .sequenceSpread (.resolve "A"), .num 4]])
+#guard obs case_list_literal_spread_elements == "ok raw=S[L[1, 2, 3], L[0, 1, 2, 3, 4]] n=2"
+
+-- list-elements-preserve-boundaries [lists]: A = [1, 2] \n B = [3, 4] \n  \n [A, B] \n [A..., B...] \n [A, B...]
+def case_list_elements_preserve_boundaries : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.resolve "A", .resolve "B"], .listLiteral [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")], .listLiteral [.resolve "A", .sequenceSpread (.resolve "B")]])
+#guard obs case_list_elements_preserve_boundaries == "ok raw=S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]] n=3"
+
+-- list-empty-spread-neutral [lists]: [1, []..., 2] \n [1, ()..., 2]
+def case_list_empty_spread_neutral : Expr :=
+  .block (alg [] [] [] [.listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2], .listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]])
+#guard obs case_list_empty_spread_neutral == "ok raw=S[L[1, 2], L[1, 2]] n=2"
+
+-- list-call-boundary [lists]: F(a, b, c) = a + b + c \n One(x) = 7 \n  \n A = [1, 2, 3] \n  \n One(A) \n F(A...)
+def case_list_call_boundary : Expr :=
+  .block (alg [] [] [privateProp "F" (alg ["a", "b", "c"] [] [] [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]), privateProp "One" (alg ["x"] [] [] [.num 7]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.call (.resolve "One") (alg [] [] [] [.resolve "A"]), .call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
+#guard obs case_list_call_boundary == "ok raw=S[7, 6] n=2"
+
+-- list-lone-deconstruction [lists]: x, y, z = [1, 2, 3] \n  \n x \n y \n z
+def case_list_lone_deconstruction : Expr :=
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y", .resolve "z"])
+#guard obs case_list_lone_deconstruction == "ok raw=S[1, 2, 3] n=3"
+
+-- list-deconstruction-not-recursive [lists]: x, y = [[1, 2], 3] \n  \n x \n y
+def case_list_deconstruction_not_recursive : Expr :=
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2], .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y"])
+#guard obs case_list_deconstruction_not_recursive == "ok raw=S[L[1, 2], 3] n=2"
+
+-- list-rest-capture-is-sequence [lists]: x, rest... = [1, 2, 3] \n  \n x \n rest
+def case_list_rest_capture_is_sequence : Expr :=
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "rest"])
+#guard obs case_list_rest_capture_is_sequence == "ok raw=S[1, S[2, 3]] n=2"
+
+-- list-builtins-deferred [lists]: count([1, 2, 3])
+def case_list_builtins_deferred : Expr :=
+  .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
+#guard obs case_list_builtins_deferred == "err type"
+
+-- 121 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -746,8 +818,22 @@ def specCaseIds : List String := [
   "division-by-zero",
   "unresolved-implicit-parameter",
   "string-equality-exact",
-  "string-displays-unquoted"
+  "string-displays-unquoted",
+  "list-literal",
+  "list-exactness",
+  "list-vs-sequence-kind",
+  "list-redundant-parens-canonicalize",
+  "list-spread-capture",
+  "list-spread-edges",
+  "list-literal-spread-elements",
+  "list-elements-preserve-boundaries",
+  "list-empty-spread-neutral",
+  "list-call-boundary",
+  "list-lone-deconstruction",
+  "list-deconstruction-not-recursive",
+  "list-rest-capture-is-sequence",
+  "list-builtins-deferred"
 ]
-#guard specCaseIds.length == 107
+#guard specCaseIds.length == 121
 
 end LanguageSpecCases

@@ -224,6 +224,10 @@ public static class ImplicitArgumentResolver
                     ProcessOpenExpr(left),
                     ProcessOpenExpr(right)) { Span = expr.Span };
 
+            case Expr.ListLiteral(var items):
+                return new Expr.ListLiteral(
+                    items.Select(ProcessOpenExpr).ToList()) { Span = expr.Span };
+
             case Expr.Call(var function, var args):
                 return new Expr.Call(
                     ProcessOpenExpr(function),
@@ -454,6 +458,11 @@ public static class ImplicitArgumentResolver
                 CollectImplicitDeps(right, paramMap, seen, deps, false);
                 break;
 
+            case Expr.ListLiteral(var listItems):
+                foreach (var item in listItems)
+                    CollectImplicitDeps(item, paramMap, seen, deps, false);
+                break;
+
             case Expr.DotCall(var target, var name, var dotArgs):
                 if (!inCallPosition
                     && TryGetBareBuiltinCallableSignature(expr, paramMap, out var callableKey, out var signature))
@@ -571,6 +580,11 @@ public static class ImplicitArgumentResolver
                 return new Expr.SequenceConstruct(
                     RewriteImplicitCalls(left, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames),
                     RewriteImplicitCalls(right, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+
+            case Expr.ListLiteral(var listItems):
+                return new Expr.ListLiteral(
+                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)).ToList())
+                { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null)
                 when !inCallPosition
@@ -701,6 +715,9 @@ public static class ImplicitArgumentResolver
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExprNested(l, paramMap),
                 ProcessExprNested(r, paramMap)) { Span = expr.Span },
+            Expr.ListLiteral(var items) => new Expr.ListLiteral(
+                items.Select(item => ProcessExprNested(item, paramMap)).ToList())
+            { Span = expr.Span },
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExprNested(t, paramMap),
                 n,

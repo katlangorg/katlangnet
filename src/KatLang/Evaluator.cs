@@ -328,6 +328,7 @@ public static class Evaluator
         Expr.SequenceConstruct => "sequenceConstruct",
         Expr.EmptySequence => "emptySequence",
         Expr.SequenceSpread => "spread",
+        Expr.ListLiteral => "listLiteral",
         Expr.Resolve => "resolve",
         Expr.Block => "block",
         Expr.Call => "call",
@@ -376,6 +377,8 @@ public static class Evaluator
         Expr.SequenceConstruct(var a, var b) => "(" + OpenExprName(a) + ", " + OpenExprName(b) + ")",
         // Postfix spread renders as `a...` over its single operand.
         Expr.SequenceSpread(var a) => OpenExprName(a) + "...",
+        // Exact list literal `[a, b, c]`.
+        Expr.ListLiteral(var items) => "[" + string.Join(", ", items.Select(OpenExprName)) + "]",
         // Empty sequence core nodes render by depth for diagnostics; evaluation
         // canonicalizes repeated ordinary parentheses back to `()`.
         Expr.EmptySequence(var depth) => new string('(', depth + 1) + new string(')', depth + 1),
@@ -877,6 +880,7 @@ public static class Evaluator
         Result.SequenceValue(var items) => $"a sequence value with {items.Count} {Pluralize(items.Count, "sequence element")}: {FormatResultForDiagnostic(value)}",
         Result.Str(var text) => $"a string: '{text}'",
         Result.Atom(var number) => $"numeric value {number.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
         _ => $"a value: {FormatResultForDiagnostic(value)}",
     };
 
@@ -888,6 +892,7 @@ public static class Evaluator
         Result.Atom(var number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
         Result.Str(var text) => $"'{text}'",
         Result.SequenceValue(var items) => $"({string.Join(", ", items.Select(FormatResultForDiagnostic))})",
+        Result.ListValue(var items) => $"[{string.Join(", ", items.Select(FormatResultForDiagnostic))}]",
         _ => "value",
     };
 
@@ -977,13 +982,16 @@ public static class Evaluator
 
     /// <summary>
     /// Argument passing rule: a single atom is wrapped in a one-element list;
-    /// a sequence value is unpacked into its elements. Lean: unpackArgs.
+    /// a sequence value is unpacked into its elements. Exact list values are
+    /// NOT unpacked: call-argument binding preserves a list as one argument;
+    /// only explicit caller-site <c>...</c> opens it. Lean: unpackArgs.
     /// </summary>
     private static IReadOnlyList<Result> UnpackArgs(Result r) => r switch
     {
         Result.Atom(var n) => [new Result.Atom(n)],
         Result.Str _ => [r],
         Result.SequenceValue(var items) => items,
+        Result.ListValue _ => [r],
         _ => [],
     };
 
@@ -1358,8 +1366,12 @@ public static class Evaluator
         if (input.ExplicitSequenceValueItems is not null)
             return EvalResult<IReadOnlyList<Result>>.Ok(input.ExplicitSequenceValueItems);
 
-        if (input.Value is Result.SequenceValue(var items))
-            return EvalResult<IReadOnlyList<Result>>.Ok(items);
+        // A received sequence value or exact list value opens to its immediate
+        // items (Lean: Result.structureItems?): the deconstruction receiver
+        // opens ONE lone structure boundary of either kind, so
+        // `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]...`.
+        if (input.Value?.StructureItems() is { } structureItems)
+            return EvalResult<IReadOnlyList<Result>>.Ok(structureItems);
 
         return input.ValueError ?? new EvalError.BadArity();
     }
@@ -1932,7 +1944,9 @@ public static class Evaluator
 
     /// <summary>
     /// Extract top-level items from a result into a list.
-    /// Atom/string -> singleton list; sequence value -> its items. Lean: Result.toItems.
+    /// Atom/string -> singleton list; sequence value -> its items. A list
+    /// value stays opaque (one item), matching <see cref="Result.ToItems"/>.
+    /// Lean: Result.toItems.
     /// </summary>
     private static void ResultItems(List<Result> into, Result r)
     {
@@ -1940,6 +1954,7 @@ public static class Evaluator
         {
             case Result.Atom:
             case Result.Str:
+            case Result.ListValue:
                 into.Add(r);
                 break;
             case Result.SequenceValue(var items):
@@ -1999,6 +2014,9 @@ public static class Evaluator
             Opens: [],
             Properties: [],
             Output: items.Select(ResultToExpr).ToList())),
+        // Exact list values reify as list literals so they round-trip
+        // losslessly (a reified `()` element stays one visible list element).
+        Result.ListValue(var items) => new Expr.ListLiteral(items.Select(ResultToExpr).ToList()),
         _ => EmptyResultExpr(),
     };
 
@@ -2008,7 +2026,7 @@ public static class Evaluator
     /// empty sequence values.
     /// </summary>
     private static Result BuildEmptySequenceValue(int _)
-        => new Result.SequenceValue([]);
+        => Result.SequenceValue.TakeOwnership([]);
 
     /// <summary>
     /// Returns true when <paramref name="result"/> is the empty sequence value or
@@ -2459,12 +2477,13 @@ public static class Evaluator
 
             case SequenceValueParameterPattern group:
             {
-                var items = input.Value switch
-                {
-                    Result.SequenceValue(var groupedItems) => (IReadOnlyList<Result>)groupedItems,
-                    _ when group.Items.Count == 1 => [input.Value],
-                    _ => null,
-                };
+                // A received sequence value or exact list value opens to its
+                // immediate items (Lean: Result.structureItems?); the counted
+                // callback path keeps its stricter singleton-only scalar
+                // fallback (callback deconstruction deferred).
+                var items = input.Value.StructureItems();
+                if (items is null && group.Items.Count == 1)
+                    items = [input.Value];
 
                 if (items is null)
                     return new EvalError.BadArity();
@@ -3183,7 +3202,7 @@ public static class Evaluator
                     ? SpreadMissingOutput(blockSpan)
                     : blockR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.ToItems());
+            return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.SpreadItems());
         }
 
         var outputR = Eval(expr, ctx, valEnv);
@@ -3192,30 +3211,74 @@ public static class Evaluator
                 ? SpreadMissingOutput(expr.Span)
                 : outputR.Error;
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(outputR.Value.ToItems());
+        return EvalResult<IReadOnlyList<Result>>.Ok(outputR.Value.SpreadItems());
     }
 
     // Evaluate a unary `sequenceSpread` node by evaluating its single operand
-    // and spreading that operand's immediate top-level items. Directly-nested
-    // spreads (`A......`) are unwrapped iteratively so deep nesting stays
-    // stack-safe; each level spreads the same items as the innermost operand,
-    // so peeling to that operand and spreading once is value-equivalent.
+    // once and spreading immediate top-level items. Directly-nested spreads
+    // (`A......`) are unwrapped iteratively (stack-safe for deep nesting) and
+    // then each written layer is applied COMPOSITIONALLY: every `...` opens
+    // exactly one boundary of the value the previous layer would have
+    // captured, so `A......` agrees with `(A...)...`. For sequence values the
+    // extra layers are fixed points (value-equivalent to a single spread);
+    // for exact LIST values each layer opens one more list boundary
+    // (`[[7]]......` supplies `7`). Lean: evalSequenceSpreadCounted.
     private static EvalResult<CountedResult> EvalSequenceSpreadCounted(
         Expr expr,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         var operand = expr;
+        var layers = 0;
         while (operand is Expr.SequenceSpread(var supplied))
+        {
             operand = supplied;
+            layers++;
+        }
 
         var operandR = EvalSequenceSpreadOperandItems(operand, ctx, valEnv);
         if (operandR.IsError) return operandR.Error;
 
         var items = operandR.Value;
+        for (var layer = 1; layer < layers; layer++)
+            items = Result.FromItems(items).SpreadItems();
+
         return EvalResult<CountedResult>.Ok(new CountedResult(
             Result.FromItems(items),
             items.Count));
+    }
+
+    /// <summary>
+    /// Evaluate a surface list literal <c>[e1, ..., en]</c> as exactly ONE
+    /// exact immutable list value. Element slots reuse the written-parentheses
+    /// expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>):
+    /// an explicit spread slot opens its operand's immediate items into the
+    /// list being constructed (an empty spread contributes no elements), a
+    /// non-spread slot is one element even when it evaluates to the empty
+    /// sequence value <c>()</c>, and a nested zero-parameter block is one
+    /// written grouping level. Unlike sequence construction the collected
+    /// elements are stored EXACTLY: no singleton erasure and no empty
+    /// canonicalization, so <c>[7]</c>, <c>[[7]]</c>, <c>[]</c>, and
+    /// <c>[()]</c> are all distinct list values. A list literal always emits
+    /// one value.
+    /// Lean: <c>evalListLiteralCounted</c>; plain <c>Eval</c> is this
+    /// function's value projection on both sides.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalListLiteralCounted(
+        IReadOnlyList<Expr> elements,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var items = new List<Result>();
+        foreach (var element in elements)
+        {
+            var slotsR = EvalExplicitSequenceValueExprSlots(element, ctx, valEnv);
+            if (slotsR.IsError) return slotsR.Error;
+            items.AddRange(slotsR.Value);
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(
+            Result.ListValue.TakeOwnership(items.ToArray()), 1));
     }
 
     private readonly record struct BoundSequenceBuiltinArguments(
@@ -3412,6 +3475,8 @@ public static class Evaluator
         Result.Str(var s) => $"string value \"{s}\"",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",
+        Result.ListValue(var items) when items.Count == 0 => "empty list value",
+        Result.ListValue => "list value",
         _ => "value",
     };
 
@@ -3719,6 +3784,20 @@ public static class Evaluator
                 restValues,
                 static value => value,
                 static value => value).ToList();
+
+        // Exact list values are not yet supported inside builtin item supplies:
+        // singleton-boundary normalization deliberately does not open a lone
+        // list (a list is one opaque value everywhere outside spread and
+        // deconstruction), and final builtin list semantics are deferred to the
+        // follow-up builtin work. Until then a list in the collection is a
+        // targeted type error; explicit caller-site spread
+        // (`count([1, 2, 3]...)`) already supplies the opened items and stays
+        // fully supported. Lean: the list guard in bindSequenceBuiltinArguments.
+        if (collectionValues.Any(static value => value is Result.ListValue))
+        {
+            return new EvalError.TypeMismatch(
+                $"{BuiltinDisplayName(builtin)} does not support list values yet; spread the list with `...` to supply its items");
+        }
 
         var collected = new CollectedSequenceBuiltinInput([collectionValues], collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
@@ -4366,7 +4445,7 @@ public static class Evaluator
     private static SequenceBuiltinMetadata? GetSequenceBuiltinMetadata(BuiltinId builtin)
         => BuiltinRegistry.TryGetSequenceMetadata(builtin, out var metadata) ? metadata : null;
 
-    private static string BuiltinDisplayName(BuiltinId builtin)
+    internal static string BuiltinDisplayName(BuiltinId builtin)
         => BuiltinRegistry.GetBuiltin(builtin).Name;
 
     /// <summary>Lean: builtinAcceptsArity. Fixed-arity builtins stay exact; sequence builtins use callable signatures with <c>values...</c>.</summary>
@@ -4551,6 +4630,8 @@ public static class Evaluator
                 return new EvalError.NotAnAlgorithm($"num({n})") { Span = expr.Span };
             case Expr.EmptySequence:
                 return new EvalError.NotAnAlgorithm("empty sequence value") { Span = expr.Span };
+            case Expr.ListLiteral:
+                return new EvalError.NotAnAlgorithm("list literal") { Span = expr.Span };
             case Expr.Unary:
                 return new EvalError.NotAnAlgorithm("unary expression") { Span = expr.Span };
             case Expr.Binary:
@@ -4878,7 +4959,7 @@ public static class Evaluator
         if (leftEmpty || rightEmpty)
         {
             // Empty results stay transparent for the non-comparison operators.
-            if (leftEmpty && rightEmpty) return EvalResult<Result>.Ok(new Result.SequenceValue([]));
+            if (leftEmpty && rightEmpty) return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
             if (leftEmpty) return EvalResult<Result>.Ok(rightValue);
             return EvalResult<Result>.Ok(leftValue);
         }
@@ -5309,7 +5390,7 @@ public static class Evaluator
                 var operandR = Eval(operand, ctx, valEnv);
                 if (operandR.IsError) return operandR.Error;
                 if (operandR.Value is Result.SequenceValue(var uItems) && uItems.Count == 0)
-                    return EvalResult<Result>.Ok(new Result.SequenceValue([]));
+                    return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
                 if (operandR.Value is Result.Str)
                     return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = expr.Span };
                 var vR = ExpectInt(operandR.Value);
@@ -5350,6 +5431,14 @@ public static class Evaluator
                 return sequenceSpreadR.IsError
                     ? sequenceSpreadR.Error
                     : EvalResult<Result>.Ok(sequenceSpreadR.Value.Value);
+            }
+
+            case Expr.ListLiteral(var listItems):
+            {
+                var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv);
+                return listLiteralR.IsError
+                    ? listLiteralR.Error
+                    : EvalResult<Result>.Ok(listLiteralR.Value.Value);
             }
 
             case Expr.Block(var alg):
@@ -5467,6 +5556,9 @@ public static class Evaluator
 
             case Expr.SequenceConstruct:
                 return EvalSequenceConstructCounted(expr, ctx, valEnv);
+
+            case Expr.ListLiteral(var listItems):
+                return EvalListLiteralCounted(listItems, ctx, valEnv);
 
             case Expr.EmptySequence(var depth):
             {
@@ -6492,8 +6584,19 @@ public static class Evaluator
         if (receiverR.IsError)
             return receiverR.Error;
 
+        var items = receiverR.Value.Value.ToItems();
+
+        // Mirror the generic builtin binding's list guard (the fused pipeline's
+        // only source consumer is `filter`): a list value in the collection is
+        // not yet supported, exactly like BindSequenceBuiltinArguments reports.
+        if (items.Any(static item => item is Result.ListValue))
+        {
+            return new EvalError.TypeMismatch(
+                $"{BuiltinDisplayName(BuiltinId.@filter)} does not support list values yet; spread the list with `...` to supply its items");
+        }
+
         return EvalResult<IReadOnlyList<CountedResult>>.Ok(
-            receiverR.Value.Value.ToItems()
+            items
                 .Select(static item => new CountedResult(item, item.ValueCount()))
                 .ToList());
     }

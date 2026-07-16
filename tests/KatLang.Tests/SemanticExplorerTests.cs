@@ -228,24 +228,77 @@ public class SemanticExplorerTests
         var captured = Obs("capture", valueId);
         var capturedValue = captured.Value!;
         var items = capturedValue.ToItems();
+        // Spread opens ONE boundary of either structure kind (sequence OR
+        // exact list); the non-spread item view keeps lists opaque.
+        var spreadItems = capturedValue.SpreadItems();
+        var isListValue = capturedValue is Result.ListValue;
+        // Builtin collection binding does not accept list values yet
+        // (deferred to the follow-up builtin work): a list anywhere in the
+        // bound item supply is a targeted type error.
+        var builtinItemsContainList = items.Any(static item => item is Result.ListValue);
+        var spreadSupplyContainsList = spreadItems.Any(static item => item is Result.ListValue);
 
         // Every plain access / one-value boundary must observe the identical
         // captured value with emitted count 1.
         AssertSame(findings, "LexicalDotMismatch", valueId, captured, "dotAccess", "dotAccessCall", "captureCall");
         AssertSame(findings, "BoundaryReentryChange", valueId, captured, "identity", "identityTwice", "propChain", "fixed", "root", "seqWrapSolo");
-        AssertSame(findings, "BoundaryReentryChange", valueId, captured, "variadic", "variadicSpread", "variadicViaProp");
+        AssertSame(findings, "BoundaryReentryChange", valueId, captured, "variadic", "variadicViaProp");
 
-        // count(...) vs .count vs spread-opened supply observe the same layer.
-        var expectedCount = items.Count;
-        foreach (var template in new[] { "count", "countSpread", "dotCount", "literalDotCount" })
+        // The grouped/spread coincidence `F(x) == F(x...)` for a rest-only
+        // callee is SEQUENCE-specific: canonical capture erases a redundant
+        // sequence boundary but never a list boundary, so spreading a lone
+        // list re-captures as the sequence of its elements.
+        if (!isListValue)
+        {
+            AssertSame(findings, "BoundaryReentryChange", valueId, captured, "variadicSpread");
+        }
+        else
+        {
+            var variadicSpread = Obs("variadicSpread", valueId);
+            var expectedRecapture = Result.FromItems(spreadItems);
+            if (variadicSpread.Outcome != "ok"
+                || !Result.ValueComparer.Equals(variadicSpread.Value, expectedRecapture))
+            {
+                findings.Add(new Finding(
+                    "BoundaryReentryChange", variadicSpread.CaseId,
+                    $"expected list spread to re-capture as {SemanticExplorerHarness.Neutral(expectedRecapture)}, observed {variadicSpread.Neutral}"));
+            }
+        }
+
+        // count(...) vs .count observe the bound item supply; a list in the
+        // supply is the deferred-builtin type error, and `count(x...)` counts
+        // the spread-opened supply instead.
+        foreach (var template in new[] { "count", "dotCount", "literalDotCount" })
         {
             var observation = Obs(template, valueId);
-            if (observation.Outcome != "ok" || observation.Raw != expectedCount.ToString())
+            if (builtinItemsContainList)
+            {
+                ExpectBuiltinListDeferred(findings, observation);
+            }
+            else if (observation.Outcome != "ok" || observation.Raw != items.Count.ToString())
             {
                 findings.Add(new Finding(
                     "CountDisagreement", observation.CaseId,
-                    $"expected {expectedCount}, observed {observation.Neutral}"));
+                    $"expected {items.Count}, observed {observation.Neutral}"));
             }
+        }
+
+        // `count(x...)` counts the spread-opened supply, to which builtin
+        // collection binding applies its own singleton-boundary normalization
+        // (a supply of exactly one grouped SEQUENCE value is that collection).
+        var countSpread = Obs("countSpread", valueId);
+        var spreadSupplyAsCollection = spreadItems is [Result.SequenceValue(var loneSeqItems)]
+            ? loneSeqItems
+            : spreadItems;
+        if (spreadSupplyContainsList)
+        {
+            ExpectBuiltinListDeferred(findings, countSpread);
+        }
+        else if (countSpread.Outcome != "ok" || countSpread.Raw != spreadSupplyAsCollection.Count.ToString())
+        {
+            findings.Add(new Finding(
+                "CountDisagreement", countSpread.CaseId,
+                $"expected {spreadSupplyAsCollection.Count}, observed {countSpread.Neutral}"));
         }
 
         // Structural equality is reflexive and construction-path independent.
@@ -254,14 +307,18 @@ public class SemanticExplorerTests
         ExpectAtom(findings, "EqualityInstability", Obs("eqIdentity", valueId), 1);
 
         // Spread opens exactly one layer: item count and recombined value.
+        // For sequences the re-captured value is the captured value itself;
+        // for lists it is the canonical sequence of the elements.
         var spreadRoot = Obs("spreadRoot", valueId);
+        var expectedSpreadValue = Result.FromItems(spreadItems);
+        var expectedSpreadRaw = SemanticExplorerHarness.Neutral(expectedSpreadValue);
         if (spreadRoot.Outcome != "ok"
-            || spreadRoot.Emitted != items.Count
-            || spreadRoot.Raw != captured.Raw)
+            || spreadRoot.Emitted != spreadItems.Count
+            || spreadRoot.Raw != expectedSpreadRaw)
         {
             findings.Add(new Finding(
                 "SpreadDepthMismatch", spreadRoot.CaseId,
-                $"expected raw {captured.Raw} n={items.Count}, observed {spreadRoot.Neutral}"));
+                $"expected raw {expectedSpreadRaw} n={spreadItems.Count}, observed {spreadRoot.Neutral}"));
         }
 
         // A non-spread value stays one visible item; nested structure intact.
@@ -279,7 +336,7 @@ public class SemanticExplorerTests
 
         // Spread into a sequence literal splices exactly the one-layer items.
         var spreadInSeq = Obs("spreadInSeq", valueId);
-        var expectedSplice = SemanticExplorerHarness.ShallowCombine([.. items, new Result.Atom(99)]);
+        var expectedSplice = SemanticExplorerHarness.ShallowCombine([.. spreadItems, new Result.Atom(99)]);
         if (spreadInSeq.Outcome != "ok" || !Result.ValueComparer.Equals(spreadInSeq.Value, expectedSplice))
         {
             findings.Add(new Finding(
@@ -322,6 +379,37 @@ public class SemanticExplorerTests
         IReadOnlyList<Result> items,
         List<Finding> findings)
     {
+        // Builtin collection binding does not accept list values yet: a list
+        // anywhere in the bound item supply is the deferred-builtin type
+        // error, uniformly across the collection builtins.
+        if (items.Any(static item => item is Result.ListValue))
+        {
+            foreach (var template in new[]
+                     {
+                         "take1", "take9", "skip1", "filterKeep", "distinct", "order",
+                         "mapId", "takeCapture", "takeIdentity", "takeVariadic", "takeCount",
+                     })
+            {
+                ExpectBuiltinListDeferred(findings, Obs(template, valueId));
+            }
+
+            // `atoms` flattens through Result.ToAtoms directly (it never binds
+            // an item supply), so lists are omitted like strings rather than
+            // rejected — checked below with the shared expectation.
+            var atomsWithList = Obs("atoms", valueId);
+            var expectedAtomsWithList = Result.FromItems(
+                captured.Value!.ToAtoms().Select(a => (Result)new Result.Atom(a)));
+            if (atomsWithList.Outcome != "ok"
+                || !Result.ValueComparer.Equals(atomsWithList.Value, expectedAtomsWithList))
+            {
+                findings.Add(new Finding(
+                    "BuiltinBoundaryMismatch", atomsWithList.CaseId,
+                    $"expected {SemanticExplorerHarness.Neutral(expectedAtomsWithList)}, observed {atomsWithList.Neutral}"));
+            }
+
+            return;
+        }
+
         // take/skip/distinct/filter keep original items and recombine with the
         // shallow single-survivor boundary erasure; expected values are
         // computed structurally from the captured value's one-layer items.
@@ -386,6 +474,21 @@ public class SemanticExplorerTests
         }
     }
 
+    /// <summary>
+    /// A collection builtin observing a list value in its bound item supply
+    /// reports the deferred-list type error (final builtin list semantics are
+    /// a follow-up; only explicit spread supplies list elements today).
+    /// </summary>
+    private static void ExpectBuiltinListDeferred(List<Finding> findings, ExplorerObservation observation)
+    {
+        if (observation.Outcome != "err" || observation.ErrorCategory != "type")
+        {
+            findings.Add(new Finding(
+                "BuiltinBoundaryMismatch", observation.CaseId,
+                $"expected the deferred-list builtin type error, observed {observation.Neutral}"));
+        }
+    }
+
     private static void ExpectCombined(List<Finding> findings, ExplorerObservation observation, IReadOnlyList<Result> keptItems)
     {
         var expected = SemanticExplorerHarness.ShallowCombine(keptItems);
@@ -433,6 +536,7 @@ public class SemanticExplorerTests
     {
         Result.Str => true,
         Result.SequenceValue g => g.Items.Any(ContainsString),
+        Result.ListValue l => l.Items.Any(ContainsString),
         _ => false,
     };
 

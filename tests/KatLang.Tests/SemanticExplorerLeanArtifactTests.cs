@@ -86,7 +86,15 @@ public class SemanticExplorerLeanArtifactTests
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();
         var expected = SemanticExplorerCorpus.Values.Select(v => $"indexNeg__{v.Id}")
-            .Concat(["special__semicolonSeparator", "special__spreadAsBinaryOperand", "special__trailingComma"])
+            .Concat(
+            [
+                "special__semicolonSeparator",
+                "special__spreadAsBinaryOperand",
+                "special__trailingComma",
+                "special__listUnterminated",
+                "special__listDefinitionInside",
+                "special__listLoneRestAssignment",
+            ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();
         Assert.Equal(expected, excluded);

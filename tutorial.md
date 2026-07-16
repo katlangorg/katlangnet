@@ -57,21 +57,26 @@
     - [Algorithm as Argument](#algorithm-as-argument)
     - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
 12. [Spread with ellipsis operator](#spread-with-ellipsis-operator)
-13. [Atoms](#atoms)
+13. [Lists](#lists)
+    - [Lists versus Sequence Values](#lists-versus-sequence-values)
+    - [Spreading Lists](#spreading-lists)
+    - [Lists in Calls and Deconstruction](#lists-in-calls-and-deconstruction)
+    - [Lists and Collection Builtins](#lists-and-collection-builtins)
+14. [Atoms](#atoms)
     - [Opening one level vs flattening](#opening-one-level-vs-flattening)
-14. [Conditional Algorithms](#conditional-algorithms)
+15. [Conditional Algorithms](#conditional-algorithms)
     - [Basic Pattern Matching](#basic-pattern-matching)
     - [Nested Sequence-Value Patterns](#nested-sequence-value-patterns)
     - [The K Combinator: Ignoring a Parameter](#the-k-combinator-ignoring-a-parameter)
     - [Mixing Literals and Variables](#mixing-literals-and-variables)
     - [String Patterns](#string-patterns)
     - [Non-Exhaustive Patterns](#non-exhaustive-patterns)
-15. [Loading and `open`](#loading-and-open)
+16. [Loading and `open`](#loading-and-open)
     - [Loading External Algorithms](#loading-external-algorithms)
     - [`open`: Import Properties Directly](#open-import-properties-directly)
     - [Visibility](#visibility)
-16. [Pitfalls](#pitfalls)
-17. [Full Reference](#full-reference)
+17. [Pitfalls](#pitfalls)
+18. [Full Reference](#full-reference)
     - [Operators](#operators)
     - [Builtin Algorithms, Intrinsics, and Keywords](#builtin-algorithms-intrinsics-and-keywords)
 
@@ -553,10 +558,10 @@ Use parentheses when sequence-valued output intent is clearer:
 | `1, 2` | Two top-level comma outputs |
 | `(1, 2)` | One sequence value containing `1` followed by `2` |
 | `1 2` | Implicit expression-list separator by adjacency: exactly `1, 2` |
-| `1...` | Postfix spread: expand the evaluated sequence value of `1` into the surrounding slot context |
+| `1...` | Postfix spread: open one item boundary of the evaluated value and contribute the items to the surrounding slot context |
 | `1...2` | Postfix spread then an adjacent expression-list slot: `1..., 2` — `...` takes no right operand |
 
-Comma and adjacency create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, and parentheses materialize it as one sequence value. Semicolon is not an expression separator; use comma/adjacency for separate slots or parentheses for one sequence value. Postfix `...` applies only to its immediate operand: `A B... C` is the expression list `A, B..., C`. Comma and adjacency slots stay structural (`F(a..., b)` and `F(a...b)` are both two-argument calls). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
+Comma and adjacency create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use comma/adjacency for separate slots or parentheses for one sequence value. Postfix `...` applies only to its immediate operand: `A B... C` is the expression list `A, B..., C`. Comma and adjacency slots stay structural (`F(a..., b)` and `F(a...b)` are both two-argument calls). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
 
 ```
 1, (2, 3)    // two slots: 1 and (2, 3)
@@ -1331,7 +1336,7 @@ A parameter list with two or more captures and one rest matches the supplied ite
 
 #### Deconstruction Assignment
 
-The same comma binding pattern works on the left of `=`, binding several names from one right-hand side. Assignment deconstruction is an **unpacking receiver**, like Python's `x, y = pair`: when the right-hand side is a single sequence value, the pattern unpacks its items and matches them to the targets. At most one rest binding `name...` is allowed, and it may appear anywhere in the pattern:
+The same comma binding pattern works on the left of `=`, binding several names from one right-hand side. Assignment deconstruction is an **unpacking receiver**, like Python's `x, y = pair`: when the right-hand side is exactly one sequence value or one exact [list value](#lists), the pattern opens that lone value and matches its items to the targets. At most one rest binding `name...` is allowed, and it may appear anywhere in the pattern:
 
 <!-- spec:decon-tutorial-full -->
 ```
@@ -2469,7 +2474,7 @@ With no contents, `()` is the empty sequence value (a real value, displayed as `
 
 ## Spread with ellipsis operator
 
-The `...` operator is KatLang's POSTFIX spread operator. `x...` spreads the result sequence of `x` (followed by nothing) at the current output level. It NEVER consumes a right operand: any token after `...` — tight, spaced, or on the next physical line — starts a new expression-list slot. So `x...y` is `x..., y`, and `x...C` is `x..., C`; `C` is just the following expression-list slot, not a right operand of `...`. (Internally `x...` is a unary spread node over its single operand, with no right operand.)
+The `...` operator is KatLang's POSTFIX spread operator. `x...` opens ONE item-producing boundary of `x`'s evaluated value and contributes the opened items to the surrounding item supply (output rows, call argument slots, or list/sequence elements) — it does not create or emit a sequence value by itself. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. It NEVER consumes a right operand: any token after `...` — tight, spaced, or on the next physical line — starts a new expression-list slot. So `x...y` is `x..., y`, and `x...C` is `x..., C`; `C` is just the following expression-list slot, not a right operand of `...`. (Internally `x...` is a unary spread node over its single operand, with no right operand.)
 
 Because `...` is postfix everywhere, `x...y`, `x ...y`, and `x... y` all mean `x..., y` (whitespace before `...` is insignificant). This matters at boundary-sensitive sites: `Use(1...Tail)` has two argument slots, `1...` and `Tail`. To construct one sequence argument from a spread value and another expression, capture it explicitly with parentheses: `Use((1..., Tail))`.
 
@@ -2626,6 +2631,269 @@ Spread projects only one immediate level. Each spread contributes its opened ite
 | `((1, 2))...3` | Redundant unary parentheses canonicalize during value construction, so `((1, 2))` is the value `(1, 2)`; the spread opens its items and `3` is a separate slot, producing `1, 2, 3` — same as `(1, 2)...3` |
 | `1, { 2, 3 }` | Preserves the nested block boundary, producing `1, (2, 3)` |
 | `1...{ 2, 3 }` | `1...` spreads `1`, then the block `{ 2, 3 }` is a separate expression-list slot; `...` has no right operand. Produces `1, (2, 3)` |
+
+---
+
+## Lists
+
+Square brackets construct an **exact immutable list value** — KatLang's second collection kind, complementing sequence values:
+
+<!-- spec:list-literal -->
+```
+[1, 2, 3]
+```
+
+**Result:** `[1, 2, 3]`
+
+A list literal always evaluates to exactly ONE list value. Its elements use the ordinary expression-list rules (comma or adjacency separate elements, and an already-open `[` spans lines just like `(` and `{`), but unlike parenthesized sequence values, **no canonicalization ever applies to list structure**: lists preserve exact cardinality and nesting.
+
+<!-- spec:list-exactness -->
+```
+[7] == 7
+[[1, 2]] == [1, 2]
+[[]] == []
+```
+
+**Results:**
+```
+0
+0
+0
+```
+
+`[]` is the empty list, `[7]` is a singleton list (it never collapses to `7`), and `[[7]]` is a singleton list containing another singleton list. List equality is structural and recursive: `[1, 2] == [1, 2]` is `1`, and `[1, [2]] == [1, 2]` is `0`.
+
+Lists are observably immutable: assigning a list to another name shares the same value, and no operation modifies a list in place.
+
+### Lists versus Sequence Values
+
+Lists and sequence values are **different value kinds** — equal elements never make them equal:
+
+<!-- spec:list-vs-sequence-kind -->
+```
+[] == ()
+[1, 2] == (1, 2)
+```
+
+**Results:**
+```
+0
+0
+```
+
+The conceptual split:
+
+| Kind | Written | Role |
+|---|---|---|
+| sequence value `()` | parentheses | canonical captured arity value — singleton and redundant boundaries canonicalize away |
+| list `[]` | brackets | exact immutable collection value — structure is preserved exactly |
+| item supply | (no literal) | temporary non-value structure consumed by binding and spread |
+
+Ordinary parentheses stay a redundant SEQUENCE grouping even around lists:
+
+<!-- spec:list-redundant-parens-canonicalize -->
+```
+([1, 2]) == [1, 2]
+```
+
+**Result:** `1`
+
+Unlike `()`, the empty list `[]` is never transparent: `[] > 1` is a type error while `() > 1` passes the operand through, and `F([])` passes one empty-list argument while `F([]...)` supplies zero arguments.
+
+Selection `:` follows the generic one-item projection rule for opaque values — it is **not** list-element indexing. A list is one top-level item, so `[1, 2]:0` yields the whole list `[1, 2]` (just as `7:0` is `7`), and with `A = (0, [1, 2])`, `A:1` yields the intact list `[1, 2]`. List-element indexing is deferred follow-up work.
+
+### Spreading Lists
+
+Postfix `...` opens exactly ONE list boundary into the surrounding item supply — the same spread operator and rules as sequence values. Because single-name assignment is capture (not deconstruction), the captured spread becomes a canonical sequence:
+
+<!-- spec:list-spread-capture -->
+```
+A = [1, 2, 3]
+
+x = A
+y = A...
+
+x
+y
+```
+
+**Results:**
+```
+[1, 2, 3]
+(1, 2, 3)
+```
+
+This distinction is essential: `x = value` preserves the value, `x = value...` opens one boundary and captures the resulting item supply.
+
+Spread opens only the outermost boundary:
+
+<!-- spec:list-spread-edges -->
+```
+A = []
+B = [7]
+C = [[7]]
+
+A...
+B...
+C...
+```
+
+**Results:**
+```
+7
+[7]
+```
+
+`A...` supplies zero items (its output row vanishes), `B...` supplies `7`, and `C...` supplies the inner list `[7]` intact.
+
+Spread also works INSIDE list literals — a spread element inserts its item supply into the list being constructed:
+
+<!-- spec:list-literal-spread-elements -->
+```
+A = 1, 2, 3
+
+[A...]
+[0, A..., 4]
+```
+
+**Results:**
+```
+[1, 2, 3]
+[0, 1, 2, 3, 4]
+```
+
+Non-spread values stay single elements; only explicit `...` opens them:
+
+<!-- spec:list-elements-preserve-boundaries -->
+```
+A = [1, 2]
+B = [3, 4]
+
+[A, B]
+[A..., B...]
+[A, B...]
+```
+
+**Results:**
+```
+[[1, 2], [3, 4]]
+[1, 2, 3, 4]
+[[1, 2], 3, 4]
+```
+
+An empty spread contributes no elements, while a non-spread `()` or `[]` element stays one visible element:
+
+<!-- spec:list-empty-spread-neutral -->
+```
+[1, []..., 2]
+[1, ()..., 2]
+```
+
+**Results:**
+```
+[1, 2]
+[1, 2]
+```
+
+### Lists in Calls and Deconstruction
+
+Calls never open lists implicitly. A list passed without spread is ONE argument; explicit spread supplies its elements:
+
+<!-- spec:list-call-boundary -->
+```
+F(a, b, c) = a + b + c
+One(x) = 7
+
+A = [1, 2, 3]
+
+One(A)
+F(A...)
+```
+
+**Results:**
+```
+7
+6
+```
+
+`F(A)` without the spread is an arity error (one argument for three parameters), and `F([]...)` supplies zero arguments. Extension dot-calls follow the ordinary receiver rule: `A.F(9)` passes the whole list `A` as the one leading argument.
+
+Multi-target **deconstruction**, by contrast, is an unpacking receiver: a right-hand side that is exactly one list value opens the list and matches its elements — the same rule that already opens a lone sequence value, and the same bindings the explicit spread `x, y, z = [1, 2, 3]...` produces. (The two written forms coincide except for one exotic shape: a singleton list whose lone element is itself a sequence or list, such as `[(1, 2)]`, where the spread form re-groups through a capture boundary and opens one level further.)
+
+<!-- spec:list-lone-deconstruction -->
+```
+x, y, z = [1, 2, 3]
+
+x
+y
+z
+```
+
+**Results:**
+```
+1
+2
+3
+```
+
+Only the OUTER lone structure opens — nested values stay intact, and a list that is one item of an already multi-item supply stays one value (`x, y = [1, 2], 3` binds `x = [1, 2]`, `y = 3`):
+
+<!-- spec:list-deconstruction-not-recursive -->
+```
+x, y = [[1, 2], 3]
+
+x
+y
+```
+
+**Results:**
+```
+[1, 2]
+3
+```
+
+Rest capture always groups the unmatched items as one canonical SEQUENCE value — it never reconstructs the source list:
+
+<!-- spec:list-rest-capture-is-sequence -->
+```
+x, rest... = [1, 2, 3]
+
+x
+rest
+```
+
+**Results:**
+```
+1
+(2, 3)
+```
+
+With `x, rest... = [1]` the rest is `()`, and with `x, rest... = [1, 2]` the singleton rest normalizes to `2` — exactly the existing sequence-capture rules. Rest-only assignment stays forbidden for lists exactly as for sequences: `items... = [1, 2, 3]` is a parse error; write producer-side spread `items = value...` to open a stored list into a captured sequence.
+
+### Lists and Collection Builtins
+
+Builtin collection support for lists is deliberately deferred: a list value inside a builtin's item supply reports a targeted error, and only explicit spread supplies list elements to builtins today.
+
+```
+count([1, 2, 3])
+```
+
+**Result:** error — `count does not support list values yet; spread the list with `...` to supply its items`.
+
+The explicit spread forms are fully supported:
+
+```
+count([1, 2, 3]...)
+sum([1, 2, 3]...)
+```
+
+**Results:**
+```
+3
+6
+```
+
+(`atoms` is the one exception: it flattens numeric structure directly and omits list values exactly like strings.)
 
 ---
 
@@ -3030,7 +3298,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `*`, `/`, `div`, `mod` | Multiplication, division, integer division, modulo | |
 | `+`, `-` | Addition, subtraction | |
 | `<`, `>`, `<=`, `>=` | Ordering comparison, numeric scalar operands only (returns 1 or 0) | |
-| `==`, `!=` | Structural value equality / inequality across all value kinds (numbers, strings, and sequence values); returns 1 or 0 | |
+| `==`, `!=` | Structural value equality / inequality across all value kinds (numbers, strings, sequence values, and lists — different kinds compare unequal); returns 1 or 0 | |
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
@@ -3041,6 +3309,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `...` | Spread (spread immediate evaluated results) | — |
 | `~` (prefix) | Grace: move parameter one position earlier | — |
 | `~` (postfix) | Grace: move parameter one position later | — |
+| `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is the adjacency list `A, [1]`) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords
 

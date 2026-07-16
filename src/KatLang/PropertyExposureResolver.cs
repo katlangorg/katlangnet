@@ -378,6 +378,27 @@ internal static class PropertyExposureResolver
                     MergeSummaries([rewrittenLeft.Summary, rewrittenRight.Summary]));
             }
 
+            case Expr.ListLiteral(var items):
+            {
+                var rewrittenItems = new List<Expr>(items.Count);
+                var itemSummaries = new List<AnalysisSummary>(items.Count);
+                foreach (var item in items)
+                {
+                    var rewrittenItem = RewriteExpr(
+                        item,
+                        visiblePropertySummaries,
+                        ownedHere,
+                        ancestorOwnedForChildren,
+                        insideConditionalAlgorithm);
+                    rewrittenItems.Add(rewrittenItem.Expr);
+                    itemSummaries.Add(rewrittenItem.Summary);
+                }
+
+                return new ExprRewriteResult(
+                    new Expr.ListLiteral(rewrittenItems) { Span = expr.Span },
+                    MergeSummaries(itemSummaries));
+            }
+
             case Expr.Block(var algorithm):
             {
                 var rewrittenAlgorithm = ProcessAlgorithm(

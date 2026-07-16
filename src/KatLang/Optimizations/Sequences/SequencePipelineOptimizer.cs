@@ -202,8 +202,13 @@ internal static class SequencePipelineOptimizer
         if (countSource is Expr.Call(var filterFunction, var plainFilterArgs)
             && IsFilterFunctionCandidate(filterFunction))
         {
+            // Keep the ORIGINAL (possibly spread) source expression: generic
+            // source evaluation must observe real spread semantics (a spread
+            // opens one list boundary, while a bare list value stays one opaque
+            // item). Direct-range recognition peels spread layers itself inside
+            // TryEvaluateBuiltinRangeSource, so range fusion is unaffected.
             var plainSource = plainFilterArgs.Output.Count > 0
-                ? UnwrapSpread(plainFilterArgs.Output[0])
+                ? plainFilterArgs.Output[0]
                 : countSource;
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.PlainCountPlainFilter,
@@ -564,6 +569,12 @@ internal static class SequencePipelineOptimizer
         Expr source,
         SequencePipelineEvaluationServices services)
     {
+        // Direct-range recognition sees through spread layers: `range(a, b)...`
+        // supplies exactly the range's items, so fusing on the peeled call is
+        // value-equivalent. Generic (non-range) sources keep their original
+        // spread expression and are evaluated with real spread semantics.
+        source = UnwrapSpread(source);
+
         if (source is not Expr.Call(var function, var argsAlg))
             return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
                 SequencePipelineRangeSourceEvaluation.Fallback("source is not builtin range"));
@@ -654,9 +665,24 @@ internal static class SequencePipelineOptimizer
         // one-item collection boundary, so when exactly one item is kept and it
         // is a sequence value, `count` opens that lone kept value's items (0 for
         // a kept `()`). Every other kept shape still counts one per kept item.
-        var fusedCount = soleKeptValue is Result.SequenceValue(var soleItems)
-            ? soleItems.Count
-            : keptCount;
+        // Mirror the generic count binding's deferred-list guard on those
+        // opened items: the split composition (`K = src.filter(p)` then
+        // `K.count`) raises the targeted list error when the lone kept
+        // sequence contains a list value, so the fused count must as well.
+        // (Top-level list SOURCE items never reach here — the source-boundary
+        // guard in EvaluateDotReceiverIterationItemsForSequenceOptimizer
+        // rejects them before the predicate loop, matching generic filter.)
+        var fusedCount = keptCount;
+        if (soleKeptValue is Result.SequenceValue(var soleItems))
+        {
+            if (soleItems.Any(static item => item is Result.ListValue))
+            {
+                return new EvalError.TypeMismatch(
+                    $"{Evaluator.BuiltinDisplayName(BuiltinId.@count)} does not support list values yet; spread the list with `...` to supply its items");
+            }
+
+            fusedCount = soleItems.Count;
+        }
 
         diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
         diagnostics?.RecordPipelineExecution(

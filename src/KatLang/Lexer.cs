@@ -190,6 +190,8 @@ public static class Lexer
                 case ')': tokens.Add(Token.Create(TokenKind.RParen,     singleStart, 1, singleLine, singleCol)); break;
                 case '{': tokens.Add(Token.Create(TokenKind.LBrace,     singleStart, 1, singleLine, singleCol)); break;
                 case '}': tokens.Add(Token.Create(TokenKind.RBrace,     singleStart, 1, singleLine, singleCol)); break;
+                case '[': tokens.Add(Token.Create(TokenKind.LBracket,   singleStart, 1, singleLine, singleCol)); break;
+                case ']': tokens.Add(Token.Create(TokenKind.RBracket,   singleStart, 1, singleLine, singleCol)); break;
                 case ',': tokens.Add(Token.Create(TokenKind.Comma,      singleStart, 1, singleLine, singleCol)); break;
                 case ';': tokens.Add(Token.Create(TokenKind.Semicolon,  singleStart, 1, singleLine, singleCol)); break;
                 case ':': tokens.Add(Token.Create(TokenKind.Colon,      singleStart, 1, singleLine, singleCol)); break;

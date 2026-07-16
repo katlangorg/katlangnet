@@ -85,6 +85,27 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_IdentifiersInsideListLiterals_ProduceResolutions()
+    {
+        var model = BuildModel("Alpha = 1\nBeta = 2\n[Alpha, Beta, 3]");
+
+        var alphaDeclaration = Assert.Single(model.FindDeclarations("Alpha"));
+        var alphaReference = Assert.Single(
+            model.IdentifierResolutions,
+            resolution => resolution.Occurrence.Name == "Alpha"
+                && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
+        Assert.Equal(IdentifierClassification.PropertyReference, alphaReference.Classification);
+        Assert.Equal(alphaDeclaration, alphaReference.ResolvedDeclaration);
+        AssertSpan(alphaReference.Occurrence.Span, 3, 2, 3, 6);
+
+        var betaReference = Assert.Single(
+            model.IdentifierResolutions,
+            resolution => resolution.Occurrence.Name == "Beta"
+                && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
+        AssertSpan(betaReference.Occurrence.Span, 3, 9, 3, 12);
+    }
+
+    [Fact]
     public void Build_SourceCoordinates_AreOneBasedAndEndInclusive()
     {
         var model = BuildModel("Alpha = 123\nAlpha");
