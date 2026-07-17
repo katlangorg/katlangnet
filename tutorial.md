@@ -59,6 +59,7 @@
 12. [Spread with ellipsis operator](#spread-with-ellipsis-operator)
 13. [Lists](#lists)
     - [Lists versus Sequence Values](#lists-versus-sequence-values)
+    - [Indexing Lists](#indexing-lists)
     - [Spreading Lists](#spreading-lists)
     - [Lists in Calls and Deconstruction](#lists-in-calls-and-deconstruction)
     - [Lists and Collection Builtins](#lists-and-collection-builtins)
@@ -921,13 +922,14 @@ Collection builtins receive one collection object. Named helpers such as `A = 1,
 
 ### Output Selection
 
-When an algorithm produces multiple outputs, the `:` operator selects one top-level item by its zero-based index and projects that selected item's content one level.
+When an algorithm produces multiple outputs, the `:` operator selects one top-level item by its zero-based index and projects that selected item's content one level. Exact list values are indexable the same way: `value:index` selects one immediate element from a sequence or list target under identical index rules.
 
 Construction preserves structure; selection projects content.
 
 - If the selected item is atomic, the result is that atomic value.
 - If the selected item is a sequence value, the result is its immediate top-level members.
-- Nested sequence values stay intact; `:` does not recursively flatten them.
+- If the selected item is an exact list value, the result is that list, exactly as stored.
+- Nested sequence and list values stay intact; `:` does not recursively flatten them.
 - Chained selection repeats the same one-level projection step at each `:`.
 
 ```
@@ -967,6 +969,17 @@ Bags:0:1
 ```
 
 Here each selection sits beside another output row, so each displays as one value row (`Bags:0` is the intact inner pair-of-pairs). Only a lone root row spreads a projection across rows, as in the `Pairs:0` example above.
+
+Exact list values use the same zero-based selection:
+
+<!-- spec:list-index-selects-element -->
+```
+[1, 2, 3]:0
+```
+
+**Result:** `1`
+
+`(1, 2, 3):1` and `[1, 2, 3]:1` agree on every index, and the same out-of-range and invalid-index errors apply to both target kinds. See [Indexing Lists](#indexing-lists) for how selected list elements keep their exact structure.
 
 Output selection is especially useful with loops and multi-output algorithms where you only need one particular result.
 
@@ -2385,7 +2398,7 @@ Compute the sum of all numbers in a multi-value property using `repeat`:
 ```
 Numbers = 3, 5, 9, 1, 0, 6
 
-// Step: advance index, accumulate Numbers[index]
+// Step: advance index, accumulate Numbers:a
 Step = a + 1, total + Numbers:a
 
 // Repeat once per element, then select the accumulated sum:
@@ -2714,7 +2727,39 @@ Ordinary parentheses stay a redundant SEQUENCE grouping even around lists:
 
 Unlike `()`, the empty list `[]` is never transparent: `[] > 1` is a type error while `() > 1` passes the operand through, and `F([])` passes one empty-list argument while `F([]...)` supplies zero arguments.
 
-Selection `:` follows the generic one-item projection rule for opaque values — it is **not** list-element indexing. A list is one top-level item, so `[1, 2]:0` yields the whole list `[1, 2]` (just as `7:0` is `7`), and with `A = (0, [1, 2])`, `A:1` yields the intact list `[1, 2]`. List-element indexing is deferred follow-up work.
+### Indexing Lists
+
+Selection `:` indexes into exact list values: `value:index` selects ONE immediate element by zero-based position, using exactly the same index rules as sequence selection. The selected element is returned exactly as stored — a nested list element stays an exact list, a sequence-valued element stays a sequence value, and nothing is flattened, spread, or converted between kinds.
+
+<!-- spec:list-index-nested-element-stays-exact -->
+```
+Rows = [[1, 2], [3, 4]]
+Rows:0
+Rows:0:1
+```
+
+**Results:**
+```
+[1, 2]
+2
+```
+
+`Rows:0` selects the stored element `[1, 2]` (one opaque list, count 1), and chaining `:` selects one level at a time, so `Rows:0:1` is `2`. Exact kinds survive selection: `[[1, 2]]:0 == [1, 2]` is `1` while `[[1, 2]]:0 == (1, 2)` is `0`.
+
+Collection-producing builtin results are exact lists, so they index directly — no spread-and-recapture step is needed:
+
+<!-- spec:list-index-builtin-results -->
+```
+range(1, 3):2
+```
+
+**Result:** `3`
+
+Likewise `take([1, 2, 3], 1):0` is `1` and `[3, 1, 2].order:0` is `1`.
+
+Empty and past-the-end positions report the same out-of-range index error as sequences: `[]:0`, `[1, 2]:2`, and `[1, 2]:100` are all index errors — never `()`, `[]`, or a default value.
+
+Indexing and spread stay distinct operations: `A:0` selects one element, while `A...` opens the whole list into the surrounding item supply. With `A = [1, 2]`, `A:0` is `1` and `B = A...` captures the canonical sequence `(1, 2)`.
 
 ### Spreading Lists
 
@@ -3358,7 +3403,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `or` | Logical or | Lowest |
 | `not` | Logical negation (prefix) | — |
 | `-` | Arithmetic negation (prefix) | — |
-| `:` | Output selection (zero-based index, one-level content projection) | Postfix |
+| `:` | Output selection (zero-based index over a sequence or exact list target, one-level content projection) | Postfix |
 | `.` | Dot-call / property access | Postfix |
 | `...` | Spread (spread immediate evaluated results) | — |
 | `~` (prefix) | Grace: move parameter one position earlier | — |

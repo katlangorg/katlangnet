@@ -193,6 +193,47 @@ public class ListValueImmutabilityTests
         AssertSemanticallyEqual(List(Atom(1), Atom(2), Atom(3)), value);
     }
 
+    // ── 4b. Projection-selected lists cannot be mutated from the host ───────
+
+    [Theory]
+    [InlineData("[[1, 2], [3, 4]]:0", "[1, 2]")]
+    [InlineData("(0, [1, 2]):1", "[1, 2]")]
+    [InlineData("take([[1, 2], [3, 4]], 1):0", "[1, 2]")]
+    public void ProjectionSelectedList_ResistsHostMutation(string source, string expectedDisplay)
+    {
+        // A list selected by `:` is an ordinary immutable list value: no item
+        // view of the selection exposes writable storage.
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+        var value = Assert.IsType<Result.ListValue>(run.Value);
+        var hashBefore = Result.ValueComparer.GetHashCode(value);
+
+        Assert.Equal(expectedDisplay, run.ToDisplayString());
+
+        ProbeViewForMutation(value.Items);
+        ProbeViewForMutation(value.SpreadItems());
+
+        Assert.Equal(expectedDisplay, run.ToDisplayString());
+        AssertSemanticallyEqual(List(Atom(1), Atom(2)), value);
+        Assert.Equal(hashBefore, Result.ValueComparer.GetHashCode(value));
+    }
+
+    [Fact]
+    public void ProjectionSelectedList_SourceListStaysStable()
+    {
+        var rows = EvaluateList("[[1, 2], [3, 4]]");
+        var selected = Assert.IsType<Result.ListValue>(rows.Index(0));
+
+        ProbeViewForMutation(selected.Items);
+        ProbeViewForMutation(selected.SpreadItems());
+
+        AssertSemanticallyEqual(List(Atom(1), Atom(2)), selected);
+        Assert.Equal(2, rows.Items.Count);
+        AssertSemanticallyEqual(
+            List(List(Atom(1), Atom(2)), List(Atom(3), Atom(4))),
+            rows);
+        AssertSemanticallyEqual(selected, rows.Items[0]);
+    }
+
     [Fact]
     public void DeconstructionProgram_BehaviorRetained()
     {

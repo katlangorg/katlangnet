@@ -705,16 +705,139 @@ public class ListValueTests
     public void DottedBuiltin_ListReceiver_AgreesWithDirectForm(string comparison)
         => AssertAtoms($"P = x > 1\nD = x * 2\nAdd = x + total\nS = [3, 1, 2]\n{comparison}", 1);
 
-    // ── Indexing keeps lists opaque (list indexing is deferred) ──────────────
+    // ── Indexing `:` selects one immediate list element ──────────────────────
 
     [Fact]
     public void Indexing_SelectsListItem_PreservingTheList()
         => AssertEvalCounted("A = (0, [1, 2])\nA:1", 1, ListValue(Atom(1), Atom(2)));
 
+    [Theory]
+    [InlineData("[1, 2, 3]:0", 1)]
+    [InlineData("[1, 2, 3]:1", 2)]
+    [InlineData("[1, 2, 3]:2", 3)]
+    [InlineData("[7]:0", 7)]
+    public void Indexing_ListTarget_SelectsElement(string source, decimal expected)
+        => AssertEvalCounted(source, 1, Atom(expected));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Indexing_ListTarget_AgreesWithSequenceTarget(int index)
+        => AssertAtoms($"((1, 2, 3):{index}) == ([1, 2, 3]:{index})", 1);
+
     [Fact]
-    public void Indexing_ListTarget_BehavesLikeScalarTarget()
-        // `7:0` is `7`; a list is one opaque item, so `[1, 2]:0` is the list.
-        => AssertEvalCounted("A = [1, 2]\nA:0", 1, ListValue(Atom(1), Atom(2)));
+    public void Indexing_BoundListProperty_SelectsElement()
+        => AssertEvalCounted("A = [1, 2, 3]\nA:1", 1, Atom(2));
+
+    [Fact]
+    public void Indexing_NestedListElement_StaysExactList()
+        => AssertEvalCounted("[[1, 2], [3, 4]]:1", 1, ListValue(Atom(3), Atom(4)));
+
+    [Fact]
+    public void Indexing_ChainedListProjection_SelectsOneLevelAtATime()
+        => AssertEvalCounted("[[1, 2], [3, 4]]:1:0", 1, Atom(3));
+
+    [Fact]
+    public void Indexing_DeepChainedListProjection_PeelsOneBoundaryPerColon()
+    {
+        AssertEvalCounted("A = [[[7]]]\nA:0", 1, ListValue(ListValue(Atom(7))));
+        AssertEvalCounted("A = [[[7]]]\nA:0:0", 1, ListValue(Atom(7)));
+        AssertEvalCounted("A = [[[7]]]\nA:0:0:0", 1, Atom(7));
+    }
+
+    [Fact]
+    public void Indexing_SequenceElementInsideList_ProjectsLikeSequenceTarget()
+    {
+        // A selected sequence element projects one level, so the counted pair
+        // matches the sequence-target twin exactly.
+        AssertEvalCounted("((1, 2), (3, 4)):0", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("[(1, 2), (3, 4)]:0", 2, SequenceValue(Atom(1), Atom(2)));
+    }
+
+    [Fact]
+    public void Indexing_ListElementInsideSequence_StaysExactList()
+        => AssertEvalCounted("([1, 2], [3, 4]):0", 1, ListValue(Atom(1), Atom(2)));
+
+    [Fact]
+    public void Indexing_EmptyNestedStructures_StayExact()
+    {
+        AssertEvalCounted("[[]]:0", 1, ListValue());
+        AssertEvalCounted("[[(1, 2)]]:0", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
+    }
+
+    [Fact]
+    public void Indexing_SelectedEmptySequenceElement_ProjectsToEmpty()
+    {
+        // A selected `()` element projects one level to the empty result;
+        // the root output row keeps it as one visible `()` row, matching the
+        // sequence-target twin exactly.
+        AssertEvalCounted("((), 1):0", 1, SequenceValue());
+        AssertEvalCounted("[()]:0", 1, SequenceValue());
+    }
+
+    [Theory]
+    [InlineData("[[1, 2]]:0 == [1, 2]", 1)]
+    [InlineData("[(1, 2)]:0 == (1, 2)", 1)]
+    [InlineData("[[1, 2]]:0 == (1, 2)", 0)]
+    [InlineData("[(1, 2)]:0 == [1, 2]", 0)]
+    [InlineData("[[]]:0 == []", 1)]
+    [InlineData("[[]]:0 == ()", 0)]
+    public void Indexing_SelectedElement_PreservesExactValueKind(string source, decimal expected)
+        => AssertAtoms(source, expected);
+
+    [Theory]
+    [InlineData("take([1, 2, 3], 1):0", 1)]
+    [InlineData("take([1, 2, 3], 2):1", 2)]
+    [InlineData("skip([1, 2, 3], 1):0", 2)]
+    [InlineData("range(1, 3):0", 1)]
+    [InlineData("range(1, 3):2", 3)]
+    [InlineData("distinct((3, 1, 3)):1", 1)]
+    public void Indexing_CollectionBuiltinResult_IsDirectlyIndexable(string source, decimal expected)
+        => AssertEvalCounted(source, 1, Atom(expected));
+
+    [Fact]
+    public void Indexing_DottedBuiltinResult_IsDirectlyIndexable()
+    {
+        AssertEvalCounted("[3, 1, 2].order:0", 1, Atom(1));
+        AssertEvalCounted("[3, 1, 2].orderDesc:0", 1, Atom(3));
+    }
+
+    [Fact]
+    public void Indexing_CallbackBuiltinResult_IsDirectlyIndexable()
+    {
+        AssertEvalCounted("IsOdd = x mod 2 == 1\nfilter([1, 2, 3], IsOdd):1", 1, Atom(3));
+        AssertEvalCounted("Double = x * 2\nmap([1, 2, 3], Double):2", 1, Atom(6));
+    }
+
+    [Fact]
+    public void Indexing_NestedBuiltinListResult_SelectsExactElement()
+        => AssertEvalCounted("take([[1, 2], [3, 4]], 1):0", 1, ListValue(Atom(1), Atom(2)));
+
+    [Fact]
+    public void Indexing_BuiltinResult_AgreesWithAssignedProperty()
+        => AssertAtoms("A = range(1, 3)\n(A:0) == (range(1, 3):0)", 1);
+
+    [Fact]
+    public void Indexing_SelectsOneElement_WhileSpreadOpensAll()
+    {
+        AssertEvalCounted("A = [1, 2]\nA:0", 1, Atom(1));
+        AssertEvalCounted("A = [1, 2]\nA...", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [1, 2]\nB = A...\nB", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [7]\nA:0", 1, Atom(7));
+        AssertEvalCounted("A = [7]\nB = A...\nB", 1, Atom(7));
+        AssertEvalCounted("A = []\nB = A...\nB", 1, SequenceValue());
+    }
+
+    [Fact]
+    public void Indexing_ProjectedValue_IsOrdinaryVariadicArgument()
+    {
+        AssertEvalCounted("Inspect(items...) = items\nA = [1, 2, 3]\nInspect(A:1)", 1, Atom(2));
+        AssertEvalCounted(
+            "Inspect(items...) = items\nA = [[1, 2]]\nInspect(A:0)",
+            1,
+            ListValue(Atom(1), Atom(2)));
+    }
 
     // ── Parser diagnostics ───────────────────────────────────────────────────
 

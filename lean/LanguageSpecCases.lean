@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 130
+- specification surface cases: 134
 - excluded parse-level cases (Lean has no surface parser): 7
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 122
-- probe observations (C#-only by design): 110
+- Lean-guarded cases: 126
+- probe observations (C#-only by design): 122
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -654,6 +654,26 @@ def case_list_vs_sequence_kind : Expr :=
   .block (alg [] [] [] [.binary .eq (.listLiteral []) (.emptySequence 0), .binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))])
 #guard obs case_list_vs_sequence_kind == "ok raw=S[0, 0] n=2"
 
+-- list-index-selects-element [lists]: [1, 2, 3]:0
+def case_list_index_selects_element : Expr :=
+  .block (alg [] [] [] [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 0)])
+#guard obs case_list_index_selects_element == "ok raw=1 n=1"
+
+-- list-index-nested-element-stays-exact [lists]: Rows = [[1, 2], [3, 4]] \n Rows:0 \n Rows:0:1
+def case_list_index_nested_element_stays_exact : Expr :=
+  .block (alg [] [] [privateProp "Rows" (alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]])] [.index (.resolve "Rows") (.num 0), .index (.index (.resolve "Rows") (.num 0)) (.num 1)])
+#guard obs case_list_index_nested_element_stays_exact == "ok raw=S[L[1, 2], 2] n=2"
+
+-- list-index-out-of-range [lists]: []:0
+def case_list_index_out_of_range : Expr :=
+  .block (alg [] [] [] [.index (.listLiteral []) (.num 0)])
+#guard obs case_list_index_out_of_range == "err index"
+
+-- list-index-builtin-results [lists]: range(1, 3):2
+def case_list_index_builtin_results : Expr :=
+  .block (alg [] [] [] [.index (.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])) (.num 2)])
+#guard obs case_list_index_builtin_results == "ok raw=3 n=1"
+
 -- list-redundant-parens-canonicalize [lists]: ([1, 2]) == [1, 2]
 def case_list_redundant_parens_canonicalize : Expr :=
   .block (alg [] [] [] [.binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])])
@@ -709,7 +729,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 122 canonical Lean-guarded specification cases.
+-- 126 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -828,6 +848,10 @@ def specCaseIds : List String := [
   "list-literal",
   "list-exactness",
   "list-vs-sequence-kind",
+  "list-index-selects-element",
+  "list-index-nested-element-stays-exact",
+  "list-index-out-of-range",
+  "list-index-builtin-results",
   "list-redundant-parens-canonicalize",
   "list-spread-capture",
   "list-spread-edges",
@@ -840,6 +864,6 @@ def specCaseIds : List String := [
   "list-rest-capture-is-sequence",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 122
+#guard specCaseIds.length == 126
 
 end LanguageSpecCases

@@ -329,6 +329,60 @@ public class ParserTests
     }
 
     [Fact]
+    public void Parse_Index_ListLiteralTarget_ReturnsIndexExpr()
+    {
+        var result = Parser.ParseSyntax("[1, 2, 3]:1");
+
+        Assert.False(result.HasErrors);
+        var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
+        var target = Assert.IsType<Expr.ListLiteral>(index.Target);
+        Assert.Equal(3, target.Items.Count);
+        Assert.Equal(1, ((Expr.Num)index.Selector).Value);
+    }
+
+    [Fact]
+    public void Parse_Index_NestedListLiteralTarget_ChainsLeftAssociatively()
+    {
+        var result = Parser.ParseSyntax("[[1, 2], [3, 4]]:1:0");
+
+        Assert.False(result.HasErrors);
+        var outer = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
+        Assert.Equal(0, ((Expr.Num)outer.Selector).Value);
+        var inner = Assert.IsType<Expr.Index>(outer.Target);
+        Assert.Equal(1, ((Expr.Num)inner.Selector).Value);
+        var list = Assert.IsType<Expr.ListLiteral>(inner.Target);
+        Assert.Equal(2, list.Items.Count);
+        Assert.All(list.Items, static item => Assert.IsType<Expr.ListLiteral>(item));
+    }
+
+    [Fact]
+    public void Parse_Index_CallTarget_ReturnsIndexOverCall()
+    {
+        var result = Parser.ParseSyntax("take([1, 2, 3], 2):1");
+
+        Assert.False(result.HasErrors);
+        var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
+        Assert.Equal(1, ((Expr.Num)index.Selector).Value);
+        var call = Assert.IsType<Expr.Call>(index.Target);
+        var callee = Assert.IsType<Expr.Resolve>(call.Function);
+        Assert.Equal("take", callee.Name);
+    }
+
+    [Fact]
+    public void Parse_Index_DottedBuiltinTarget_ReturnsIndexOverDotCall()
+    {
+        var result = Parser.ParseSyntax("[3, 1, 2].order:0");
+
+        Assert.False(result.HasErrors);
+        var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
+        Assert.Equal(0, ((Expr.Num)index.Selector).Value);
+        var dotCall = Assert.IsType<Expr.DotCall>(index.Target);
+        Assert.Equal("order", dotCall.Name);
+        var receiver = Assert.IsType<Expr.ListLiteral>(dotCall.Target);
+        Assert.Equal(3, receiver.Items.Count);
+    }
+
+    [Fact]
     public void Parse_DotAccess_ReturnsDotCallExpr()
     {
         var result = Parser.ParseSyntax("X.count");

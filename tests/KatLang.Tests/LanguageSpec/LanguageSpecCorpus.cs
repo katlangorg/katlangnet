@@ -1315,10 +1315,10 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count(range(1, 5))", "ok raw=5 n=1"),
-                new SpecProbe("range(1, 3):0", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("range(1, 3):0", "ok raw=1 n=1"),
                 new SpecProbe("x = range(1, 3)...\nx:0", "ok raw=1 n=1"),
             ],
-            Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; indexing keeps the list opaque (spread and re-capture first to index its items).",
+            Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; `:` selects one element directly from the list result.",
         },
         new()
         {
@@ -1904,6 +1904,82 @@ public static class LanguageSpecCorpus
                  ".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"]),
             IncludeInGeneratorPrompt = true,
             Explanation = "Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.",
+        },
+        new()
+        {
+            Id = "list-index-selects-element",
+            Category = "lists",
+            Source = "[1, 2, 3]:0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [".index (.listLiteral [.num 1, .num 2, .num 3]) (.num 0)"]),
+            Probes =
+            [
+                new SpecProbe("[1, 2, 3]:2", "ok raw=3 n=1"),
+                new SpecProbe("[7]:0", "ok raw=7 n=1"),
+                new SpecProbe("((1, 2, 3):1) == ([1, 2, 3]:1)", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.",
+        },
+        new()
+        {
+            Id = "list-index-nested-element-stays-exact",
+            Category = "lists",
+            Source = "Rows = [[1, 2], [3, 4]]\nRows:0\nRows:0:1",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]\n2",
+            ExpectedRaw = "S[L[1, 2], 2]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("Rows", ".listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]")],
+                [".index (.resolve \"Rows\") (.num 0)",
+                 ".index (.index (.resolve \"Rows\") (.num 0)) (.num 1)"]),
+            Probes =
+            [
+                new SpecProbe("[[1, 2]]:0 == [1, 2]", "ok raw=1 n=1"),
+                new SpecProbe("[[1, 2]]:0 == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("[(1, 2), (3, 4)]:0", "ok raw=S[1, 2] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — while a selected sequence element projects one level as usual; chaining `:` selects one level at a time.",
+        },
+        new()
+        {
+            Id = "list-index-out-of-range",
+            Category = "lists",
+            Source = "[]:0",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "index",
+            LeanProgram = LProg([], [".index (.listLiteral []) (.num 0)"]),
+            Probes =
+            [
+                new SpecProbe("[1, 2]:2", "err index"),
+                new SpecProbe("[1, 2]:100", "err index"),
+                new SpecProbe("A = []\nA:0", "err index"),
+            ],
+            Explanation = "Empty and past-the-end list positions report the same out-of-range index error as sequence selection.",
+        },
+        new()
+        {
+            Id = "list-index-builtin-results",
+            Category = "lists",
+            Source = "range(1, 3):2",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [$".index ({LCall("range", ".num 1", ".num 3")}) (.num 2)"]),
+            Probes =
+            [
+                new SpecProbe("take([1, 2, 3], 1):0", "ok raw=1 n=1"),
+                new SpecProbe("[3, 1, 2].order:0", "ok raw=1 n=1"),
+                new SpecProbe("A = range(1, 3)\nA:0", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Collection-producing builtin results are exact lists and can be indexed directly — no spread-and-recapture step is needed.",
         },
         new()
         {

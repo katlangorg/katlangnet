@@ -292,9 +292,10 @@ theorem deconstruct_rest_single_sequence_opens :
 Exact list values (`Result.listValue`) join the deconstruction opening rule but
 remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
 list as one item, while postfix spread (`Result.spreadItems`), the
-deconstruction pattern (`Result.structureItems?`), and the post-binding builtin
-collection view open one list boundary in their documented contexts. The laws
-below pin each decision over the real model, mirroring the sequence laws above.
+deconstruction pattern (`Result.structureItems?`), the indexing `:` projection
+target view (`Result.projectionItems`), and the post-binding builtin collection
+view open one list boundary in their documented contexts. The laws below pin
+each decision over the real model, mirroring the sequence laws above.
 -/
 
 /-- Spread opens exactly one list boundary: `[1, 2, 3]...` supplies the items. -/
@@ -309,12 +310,88 @@ theorem spreadItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).spreadItems = xs := rfl
 
 /-- The non-spread item view keeps a list OPAQUE: a list is one item, so
-value boundaries and indexing projection never open it. (The post-binding
-builtin collection view opens the bound list through
-`builtinCollectionItems`, not through `toItems` — see
+value boundaries and call binding never open it. (Indexing `:` opens its
+TARGET through `projectionItems` and the post-binding builtin collection
+view opens the bound list through `builtinCollectionItems`, not through
+`toItems` — see `projectionItems_listValue` and
 `builtinCollectionItems_list` below.) -/
 theorem toItems_listValue_opaque (xs : List Result) :
     (Result.listValue xs).toItems = [Result.listValue xs] := rfl
+
+/-- The indexing `:` projection target view opens a list target to its
+immediate elements, exactly like a sequence target. -/
+theorem projectionItems_listValue (xs : List Result) :
+    (Result.listValue xs).projectionItems = xs := rfl
+
+/-- Projection on sequence targets is unchanged by the list extension. -/
+theorem projectionItems_sequenceValue (xs : List Result) :
+    (Result.sequenceValue xs).projectionItems = xs := rfl
+
+/-- The empty list has no projectable positions (`[]:0` is out of range). -/
+theorem projectionItems_empty_list :
+    (Result.listValue []).projectionItems = [] := rfl
+
+/-- Scalar projection targets are unchanged: an atom offers itself as the
+single position, so `7:0` stays `7`. -/
+theorem projectionItems_atom (n : Int) :
+    (Result.atom n).projectionItems = [Result.atom n] := rfl
+
+/-- `:` selects one immediate list element and returns it exactly as stored:
+`[1, 2, 3]:0` is `1`. -/
+theorem select_list_first :
+    Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 0
+      = some (Result.atom 1, 1) := by
+  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
+    Result.toItems, Result.normalize]
+
+/-- `[1, 2, 3]:2` selects the upper-bound element. -/
+theorem select_list_last :
+    Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 2
+      = some (Result.atom 3, 1) := by
+  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
+    Result.toItems, Result.normalize]
+
+/-- A selected LIST element stays one exact opaque list:
+`[[1, 2], [3, 4]]:0` is `[1, 2]`, never flattened or reopened. -/
+theorem select_nested_list_element_stays_list :
+    Result.select?
+      (Result.listValue
+        [Result.listValue [Result.atom 1, Result.atom 2],
+         Result.listValue [Result.atom 3, Result.atom 4]]) 0
+      = some (Result.listValue [Result.atom 1, Result.atom 2], 1) := by
+  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
+    Result.toItems, Result.normalize]
+
+/-- Chained projection peels one boundary per `:`:
+`[[1, 2], [3, 4]]:1:0` is `3`. -/
+theorem select_list_chained :
+    (Result.select?
+      (Result.listValue
+        [Result.listValue [Result.atom 1, Result.atom 2],
+         Result.listValue [Result.atom 3, Result.atom 4]]) 1).bind
+      (fun projected => Result.select? projected.fst 0)
+      = some (Result.atom 3, 1) := by
+  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
+    Result.toItems, Result.normalize]
+
+/-- A selected SEQUENCE element inside a list projects one level with its
+item count, exactly like selecting it from a sequence target. -/
+theorem select_sequence_element_in_list_projects :
+    Result.select?
+      (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) 0
+      = some (Result.sequenceValue [Result.atom 1, Result.atom 2], 2) := by
+  simp [Result.select?, Result.projectionItems, Result.projectSelectedContent,
+    Result.toItems, Result.normalize]
+
+/-- Out-of-range list projection is a miss (`[]:0` and `[1, 2]:2` are the
+existing projection out-of-range error). -/
+theorem select_empty_list_out_of_range :
+    Result.select? (Result.listValue []) 0 = none := by
+  simp [Result.select?, Result.projectionItems]
+
+theorem select_list_past_end_out_of_range :
+    Result.select? (Result.listValue [Result.atom 1, Result.atom 2]) 2 = none := by
+  simp [Result.select?, Result.projectionItems]
 
 /-- The deconstruction structure view opens a received list to its items. -/
 theorem structureItems_listValue (xs : List Result) :

@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1409
+- surface corpus cases: 1413
 - excluded parse-level cases (Lean has no surface parser): 32
-- Lean-representable surface cases: 1377
+- Lean-representable surface cases: 1381
 - internal-node cases: 13
-- total generated guards: 1390 case guards + 2 count guards
+- total generated guards: 1394 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -3951,37 +3951,37 @@ def case_index0__ppp12 : Expr :=
 -- index0__le: x = [] \n x:0
 def case_index0__le : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__le == "ok raw=L[] n=1"
+#guard obs case_index0__le == "err index"
 
 -- index0__l7: x = [7] \n x:0
 def case_index0__l7 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.num 7)])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__l7 == "ok raw=L[7] n=1"
+#guard obs case_index0__l7 == "ok raw=7 n=1"
 
 -- index0__l12: x = [1, 2] \n x:0
 def case_index0__l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__l12 == "ok raw=L[1, 2] n=1"
+#guard obs case_index0__l12 == "ok raw=1 n=1"
 
 -- index0__l12_3: x = [[1, 2], 3] \n x:0
 def case_index0__l12_3 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
+#guard obs case_index0__l12_3 == "ok raw=L[1, 2] n=1"
 
 -- index0__lle: x = [[]] \n x:0
 def case_index0__lle : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__lle == "ok raw=L[L[]] n=1"
+#guard obs case_index0__lle == "ok raw=L[] n=1"
 
 -- index0__l_e: x = [()] \n x:0
 def case_index0__l_e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__l_e == "ok raw=L[S[]] n=1"
+#guard obs case_index0__l_e == "ok raw=S[] n=1"
 
 -- index0__l_p12: x = [(1, 2)] \n x:0
 def case_index0__l_p12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__l_p12 == "ok raw=L[S[1, 2]] n=1"
+#guard obs case_index0__l_p12 == "ok raw=S[1, 2] n=2"
 
 -- index0__p_l12: x = ([1, 2], 3) \n x:0
 def case_index0__p_l12 : Expr :=
@@ -3991,7 +3991,7 @@ def case_index0__p_l12 : Expr :=
 -- index0__pl1: x = ([1]) \n x:0
 def case_index0__pl1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [.index (.resolve "x") (.num 0)])
-#guard obs case_index0__pl1 == "ok raw=L[1] n=1"
+#guard obs case_index0__pl1 == "ok raw=1 n=1"
 
 -- index1__e: x = () \n x:1
 def case_index1__e : Expr :=
@@ -4091,12 +4091,12 @@ def case_index1__l7 : Expr :=
 -- index1__l12: x = [1, 2] \n x:1
 def case_index1__l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [.index (.resolve "x") (.num 1)])
-#guard obs case_index1__l12 == "err index"
+#guard obs case_index1__l12 == "ok raw=2 n=1"
 
 -- index1__l12_3: x = [[1, 2], 3] \n x:1
 def case_index1__l12_3 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [.index (.resolve "x") (.num 1)])
-#guard obs case_index1__l12_3 == "err index"
+#guard obs case_index1__l12_3 == "ok raw=3 n=1"
 
 -- index1__lle: x = [[]] \n x:1
 def case_index1__lle : Expr :=
@@ -6676,7 +6676,7 @@ def case_special__rangeCount : Expr :=
 -- special__rangeIndex0: range(1, 3):0
 def case_special__rangeIndex0 : Expr :=
   .block (alg [] [] [] [.index (.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])) (.num 0)])
-#guard obs case_special__rangeIndex0 == "ok raw=L[1, 2, 3] n=1"
+#guard obs case_special__rangeIndex0 == "ok raw=1 n=1"
 
 -- special__takeOneSurvivorPair: take(((1, 2), (3, 4)), 1)
 def case_special__takeOneSurvivorPair : Expr :=
@@ -6817,6 +6817,26 @@ def case_special__indexEmptyItemRoot : Expr :=
 def case_special__indexCapturedEq : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))]), privateProp "y" (alg [] [] [] [.index (.resolve "x") (.num 0)])] [.binary .eq (.resolve "y") (.block (alg [] [] [] [.num 1, .num 2]))])
 #guard obs case_special__indexCapturedEq == "ok raw=1 n=1"
+
+-- special__chainedListIndex: x = [[1, 2], [3, 4]] \n x:1:0
+def case_special__chainedListIndex : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])])] [.index (.index (.resolve "x") (.num 1)) (.num 0)])
+#guard obs case_special__chainedListIndex == "ok raw=3 n=1"
+
+-- special__listIndexCapturedEq: x = [[1, 2]] \n y = x:0 \n y == [1, 2]
+def case_special__listIndexCapturedEq : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2]])]), privateProp "y" (alg [] [] [] [.index (.resolve "x") (.num 0)])] [.binary .eq (.resolve "y") (.listLiteral [.num 1, .num 2])])
+#guard obs case_special__listIndexCapturedEq == "ok raw=1 n=1"
+
+-- special__listIndexSelectedKindEqFalse: [[1, 2]]:0 == (1, 2)
+def case_special__listIndexSelectedKindEqFalse : Expr :=
+  .block (alg [] [] [] [.binary .eq (.index (.listLiteral [.listLiteral [.num 1, .num 2]]) (.num 0)) (.block (alg [] [] [] [.num 1, .num 2]))])
+#guard obs case_special__listIndexSelectedKindEqFalse == "ok raw=0 n=1"
+
+-- special__orderIndex0: [3, 1, 2].order:0
+def case_special__orderIndex0 : Expr :=
+  .block (alg [] [] [] [.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) (.num 0)])
+#guard obs case_special__orderIndex0 == "ok raw=1 n=1"
 
 -- special__nestedWrittenArg: F(a, b) = a \n F(((1, 2)), 3)
 def case_special__nestedWrittenArg : Expr :=
@@ -6978,7 +6998,7 @@ def case_special__listVariadicSpreadCall : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A"), .num 9])])
 #guard obs case_special__listVariadicSpreadCall == "ok raw=S[1, 2, 9] n=1"
 
--- 1377 differential cases.
+-- 1381 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -8331,6 +8351,10 @@ def surfaceCaseIds : List String := [
   "special__indexPairInSeq",
   "special__indexEmptyItemRoot",
   "special__indexCapturedEq",
+  "special__chainedListIndex",
+  "special__listIndexCapturedEq",
+  "special__listIndexSelectedKindEqFalse",
+  "special__orderIndex0",
   "special__nestedWrittenArg",
   "special__writtenSlotArity",
   "special__mixedSingleGrouped",
@@ -8364,7 +8388,7 @@ def surfaceCaseIds : List String := [
   "special__listFixedCallBoundary",
   "special__listVariadicSpreadCall"
 ]
-#guard surfaceCaseIds.length == 1377
+#guard surfaceCaseIds.length == 1381
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -8460,5 +8484,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 13
 
 -- 13 internal-node cases.
--- Total: 1390 case guards (1377 surface + 13 internal-node).
+-- Total: 1394 case guards (1381 surface + 13 internal-node).
 end SemanticExplorerCases

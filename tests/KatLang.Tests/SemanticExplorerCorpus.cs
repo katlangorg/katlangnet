@@ -457,6 +457,21 @@ public static class SemanticExplorerCorpus
             LProg(
                 [LVal("x", PairOfPairs), "privateProp \"y\" (alg [] [] [] [.index (.resolve \"x\") (.num 0)])"],
                 [".binary .eq (.resolve \"y\") (.block (alg [] [] [] [.num 1, .num 2]))"])),
+        ("chainedListIndex", "x = [[1, 2], [3, 4]]\nx:1:0",
+            LProg(
+                [LVal("x", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
+                [".index (.index (.resolve \"x\") (.num 1)) (.num 0)"])),
+        ("listIndexCapturedEq", "x = [[1, 2]]\ny = x:0\ny == [1, 2]",
+            LProg(
+                [LVal("x", "(.listLiteral [.listLiteral [.num 1, .num 2]])"),
+                 "privateProp \"y\" (alg [] [] [] [.index (.resolve \"x\") (.num 0)])"],
+                [".binary .eq (.resolve \"y\") (.listLiteral [.num 1, .num 2])"])),
+        ("listIndexSelectedKindEqFalse", "[[1, 2]]:0 == (1, 2)",
+            LProg([],
+                [".binary .eq (.index (.listLiteral [.listLiteral [.num 1, .num 2]]) (.num 0)) (.block (alg [] [] [] [.num 1, .num 2]))"])),
+        ("orderIndex0", "[3, 1, 2].order:0",
+            LProg([],
+                [".index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) \"order\" none) (.num 0)"])),
         ("nestedWrittenArg", "F(a, b) = a\nF(((1, 2)), 3)",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
                 [LCall("F", "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))", ".num 3")])),

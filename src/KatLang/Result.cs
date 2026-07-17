@@ -283,11 +283,12 @@ public abstract record Result
     /// Extract top-level items from a result.
     /// Atom/string -> singleton list; sequence value -> its items.
     /// A list value stays OPAQUE here: it is one item, so non-spread consumers
-    /// (indexing <c>:</c> projection, boundary re-counting) treat a list as a
-    /// single exact value. Only postfix spread (<see cref="SpreadItems"/>),
-    /// deconstruction binding, and the builtin collection-item view (the
-    /// bound collection argument after ordinary fixed binding) open a list
-    /// boundary.
+    /// (boundary re-counting, call binding) treat a list as a single exact
+    /// value. Only postfix spread (<see cref="SpreadItems"/>), deconstruction
+    /// binding, the indexing <c>:</c> projection target view
+    /// (<see cref="ProjectionItems"/>), and the builtin collection-item view
+    /// (the bound collection argument after ordinary fixed binding) open a
+    /// list boundary.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>
     public IReadOnlyList<Result> ToItems()
@@ -348,15 +349,33 @@ public abstract record Result
     }
 
     /// <summary>
+    /// Projection target view for indexing <c>:</c>: a sequence value or exact
+    /// list value opens to its immediate elements; every other value follows
+    /// <see cref="ToItems"/>. This opens the TARGET boundary only — the
+    /// selected element itself is returned exactly as stored, so a nested
+    /// list element stays one opaque list.
+    /// Lean: <c>Result.projectionItems</c>.
+    /// </summary>
+    private IReadOnlyList<Result> ProjectionItems()
+    {
+        return this switch
+        {
+            ListValue(var items) => items,
+            _ => ToItems(),
+        };
+    }
+
+    /// <summary>
     /// Construction preserves structure; selection projects content.
-    /// <c>:</c> selects one top-level item from the target and projects that
-    /// item's content one level: atoms stay atomic, sequence values yield their
-    /// immediate members, and nested sequence values remain intact.
+    /// <c>:</c> selects one top-level item from a sequence or exact list
+    /// target and projects that item's content one level: atoms stay atomic,
+    /// sequence values yield their immediate members, and nested sequence and
+    /// list values remain intact.
     /// Lean: <c>Result.select?</c>.
     /// </summary>
     public (Result Value, int EmittedCount)? SelectProjected(int i)
     {
-        var sourceItems = ToItems();
+        var sourceItems = ProjectionItems();
         return i >= 0 && i < sourceItems.Count
             ? ProjectSelectedContent(sourceItems[i])
             : null;
@@ -373,7 +392,7 @@ public abstract record Result
 
     /// <summary>
     /// One-level projected selection result for <c>:</c>.
-    /// Lean: <c>Result.index?</c>.
+    /// Lean: <c>Result.select?</c>.
     /// </summary>
     public Result? Index(int i)
     {
@@ -381,12 +400,13 @@ public abstract record Result
     }
 
     /// <summary>
-    /// Try to get as integer (for indexing).
+    /// Try to get as integer (for indexing). A value beyond the host int
+    /// range can never be a valid position, so it is not an index.
     /// </summary>
     public int? AsIndex()
     {
         var num = AsNum();
-        if (num is null || num < 0 || num != Math.Floor(num.Value))
+        if (num is null || num < 0 || num > int.MaxValue || num != Math.Floor(num.Value))
             return null;
         return (int)num.Value;
     }

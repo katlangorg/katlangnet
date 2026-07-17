@@ -128,7 +128,7 @@ Output shaping:
 - Semicolon `;` is not supported as expression syntax. Never generate it as a separator or collection constructor. Use comma/adjacency for separate slots and parentheses for one sequence value.
 - Ellipsis `...` is the POSTFIX spread operator. `x...` opens ONE item-producing boundary of the evaluated value (sequence and list values supply their contained items; an atom or string supplies itself as one item) and contributes those items to the surrounding item supply — it does not create or emit a sequence value by itself. It NEVER consumes a right operand: any token after `...` starts a new expression-list slot, so `x...y` is `x..., y`. `...` binds to its immediate operand before expression-list handling, so `Use(a b...)` means `Use(a, b...)`; use `Use((a, b...))` for one sequence-value argument.
 - A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed on a single row as `(…)`, not as separate rows: `F(a...) = a` then `F(5, 9)` is `(5, 9)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`) return ONE exact immutable list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. (`atoms` is the exception: it still returns one flat canonical sequence value and omits list values like strings.) Use postfix `...` at the call site to re-open the returned value into separate rows/items (`F(5, 9)...`, `X.order...` — spread opens the one list boundary). This mirrors `if`. Inside a body the raw item supply is still available (`F(a...) = sum(a)` and `a...` forwarding are unchanged). List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows), explicit caller-site spread, and `while`/`repeat` loop state. Scalar/reduction builtins already return one value; a `map`/`reduce` callback must still return exactly one element.
-- To index into (`:`) or arithmetically consume a collection-builtin result, spread-capture it first. `Sorted = X.order...` stores the canonical sequence (`(1, 2, 3)` for `X = 1, 2, 3`) whose items `Sorted:i` selects; `Sorted = X.order` stores one opaque list, so `Sorted:0` yields the whole list `[1, 2, 3]` and arithmetic or comparison on it is a type error (lists are not operator-transparent and have no truth value). Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
+- Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted:0` selects its first element (`range(1, 3):2` is `3`, `[3, 1, 2].order:0` is `1`), so no spread-capture step is needed for `:` indexing. Arithmetic or comparison on a WHOLE list value is still a type error (lists are not operator-transparent and have no truth value) — select an element first (`Sorted:0 + 1`) or spread-capture (`Sorted = X.order...`) when a canonical sequence VALUE is specifically wanted. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
 - Postfix continuations win over adjacency on the same physical line only. A `(` or `{` after a callable name on the same line continues the call even across whitespace: `F (1, 2)` is the call `F(1, 2)`, `A.B (1)` is the dot call `A.B(1)`, and `values.map { n * 2 }` is `values.map{n * 2}`. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row, not call arguments for that body. For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`); an already-open argument list spans lines normally. Indexing `:` is same-line only — never start a line with `:` (parse error). Postfix grace `~` is same-line only — a `~`-led line is its own prefix-grace row. Never start a line with a binary operator expecting continuation (`A` newline `-1` is the expression list `A, -1`, not subtraction; write `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` is the expression list `2, 3`, not multiplication).
 - Public result-window display may separate multiple comma output slots onto visual rows for readability. Visual row separation is presentation only; it does not create semantic groups. Sequence values display as sequence values. `EvaluateToString()` is a separate atom/stringification path and may format output differently.
 
@@ -378,12 +378,12 @@ Exact immutable lists (square brackets):
     [0, A..., 4]         // [0, 1, 2, 3, 4]
     [1, []..., 2]        // [1, 2]
 
-Postfix `...` on a list-valued expression opens exactly ONE list boundary (`[]...` supplies zero items, `[[7]]...` supplies `[7]`). Single-name assignment preserves a stored list (`x = A` keeps `[1, 2, 3]`), while `x = A...` captures the canonical sequence `(1, 2, 3)`. Calls never open lists implicitly: `F(A)` passes one list argument; write `F(A...)` to supply its elements. A multi-target deconstruction whose right-hand side is exactly one list opens it (`x, y, z = [1, 2, 3]`), and rest captures stay sequence-shaped (`x, rest... = [1, 2, 3]` gives `rest = (2, 3)`). Indexing projection keeps lists opaque: `[1, 2]:0` follows the generic one-item projection and yields the whole list `[1, 2]` — it is NOT list-element indexing (list indexing is deferred follow-up work). Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]...)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`) return exact immutable list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
+Postfix `...` on a list-valued expression opens exactly ONE list boundary (`[]...` supplies zero items, `[[7]]...` supplies `[7]`). Single-name assignment preserves a stored list (`x = A` keeps `[1, 2, 3]`), while `x = A...` captures the canonical sequence `(1, 2, 3)`. Calls never open lists implicitly: `F(A)` passes one list argument; write `F(A...)` to supply its elements. A multi-target deconstruction whose right-hand side is exactly one list opens it (`x, y, z = [1, 2, 3]`), and rest captures stay sequence-shaped (`x, rest... = [1, 2, 3]` gives `rest = (2, 3)`). Selection `:` indexes lists positionally: `[1, 2, 3]:0` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]]:0` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]]:1:0` is `3`), and `[]:0` or `[1, 2]:2` is the ordinary out-of-range index error. Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]...)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`) return exact immutable list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
 
 Indexing:
     expr:index
 
-Indexing is zero-based. It selects one top-level item and projects that selected item's content one level. Nested sequence elements are not recursively flattened.
+Indexing is zero-based. It selects one top-level item from a sequence or exact list target and projects that selected item's content one level. Nested sequence and list elements are not recursively flattened, and a selected list element is returned exactly as stored.
 The index operator projects one level per hop. Use exactly as many `:` selections as the output shape requires.
 If a result is a pair/state such as `(candidate, found)` or `candidate, found`, use `:0` or `:1` directly.
 For a final accumulator/state from `reduce` or `repeat`, select fields directly too: use `...:1` for the second field of `(n, found)` or `n, found`, not `...:0:1`.
@@ -399,6 +399,11 @@ Examples:
     Pairs = (1, 2), (3, 4)
     Pairs:0               // 1, 2
     Pairs:0:1             // 2
+
+    Rows = [[1, 2], [3, 4]]
+    Rows:0                // [1, 2]
+    Rows:0:1              // 2
+    range(1, 3):2         // 3
 
 # 5. Parameters and grace
 
@@ -947,11 +952,11 @@ Compound growth (prefer `^` for integer exponents):
     Compound = principal * (1 + rate) ^ years
     Compound(1000, 0.05, 3)
 
-Sorting paired lists by index (spread-capture each `order` result so `:` indexing sees a canonical sequence — `SortedLeft = Left.order` would store one opaque list, `SortedLeft:index` would select the whole list, and the subtraction would be a list type error):
+Sorting paired lists by index (`:` indexes the stored `order` result directly — each `SortedLeft:index` selects one element; no spread-capture step is needed for indexing):
     Left = 3, 4, 2, 1, 3, 3
     Right = 4, 3, 5, 3, 9, 3
-    SortedLeft = Left.order...
-    SortedRight = Right.order...
+    SortedLeft = Left.order
+    SortedRight = Right.order
     // index is the implicit parameter supplied by map.
     Difference = Math.Abs(SortedLeft:index - SortedRight:index)
     range(0, SortedLeft.count - 1).map(Difference).sum
@@ -1033,7 +1038,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (30 of the 130-case canonical language specification,
+Verified reference examples (33 of the 134-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1252,6 +1257,30 @@ Regenerate this block from the repo root with:
   Displays:
     0
     0
+
+[list-index-selects-element] `:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.
+
+    [1, 2, 3]:0
+
+  Displays:
+    1
+
+[list-index-nested-element-stays-exact] A selected list element is returned exactly as stored — one opaque list, never flattened or converted — while a selected sequence element projects one level as usual; chaining `:` selects one level at a time.
+
+    Rows = [[1, 2], [3, 4]]
+    Rows:0
+    Rows:0:1
+
+  Displays:
+    [1, 2]
+    2
+
+[list-index-builtin-results] Collection-producing builtin results are exact lists and can be indexed directly — no spread-and-recapture step is needed.
+
+    range(1, 3):2
+
+  Displays:
+    3
 
 [list-spread-capture] Single-name capture preserves the list; postfix spread opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.
 

@@ -1008,9 +1008,10 @@ namespace Result
   /-- Extract top-level items from a result.
       Atom/string -> singleton list; sequence value -> its items.
       A list value stays OPAQUE here: it is one item, so non-spread consumers
-      (indexing `:` projection, boundary re-counting) treat a list as a single
-      exact value. Only postfix spread (`spreadItems`), deconstruction binding
-      (`structureItems?`), and the post-binding builtin collection view
+      (boundary re-counting, call binding) treat a list as a single exact
+      value. Only postfix spread (`spreadItems`), deconstruction binding
+      (`structureItems?`), the indexing `:` projection target view
+      (`projectionItems`), and the post-binding builtin collection view
       (`builtinCollectionItems`, applied to the bound `collection` argument)
       open a list boundary. -/
   def toItems : Result -> List Result
@@ -1062,12 +1063,22 @@ namespace Result
     | sequenceValue [] => 0
     | _ => 1
 
+  /-- Projection target view for indexing `:`: a sequence value or exact list
+      value opens to its immediate elements; every other value follows
+      `toItems`. This opens the TARGET boundary only — the selected element
+      itself is returned exactly as stored, so a nested list element stays one
+      opaque list. C#: `Result.ProjectionItems`. -/
+  def projectionItems : Result -> List Result
+    | listValue rs => rs
+    | r => r.toItems
+
   /-- Construction preserves structure; selection projects content.
-      `:` selects one top-level item from the target and projects that item's
-      content one level: atoms stay atomic, sequence values yield their immediate
-      members, and nested sequence values remain intact. -/
+      `:` selects one top-level item from a sequence or exact list target and
+      projects that item's content one level: atoms stay atomic, sequence
+      values yield their immediate members, and nested sequence and list
+      values remain intact. -/
   def select? (r : Result) (i : Nat) : Option (Result × Nat) :=
-    match r.toItems[i]? with
+    match r.projectionItems[i]? with
     | some selected => some (projectSelectedContent selected)
     | none => none
 end Result
@@ -2388,11 +2399,60 @@ def Expr.kind : Expr -> String
 def emptySequenceText (depth : Nat) : String :=
   String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
 
-/-- Extract a descriptive name from an open expression for error messages. -/
+/-- Diagnostic expression names use KatLang source syntax; `.index` renders as
+  `target:selector`, never `target[selector]` (`[...]` is exact list literal
+  syntax). Indexing is postfix and binds tighter than unary and every binary
+  operator, so those operands need parentheses in target position: `-A:0` reads
+  as `-(A:0)`, so the target of an index over a unary must render `(-A):0`.
+  Postfix targets are left-associative and render faithfully bare (`A:0:1`).
+  C#: `Evaluator.OpenExprIndexTargetName`. -/
+def indexTargetNeedsParens : Expr -> Bool
+  | .unary _ _    => true
+  | .binary _ _ _ => true
+  | _             => false
+
+/-- The index selector is a primary in source syntax, so any form that would
+  continue the postfix chain rebinds to the target instead (`A:B.C` reads as
+  `(A:B).C`, `A:B:C` as `(A:B):C`, `A:f(0)` as adjacency), and a bare negative
+  literal (`A:-1`) is not selector syntax at all.
+  C#: `Evaluator.OpenExprIndexSelectorName`. -/
+def indexSelectorNeedsParens : Expr -> Bool
+  | .unary _ _      => true
+  | .binary _ _ _   => true
+  | .call _ _       => true
+  | .dotCall _ _ _  => true
+  | .index _ _      => true
+  | .sequenceSpread _ => true
+  | .num v          => decide (v < 0)
+  | _               => false
+
+/-- This MINIMAL renderer models only structural reference forms; every other
+  kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
+  C#'s merged `OpenExprName` prints more detail for them. That gap is
+  pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
+  `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
+  coverage, not of indexing. -/
+def openExprNameIndexSelectorNeedsParens : Expr -> Bool
+  | .dotCall _ _ _    => true
+  | .index _ _        => true
+  | .sequenceSpread _ => true
+  | _                 => false
+
+/-- Extract a descriptive name from an open expression for error messages.
+  See `openExprNameIndexSelectorNeedsParens` for this renderer's coverage gap. -/
 def openExprName (e : Expr) : String :=
   match e with
   | .resolve n => n
   | .dotCall o n _ => openExprName o ++ "." ++ n
+  -- Indexing is source-faithful postfix `target:selector`, never the `(index)`
+  -- kind fallback. Only the forms this renderer prints BARE can continue the
+  -- postfix chain and rebind; every unmodelled kind is already self-delimiting
+  -- as `(kind)`, so parenthesizing it again would only double the parentheses.
+  | .index target selector =>
+      let selectorName := openExprName selector
+      openExprName target ++ ":" ++
+        (if openExprNameIndexSelectorNeedsParens selector then "(" ++ selectorName ++ ")"
+         else selectorName)
   | .block _ => "(inline library)"
   -- SequenceConstruct is an internal value node; ';' is not surface syntax,
   -- so render it as one sequence value, never with ';'.
@@ -2410,7 +2470,20 @@ partial def exprDiagnosticName : Expr -> String
   | .unary .minus operand => "-" ++ exprDiagnosticName operand
   | .unary .not operand => "not " ++ exprDiagnosticName operand
   | .binary op left right => exprDiagnosticName left ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
-  | .index target selector => exprDiagnosticName target ++ "[" ++ exprDiagnosticName selector ++ "]"
+  -- Source-faithful postfix indexing `target:selector`; operands that would
+  -- rebind under the real precedence are parenthesized. This renderer prints
+  -- binary bare, so a binary index operand is parenthesized here; C# reaches
+  -- the same text via `OpenExprName`, which self-parenthesizes binary. The two
+  -- agree on a simple operand (`(A + B):0`) but not on a NESTED one, where C#
+  -- also parenthesizes the inner binary (`((A + B) + C):0` vs `(A + B + C):0`).
+  -- That difference is inherited from each renderer's own binary convention,
+  -- is independent of indexing, and is unambiguous either way.
+  | .index target selector =>
+      let targetName := exprDiagnosticName target
+      let selectorName := exprDiagnosticName selector
+      (if indexTargetNeedsParens target then "(" ++ targetName ++ ")" else targetName)
+        ++ ":" ++
+        (if indexSelectorNeedsParens selector then "(" ++ selectorName ++ ")" else selectorName)
   -- Internal SequenceConstruct renders as one sequence value; ';' is not surface syntax.
   | .sequenceConstruct left right => "(" ++ exprDiagnosticName left ++ ", " ++ exprDiagnosticName right ++ ")"
   -- Empty sequence value `()` and its nested forms.

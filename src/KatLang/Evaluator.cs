@@ -363,7 +363,11 @@ public static class Evaluator
             _ => $"({ExprKind(e)})",
         },
         Expr.Binary(var op, var left, var right) => $"({OpenExprName(left)} {OpenExprBinaryOp(op)} {OpenExprName(right)})",
-        Expr.Index(var target, var selector) => $"{OpenExprName(target)}[{OpenExprName(selector)}]",
+        // Diagnostic expression names use KatLang source syntax: indexing is
+        // postfix `target:selector`, never `target[selector]` (`[...]` is exact
+        // list literal syntax, so bracket text would read back as adjacency).
+        Expr.Index(var target, var selector)
+            => $"{OpenExprIndexTargetName(target)}:{OpenExprIndexSelectorName(selector)}",
         Expr.DotCall(var o, var n, var argsOpt) => argsOpt is null
             ? OpenExprName(o) + "." + n
             : OpenExprName(o) + "." + n + "(...)",
@@ -390,6 +394,39 @@ public static class Evaluator
         Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.DotCall or Expr.Index
             => OpenExprName(expr),
         _ => $"({OpenExprName(expr)})",
+    };
+
+    /// <summary>
+    /// Parenthesize an index target when a bare rendering would rebind.
+    /// Indexing is postfix and binds tighter than unary, so <c>-A:0</c> reads as
+    /// <c>-(A:0)</c> and a unary target needs <c>(-A):0</c>. A binary target is
+    /// already self-parenthesized by <see cref="OpenExprName"/>. Postfix targets
+    /// (<c>A:0:1</c>, <c>A.B:0</c>, <c>f(...):0</c>) are left-associative and
+    /// render faithfully bare.
+    /// Lean: indexTargetNeedsParens.
+    /// </summary>
+    private static string OpenExprIndexTargetName(Expr expr) => expr switch
+    {
+        Expr.Unary => $"({OpenExprName(expr)})",
+        _ => OpenExprName(expr),
+    };
+
+    /// <summary>
+    /// Parenthesize an index selector when a bare rendering would rebind. The
+    /// selector is a primary in source syntax, so any form that would continue
+    /// the postfix chain rebinds to the target instead: <c>A:B.C</c> reads as
+    /// <c>(A:B).C</c>, <c>A:B:C</c> as <c>(A:B):C</c>, <c>A:f(0)</c> as
+    /// adjacency, and <c>A:B...</c> as a spread of the whole index. A bare
+    /// negative literal (<c>A:-1</c>) is not selector syntax at all. A binary
+    /// selector is already self-parenthesized by <see cref="OpenExprName"/>.
+    /// Lean: indexSelectorNeedsParens.
+    /// </summary>
+    private static string OpenExprIndexSelectorName(Expr expr) => expr switch
+    {
+        Expr.Unary or Expr.Call or Expr.DotCall or Expr.Index or Expr.SequenceSpread
+            => $"({OpenExprName(expr)})",
+        Expr.Num(var value) when value < 0 => $"({OpenExprName(expr)})",
+        _ => OpenExprName(expr),
     };
 
     private static string OpenExprBinaryOp(BinaryOp op) => op switch
@@ -1955,6 +1992,12 @@ public static class Evaluator
     /// Evaluate <c>target:selector</c> through the shared one-level projected
     /// selection semantics.
     /// Construction preserves structure; selection projects content.
+    /// This helper is the single owner of index-expression error spans: every
+    /// error it returns carries the full <c>target:selector</c> span unless it
+    /// already carries a more specific inner one (<see cref="WithSpan"/> only
+    /// fills a missing span, so a selector sub-expression such as
+    /// <c>1 div 0</c> keeps its own). Callers therefore need no wrapping of
+    /// their own, and plain and counted evaluation report identical spans.
     /// </summary>
     private static EvalResult<CountedResult> EvalIndexSelectionCounted(
         Expr target,
@@ -1964,13 +2007,22 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var targetR = Eval(target, ctx, valEnv);
-        if (targetR.IsError) return targetR.Error;
+        if (targetR.IsError) return WithSpan<CountedResult>(span, targetR.Error);
 
+        // ExpectInt reports TypeMismatch/BadArity from a Result and so has no
+        // span of its own; the index expression is the nearest source location.
         var nR = EvalInt(selector, ctx, valEnv);
-        if (nR.IsError) return nR.Error;
+        if (nR.IsError) return WithSpan<CountedResult>(span, nR.Error);
 
         var n = nR.Value;
         if (n < 0 || n != Math.Floor(n))
+            return new EvalError.BadIndex() { Span = span };
+
+        // Lean models the selector as an unbounded integer and reports
+        // badIndex for any position past the target's items; a selector
+        // beyond int range can never be in range, so it is the same
+        // out-of-range error rather than a host overflow.
+        if (n > int.MaxValue)
             return new EvalError.BadIndex() { Span = span };
 
         var selected = targetR.Value.SelectProjected((int)n);
@@ -5566,8 +5618,8 @@ public static class Evaluator
                     EvalCallCountedExpr(func, argsAlg, ctx, valEnv));
 
             case Expr.Index(var target, var selector):
-                return WithSpan(expr.Span,
-                    EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv));
+                // EvalIndexSelectionCounted owns the index-expression span.
+                return EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
 
             default:
             {
