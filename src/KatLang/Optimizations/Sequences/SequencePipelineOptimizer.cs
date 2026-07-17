@@ -175,16 +175,15 @@ internal static class SequencePipelineOptimizer
             return false;
         }
 
-        // The plain-count filter-count fusion only fires when count's own
-        // argument is a spread — `count(filter(...)...)` or
-        // `count((src...).filter(p)...)` — a conservative gate: the bare
-        // `count(filter(...))` form falls back to the generic path. (Since
-        // singleton-boundary normalization, generic bare `count(filter(...))`
-        // opens the filter's one sequence-value result and counts its items —
-        // `count((1, 2, 3))` is 3 — so with the single-kept-item handling in
-        // ExecuteGenericFilterCount the fused count would now match the bare
-        // form too; the gate is kept for conservatism, not semantics.)
-        if (!TryGetSpreadOperand(args.Output[0], out var countSource))
+        // Under fixed collection-object arity the valid plain composition is
+        // the BARE one-argument form — `count(filter(src, pred))` or
+        // `count(src.filter(pred))` — where the filter result is count's one
+        // collection argument. A spread form such as `count(filter(...)...)`
+        // supplies the opened items as separate arguments and is an ordinary
+        // arity error, so it must NOT be recognized: it falls back to the
+        // generic evaluator, which reports the arity mismatch.
+        var countSource = args.Output[0];
+        if (countSource is Expr.SequenceSpread)
             return false;
 
         if (countSource is Expr.DotCall(var dotSource, var filterName, var dotFilterArgs)
@@ -202,11 +201,6 @@ internal static class SequencePipelineOptimizer
         if (countSource is Expr.Call(var filterFunction, var plainFilterArgs)
             && IsFilterFunctionCandidate(filterFunction))
         {
-            // Keep the ORIGINAL (possibly spread) source expression: generic
-            // source evaluation must observe real spread semantics (a spread
-            // opens one list boundary, while a bare list value stays one opaque
-            // item). Direct-range recognition peels spread layers itself inside
-            // TryEvaluateBuiltinRangeSource, so range fusion is unaffected.
             var plainSource = plainFilterArgs.Output.Count > 0
                 ? plainFilterArgs.Output[0]
                 : countSource;
@@ -398,36 +392,21 @@ internal static class SequencePipelineOptimizer
         var filterFunction = syntax.PlainFilterFunction!;
         var filterArgs = syntax.PlainFilterArgs!;
 
-        if (filterArgs.Output.Count < 2)
+        // Fixed collection-object arity: `filter(collection, predicate)` is
+        // exactly two arguments, and a spread argument would change the
+        // supplied argument count — such a program is an ordinary arity error
+        // and must fall back so the generic evaluator reports it.
+        if (filterArgs.Output.Count != 2)
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported filter argument shape");
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        if (filterArgs.Output.Count > 2)
+        if (filterArgs.Output.Any(static expr => expr is Expr.SequenceSpread))
         {
-            RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported extra arguments");
+            RecordFilterCountFallback(diagnostics, diagnosticPlan, "spread argument follows ordinary fixed arity");
             return FilterCountRecognitionStatus.Fallback;
         }
-
-        if (!TryGetSpreadOperand(filterArgs.Output[0], out var suppliedSource))
-        {
-            RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported filter argument shape");
-            return FilterCountRecognitionStatus.Fallback;
-        }
-
-        if (filterArgs.Output.Skip(1).Any(static expr => expr is Expr.SequenceSpread))
-        {
-            RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported explicit spread argument");
-            return FilterCountRecognitionStatus.Fallback;
-        }
-
-        filterArgs = filterArgs with
-        {
-            Output = filterArgs.Output
-                .Select((expr, index) => index == 0 ? suppliedSource : expr)
-                .ToList()
-        };
 
         var filterCalleeR = services.ResolveAlgorithm(filterFunction);
         if (filterCalleeR.IsError || !IsBuiltin(filterCalleeR.Value, BuiltinId.@filter))
@@ -450,15 +429,12 @@ internal static class SequencePipelineOptimizer
         }
 
         var evaluationContext = EvaluationContext(syntax);
-        // Plain `count(filter(SOURCE..., pred)...)` only fuses a direct
-        // builtin-range source. Use a range-ONLY probe that never evaluates a
-        // generic/non-range source: the generic source path does not iterate a
-        // plain-filter source correctly (it would pass the whole source to the
-        // predicate as one sequence value), and — crucially — evaluating it here
-        // only to reject the plan would double-evaluate the source once the path
-        // falls back to the generic evaluator. Non-range sources are deferred
-        // WITHOUT being evaluated here, so the generic evaluator runs them exactly
-        // once.
+        // Plain `count(filter(SOURCE, pred))` only fuses a direct builtin-range
+        // source. Use a range-ONLY probe that never evaluates a
+        // generic/non-range source: evaluating a generic source here only to
+        // reject the plan would double-evaluate it once the path falls back to
+        // the generic evaluator. Non-range sources are deferred WITHOUT being
+        // evaluated here, so the generic evaluator runs them exactly once.
         var sourcePlanStatus = TryCreateDirectRangeSourcePlan(
             syntax.Source,
             services,
@@ -569,10 +545,11 @@ internal static class SequencePipelineOptimizer
         Expr source,
         SequencePipelineEvaluationServices services)
     {
-        // Direct-range recognition sees through spread layers: `range(a, b)...`
-        // supplies exactly the range's items, so fusing on the peeled call is
-        // value-equivalent. Generic (non-range) sources keep their original
-        // spread expression and are evaluated with real spread semantics.
+        // Recognized plain sources are bare expressions (a spread filter
+        // argument is an ordinary arity error and never reaches this probe).
+        // A DOT receiver can still be a spread expression; spreading a range
+        // list into the receiver value re-groups the same items, so fusing on
+        // the peeled call stays value-equivalent there.
         source = UnwrapSpread(source);
 
         if (source is not Expr.Call(var function, var argsAlg))
@@ -633,7 +610,6 @@ internal static class SequencePipelineOptimizer
 
         long predicateCalls = 0;
         long keptCount = 0;
-        Result? soleKeptValue = null;
 
         for (var index = 0; index < sourcePlan.SourceItems.Count; index++)
         {
@@ -655,47 +631,26 @@ internal static class SequencePipelineOptimizer
             }
 
             if (predicateR.Value)
-            {
-                soleKeptValue = keptCount == 0 ? sourcePlan.SourceItems[index].Value : null;
                 keptCount++;
-            }
         }
 
-        // Match the generic composition: CombineCollectionResult erases the
-        // one-item collection boundary, so when exactly one item is kept and it
-        // is a sequence value, `count` opens that lone kept value's items (0 for
-        // a kept `()`). Every other kept shape still counts one per kept item.
-        // Mirror the generic count binding's deferred-list guard on those
-        // opened items: the split composition (`K = src.filter(p)` then
-        // `K.count`) raises the targeted list error when the lone kept
-        // sequence contains a list value, so the fused count must as well.
-        // (Top-level list SOURCE items never reach here — the source-boundary
-        // guard in EvaluateDotReceiverIterationItemsForSequenceOptimizer
-        // rejects them before the predicate loop, matching generic filter.)
-        var fusedCount = keptCount;
-        if (soleKeptValue is Result.SequenceValue(var soleItems))
-        {
-            if (soleItems.Any(static item => item is Result.ListValue))
-            {
-                return new EvalError.TypeMismatch(
-                    $"{Evaluator.BuiltinDisplayName(BuiltinId.@count)} does not support list values yet; spread the list with `...` to supply its items");
-            }
-
-            fusedCount = soleItems.Count;
-        }
-
+        // Match the generic composition: filter materializes its kept items as
+        // ONE exact immutable list value, and `count` opens exactly that one
+        // list boundary through the shared builtin collection-item view, so the
+        // fused count is always the kept-item count — a lone kept sequence
+        // value (or list value) stays one exact element and counts as one.
         diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
         diagnostics?.RecordPipelineExecution(
             diagnosticKey,
             sourcePlan.SourceItems.Count,
             predicateCalls,
-            fusedCount,
+            keptCount,
             avoidedFilteredResultMaterializationCount: keptCount,
             avoidedSourceMaterializationCount: 0);
         diagnostics?.RecordAvoidedFilteredResultMaterialization(keptCount);
 
         return EvalResult<Evaluator.CountedResult>.Ok(
-            new Evaluator.CountedResult(new Result.Atom(fusedCount), 1));
+            new Evaluator.CountedResult(new Result.Atom(keptCount), 1));
     }
 
     private static EvalResult<Evaluator.CountedResult> ExecuteRangeFilterCount(

@@ -42,10 +42,11 @@ public static class CallableSignatureDiagnostics
             topLevelVariadicCount);
     }
 
-    // A top-level variadic signature consumes an item supply whether it is user-defined
-    // or a builtin whose public signature is rest-shaped (`sum(values...)`,
-    // `contains(values..., item)`). Both bind the fixed captures and let the rest capture
-    // any number of items, so min = fixed count and max is unbounded.
+    // A top-level variadic signature consumes an item supply (a user-defined
+    // shape such as `Inspect(items...)` or `Scale(values..., factor)`): the
+    // fixed captures bind and the rest captures any number of items, so
+    // min = fixed count and max is unbounded. Collection builtins are NOT
+    // item-supply signatures — they use one fixed `collection` parameter.
     private static bool IsItemSupplySignature(CallableSignature signature, int topLevelVariadicCount)
         => topLevelVariadicCount == 1
             && signature.ParameterPatterns.Count >= 1
@@ -68,12 +69,6 @@ public static class CallableSignatureDiagnostics
     public static string FormatBadArity(CallableSignature signature, int actualArgumentCount)
         => $"Callable `{signature.DisplayText}` expects {FormatExpectedArgumentCount(GetArityFacts(signature))}, but was called with {FormatCount(actualArgumentCount, "argument")}.";
 
-    internal static string FormatBuiltinItemCountMismatch(
-        string builtinName,
-        CallableSignature signature,
-        int actualItemCount)
-        => $"Builtin '{builtinName}' expects {FormatExpectedItemCount(GetArityFacts(signature))} for {signature.DisplayText}, but received {actualItemCount}.";
-
     public static string FormatMultipleTopLevelVariadics(CallableSignature signature)
         => $"Callable signature `{signature.DisplayText}` cannot contain more than one variadic parameter.";
 
@@ -90,21 +85,6 @@ public static class CallableSignatureDiagnostics
             return FormatCount(facts.MinTopLevelArgumentCount, "argument");
 
         return $"between {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} and {FormatCount(facts.MaxTopLevelArgumentCount.Value, "argument")}";
-    }
-
-    internal static string FormatExpectedItemCount(CallableArityFacts facts)
-    {
-        if (facts.MaxTopLevelArgumentCount is null)
-        {
-            return facts.MinTopLevelArgumentCount == 0
-                ? "any number of item(s)"
-                : $"at least {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s)";
-        }
-
-        if (facts.MinTopLevelArgumentCount == facts.MaxTopLevelArgumentCount.Value)
-            return $"{facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s)";
-
-        return $"between {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} and {facts.MaxTopLevelArgumentCount.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s)";
     }
 
     internal static string FormatExpectedArgumentCountWithoutNoun(CallableArityFacts facts)

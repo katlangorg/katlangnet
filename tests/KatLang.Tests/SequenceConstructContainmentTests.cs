@@ -69,7 +69,7 @@ public class SequenceConstructContainmentTests
         "1, 2",
         "1 2 3",
         "P = (), 99\nP",
-        "take((), (), 2)",
+        "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",
         "x, y = (1, 2)...\nx",
         "F(a...) = a\nF((1, 2)..., 3)",
@@ -241,12 +241,10 @@ public class SequenceConstructContainmentTests
     //
     // A lone SequenceConstruct argument to a builtin is an ordinary value
     // expression: it value-evaluates to ONE grouped sequence value (through
-    // the same ()-dropping evaluation as everywhere else) and then follows
-    // the ordinary grouped-argument rules (singleton-boundary opening, suffix
-    // binding from the back) — exactly like Lean. The July 2026 audit removed
-    // the C#-only legacy reshape (SplitStrictVariadicSuffixArgument) that
-    // special-cased this shape and diverged from Lean on block leaves
-    // straddling the suffix boundary.
+    // the same ()-dropping evaluation as everywhere else) and then counts as
+    // exactly ONE argument against the builtin's fixed signature, where the
+    // post-binding collection view opens its lone boundary — exactly like
+    // Lean and like the written grouped surface form.
 
     private static Expr BuiltinCall(string name, params Expr[] args) => new Expr.Call(
         new Expr.Resolve(name),
@@ -255,10 +253,12 @@ public class SequenceConstructContainmentTests
     [Fact]
     public void LoneSequenceConstructBuiltinArgument_BehavesLikeGroupedSurfaceArgument()
     {
-        // take(SC[1, 2, 5]) ≡ take((1, 2, 5)): suffix binds 5 from the back.
-        var grouped = SemanticExplorerHarness.ObserveAst("take-sc", BuiltinCall("take", Sc(N(1), N(2), N(5))));
-        var surface = SemanticExplorerHarness.Observe("take-surface", "take((1, 2, 5))");
-        Assert.Equal("ok raw=S[1, 2] n=1", grouped.Neutral);
+        // take(SC[1, 2, 5], 2) ≡ take((1, 2, 5), 2): the internal join is ONE
+        // collection argument beside the explicit fixed `count` argument, and
+        // the collection-producing builtin returns one exact list value.
+        var grouped = SemanticExplorerHarness.ObserveAst("take-sc", BuiltinCall("take", Sc(N(1), N(2), N(5)), N(2)));
+        var surface = SemanticExplorerHarness.Observe("take-surface", "take((1, 2, 5), 2)");
+        Assert.Equal("ok raw=L[1, 2] n=1", grouped.Neutral);
         Assert.Equal(surface.Neutral, grouped.Neutral);
 
         // sum(SC[1, 2]) ≡ sum((1, 2)).
@@ -266,28 +266,45 @@ public class SequenceConstructContainmentTests
         Assert.Equal("ok raw=3 n=1", sum.Neutral);
         Assert.Equal(SemanticExplorerHarness.Observe("sum-surface", "sum((1, 2))").Neutral, sum.Neutral);
 
-        // take(SC[1, (2, 5)]) ≡ take((1, (2, 5))): the nested pair is one item,
-        // so it binds the whole-number `count` suffix and fails — on BOTH
-        // sides (before the reshape removal, C# silently split the pair and
-        // returned (1, 2) where Lean errored).
-        var blockLeaf = SemanticExplorerHarness.ObserveAst("take-sc-pair", BuiltinCall("take", Sc(N(1), Blk(N(2), N(5)))));
-        var blockLeafSurface = SemanticExplorerHarness.Observe("take-surface-pair", "take((1, (2, 5)))");
-        Assert.Equal("err arity", blockLeaf.Neutral);
+        // take(SC[1, (2, 5)], 2) ≡ take((1, (2, 5)), 2): the nested pair stays
+        // one opaque collection item on BOTH sides.
+        var blockLeaf = SemanticExplorerHarness.ObserveAst("take-sc-pair", BuiltinCall("take", Sc(N(1), Blk(N(2), N(5))), N(2)));
+        var blockLeafSurface = SemanticExplorerHarness.Observe("take-surface-pair", "take((1, (2, 5)), 2)");
+        Assert.Equal("ok raw=L[1, S[2, 5]] n=1", blockLeaf.Neutral);
         Assert.Equal(blockLeafSurface.Neutral, blockLeaf.Neutral);
+
+        // A lone SequenceConstruct is still exactly ONE argument against the
+        // fixed take(collection, count) signature: a missing `count` is an
+        // ordinary arity error — like the grouped surface form, on BOTH sides.
+        var missingCount = SemanticExplorerHarness.ObserveAst("take-sc-missing-count", BuiltinCall("take", Sc(N(1), N(2), N(5))));
+        var missingCountSurface = SemanticExplorerHarness.Observe("take-surface-missing-count", "take((1, 2, 5))");
+        Assert.Equal("err arity", missingCount.Neutral);
+        Assert.Equal(missingCountSurface.Neutral, missingCount.Neutral);
     }
 
     [Fact]
     public void LoneSequenceConstructBuiltinArgument_StillDropsEmptyLeaves()
     {
-        // take(SC[(), 1, 2]) loses the () leaf (internal semantics), while the
-        // written take(((), 1, 2)) keeps it as a countable item. Pinned as
-        // intentionally different — this is exactly the hazard that must never
-        // become surface-reachable.
-        var internalObs = SemanticExplorerHarness.ObserveAst("take-sc-empty", BuiltinCall("take", Sc(E(), N(1), N(2))));
-        var surfaceObs = SemanticExplorerHarness.Observe("take-surface-empty", "take(((), 1, 2))");
+        // count(SC[(), 1, 2]) loses the () leaf (internal semantics), so the
+        // bound collection is (1, 2) and the count is 2, while the written
+        // count(((), 1, 2)) keeps the () as a countable item and counts 3.
+        // Pinned as intentionally different — this is exactly the hazard that
+        // must never become surface-reachable.
+        var internalCount = SemanticExplorerHarness.ObserveAst("count-sc-empty", BuiltinCall("count", Sc(E(), N(1), N(2))));
+        var surfaceCount = SemanticExplorerHarness.Observe("count-surface-empty", "count(((), 1, 2))");
 
-        Assert.Equal("ok raw=1 n=1", internalObs.Neutral);
-        Assert.Equal("ok raw=S[S[], 1] n=1", surfaceObs.Neutral);
-        Assert.NotEqual(internalObs.Neutral, surfaceObs.Neutral);
+        Assert.Equal("ok raw=2 n=1", internalCount.Neutral);
+        Assert.Equal("ok raw=3 n=1", surfaceCount.Neutral);
+        Assert.NotEqual(internalCount.Neutral, surfaceCount.Neutral);
+
+        // The same divergence observed at a collection-producing boundary:
+        // with the explicit `count` argument, take(SC[(), 1, 2], 2) keeps
+        // [1, 2] while the written take(((), 1, 2), 2) keeps [(), 1].
+        var internalTake = SemanticExplorerHarness.ObserveAst("take-sc-empty", BuiltinCall("take", Sc(E(), N(1), N(2)), N(2)));
+        var surfaceTake = SemanticExplorerHarness.Observe("take-surface-empty", "take(((), 1, 2), 2)");
+
+        Assert.Equal("ok raw=L[1, 2] n=1", internalTake.Neutral);
+        Assert.Equal("ok raw=L[S[], 1] n=1", surfaceTake.Neutral);
+        Assert.NotEqual(internalTake.Neutral, surfaceTake.Neutral);
     }
 }

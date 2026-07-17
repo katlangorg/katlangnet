@@ -584,9 +584,9 @@ public static class SemanticExplorerCorpus
     private static Expr Sc(params Expr[] leaves)
         => leaves.Aggregate((left, right) => new Expr.SequenceConstruct(left, right));
 
-    private static Expr ScCall(string builtin, Expr arg) => new Expr.Call(
+    private static Expr ScCall(string builtin, params Expr[] args) => new Expr.Call(
         new Expr.Resolve(builtin),
-        new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [arg]));
+        new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [.. args]));
 
     private const string LScPair12 = "(.block (alg [] [] [] [.num 1, .num 2]))";
 
@@ -628,18 +628,18 @@ public static class SemanticExplorerCorpus
             () => ScCall("count", Sc(ScEmpty(), ScNum(1))),
             ".call (.resolve \"count\") (alg [] [] [] [.sequenceConstruct (.emptySequence 0) (.num 1)])",
             "count(((), 1))", InternalNodeRelation.IntentionallyDifferent),
-        new("sc_take_suffix", "lone SequenceConstruct arg to a suffix builtin binds like the grouped surface form",
-            () => ScCall("take", Sc(ScNum(1), ScNum(2), ScNum(5))),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])",
-            "take((1, 2, 5))", InternalNodeRelation.IntentionallyEqual),
-        new("sc_take_suffix_empty", "() leaf vanishes from a lone SequenceConstruct arg before suffix binding",
-            () => ScCall("take", Sc(ScEmpty(), ScNum(1), ScNum(2))),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2)])",
-            "take(((), 1, 2))", InternalNodeRelation.IntentionallyDifferent),
-        new("sc_take_block_leaf", "a nested pair inside a lone SequenceConstruct arg is one item, so it binds the count suffix and fails",
-            () => ScCall("take", Sc(ScNum(1), ScBlock(ScNum(2), ScNum(5)))),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.num 1) (.block (alg [] [] [] [.num 2, .num 5]))])",
-            "take((1, (2, 5)))", InternalNodeRelation.IntentionallyEqual),
+        new("sc_take_collection", "a SequenceConstruct collection argument binds like the grouped surface form",
+            () => ScCall("take", Sc(ScNum(1), ScNum(2), ScNum(5)), ScNum(2)),
+            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2])",
+            "take((1, 2, 5), 2)", InternalNodeRelation.IntentionallyEqual),
+        new("sc_take_collection_empty", "() leaf vanishes from a SequenceConstruct collection argument (written parens keep it)",
+            () => ScCall("take", Sc(ScEmpty(), ScNum(1), ScNum(2)), ScNum(2)),
+            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2), .num 2])",
+            "take(((), 1, 2), 2)", InternalNodeRelation.IntentionallyDifferent),
+        new("sc_take_block_leaf", "a nested pair inside a SequenceConstruct collection argument stays one item",
+            () => ScCall("take", Sc(ScNum(1), ScBlock(ScNum(2), ScNum(5))), ScNum(2)),
+            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.num 1) (.block (alg [] [] [] [.num 2, .num 5])), .num 2])",
+            "take((1, (2, 5)), 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_sum_arg", "sum of the internal node matches the grouped surface form",
             () => ScCall("sum", Sc(ScNum(1), ScNum(2))),
             ".call (.resolve \"sum\") (alg [] [] [] [.sequenceConstruct (.num 1) (.num 2)])",

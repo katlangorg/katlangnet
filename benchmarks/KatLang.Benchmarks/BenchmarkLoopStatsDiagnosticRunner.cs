@@ -62,7 +62,7 @@ internal static class BenchmarkLoopStatsDiagnosticRunner
 		if (result.IsError)
 			throw new InvalidOperationException($"Loop stats scenario '{scenario.Id}' failed: {result.Error}");
 
-		var atoms = result.Value.ToAtoms();
+		var atoms = result.Value.ToHostAtoms();
 		if (!scenario.ExpectedAtoms.SequenceEqual(atoms))
 		{
 			throw new InvalidOperationException(

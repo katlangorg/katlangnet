@@ -238,21 +238,31 @@ public class CallableSignatureTests
     }
 
     [Fact]
-    public void ArityFacts_BuiltinSequenceSignatures_UseTopLevelVariadicFacts()
+    public void ArityFacts_BuiltinCollectionSignatures_AreOrdinaryFixed()
     {
         var map = CallableSignature.FromBuiltin(BuiltinId.map);
         var take = CallableSignature.FromBuiltin(BuiltinId.take);
+        var count = CallableSignature.FromBuiltin(BuiltinId.count);
 
-        // Rest-shaped builtins are item supplies: min = fixed (suffix) count, max unbounded.
-        Assert.Equal("map(values..., mapper)", map.DisplayText);
-        Assert.Equal(1, map.ArityFacts.MinTopLevelArgumentCount);
-        Assert.Null(map.ArityFacts.MaxTopLevelArgumentCount);
-        Assert.True(map.ArityFacts.HasTopLevelVariadic);
+        // Collection builtins are ordinary fixed-arity callables:
+        // min = max = parameter count and there is no variadic parameter.
+        Assert.Equal("map(collection, mapper)", map.DisplayText);
+        Assert.Equal(0, map.VariadicParameterCount);
+        Assert.Equal(2, map.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Equal(2, map.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.False(map.ArityFacts.HasTopLevelVariadic);
 
-        Assert.Equal("take(values..., count)", take.DisplayText);
-        Assert.Equal(1, take.ArityFacts.MinTopLevelArgumentCount);
-        Assert.Null(take.ArityFacts.MaxTopLevelArgumentCount);
-        Assert.True(take.ArityFacts.HasTopLevelVariadic);
+        Assert.Equal("take(collection, count)", take.DisplayText);
+        Assert.Equal(0, take.VariadicParameterCount);
+        Assert.Equal(2, take.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Equal(2, take.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.False(take.ArityFacts.HasTopLevelVariadic);
+
+        Assert.Equal("count(collection)", count.DisplayText);
+        Assert.Equal(0, count.VariadicParameterCount);
+        Assert.Equal(1, count.ArityFacts.MinTopLevelArgumentCount);
+        Assert.Equal(1, count.ArityFacts.MaxTopLevelArgumentCount);
+        Assert.False(count.ArityFacts.HasTopLevelVariadic);
     }
 
     [Fact]

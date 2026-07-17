@@ -335,13 +335,13 @@ public class CallableBindingPlanParityTests
     }
 
     [Fact]
-    public void SequenceBuiltinSignatures_HavePlansMatchingBuiltinMetadata()
+    public void CollectionBuiltinSignatures_HavePlansMatchingBuiltinMetadata()
     {
-        AssertBuiltinSequencePlan(BuiltinId.map, "map(values..., mapper)", min: 1, suffixName: "mapper");
-        AssertBuiltinSequencePlan(BuiltinId.filter, "filter(values..., predicate)", min: 1, suffixName: "predicate");
-        AssertBuiltinSequencePlan(BuiltinId.take, "take(values..., count)", min: 1, suffixName: "count");
-        AssertBuiltinSequencePlan(BuiltinId.skip, "skip(values..., count)", min: 1, suffixName: "count");
-        AssertBuiltinSequencePlan(BuiltinId.count, "count(values...)", min: 0, suffixName: null);
+        AssertBuiltinCollectionPlan(BuiltinId.map, "map(collection, mapper)", controlName: "mapper");
+        AssertBuiltinCollectionPlan(BuiltinId.filter, "filter(collection, predicate)", controlName: "predicate");
+        AssertBuiltinCollectionPlan(BuiltinId.take, "take(collection, count)", controlName: "count");
+        AssertBuiltinCollectionPlan(BuiltinId.skip, "skip(collection, count)", controlName: "count");
+        AssertBuiltinCollectionPlan(BuiltinId.count, "count(collection)", controlName: null);
     }
 
     [Fact]
@@ -487,32 +487,33 @@ public class CallableBindingPlanParityTests
         AssertArity(plan, min: 0, max: 0, hasTopLevelVariadic: false);
     }
 
-    private static void AssertBuiltinSequencePlan(
+    private static void AssertBuiltinCollectionPlan(
         BuiltinId builtin,
         string display,
-        int min,
-        string? suffixName)
+        string? controlName)
     {
         var plan = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(builtin));
 
         AssertPlanDisplay(plan, display);
-        Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
-        Assert.Equal("values", plan.TopLevelPatternList.VariadicCapture.Name);
-        Assert.Equal(CallableParameterSource.Builtin, plan.TopLevelPatternList.VariadicCapture.Source);
-        Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
-        // Rest-shaped builtins are item supplies: fixed-count minimum, unbounded maximum.
-        AssertArity(plan, min, max: null, hasTopLevelVariadic: true);
+        // Fixed collection-object model: one ordinary `collection` capture
+        // plus fixed control captures — a flat fixed layout, no variadic.
+        Assert.Null(plan.TopLevelPatternList.VariadicCapture);
+        var parameterCount = controlName is null ? 1 : 2;
+        AssertArity(plan, min: parameterCount, max: parameterCount, hasTopLevelVariadic: false);
+        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.True(plan.TryGetFlatFixedLayout(out var captures));
+        Assert.Equal(parameterCount, captures.Count);
+        Assert.Equal("collection", captures[0].Name);
+        Assert.All(captures, capture => Assert.Equal(CallableParameterSource.Builtin, capture.Source));
 
-        if (suffixName is null)
+        if (controlName is null)
         {
-            Assert.Empty(plan.TopLevelPatternList.Suffix);
-            AssertTopLevelNodes(plan, "Variadic(values:Builtin:top)");
-            AssertCaptures(plan, "values...:Builtin");
+            AssertTopLevelNodes(plan, "Capture(collection:Builtin)");
+            AssertCaptures(plan, "collection:Builtin");
             return;
         }
 
-        Assert.Equal(["Capture(" + suffixName + ":Builtin)"], plan.TopLevelPatternList.Suffix.Select(DescribeNode).ToArray());
-        AssertTopLevelNodes(plan, "Variadic(values:Builtin:top)", "Capture(" + suffixName + ":Builtin)");
-        AssertCaptures(plan, "values...:Builtin", suffixName + ":Builtin");
+        AssertTopLevelNodes(plan, "Capture(collection:Builtin)", "Capture(" + controlName + ":Builtin)");
+        AssertCaptures(plan, "collection:Builtin", controlName + ":Builtin");
     }
 }

@@ -64,6 +64,16 @@ public class SequenceValueImmutabilityTests
         ProbeViewForMutation(structure);
     }
 
+    /// <summary>Probe every public item view of one exact list value.</summary>
+    private static void ProbeAllViews(Result.ListValue value)
+    {
+        ProbeViewForMutation(value.Items);
+        ProbeViewForMutation(value.SpreadItems());
+        var structure = value.StructureItems();
+        Assert.NotNull(structure);
+        ProbeViewForMutation(structure);
+    }
+
     // ── 1. Constructor input is snapshotted ─────────────────────────────────
 
     [Fact]
@@ -262,20 +272,21 @@ public class SequenceValueImmutabilityTests
         AssertSemanticallyEqual(Seq(Atom(1), Atom(2), Atom(3)), value);
     }
 
-    // ── 9. Builtin-produced sequences ─────────────────────────────────────────
+    // ── 9. Builtin-produced collections ───────────────────────────────────────
 
     [Theory]
-    [InlineData("order(3, 1, 2)", "(1, 2, 3)")]
-    [InlineData("map((1, 2, 3), {a * 2})", "(2, 4, 6)")]
-    [InlineData("filter((1, 2, 3, 4), {a > 2})", "(3, 4)")]
-    [InlineData("range(1, 3)", "(1, 2, 3)")]
-    [InlineData("take((1, 2, 3, 4), 2)", "(1, 2)")]
-    [InlineData("skip((1, 2, 3, 4), 2)", "(3, 4)")]
-    [InlineData("distinct(1, 2, 2, 3)", "(1, 2, 3)")]
-    public void BuiltinProducedSequence_ResistsHostMutation(string source, string expectedDisplay)
+    [InlineData("order((3, 1, 2))", "[1, 2, 3]")]
+    [InlineData("map((1, 2, 3), {a * 2})", "[2, 4, 6]")]
+    [InlineData("filter((1, 2, 3, 4), {a > 2})", "[3, 4]")]
+    [InlineData("range(1, 3)", "[1, 2, 3]")]
+    [InlineData("take((1, 2, 3, 4), 2)", "[1, 2]")]
+    [InlineData("skip((1, 2, 3, 4), 2)", "[3, 4]")]
+    [InlineData("distinct((1, 2, 2, 3))", "[1, 2, 3]")]
+    public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
     {
+        // Collection-producing builtins return one exact immutable list value.
         var run = Run(source);
-        var value = Assert.IsType<Result.SequenceValue>(run.Value);
+        var value = Assert.IsType<Result.ListValue>(run.Value);
 
         Assert.Equal(expectedDisplay, run.ToDisplayString());
 
@@ -284,13 +295,27 @@ public class SequenceValueImmutabilityTests
         Assert.Equal(expectedDisplay, run.ToDisplayString());
     }
 
+    [Fact]
+    public void BuiltinProducedSequence_ResistsHostMutation()
+    {
+        // atoms keeps its canonical sequence result.
+        var run = Run("atoms((1, 2, 3))");
+        var value = Assert.IsType<Result.SequenceValue>(run.Value);
+
+        Assert.Equal("(1, 2, 3)", run.ToDisplayString());
+
+        ProbeAllViews(value);
+
+        Assert.Equal("(1, 2, 3)", run.ToDisplayString());
+    }
+
     // ── 10. Optimizer parity ──────────────────────────────────────────────────
 
     [Theory]
     [InlineData("Data = 4, 1, 3, 2\nData.filter({a > 1})")]
     [InlineData("Data = 4, 1, 3, 2\nData.order")]
     [InlineData("Step(a, b) = b, a + b, b < 20\nStep.while(1, 1)")]
-    public void OptimizerModes_AgreeAndBothProduceImmutableSequences(string source)
+    public void OptimizerModes_AgreeAndBothProduceImmutableCollections(string source)
     {
         var parseResult = Parser.Parse(source);
         Assert.False(parseResult.HasErrors);
@@ -304,14 +329,26 @@ public class SequenceValueImmutabilityTests
             Result.ValueComparer.Equals(generic.Value, optimized.Value),
             $"optimizer divergence: {generic.Value} vs {optimized.Value}");
 
+        // Every case yields a collection value: filter/order produce exact
+        // list values, while loop state stays a sequence value. Probe both
+        // kinds so neither silently skips.
         foreach (var value in new[] { generic.Value, optimized.Value })
         {
-            if (value is Result.SequenceValue sequence)
+            var expected = optimized.Value;
+            switch (value)
             {
-                var expected = optimized.Value;
-                ProbeAllViews(sequence);
-                Assert.True(Result.ValueComparer.Equals(expected, value));
+                case Result.SequenceValue sequence:
+                    ProbeAllViews(sequence);
+                    break;
+                case Result.ListValue list:
+                    ProbeAllViews(list);
+                    break;
+                default:
+                    Assert.Fail($"expected a collection-valued result but got {value}");
+                    break;
             }
+
+            Assert.True(Result.ValueComparer.Equals(expected, value));
         }
     }
 

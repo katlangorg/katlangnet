@@ -958,11 +958,15 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Build the inclusive integer result for <c>range(start, stop)</c>.
-    /// Counts upward when <c>start &lt;= stop</c> and downward otherwise.
+    /// Build the inclusive integer result for <c>range(start, stop)</c> as one
+    /// exact immutable list value. Counts upward when <c>start &lt;= stop</c>
+    /// and downward otherwise (inclusive bounds always yield at least one
+    /// element). The array is freshly materialized, so ownership transfer is
+    /// safe.
     /// </summary>
     private static Result BuildInclusiveRange(InclusiveRange range)
-        => Result.FromItems(EnumerateInclusiveRangeValues(range).Select(static value => new Result.Atom(value)));
+        => Result.ListValue.TakeOwnership(
+            EnumerateInclusiveRangeValues(range).Select(static value => (Result)new Result.Atom(value)).ToArray());
 
     // ── Bind parameters ─────────────────────────────────────────────────────
 
@@ -1227,9 +1231,10 @@ public static class Evaluator
         }
 
         // The default minimum is the structural parameter count (loop-state binding,
-        // where the rest captures at least one slot). Item-supply callers — user calls
-        // and rest-shaped builtins — pass the fixed (non-variadic) count so the rest
-        // may capture zero items.
+        // where the rest captures at least one slot). Item-supply callers — user
+        // calls — pass the fixed (non-variadic) count so the rest may capture
+        // zero items. (Collection builtins no longer bind here: they are
+        // ordinary fixed-arity callables bound in BindSequenceBuiltinArguments.)
         var requiredNormalItemCount = minimumItemCount ?? signature.RequiredNormalParameterCount;
         if (items.Count < requiredNormalItemCount)
             return arityMismatch(requiredNormalItemCount, items.Count);
@@ -1753,37 +1758,20 @@ public static class Evaluator
         => signature.HasVariadicParameter;
 
     /// <summary>
-    /// Singleton-boundary normalization for sequence-builtin collection binding:
-    /// while the supplied item supply is exactly one grouped sequence value, replace it
-    /// with that value's contents. Function-call parameter binding does not use this
-    /// normalization; it consumes the supplied item supply as given, preserving a
-    /// plain sequence-valued argument as one supplied item unless <c>...</c> is
-    /// written. Assignment deconstruction does not use this path either: it is an
-    /// unpacking receiver elaborated through the sequence-value parameter pattern,
-    /// which opens its single received right-hand-side value.
-    /// Lean: <c>normalizeSingletonBoundaryForItemSupply</c>.
+    /// Builtin collection-item view of the bound collection argument: opens
+    /// exactly one outer sequence or exact-list boundary to its immediate
+    /// items; any other value supplies itself as one item (a scalar is a
+    /// one-element collection). Never recursive — nested sequence values and
+    /// nested list values stay intact as single items.
+    /// Applied strictly AFTER ordinary fixed parameter binding, to the already
+    /// bound <c>collection</c> parameter only — argument boundaries are never
+    /// altered before binding. Shared by generic collection-builtin binding
+    /// and by the sequence-pipeline optimizer's receiver mirror so both open
+    /// collections identically.
+    /// Lean: <c>builtinCollectionItems</c>.
     /// </summary>
-    private static IReadOnlyList<BindingInputSlot> NormalizeSingletonBoundaryForItemSupply(
-        IReadOnlyList<BindingInputSlot> items)
-        => NormalizeSingletonBoundaryForItemSupply(
-            items,
-            static slot => slot.Value,
-            static value => BindingInputSlot.FromUserCallItem(value, algorithm: null, valueError: null));
-
-    /// <summary>
-    /// Generic singleton-boundary normalization for receiver-style item supplies:
-    /// when the item supply is exactly one grouped sequence value, that value IS the
-    /// receiver collection, so it is opened once into its immediate items. Opening
-    /// happens at most once; multiple sibling grouped values are preserved.
-    /// Lean: <c>normalizeSingletonBoundaryForItemSupply</c>.
-    /// </summary>
-    private static IReadOnlyList<T> NormalizeSingletonBoundaryForItemSupply<T>(
-        IReadOnlyList<T> items,
-        Func<T, Result?> valueOf,
-        Func<Result, T> fromValue)
-        => items.Count == 1 && valueOf(items[0]) is Result.SequenceValue grouped
-            ? grouped.Items.Select(fromValue).ToList()
-            : items;
+    private static IReadOnlyList<Result> BuiltinCollectionItems(Result value)
+        => value is Result.ListValue(var listItems) ? listItems : value.ToItems();
 
     /// <summary>
     /// Binds a call to an item-supply parameter list (any top-level variadic).
@@ -2075,8 +2063,9 @@ public static class Evaluator
     internal readonly record struct InclusiveRange(decimal Start, decimal Stop);
 
     /// <summary>
-    /// Collected sequence input records the items captured by <c>values...</c>
-    /// plus the prepared outer-item supply used by the current builtin.
+    /// Collected collection input records the bound collection argument's
+    /// viewed items plus the prepared outer-item supply used by the current
+    /// builtin.
     /// </summary>
     private readonly record struct CollectedSequenceBuiltinInput(
         IReadOnlyList<IReadOnlyList<Result>> PerInputItems,
@@ -2796,23 +2785,21 @@ public static class Evaluator
     private static Result CombineOutputSlots(IReadOnlyList<Result> slots)
         => slots.Count == 1 ? slots[0] : new Result.SequenceValue(slots);
 
-    // Combine a collection-producing builtin's kept/projected items into one
-    // result value with the same shallow singleton-boundary erasure every other
-    // value construction path applies (ordinary construction via
-    // <see cref="Result.Normalize"/>, variadic capture grouping,
-    // <see cref="CombineOutputSlots"/>): zero items form the empty sequence
-    // value `()`, a single kept item IS the result (the one-item collection
-    // boundary is erased, so `take(((1, 2), (3, 4)), 1)` yields `(1, 2)` and a
-    // lone kept `()` yields `()` — never a literal-unwritable orphan such as
-    // `((1, 2))` or `(())`), and two or more items form one sequence value that
-    // keeps every sibling item intact, including empty-sequence items. Unlike
-    // <see cref="Result.FromItems"/>, this is shallow: it never recursively
-    // renormalizes item internals and never drops empty items, so meaningful
-    // sibling boundaries such as `((), ())` are preserved. The caller still
-    // records the item count separately.
-    // Lean: combineCollectionResult.
-    private static Result CombineCollectionResult(IReadOnlyList<Result> items)
-        => items.Count == 1 ? items[0] : new Result.SequenceValue(items);
+    // Materialize a collection-producing builtin's kept/projected items as ONE
+    // exact immutable list value. Unlike canonical arity capture (ordinary
+    // construction via <see cref="Result.Normalize"/>, variadic capture
+    // grouping, <see cref="CombineOutputSlots"/>), the list boundary is exact:
+    // zero items form `[]`, a single kept item forms `[item]` (the one-item
+    // collection boundary is NEVER erased, so `take(((1, 2), (3, 4)), 1)`
+    // yields `[(1, 2)]`), and item internals are never renormalized, dropped,
+    // or flattened — nested sequence values and nested list values stay exact
+    // elements. The emitted count is always 1: a list value is one visible
+    // value (<see cref="Result.ValueCount"/>), including the empty list `[]`.
+    // The items array is freshly materialized here, so ownership transfer via
+    // <see cref="Result.ListValue.TakeOwnership"/> is safe.
+    // Lean: makeCollectionListResult.
+    private static CountedResult MakeCollectionListResult(IEnumerable<Result> items)
+        => new(Result.ListValue.TakeOwnership(items.ToArray()), 1);
 
     // Re-count a counted result at a public property/call/builtin RESULT boundary.
     // A property/call boundary always returns ONE value: the body may internally
@@ -3286,21 +3273,6 @@ public static class Evaluator
         IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
-    private static EvalError SequenceBuiltinBindingArityMismatch(
-        BuiltinId builtin,
-        CallableSignature signature,
-        int requiredNormalItemCount,
-        int actualItemCount)
-        => new EvalError.WithContext(
-            CallableSignatureDiagnostics.FormatBuiltinItemCountMismatch(
-                BuiltinDisplayName(builtin),
-                signature,
-                actualItemCount),
-            new EvalError.ArityMismatch(requiredNormalItemCount, actualItemCount)
-            {
-                Signature = signature,
-            });
-
     private static IReadOnlyList<ResolvedArgumentAlgorithm> WithoutSequenceSpread(
         IReadOnlyList<Algorithm> args)
         => args.Select(static arg => new ResolvedArgumentAlgorithm(arg, SpreadsSequence: false)).ToList();
@@ -3507,12 +3479,13 @@ public static class Evaluator
         };
 
     /// <summary>
-    /// Evaluate <c>reduce(values..., reducer, initial)</c> while
+    /// Evaluate <c>reduce(collection, reducer, initial)</c> while
     /// preserving the accumulator's emitted-value count for the empty-sequence
-    /// case. <c>values...</c> supplies the items, and the reducer and initial
-    /// accumulator are suffix parameters.
-    /// The current item is passed exactly as collected by the shared
-    /// <c>values...</c> top-level binding model; nested sequence values stay intact.
+    /// case. The fixed <c>collection</c> argument supplies the items through
+    /// the post-binding collection view; the reducer and initial accumulator
+    /// are fixed control arguments.
+    /// The current item is passed to the reducer exactly as collected;
+    /// nested sequence values stay intact.
     /// Normal accumulator parameters keep ordinary structural semantics; a
     /// top-level variadic accumulator parameter receives accumulator state
     /// slots.
@@ -3552,11 +3525,13 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>filter(values..., predicate)</c>. <c>values...</c> supplies
-    /// the items, and <c>predicate</c> is a suffix parameter.
-    /// Each iterated item is passed exactly as collected by the shared
-    /// <c>values...</c> top-level binding model; nested sequence values stay intact.
-    /// Kept outputs remain the original sequence items.
+    /// Evaluate <c>filter(collection, predicate)</c>. The fixed
+    /// <c>collection</c> argument supplies the items through the post-binding
+    /// collection view, and <c>predicate</c> is a fixed control argument.
+    /// Each iterated item is passed to the predicate exactly as collected;
+    /// nested sequence values and nested list values stay intact.
+    /// The kept items remain the original collection items and are
+    /// materialized as one exact immutable list value.
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
         IReadOnlyList<CountedResult> items,
@@ -3576,7 +3551,7 @@ public static class Evaluator
                 kept.Add(item.Value);
         }
 
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(CombineCollectionResult(kept), kept.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(kept));
     }
 
     /// <summary>
@@ -3609,10 +3584,13 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>map(values..., mapper)</c> while preserving the number of
-    /// top-level mapped elements. <c>mapper</c> is a suffix parameter.
-    /// Each callback item is passed exactly as collected by the shared
-    /// <c>values...</c> top-level binding model; nested sequence values stay intact.
+    /// Evaluate <c>map(collection, mapper)</c> while preserving the number of
+    /// top-level mapped elements. <c>mapper</c> is a fixed control argument.
+    /// Each callback item is passed to the mapper exactly as collected from
+    /// the post-binding collection view; nested sequence values and
+    /// nested list values stay intact. Each captured callback result becomes
+    /// one element of the exact immutable list result (mapped elements are
+    /// never flattened into the outer list).
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
@@ -3635,7 +3613,7 @@ public static class Evaluator
             mapped.Add(mappedElementR.Value);
         }
 
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(CombineCollectionResult(mapped), mapped.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(mapped));
     }
 
     /// <summary>
@@ -3738,77 +3716,39 @@ public static class Evaluator
         var itemsR = BuildCallableCallItems(args, ctx, valEnv);
         if (itemsR.IsError) return itemsR.Error;
 
-        // A builtin whose public signature is `values...` consumes an item supply, exactly
-        // like a user-defined variadic: singleton sequence boundaries are normalized, the
-        // rest captures the collection, and suffix parameters bind from the back. Multiple
-        // sibling grouped values are preserved (not flattened).
-        //
-        // Singleton-boundary normalization is applied exactly once to obtain the collection.
-        // When the whole supply is one grouped value, that value IS the collection and is
-        // opened here (so its items become the supply and can also expose suffix slots);
-        // its rest capture is then already at item level and must NOT be reopened. When
-        // the supply has several slots (e.g. `contains((1, 2, 3), 2)`), the rest may
-        // itself be one grouped collection value and is opened once via the same
-        // singleton-boundary rule below. That rule opens exactly one boundary without
-        // recursively flattening useful nested sequence values such as `(1, (2, 3))`.
-        var supplyIsSingleGroupedValue =
-            itemsR.Value.Count == 1 && itemsR.Value[0].Value is Result.SequenceValue;
-
-        var items = NormalizeSingletonBoundaryForItemSupply(
-            itemsR.Value,
-            static item => item.Value,
-            static value => new VariadicCallItem(value, Algorithm: null, ValueError: null));
-
-        var suffixCount = metadata.SuffixArgs.Count;
-        var bindingsR = BindCallableArguments(
-            signature,
-            items,
-            (required, actual) => SequenceBuiltinBindingArityMismatch(builtin, signature, required, actual),
-            minimumItemCount: suffixCount);
-        if (bindingsR.IsError) return bindingsR.Error;
-
-        var bindings = bindingsR.Value;
-
-        var restValues = new List<Result>(bindings.VariadicItems.Count);
-        foreach (var restItem in bindings.VariadicItems)
+        // A collection builtin is an ordinary fixed-arity callable: exactly one
+        // collection argument followed by its fixed control arguments
+        // (`count(collection)`, `take(collection, count)`,
+        // `map(collection, mapper)`). An unspread sequence or list value is ONE
+        // argument at this call boundary, exactly like at every other call
+        // boundary; only explicit caller-site spread alters argument
+        // boundaries, and the spread-opened items obey the same fixed arity
+        // (`count([1, 2, 3]...)` supplies three arguments and is an arity
+        // error). Nothing is opened before binding.
+        var items = itemsR.Value;
+        var expectedArgCount = 1 + metadata.SuffixArgs.Count;
+        if (items.Count != expectedArgCount)
         {
-            if (restItem.Value is null)
-                return restItem.ValueError ?? new EvalError.BadArity();
-
-            restValues.Add(restItem.Value);
+            return new EvalError.ArityMismatch(expectedArgCount, items.Count)
+            {
+                Signature = signature,
+            };
         }
 
-        var collectionValues = supplyIsSingleGroupedValue
-            ? restValues
-            : NormalizeSingletonBoundaryForItemSupply(
-                restValues,
-                static value => value,
-                static value => value).ToList();
+        var collectionItem = items[0];
+        if (collectionItem.Value is null)
+            return collectionItem.ValueError ?? new EvalError.BadArity();
 
-        // Exact list values are not yet supported inside builtin item supplies:
-        // singleton-boundary normalization deliberately does not open a lone
-        // list (a list is one opaque value everywhere outside spread and
-        // deconstruction), and final builtin list semantics are deferred to the
-        // follow-up builtin work. Until then a list in the collection is a
-        // targeted type error; explicit caller-site spread
-        // (`count([1, 2, 3]...)`) already supplies the opened items and stays
-        // fully supported. Lean: the list guard in bindSequenceBuiltinArguments.
-        if (collectionValues.Any(static value => value is Result.ListValue))
-        {
-            return new EvalError.TypeMismatch(
-                $"{BuiltinDisplayName(builtin)} does not support list values yet; spread the list with `...` to supply its items");
-        }
+        // The one-level builtin collection view applies AFTER binding, to the
+        // bound collection value only: a lone sequence or exact list value
+        // opens to its immediate items, and any other value is a one-element
+        // collection (`count(7)` is 1). Opening is never recursive — nested
+        // sequence/list elements stay intact as single items.
+        var collectionValues = BuiltinCollectionItems(collectionItem.Value);
 
         var collected = new CollectedSequenceBuiltinInput([collectionValues], collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
-
-        if (bindings.NormalBindings.Count != metadata.SuffixArgs.Count)
-        {
-            return InternalSequenceBuiltinSuffixArgMetadataError<BoundSequenceBuiltinArguments>(
-                builtin,
-                "mismatched suffix arguments");
-        }
 
         var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
         for (var index = 0; index < metadata.SuffixArgs.Count; index++)
@@ -3816,7 +3756,7 @@ public static class Evaluator
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
                 builtin,
                 metadata.SuffixArgs[index],
-                bindings.NormalBindings[index].Item,
+                items[1 + index],
                 ctx);
             if (preparedArgR.IsError) return preparedArgR.Error;
 
@@ -3928,39 +3868,39 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>order(values...)</c> by eagerly sorting the top-level numeric
-    /// sequence items in ascending order.
+    /// Evaluate <c>order(collection)</c> by eagerly sorting the top-level numeric
+    /// collection items in ascending order and materializing them as one exact
+    /// immutable list value.
     /// Duplicates are preserved, sequence values are not flattened, strings are
-    /// rejected, and empty collections stay empty.
+    /// rejected, and empty collections yield the empty list <c>[]</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
         IReadOnlyList<decimal> numbers)
     {
         var sorted = numbers.ToList();
         sorted.Sort();
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(
-            Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
-            sorted.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(
+            sorted.Select(static value => (Result)new Result.Atom(value))));
     }
 
     /// <summary>
-    /// Evaluate <c>orderDesc(values...)</c> by eagerly sorting the top-level
-    /// numeric sequence items in descending order.
+    /// Evaluate <c>orderDesc(collection)</c> by eagerly sorting the top-level
+    /// numeric collection items in descending order and materializing them as
+    /// one exact immutable list value.
     /// Duplicates are preserved, sequence values are not flattened, strings are
-    /// rejected, and empty collections stay empty.
+    /// rejected, and empty collections yield the empty list <c>[]</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
         IReadOnlyList<decimal> numbers)
     {
         var sorted = numbers.ToList();
         sorted.Sort(static (left, right) => right.CompareTo(left));
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(
-            Result.FromItems(sorted.Select(static value => new Result.Atom(value))),
-            sorted.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(
+            sorted.Select(static value => (Result)new Result.Atom(value))));
     }
 
     /// <summary>
-    /// Evaluate <c>count(values...)</c> by counting the top-level sequence
+    /// Evaluate <c>count(collection)</c> by counting the top-level sequence
     /// elements from left to right.
     /// Each atom, string, or sequence value counts as one top-level element;
     /// sequence values are not flattened or inspected recursively, and empty collections
@@ -3972,7 +3912,7 @@ public static class Evaluator
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(items.Count), 1));
 
     /// <summary>
-    /// Evaluate <c>contains(values..., item)</c> by checking whether any
+    /// Evaluate <c>contains(collection, item)</c> by checking whether any
     /// extracted top-level item equals the searched suffix item under ordinary
     /// KatLang value semantics.
     /// Search is top-level only: sequence values compare structurally as single
@@ -3986,11 +3926,12 @@ public static class Evaluator
             1));
 
     /// <summary>
-    /// Evaluate <c>distinct(values...)</c> by removing later duplicate top-level
-    /// items while preserving the original
-    /// order of first occurrence. Duplicate detection follows KatLang value
+    /// Evaluate <c>distinct(collection)</c> by removing later duplicate top-level
+    /// items while preserving the original order of first occurrence, then
+    /// materializing the kept items as one exact immutable list value.
+    /// Duplicate detection follows KatLang value
     /// semantics, so atoms compare by numeric value, strings by exact string
-    /// value, and sequence values structurally by their sequence elements.
+    /// value, and sequence/list values structurally by their elements.
     /// </summary>
     private static EvalResult<CountedResult> EvalDistinctCounted(
         IReadOnlyList<Result> items)
@@ -4003,11 +3944,11 @@ public static class Evaluator
                 distinctItems.Add(item);
         }
 
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(CombineCollectionResult(distinctItems), distinctItems.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(distinctItems));
     }
 
     /// <summary>
-    /// Evaluate <c>first(values...)</c> by returning the first top-level
+    /// Evaluate <c>first(collection)</c> by returning the first top-level
     /// collection element unchanged.
     /// Atoms, strings, and sequence values each count as one top-level element;
     /// sequence values are preserved whole, and the collection must be non-empty.
@@ -4022,7 +3963,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>last(values...)</c> by returning the last top-level
+    /// Evaluate <c>last(collection)</c> by returning the last top-level
     /// collection element unchanged.
     /// Atoms, strings, and sequence values each count as one top-level element;
     /// sequence values are preserved whole, and the collection must be non-empty.
@@ -4037,12 +3978,12 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>take(values..., count)</c> by returning the first
-    /// <paramref name="count"/> extracted top-level items. <paramref name="count"/>
-    /// is a suffix parameter.
-    /// Non-positive counts return an empty sequence, oversized counts return
-    /// the whole sequence, sequence values stay intact, and original order is
-    /// preserved.
+    /// Evaluate <c>take(collection, count)</c> by returning the first
+    /// <paramref name="count"/> extracted top-level items as one exact
+    /// immutable list value. <paramref name="count"/> is a suffix parameter.
+    /// Non-positive counts return the empty list <c>[]</c>, oversized counts
+    /// return all items, nested sequence/list values stay intact as exact
+    /// elements, and original order is preserved.
     /// </summary>
     private static EvalResult<CountedResult> EvalTakeCounted(
         IReadOnlyList<Result> items,
@@ -4052,15 +3993,17 @@ public static class Evaluator
             ? []
             : items.Take((int)count).ToList();
 
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(CombineCollectionResult(taken), taken.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(taken));
     }
 
     /// <summary>
-    /// Evaluate <c>skip(values..., count)</c> by returning the extracted
-    /// top-level items after the first <paramref name="count"/> items.
-    /// <paramref name="count"/> is a suffix parameter. Non-positive counts leave the sequence
-    /// unchanged, oversized counts return an empty sequence, sequence values
-    /// stay intact, and original order is preserved.
+    /// Evaluate <c>skip(collection, count)</c> by returning the extracted
+    /// top-level items after the first <paramref name="count"/> items as one
+    /// exact immutable list value.
+    /// <paramref name="count"/> is a suffix parameter. Non-positive counts keep
+    /// all items, oversized counts return the empty list <c>[]</c>, nested
+    /// sequence/list values stay intact as exact elements, and original order
+    /// is preserved.
     /// </summary>
     private static EvalResult<CountedResult> EvalSkipCounted(
         IReadOnlyList<Result> items,
@@ -4070,11 +4013,11 @@ public static class Evaluator
             ? items.ToList()
             : items.Skip((int)count).ToList();
 
-        return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(CombineCollectionResult(remaining), remaining.Count)));
+        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(remaining));
     }
 
     /// <summary>
-    /// Evaluate <c>min(values...)</c> by comparing top-level sequence elements
+    /// Evaluate <c>min(collection)</c> by comparing top-level sequence elements
     /// from left to right and returning the smallest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; sequence values are not flattened and strings
@@ -4098,7 +4041,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>max(values...)</c> by comparing top-level sequence elements
+    /// Evaluate <c>max(collection)</c> by comparing top-level sequence elements
     /// from left to right and returning the largest numeric element.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; sequence values are not flattened and strings
@@ -4122,7 +4065,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>sum(values...)</c> by adding the top-level sequence elements
+    /// Evaluate <c>sum(collection)</c> by adding the top-level sequence elements
     /// from left to right.
     /// Each element must be exactly one atomic numeric value; sequence values are not
     /// flattened, strings are rejected, and empty collections return <c>0</c>.
@@ -4150,7 +4093,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>sum(values...)</c> by adding the prepared numeric elements
+    /// Evaluate <c>sum(collection)</c> by adding the prepared numeric elements
     /// from left to right.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
@@ -4163,7 +4106,7 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate <c>avg(values...)</c> by averaging the top-level sequence
+    /// Evaluate <c>avg(collection)</c> by averaging the top-level sequence
     /// elements from left to right.
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; sequence values are not flattened and strings
@@ -4422,8 +4365,9 @@ public static class Evaluator
                 var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
                 if (rangeR.IsError) return rangeR.Error;
 
+                // A list value is always one visible value, including `[]`.
                 var value = BuildInclusiveRange(rangeR.Value);
-                return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(value, value.ToAtoms().Count)));
+                return EvalResult<CountedResult>.Ok(new CountedResult(value, 1));
             }
 
             default:
@@ -4448,7 +4392,7 @@ public static class Evaluator
     internal static string BuiltinDisplayName(BuiltinId builtin)
         => BuiltinRegistry.GetBuiltin(builtin).Name;
 
-    /// <summary>Lean: builtinAcceptsArity. Fixed-arity builtins stay exact; sequence builtins use callable signatures with <c>values...</c>.</summary>
+    /// <summary>Lean: builtinAcceptsArity. Every builtin is fixed-arity except the variadic-state loops <c>while</c>/<c>repeat</c>; collection builtins expect exactly one collection argument plus their fixed control arguments.</summary>
     private static bool BuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
         => BuiltinRegistry.GetBuiltin(builtin).AcceptsArity(argumentCount);
 
@@ -5151,7 +5095,7 @@ public static class Evaluator
                     Result.FromItems(atoms.Select(n => new Result.Atom(n))));
             }
 
-            // range(start, stop) — inclusive integer sequence, ascending or descending.
+            // range(start, stop) — inclusive integers materialized as one exact list.
             case (BuiltinId.@range, 2):
             {
                 var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
@@ -6475,8 +6419,11 @@ public static class Evaluator
         {
             var extraArgAlgsR = ResolveArgAlgsWithSequenceSpread(extraArgs, ctx, valEnv);
             if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
-            if (builtin == BuiltinId.@reduce && extraArgAlgsR.Value.Count == 1)
-                return ReduceInitialAccumulatorRequiresValueError(extraArgAlgsR.Value[0].Algorithm);
+            if (builtin == BuiltinId.@reduce
+                && extraArgAlgsR.Value is [{ Algorithm.Params.Count: > 0 } missingInitialReducer])
+            {
+                return ReduceInitialAccumulatorRequiresValueError(missingInitialReducer.Algorithm);
+            }
 
             argAlgs.AddRange(extraArgAlgsR.Value);
         }
@@ -6584,16 +6531,11 @@ public static class Evaluator
         if (receiverR.IsError)
             return receiverR.Error;
 
-        var items = receiverR.Value.Value.ToItems();
-
-        // Mirror the generic builtin binding's list guard (the fused pipeline's
-        // only source consumer is `filter`): a list value in the collection is
-        // not yet supported, exactly like BindSequenceBuiltinArguments reports.
-        if (items.Any(static item => item is Result.ListValue))
-        {
-            return new EvalError.TypeMismatch(
-                $"{BuiltinDisplayName(BuiltinId.@filter)} does not support list values yet; spread the list with `...` to supply its items");
-        }
+        // Mirror the generic builtin collection binding: the receiver value is
+        // the bound collection, so exactly one outer sequence OR list boundary
+        // is opened by the shared builtin collection-item view; any other value
+        // supplies itself as one item.
+        var items = BuiltinCollectionItems(receiverR.Value.Value);
 
         return EvalResult<IReadOnlyList<CountedResult>>.Ok(
             items
@@ -7012,14 +6954,16 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Run evaluation and flatten to atoms.
+    /// Run evaluation and flatten to atoms at the host boundary: exact list
+    /// boundaries are opened (<see cref="Result.ToHostAtoms"/>) so
+    /// collection-builtin results surface their numeric contents.
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
     public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr)
     {
         var r = Run(expr);
         if (r.IsError) return r.Error;
-        return EvalResult<IReadOnlyList<decimal>>.Ok(r.Value.ToAtoms());
+        return EvalResult<IReadOnlyList<decimal>>.Ok(r.Value.ToHostAtoms());
     }
 
     // ── Utility ──────────────────────────────────────────────────────────────

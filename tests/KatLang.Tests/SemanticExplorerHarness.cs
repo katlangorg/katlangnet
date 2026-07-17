@@ -199,10 +199,22 @@ public static class SemanticExplorerHarness
     }
 
     /// <summary>
-    /// Shallow single-item boundary erasure used by collection builtins
-    /// (mirror of the evaluator's CombineCollectionResult, kept here so the
-    /// invariants can compute expected builtin results structurally).
+    /// Shallow single-item boundary erasure for constructed sequence slots
+    /// (same shape as the evaluator's CombineOutputSlots / explicit
+    /// sequence-value construction, kept here so the invariants can compute
+    /// expected spliced values structurally). Collection BUILTIN results no
+    /// longer use this shape — they materialize exact list values; see
+    /// <see cref="ExpectedCollectionList"/>.
     /// </summary>
     public static Result ShallowCombine(IReadOnlyList<Result> items)
         => items.Count == 1 ? items[0] : new Result.SequenceValue(items);
+
+    /// <summary>
+    /// Expected collection-producing builtin result: ONE exact immutable list
+    /// of the kept/projected items (mirror of the evaluator's
+    /// MakeCollectionListResult — zero items form [], a single kept item is
+    /// never erased, and nested values stay exact elements).
+    /// </summary>
+    public static Result ExpectedCollectionList(IReadOnlyList<Result> items)
+        => new Result.ListValue(items);
 }

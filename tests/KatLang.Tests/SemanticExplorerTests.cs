@@ -229,14 +229,12 @@ public class SemanticExplorerTests
         var capturedValue = captured.Value!;
         var items = capturedValue.ToItems();
         // Spread opens ONE boundary of either structure kind (sequence OR
-        // exact list); the non-spread item view keeps lists opaque.
+        // exact list); the non-spread item view keeps lists opaque. The
+        // builtin collection view coincides with the spread view for a lone
+        // bound value: exactly one outer sequence or list boundary opens.
         var spreadItems = capturedValue.SpreadItems();
+        var builtinSupply = spreadItems;
         var isListValue = capturedValue is Result.ListValue;
-        // Builtin collection binding does not accept list values yet
-        // (deferred to the follow-up builtin work): a list anywhere in the
-        // bound item supply is a targeted type error.
-        var builtinItemsContainList = items.Any(static item => item is Result.ListValue);
-        var spreadSupplyContainsList = spreadItems.Any(static item => item is Result.ListValue);
 
         // Every plain access / one-value boundary must observe the identical
         // captured value with emitted count 1.
@@ -265,40 +263,41 @@ public class SemanticExplorerTests
             }
         }
 
-        // count(...) vs .count observe the bound item supply; a list in the
-        // supply is the deferred-builtin type error, and `count(x...)` counts
-        // the spread-opened supply instead.
+        // count(...) vs .count observe the bound collection through the shared
+        // builtin collection view: a lone sequence OR list value opens one
+        // outer boundary; any other value is one item.
         foreach (var template in new[] { "count", "dotCount", "literalDotCount" })
         {
             var observation = Obs(template, valueId);
-            if (builtinItemsContainList)
-            {
-                ExpectBuiltinListDeferred(findings, observation);
-            }
-            else if (observation.Outcome != "ok" || observation.Raw != items.Count.ToString())
+            if (observation.Outcome != "ok" || observation.Raw != builtinSupply.Count.ToString())
             {
                 findings.Add(new Finding(
                     "CountDisagreement", observation.CaseId,
-                    $"expected {items.Count}, observed {observation.Neutral}"));
+                    $"expected {builtinSupply.Count}, observed {observation.Neutral}"));
             }
         }
 
-        // `count(x...)` counts the spread-opened supply, to which builtin
-        // collection binding applies its own singleton-boundary normalization
-        // (a supply of exactly one grouped SEQUENCE value is that collection).
+        // `count(x...)` supplies the spread-opened items as ORDINARY argument
+        // slots that obey count's fixed one-parameter arity: exactly one
+        // opened item binds the collection parameter (and is then interpreted
+        // through the post-binding one-level collection view), while zero or
+        // several opened items are an ordinary arity error.
         var countSpread = Obs("countSpread", valueId);
-        var spreadSupplyAsCollection = spreadItems is [Result.SequenceValue(var loneSeqItems)]
-            ? loneSeqItems
-            : spreadItems;
-        if (spreadSupplyContainsList)
+        if (spreadItems.Count == 1)
         {
-            ExpectBuiltinListDeferred(findings, countSpread);
+            var expectedSpreadCount = spreadItems[0].SpreadItems().Count;
+            if (countSpread.Outcome != "ok" || countSpread.Raw != expectedSpreadCount.ToString())
+            {
+                findings.Add(new Finding(
+                    "CountDisagreement", countSpread.CaseId,
+                    $"expected {expectedSpreadCount}, observed {countSpread.Neutral}"));
+            }
         }
-        else if (countSpread.Outcome != "ok" || countSpread.Raw != spreadSupplyAsCollection.Count.ToString())
+        else if (countSpread.Outcome != "err" || countSpread.ErrorCategory != "arity")
         {
             findings.Add(new Finding(
                 "CountDisagreement", countSpread.CaseId,
-                $"expected {spreadSupplyAsCollection.Count}, observed {countSpread.Neutral}"));
+                $"expected an ordinary arity error for {spreadItems.Count} spread-opened arguments, observed {countSpread.Neutral}"));
         }
 
         // Structural equality is reflexive and construction-path independent.
@@ -370,61 +369,32 @@ public class SemanticExplorerTests
             }
         }
 
-        CheckCollectionBuiltins(valueId, captured, items, findings);
+        CheckCollectionBuiltins(valueId, captured, builtinSupply, findings);
     }
 
     private static void CheckCollectionBuiltins(
         string valueId,
         ExplorerObservation captured,
-        IReadOnlyList<Result> items,
+        IReadOnlyList<Result> builtinSupply,
         List<Finding> findings)
     {
-        // Builtin collection binding does not accept list values yet: a list
-        // anywhere in the bound item supply is the deferred-builtin type
-        // error, uniformly across the collection builtins.
-        if (items.Any(static item => item is Result.ListValue))
-        {
-            foreach (var template in new[]
-                     {
-                         "take1", "take9", "skip1", "filterKeep", "distinct", "order",
-                         "mapId", "takeCapture", "takeIdentity", "takeVariadic", "takeCount",
-                     })
-            {
-                ExpectBuiltinListDeferred(findings, Obs(template, valueId));
-            }
+        // Collection-producing builtins materialize ONE exact immutable list
+        // of the kept/projected supply items: zero items form [], a single
+        // kept item is never erased, and nested sequence/list values stay
+        // exact elements. The supply itself is the builtin collection view of
+        // the captured value (one outer sequence or list boundary opened).
+        ExpectExactList(findings, Obs("take1", valueId), builtinSupply.Take(1).ToList());
+        ExpectExactList(findings, Obs("take9", valueId), builtinSupply);
+        ExpectExactList(findings, Obs("skip1", valueId), builtinSupply.Skip(1).ToList());
+        ExpectExactList(findings, Obs("filterKeep", valueId), builtinSupply);
+        ExpectExactList(findings, Obs("distinct", valueId), builtinSupply.Distinct(Result.ValueComparer).ToList());
 
-            // `atoms` flattens through Result.ToAtoms directly (it never binds
-            // an item supply), so lists are omitted like strings rather than
-            // rejected — checked below with the shared expectation.
-            var atomsWithList = Obs("atoms", valueId);
-            var expectedAtomsWithList = Result.FromItems(
-                captured.Value!.ToAtoms().Select(a => (Result)new Result.Atom(a)));
-            if (atomsWithList.Outcome != "ok"
-                || !Result.ValueComparer.Equals(atomsWithList.Value, expectedAtomsWithList))
-            {
-                findings.Add(new Finding(
-                    "BuiltinBoundaryMismatch", atomsWithList.CaseId,
-                    $"expected {SemanticExplorerHarness.Neutral(expectedAtomsWithList)}, observed {atomsWithList.Neutral}"));
-            }
-
-            return;
-        }
-
-        // take/skip/distinct/filter keep original items and recombine with the
-        // shallow single-survivor boundary erasure; expected values are
-        // computed structurally from the captured value's one-layer items.
-        ExpectCombined(findings, Obs("take1", valueId), items.Take(1).ToList());
-        ExpectCombined(findings, Obs("take9", valueId), items);
-        ExpectCombined(findings, Obs("skip1", valueId), items.Skip(1).ToList());
-        ExpectCombined(findings, Obs("filterKeep", valueId), items);
-        ExpectCombined(findings, Obs("distinct", valueId), items.Distinct(Result.ValueComparer).ToList());
-
-        var allAtoms = items.All(i => i is Result.Atom);
+        var allAtoms = builtinSupply.All(i => i is Result.Atom);
         var order = Obs("order", valueId);
         if (allAtoms)
         {
-            var sorted = items.Cast<Result.Atom>().OrderBy(a => a.Value).Cast<Result>().ToList();
-            ExpectCombined(findings, order, sorted);
+            var sorted = builtinSupply.Cast<Result.Atom>().OrderBy(a => a.Value).Cast<Result>().ToList();
+            ExpectExactList(findings, order, sorted);
         }
         else if (order.Outcome != "err")
         {
@@ -433,10 +403,16 @@ public class SemanticExplorerTests
                 $"expected error on non-numeric items, observed {order.Neutral}"));
         }
 
+        // The identity map callback `M(a) = a` binds each supply item through
+        // ordinary counted callback projection: an atom or exact list item is
+        // one bound value and maps to itself, while a sequence-valued item
+        // projects to a different count and fails the strict single-element
+        // transform contract (empty `()` items project zero values).
         var mapId = Obs("mapId", valueId);
-        if (allAtoms)
+        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is Result.Atom or Result.ListValue);
+        if (mapIdBindsOneValuePerItem)
         {
-            ExpectCombined(findings, mapId, items);
+            ExpectExactList(findings, mapId, builtinSupply);
         }
         else if (mapId.Outcome != "err")
         {
@@ -445,6 +421,10 @@ public class SemanticExplorerTests
                 $"expected single-element contract error, observed {mapId.Neutral}"));
         }
 
+        // `atoms` is intentionally UNCHANGED by the builtin-list work: it
+        // flattens through Result.ToAtoms (canonical sequence result; lists
+        // are omitted like strings). Direct list support for `atoms` is a
+        // deferred follow-up.
         var atoms = Obs("atoms", valueId);
         var expectedAtoms = Result.FromItems(
             captured.Value!.ToAtoms().Select(a => (Result)new Result.Atom(a)));
@@ -455,17 +435,17 @@ public class SemanticExplorerTests
                 $"expected {SemanticExplorerHarness.Neutral(expectedAtoms)}, observed {atoms.Neutral}"));
         }
 
-        // A builtin result re-enters every boundary unchanged.
+        // A builtin result re-enters every boundary unchanged (a list value is
+        // one value for capture, identity calls, and variadic binding alike).
         AssertSame(findings, "BuiltinBoundaryMismatch", valueId, Obs("take1", valueId),
             "takeCapture", "takeIdentity", "takeVariadic");
 
-        // The single-survivor boundary erasure means count() of a one-item
-        // take observes the survivor's own contents: count(take(((1,2),3),1))
-        // is 2, and a lone kept `()` counts 0 (documented #133 semantics).
+        // count() of a take(x, 1) result opens exactly the one list boundary
+        // that take materialized, so it counts the kept items: 1 when the
+        // supply had any item, 0 for an empty supply — never the survivor's
+        // own contents (exact lists have no single-survivor erasure).
         var takeCount = Obs("takeCount", valueId);
-        var expectedTakeCount = SemanticExplorerHarness
-            .ShallowCombine(items.Take(1).ToList())
-            .ToItems().Count;
+        var expectedTakeCount = builtinSupply.Count == 0 ? 0 : 1;
         if (takeCount.Outcome != "ok" || takeCount.Raw != expectedTakeCount.ToString())
         {
             findings.Add(new Finding(
@@ -474,31 +454,16 @@ public class SemanticExplorerTests
         }
     }
 
-    /// <summary>
-    /// A collection builtin observing a list value in its bound item supply
-    /// reports the deferred-list type error (final builtin list semantics are
-    /// a follow-up; only explicit spread supplies list elements today).
-    /// </summary>
-    private static void ExpectBuiltinListDeferred(List<Finding> findings, ExplorerObservation observation)
+    private static void ExpectExactList(List<Finding> findings, ExplorerObservation observation, IReadOnlyList<Result> keptItems)
     {
-        if (observation.Outcome != "err" || observation.ErrorCategory != "type")
+        var expected = SemanticExplorerHarness.ExpectedCollectionList(keptItems);
+        if (observation.Outcome != "ok"
+            || !Result.ValueComparer.Equals(observation.Value, expected)
+            || observation.Emitted != 1)
         {
             findings.Add(new Finding(
                 "BuiltinBoundaryMismatch", observation.CaseId,
-                $"expected the deferred-list builtin type error, observed {observation.Neutral}"));
-        }
-    }
-
-    private static void ExpectCombined(List<Finding> findings, ExplorerObservation observation, IReadOnlyList<Result> keptItems)
-    {
-        var expected = SemanticExplorerHarness.ShallowCombine(keptItems);
-        var expectedEmitted = expected is Result.SequenceValue { Items.Count: 0 } ? 0 : 1;
-        _ = expectedEmitted; // collection results re-count at the boundary; root slot shows 1 row minimum
-        if (observation.Outcome != "ok" || !Result.ValueComparer.Equals(observation.Value, expected))
-        {
-            findings.Add(new Finding(
-                "BuiltinBoundaryMismatch", observation.CaseId,
-                $"expected {SemanticExplorerHarness.Neutral(expected)}, observed {observation.Neutral}"));
+                $"expected {SemanticExplorerHarness.Neutral(expected)} n=1, observed {observation.Neutral}"));
         }
     }
 
@@ -642,9 +607,18 @@ public class SemanticExplorerTests
         { "()...", "ok raw=S[] n=0" },
         { "(()..., 99)", "ok raw=99 n=1" },
         { "((), 99)", "ok raw=S[S[], 99] n=1" },
-        { "take(((1, 2), (3, 4)), 1)", "ok raw=S[1, 2] n=1" },
-        { "distinct((), ())", "ok raw=S[] n=1" },
-        { "take((), (), 2)", "ok raw=S[S[], S[]] n=1" },
+        { "take(((1, 2), (3, 4)), 1)", "ok raw=L[S[1, 2]] n=1" },
+        { "distinct(((), ()))", "ok raw=L[S[]] n=1" },
+        { "take(((), ()), 2)", "ok raw=L[S[], S[]] n=1" },
+        { "distinct((), ())", "err arity" },
+        { "take((), (), 2)", "err arity" },
+        { "count([1, 2, 3])", "ok raw=3 n=1" },
+        { "count(1, 2, 3)", "err arity" },
+        { "count()", "err arity" },
+        { "count([1, 2, 3]...)", "err arity" },
+        { "take([1, 2, 3])", "err arity" },
+        { "take([1, 2, 3], 0)", "ok raw=L[] n=1" },
+        { "take([[1, 2], [3, 4]], 1)", "ok raw=L[L[1, 2]] n=1" },
         { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },

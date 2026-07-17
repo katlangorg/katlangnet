@@ -174,9 +174,9 @@ public class BuiltinRegistryParityTests
     }
 
     [Fact]
-    public void RegistrySequenceBuiltinSignatures_DisplayExpectedNames()
+    public void RegistryCollectionBuiltinSignatures_DisplayExpectedNames()
     {
-        var expected = ExpectedSequenceBuiltins();
+        var expected = ExpectedCollectionBuiltins();
         Assert.Equal(
             expected.Keys.OrderBy(static id => id.ToString(), StringComparer.Ordinal).ToArray(),
             BuiltinRegistry.AllBuiltins
@@ -191,17 +191,18 @@ public class BuiltinRegistryParityTests
 
             Assert.Equal(expectation.PlainSignatureDisplay, builtin.PlainSignature.DisplayText);
             Assert.Equal(expectation.DotParameterNames, builtin.PlainParameters.Skip(1).Select(static parameter => parameter.Name).ToArray());
-            Assert.Equal("values", builtin.PlainParameters[0].Name);
-            Assert.Equal(ParameterKind.Variadic, builtin.PlainParameters[0].Kind);
+            // Fixed collection-object model: an ordinary fixed `collection`
+            // parameter leads, followed by the fixed control parameters.
+            Assert.Equal("collection", builtin.PlainParameters[0].Name);
             Assert.All(builtin.PlainParameters, parameter => Assert.Equal(CallableParameterSource.Builtin, parameter.Source));
-            Assert.All(builtin.PlainParameters.Skip(1), parameter => Assert.Equal(ParameterKind.Normal, parameter.Kind));
+            Assert.All(builtin.PlainParameters, parameter => Assert.Equal(ParameterKind.Normal, parameter.Kind));
         }
     }
 
     [Fact]
-    public void RegistrySequenceBuiltinDotParameters_ExposeOnlySuffixCaptures()
+    public void RegistryCollectionBuiltinDotParameters_ExposeOnlyControlParameters()
     {
-        var expected = ExpectedSequenceBuiltins();
+        var expected = ExpectedCollectionBuiltins();
 
         foreach (var (builtinId, expectation) in expected)
         {
@@ -217,24 +218,24 @@ public class BuiltinRegistryParityTests
     }
 
     [Fact]
-    public void SequenceBuiltinDotPlan_RoundTripsRegistrySuffixMetadata()
+    public void CollectionBuiltinPlan_IsFlatFixedAndRoundTripsControlMetadata()
     {
         foreach (var builtin in BuiltinRegistry.AllBuiltins.Where(static builtin => builtin.SequenceMetadata is not null))
         {
             var metadata = builtin.SequenceMetadata!.Value;
             var plan = CallableBindingPlan.FromSignature(builtin.PlainSignature);
 
-            Assert.True(plan.TryGetFlatVariadicLayout(out var prefix, out var variadic, out var suffix));
-            Assert.Empty(prefix);
-            Assert.Equal("values", variadic.Name);
-            Assert.Equal(ParameterKind.Variadic, variadic.Kind);
-            Assert.Equal(CallableParameterSource.Builtin, variadic.Source);
+            // Collection builtins bind like every other fixed callable: a flat
+            // fixed layout (`collection` + controls), never a variadic one.
+            Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+            Assert.True(plan.TryGetFlatFixedLayout(out var captures));
+            Assert.Equal("collection", captures[0].Name);
 
-            var suffixNames = suffix.Select(static capture => capture.Name).ToArray();
-            Assert.Equal(metadata.SuffixArgs.Select(static descriptor => descriptor.Name).ToArray(), suffixNames);
-            Assert.Equal(builtin.DotParameters.Select(static parameter => parameter.Name).ToArray(), suffixNames);
-            Assert.All(suffix, capture => Assert.Equal(ParameterKind.Normal, capture.Kind));
-            Assert.All(suffix, capture => Assert.Equal(CallableParameterSource.Builtin, capture.Source));
+            var controlNames = captures.Skip(1).Select(static capture => capture.Name).ToArray();
+            Assert.Equal(metadata.SuffixArgs.Select(static descriptor => descriptor.Name).ToArray(), controlNames);
+            Assert.Equal(builtin.DotParameters.Select(static parameter => parameter.Name).ToArray(), controlNames);
+            Assert.All(captures, capture => Assert.Equal(ParameterKind.Normal, capture.Kind));
+            Assert.All(captures, capture => Assert.Equal(CallableParameterSource.Builtin, capture.Source));
         }
     }
 
@@ -391,25 +392,25 @@ public class BuiltinRegistryParityTests
         return items.Length == 0 ? "(none)" : string.Join(", ", items);
     }
 
-    private static IReadOnlyDictionary<BuiltinId, SequenceBuiltinExpectation> ExpectedSequenceBuiltins()
-        => new Dictionary<BuiltinId, SequenceBuiltinExpectation>
+    private static IReadOnlyDictionary<BuiltinId, CollectionBuiltinExpectation> ExpectedCollectionBuiltins()
+        => new Dictionary<BuiltinId, CollectionBuiltinExpectation>
         {
-            [BuiltinId.map] = new("map(values..., mapper)", ["mapper"]),
-            [BuiltinId.filter] = new("filter(values..., predicate)", ["predicate"]),
-            [BuiltinId.reduce] = new("reduce(values..., reducer, initial)", ["reducer", "initial"]),
-            [BuiltinId.take] = new("take(values..., count)", ["count"]),
-            [BuiltinId.skip] = new("skip(values..., count)", ["count"]),
-            [BuiltinId.contains] = new("contains(values..., item)", ["item"]),
-            [BuiltinId.count] = new("count(values...)", []),
-            [BuiltinId.sum] = new("sum(values...)", []),
-            [BuiltinId.min] = new("min(values...)", []),
-            [BuiltinId.max] = new("max(values...)", []),
-            [BuiltinId.avg] = new("avg(values...)", []),
-            [BuiltinId.first] = new("first(values...)", []),
-            [BuiltinId.last] = new("last(values...)", []),
-            [BuiltinId.order] = new("order(values...)", []),
-            [BuiltinId.orderDesc] = new("orderDesc(values...)", []),
-            [BuiltinId.distinct] = new("distinct(values...)", []),
+            [BuiltinId.map] = new("map(collection, mapper)", ["mapper"]),
+            [BuiltinId.filter] = new("filter(collection, predicate)", ["predicate"]),
+            [BuiltinId.reduce] = new("reduce(collection, reducer, initial)", ["reducer", "initial"]),
+            [BuiltinId.take] = new("take(collection, count)", ["count"]),
+            [BuiltinId.skip] = new("skip(collection, count)", ["count"]),
+            [BuiltinId.contains] = new("contains(collection, item)", ["item"]),
+            [BuiltinId.count] = new("count(collection)", []),
+            [BuiltinId.sum] = new("sum(collection)", []),
+            [BuiltinId.min] = new("min(collection)", []),
+            [BuiltinId.max] = new("max(collection)", []),
+            [BuiltinId.avg] = new("avg(collection)", []),
+            [BuiltinId.first] = new("first(collection)", []),
+            [BuiltinId.last] = new("last(collection)", []),
+            [BuiltinId.order] = new("order(collection)", []),
+            [BuiltinId.orderDesc] = new("orderDesc(collection)", []),
+            [BuiltinId.distinct] = new("distinct(collection)", []),
         };
 
     private static bool IsIdentifierLike(string name)
@@ -602,7 +603,7 @@ public class BuiltinRegistryParityTests
     private readonly record struct RuntimeSequenceSignature(
         IReadOnlyList<string> SuffixParameterNames);
 
-    private readonly record struct SequenceBuiltinExpectation(
+    private readonly record struct CollectionBuiltinExpectation(
         string PlainSignatureDisplay,
         IReadOnlyList<string> DotParameterNames);
 }

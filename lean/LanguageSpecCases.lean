@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 129
+- specification surface cases: 130
 - excluded parse-level cases (Lean has no surface parser): 7
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 121
-- probe observations (C#-only by design): 84
+- Lean-guarded cases: 122
+- probe observations (C#-only by design): 110
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -199,9 +199,9 @@ def case_empty_count_one_arg : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.emptySequence 0)])])
 #guard obs case_empty_count_one_arg == "ok raw=0 n=1"
 
--- empty-count-two-args [empty-visible-vs-spread]: count((), ())
+-- empty-count-two-args [empty-visible-vs-spread]: count(((), ()))
 def case_empty_count_two_args : Expr :=
-  .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])])
+  .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_empty_count_two_args == "ok raw=2 n=1"
 
 -- fixed-empty-arg-visible [empty-visible-vs-spread]: F(a) = a \n F(())
@@ -382,7 +382,7 @@ def case_property_call_boundary : Expr :=
 -- builtin-result-reentry [access-boundaries]: x = take((1, 2, 3), 2) \n x
 def case_builtin_result_reentry : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .num 2])])] [.resolve "x"])
-#guard obs case_builtin_result_reentry == "ok raw=S[1, 2] n=1"
+#guard obs case_builtin_result_reentry == "ok raw=L[1, 2] n=1"
 
 -- zero-arg-access-of-parametrized [access-boundaries]: Add(a, b) = a + b \n  \n Add \n (1, 2)
 def case_zero_arg_access_of_parametrized : Expr :=
@@ -392,107 +392,107 @@ def case_zero_arg_access_of_parametrized : Expr :=
 -- take-prefix [collection-builtins]: take((1, 2, 3, 4, 5), 3)
 def case_take_prefix : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])), .num 3])])
-#guard obs case_take_prefix == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_take_prefix == "ok raw=L[1, 2, 3] n=1"
 
 -- take-single-survivor [collection-builtins]: take(((1, 2), (3, 4)), 1)
 def case_take_single_survivor : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1])])
-#guard obs case_take_single_survivor == "ok raw=S[1, 2] n=1"
+#guard obs case_take_single_survivor == "ok raw=L[S[1, 2]] n=1"
 
 -- take-zero-empty [collection-builtins]: take((1, 2, 3), 0)
 def case_take_zero_empty : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .num 0])])
-#guard obs case_take_zero_empty == "ok raw=S[] n=1"
+#guard obs case_take_zero_empty == "ok raw=L[] n=1"
 
 -- skip-prefix [collection-builtins]: skip((1, 2, 3, 4, 5), 3)
 def case_skip_prefix : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])), .num 3])])
-#guard obs case_skip_prefix == "ok raw=S[4, 5] n=1"
+#guard obs case_skip_prefix == "ok raw=L[4, 5] n=1"
 
 -- filter-keeps-matching [collection-builtins]: IsEven = x mod 2 == 0 \n filter((1, 2, 3, 4, 5, 6), IsEven)
 def case_filter_keeps_matching : Expr :=
   .block (alg [] [] [privateProp "IsEven" (alg ["x"] [] [] [.binary .eq (.binary .mod (.param "x") (.num 2)) (.num 0)])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])), .resolve "IsEven"])])
-#guard obs case_filter_keeps_matching == "ok raw=S[2, 4, 6] n=1"
+#guard obs case_filter_keeps_matching == "ok raw=L[2, 4, 6] n=1"
 
 -- filter-single-survivor [collection-builtins]: Big(a) = a > 2 \n filter((1, 2, 3), Big)
 def case_filter_single_survivor : Expr :=
   .block (alg [] [] [privateProp "Big" (alg ["a"] [] [] [.binary .gt (.param "a") (.num 2)])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .resolve "Big"])])
-#guard obs case_filter_single_survivor == "ok raw=3 n=1"
+#guard obs case_filter_single_survivor == "ok raw=L[3] n=1"
 
 -- filter-none-empty [collection-builtins]: No(a) = 0 \n filter((1, 2, 3), No)
 def case_filter_none_empty : Expr :=
   .block (alg [] [] [privateProp "No" (alg ["a"] [] [] [.num 0])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .resolve "No"])])
-#guard obs case_filter_none_empty == "ok raw=S[] n=1"
+#guard obs case_filter_none_empty == "ok raw=L[] n=1"
 
 -- map-transforms-items [collection-builtins]: Double = x * 2 \n map((1, 2, 3), Double)
 def case_map_transforms_items : Expr :=
   .block (alg [] [] [privateProp "Double" (alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .resolve "Double"])])
-#guard obs case_map_transforms_items == "ok raw=S[2, 4, 6] n=1"
+#guard obs case_map_transforms_items == "ok raw=L[2, 4, 6] n=1"
 
 -- map-single-item [collection-builtins]: M(a) = a \n map((7), M)
 def case_map_single_item : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [.num 7])), .resolve "M"])])
-#guard obs case_map_single_item == "ok raw=7 n=1"
+#guard obs case_map_single_item == "ok raw=L[7] n=1"
 
 -- map-pair-callback [collection-builtins]: Swap(a, b) = (b, a) \n map(((1, 2), (3, 4)), Swap)
 def case_map_pair_callback : Expr :=
   .block (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [(.block (alg [] [] [] [.param "b", .param "a"]))])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .resolve "Swap"])])
-#guard obs case_map_pair_callback == "ok raw=S[S[2, 1], S[4, 3]] n=1"
+#guard obs case_map_pair_callback == "ok raw=L[S[2, 1], S[4, 3]] n=1"
 
 -- distinct-preserves-first [collection-builtins]: distinct((3, 1, 3, 2, 1, 2))
 def case_distinct_preserves_first : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2]))])])
-#guard obs case_distinct_preserves_first == "ok raw=S[3, 1, 2] n=1"
+#guard obs case_distinct_preserves_first == "ok raw=L[3, 1, 2] n=1"
 
 -- distinct-structural-pairs [collection-builtins]: distinct(((1, 2), (1, 2), (3, 4)))
 def case_distinct_structural_pairs : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])])
-#guard obs case_distinct_structural_pairs == "ok raw=S[S[1, 2], S[3, 4]] n=1"
+#guard obs case_distinct_structural_pairs == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- take-family-tutorial [collection-builtins]: take((1, 2, 3, 4, 5), 3) \n  \n take(((1, 2), (3, 4)), 1) \n  \n range(1, 5).take(2)
 def case_take_family_tutorial : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])), .num 3]), .call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1]), .dotCall (.call (.resolve "range") (alg [] [] [] [.num 1, .num 5])) "take" (some (alg [] [] [] [.num 2]))])
-#guard obs case_take_family_tutorial == "ok raw=S[S[1, 2, 3], S[1, 2], S[1, 2]] n=3"
+#guard obs case_take_family_tutorial == "ok raw=S[L[1, 2, 3], L[S[1, 2]], L[1, 2]] n=3"
 
 -- distinct-family-tutorial [collection-builtins]: distinct((3, 1, 3, 2, 1, 2)) \n  \n distinct(((1, 2), (1, 2), (3, 4))) \n  \n Values = 3, 1, 3, 2, 1, 2 \n Values.distinct
 def case_distinct_family_tutorial : Expr :=
   .block (alg [] [] [privateProp "Values" (alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2])] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2]))]), .call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))]), .dotCall (.resolve "Values") "distinct" none])
-#guard obs case_distinct_family_tutorial == "ok raw=S[S[3, 1, 2], S[S[1, 2], S[3, 4]], S[3, 1, 2]] n=3"
+#guard obs case_distinct_family_tutorial == "ok raw=S[L[3, 1, 2], L[S[1, 2], S[3, 4]], L[3, 1, 2]] n=3"
 
 -- spread-one-level-family [sequence-construction]: (1, 2)...3 \n 1...(2, 3) \n (1, (2, 3))...4
 def case_spread_one_level_family : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [.num 1, .num 2])), .num 3, .sequenceSpread (.num 1), (.block (alg [] [] [] [.num 2, .num 3])), .sequenceSpread (.block (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))])), .num 4])
 #guard obs case_spread_one_level_family == "ok raw=S[1, 2, 3, 1, S[2, 3], 1, S[2, 3], 4] n=8"
 
--- distinct-empties-collapse [collection-builtins]: distinct((), ())
+-- distinct-empties-collapse [collection-builtins]: distinct(((), ()))
 def case_distinct_empties_collapse : Expr :=
-  .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])])
-#guard obs case_distinct_empties_collapse == "ok raw=S[] n=1"
+  .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
+#guard obs case_distinct_empties_collapse == "ok raw=L[S[]] n=1"
 
 -- order-sorts-atoms [collection-builtins]: order((3, 4, 2, 1, 3, 3))
 def case_order_sorts_atoms : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]))])])
-#guard obs case_order_sorts_atoms == "ok raw=S[1, 2, 3, 3, 3, 4] n=1"
+#guard obs case_order_sorts_atoms == "ok raw=L[1, 2, 3, 3, 3, 4] n=1"
 
 -- range-inclusive [collection-builtins]: range(1, 5)
 def case_range_inclusive : Expr :=
   .block (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 5])])
-#guard obs case_range_inclusive == "ok raw=S[1, 2, 3, 4, 5] n=1"
+#guard obs case_range_inclusive == "ok raw=L[1, 2, 3, 4, 5] n=1"
 
 -- range-single-value [collection-builtins]: range(3, 3)
 def case_range_single_value : Expr :=
   .block (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 3, .num 3])])
-#guard obs case_range_single_value == "ok raw=3 n=1"
+#guard obs case_range_single_value == "ok raw=L[3] n=1"
 
 -- atoms-recursive-flatten [collection-builtins]: atoms(((1, 2), (3, 4)))
 def case_atoms_recursive_flatten : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])])
 #guard obs case_atoms_recursive_flatten == "ok raw=S[1, 2, 3, 4] n=1"
 
--- sum-of-opened-range [collection-builtins]: sum(range(1, 3)...)
-def case_sum_of_opened_range : Expr :=
-  .block (alg [] [] [] [.call (.resolve "sum") (alg [] [] [] [.sequenceSpread (.call (.resolve "range") (alg [] [] [] [.num 1, .num 3]))])])
-#guard obs case_sum_of_opened_range == "ok raw=6 n=1"
+-- sum-of-range-collection [collection-builtins]: sum(range(1, 3))
+def case_sum_of_range_collection : Expr :=
+  .block (alg [] [] [] [.call (.resolve "sum") (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])])
+#guard obs case_sum_of_range_collection == "ok raw=6 n=1"
 
 -- count-family [collection-builtins]: count(()) \n count((())) \n  \n count(range(1, 5)) \n  \n count((10, 20, 30)) \n  \n count((3, 4, range(1, 5)..., 7)) \n  \n count((range(1, 5)..., 7)) \n  \n count(((1, 2), (3, 4))) \n  \n Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5) \n (Data:0).count
 def case_count_family : Expr :=
@@ -513,6 +513,11 @@ def case_count_dotcount_agree : Expr :=
 def case_if_value_boundary : Expr :=
   .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [.call (.resolve "if") (alg [] [] [] [.num 1, .resolve "X", .resolve "X"])])
 #guard obs case_if_value_boundary == "ok raw=S[1, 2, 3] n=1"
+
+-- builtin-fixed-collection-arity [collection-builtins]: count((1, 2, 3))
+def case_builtin_fixed_collection_arity : Expr :=
+  .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
+#guard obs case_builtin_fixed_collection_arity == "ok raw=3 n=1"
 
 -- reduce-accumulates-value [collection-builtins]: Append(item, history...) = (history..., item) \n reduce((2, 3, 4), Append, 1)
 def case_reduce_accumulates_value : Expr :=
@@ -699,12 +704,12 @@ def case_list_rest_capture_is_sequence : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "rest"])
 #guard obs case_list_rest_capture_is_sequence == "ok raw=S[1, S[2, 3]] n=2"
 
--- list-builtins-deferred [lists]: count([1, 2, 3])
-def case_list_builtins_deferred : Expr :=
+-- list-builtin-collection [lists]: count([1, 2, 3])
+def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
-#guard obs case_list_builtins_deferred == "err type"
+#guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 121 canonical Lean-guarded specification cases.
+-- 122 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -790,11 +795,12 @@ def specCaseIds : List String := [
   "range-inclusive",
   "range-single-value",
   "atoms-recursive-flatten",
-  "sum-of-opened-range",
+  "sum-of-range-collection",
   "count-family",
   "count-scalar-and-string",
   "count-dotcount-agree",
   "if-value-boundary",
+  "builtin-fixed-collection-arity",
   "reduce-accumulates-value",
   "eq-structural-nested",
   "index-selects-atom",
@@ -832,8 +838,8 @@ def specCaseIds : List String := [
   "list-lone-deconstruction",
   "list-deconstruction-not-recursive",
   "list-rest-capture-is-sequence",
-  "list-builtins-deferred"
+  "list-builtin-collection"
 ]
-#guard specCaseIds.length == 121
+#guard specCaseIds.length == 122
 
 end LanguageSpecCases

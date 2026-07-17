@@ -2,15 +2,17 @@ namespace KatLang.Tests;
 
 public class BuiltinRuntimeParityTests
 {
-    public static TheoryData<string, string, string, int, int> SequenceBuiltinArityDiagnosticCases => new()
+    public static TheoryData<string, string, string, int, int> CollectionBuiltinArityDiagnosticCases => new()
     {
-        { "map()", "map", "map(values..., mapper)", 1, 0 },
-        { "take()", "take", "take(values..., count)", 1, 0 },
-        { "skip()", "skip", "skip(values..., count)", 1, 0 },
-        { "reduce(1)", "reduce", "reduce(values..., reducer, initial)", 2, 1 },
+        { "map()", "map(collection, mapper)", "Callable `map(collection, mapper)` expects 2 arguments, but was called with 0 arguments.", 2, 0 },
+        { "take()", "take(collection, count)", "Callable `take(collection, count)` expects 2 arguments, but was called with 0 arguments.", 2, 0 },
+        { "skip()", "skip(collection, count)", "Callable `skip(collection, count)` expects 2 arguments, but was called with 0 arguments.", 2, 0 },
+        { "reduce(1)", "reduce(collection, reducer, initial)", "Callable `reduce(collection, reducer, initial)` expects 3 arguments, but was called with 1 argument.", 3, 1 },
+        { "sum()", "sum(collection)", "Callable `sum(collection)` expects 1 argument, but was called with 0 arguments.", 1, 0 },
+        { "count(1, 2, 3)", "count(collection)", "Callable `count(collection)` expects 1 argument, but was called with 3 arguments.", 1, 3 },
     };
 
-    public static TheoryData<BuiltinId> RequireNonEmptySequenceBuiltinCases => new()
+    public static TheoryData<BuiltinId> RequireNonEmptyCollectionBuiltinCases => new()
     {
         BuiltinId.first,
         BuiltinId.last,
@@ -26,35 +28,35 @@ public class BuiltinRuntimeParityTests
     };
 
     [Theory]
-    [MemberData(nameof(SequenceBuiltinArityDiagnosticCases))]
-    public void SequenceBuiltinArityDiagnostics_IncludeSignatureDisplay(
+    [MemberData(nameof(CollectionBuiltinArityDiagnosticCases))]
+    public void CollectionBuiltinArityDiagnostics_UseOrdinaryFixedSignatureDisplay(
         string source,
-        string builtinName,
         string signatureDisplay,
-        int expectedMinimum,
+        string expectedMessage,
+        int expected,
         int actual)
     {
         var error = AssertEvalFails(source, out var message);
 
-        // Rest-shaped builtins are item supplies (unbounded max), so the arity floor reads
-        // "expects at least N item(s)".
-        Assert.Equal(
-            $"while evaluating call to {builtinName}: Builtin '{builtinName}' expects at least {expectedMinimum} item(s) for {signatureDisplay}, but received {actual}.",
-            message);
+        // Collection builtins are ordinary fixed-arity callables, so their
+        // arity diagnostics use the same style as every other fixed builtin.
+        Assert.Equal(expectedMessage, message);
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
-        Assert.Equal(expectedMinimum, arity.Expected);
+        Assert.Equal(expected, arity.Expected);
         Assert.Equal(actual, arity.Actual);
         Assert.NotNull(arity.Signature);
         Assert.Equal(signatureDisplay, arity.Signature.DisplayText);
     }
 
     [Fact]
-    public void SequenceBuiltinValidArity_TakeSequenceAndCountSuffix()
+    public void CollectionBuiltinValidArity_TakeCollectionAndCount()
+        // take returns one exact list value [1, 2]; the host-boundary
+        // flattening in AssertEval sees its two items.
         => AssertEval("take((1, 2, 3), 2)", 1, 2);
 
     [Fact]
-    public void SequenceBuiltinSuffixKindDiagnostics_UseDescriptorName()
+    public void CollectionBuiltinControlKindDiagnostics_UseDescriptorName()
     {
         var error = AssertEvalFails("""
             take((1, 2), 'x')
@@ -65,8 +67,8 @@ public class BuiltinRuntimeParityTests
     }
 
     [Theory]
-    [MemberData(nameof(RequireNonEmptySequenceBuiltinCases))]
-    public void SequenceBuiltinEmptyPolicyMetadata_MatchesRuntimeDiagnostics(BuiltinId builtinId)
+    [MemberData(nameof(RequireNonEmptyCollectionBuiltinCases))]
+    public void CollectionBuiltinEmptyPolicyMetadata_MatchesRuntimeDiagnostics(BuiltinId builtinId)
     {
         var builtin = BuiltinRegistry.GetBuiltin(builtinId);
         Assert.NotNull(builtin.SequenceMetadata);
@@ -92,11 +94,25 @@ public class BuiltinRuntimeParityTests
 
     [Fact]
     public void Eval_Map_BuiltinAsCallback_AppliesPerItem()
+        // count(item) is 1 per scalar item, so the result is the list [1, 1, 1].
         => AssertEval("map((1, 2, 3), count)", 1, 1, 1);
 
     [Fact]
-    public void Eval_Filter_BuiltinAsPredicate_AppliesPerItem()
-        => AssertEval("filter((0, 1, 2), distinct)", 1, 2);
+    public void Eval_Filter_CollectionBuiltinAsPredicate_RejectsListResult()
+    {
+        // A collection-producing builtin returns one exact LIST per item, and
+        // lists have no truth value, so the strict predicate contract rejects it.
+        var error = AssertEvalFails("filter((0, 1, 2), distinct)", out var message);
+
+        Assert.Contains("filter predicate must return exactly one atomic numeric value", message, StringComparison.Ordinal);
+        Assert.IsType<EvalError.BadArity>(Innermost(error));
+    }
+
+    [Fact]
+    public void Eval_Filter_ScalarBuiltinAsPredicate_AppliesPerItem()
+        // sum(item) is one atomic numeric value per item, so the predicate
+        // keeps the truthy items: filter((0, 1, 2), sum) = [1, 2].
+        => AssertEval("filter((0, 1, 2), sum)", 1, 2);
 
     [Theory]
     [MemberData(nameof(FixedBuiltinArityDiagnosticCases))]
@@ -170,7 +186,9 @@ public class BuiltinRuntimeParityTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal(expected, result.Value.ToAtoms());
+        // Host-boundary flattening (ToHostAtoms) opens list results too, so
+        // flat expectations cover exact-list builtin results.
+        Assert.Equal(expected, result.Value.ToHostAtoms());
     }
 
     private static void AssertEmptySequenceBuiltinFailsWithContext(string source, string builtinName)

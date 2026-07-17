@@ -486,7 +486,7 @@ public sealed class KatLangError
             ? "The last argument cannot be evaluated as the starting accumulator."
             : $"The last argument is an algorithm that still needs {FormatQuotedList(requiredParameterNames)}, so it cannot be evaluated as the starting accumulator.";
 
-        return $"`reduce` is `reduce(values..., reducer, initial)`: the last argument must be an initial accumulator value. {parameterDetail} If that algorithm is the reducer function, add an initial accumulator after it, for example `reduce(..., reducer, 0)`.";
+        return $"`reduce` is `reduce(collection, reducer, initial)`: the last argument must be an initial accumulator value. {parameterDetail} If that algorithm is the reducer function, add an initial accumulator after it, for example `reduce(..., reducer, 0)`.";
     }
 
     private static string FormatCount(int count, string singularNoun)

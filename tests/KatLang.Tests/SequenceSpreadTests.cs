@@ -528,15 +528,24 @@ public class SequenceSpreadTests
             2m);
 
     [Fact]
-    public void SequenceBuiltin_ExplicitSpreadJoinsItemSupply()
-        // A rest-shaped builtin consumes an item supply like a user variadic, so explicit
-        // spread opens its items into the same supply (it no longer over-supplies).
-        => AssertEval(
+    public void SequenceBuiltin_SpreadFollowsOrdinaryFixedArity()
+    {
+        // Spread has only its ordinary meaning: `Values...` opens to two
+        // argument slots, over-supplying the fixed count(collection) — an
+        // ordinary arity error. Grouping the spread back into one collection
+        // argument is the valid rewrite.
+        AssertArityFailure(
             """
             Values = 10, 20
             count(Values...)
+            """);
+        AssertEval(
+            """
+            Values = 10, 20
+            count((Values...))
             """,
             2m);
+    }
 
     [Fact]
     public void SequenceBuiltin_NumericNormalArgumentConsumesSequenceValue()
@@ -548,13 +557,22 @@ public class SequenceSpreadTests
             30m);
 
     [Fact]
-    public void SequenceBuiltin_NumericExplicitSpreadJoinsItemSupply()
-        => AssertEval(
+    public void SequenceBuiltin_NumericSpreadFollowsOrdinaryFixedArity()
+    {
+        // Same rule for the numeric reducers: sum(Values...) supplies two
+        // arguments to the fixed sum(collection); the grouped form is valid.
+        AssertArityFailure(
             """
             Values = 10, 20
             sum(Values...)
+            """);
+        AssertEval(
+            """
+            Values = 10, 20
+            sum((Values...))
             """,
             30m);
+    }
 
     [Fact]
     public void FixedBuiltin_ExplicitSpreadProvidesArguments()

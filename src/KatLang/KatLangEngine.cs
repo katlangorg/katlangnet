@@ -171,7 +171,7 @@ public static class KatLangEngine
         return new RunResult.Success(
             frontEndResult.ElaboratedRoot,
             evalResult.Value.Output.Value,
-            evalResult.Value.Output.Value.ToAtoms())
+            evalResult.Value.Output.Value.ToHostAtoms())
         {
             EmittedCount = evalResult.Value.Output.EmittedCount,
             DisplayOptions = displayOptionsResult.Value,

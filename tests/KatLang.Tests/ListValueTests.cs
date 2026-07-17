@@ -3,8 +3,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// Exact immutable list values (<c>[]</c> syntax): construction, display,
 /// equality, spread, calls, capture, deconstruction, rest binding, and the
-/// deferred-builtin guard. Lean parity: the list cases in CoreTests.lean and
-/// the list bridge laws in KatLangArityLaws.lean.
+/// builtin collection view (lone lists open one boundary; collection-producing
+/// builtins return exact lists). Lean parity: the list cases in CoreTests.lean
+/// and the list bridge laws in KatLangArityLaws.lean.
 /// </summary>
 public class ListValueTests
 {
@@ -13,6 +14,16 @@ public class ListValueTests
     private static void AssertAtoms(string source, params decimal[] expected) => Assert.Equal(expected, Atoms(source));
 
     private static bool Fails(string source) => KatLangEngine.Run(source).IsFailure;
+
+    private static void AssertArityFailure(string source, string signatureDisplay)
+    {
+        var result = KatLangEngine.Run(source);
+        Assert.True(result.IsFailure, $"Expected arity failure but got: {result.ToDisplayString()}");
+        Assert.Contains(
+            $"Callable `{signatureDisplay}` expects",
+            result.ToDisplayString(),
+            StringComparison.Ordinal);
+    }
 
     private static string Display(string source)
     {
@@ -28,6 +39,16 @@ public class ListValueTests
     private static Result SequenceValue(params Result[] items) => new Result.SequenceValue(items);
 
     private static Result ListValue(params Result[] items) => new Result.ListValue(items);
+
+    [Fact]
+    public void LanguageAndHostAtomViews_RemainDistinctForLists()
+    {
+        var value = ListValue(Atom(1), SequenceValue(Atom(2), Atom(3)), ListValue(Atom(4)));
+
+        Assert.Empty(value.ToAtoms());
+        Assert.Equal([1m, 2m, 3m, 4m], value.ToHostAtoms());
+        Assert.Equal([1m, 2m, 3m], KatLangEngine.EvaluateToAtoms("range(1, 3)"));
+    }
 
     private static void AssertEvalCounted(string source, int expectedEmittedCount, Result expectedValue)
     {
@@ -47,18 +68,6 @@ public class ListValueTests
             Result.ValueComparer.Equals(expectedValue, result.Value.Value),
             $"Expected {expectedValue} but got {result.Value.Value}");
     }
-
-    private static EvalError EvalError(string source)
-    {
-        var parseResult = Parser.Parse(source);
-        Assert.False(parseResult.HasErrors, "Expected parse success");
-        var result = Evaluator.RunCounted(new Expr.Block(parseResult.Root));
-        Assert.True(result.IsError, "Expected an evaluation error");
-        return result.Error;
-    }
-
-    private static EvalError Innermost(EvalError error)
-        => error is EvalError.WithContext(_, var inner) ? Innermost(inner) : error;
 
     // ── Construction and display ─────────────────────────────────────────────
 
@@ -415,76 +424,52 @@ public class ListValueTests
         => AssertEvalCounted("value = [1, 2, 3]\nitems = value...\nitems", 1,
             SequenceValue(Atom(1), Atom(2), Atom(3)));
 
-    // ── Builtins: deferred list support (targeted error, spread works) ───────
+    // ── Builtins: lone-list collection view (one boundary opens) ─────────────
 
     [Fact]
-    public void Builtin_LoneListCollection_ReportsTargetedTypeMismatch()
+    public void Builtin_LoneListCollection_OpensOneBoundary()
+        => AssertAtoms("count([1, 2, 3])", 3);
+
+    [Fact]
+    public void Builtin_DotReceiverList_OpensOneBoundary()
+        => AssertAtoms("A = [1, 2, 3]\nA.count", 3);
+
+    [Fact]
+    public void Builtin_ListItemInsideCollection_IsOneOpaqueItem()
+        // The collection view opens only the outer lone boundary; a nested
+        // list stays one opaque countable item.
+        => AssertAtoms("count((1, [2], 3))", 3);
+
+    [Fact]
+    public void Builtin_NumericConstraint_ReportsPerItemListError()
     {
-        var error = Innermost(EvalError("count([1, 2, 3])"));
-        var mismatch = Assert.IsType<EvalError.TypeMismatch>(error);
-        Assert.Contains("does not support list values yet", mismatch.Message);
+        // A list ITEM inside a numeric collection reports the ordinary
+        // per-item numeric error (same wording family as sequence items) —
+        // the old "does not support list values yet" guard is gone.
+        var result = KatLangEngine.Run("sum((1, [2], 3))");
+        Assert.True(result.IsFailure);
+        Assert.Contains("item 1 was list value", result.ToDisplayString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("does not support list values yet", result.ToDisplayString(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Builtin_DotReceiverList_ReportsTargetedTypeMismatch()
+    public void Builtin_SpreadList_FollowsOrdinaryFixedArity()
     {
-        var error = Innermost(EvalError("A = [1, 2, 3]\nA.count"));
-        var mismatch = Assert.IsType<EvalError.TypeMismatch>(error);
-        Assert.Contains("does not support list values yet", mismatch.Message);
+        // Spread supplies the list's items as ordinary argument slots, so a
+        // multi-item spread overflows the one-collection signature. The
+        // grouped (non-spread) list argument is the supported form.
+        AssertArityFailure("count([1, 2, 3]...)", "count(collection)");
+        AssertArityFailure("sum([1, 2, 3]...)", "sum(collection)");
+        AssertArityFailure("A = [5, 1, 3]\norder(A...)", "order(collection)");
+        AssertAtoms("count([1, 2, 3])", 3);
+        AssertAtoms("sum([1, 2, 3])", 6);
+        AssertAtoms("A = [5, 1, 3]\norder(A)", 1, 3, 5);
     }
 
     [Fact]
-    public void Builtin_ListItemInsideCollection_ReportsTargetedTypeMismatch()
+    public void Builtin_FilterCountPipeline_ListReceiverAgreesInBothOptimizerModes()
     {
-        var error = Innermost(EvalError("count((1, [2], 3))"));
-        Assert.IsType<EvalError.TypeMismatch>(error);
-    }
-
-    [Fact]
-    public void Builtin_SpreadListCollection_IsFullySupported()
-    {
-        AssertAtoms("count([1, 2, 3]...)", 3);
-        AssertAtoms("sum([1, 2, 3]...)", 6);
-        AssertAtoms("A = [5, 1, 3]\norder(A...)", 1, 3, 5);
-    }
-
-    [Fact]
-    public void Builtin_FilterCountPipeline_ListReceiverFailsInBothOptimizerModes()
-    {
-        var source = "A = [1, 2, 3]\ncount(A.filter({x > 1})...)";
-        var parseResult = Parser.Parse(source);
-        Assert.False(parseResult.HasErrors);
-
-        var generic = RunWithSequenceOptimization(parseResult.Root, enabled: false);
-        var optimized = RunWithSequenceOptimization(parseResult.Root, enabled: true);
-        Assert.True(generic.IsError, "generic path should reject a list receiver");
-        Assert.True(optimized.IsError, "optimized path should reject a list receiver");
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error));
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized.Error));
-    }
-
-    [Fact]
-    public void Builtin_FilterCountPipeline_NestedListInLoneKeptItem_FailsInBothOptimizerModes()
-    {
-        // A list one level INSIDE the single kept sequence item must hit the
-        // deferred-list guard on the fused path exactly like the split
-        // composition (`K = Src.filter(p)` then `K.count`) does.
-        var source = "Src = (1, [2]), 3\nSrc.filter({a == (1, [2])}).count";
-        var parseResult = Parser.Parse(source);
-        Assert.False(parseResult.HasErrors);
-
-        var generic = RunWithSequenceOptimization(parseResult.Root, enabled: false);
-        var optimized = RunWithSequenceOptimization(parseResult.Root, enabled: true);
-        Assert.True(generic.IsError, "generic path should reject the nested list");
-        Assert.True(optimized.IsError, "fused path should reject the nested list");
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error));
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized.Error));
-    }
-
-    [Fact]
-    public void Builtin_FilterCountPipeline_SpreadListSourceWorksInBothOptimizerModes()
-    {
-        var source = "A = [1, 2, 3]\ncount(filter(A..., {x > 1})...)";
+        var source = "A = [1, 2, 3]\nA.filter({x > 1}).count";
         var parseResult = Parser.Parse(source);
         Assert.False(parseResult.HasErrors);
 
@@ -496,6 +481,64 @@ public class ListValueTests
         Assert.Equal([2m], optimized.Value.ToAtoms());
     }
 
+    [Fact]
+    public void Builtin_FilterCountPipeline_NestedListInLoneKeptItem_AgreesInBothOptimizerModes()
+    {
+        // A list one level INSIDE the single kept sequence item stays one
+        // opaque item on the fused path exactly like the split composition
+        // (`K = Src.filter(p)` then `K.count`): filter keeps one item, so the
+        // count is 1 in both optimizer modes.
+        var source = "Src = (1, [2]), 3\nSrc.filter({a == (1, [2])}).count";
+        var parseResult = Parser.Parse(source);
+        Assert.False(parseResult.HasErrors);
+
+        var generic = RunWithSequenceOptimization(parseResult.Root, enabled: false);
+        var optimized = RunWithSequenceOptimization(parseResult.Root, enabled: true);
+        Assert.False(generic.IsError, $"generic path failed: {(generic.IsError ? generic.Error : null)}");
+        Assert.False(optimized.IsError, $"optimized path failed: {(optimized.IsError ? optimized.Error : null)}");
+        Assert.Equal([1m], generic.Value.ToAtoms());
+        Assert.Equal([1m], optimized.Value.ToAtoms());
+    }
+
+    [Fact]
+    public void Builtin_FilterCountPipeline_BarePlainFormWorksInBothOptimizerModes()
+    {
+        var source = "A = [1, 2, 3]\ncount(filter(A, {x > 1}))";
+        var parseResult = Parser.Parse(source);
+        Assert.False(parseResult.HasErrors);
+
+        var generic = RunWithSequenceOptimization(parseResult.Root, enabled: false);
+        var optimized = RunWithSequenceOptimization(parseResult.Root, enabled: true);
+        Assert.False(generic.IsError, $"generic path failed: {(generic.IsError ? generic.Error : null)}");
+        Assert.False(optimized.IsError, $"optimized path failed: {(optimized.IsError ? optimized.Error : null)}");
+        Assert.Equal([2m], generic.Value.ToAtoms());
+        Assert.Equal([2m], optimized.Value.ToAtoms());
+    }
+
+    [Fact]
+    public void Builtin_FilterCountPipeline_SpreadListSourceIsArityErrorInBothOptimizerModes()
+    {
+        // `filter(A..., predicate)` spreads three ordinary argument slots into
+        // the two-argument signature, so the pipeline is an arity error on the
+        // generic and the fused path alike.
+        var source = "A = [1, 2, 3]\ncount(filter(A..., {x > 1})...)";
+        var parseResult = Parser.Parse(source);
+        Assert.False(parseResult.HasErrors);
+
+        var generic = RunWithSequenceOptimization(parseResult.Root, enabled: false);
+        var optimized = RunWithSequenceOptimization(parseResult.Root, enabled: true);
+        Assert.True(generic.IsError, "generic path unexpectedly succeeded");
+        Assert.True(optimized.IsError, "optimized path unexpectedly succeeded");
+        Assert.Contains(
+            "Callable `filter(collection, predicate)` expects",
+            KatLangError.FromEvalError(generic.Error).Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Callable `filter(collection, predicate)` expects",
+            KatLangError.FromEvalError(optimized.Error).Message,
+            StringComparison.Ordinal);
+    }
+
     private static EvalResult<Result> RunWithSequenceOptimization(Algorithm root, bool enabled)
         => Evaluator.Run(
             new Expr.Block(root),
@@ -504,6 +547,163 @@ public class ListValueTests
             loopDiagnostics: null,
             enableSequencePipelineOptimization: enabled,
             sequenceDiagnostics: null);
+
+    // ── Arity model non-regression: variadic and rest capture (unchanged) ────
+
+    [Theory]
+    [InlineData("Inspect()", "()")]
+    [InlineData("Inspect(7)", "7")]
+    [InlineData("Inspect(1, 2)", "(1, 2)")]
+    [InlineData("Inspect([1, 2])", "[1, 2]")]
+    [InlineData("Inspect([1, 2]...)", "(1, 2)")]
+    public void VariadicCapture_ArityModelUnchangedForLists(string call, string expected)
+        // Calls never open lists implicitly: a plain list is one supplied
+        // argument, and only explicit `...` opens it into the stream.
+        => AssertDisplay($"Inspect(items...) = items\n{call}", expected);
+
+    [Theory]
+    [InlineData("head, rest... = [1, 2, 3]\nrest", "(2, 3)")]
+    [InlineData("head, rest... = [1]\nrest", "()")]
+    [InlineData("head, rest... = [1, 2]\nrest", "2")]
+    [InlineData("first, rest... = 1, [2, 3]..., (4, 5)...\nfirst", "1")]
+    [InlineData("first, rest... = 1, [2, 3]..., (4, 5)...\nrest", "(2, 3, 4, 5)")]
+    public void RestCapture_StaysSequenceShaped_AcrossListSources(string source, string expected)
+        => AssertDisplay(source, expected);
+
+    [Fact]
+    public void RestCapture_And_SkipBuiltin_DifferByResultKind()
+    {
+        // Intended difference: rest capture stays sequence-shaped while the
+        // collection builtin returns an exact list of the same items.
+        AssertDisplay("head, rest... = [1, 2, 3]\nrest", "(2, 3)");
+        AssertDisplay("skip([1, 2, 3], 1)", "[2, 3]");
+        AssertAtoms("head, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 0);
+    }
+
+    // ── Collection-producing builtins return one exact list value ────────────
+
+    [Theory]
+    [InlineData("take((1, 2, 3), 1)")]
+    [InlineData("take([1, 2, 3], 1)")]
+    public void BuiltinBindingForms_AgreeOnTheSameListResult(string source)
+        => AssertDisplay(source, "[1]");
+
+    [Theory]
+    [InlineData("take(1, 2, 3, 1)")]
+    [InlineData("take([1, 2, 3]..., 1)")]
+    public void BuiltinBindingForms_InlineItemsAndSpreadAreArityErrors(string source)
+        // Inline items and spread both supply ordinary argument slots, which
+        // overflow the fixed `take(collection, count)` signature.
+        => AssertArityFailure(source, "take(collection, count)");
+
+    [Fact]
+    public void BuiltinEmptyResult_IsTheEmptyList()
+    {
+        AssertDisplay("take((1, 2), 0)", "[]");
+        AssertDisplay("skip([1, 2], 2)", "[]");
+    }
+
+    [Fact]
+    public void BuiltinSingletonResult_IsASingletonList()
+    {
+        AssertDisplay("distinct((1, 1))", "[1]");
+        // Two inline items are two arguments, not one collection.
+        AssertArityFailure("distinct(1, 1)", "distinct(collection)");
+    }
+
+    [Fact]
+    public void BuiltinResult_KeepsNestedElementsExact()
+    {
+        AssertDisplay("take(((1, 2), (3, 4)), 1)", "[(1, 2)]");
+        AssertDisplay("take([[1, 2], [3, 4]], 1)", "[[1, 2]]");
+    }
+
+    [Fact]
+    public void Count_ValueBoundaries_ScalarEmptyAndSiblingForms()
+    {
+        AssertAtoms("count(3)", 1);
+        AssertAtoms("count(())", 0);
+        AssertAtoms("count([])", 0);
+        // Sibling arguments are extra argument slots, never extra collection
+        // items — the fix is grouping them into one collection, where they
+        // stay two visible items.
+        AssertArityFailure("count(3, 3)", "count(collection)");
+        AssertArityFailure("count((), ())", "count(collection)");
+        AssertArityFailure("count([], [])", "count(collection)");
+        AssertAtoms("count(((), ()))", 2);
+        AssertAtoms("count(([], []))", 2);
+    }
+
+    [Fact]
+    public void NumericBuiltin_LoneListOpens_SpreadFormMustBeRegrouped()
+    {
+        AssertAtoms("A = [1, 2, 3]\nsum(A)", 6);
+        // Spread supplies three ordinary argument slots — an arity error;
+        // regrouping the spread restores one collection argument.
+        AssertArityFailure("A = [1, 2, 3]\nsum(A...)", "sum(collection)");
+        AssertAtoms("A = [1, 2, 3]\nsum((A...))", 6);
+    }
+
+    [Fact]
+    public void BuiltinListResult_ReEntersArityThroughOrdinaryRules()
+    {
+        // A stored builtin list result spreads like any other list value.
+        AssertDisplay("A = take([1, 2, 3], 1)\nA...", "1");
+        AssertDisplay("A = take([1, 2, 3], 2)\nB = A...\nB", "(1, 2)");
+    }
+
+    [Fact]
+    public void Range_ReturnsExactList_AndKeepsArgumentValidation()
+    {
+        AssertDisplay("range(1, 3)", "[1, 2, 3]");
+        AssertDisplay("range(3, 3)", "[3]");
+        AssertDisplay("range(3, 1)", "[3, 2, 1]");
+        AssertDisplay("A = range(1, 3)\nB = A...\nB", "(1, 2, 3)");
+        Assert.True(Fails("range(1.5, 3)"));
+    }
+
+    [Fact]
+    public void LoneCollection_DoesNotExposeControlSlots()
+    {
+        // `count` is an ordinary fixed control parameter of
+        // take(collection, count): a lone collection argument never fills it
+        // from its own items, so the one-argument call is an arity error for
+        // list and sequence collections alike.
+        AssertArityFailure("take([1, 2, 3])", "take(collection, count)");
+        AssertArityFailure("take((1, 2, 3))", "take(collection, count)");
+    }
+
+    // ── Dotted and direct builtin forms agree on both collection kinds ───────
+
+    public static TheoryData<string> DottedEquivalenceComparisons => new()
+    {
+        "S.take(1) == take(S, 1)",
+        "S.skip(1) == skip(S, 1)",
+        "S.order == order(S)",
+        "S.orderDesc == orderDesc(S)",
+        "S.distinct == distinct(S)",
+        "S.filter(P) == filter(S, P)",
+        "S.map(D) == map(S, D)",
+        "S.count == count(S)",
+        "S.sum == sum(S)",
+        "S.min == min(S)",
+        "S.max == max(S)",
+        "S.avg == avg(S)",
+        "S.first == first(S)",
+        "S.last == last(S)",
+        "S.contains(2) == contains(S, 2)",
+        "S.reduce(Add, 0) == reduce(S, Add, 0)",
+    };
+
+    [Theory]
+    [MemberData(nameof(DottedEquivalenceComparisons))]
+    public void DottedBuiltin_SequenceReceiver_AgreesWithDirectForm(string comparison)
+        => AssertAtoms($"P = x > 1\nD = x * 2\nAdd = x + total\nS = 3, 1, 2\n{comparison}", 1);
+
+    [Theory]
+    [MemberData(nameof(DottedEquivalenceComparisons))]
+    public void DottedBuiltin_ListReceiver_AgreesWithDirectForm(string comparison)
+        => AssertAtoms($"P = x > 1\nD = x * 2\nAdd = x + total\nS = [3, 1, 2]\n{comparison}", 1);
 
     // ── Indexing keeps lists opaque (list indexing is deferred) ──────────────
 

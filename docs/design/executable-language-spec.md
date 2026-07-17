@@ -157,27 +157,28 @@ identities), `git diff --check`, and all Lean targets including
 ## 9. Worked example: one case through all four layers
 
 Case `take-single-survivor` (`LanguageSpecCorpus.cs`):
-source `take(((1, 2), (3, 4)), 1)`, canonical display `(1, 2)`, canonical
-neutral `ok raw=S[1, 2] n=1`, probes for `count(...)` = 2 and structural
-equality with `(1, 2)`.
+source `take(((1, 2), (3, 4)), 1)`, canonical display `[(1, 2)]`, canonical
+neutral `ok raw=L[S[1, 2]] n=1`, probes for `count(...)` = 1, non-equality
+with `(1, 2)`, and spread re-opening (`take(...)...` is the kept pair).
 
 1. **C#**: `LanguageSpecRunnerTests.Case_MatchesCanonicalExpectations`
    parses and evaluates the source, asserting the neutral observation and
-   display; the two probes run the same way.
+   display; the probes run the same way.
 2. **Lean**: the generated `lean/LanguageSpecCases.lean` contains
    `def case_take_single_survivor` (the equivalent AST: a `take` call on a
    block-of-blocks) and
-   `#guard obs case_take_single_survivor == "ok raw=S[1, 2] n=1"`. The
-   related general law — a single kept item is never re-wrapped — is the
-   theorem side: `orphanFree_normalize` plus the
-   `combineCollectionResult` pins in CoreTests.
+   `#guard obs case_take_single_survivor == "ok raw=L[S[1, 2]] n=1"`. The
+   related general law — collection results are exact lists whose one-item
+   boundary is never erased — is the theorem side: the
+   `makeCollectionListResult` pins in CoreTests plus
+   `makeCollectionListResult_exact` in `KatLangArityLaws`.
 3. **Tutorial**: the `take` section's example fence is marked
    `<!-- spec:take-family-tutorial -->` (the composite tutorial fence that
    contains this program); editing the fence or its Results block without
    updating the corpus fails `TutorialSpecTests`.
 4. **Generator**: the case is flagged `IncludeInGeneratorPrompt`, so both
    prompt files' generated block teaches
-   `take(((1, 2), (3, 4)), 1)` → `(1, 2)` with the no-orphan-wrapper
+   `take(((1, 2), (3, 4)), 1)` → `[(1, 2)]` with the exact-list
    explanation, and goes stale (test failure) if the canonical case changes.
 
 ## 10. Known limitations

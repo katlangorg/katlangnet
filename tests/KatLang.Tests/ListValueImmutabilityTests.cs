@@ -130,6 +130,32 @@ public class ListValueImmutabilityTests
         AssertSemanticallyEqual(List(), value);
     }
 
+    // ── 2b. Builtin-produced lists cannot be mutated from the host ──────────
+
+    [Theory]
+    [InlineData("take((1, 2, 3), 2)", "[1, 2]")]
+    [InlineData("range(1, 3)", "[1, 2, 3]")]
+    [InlineData("Double = x * 2\nmap((1, 2, 3), Double)", "[2, 4, 6]")]
+    public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
+    {
+        // Collection-producing builtins return one exact immutable list value;
+        // the Items view (including mutable-interface downcasts probed by
+        // ProbeViewForMutation) must not expose writable storage.
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+        var value = Assert.IsType<Result.ListValue>(run.Value);
+        var hashBefore = Result.ValueComparer.GetHashCode(value);
+        var itemCountBefore = value.Items.Count;
+
+        Assert.Equal(expectedDisplay, run.ToDisplayString());
+
+        ProbeViewForMutation(value.Items);
+        ProbeViewForMutation(value.SpreadItems());
+
+        Assert.Equal(expectedDisplay, run.ToDisplayString());
+        Assert.Equal(itemCountBefore, value.Items.Count);
+        Assert.Equal(hashBefore, Result.ValueComparer.GetHashCode(value));
+    }
+
     // ── 3. Spread view cannot mutate the original list ──────────────────────
 
     [Fact]

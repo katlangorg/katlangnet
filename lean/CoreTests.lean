@@ -944,6 +944,8 @@ def explicitEmptyEquality : Bool :=
     .binary .ne explicitEmptyExpr explicitEmptyExpr,
     .binary .eq explicitEmptyExpr explicitEmptyOutputBody,
     .binary .eq explicitEmptyOutputBody explicitEmptyExpr,
+    -- Collection builtins materialize exact lists, so an all-rejected filter
+    -- and an all-skipped skip yield `[]`, which is NOT the empty sequence `()`.
     .binary .eq
       (.call (.resolve "filter") (alg [] [] [] [
         .sequenceConstruct (.num 1) (.sequenceConstruct (.num 3) (.num 5)),
@@ -960,7 +962,7 @@ def explicitEmptyEquality : Bool :=
       (.dotCall (.num 0) "skip" (some (alg [] [] [] [.num 1])))
       explicitEmptyExpr
   ])) with
-  | Except.ok [1, 0, 1, 1, 1, 1, 1] => true
+  | Except.ok [1, 0, 1, 1, 0, 0, 0] => true
   | _ => false
 
 #guard explicitEmptyEquality
@@ -1085,20 +1087,39 @@ def internalSequenceConstructDropsEmptyBesidePair : Bool :=
 #guard internalSequenceConstructDropsEmptyBesidePair
 
 -- A lone sequenceConstruct argument to a builtin is an ordinary value
--- expression: it evaluates to ONE grouped value and follows the ordinary
--- grouped-argument rules (singleton opening, suffix from the back) — the
--- same as the written grouped form. (C# once had a legacy reshape that
--- special-cased this shape and diverged; it was removed in the July 2026
--- containment audit.)
+-- expression: it evaluates to ONE grouped value and counts as ONE fixed-arity
+-- argument — the same as the written grouped form. take(SC[1, 2, 5]) is one
+-- argument where `take(collection, count)` expects two, exactly like surface
+-- `take((1, 2, 5))`; with an explicit count both forms agree, and
+-- sequenceConstruct still drops its `()` leaves (sum(SC[(), 1, 2]) is 3).
+-- (C# once had a legacy reshape that special-cased this shape and diverged;
+-- it was removed in the July 2026 containment audit.)
 def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
-  match
-    runResult (.call (.resolve "take") (alg [] [] [] [
-      .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])),
-    runResult (.call (.resolve "sum") (alg [] [] [] [
-      .sequenceConstruct (.num 1) (.num 2)]))
-  with
-  | Except.ok (.sequenceValue [.atom 1, .atom 2]), Except.ok (.atom 3) => true
-  | _, _ => false
+  let loneScErrsLikeGroupedSurfaceForm :=
+    match
+      runResult (.call (.resolve "take") (alg [] [] [] [
+        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])),
+      runResult (.call (.resolve "take") (alg [] [] [] [
+        .block (alg [] [] [] [.num 1, .num 2, .num 5])]))
+    with
+    | Except.error scErr, Except.error groupedErr =>
+        innermostIsArityMismatch 2 1 scErr && innermostIsArityMismatch 2 1 groupedErr
+    | _, _ => false
+  let scBindsLikeGroupedForm :=
+    match
+      runResult (.call (.resolve "take") (alg [] [] [] [
+        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2])),
+      runResult (.call (.resolve "sum") (alg [] [] [] [
+        .sequenceConstruct (.num 1) (.num 2)]))
+    with
+    | Except.ok (.listValue [.atom 1, .atom 2]), Except.ok (.atom 3) => true
+    | _, _ => false
+  let scStillDropsEmptyLeaves :=
+    match runResult (.call (.resolve "sum") (alg [] [] [] [
+      .sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2)])) with
+    | Except.ok (.atom 3) => true
+    | _ => false
+  loneScErrsLikeGroupedSurfaceForm && scBindsLikeGroupedForm && scStillDropsEmptyLeaves
 
 #guard internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm
 
@@ -1195,7 +1216,7 @@ def collectionBuiltinAlwaysTrue : KatLang.Expr := .block (alg ["x"] [] [] [.num 
 def filterNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "filter")
       (alg [] [] [] [.emptySequence 1, collectionBuiltinAlwaysTrue])) with
-  | Except.ok (.sequenceValue []) => true
+  | Except.ok (.listValue []) => true
   | _ => false
 
 #guard filterNestedEmptyInputCanonicalizesToEmptyCollection
@@ -1213,7 +1234,7 @@ def countFilterNestedEmptyInputCanonicalizesToZero : Bool :=
 def takeNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "take")
       (alg [] [] [] [.emptySequence 1, .num 1])) with
-  | Except.ok (.sequenceValue []) => true
+  | Except.ok (.listValue []) => true
   | _ => false
 
 #guard takeNestedEmptyInputCanonicalizesToEmptyCollection
@@ -1221,7 +1242,7 @@ def takeNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
 def skipNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "skip")
       (alg [] [] [] [.emptySequence 1, .num 0])) with
-  | Except.ok (.sequenceValue []) => true
+  | Except.ok (.listValue []) => true
   | _ => false
 
 #guard skipNestedEmptyInputCanonicalizesToEmptyCollection
@@ -1229,16 +1250,16 @@ def skipNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
 def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
   match runResult (.call (.resolve "distinct")
       (alg [] [] [] [.emptySequence 1])) with
-  | Except.ok (.sequenceValue []) => true
+  | Except.ok (.listValue []) => true
   | _ => false
 
 #guard distinctNestedEmptyInputCanonicalizesToEmptyCollection
 
--- Filtering a two-item collection down to one kept `(1, 2)` erases the one-item
--- collection boundary: the result IS `(1, 2)`, matching ordinary construction where a
--- literal `((1, 2))` also collapses to the two-item collection `(1, 2)`. Builtin results
--- never mint the literal-unwritable orphan `((1, 2))`.
-def filterSingleKeptSequenceValueItemErasesBoundary : Bool :=
+-- Filtering a two-item collection down to one kept `(1, 2)` materializes the
+-- exact one-element list `[(1, 2)]`: collection-producing builtins never apply
+-- singleton-boundary erasure to their list results — the kept sequence value
+-- stays one exact element (`[(1, 2)]` is a writable KatLang value).
+def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
   let keepFirstPair : KatLang.Expr := .block (alg ["pair"] [] [] [
     .binary .eq (.index (.param "pair") (.num 0)) (.num 1)
   ])
@@ -1250,10 +1271,10 @@ def filterSingleKeptSequenceValueItemErasesBoundary : Bool :=
         ],
         keepFirstPair
       ])) with
-  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
   | _ => false
 
-#guard filterSingleKeptSequenceValueItemErasesBoundary
+#guard filterSingleKeptSequenceValueItemStaysExactElement
 
 -- An internal `sequenceConstruct (sequenceSpread A) B` is ONE sequence-value argument in
 -- fixed-arity call-argument position and therefore fails to bind a two-parameter
@@ -2364,20 +2385,28 @@ def test12 : Bool :=
 -- Regression: recursive dot-call arguments bind both value and algorithm views,
 -- but builtin argument preparation must use the current parameter value when it
 -- exists. Otherwise atoms(values) re-enters list.skip(1) while list is computing.
+-- With exact-list builtin results, `atoms` stays list-opaque, so the recursion
+-- spread-captures the skip result first (`rest = list.skip(1)...`) and recurses
+-- on that canonical sequence — mirroring the C# regression test.
 def recursiveDotCallListAlg : Algorithm :=
   alg [] [] [] [
     .call (resolve "atoms") (alg [] [] [] [.param "values"])
   ]
 
+def recursiveDotCallRestAlg : Algorithm :=
+  alg [] [] [] [
+    .sequenceSpread (.dotCall (resolve "list") "skip" (some (alg [] [] [] [.num 1])))
+  ]
+
 def recursiveDotCallReduceCollectionAlg : Algorithm :=
-  algPrivate ["values"] [] [("list", recursiveDotCallListAlg)] [
+  algPrivate ["values"] [] [
+    ("list", recursiveDotCallListAlg),
+    ("rest", recursiveDotCallRestAlg)
+  ] [
     .call (resolve "if") (alg [] [] [] [
       .binary .le (.dotCall (resolve "list") "count" none) (.num 1),
       resolve "list",
-      .dotCall
-        (.dotCall (resolve "list") "skip" (some (alg [] [] [] [.num 1])))
-        "reduceCollection"
-        none
+      .dotCall (resolve "rest") "reduceCollection" none
     ])
   ]
 
@@ -3590,7 +3619,9 @@ def test19c : Bool :=
 ]))
 
 -- Test 19d: sequenceValue eager values stay whole when a sibling argument binds only
--- through AlgEnv.
+-- through AlgEnv. The occurrence count is the kept-item count: filter materializes an
+-- exact list ([(1, 2)] here) and count opens exactly that one list boundary, so one
+-- kept pair counts as 1.
 def evenPredicateAlg19d : Algorithm :=
   alg ["n"] [] [] [
     .binary .eq
@@ -3618,7 +3649,7 @@ def test19d : Bool :=
       .block evenPredicateAlg19d
     ])
   ])) with
-  | Except.ok [2] => true
+  | Except.ok [1] => true
   | _ => false
 
 #guard test19d
@@ -3637,9 +3668,10 @@ def test19d : Bool :=
 -- Test 19e: inline predicate captures an outer value parameter rather than
 -- re-declaring it as a local parameter.
 --
--- Plain-call sequence builtins now expand emitted top-level items from
--- ordinary arguments. This test still uses explicit top-level pair arguments
--- to keep the capture shape obvious.
+-- The fixed collection argument is a grouped collection of explicit pair
+-- items. One pair matches the target, so the
+-- filter(...).count occurrence count is the kept-item count 1 (the kept pair
+-- stays one exact list element; count opens only the list boundary).
 def occurrenceCountAlg19e : Algorithm :=
   alg ["target"] [] [] [
     .dotCall
@@ -3667,7 +3699,7 @@ def test19e : Bool :=
       .block (alg [] [] [] [.num 2, .num 20])
     ])
   ])) with
-  | Except.ok [2] => true
+  | Except.ok [1] => true
   | _ => false
 
 #guard test19e
@@ -3911,8 +3943,8 @@ def test25bCommaSimilarity : Bool :=
 #guard test25bCommaSimilarity
 
 def test25c : Bool :=
-  -- Internal sequence `(P..., 3, 4, 5)` where P = 1, 2 is one grouped value, opened by
-  -- singleton-boundary normalization into the item supply; sum 15.
+  -- Internal sequence `(P..., 3, 4, 5)` where P = 1, 2 is ONE collection argument,
+  -- opened by the post-binding one-level collection view; sum 15.
   let pThenMore := sequenceItems [sequenceSpread (resolve "P"), .num 3, .num 4, .num 5]
   match runFlat (.block (algPrivate [] [] [
     ("P", alg [] [] [] [.num 1, .num 2]),
@@ -4582,7 +4614,9 @@ def badMultiTrueAlg69 : Algorithm :=
 def badSequenceValueAlg70 : Algorithm :=
   alg ["x"] [] [] [.block (alg [] [] [] [.num 1, .num 0])]
 
-def emptyTruthAlg71 : Algorithm :=
+-- `take(x, 0)` returns the exact list `[]`: one value, but a list has no truth
+-- value, so a predicate built from a collection builtin is rejected.
+def listTruthAlg71 : Algorithm :=
   alg ["x"] [] [] [
     .call (resolve "take") (alg [] [] [] [
       .param "x",
@@ -4642,12 +4676,13 @@ def test66 : Bool :=
 
 #guard test66
 
--- Rest-shaped sequence builtin binding: a grouped value is opened by singleton-boundary
--- normalization, while multiple sibling grouped values are preserved (not flattened).
+-- Fixed-arity collection builtin binding: the ONE bound collection argument is read
+-- through the one-level collection view after binding, while sibling arguments are
+-- never merged into one collection (extra siblings are ordinary arity errors).
 
--- Sibling grouped values are preserved: filter(range(3, 6), 8, IsEven) binds the collection to
--- the two siblings (3, 4, 5, 6) and 8, so the predicate runs against a non-numeric grouped item
--- and fails (a type mismatch, not a one-slot arity error).
+-- Sibling arguments are never flattened into one collection: filter(range(3, 6), 8, IsEven)
+-- supplies three arguments where `filter(collection, predicate)` expects two, so the call
+-- reports an ordinary arity error (never a silently merged collection).
 def sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary : Bool :=
   match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -4656,13 +4691,14 @@ def sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary : Bool :=
       .resolve "IsEven"
     ])
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 3 err
   | Except.ok _ => false
 
 #guard sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary
 
--- A single grouped value `(range(3, 6)..., 8)` is opened by singleton-boundary normalization,
--- so filter's collection is [3, 4, 5, 6, 8] and keeps the even items [4, 6, 8].
+-- A single grouped argument `(range(3, 6)..., 8)` is ONE collection value; the post-binding
+-- one-level collection view opens it, so filter's collection is [3, 4, 5, 6, 8] and keeps
+-- the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
   match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -4675,8 +4711,8 @@ def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
 
 #guard sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands
 
--- A named multi-output source `Data` is opened by singleton-boundary normalization into the
--- item supply, so filter's collection is [3, 4, 5, 6].
+-- A named multi-output source `Data` is ONE collection argument; the post-binding one-level
+-- collection view opens it, so filter's collection is [3, 4, 5, 6].
 def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
@@ -4692,8 +4728,8 @@ def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
 
 #guard sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary
 
--- A dot-call receiver `Data` is the leading item in the supply, opened by singleton-boundary
--- normalization, so filter iterates [3, 4, 5, 6].
+-- A dot-call receiver `Data` binds the fixed collection parameter; the post-binding
+-- one-level collection view opens it, so filter iterates [3, 4, 5, 6].
 def sequenceBoundaryLawFilterDotReceiverExpands : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
@@ -4706,9 +4742,9 @@ def sequenceBoundaryLawFilterDotReceiverExpands : Bool :=
 
 #guard sequenceBoundaryLawFilterDotReceiverExpands
 
--- Named multi-output plus a comma-separated scalar are preserved as two grouped siblings
--- ((3, 4, 5, 6) and 8), so the predicate fails on the non-numeric grouped item (sibling
--- preservation, not a one-slot arity error).
+-- Named multi-output plus a comma-separated scalar are two sibling arguments ((3, 4, 5, 6)
+-- and 8), so `filter(collection, predicate)` receives three arguments and reports an
+-- ordinary arity error (sibling preservation, never silent flattening).
 def sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
@@ -4720,13 +4756,14 @@ def sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary : Bool :=
       .resolve "IsEven"
     ])
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 3 err
   | Except.ok _ => false
 
 #guard sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary
 
--- A single grouped value `(Data..., 8)` is opened by singleton-boundary normalization, so
--- filter's collection is [3, 4, 5, 6, 8] and keeps the even items [4, 6, 8].
+-- A single grouped argument `(Data..., 8)` is ONE collection value opened by the
+-- post-binding one-level collection view, so filter's collection is [3, 4, 5, 6, 8]
+-- and keeps the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadNamedSourceExpands : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
@@ -4758,7 +4795,7 @@ def test67 : Bool :=
 
 #guard test67
 
--- Test 68: sequence values are preserved whole and in order
+-- Test 68: kept sequence values are preserved whole and in order as exact list elements
 def test68 : Bool :=
   match runResult (.block (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
     .call (resolve "filter") (alg [] [] [] [sequenceItems [
@@ -4769,7 +4806,7 @@ def test68 : Bool :=
       .resolve "KeepPair"
     ])
   ])) with
-  | Except.ok (.sequenceValue [
+  | Except.ok (.listValue [
       .sequenceValue [.atom 2, .atom 20],
       .sequenceValue [.atom 4, .atom 40]
     ]) => true
@@ -4816,9 +4853,10 @@ def test71 : Bool :=
 
 #guard test71
 
--- Test 72: empty predicate result is rejected
+-- Test 72: exact-list predicate result is rejected (a collection builtin used
+-- as a filter predicate returns a list, never an atomic numeric value)
 def test72 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", emptyTruthAlg71)] [
+  match runResult (.block (algPrivate [] [] [("Bad", listTruthAlg71)] [
     .call (resolve "filter") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
       .resolve "Bad"
@@ -4934,13 +4972,10 @@ def addItemCountAlg80c : Algorithm :=
       (.param "acc")
   ]
 
+-- A literal `()` body keeps testing the empty-step failure: `take(x, 0)` now
+-- returns the exact list `[]`, which is ONE valid accumulator value.
 def reduceEmptyAlg81 : Algorithm :=
-  alg ["x", "acc"] [] [] [
-    .call (resolve "take") (alg [] [] [] [
-      .param "x",
-      .num 0
-    ])
-  ]
+  alg ["x", "acc"] [] [] [.emptySequence 0]
 
 def reduceMultiAlg82 : Algorithm :=
   alg ["x", "acc"] [] [] [.param "acc", .param "x"]
@@ -4963,8 +4998,8 @@ def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
     ])
   ]
 
--- Exact AoC-style regression: Right is a named multi-output property passed
--- to a values... reduce input, so top-level binding must iterate its items.
+-- Exact AoC-style regression: Right is a named multi-output property bound as
+-- reduce's collection argument, so the collection view must iterate its items.
 def sequenceBoundaryLawAocNamedReduceSource : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("Left", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]),
@@ -5145,24 +5180,22 @@ def test84 : Bool :=
 
 #guard test84
 
--- Test 84a: reduce requires reducer and initial suffix items
+-- Test 84a: reduce is an ordinary fixed-arity callable — reduce(1) supplies one
+-- argument where `reduce(collection, reducer, initial)` expects three.
 def test84a : Bool :=
   match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
     .call (resolve "reduce") (alg [] [] [] [
       .num 1
     ])
   ])) with
-  | Except.error err =>
-      hasContext "Builtin 'reduce' expects at least 2 item(s) for reduce(values..., reducer, initial), but received 1." err
-      && innermostIsArityMismatch 2 1 err
+  | Except.error err => innermostIsArityMismatch 3 1 err
   | _ => false
 
 #guard test84a
 
--- Test 84b: reduce(values..., reducer, initial) is an item supply, so the two suffix slots
--- bind reducer = (1, 2, 3) and initial = Add from the back, leaving an empty collection. Add
--- is parameterized, so it cannot be the starting accumulator and the initial-accumulator
--- error fires (rather than a generic arity error).
+-- Test 84b: reduce((1, 2, 3), Add) supplies two of the three fixed arguments —
+-- an ordinary arity error, with no suffix-binding reinterpretation of the
+-- argument list.
 def test84b : Bool :=
   match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -5170,10 +5203,24 @@ def test84b : Bool :=
       .resolve "Add"
     ])
   ])) with
-  | Except.error err => hasContext "while preparing reduce initial accumulator" err
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | _ => false
 
 #guard test84b
+
+-- Test 84c: the dotted missing-initial hint is reserved for a visibly
+-- parameterized reducer. An ordinary value in the sole control slot follows
+-- the fixed signature and reports the ordinary three-versus-two arity error.
+def test84c : Bool :=
+  match runResult (.block (algPrivate [] [] [("Values", alg [] [] [] [
+    sequenceItems [.num 1, .num 2, .num 3]
+  ])] [
+    .dotCall (resolve "Values") "reduce" (some (alg [] [] [] [.num 0]))
+  ])) with
+  | Except.error err => innermostIsArityMismatch 3 2 err
+  | _ => false
+
+#guard test84c
 
 --------------------------------------------------------------------------------
 -- map builtin tests
@@ -5227,13 +5274,10 @@ def pairWithSquareAlg90 : Algorithm :=
       ] ⟩
   ]
 
+-- A literal `()` body keeps testing the empty-transform failure: `take(x, 0)` now
+-- returns the exact list `[]`, which is ONE valid element.
 def mapEmptyAlg91 : Algorithm :=
-  alg ["x"] [] [] [
-    .call (resolve "take") (alg [] [] [] [
-      .param "x",
-      .num 0
-    ])
-  ]
+  alg ["x"] [] [] [.emptySequence 0]
 
 def mapMultiAlg92 : Algorithm :=
   alg ["x"] [] [] [
@@ -5318,7 +5362,7 @@ def test87 : Bool :=
 
 #guard test87
 
--- Test 88: empty sequence-value callback items project to zero outputs inside map
+-- Test 88: mapping over an empty filter-result list yields the exact empty list `[]`
 def test88 : Bool :=
   match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("CountMembers", countMembersAlg88a)] [
     .call (resolve "map") (alg [] [] [] [
@@ -5329,7 +5373,7 @@ def test88 : Bool :=
       .resolve "CountMembers"
     ])
   ])) with
-  | Except.ok (.sequenceValue []) => true
+  | Except.ok (.listValue []) => true
   | _ => false
 
 #guard test88
@@ -5357,7 +5401,7 @@ def test90 : Bool :=
       .resolve "PairWithSquare"
     ])
   ])) with
-  | Except.ok (.sequenceValue [
+  | Except.ok (.listValue [
       .sequenceValue [.atom 0, .atom 0],
       .sequenceValue [.atom 0, .atom 0],
       .sequenceValue [.atom 0, .atom 0]
@@ -5659,31 +5703,33 @@ def test107a : Bool :=
 
 #guard test107a
 
--- Test 107b: count(values...) is an item supply with no suffix, so an empty call binds an
--- empty collection and counts zero (rather than reporting an arity error).
+-- Test 107b: count(collection) is an ordinary fixed-arity callable, so an empty
+-- call is an arity error — absence of an argument is never an empty collection
+-- (the explicit empty-collection call `count(())` counts zero).
 def test107b : Bool :=
   match runFlat (.block (alg [] [] [] [
     .call (resolve "count") (alg [] [] [] [])
   ])) with
-  | Except.ok [0] => true
+  | Except.error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
 #guard test107b
 
 --------------------------------------------------------------------------------
--- Aspect 2 builtin item-supply binding (mirrors C# BuiltinItemSupplyBindingTests):
--- a rest-shaped builtin (`sum(values...)`, `contains(values..., item)`) consumes an
--- item supply like a user variadic, through the same shared binder.
+-- Fixed-arity collection builtin calls (mirrors the C# fixed collection-object
+-- binding tests): a collection builtin is an ordinary fixed-arity callable
+-- (`sum(collection)`, `contains(collection, item)`) whose ONE bound collection
+-- value is read through the one-level collection view after binding.
 --------------------------------------------------------------------------------
 
--- sum(values...): inline items, a single grouped value, an empty call, and an explicit
--- spread all bind the same item supply.
-def builtinSumConsumesItemSupply : Bool :=
-  let inline :=
-    match runFlat (.block (alg [] [] [] [
+-- sum(collection): one grouped value is the collection argument; inline
+-- multi-item calls and empty calls are ordinary arity errors.
+def builtinSumTakesOneCollectionArgument : Bool :=
+  let inlineErrs :=
+    match runResult (.block (alg [] [] [] [
       .call (resolve "sum") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
     ])) with
-    | Except.ok [16] => true
+    | Except.error err => innermostIsArityMismatch 1 6 err
     | _ => false
   let grouped :=
     match runFlat (.block (alg [] [] [] [
@@ -5691,44 +5737,53 @@ def builtinSumConsumesItemSupply : Bool :=
     ])) with
     | Except.ok [16] => true
     | _ => false
-  let empty :=
-    match runFlat (.block (alg [] [] [] [.call (resolve "sum") (alg [] [] [] [])])) with
-    | Except.ok [0] => true
+  let emptyErrs :=
+    match runResult (.block (alg [] [] [] [.call (resolve "sum") (alg [] [] [] [])])) with
+    | Except.error err => innermostIsArityMismatch 1 0 err
     | _ => false
-  inline && grouped && empty
+  inlineErrs && grouped && emptyErrs
 
-#guard builtinSumConsumesItemSupply
+#guard builtinSumTakesOneCollectionArgument
 
--- Multiple sibling grouped values are preserved (not flattened): sum(A, B) with A = (1, 2)
--- and B = (3, 4) rejects the grouped items rather than summing 1 + 2 + 3 + 4 = 10. An
--- explicit spread opens them into one numeric item supply and sums to 10.
+-- Multiple sibling arguments are never flattened into one collection: sum(A, B) with
+-- A = (1, 2) and B = (3, 4) is a two-argument arity error, and sum(A..., B...) opens the
+-- spreads into FOUR ordinary argument slots (also an arity error). The concatenation
+-- rewrite groups the spreads into ONE collection argument: sum((A..., B...)) = 10.
 def builtinSumSiblingsNotFlattened : Bool :=
-  let preservedFails :=
+  let siblingsErr :=
     match runResult (.block (algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4])
     ] [ .call (resolve "sum") (alg [] [] [] [resolve "A", resolve "B"]) ])) with
-    | Except.error _ => true
+    | Except.error err => innermostIsArityMismatch 1 2 err
     | _ => false
-  let openedConcatenates :=
-    match runFlat (.block (algPrivate [] [] [
+  let spreadSiblingsErr :=
+    match runResult (.block (algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4])
     ] [ .call (resolve "sum") (alg [] [] [] [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")]) ])) with
+    | Except.error err => innermostIsArityMismatch 1 4 err
+    | _ => false
+  let groupedConcatenates :=
+    match runFlat (.block (algPrivate [] [] [
+      ("A", alg [] [] [] [.num 1, .num 2]),
+      ("B", alg [] [] [] [.num 3, .num 4])
+    ] [ .call (resolve "sum") (alg [] [] [] [
+          .block (alg [] [] [] [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")])]) ])) with
     | Except.ok [10] => true
     | _ => false
-  preservedFails && openedConcatenates
+  siblingsErr && spreadSiblingsErr && groupedConcatenates
 
 #guard builtinSumSiblingsNotFlattened
 
--- contains(values..., item): the rest captures the collection and the suffix binds the item,
--- so inline and grouped collections agree.
-def builtinContainsItemSupply : Bool :=
-  let inline :=
-    match runFlat (.block (alg [] [] [] [
+-- contains(collection, item): the first argument is the collection and the second is the
+-- item. The inline multi-item call is an arity error; the grouped form binds.
+def builtinContainsTakesCollectionAndItem : Bool :=
+  let inlineErrs :=
+    match runResult (.block (alg [] [] [] [
       .call (resolve "contains") (alg [] [] [] [.num 1, .num 2, .num 3, .num 2])
     ])) with
-    | Except.ok [1] => true
+    | Except.error err => innermostIsArityMismatch 2 4 err
     | _ => false
   let grouped :=
     match runFlat (.block (alg [] [] [] [
@@ -5736,16 +5791,24 @@ def builtinContainsItemSupply : Bool :=
     ])) with
     | Except.ok [1] => true
     | _ => false
-  inline && grouped
+  inlineErrs && grouped
 
-#guard builtinContainsItemSupply
+#guard builtinContainsTakesCollectionAndItem
 
--- The shared item-supply binder makes a rest-shaped builtin agree with an equivalent user
--- variadic: sum(3, 4, 2, 1, 3, 3) and G(values...) = values.sum applied to the same items.
-def builtinMatchesUserVariadic : Bool :=
-  let viaBuiltin :=
-    match runFlat (.block (alg [] [] [] [
+-- A collection builtin is NOT a user variadic: sum(3, 4, 2, 1, 3, 3) is an arity error
+-- under `sum(collection)`, while a user variadic G(values...) = values.sum captures the
+-- same inline items and sums them; the grouped call sum((3, 4, 2, 1, 3, 3)) is the
+-- builtin twin.
+def builtinFixedArityDiffersFromUserVariadic : Bool :=
+  let builtinInlineErrs :=
+    match runResult (.block (alg [] [] [] [
       .call (resolve "sum") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+    ])) with
+    | Except.error err => innermostIsArityMismatch 1 6 err
+    | _ => false
+  let builtinGrouped :=
+    match runFlat (.block (alg [] [] [] [
+      .call (resolve "sum") (alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])])
     ])) with
     | Except.ok [16] => true
     | _ => false
@@ -5759,11 +5822,12 @@ def builtinMatchesUserVariadic : Bool :=
     ])) with
     | Except.ok [16] => true
     | _ => false
-  viaBuiltin && viaUser
+  builtinInlineErrs && builtinGrouped && viaUser
 
-#guard builtinMatchesUserVariadic
+#guard builtinFixedArityDiffersFromUserVariadic
 
--- Test 108: a sequence-valued argument is destructured by values...
+-- Test 108: count's one bound sequence-valued argument is opened by the
+-- one-level collection view — two nested pairs are two items.
 def test108 : Bool :=
   let sequenceValuePairs := .block (alg [] [] [] [
     .block (alg [] [] [] [.num 1, .num 2]),
@@ -5908,7 +5972,8 @@ def test110f : Bool :=
 
 #guard test110f
 
--- Test 110g: contains keeps a multi-output suffix helper outside values...
+-- Test 110g: contains's item argument stays outside the collection — a
+-- multi-output helper bound to `item` is compared as one grouped value.
 def test110g : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("Item", alg [] [] [] [.num 1, .num 2])
@@ -6426,7 +6491,7 @@ def test147 : Bool :=
 
 #guard test147
 
--- Test 148: first returns the first item of the grouped collection (opened into the item supply)
+-- Test 148: first returns the first item of the grouped collection (opened by the one-level collection view)
 def test148 : Bool :=
   let sequenceValuePairs := .block (alg [] [] [] [
     .block (alg [] [] [] [.num 1, .num 2]),
@@ -6440,7 +6505,7 @@ def test148 : Bool :=
 
 #guard test148
 
--- Test 149: last returns the last item of the grouped collection (opened into the item supply)
+-- Test 149: last returns the last item of the grouped collection (opened by the one-level collection view)
 def test149 : Bool :=
   let sequenceValuePairs := .block (alg [] [] [] [
     .block (alg [] [] [] [.num 1, .num 2]),
@@ -6643,7 +6708,7 @@ def test151o : Bool :=
 #guard test151o
 
 -- SequenceValue source `map((1, range(2, 4)...), MarkThreeSequenceValue)`: postfix spread
--- contributes inside the single grouped value, opened into the item supply.
+-- contributes inside the single grouped value, opened by the collection view.
 def test151ob : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "map") (alg [] [] [] [
@@ -6657,7 +6722,7 @@ def test151ob : Bool :=
 #guard test151ob
 
 -- SequenceValue source `filter((1, range(2, 4)...), MarkThreeSequenceValue)`: postfix spread
--- contributes inside the single grouped value, opened into the item supply.
+-- contributes inside the single grouped value, opened by the collection view.
 def test151oc : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
     .call (resolve "filter") (alg [] [] [] [
@@ -6677,13 +6742,16 @@ def markSequenceValueRangeDirectCallAlg151oa : Algorithm :=
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
   ]
 
+-- `range(1, 3)` is now an exact list value, and multi-clause conditional groups
+-- match sequence values only (list patterns are deferred), so the list argument
+-- takes the fallback clause.
 def test151oa : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkSequenceValueRange", markSequenceValueRangeDirectCallAlg151oa)] [
     .call (resolve "MarkSequenceValueRange") (alg [] [] [] [
       .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
     ])
   ])) with
-  | Except.ok [1] => true
+  | Except.ok [0] => true
   | _ => false
 
 #guard test151oa
@@ -6723,7 +6791,7 @@ def test151pb : Bool :=
 #guard test151pb
 
 -- SequenceValue source `reduce((1, range(2, 4)...), AddSequenceValueRange, 0)`: postfix
--- spread contributes inside the single grouped value, opened into the item supply.
+-- spread contributes inside the single grouped value, opened by the collection view.
 def test151pc : Bool :=
   match runFlat (.block (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -6843,9 +6911,9 @@ def test152 : Bool :=
       .resolve "KeepSecondEven"
     ])
   ])) with
-  -- One sequence-valued item is kept, so the collection-result combiner erases the
-  -- one-item collection boundary: the kept `(1, 2)` IS the result, never `((1, 2))`.
-  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  -- One sequence-valued item is kept; the exact-list materializer keeps it as one
+  -- list element, so the result is `[(1, 2)]` (never erased to the item itself).
+  | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
   | _ => false
 
 #guard test152
@@ -7278,9 +7346,9 @@ def test186 : Bool :=
       .num 1
     ])
   ])) with
-  -- Taking one sequence-valued item erases the one-item collection boundary:
-  -- the result is the item itself, `(1, 2)`, agreeing with `first`.
-  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  -- Taking one sequence-valued item keeps it as one exact list element:
+  -- the result is `[(1, 2)]` (`first` still selects the item itself).
+  | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
   | _ => false
 
 #guard test186
@@ -7293,17 +7361,18 @@ def test187 : Bool :=
       .num 1
     ])
   ])) with
-  -- Skipping to one remaining sequence-valued item erases the one-item collection
-  -- boundary: the result is the item itself, `(3, 4)`, agreeing with `last`.
-  | Except.ok (.sequenceValue [.atom 3, .atom 4]) => true
+  -- Skipping to one remaining sequence-valued item keeps it as one exact list
+  -- element: the result is `[(3, 4)]` (`last` still selects the item itself).
+  | Except.ok (.listValue [.sequenceValue [.atom 3, .atom 4]]) => true
   | _ => false
 
 #guard test187
 
--- Regression block for the former builtin singleton-boundary orphan:
--- `T = take(((1, 2), (3, 4)), 1)` must be the writable value `(1, 2)` — equal to
--- the literal `(1, 2)` (and to the grouping form `((1, 2))`, which constructs the
--- same value), counted as two items by `count(T)` and `T.count` alike.
+-- Regression block for the exact-list builtin result boundary:
+-- `T = take(((1, 2), (3, 4)), 1)` is the exact list `[(1, 2)]` — equal to the
+-- list literal `[(1, 2)]`, NOT equal to the sequence `(1, 2)` (or its grouping
+-- form `((1, 2))`), and counted as ONE kept item by `count(T)` and `T.count`
+-- alike (count opens exactly the one list boundary).
 def takeSingleKeptItemProgram (output : KatLang.Expr) : KatLang.Expr :=
   .block (algPrivate [] [] [
     ("T", alg [] [] [] [
@@ -7317,105 +7386,126 @@ def takeSingleKeptItemProgram (output : KatLang.Expr) : KatLang.Expr :=
     ])
   ] [output])
 
-def takeSingleKeptItemIsWritableValue : Bool :=
+def takeSingleKeptItemIsExactListValue : Bool :=
   match runResult (takeSingleKeptItemProgram (.resolve "T")) with
-  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
   | _ => false
 
-#guard takeSingleKeptItemIsWritableValue
+#guard takeSingleKeptItemIsExactListValue
 
 def takeSingleKeptItemCount : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.call (resolve "count") (alg [] [] [] [.resolve "T"]))) with
-  | Except.ok (.atom 2) => true
+  | Except.ok (.atom 1) => true
   | _ => false
 
 #guard takeSingleKeptItemCount
 
 def takeSingleKeptItemDotCount : Bool :=
   match runResult (takeSingleKeptItemProgram (.dotCall (.resolve "T") "count" none)) with
-  | Except.ok (.atom 2) => true
+  | Except.ok (.atom 1) => true
   | _ => false
 
 #guard takeSingleKeptItemDotCount
 
-def takeSingleKeptItemEqualsFlatLiteral : Bool :=
+def takeSingleKeptItemEqualsListLiteral : Bool :=
+  match runResult (takeSingleKeptItemProgram
+      (.binary .eq (.resolve "T") (.listLiteral [sequenceItems [.num 1, .num 2]]))) with
+  | Except.ok (.atom 1) => true
+  | _ => false
+
+#guard takeSingleKeptItemEqualsListLiteral
+
+def takeSingleKeptItemNotEqualFlatLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.binary .eq (.resolve "T") (sequenceItems [.num 1, .num 2]))) with
-  | Except.ok (.atom 1) => true
-  | _ => false
-
-#guard takeSingleKeptItemEqualsFlatLiteral
-
-def takeSingleKeptItemEqualsWrappedLiteral : Bool :=
-  match runResult (takeSingleKeptItemProgram
-      (.binary .eq (.resolve "T")
-        (.block (alg [] [] [] [sequenceItems [.num 1, .num 2]])))) with
-  | Except.ok (.atom 1) => true
-  | _ => false
-
-#guard takeSingleKeptItemEqualsWrappedLiteral
-
--- A single kept empty-sequence item also erases its one-item collection boundary:
--- `distinct((), ())` dedups two equal `()` items to one kept item and yields `()`
--- itself (count 0), never the literal-unwritable orphan `(())`.
-def distinctSingleKeptEmptyItemErasesBoundary : Bool :=
-  match runResult (.call (resolve "distinct")
-      (alg [] [] [] [.emptySequence 0, .emptySequence 0])) with
-  | Except.ok (.sequenceValue []) => true
-  | _ => false
-
-#guard distinctSingleKeptEmptyItemErasesBoundary
-
-def distinctSingleKeptEmptyItemCountsZero : Bool :=
-  match runResult (.call (resolve "count") (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [.emptySequence 0, .emptySequence 0])
-  ])) with
   | Except.ok (.atom 0) => true
   | _ => false
 
-#guard distinctSingleKeptEmptyItemCountsZero
+#guard takeSingleKeptItemNotEqualFlatLiteral
 
-def distinctSingleKeptEmptyItemEqualsEmpty : Bool :=
-  match runResult (.binary .eq
-      (.call (resolve "distinct") (alg [] [] [] [.emptySequence 0, .emptySequence 0]))
-      (.emptySequence 0)) with
+def takeSingleKeptItemNotEqualWrappedLiteral : Bool :=
+  match runResult (takeSingleKeptItemProgram
+      (.binary .eq (.resolve "T")
+        (.block (alg [] [] [] [sequenceItems [.num 1, .num 2]])))) with
+  | Except.ok (.atom 0) => true
+  | _ => false
+
+#guard takeSingleKeptItemNotEqualWrappedLiteral
+
+-- A single kept empty-sequence item stays one exact list element:
+-- `distinct(((), ()))` dedups the two equal `()` items of the one grouped
+-- collection argument to one kept item and yields the exact list `[()]`
+-- (count 1) — never erased to `()` itself. The ungrouped spelling
+-- `distinct((), ())` is a two-argument arity error under `distinct(collection)`.
+def distinctSingleKeptEmptyItemStaysExactElement : Bool :=
+  match runResult (.call (resolve "distinct")
+      (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])])) with
+  | Except.ok (.listValue [.sequenceValue []]) => true
+  | _ => false
+
+#guard distinctSingleKeptEmptyItemStaysExactElement
+
+def distinctTwoEmptyArgumentsIsArityError : Bool :=
+  match runResult (.call (resolve "distinct")
+      (alg [] [] [] [.emptySequence 0, .emptySequence 0])) with
+  | Except.error err => innermostIsArityMismatch 1 2 err
+  | _ => false
+
+#guard distinctTwoEmptyArgumentsIsArityError
+
+def distinctSingleKeptEmptyItemCountsOne : Bool :=
+  match runResult (.call (resolve "count") (alg [] [] [] [
+    .call (resolve "distinct") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])])
+  ])) with
   | Except.ok (.atom 1) => true
   | _ => false
 
-#guard distinctSingleKeptEmptyItemEqualsEmpty
+#guard distinctSingleKeptEmptyItemCountsOne
 
--- Guard against over-normalization: multiple kept empty-sequence items keep their
--- sibling boundaries. `take((), (), 2)` stays the two-item collection `((), ())`
--- with count 2 — the combiner is shallow and never collapses or drops meaningful
--- sibling items.
+def distinctSingleKeptEmptyItemNotEqualEmpty : Bool :=
+  match runResult (.binary .eq
+      (.call (resolve "distinct") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])]))
+      (.emptySequence 0)) with
+  | Except.ok (.atom 0) => true
+  | _ => false
+
+#guard distinctSingleKeptEmptyItemNotEqualEmpty
+
+-- Multiple kept empty-sequence items keep their sibling boundaries as exact list
+-- elements. `take(((), ()), 2)` is the two-element list `[(), ()]` with count 2 —
+-- the materializer is exact and never collapses or drops meaningful sibling items.
 def takeMultipleEmptyItemsPreservesSiblingBoundaries : Bool :=
   match runResult (.call (resolve "take")
-      (alg [] [] [] [.emptySequence 0, .emptySequence 0, .num 2])) with
-  | Except.ok (.sequenceValue [.sequenceValue [], .sequenceValue []]) => true
+      (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0]), .num 2])) with
+  | Except.ok (.listValue [.sequenceValue [], .sequenceValue []]) => true
   | _ => false
 
 #guard takeMultipleEmptyItemsPreservesSiblingBoundaries
 
 def takeMultipleEmptyItemsCountsTwo : Bool :=
   match runResult (.call (resolve "count") (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [.emptySequence 0, .emptySequence 0, .num 2])
+    .call (resolve "take") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0]), .num 2])
   ])) with
   | Except.ok (.atom 2) => true
   | _ => false
 
 #guard takeMultipleEmptyItemsCountsTwo
 
--- The collection-result combiner itself shares `combineOutputSlots`' shallow
--- singleton-erasing shape: one item IS the result, everything else wraps raw.
-#guard KatLang.combineCollectionResult [] == Result.sequenceValue []
-#guard KatLang.combineCollectionResult [.atom 7] == Result.atom 7
-#guard KatLang.combineCollectionResult [.str "a"] == Result.str "a"
-#guard KatLang.combineCollectionResult [.sequenceValue [.atom 1, .atom 2]]
-  == Result.sequenceValue [.atom 1, .atom 2]
-#guard KatLang.combineCollectionResult [.sequenceValue []] == Result.sequenceValue []
-#guard KatLang.combineCollectionResult [.sequenceValue [], .sequenceValue []]
-  == Result.sequenceValue [.sequenceValue [], .sequenceValue []]
+-- The collection-result materializer is EXACT, unlike the canonical arity
+-- combiners: zero items form `[]`, one item forms `[item]` (never erased),
+-- nested structure is preserved raw, and the emitted count is always 1.
+#guard KatLang.makeCollectionListResult [] == (Result.listValue [], 1)
+#guard KatLang.makeCollectionListResult [.atom 7] == (Result.listValue [.atom 7], 1)
+#guard KatLang.makeCollectionListResult [.str "a"] == (Result.listValue [.str "a"], 1)
+#guard KatLang.makeCollectionListResult [.sequenceValue [.atom 1, .atom 2]]
+  == (Result.listValue [.sequenceValue [.atom 1, .atom 2]], 1)
+#guard KatLang.makeCollectionListResult [.sequenceValue []]
+  == (Result.listValue [.sequenceValue []], 1)
+#guard KatLang.makeCollectionListResult [.sequenceValue [], .sequenceValue []]
+  == (Result.listValue [.sequenceValue [], .sequenceValue []], 1)
+#guard KatLang.makeCollectionListResult [.listValue [.atom 1]]
+  == (Result.listValue [.listValue [.atom 1]], 1)
 
 def test188 : Bool :=
   match runResult (.block (algPrivate [] [] [
@@ -7428,7 +7518,7 @@ def test188 : Bool :=
       .num 1
     ])
   ])) with
-  | Except.ok (.atom 1) => true
+  | Except.ok (.listValue [.atom 1]) => true
   | _ => false
 
 #guard test188
@@ -7593,7 +7683,7 @@ def test200 : Bool :=
       .block (alg [] [] [] [.num 3, .num 4])]
     ])
   ])) with
-  | Except.ok (.sequenceValue [
+  | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
       .sequenceValue [.atom 3, .atom 4]
     ]) => true
@@ -7615,7 +7705,7 @@ def test201 : Bool :=
       .resolve "Values"
     ])
   ])) with
-  | Except.ok (.sequenceValue [
+  | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
       .sequenceValue [.atom 3, .atom 4]
     ]) => true
@@ -7635,7 +7725,7 @@ def test202 : Bool :=
       .resolve "Values"
     ])
   ])) with
-  | Except.ok (.sequenceValue [
+  | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
       .sequenceValue [.atom 3, .atom 4]
     ]) => true
@@ -7986,9 +8076,9 @@ def test216 : Bool :=
   | Except.ok (.sequenceValue [
       .atom 4,
       .atom 6,
-      .sequenceValue [.atom 4, .atom 5, .atom 6],
-      .sequenceValue [.atom 4, .atom 5],
-      .sequenceValue [.atom 5, .atom 4, .atom 6]
+      .listValue [.atom 4, .atom 5, .atom 6],
+      .listValue [.atom 4, .atom 5],
+      .listValue [.atom 5, .atom 4, .atom 6]
     ]) => true
   | _ => false
 
@@ -8021,11 +8111,11 @@ def test217 : Bool :=
     | _ => false
   let orderWorks :=
     match runBuiltin "order" with
-    | Except.ok (.sequenceValue [.atom 10, .atom 20, .atom 30]) => true
+    | Except.ok (.listValue [.atom 10, .atom 20, .atom 30]) => true
     | _ => false
   let orderDescWorks :=
     match runBuiltin "orderDesc" with
-    | Except.ok (.sequenceValue [.atom 30, .atom 20, .atom 10]) => true
+    | Except.ok (.listValue [.atom 30, .atom 20, .atom 10]) => true
     | _ => false
   minWorks && maxWorks && sumWorks && avgWorks && orderWorks && orderDescWorks
 
@@ -8080,13 +8170,13 @@ def test218 : Bool :=
     ]))
   let filterOk :=
     match filterResult with
-    -- Filtering keeps one sequence-valued item; the one-item collection boundary
-    -- is erased, so the result is the kept `(1, 2)` itself.
-    | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+    -- Filtering keeps one sequence-valued item; the exact-list result keeps it
+    -- as one element, so the result is `[(1, 2)]`.
+    | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
     | _ => false
   let mapOk :=
     match mapResult with
-    | Except.ok (.sequenceValue [.atom 1, .atom 4]) => true
+    | Except.ok (.listValue [.atom 1, .atom 4]) => true
     | _ => false
   let reduceOk :=
     match reduceResult with
@@ -8199,9 +8289,9 @@ def test232 : Bool :=
       .resolve "IsSafe"
     ])
   ])) with
-  -- Only the first report is kept; the one-item collection boundary is erased, so
-  -- the result is the kept report `(7, 6, 4, 2, 1)` itself.
-  | Except.ok (.sequenceValue [.atom 7, .atom 6, .atom 4, .atom 2, .atom 1]) => true
+  -- Only the first report is kept; the exact-list result keeps it as one element,
+  -- so the result is `[(7, 6, 4, 2, 1)]`.
+  | Except.ok (.listValue [.sequenceValue [.atom 7, .atom 6, .atom 4, .atom 2, .atom 1]]) => true
   | _ => false
 
 #guard test232
@@ -8627,8 +8717,8 @@ def sequenceBuiltinDotCallDistinctSequenceValueSweep : Bool :=
     .call (resolve "distinct") (alg [] [] [] [resolve "SequenceValue"])
   ])) with
   | Except.ok (.sequenceValue [
-      .sequenceValue [.atom 1, .atom 2, .atom 3],
-      .sequenceValue [.atom 1, .atom 2, .atom 3]
+      .listValue [.atom 1, .atom 2, .atom 3],
+      .listValue [.atom 1, .atom 2, .atom 3]
     ]) => true
   | _ => false
 
@@ -8663,8 +8753,8 @@ def sequenceBuiltinDotCallTakeSkipSequenceValueSweep : Bool :=
       .call (resolve "take") (alg [] [] [] [resolve "SequenceValue", .num 2])
     ])) with
     | Except.ok (.sequenceValue [
-        .sequenceValue [.atom 1, .atom 2],
-        .sequenceValue [.atom 1, .atom 2]
+        .listValue [.atom 1, .atom 2],
+        .listValue [.atom 1, .atom 2]
       ]) => true
     | _ => false
   let skipDotOk :=
@@ -8704,7 +8794,7 @@ def sequenceBuiltinDotCallNamedReceiverBoundarySweep : Bool :=
       .dotCall (resolve "A") "take" (some (alg [] [] [] [.num 2])),
       .dotCall (resolve "A") "count" none
     ])) with
-    | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3]) => true
+    | Except.ok (.sequenceValue [.listValue [.atom 1, .atom 2], .atom 3]) => true
     | _ => false
   let spread :=
     match runFlat (.block (algPrivate [] [] [
@@ -10998,9 +11088,9 @@ def builtinsFailingArityParity : List String :=
 -- Keep the probe arguments honest: representative accepted counts must
 -- actually succeed (not merely avoid arity errors), so a silently broken
 -- dummy argument cannot make the accepted direction of the sweep vacuous.
--- Covers each builtin's minimum valid count and one extra-argument count
--- (skipping `first`/`last`/`min`/`max`/`avg` at count 0, which hit the
--- empty-collection policy below).
+-- Covers each builtin's accepted count (fixed-arity builtins have exactly
+-- one) plus one extra-argument count for the variable-arity loop builtins
+-- (`while`/`repeat`).
 def builtinAcceptedAritySpotCases : List (KatLang.Builtin × Nat) :=
   [ (.ifBuiltin, 3),
     (.whileBuiltin, 2), (.whileBuiltin, 4),
@@ -11027,7 +11117,7 @@ def builtinAcceptedAritySpotFailures : List String :=
 #guard builtinAcceptedAritySpotFailures == []
 
 -- Accepted count does not promise success: the empty-collection policy rejects
--- `first()`-style calls at an accepted count 0 with a non-arity diagnostic.
+-- `first(())`-style calls at the accepted count 1 with a non-arity diagnostic.
 -- Pin that distinction so the accepted direction of the sweep stays meaningful.
 def builtinEmptyPolicyFailuresAreNotArityErrors : Bool :=
   let emptyArg := alg [] [] [] []
@@ -11346,11 +11436,12 @@ def boundaryStructuralDotAccessIsOneValue : Bool :=
 
 #guard boundaryStructuralDotAccessIsOneValue
 
-/-- Collection-producing builtin `order` returns one value; spread opens it. -/
+/-- Collection-producing builtin `order` returns one exact list value; spread
+    opens it. -/
 def boundaryOrderIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 3, .num 1, .num 2])]
       [.dotCall (.resolve "X") "order" none])) with
-  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryOrderIsOneValue
@@ -11363,11 +11454,12 @@ def boundaryOrderSpreadOpensItems : Bool :=
 
 #guard boundaryOrderSpreadOpensItems
 
-/-- `range(1, 3)` is a collection-producing builtin: one value, opened by spread. -/
+/-- `range(1, 3)` is a collection-producing builtin: one exact list value,
+    opened by spread. -/
 def boundaryRangeIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] []
       [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])) with
-  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryRangeIsOneValue
@@ -11401,7 +11493,7 @@ def boundaryCanonicalizesNestedEmptySequence : Bool :=
 
 #guard boundaryCanonicalizesNestedEmptySequence
 
--- Collection-producing builtin parity: each returns one sequence value (count 1)
+-- Collection-producing builtin parity: each returns one exact list value (count 1)
 -- at the call/property boundary; caller-site `...` opens it into an item supply.
 -- (`order` and `range` are covered by the guards above.)
 
@@ -11412,7 +11504,7 @@ def boundary123 : Algorithm := alg [] [] [] [.num 1, .num 2, .num 3]
 def boundaryOrderDescIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", boundaryDesc312)]
       [.dotCall (.resolve "X") "orderDesc" none])) with
-  | .ok (Result.sequenceValue [Result.atom 3, Result.atom 2, Result.atom 1], 1) => true
+  | .ok (Result.listValue [Result.atom 3, Result.atom 2, Result.atom 1], 1) => true
   | _ => false
 
 #guard boundaryOrderDescIsOneValue
@@ -11429,7 +11521,7 @@ def boundaryOrderDescSpreadOpensItems : Bool :=
 def boundaryDistinctIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
       [.dotCall (.resolve "X") "distinct" none])) with
-  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryDistinctIsOneValue
@@ -11446,7 +11538,7 @@ def boundaryDistinctSpreadOpensItems : Bool :=
 def boundaryTakeIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
       [.dotCall (.resolve "X") "take" (some (alg [] [] [] [.num 2]))])) with
-  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 1) => true
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2], 1) => true
   | _ => false
 
 #guard boundaryTakeIsOneValue
@@ -11455,7 +11547,7 @@ def boundaryTakeIsOneValue : Bool :=
 def boundarySkipIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
       [.dotCall (.resolve "X") "skip" (some (alg [] [] [] [.num 1]))])) with
-  | .ok (Result.sequenceValue [Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundarySkipIsOneValue
@@ -11474,7 +11566,7 @@ def boundaryFilterPredicate : Algorithm := alg ["x"] [] [] [.binary .gt (.param 
 def boundaryFilterIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]
       [.dotCall (.resolve "X") "filter" (some (alg [] [] [] [.resolve "IsBig"]))])) with
-  | .ok (Result.sequenceValue [Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryFilterIsOneValue
@@ -11493,7 +11585,7 @@ def boundaryMapTransform : Algorithm := alg ["x"] [] [] [.binary .mul (.param "x
 def boundaryMapIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("Double", boundaryMapTransform), ("X", boundary123)]
       [.dotCall (.resolve "X") "map" (some (alg [] [] [] [.resolve "Double"]))])) with
-  | .ok (Result.sequenceValue [Result.atom 2, Result.atom 4, Result.atom 6], 1) => true
+  | .ok (Result.listValue [Result.atom 2, Result.atom 4, Result.atom 6], 1) => true
   | _ => false
 
 #guard boundaryMapIsOneValue
@@ -11598,7 +11690,9 @@ def dotCallParityCtx (prog : Algorithm) : KatLang.EvalCtx :=
 /-- Run both dot-call twins from identical initial state and require:
     projection parity (value / error Repr / final state Repr), the expected
     outcome classification, and the expected atoms for success cases — the
-    last two keep each case honest about what it exercises. -/
+    last two keep each case honest about what it exercises. Atoms are compared
+    through the host-boundary view (`Result.hostAtoms`), which opens exact list
+    values, so collection-builtin cases still assert their numeric contents. -/
 def dotCallParityCaseHolds (c : DotCallParityCase) : Bool :=
   let ctx := dotCallParityCtx dotCallParityProg
   let plain := (KatLang.evalDotCall c.target c.name c.argsOpt ctx []).run KatLang.EvalState.empty
@@ -11612,7 +11706,7 @@ def dotCallParityCaseHolds (c : DotCallParityCase) : Bool :=
   let outcome := classifyBuiltinApply (plain.map (fun _ => ()))
   let atomsMatch :=
     match c.expectedAtoms, plain with
-    | some expected, .ok (value, _) => Result.atoms value == expected
+    | some expected, .ok (value, _) => Result.hostAtoms value == expected
     | some _, .error _ => false
     | none, _ => true
   parity && outcome == c.expected && atomsMatch
@@ -11912,22 +12006,61 @@ def deconstructionDoesNotOpenListRecursively : Bool :=
 
 #guard deconstructionDoesNotOpenListRecursively
 
--- Builtin collection binding does not open lists yet (deferred): a list in
--- the bound item supply is a targeted type error, while explicit spread
--- supplies the opened elements and is fully supported.
-def builtinListCollectionRejected : Bool :=
-  expectInnermostTypeMismatch (runFlat (.block (alg [] [] []
+-- Builtin collection binding opens a lone list like a lone sequence value:
+-- the shared collection-item view opens ONE outer sequence or list boundary,
+-- so `count([1, 2, 3])` counts three items.
+def builtinLoneListCollectionOpens : Bool :=
+  expectFlat (runFlat (.block (alg [] [] []
     [.call (.resolve "count") (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])])))
+    [3]
 
-#guard builtinListCollectionRejected
+#guard builtinLoneListCollectionOpens
 
-def builtinSpreadListSupported : Bool :=
+-- Opening is never recursive: two sibling lists grouped into ONE collection
+-- argument are two items (`count(([], []))` is 2), the ungrouped `count([], [])`
+-- is a two-argument arity error, and a nested list inside an opened lone list
+-- stays one opaque item (`count([1, [2], 3])` is 3).
+def builtinSiblingListsCountAsItems : Bool :=
   expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])]))) [3] &&
-  expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "sum") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])]))) [6]
+    [.call (.resolve "count") (alg [] [] []
+      [.block (alg [] [] [] [.listLiteral [], .listLiteral []])])])))
+    [2] &&
+  (match runResult (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] []
+      [.listLiteral [], .listLiteral []])])) with
+   | Except.error err => innermostIsArityMismatch 1 2 err
+   | _ => false)
 
-#guard builtinSpreadListSupported
+#guard builtinSiblingListsCountAsItems
+
+def builtinNestedListStaysOneItem : Bool :=
+  expectFlat (runFlat (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] []
+      [.listLiteral [.num 1, .listLiteral [.num 2], .num 3]])])))
+    [3]
+
+#guard builtinNestedListStaysOneItem
+
+-- Spread keeps only its ordinary meaning at builtin calls: `count([1, 2, 3]...)`
+-- opens the list into THREE ordinary argument slots, an arity error under
+-- `count(collection)` (same for sum). Grouping the spread back into one
+-- argument is the rewrite idiom: `count(([1, 2, 3]...))` is 3, and the
+-- unspread `count([1, 2, 3])` stays the direct form (see
+-- builtinLoneListCollectionOpens above).
+def builtinSpreadListFollowsFixedArity : Bool :=
+  (match runResult (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])) with
+   | Except.error err => innermostIsArityMismatch 1 3 err
+   | _ => false) &&
+  (match runResult (.block (alg [] [] []
+    [.call (.resolve "sum") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])) with
+   | Except.error err => innermostIsArityMismatch 1 3 err
+   | _ => false) &&
+  expectFlat (runFlat (.block (alg [] [] []
+    [.call (.resolve "count") (alg [] [] []
+      [.block (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])]))) [3]
+
+#guard builtinSpreadListFollowsFixedArity
 
 -- Indexing keeps lists opaque: selecting a list ITEM from a sequence
 -- preserves the list (projection does not erase listness).

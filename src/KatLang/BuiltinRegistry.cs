@@ -35,6 +35,11 @@ internal readonly record struct SequenceBuiltinMetadata(
     SequenceBuiltinEmptyPolicy EmptyPolicy,
     SequenceBuiltinItemShapeConstraint ItemShapeConstraint)
 {
+    // A collection builtin is an ordinary fixed-arity callable: exactly one
+    // fixed `collection` parameter followed by its fixed control parameters
+    // (`count(collection)`, `take(collection, count)`). The bound collection
+    // value is interpreted through the one-level builtin collection view only
+    // AFTER binding; argument boundaries are never altered before binding.
     public IReadOnlyList<CallableParameter> Parameters { get; } = CreateParameters(SuffixArgs);
 
     private static IReadOnlyList<CallableParameter> CreateParameters(
@@ -42,7 +47,7 @@ internal readonly record struct SequenceBuiltinMetadata(
     {
         var parameters = new List<CallableParameter>(suffixArgs.Count + 1)
         {
-            new("values", ParameterKind.Variadic, CallableParameterSource.Builtin),
+            new("collection", Source: CallableParameterSource.Builtin),
         };
 
         parameters.AddRange(suffixArgs.Select(static descriptor => new CallableParameter(
@@ -119,17 +124,15 @@ internal sealed class BuiltinDescriptor
 
     public bool AcceptsArity(int count)
     {
-        if (SequenceMetadata is { } metadata)
-        {
-            return PlainSignature.AcceptsItemCount(count);
-        }
-
         if (Id == BuiltinId.@while)
             return count >= 2;
 
         if (Id == BuiltinId.@repeat)
             return count >= 3;
 
+        // Collection builtins are ordinary fixed-arity callables
+        // (`count(collection)` is exactly 1, `take(collection, count)` is
+        // exactly 2), the same rule as every other fixed builtin.
         return FixedArity == count;
     }
 
@@ -438,25 +441,16 @@ internal static class BuiltinRegistry
     private static BuiltinDescriptor Sequence(BuiltinId id, SequenceBuiltinMetadata metadata)
         => new(
             id,
-            fixedArity: null,
+            fixedArity: 1 + metadata.SuffixArgs.Count,
             plainParameters: metadata.Parameters,
-            dotParameters: CreateSequenceDotParameters(id, metadata),
+            dotParameters: CreateSequenceDotParameters(metadata),
             sequenceMetadata: metadata);
 
-    private static IReadOnlyList<CallableParameter> CreateSequenceDotParameters(BuiltinId id, SequenceBuiltinMetadata metadata)
-    {
-        var signature = new CallableSignature(id.ToString(), metadata.Parameters);
-        var plan = CallableBindingPlan.FromSignature(signature);
-        if (!plan.TryGetFlatVariadicLayout(out _, out _, out var suffix))
-            throw new InvalidOperationException($"Sequence builtin signature `{signature.DisplayText}` must be a flat variadic layout.");
-
-        return suffix
-            .Select(static capture => new CallableParameter(
-                capture.Name,
-                capture.Kind,
-                capture.Source))
-            .ToArray();
-    }
+    // Dot-call syntax injects the receiver as the fixed `collection` argument,
+    // so the dot-visible parameters are exactly the control parameters that
+    // follow it (`collection.take(count)`-style hovers show only `count`).
+    private static IReadOnlyList<CallableParameter> CreateSequenceDotParameters(SequenceBuiltinMetadata metadata)
+        => metadata.Parameters.Skip(1).ToArray();
 
     internal static string DescribeSequenceBuiltinTotalArgs(CallableSignature signature)
         => CallableSignatureDiagnostics.FormatExpectedArgumentCountWithoutNoun(signature.ArityFacts);

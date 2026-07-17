@@ -209,9 +209,10 @@ public sealed record PatternListBindingPlan
         }
 
         // Mirror CallableSignatureDiagnostics.GetArityFacts: a top-level list with one or
-        // more plain captures and one rest (rest-only or comma deconstruction), whether
-        // user-defined or a rest-shaped builtin, accepts the fixed captures plus any number
-        // of rest items, so it has a fixed-count minimum and an unbounded maximum.
+        // more plain captures and one rest (rest-only or comma deconstruction) accepts the
+        // fixed captures plus any number of rest items, so it has a fixed-count minimum
+        // and an unbounded maximum. Collection builtins have fixed signatures and do not
+        // enter this pattern-list branch.
         var isItemSupplyShape = isTopLevel
             && variadicCount == 1
             && nodes.Count >= 1

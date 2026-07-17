@@ -79,8 +79,8 @@ pre-normalization structure. Observable KatLang values, by contrast, are
 **canonical**: every construction/capture boundary that stores or returns a
 newly built sequence value goes through `capture` / `normalize`. In the full
 model, capture and written-construction sites apply the deep `Result.normalize`,
-while output/collection boundaries combine with the *shallow* singleton-erasing
-`combineOutputSlots` / `combineCollectionResult`; the two agree because the
+while output boundaries combine with the *shallow* singleton-erasing
+`combineOutputSlots`; the two agree because the
 combined items are themselves already canonical (item internals are never
 renormalized). A literal-unwritable singleton orphan such as a stored `(5)` is
 therefore never observable. Equality stays ordinary structural equality over
@@ -133,11 +133,12 @@ in `KatLang.lean`, including the subtle points:
   supplies the same items. This opening is deconstruction-specific — `bindArgs`
   (function calls) does not open — so it does **not** leak into calls (`G(A)` keeps
   `A` as one argument). `openLoneSequence` is the shared lone-sequence opening of a
-  supply: it is used by `bindDeconstruct` and by sequence-builtin collection binding
-  (`count(A)`, whose one grouped value supplies the collection items), but never by
-  `bindArgs`.
-  (In `KatLang.lean` these are two code paths — builtin item-supply singleton opening
-  via `normalizeSingletonBoundaryForItemSupplyOf` and the deconstruction receiver's
+  received value: it is used by `bindDeconstruct` and by the collection builtins'
+  POST-BINDING collection view (`count(A)`, whose already-bound collection argument
+  supplies the collection items), but never by `bindArgs`.
+  (In `KatLang.lean` these are two code paths — the post-binding builtin collection
+  view `builtinCollectionItems`, applied to the bound `collection` argument of an
+  ordinary fixed-arity builtin call, and the deconstruction receiver's
   sequence-value parameter pattern — with the same one-boundary opening behaviour;
   the core model unifies them as the single `openLoneSequence`.)
 

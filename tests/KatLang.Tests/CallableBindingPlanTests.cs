@@ -169,31 +169,39 @@ public class CallableBindingPlanTests
     }
 
     [Fact]
-    public void FromSignature_BuiltinSequencePlans_UseBuiltinSourcesAndVariadicFacts()
+    public void FromSignature_BuiltinCollectionPlans_AreFlatFixedWithBuiltinSources()
     {
         var map = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(BuiltinId.map));
         var take = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(BuiltinId.take));
         var count = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(BuiltinId.count));
 
-        Assert.Equal("map(values..., mapper)", map.DisplayText);
-        Assert.NotNull(map.TopLevelPatternList.VariadicCapture);
-        AssertVariadic(map.TopLevelPatternList.VariadicCapture, "values", CallableParameterSource.Builtin, isTopLevel: true);
-        AssertCapture(Assert.Single(map.TopLevelPatternList.Suffix), "mapper", CallableParameterSource.Builtin);
-        // Rest-shaped builtins are item supplies: min = fixed (suffix) count, max unbounded.
-        Assert.Equal(1, map.TopLevelPatternList.MinSlotCount);
-        Assert.Null(map.TopLevelPatternList.MaxSlotCount);
+        // Collection builtins are ordinary fixed-arity callables: one fixed
+        // `collection` capture plus fixed control captures, no variadic.
+        Assert.Equal("map(collection, mapper)", map.DisplayText);
+        Assert.Null(map.TopLevelPatternList.VariadicCapture);
+        Assert.Equal(2, map.TopLevelPatternList.Nodes.Count);
+        AssertCapture(map.TopLevelPatternList.Nodes[0], "collection", CallableParameterSource.Builtin);
+        AssertCapture(map.TopLevelPatternList.Nodes[1], "mapper", CallableParameterSource.Builtin);
+        Assert.Equal(2, map.TopLevelPatternList.MinSlotCount);
+        Assert.Equal(2, map.TopLevelPatternList.MaxSlotCount);
+        Assert.False(map.TopLevelPatternList.HasVariadicAtThisLevel);
+        Assert.True(map.TryGetFlatFixedLayout(out _));
 
-        Assert.Equal("take(values..., count)", take.DisplayText);
-        Assert.NotNull(take.TopLevelPatternList.VariadicCapture);
-        AssertVariadic(take.TopLevelPatternList.VariadicCapture, "values", CallableParameterSource.Builtin, isTopLevel: true);
-        AssertCapture(Assert.Single(take.TopLevelPatternList.Suffix), "count", CallableParameterSource.Builtin);
-        Assert.Equal(1, take.TopLevelPatternList.MinSlotCount);
-        Assert.Null(take.TopLevelPatternList.MaxSlotCount);
+        Assert.Equal("take(collection, count)", take.DisplayText);
+        Assert.Null(take.TopLevelPatternList.VariadicCapture);
+        Assert.Equal(2, take.TopLevelPatternList.Nodes.Count);
+        AssertCapture(take.TopLevelPatternList.Nodes[0], "collection", CallableParameterSource.Builtin);
+        AssertCapture(take.TopLevelPatternList.Nodes[1], "count", CallableParameterSource.Builtin);
+        Assert.Equal(2, take.TopLevelPatternList.MinSlotCount);
+        Assert.Equal(2, take.TopLevelPatternList.MaxSlotCount);
+        Assert.True(take.TryGetFlatFixedLayout(out _));
 
-        Assert.Equal("count(values...)", count.DisplayText);
-        AssertVariadic(Assert.Single(count.TopLevelPatternList.Nodes), "values", CallableParameterSource.Builtin, isTopLevel: true);
-        Assert.Equal(0, count.TopLevelPatternList.MinSlotCount);
-        Assert.Null(count.TopLevelPatternList.MaxSlotCount);
+        Assert.Equal("count(collection)", count.DisplayText);
+        AssertCapture(Assert.Single(count.TopLevelPatternList.Nodes), "collection", CallableParameterSource.Builtin);
+        Assert.Equal(1, count.TopLevelPatternList.MinSlotCount);
+        Assert.Equal(1, count.TopLevelPatternList.MaxSlotCount);
+        Assert.False(count.TopLevelPatternList.HasVariadicAtThisLevel);
+        Assert.True(count.TryGetFlatFixedLayout(out _));
     }
 
     [Fact]

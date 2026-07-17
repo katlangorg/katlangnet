@@ -10,68 +10,71 @@ public enum UnaryOp { Minus, Not }
 
 /// <summary>
 /// <c>if</c> uses the fixed 3-argument form <c>if(cond, then, else)</c>.
-/// Sequence builtins use variadic-style binding for their <c>values...</c>
-/// input: each argument contributes its immediate top-level emitted items,
-/// suffix parameters such as <c>predicate</c>, <c>mapper</c>, or <c>count</c>
-/// bind from the back, and nested sequence values are preserved. Sequence-builtin
-/// dot-call receivers contribute the receiver's counted top-level items.
-/// Dot-call strips exactly one outer inline receiver block layer, so
-/// <c>(1, 2, 3).count</c> behaves like three receiver items while
-/// <c>((1, 2, 3)).count</c> and named sequence-valued helpers such as
-/// <c>Values = (1, 2, 3); Values.count</c> stay intact.
-/// <c>filter(values..., predicate)</c> keeps the original top-level sequence
+/// Collection builtins are ordinary fixed-arity callables: exactly one fixed
+/// <c>collection</c> argument followed by fixed control arguments such as
+/// <c>predicate</c>, <c>mapper</c>, or <c>count</c>, bound after argument
+/// evaluation and explicit spread with nothing opened before binding. The
+/// post-binding builtin collection view then opens exactly one outer boundary
+/// of the bound sequence or exact-list value (any other value is a
+/// one-element collection); nested grouped values stay intact. Dot-call
+/// receivers fill the <c>collection</c> argument.
+/// <c>range(start, stop)</c> materializes the inclusive integer span as one
+/// exact immutable list value.
+/// <c>filter(collection, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
 /// seeing each callback item through the same one-level projection rule as
-/// <c>S:i</c>.
-/// <c>map(values..., mapper)</c> maps top-level sequence items left to right;
+/// <c>S:i</c>, then materializes the kept items as one exact list value.
+/// <c>map(collection, mapper)</c> maps top-level sequence items left to right;
 /// each callback item follows the same one-level projection rule as
 /// <c>S:i</c>, <c>mapper(element)</c> must return exactly one mapped
-/// element, and sequence-value mapped outputs are preserved whole.
-/// <c>count(values...)</c> counts the top-level sequence items exposed by direct
+/// element, and sequence/list mapped outputs are preserved whole as exact
+/// elements of one list result.
+/// <c>count(collection)</c> counts the top-level sequence items exposed by direct
 /// sequence consumption; sequence-value top-level elements still count as one element.
-/// <c>contains(values..., item)</c> returns <c>1</c> when any top-level sequence
+/// <c>contains(collection, item)</c> returns <c>1</c> when any top-level sequence
 /// item equals <c>item</c> under ordinary KatLang value equality, otherwise
 /// <c>0</c>; sequence values compare as sequence values and are not searched
 /// recursively.
-/// <c>order(values...)</c> sorts top-level numeric sequence items in ascending
-/// order; duplicates are preserved, sequence values are not flattened,
-/// strings are invalid, and empty collections stay empty.
-/// <c>orderDesc(values...)</c> sorts top-level numeric sequence items in
-/// descending order; duplicates are preserved, sequence values are not
-/// flattened, strings are invalid, and empty collections stay empty.
-/// <c>first(values...)</c> returns the first preserved top-level sequence item
+/// <c>order(collection)</c> sorts top-level numeric sequence items in ascending
+/// order into one exact list value; duplicates are preserved, sequence/list
+/// values are not flattened, strings are invalid, and empty input yields <c>[]</c>.
+/// <c>orderDesc(collection)</c> sorts top-level numeric sequence items in
+/// descending order into one exact list value; duplicates are preserved,
+/// sequence/list values are not flattened, strings are invalid, and empty
+/// input yields <c>[]</c>.
+/// <c>first(collection)</c> returns the first preserved top-level sequence item
 /// unchanged; atoms, strings, and sequence values each count as one element,
 /// and sequence values stay intact.
-/// <c>last(values...)</c> returns the last preserved top-level sequence item
+/// <c>last(collection)</c> returns the last preserved top-level sequence item
 /// unchanged; atoms, strings, and sequence values each count as one element,
 /// and sequence values stay intact.
-/// <c>distinct(values...)</c> removes later duplicate top-level sequence items
-/// while preserving the original order of first occurrence; sequence values
-/// stay intact and duplicate detection follows ordinary KatLang value
-/// semantics.
-/// <c>take(values..., count)</c> returns the first <c>count</c> extracted
-/// top-level sequence items unchanged; non-positive counts return an empty
-/// sequence, oversized counts return the whole sequence, and sequence values
-/// stay intact.
-/// <c>skip(values..., count)</c> returns the extracted top-level sequence items
-/// after the first <c>count</c>; non-positive counts leave the sequence
-/// unchanged, oversized counts return an empty sequence, and sequence values
-/// stay intact.
-/// <c>min(values...)</c> compares top-level numeric sequence items left to
+/// <c>distinct(collection)</c> removes later duplicate top-level sequence items
+/// while preserving the original order of first occurrence and returns one
+/// exact list value; nested values stay intact and duplicate detection follows
+/// ordinary KatLang value semantics.
+/// <c>take(collection, count)</c> returns the first <c>count</c> extracted
+/// top-level sequence items unchanged as one exact list value; non-positive
+/// counts return <c>[]</c>, oversized counts return a list of all items, and
+/// nested values stay intact.
+/// <c>skip(collection, count)</c> returns the extracted top-level sequence items
+/// after the first <c>count</c> as one exact list value; non-positive counts
+/// keep all items, oversized counts return <c>[]</c>, and nested values stay
+/// intact.
+/// <c>min(collection)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and sequence values are not flattened.
-/// <c>max(values...)</c> compares top-level numeric sequence items left to
+/// <c>max(collection)</c> compares top-level numeric sequence items left to
 /// right; the sequence must be non-empty, each item must be exactly one
 /// atomic numeric value, and sequence values are not flattened.
-/// <c>sum(values...)</c> adds preserved top-level numeric sequence items left to
+/// <c>sum(collection)</c> adds preserved top-level numeric sequence items left to
 /// right; each item must be exactly one atomic numeric value, and sequence
 /// values are not flattened.
-/// <c>avg(values...)</c> averages top-level numeric sequence items left to
+/// <c>avg(collection)</c> averages top-level numeric sequence items left to
 /// right and returns the decimal arithmetic mean (total / count); each item
 /// must be exactly one atomic numeric value, and sequence values are not
 /// flattened. (Lean's Int-only core approximates the mean with truncation
 /// toward zero.)
-/// <c>reduce(values..., reducer, initial)</c> folds top-level sequence items left
+/// <c>reduce(collection, reducer, initial)</c> folds top-level sequence items left
 /// to right; the current callback item follows the same one-level projection
 /// rule as <c>S:i</c>, <c>reducer(element, accumulator)</c> must return exactly
 /// one next accumulator value, and sequence-value accumulators are preserved whole.

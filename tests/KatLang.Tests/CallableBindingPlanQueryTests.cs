@@ -246,29 +246,32 @@ public class CallableBindingPlanQueryTests
     }
 
     [Fact]
-    public void BuiltinMapLayout_SucceedsAsFlatVariadicWithBuiltinSources()
+    public void BuiltinMapLayout_SucceedsAsFlatFixedWithBuiltinSources()
     {
         var plan = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(BuiltinId.map));
 
+        // Collection builtins are ordinary fixed-arity callables:
+        // min = max = parameter count and the layout is flat fixed.
         AssertQueryFacts(
             plan,
             requiresPatternedBinding: false,
             hasOnlyFlatTopLevelCaptures: true,
-            hasOnlyFlatFixedTopLevelCaptures: false,
-            hasTopLevelVariadic: true,
+            hasOnlyFlatFixedTopLevelCaptures: true,
+            hasTopLevelVariadic: false,
             hasNestedVariadic: false,
-            min: 1,
-            max: null);
-        AssertFlatVariadicLayout(plan, [], "values", CallableParameterSource.Builtin, ["mapper"], CallableParameterSource.Builtin);
+            min: 2,
+            max: 2);
+        AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin), ("mapper", CallableParameterSource.Builtin));
+        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
     }
 
     [Theory]
     [InlineData(BuiltinId.filter, "predicate")]
     [InlineData(BuiltinId.take, "count")]
     [InlineData(BuiltinId.skip, "count")]
-    public void BuiltinSuffixSequenceLayouts_SucceedAsFlatVariadicWithOneSuffix(
+    public void BuiltinControlLayouts_SucceedAsFlatFixedWithOneControl(
         BuiltinId builtin,
-        string suffixName)
+        string controlName)
     {
         var plan = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(builtin));
 
@@ -276,18 +279,19 @@ public class CallableBindingPlanQueryTests
             plan,
             requiresPatternedBinding: false,
             hasOnlyFlatTopLevelCaptures: true,
-            hasOnlyFlatFixedTopLevelCaptures: false,
-            hasTopLevelVariadic: true,
+            hasOnlyFlatFixedTopLevelCaptures: true,
+            hasTopLevelVariadic: false,
             hasNestedVariadic: false,
-            min: 1,
-            max: null);
-        AssertFlatVariadicLayout(plan, [], "values", CallableParameterSource.Builtin, [suffixName], CallableParameterSource.Builtin);
+            min: 2,
+            max: 2);
+        AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin), (controlName, CallableParameterSource.Builtin));
+        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
     }
 
     [Theory]
     [InlineData(BuiltinId.count)]
     [InlineData(BuiltinId.sum)]
-    public void BuiltinUnsuffixedSequenceLayouts_SucceedAsFlatVariadicWithoutSuffix(BuiltinId builtin)
+    public void BuiltinSingleCollectionLayouts_SucceedAsFlatFixed(BuiltinId builtin)
     {
         var plan = CallableBindingPlan.FromSignature(CallableSignature.FromBuiltin(builtin));
 
@@ -295,12 +299,13 @@ public class CallableBindingPlanQueryTests
             plan,
             requiresPatternedBinding: false,
             hasOnlyFlatTopLevelCaptures: true,
-            hasOnlyFlatFixedTopLevelCaptures: false,
-            hasTopLevelVariadic: true,
+            hasOnlyFlatFixedTopLevelCaptures: true,
+            hasTopLevelVariadic: false,
             hasNestedVariadic: false,
-            min: 0,
-            max: null);
-        AssertFlatVariadicLayout(plan, [], "values", CallableParameterSource.Builtin, [], CallableParameterSource.Builtin);
+            min: 1,
+            max: 1);
+        AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin));
+        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
     }
 
     [Fact]

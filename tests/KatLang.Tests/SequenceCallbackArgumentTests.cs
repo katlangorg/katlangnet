@@ -20,7 +20,9 @@ public class SequenceCallbackArgumentTests
     {
         var r = Eval(source);
         Assert.True(r.IsOk, r.IsError ? r.Error.ToString() : "");
-        return r.Value.ToAtoms();
+        // Host-boundary flattening opens exact-list builtin results (e.g. take)
+        // so flat expectations keep working across the list-result change.
+        return r.Value.ToHostAtoms();
     }
 
     // ── The crash repro: must fail cleanly, never crash the process ──────────

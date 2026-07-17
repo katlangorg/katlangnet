@@ -234,8 +234,9 @@ def CallableSignature.requiredNormalParameterCount (signature : CallableSignatur
   (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.normal)).length
 
 def CallableSignature.acceptsItemCount (signature : CallableSignature) (count : Nat) : Bool :=
-  -- A rest-shaped signature (user-defined or a rest-shaped builtin) consumes an item
-  -- supply: it accepts at least the fixed (non-variadic) count. Fixed signatures stay exact.
+  -- A rest-shaped user signature consumes an item supply: it accepts at least
+  -- the fixed (non-variadic) count. Fixed signatures, including collection
+  -- builtins, stay exact.
   match signature.variadicIndex? with
   | some _ => count >= signature.requiredNormalParameterCount
   | none => count == signature.parameters.length
@@ -309,9 +310,10 @@ def CallableSignature.validate (signature : CallableSignature) : Except Error Un
     prefix binds from the front, the fixed suffix from the back, and the variadic
     captures the remaining middle items (zero or more). The default minimum is the full
     structural parameter count (`parameters.length`) — loop-state binding, where the rest
-    captures at least one slot. Item-supply callers (rest-shaped builtins via
-    `bindSequenceBuiltinArguments`) pass `minimumItemCount := suffix count` so the rest may
-    capture zero items, matching the normal user-call path. -/
+    captures at least one slot. Item-supply callers may pass
+    `minimumItemCount := fixed count` so the rest can capture zero items.
+    (Collection builtins no longer bind here: they are ordinary fixed-arity
+    callables bound in `bindSequenceBuiltinArguments`.) -/
 def bindCallableArguments (signature : CallableSignature) (items : List α)
     (arityMismatch : Nat -> Nat -> Error) (minimumItemCount : Option Nat := none)
     : Except Error (CallableArgumentBindings α) :=
@@ -328,8 +330,9 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
             .error (arityMismatch signature.parameters.length items.length)
       | some variadicIndex =>
           -- Default minimum is the structural parameter count (loop-state binding, rest >= 1).
-          -- Item-supply callers (rest-shaped builtins) pass the fixed (suffix) count so the
-          -- rest may capture zero items.
+          -- User-call item-supply binding passes the fixed (non-variadic) count
+          -- so the rest may capture zero items. Collection builtins are ordinary
+          -- fixed-arity callables and do not use this variadic branch.
           let minimum := minimumItemCount.getD signature.parameters.length
           if items.length < minimum then
             .error (arityMismatch minimum items.length)
@@ -413,18 +416,20 @@ structure SequenceBuiltinMetadata where
   deriving Repr, BEq
 
 def SequenceBuiltinMetadata.parameters (metadata : SequenceBuiltinMetadata) : List CallableParameter :=
-  { name := "values", kind := .variadic } ::
+  { name := "collection" } ::
     metadata.suffixArgs.map (fun descriptor => { name := descriptor.name })
 
 def SequenceBuiltinMetadata.signature (builtinName : Ident) (metadata : SequenceBuiltinMetadata)
     : CallableSignature :=
   { name := builtinName, parameters := metadata.parameters }
 
-/-- Metadata for sequence builtins.
-  Sequence builtins are native callables whose sequence portion is represented
-  as a variadic `values...` parameter. The variadic parameter consumes
-  immediate top-level output items; nested sequence values remain intact. `suffixArgs`
-  describes the fixed normal suffix arguments. -/
+/-- Metadata for collection builtins.
+  A collection builtin is an ordinary fixed-arity native callable: exactly one
+  fixed `collection` parameter followed by its fixed control parameters
+  (`count(collection)`, `take(collection, count)`). The bound collection value
+  is interpreted through the one-level builtin collection view only AFTER
+  binding; argument boundaries are never altered before binding. `suffixArgs`
+  describes the fixed control arguments that follow the collection. -/
 def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
   | .filterBuiltin => some {
       suffixArgs := [{ name := "predicate" }]
@@ -521,7 +526,11 @@ def builtinAcceptsArity : Builtin -> Nat -> Bool
   | b, n =>
       match sequenceBuiltinMetadata? b with
       | some metadata =>
-          (metadata.signature (builtinDisplayName b)).acceptsItemCount n
+          -- Collection builtins are ordinary fixed-arity callables:
+          -- `count(collection)` is exactly 1 argument and
+          -- `take(collection, count)` is exactly 2, the same rule as every
+          -- other fixed builtin.
+          n = 1 + metadata.suffixArgs.length
       | none =>
           match b, n with
           | .ifBuiltin, 3 => true
@@ -939,6 +948,19 @@ namespace Result
     | sequenceValue rs => rs.flatMap atoms
     | listValue _ => []     -- lists are opaque values to numeric flattening, like strings
 
+  /-- Host-boundary numeric flattening used by `runFlat`: like `Result.atoms`,
+      but also opens exact list boundaries so collection-builtin results
+      surface their numeric contents at the embedding boundary. This is a host
+      projection, not language semantics: the `atoms` builtin and truth
+      testing keep lists opaque (`Result.atoms`), and no in-language
+      conversion between lists and sequences is implied.
+      C#: `Result.ToHostAtoms`. -/
+  def hostAtoms : Result -> List Int
+    | atom n    => [n]
+    | str _     => []
+    | sequenceValue rs => rs.flatMap hostAtoms
+    | listValue rs => rs.flatMap hostAtoms
+
   /-- KatLang truth testing used by builtins like `if`.
       Zero is false, any other numeric atom is true.
       Results with no numeric atoms are invalid for truth testing.
@@ -986,9 +1008,11 @@ namespace Result
   /-- Extract top-level items from a result.
       Atom/string -> singleton list; sequence value -> its items.
       A list value stays OPAQUE here: it is one item, so non-spread consumers
-      (indexing `:` projection, boundary re-counting, builtin item views) treat
-      a list as a single exact value. Only postfix spread (`spreadItems`) and
-      deconstruction binding (`structureItems?`) open a list boundary. -/
+      (indexing `:` projection, boundary re-counting) treat a list as a single
+      exact value. Only postfix spread (`spreadItems`), deconstruction binding
+      (`structureItems?`), and the post-binding builtin collection view
+      (`builtinCollectionItems`, applied to the bound `collection` argument)
+      open a list boundary. -/
   def toItems : Result -> List Result
     | atom n   => [atom n]
     | str s    => [str s]
@@ -1013,10 +1037,6 @@ namespace Result
     | sequenceValue rs => some rs
     | listValue rs => some rs
     | _ => none
-
-  def isListValue : Result -> Bool
-    | listValue _ => true
-    | _ => false
 
   /-- Construction preserves structure; selection projects content.
       Project one selected value to the top-level content it denotes at the
@@ -1740,7 +1760,7 @@ def requireNumericScalarOperand (op : BinaryOp) (side : String) (value : Result)
     `requireNumericScalarOperand`. -/
 def resultValueEq (a b : Result) : Bool := a == b
 
-/-- Build the inclusive integer sequence for `range(start, stop)`.
+/-- Enumerate the inclusive integer span for `range(start, stop)`.
     The direction is inferred automatically:
     - ascending when `start <= stop`
     - descending when `start > stop`
@@ -1885,27 +1905,20 @@ structure ParameterPatternBindings where
   algEnv : AlgEnv := []
   deriving Repr
 
-/-- Singleton-boundary normalization for sequence-builtin collection binding:
-  while the supplied item supply is exactly one grouped sequence value, replace it with
-  that value's contents. Function-call parameter binding does not use this
-  normalization; it consumes the supplied item supply as given, preserving a plain
-  sequence-valued argument as one supplied item unless `...` is written. Assignment
-  deconstruction does not use this path either: it is an unpacking receiver
-  elaborated through the sequence-value parameter pattern, which opens its single
-  received right-hand-side value. -/
-def normalizeSingletonBoundaryForItemSupplyOf {α : Type}
-    (valueOf : α -> Option Result) (fromValue : Result -> α) : List α -> List α
-  | [item] =>
-      match valueOf item with
-      | some (.sequenceValue elems) => elems.map fromValue
-      | _ => [item]
-  | items => items
-
-partial def normalizeSingletonBoundaryForItemSupply (items : List VariadicItem) : List VariadicItem :=
-  normalizeSingletonBoundaryForItemSupplyOf
-    (fun item => item.value?)
-    (fun value => { value? := some value : VariadicItem })
-    items
+/-- Builtin collection-item view of the bound collection argument: opens
+  exactly one outer sequence or exact-list boundary to its immediate items;
+  any other value supplies itself as one item (a scalar is a one-element
+  collection). Never recursive — nested sequence values and nested list
+  values stay intact as single items.
+  Applied strictly AFTER ordinary fixed parameter binding, to the already
+  bound `collection` parameter only — argument boundaries are never altered
+  before binding. Function-call parameter binding never uses this view, and
+  assignment deconstruction opens its received value through the
+  sequence-value parameter pattern instead. C#: `BuiltinCollectionItems`. -/
+def builtinCollectionItems : Result -> List Result
+  | .sequenceValue elems => elems
+  | .listValue elems => elems
+  | value => [value]
 
 def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   { value? := item.value?, algorithm? := item.algorithm? }
@@ -2040,21 +2053,19 @@ def combineOutputSlots : List Result -> Result
   | [r] => r
   | rs => Result.sequenceValue rs
 
-/-- Combine a collection-producing builtin's kept/projected items into one result
-    value with the same shallow singleton-boundary erasure every other value
-    construction path applies (ordinary construction via `Result.normalize`,
-    variadic capture grouping, `combineOutputSlots`): zero items form the empty
-    sequence value `()`, a single kept item IS the result (the one-item collection
-    boundary is erased, so `take(((1, 2), (3, 4)), 1)` yields `(1, 2)` and a lone
-    kept `()` yields `()` -- never a literal-unwritable orphan such as `((1, 2))`
-    or `(())`), and two or more items form one sequence value that keeps every
-    sibling item intact, including empty-sequence items. Unlike `Result.normalize`,
-    this is shallow: it never recursively renormalizes item internals and never
-    drops empty items, so meaningful sibling boundaries such as `((), ())` are
-    preserved. The caller still records the item count separately. -/
-def combineCollectionResult : List Result -> Result
-  | [item] => item
-  | items => Result.sequenceValue items
+/-- Materialize a collection-producing builtin's kept/projected items as ONE
+    exact immutable list value. Unlike canonical arity capture (ordinary
+    construction via `Result.normalize`, variadic capture grouping,
+    `combineOutputSlots`), the list boundary is exact: zero items form `[]`, a
+    single kept item forms `[item]` (the one-item collection boundary is NEVER
+    erased, so `take(((1, 2), (3, 4)), 1)` yields `[(1, 2)]`), and item
+    internals are never renormalized, dropped, or flattened -- nested sequence
+    values and nested list values stay exact elements. The emitted count is
+    always 1: a list value is one visible value (`Result.valueCount`),
+    including the empty list `[]`.
+    C#: `MakeCollectionListResult`. -/
+def makeCollectionListResult (items : List Result) : CountedResult :=
+  (Result.listValue items, 1)
 
 /-- Re-count a counted result at a public property/call/builtin RESULT boundary.
 
@@ -2256,9 +2267,10 @@ def describeSequenceItem : Result -> String
 def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
 
-/-- Shared collected view for current sequence-builtin evaluation.
-    This is the captured `values...` top-level item supply; nested sequence values stay
-    intact and recursive flattening remains the job of `atoms`. -/
+/-- Shared collected view for current collection-builtin evaluation.
+    This is the bound collection argument's post-binding one-level item view;
+    nested sequence values stay intact and recursive flattening remains the
+    job of `atoms`. -/
 structure CollectedSequenceBuiltinInput where
   items : List Result
   deriving Repr
@@ -2834,13 +2846,6 @@ def prepareSequenceBuiltinSuffixArgItem
           (sequenceBuiltinSuffixArgErrorContext b descriptor)
           Error.badArity)
 
-def sequenceBuiltinBindingArityError
-    (b : Builtin) (signature : CallableSignature)
-    (requiredNormalItemCount actualItemCount : Nat) : Error :=
-  Error.withContext
-    s!"Builtin '{builtinDisplayName b}' expects at least {requiredNormalItemCount} item(s) for {signature.name}({String.intercalate ", " (signature.parameters.map CallableParameter.displayName)}), but received {actualItemCount}."
-    (Error.arityMismatch requiredNormalItemCount actualItemCount)
-
 def expectPreparedSequenceBuiltinSuffixArgAt
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
     (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat)
@@ -2908,31 +2913,31 @@ def isLikelyUnevaluatedParameterError (algorithm : Algorithm) (err : Error) : Bo
   | [] => false
   | paramNames => Error.referencesAnyName paramNames err
 
-/-- Evaluate `order(values...)`.
-    `order` eagerly evaluates the full top-level sequence, sorts its numeric
-    items ascending, preserves duplicates, and returns a normal KatLang
-    multi-output sequence.
+/-- Evaluate `order(collection)`.
+    `order` eagerly evaluates the full top-level collection, sorts its numeric
+    items ascending, preserves duplicates, and materializes the sorted items
+    as one exact immutable list value.
 
     Each top-level collection element must be exactly one atomic numeric
     value. Sequence values are not flattened or recursively inspected, and
-    strings are rejected. Empty collections stay empty. -/
+    strings are rejected. Empty collections yield the empty list `[]`. -/
 def evalOrderCounted (numbers : List Int) : EvalM CountedResult := do
   let sorted := sortIntsAsc numbers
-  pure (reCountValueBoundary (Result.normalize (Result.sequenceValue (sorted.map Result.atom)), sorted.length))
+  pure (makeCollectionListResult (sorted.map Result.atom))
 
-/-- Evaluate `orderDesc(values...)`.
-    `orderDesc` eagerly evaluates the full top-level sequence, sorts its
-    numeric items descending, preserves duplicates, and returns a normal
-    KatLang multi-output sequence.
+/-- Evaluate `orderDesc(collection)`.
+    `orderDesc` eagerly evaluates the full top-level collection, sorts its
+    numeric items descending, preserves duplicates, and materializes the
+    sorted items as one exact immutable list value.
 
     Each top-level collection element must be exactly one atomic numeric
     value. Sequence values are not flattened or recursively inspected, and
-    strings are rejected. Empty collections stay empty. -/
+    strings are rejected. Empty collections yield the empty list `[]`. -/
 def evalOrderDescCounted (numbers : List Int) : EvalM CountedResult := do
   let sorted := sortIntsDesc numbers
-  pure (reCountValueBoundary (Result.normalize (Result.sequenceValue (sorted.map Result.atom)), sorted.length))
+  pure (makeCollectionListResult (sorted.map Result.atom))
 
-/-- Evaluate `count(values...)`.
+/-- Evaluate `count(collection)`.
     `count` processes top-level collection elements from left to right and
     increments once per element.
 
@@ -2942,7 +2947,7 @@ def evalOrderDescCounted (numbers : List Int) : EvalM CountedResult := do
 def evalCountCounted (items : List Result) : EvalM CountedResult := do
   pure (Result.atom (Int.ofNat items.length), 1)
 
-/-- Evaluate `contains(values..., item)`.
+/-- Evaluate `contains(collection, item)`.
     `contains` checks whether any extracted top-level item equals the searched
     suffix item using ordinary KatLang value equality.
 
@@ -2952,21 +2957,21 @@ def evalContainsCounted (items : List Result) (searched : Result) : EvalM Counte
   let found := items.any (fun item => item == searched)
   pure (Result.atom (if found then 1 else 0), 1)
 
-/-- Evaluate `distinct(values...)`.
+/-- Evaluate `distinct(collection)`.
     `distinct` removes later duplicate top-level items while preserving the
     first occurrence of each item and the original left-to-right order.
 
     Equality follows ordinary KatLang value semantics on extracted top-level
     items: atoms compare by numeric value, strings by exact string value, and
-    sequence values structurally by their sequence elements. Sequence values stay
-    intact and are not flattened. Empty collections stay empty. A single kept
-    item is returned as that item itself (the one-item collection boundary is
-    erased), so `distinct((), ())` yields `()` with count 0. -/
+    sequence/list values structurally by their elements. Sequence and list
+    values stay intact and are not flattened. The kept items are materialized
+    as one exact immutable list value: empty collections yield `[]`, and a
+    single kept item forms `[item]` (so `distinct((), ())` yields `[()]`). -/
 def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
   let distinctItems := dedupList items
-  pure (reCountValueBoundary (combineCollectionResult distinctItems, distinctItems.length))
+  pure (makeCollectionListResult distinctItems)
 
-/-- Evaluate `first(values...)`.
+/-- Evaluate `first(collection)`.
     `first` evaluates the full top-level sequence and
     returns its first top-level element unchanged.
 
@@ -2978,7 +2983,7 @@ def evalFirstCounted (items : List Result) : EvalM CountedResult := do
   | first :: _ => pure (first, 1)
   | [] => .error Error.badArity
 
-/-- Evaluate `last(values...)`.
+/-- Evaluate `last(collection)`.
     `last` evaluates the full top-level sequence and
     returns its last top-level element unchanged.
 
@@ -2990,41 +2995,41 @@ def evalLastCounted (items : List Result) : EvalM CountedResult := do
   | some last => pure (last, 1)
   | none => .error Error.badArity
 
-/-- Evaluate `take(values..., count)`.
-    `take` returns the first `count` extracted top-level items unchanged.
-    `count` is a suffix parameter bound after `values...`.
+/-- Evaluate `take(collection, count)`.
+    `take` returns the first `count` extracted top-level items unchanged,
+    materialized as one exact immutable list value.
+    `count` is a fixed control argument after the `collection` argument.
 
-    Non-positive counts return an empty result. Counts larger than the
-    sequence length return the whole sequence. Sequence values stay intact,
-    and the original top-level order is preserved. A single taken item is
-    returned as that item itself (the one-item collection boundary is erased),
-    so `take(values..., 1)` agrees with `first(values...)`. -/
+    Non-positive counts return the empty list `[]`. Counts larger than the
+    item count return all items. Nested sequence and list values stay intact
+    as exact elements (so `take(((1, 2), (3, 4)), 1)` yields `[(1, 2)]`), and
+    the original top-level order is preserved. -/
 def evalTakeCounted (items : List Result) (count : Int) : EvalM CountedResult := do
   let taken :=
     if count <= 0 then
       []
     else
       items.take (Int.toNat count)
-  pure (reCountValueBoundary (combineCollectionResult taken, taken.length))
+  pure (makeCollectionListResult taken)
 
-/-- Evaluate `skip(values..., count)`.
+/-- Evaluate `skip(collection, count)`.
     `skip` returns the extracted top-level items after the first `count`
-    items, preserving item identity and original order.
-    `count` is a suffix parameter bound after `values...`.
+    items, preserving item identity and original order, materialized as one
+    exact immutable list value.
+    `count` is a fixed control argument after the `collection` argument.
 
-    Non-positive counts leave the sequence unchanged. Counts larger than the
-    sequence length return an empty result. Sequence values stay intact. A
-    single remaining item is returned as that item itself (the one-item
-    collection boundary is erased), agreeing with `last(values...)`. -/
+    Non-positive counts keep all items. Counts larger than the item count
+    return the empty list `[]`. Nested sequence and list values stay intact
+    as exact elements. -/
 def evalSkipCounted (items : List Result) (count : Int) : EvalM CountedResult := do
   let remaining :=
     if count <= 0 then
       items
     else
       items.drop (Int.toNat count)
-  pure (reCountValueBoundary (combineCollectionResult remaining, remaining.length))
+  pure (makeCollectionListResult remaining)
 
-/-- Evaluate `min(values...)`.
+/-- Evaluate `min(collection)`.
     `min` compares top-level sequence items from left to right and
     returns the smallest numeric element.
 
@@ -3042,7 +3047,7 @@ def evalMinCounted (numbers : List Int) : EvalM CountedResult := do
       let minimum <- minLoop rest first
       pure (Result.atom minimum, 1)
 
-/-- Evaluate `max(values...)`.
+/-- Evaluate `max(collection)`.
     `max` compares top-level sequence items from left to right and
     returns the largest numeric element.
 
@@ -3060,7 +3065,7 @@ def evalMaxCounted (numbers : List Int) : EvalM CountedResult := do
       let maximum <- maxLoop rest first
       pure (Result.atom maximum, 1)
 
-/-- Evaluate `sum(values...)`.
+/-- Evaluate `sum(collection)`.
     `sum` processes top-level sequence items from left to right and adds them
     into one numeric total.
 
@@ -3071,7 +3076,7 @@ def evalSumCounted (numbers : List Int) : EvalM CountedResult := do
   let total := numbers.foldl (fun acc n => acc + n) 0
   pure (Result.atom total, 1)
 
-/-- Evaluate `avg(values...)`.
+/-- Evaluate `avg(collection)`.
     `avg` processes top-level sequence items from left to right,
     accumulates their numeric total, and divides by the element count.
     The integer core truncates the quotient toward zero (Int.tdiv), matching
@@ -4101,82 +4106,60 @@ mutual
     partial def bindSequenceBuiltinArguments
       (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments := do
-    let signature := metadata.signature (builtinDisplayName b)
-    let rawItems <- collectSequenceCallableCallItems args ctx env
-    -- A rest-shaped builtin consumes an item supply like a user-defined variadic: the
-    -- rest captures the collection and suffix parameters bind from the back.
-    --
-    -- Singleton-boundary normalization is applied exactly once to obtain the collection.
-    -- When the whole supply is one grouped value, that value IS the collection and is
-    -- opened here (so its items become the supply and can also expose suffix slots); its
-    -- rest capture is then already at item level and must NOT be reopened. When the supply
-    -- has several slots (e.g. `contains((1, 2, 3), 2)`), the rest may itself be one grouped
-    -- collection value and is opened once via the same singleton-boundary rule below. That
-    -- rule opens exactly one boundary without recursively flattening useful nested sequence
-    -- values such as `(1, (2, 3))`.
-    let supplyIsSingleGroupedValue :=
-      match rawItems with
-      | [item] =>
-          match item.value? with
-          | some (.sequenceValue _) => true
-          | _ => false
-      | _ => false
-    let items := normalizeSingletonBoundaryForItemSupplyOf
-      (fun item => item.value?)
-      (fun value => ({ value? := some value } : CallableCallItem))
-      rawItems
-    let suffixCount := metadata.suffixArgs.length
-    let bindings <-
-      match bindCallableArguments signature items
-          (fun required actual => sequenceBuiltinBindingArityError b signature required actual)
-          (some suffixCount) with
-      | .ok value => pure value
-      | .error err => .error err
-    let restValues <- bindings.variadicItems.mapM (fun item =>
-      match item.value? with
-      | some value => pure value
-      | none =>
-          match item.error? with
-          | some err => .error err
-          | none => .error Error.badArity)
-    let collectionValues :=
-      if supplyIsSingleGroupedValue then restValues
-      else normalizeSingletonBoundaryForItemSupplyOf (fun value => some value) (fun value => value) restValues
-    -- Exact list values are not yet supported inside builtin item supplies:
-    -- singleton-boundary normalization deliberately does not open a lone list
-    -- (a list is one opaque value everywhere outside spread/deconstruction),
-    -- and final builtin list semantics are deferred to the follow-up builtin
-    -- work. Until then a list in the collection is a targeted type error;
-    -- explicit caller-site spread (`count([1, 2, 3]...)`) already supplies the
-    -- opened items and stays fully supported.
-    if collectionValues.any Result.isListValue then
-      .error (Error.typeMismatch
-        s!"{builtinDisplayName b} does not support list values yet; spread the list with `...` to supply its items")
-    let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
-    let preparedInput <- prepareSequenceBuiltinInput b metadata collected
-    let rec prepareSuffix :
-        List SequenceBuiltinSuffixArgDescriptor ->
-        List (Prod Ident CallableCallItem) ->
-        EvalM (List PreparedSequenceBuiltinSuffixArg)
-      | [], [] => pure []
-      | descriptor :: descriptors, binding :: bindings => do
-          let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor binding.snd
-          let tail <- prepareSuffix descriptors bindings
-          pure (prepared :: tail)
-      | _, _ =>
-          internalSequenceBuiltinSuffixArgMetadataError b "mismatched suffix arguments"
-    let suffixArgs <- prepareSuffix metadata.suffixArgs bindings.normalBindings
-    pure {
-      preparedInput := preparedInput
-      iterationItems := collectionValues.map (fun value => (value, 1))
-      suffixArgs := suffixArgs
-    }
+    let items <- collectSequenceCallableCallItems args ctx env
+    -- A collection builtin is an ordinary fixed-arity callable: exactly one
+    -- collection argument followed by its fixed control arguments
+    -- (`count(collection)`, `take(collection, count)`,
+    -- `map(collection, mapper)`). An unspread sequence or list value is ONE
+    -- argument at this call boundary, exactly like at every other call
+    -- boundary; only explicit caller-site spread alters argument boundaries,
+    -- and the spread-opened items obey the same fixed arity
+    -- (`count([1, 2, 3]...)` supplies three arguments and is an arity error).
+    -- Nothing is opened before binding.
+    let expectedArgCount := 1 + metadata.suffixArgs.length
+    if items.length != expectedArgCount then
+      .error (Error.arityMismatch expectedArgCount items.length)
+    match items with
+    | [] => .error (Error.arityMismatch expectedArgCount 0)
+    | collectionItem :: controlItems => do
+        let collectionValue <-
+          match collectionItem.value? with
+          | some value => pure value
+          | none =>
+              match collectionItem.error? with
+              | some err => .error err
+              | none => .error Error.badArity
+        -- The one-level builtin collection view applies AFTER binding, to the
+        -- bound collection value only: a lone sequence or exact list value
+        -- opens to its immediate items, and any other value is a one-element
+        -- collection (`count(7)` is 1). Opening is never recursive — nested
+        -- sequence/list elements stay intact as single items.
+        let collectionValues := builtinCollectionItems collectionValue
+        let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
+        let preparedInput <- prepareSequenceBuiltinInput b metadata collected
+        let rec prepareControls :
+            List SequenceBuiltinSuffixArgDescriptor ->
+            List CallableCallItem ->
+            EvalM (List PreparedSequenceBuiltinSuffixArg)
+          | [], [] => pure []
+          | descriptor :: descriptors, item :: rest => do
+              let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
+              let tail <- prepareControls descriptors rest
+              pure (prepared :: tail)
+          | _, _ =>
+              internalSequenceBuiltinSuffixArgMetadataError b "mismatched control arguments"
+        let suffixArgs <- prepareControls metadata.suffixArgs controlItems
+        pure {
+          preparedInput := preparedInput
+          iterationItems := collectionValues.map (fun value => (value, 1))
+          suffixArgs := suffixArgs
+        }
 
-    /-- Evaluate `reduce` over the items captured by `values...`.
-      `reduce(values..., reducer, initial)` processes top-level
+    /-- Evaluate `reduce` over the bound collection argument's viewed items.
+      `reduce(collection, reducer, initial)` processes top-level
       collection elements from left to right.
-      `step(element, accumulator)` receives each item exactly as collected by
-      the shared `values...` top-level binding model; nested sequence values stay
+      `step(element, accumulator)` receives each item exactly as collected
+      from the post-binding collection view; nested sequence values stay
       intact. Normal accumulator parameters keep ordinary structural semantics,
       while top-level variadic accumulator parameters receive accumulator state
       slots. The step must
@@ -4205,14 +4188,14 @@ mutual
           reduceLoop rest (next, 1)
     reduceLoop collection initOut
 
-    /-- Evaluate `filter(values..., predicate)`.
-      `values...` supplies the items and `predicate` is a suffix parameter.
-
-      Each iterated item is passed exactly as collected by the shared
-      `values...` top-level binding model; nested sequence values stay intact. The
-      kept output items themselves remain the original sequence items. A single
-      kept item is returned as that item itself (the one-item collection
-      boundary is erased), so keeping exactly `(1, 2)` yields `(1, 2)`. -/
+    /-- Evaluate `filter(collection, predicate)`.
+      The fixed `collection` argument supplies the items through the
+      post-binding collection view, and `predicate` is a fixed control
+      argument. Each iterated item is passed to the predicate exactly as
+      collected; nested sequence values and nested
+      list values stay intact. The kept items remain the original collection
+      items and are materialized as one exact immutable list value, so keeping
+      exactly `(1, 2)` yields `[(1, 2)]`. -/
   partial def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
@@ -4234,20 +4217,21 @@ mutual
                     "filter predicate must return exactly one atomic numeric value"
                     Error.badArity)
     let kept <- filterLoop 0 items
-    pure (reCountValueBoundary (combineCollectionResult kept, kept.length))
+    pure (makeCollectionListResult kept)
 
-  /-- Evaluate `map(values..., mapper)`.
+  /-- Evaluate `map(collection, mapper)`.
       `map` processes top-level collection elements from left to right.
-      `transform(element)` receives each item exactly as collected by the
-      shared `values...` top-level binding model; nested sequence values stay intact.
+      `transform(element)` receives each item exactly as collected from the
+      post-binding collection view; nested sequence values stay intact.
       It must return exactly one mapped element:
-      one atom or one sequence value is
-      valid, while empty and multi-output results are rejected.
+      one atom, one sequence value, or one exact list value is valid, while
+      empty and multi-output results are rejected.
 
-      Sequence-value mapped elements are accepted as single output elements, empty
-      collections stay empty, and the output preserves the original element
-      order and element count. A single mapped element is returned as that
-      element itself (the one-item collection boundary is erased). -/
+      Sequence-value and list-value mapped elements are accepted as single
+      output elements. Each captured callback result becomes one element of
+      the exact immutable list result (mapped elements are never flattened
+      into the outer list), empty collections yield `[]`, and the output
+      preserves the original element order and element count. -/
   partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec mapLoop : List CountedResult -> EvalM (List Result)
@@ -4260,7 +4244,7 @@ mutual
           let restMapped <- mapLoop rest
           pure (mapped :: restMapped)
     let mapped <- mapLoop collection
-    pure (reCountValueBoundary (combineCollectionResult mapped, mapped.length))
+    pure (makeCollectionListResult mapped)
 
     partial def applyBuiltinCountedSequence
       (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm)
@@ -4416,7 +4400,8 @@ mutual
             let start <- expectInt (<- evalAlgOutput startAlg ctx env)
             let stop <- expectInt (<- evalAlgOutput stopAlg ctx env)
             let xs := inclusiveRange start stop
-            pure (reCountValueBoundary (Result.normalize (Result.sequenceValue (xs.map Result.atom)), xs.length))
+            -- `range` materializes a collection: one exact immutable list value.
+            pure (makeCollectionListResult (xs.map Result.atom))
 
         | _, _ =>
             .error (builtinArityError b args.length)
@@ -4874,10 +4859,14 @@ mutual
               match extraArgs with
               | some args => resolveArgAlgsWithSequenceSpread args ctx env
               | none => pure []
-            if b = .reduceBuiltin && extraArgAlgs.length = 1 then
-              .error reduceInitialAccumulatorRequiresValueError
-            else
-              pure (some (b, receiverArgAlgs ++ extraArgAlgs))
+            match b, extraArgAlgs with
+            | .reduceBuiltin, [missingInitialReducer] =>
+                if (Algorithm.params missingInitialReducer.algorithm).isEmpty then
+                  pure (some (b, receiverArgAlgs ++ extraArgAlgs))
+                else
+                  .error reduceInitialAccumulatorRequiresValueError
+            | _, _ =>
+                pure (some (b, receiverArgAlgs ++ extraArgAlgs))
         | none =>
             pure none
     | _ =>
@@ -5582,18 +5571,20 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      while(Step, init)        -- initial state has one slot
      repeat(Step, n, init)    -- initial state has one slot -/
 
-/- **Sequence-consuming builtin inputs** are evaluated at the builtin-dispatch
+/- **Collection builtin inputs** are evaluated at the builtin-dispatch
    layer, not by parser rewriting.
 
    Builtins such as `order`, `orderDesc`, `count`, `first`, `last`, `min`,
-   `max`, `sum`, `avg`, `filter`, `map`, and `reduce` consume top-level items.
+   `max`, `sum`, `avg`, `filter`, `map`, and `reduce` operate on one bound
+   collection value's top-level items.
 
-   - Builtins bind through the shared callable model. The `values...` parameter
-     captures immediate top-level emitted items; suffix parameters such as
-     `count`, `mapper`, or `predicate` bind from the back.
-   - Plain-call arguments and dot-call receivers both contribute to `values...`.
-     Sequence-value single outputs stay single items while multi-output algorithms can
-     contribute several items.
+   - Collection builtins are ordinary fixed-arity callables: one fixed
+     `collection` parameter followed by fixed control parameters such as
+     `count`, `mapper`, or `predicate`. Nothing is opened before binding.
+   - A plain call's first argument and a dot-call receiver both fill the
+     `collection` parameter; the post-binding collection view then opens one
+     outer boundary of a bound sequence or list value (any other value is a
+     one-element collection).
    - Nested sequence values are never recursively flattened unless a builtin
      explicitly says so (for example `atoms`). -/
 
@@ -5755,7 +5746,7 @@ def runResult (e : Expr) : Except Error Result :=
   | .error err => .error err
 
 def runFlat (e : Expr) : Except Error (List Int) := do
-  pure (Result.atoms (<- runResult e))
+  pure (Result.hostAtoms (<- runResult e))
 
 --------------------------------------------------------------------------------
 -- Core sugar (surface syntax is external)

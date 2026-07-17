@@ -170,6 +170,28 @@ public abstract record Result
     }
 
     /// <summary>
+    /// Host-boundary numeric flattening used by <c>Evaluator.RunFlat</c> and
+    /// <c>KatLangEngine.EvaluateToAtoms</c>: like <see cref="ToAtoms"/>, but
+    /// also opens exact list boundaries so collection-builtin results surface
+    /// their numeric contents to embedding hosts. This is a host projection,
+    /// not language semantics: the <c>atoms</c> builtin and truth testing keep
+    /// lists opaque (<see cref="ToAtoms"/>), and no in-language conversion
+    /// between lists and sequences is implied.
+    /// Lean: <c>Result.hostAtoms</c>.
+    /// </summary>
+    public IReadOnlyList<decimal> ToHostAtoms()
+    {
+        return this switch
+        {
+            Atom(var n) => [n],
+            Str _ => [],
+            SequenceValue(var items) => items.SelectMany(r => r.ToHostAtoms()).ToList(),
+            ListValue(var items) => items.SelectMany(r => r.ToHostAtoms()).ToList(),
+            _ => [],
+        };
+    }
+
+    /// <summary>
     /// Count emitted top-level values when this result is already in hand.
     /// Empty results emit 0. Any non-empty atomic, string, or sequence value
     /// counts as one value. List values ALWAYS count as one visible value,
@@ -261,9 +283,10 @@ public abstract record Result
     /// Extract top-level items from a result.
     /// Atom/string -> singleton list; sequence value -> its items.
     /// A list value stays OPAQUE here: it is one item, so non-spread consumers
-    /// (indexing <c>:</c> projection, boundary re-counting, builtin item
-    /// views) treat a list as a single exact value. Only postfix spread
-    /// (<see cref="SpreadItems"/>) and deconstruction binding open a list
+    /// (indexing <c>:</c> projection, boundary re-counting) treat a list as a
+    /// single exact value. Only postfix spread (<see cref="SpreadItems"/>),
+    /// deconstruction binding, and the builtin collection-item view (the
+    /// bound collection argument after ordinary fixed binding) open a list
     /// boundary.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>

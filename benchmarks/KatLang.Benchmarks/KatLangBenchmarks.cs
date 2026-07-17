@@ -42,13 +42,13 @@ internal static class KatLangBenchmarkRunner
 		BenchmarkCacheMode cacheMode,
 		BenchmarkLoopMode loopMode,
 		BenchmarkSequencePipelineMode sequencePipelineMode)
-		=> EvaluateWithFrontEnd(scenario, CreateCache(cacheMode), loopMode, sequencePipelineMode).ToAtoms();
+		=> EvaluateWithFrontEnd(scenario, CreateCache(cacheMode), loopMode, sequencePipelineMode).ToHostAtoms();
 
 	internal static BenchmarkRunWithCacheStats RunWithFrontEndWithStats(BenchmarkScenario scenario)
 	{
 		var cache = new RunScopedZeroArgPropertyResultCache();
 		return new BenchmarkRunWithCacheStats(
-			EvaluateWithFrontEnd(scenario, cache, BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized).ToAtoms(),
+			EvaluateWithFrontEnd(scenario, cache, BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized).ToHostAtoms(),
 			cache.GetSnapshot());
 	}
 
@@ -67,14 +67,14 @@ internal static class KatLangBenchmarkRunner
 		BenchmarkLoopMode loopMode,
 		BenchmarkSequencePipelineMode sequencePipelineMode)
 	{
-		return EvaluatePrepared(scenario, CreateCache(cacheMode), loopMode, sequencePipelineMode).ToAtoms();
+		return EvaluatePrepared(scenario, CreateCache(cacheMode), loopMode, sequencePipelineMode).ToHostAtoms();
 	}
 
 	internal static BenchmarkRunWithCacheStats RunPreparedWithStats(BenchmarkScenario scenario)
 	{
 		var cache = new RunScopedZeroArgPropertyResultCache();
 		return new BenchmarkRunWithCacheStats(
-			EvaluatePrepared(scenario, cache, BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized).ToAtoms(),
+			EvaluatePrepared(scenario, cache, BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized).ToHostAtoms(),
 			cache.GetSnapshot());
 	}
 

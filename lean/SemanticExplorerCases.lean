@@ -3431,52 +3431,52 @@ def case_count__ppp12 : Expr :=
 -- count__le: count([])
 def case_count__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [])])])
-#guard obs case_count__le == "err type"
+#guard obs case_count__le == "ok raw=0 n=1"
 
 -- count__l7: count([7])
 def case_count__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.num 7)])])])
-#guard obs case_count__l7 == "err type"
+#guard obs case_count__l7 == "ok raw=1 n=1"
 
 -- count__l12: count([1, 2])
 def case_count__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])])
-#guard obs case_count__l12 == "err type"
+#guard obs case_count__l12 == "ok raw=2 n=1"
 
 -- count__l12_3: count([[1, 2], 3])
 def case_count__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
-#guard obs case_count__l12_3 == "err type"
+#guard obs case_count__l12_3 == "ok raw=2 n=1"
 
 -- count__lle: count([[]])
 def case_count__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.listLiteral [])])])])
-#guard obs case_count__lle == "err type"
+#guard obs case_count__lle == "ok raw=1 n=1"
 
 -- count__l_e: count([()])
 def case_count__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])])
-#guard obs case_count__l_e == "err type"
+#guard obs case_count__l_e == "ok raw=1 n=1"
 
 -- count__l_p12: count([(1, 2)])
 def case_count__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
-#guard obs case_count__l_p12 == "err type"
+#guard obs case_count__l_p12 == "ok raw=1 n=1"
 
 -- count__p_l12: count(([1, 2], 3))
 def case_count__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
-#guard obs case_count__p_l12 == "err type"
+#guard obs case_count__p_l12 == "ok raw=2 n=1"
 
 -- count__pl1: count(([1]))
 def case_count__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
-#guard obs case_count__pl1 == "err type"
+#guard obs case_count__pl1 == "ok raw=1 n=1"
 
 -- countSpread__e: count(()...)
 def case_countSpread__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
-#guard obs case_countSpread__e == "ok raw=0 n=1"
+#guard obs case_countSpread__e == "err arity"
 
 -- countSpread__n0: count(0...)
 def case_countSpread__n0 : Expr :=
@@ -3496,57 +3496,57 @@ def case_countSpread__p1 : Expr :=
 -- countSpread__p12: count((1, 2)...)
 def case_countSpread__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
-#guard obs case_countSpread__p12 == "ok raw=2 n=1"
+#guard obs case_countSpread__p12 == "err arity"
 
 -- countSpread__p123: count((1, 2, 3)...)
 def case_countSpread__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
-#guard obs case_countSpread__p123 == "ok raw=3 n=1"
+#guard obs case_countSpread__p123 == "err arity"
 
 -- countSpread__pee: count(((), ())...)
 def case_countSpread__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
-#guard obs case_countSpread__pee == "ok raw=2 n=1"
+#guard obs case_countSpread__pee == "err arity"
 
 -- countSpread__pe1: count(((), 1)...)
 def case_countSpread__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
-#guard obs case_countSpread__pe1 == "ok raw=2 n=1"
+#guard obs case_countSpread__pe1 == "err arity"
 
 -- countSpread__p1e: count((1, ())...)
 def case_countSpread__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
-#guard obs case_countSpread__p1e == "ok raw=2 n=1"
+#guard obs case_countSpread__p1e == "err arity"
 
 -- countSpread__p12_3: count(((1, 2), 3)...)
 def case_countSpread__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
-#guard obs case_countSpread__p12_3 == "ok raw=2 n=1"
+#guard obs case_countSpread__p12_3 == "err arity"
 
 -- countSpread__p12_34: count(((1, 2), (3, 4))...)
 def case_countSpread__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
-#guard obs case_countSpread__p12_34 == "ok raw=2 n=1"
+#guard obs case_countSpread__p12_34 == "err arity"
 
 -- countSpread__pe_12: count(((), (1, 2))...)
 def case_countSpread__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
-#guard obs case_countSpread__pe_12 == "ok raw=2 n=1"
+#guard obs case_countSpread__pe_12 == "err arity"
 
 -- countSpread__ppe1_2: count((((), 1), 2)...)
 def case_countSpread__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
-#guard obs case_countSpread__ppe1_2 == "ok raw=2 n=1"
+#guard obs case_countSpread__ppe1_2 == "err arity"
 
 -- countSpread__p12_e: count(((1, 2), ())...)
 def case_countSpread__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
-#guard obs case_countSpread__p12_e == "ok raw=2 n=1"
+#guard obs case_countSpread__p12_e == "err arity"
 
 -- countSpread__ppe: count((())...)
 def case_countSpread__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
-#guard obs case_countSpread__ppe == "ok raw=0 n=1"
+#guard obs case_countSpread__ppe == "err arity"
 
 -- countSpread__pp1: count(((1))...)
 def case_countSpread__pp1 : Expr :=
@@ -3556,12 +3556,12 @@ def case_countSpread__pp1 : Expr :=
 -- countSpread__ppp12: count((((1, 2)))...)
 def case_countSpread__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
-#guard obs case_countSpread__ppp12 == "ok raw=2 n=1"
+#guard obs case_countSpread__ppp12 == "err arity"
 
 -- countSpread__le: count([]...)
 def case_countSpread__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
-#guard obs case_countSpread__le == "ok raw=0 n=1"
+#guard obs case_countSpread__le == "err arity"
 
 -- countSpread__l7: count([7]...)
 def case_countSpread__l7 : Expr :=
@@ -3571,17 +3571,17 @@ def case_countSpread__l7 : Expr :=
 -- countSpread__l12: count([1, 2]...)
 def case_countSpread__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
-#guard obs case_countSpread__l12 == "ok raw=2 n=1"
+#guard obs case_countSpread__l12 == "err arity"
 
 -- countSpread__l12_3: count([[1, 2], 3]...)
 def case_countSpread__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
-#guard obs case_countSpread__l12_3 == "err type"
+#guard obs case_countSpread__l12_3 == "err arity"
 
 -- countSpread__lle: count([[]]...)
 def case_countSpread__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
-#guard obs case_countSpread__lle == "err type"
+#guard obs case_countSpread__lle == "ok raw=0 n=1"
 
 -- countSpread__l_e: count([()]...)
 def case_countSpread__l_e : Expr :=
@@ -3596,7 +3596,7 @@ def case_countSpread__l_p12 : Expr :=
 -- countSpread__p_l12: count(([1, 2], 3)...)
 def case_countSpread__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
-#guard obs case_countSpread__p_l12 == "err type"
+#guard obs case_countSpread__p_l12 == "err arity"
 
 -- countSpread__pl1: count(([1])...)
 def case_countSpread__pl1 : Expr :=
@@ -3691,47 +3691,47 @@ def case_dotCount__ppp12 : Expr :=
 -- dotCount__le: x = [] \n x.count
 def case_dotCount__le : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__le == "err type"
+#guard obs case_dotCount__le == "ok raw=0 n=1"
 
 -- dotCount__l7: x = [7] \n x.count
 def case_dotCount__l7 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.num 7)])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__l7 == "err type"
+#guard obs case_dotCount__l7 == "ok raw=1 n=1"
 
 -- dotCount__l12: x = [1, 2] \n x.count
 def case_dotCount__l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__l12 == "err type"
+#guard obs case_dotCount__l12 == "ok raw=2 n=1"
 
 -- dotCount__l12_3: x = [[1, 2], 3] \n x.count
 def case_dotCount__l12_3 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__l12_3 == "err type"
+#guard obs case_dotCount__l12_3 == "ok raw=2 n=1"
 
 -- dotCount__lle: x = [[]] \n x.count
 def case_dotCount__lle : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__lle == "err type"
+#guard obs case_dotCount__lle == "ok raw=1 n=1"
 
 -- dotCount__l_e: x = [()] \n x.count
 def case_dotCount__l_e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__l_e == "err type"
+#guard obs case_dotCount__l_e == "ok raw=1 n=1"
 
 -- dotCount__l_p12: x = [(1, 2)] \n x.count
 def case_dotCount__l_p12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__l_p12 == "err type"
+#guard obs case_dotCount__l_p12 == "ok raw=1 n=1"
 
 -- dotCount__p_l12: x = ([1, 2], 3) \n x.count
 def case_dotCount__p_l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__p_l12 == "err type"
+#guard obs case_dotCount__p_l12 == "ok raw=2 n=1"
 
 -- dotCount__pl1: x = ([1]) \n x.count
 def case_dotCount__pl1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [.dotCall (.resolve "x") "count" none])
-#guard obs case_dotCount__pl1 == "err type"
+#guard obs case_dotCount__pl1 == "ok raw=1 n=1"
 
 -- literalDotCount__e: (()).count
 def case_literalDotCount__e : Expr :=
@@ -3821,47 +3821,47 @@ def case_literalDotCount__ppp12 : Expr :=
 -- literalDotCount__le: ([]).count
 def case_literalDotCount__le : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [])])) "count" none])
-#guard obs case_literalDotCount__le == "err type"
+#guard obs case_literalDotCount__le == "ok raw=0 n=1"
 
 -- literalDotCount__l7: ([7]).count
 def case_literalDotCount__l7 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.num 7)])])) "count" none])
-#guard obs case_literalDotCount__l7 == "err type"
+#guard obs case_literalDotCount__l7 == "ok raw=1 n=1"
 
 -- literalDotCount__l12: ([1, 2]).count
 def case_literalDotCount__l12 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])) "count" none])
-#guard obs case_literalDotCount__l12 == "err type"
+#guard obs case_literalDotCount__l12 == "ok raw=2 n=1"
 
 -- literalDotCount__l12_3: ([[1, 2], 3]).count
 def case_literalDotCount__l12_3 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])) "count" none])
-#guard obs case_literalDotCount__l12_3 == "err type"
+#guard obs case_literalDotCount__l12_3 == "ok raw=2 n=1"
 
 -- literalDotCount__lle: ([[]]).count
 def case_literalDotCount__lle : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.listLiteral [])])])) "count" none])
-#guard obs case_literalDotCount__lle == "err type"
+#guard obs case_literalDotCount__lle == "ok raw=1 n=1"
 
 -- literalDotCount__l_e: ([()]).count
 def case_literalDotCount__l_e : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])) "count" none])
-#guard obs case_literalDotCount__l_e == "err type"
+#guard obs case_literalDotCount__l_e == "ok raw=1 n=1"
 
 -- literalDotCount__l_p12: ([(1, 2)]).count
 def case_literalDotCount__l_p12 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])) "count" none])
-#guard obs case_literalDotCount__l_p12 == "err type"
+#guard obs case_literalDotCount__l_p12 == "ok raw=1 n=1"
 
 -- literalDotCount__p_l12: (([1, 2], 3)).count
 def case_literalDotCount__p_l12 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])) "count" none])
-#guard obs case_literalDotCount__p_l12 == "err type"
+#guard obs case_literalDotCount__p_l12 == "ok raw=2 n=1"
 
 -- literalDotCount__pl1: (([1])).count
 def case_literalDotCount__pl1 : Expr :=
   .block (alg [] [] [] [.dotCall (.block (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])) "count" none])
-#guard obs case_literalDotCount__pl1 == "err type"
+#guard obs case_literalDotCount__pl1 == "ok raw=1 n=1"
 
 -- index0__e: x = () \n x:0
 def case_index0__e : Expr :=
@@ -5036,552 +5036,552 @@ def case_propChain__pl1 : Expr :=
 -- take1__e: take((), 1)
 def case_take1__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 1])])
-#guard obs case_take1__e == "ok raw=S[] n=1"
+#guard obs case_take1__e == "ok raw=L[] n=1"
 
 -- take1__n0: take(0, 1)
 def case_take1__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 1])])
-#guard obs case_take1__n0 == "ok raw=0 n=1"
+#guard obs case_take1__n0 == "ok raw=L[0] n=1"
 
 -- take1__n1: take(1, 1)
 def case_take1__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 1])])
-#guard obs case_take1__n1 == "ok raw=1 n=1"
+#guard obs case_take1__n1 == "ok raw=L[1] n=1"
 
 -- take1__p1: take((1), 1)
 def case_take1__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])
-#guard obs case_take1__p1 == "ok raw=1 n=1"
+#guard obs case_take1__p1 == "ok raw=L[1] n=1"
 
 -- take1__p12: take((1, 2), 1)
 def case_take1__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])
-#guard obs case_take1__p12 == "ok raw=1 n=1"
+#guard obs case_take1__p12 == "ok raw=L[1] n=1"
 
 -- take1__p123: take((1, 2, 3), 1)
 def case_take1__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])
-#guard obs case_take1__p123 == "ok raw=1 n=1"
+#guard obs case_take1__p123 == "ok raw=L[1] n=1"
 
 -- take1__pee: take(((), ()), 1)
 def case_take1__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])
-#guard obs case_take1__pee == "ok raw=S[] n=1"
+#guard obs case_take1__pee == "ok raw=L[S[]] n=1"
 
 -- take1__pe1: take(((), 1), 1)
 def case_take1__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])
-#guard obs case_take1__pe1 == "ok raw=S[] n=1"
+#guard obs case_take1__pe1 == "ok raw=L[S[]] n=1"
 
 -- take1__p1e: take((1, ()), 1)
 def case_take1__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])
-#guard obs case_take1__p1e == "ok raw=1 n=1"
+#guard obs case_take1__p1e == "ok raw=L[1] n=1"
 
 -- take1__p12_3: take(((1, 2), 3), 1)
 def case_take1__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])
-#guard obs case_take1__p12_3 == "ok raw=S[1, 2] n=1"
+#guard obs case_take1__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
 -- take1__p12_34: take(((1, 2), (3, 4)), 1)
 def case_take1__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])
-#guard obs case_take1__p12_34 == "ok raw=S[1, 2] n=1"
+#guard obs case_take1__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
 -- take1__pe_12: take(((), (1, 2)), 1)
 def case_take1__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])
-#guard obs case_take1__pe_12 == "ok raw=S[] n=1"
+#guard obs case_take1__pe_12 == "ok raw=L[S[]] n=1"
 
 -- take1__ppe1_2: take((((), 1), 2), 1)
 def case_take1__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])
-#guard obs case_take1__ppe1_2 == "ok raw=S[S[], 1] n=1"
+#guard obs case_take1__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
 -- take1__p12_e: take(((1, 2), ()), 1)
 def case_take1__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])
-#guard obs case_take1__p12_e == "ok raw=S[1, 2] n=1"
+#guard obs case_take1__p12_e == "ok raw=L[S[1, 2]] n=1"
 
 -- take1__ppe: take((()), 1)
 def case_take1__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])
-#guard obs case_take1__ppe == "ok raw=S[] n=1"
+#guard obs case_take1__ppe == "ok raw=L[] n=1"
 
 -- take1__pp1: take(((1)), 1)
 def case_take1__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])
-#guard obs case_take1__pp1 == "ok raw=1 n=1"
+#guard obs case_take1__pp1 == "ok raw=L[1] n=1"
 
 -- take1__ppp12: take((((1, 2))), 1)
 def case_take1__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])
-#guard obs case_take1__ppp12 == "ok raw=1 n=1"
+#guard obs case_take1__ppp12 == "ok raw=L[1] n=1"
 
 -- take1__le: take([], 1)
 def case_take1__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])
-#guard obs case_take1__le == "err type"
+#guard obs case_take1__le == "ok raw=L[] n=1"
 
 -- take1__l7: take([7], 1)
 def case_take1__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])
-#guard obs case_take1__l7 == "err type"
+#guard obs case_take1__l7 == "ok raw=L[7] n=1"
 
 -- take1__l12: take([1, 2], 1)
 def case_take1__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])
-#guard obs case_take1__l12 == "err type"
+#guard obs case_take1__l12 == "ok raw=L[1] n=1"
 
 -- take1__l12_3: take([[1, 2], 3], 1)
 def case_take1__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])
-#guard obs case_take1__l12_3 == "err type"
+#guard obs case_take1__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
 -- take1__lle: take([[]], 1)
 def case_take1__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])
-#guard obs case_take1__lle == "err type"
+#guard obs case_take1__lle == "ok raw=L[L[]] n=1"
 
 -- take1__l_e: take([()], 1)
 def case_take1__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])
-#guard obs case_take1__l_e == "err type"
+#guard obs case_take1__l_e == "ok raw=L[S[]] n=1"
 
 -- take1__l_p12: take([(1, 2)], 1)
 def case_take1__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])
-#guard obs case_take1__l_p12 == "err type"
+#guard obs case_take1__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- take1__p_l12: take(([1, 2], 3), 1)
 def case_take1__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])
-#guard obs case_take1__p_l12 == "err type"
+#guard obs case_take1__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
 -- take1__pl1: take(([1]), 1)
 def case_take1__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])
-#guard obs case_take1__pl1 == "err type"
+#guard obs case_take1__pl1 == "ok raw=L[1] n=1"
 
 -- take9__e: take((), 9)
 def case_take9__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 9])])
-#guard obs case_take9__e == "ok raw=S[] n=1"
+#guard obs case_take9__e == "ok raw=L[] n=1"
 
 -- take9__n0: take(0, 9)
 def case_take9__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 9])])
-#guard obs case_take9__n0 == "ok raw=0 n=1"
+#guard obs case_take9__n0 == "ok raw=L[0] n=1"
 
 -- take9__n1: take(1, 9)
 def case_take9__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 9])])
-#guard obs case_take9__n1 == "ok raw=1 n=1"
+#guard obs case_take9__n1 == "ok raw=L[1] n=1"
 
 -- take9__p1: take((1), 9)
 def case_take9__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 9])])
-#guard obs case_take9__p1 == "ok raw=1 n=1"
+#guard obs case_take9__p1 == "ok raw=L[1] n=1"
 
 -- take9__p12: take((1, 2), 9)
 def case_take9__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 9])])
-#guard obs case_take9__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_take9__p12 == "ok raw=L[1, 2] n=1"
 
 -- take9__p123: take((1, 2, 3), 9)
 def case_take9__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 9])])
-#guard obs case_take9__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_take9__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- take9__pee: take(((), ()), 9)
 def case_take9__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 9])])
-#guard obs case_take9__pee == "ok raw=S[S[], S[]] n=1"
+#guard obs case_take9__pee == "ok raw=L[S[], S[]] n=1"
 
 -- take9__pe1: take(((), 1), 9)
 def case_take9__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 9])])
-#guard obs case_take9__pe1 == "ok raw=S[S[], 1] n=1"
+#guard obs case_take9__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- take9__p1e: take((1, ()), 9)
 def case_take9__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 9])])
-#guard obs case_take9__p1e == "ok raw=S[1, S[]] n=1"
+#guard obs case_take9__p1e == "ok raw=L[1, S[]] n=1"
 
 -- take9__p12_3: take(((1, 2), 3), 9)
 def case_take9__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 9])])
-#guard obs case_take9__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
+#guard obs case_take9__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- take9__p12_34: take(((1, 2), (3, 4)), 9)
 def case_take9__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 9])])
-#guard obs case_take9__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
+#guard obs case_take9__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- take9__pe_12: take(((), (1, 2)), 9)
 def case_take9__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 9])])
-#guard obs case_take9__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
+#guard obs case_take9__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- take9__ppe1_2: take((((), 1), 2), 9)
 def case_take9__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 9])])
-#guard obs case_take9__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
+#guard obs case_take9__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- take9__p12_e: take(((1, 2), ()), 9)
 def case_take9__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 9])])
-#guard obs case_take9__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
+#guard obs case_take9__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- take9__ppe: take((()), 9)
 def case_take9__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 9])])
-#guard obs case_take9__ppe == "ok raw=S[] n=1"
+#guard obs case_take9__ppe == "ok raw=L[] n=1"
 
 -- take9__pp1: take(((1)), 9)
 def case_take9__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 9])])
-#guard obs case_take9__pp1 == "ok raw=1 n=1"
+#guard obs case_take9__pp1 == "ok raw=L[1] n=1"
 
 -- take9__ppp12: take((((1, 2))), 9)
 def case_take9__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 9])])
-#guard obs case_take9__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_take9__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- take9__le: take([], 9)
 def case_take9__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 9])])
-#guard obs case_take9__le == "err type"
+#guard obs case_take9__le == "ok raw=L[] n=1"
 
 -- take9__l7: take([7], 9)
 def case_take9__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 9])])
-#guard obs case_take9__l7 == "err type"
+#guard obs case_take9__l7 == "ok raw=L[7] n=1"
 
 -- take9__l12: take([1, 2], 9)
 def case_take9__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 9])])
-#guard obs case_take9__l12 == "err type"
+#guard obs case_take9__l12 == "ok raw=L[1, 2] n=1"
 
 -- take9__l12_3: take([[1, 2], 3], 9)
 def case_take9__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 9])])
-#guard obs case_take9__l12_3 == "err type"
+#guard obs case_take9__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- take9__lle: take([[]], 9)
 def case_take9__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 9])])
-#guard obs case_take9__lle == "err type"
+#guard obs case_take9__lle == "ok raw=L[L[]] n=1"
 
 -- take9__l_e: take([()], 9)
 def case_take9__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 9])])
-#guard obs case_take9__l_e == "err type"
+#guard obs case_take9__l_e == "ok raw=L[S[]] n=1"
 
 -- take9__l_p12: take([(1, 2)], 9)
 def case_take9__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 9])])
-#guard obs case_take9__l_p12 == "err type"
+#guard obs case_take9__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- take9__p_l12: take(([1, 2], 3), 9)
 def case_take9__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 9])])
-#guard obs case_take9__p_l12 == "err type"
+#guard obs case_take9__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- take9__pl1: take(([1]), 9)
 def case_take9__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 9])])
-#guard obs case_take9__pl1 == "err type"
+#guard obs case_take9__pl1 == "ok raw=L[1] n=1"
 
 -- skip1__e: skip((), 1)
 def case_skip1__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.emptySequence 0), .num 1])])
-#guard obs case_skip1__e == "ok raw=S[] n=1"
+#guard obs case_skip1__e == "ok raw=L[] n=1"
 
 -- skip1__n0: skip(0, 1)
 def case_skip1__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.num 0), .num 1])])
-#guard obs case_skip1__n0 == "ok raw=S[] n=1"
+#guard obs case_skip1__n0 == "ok raw=L[] n=1"
 
 -- skip1__n1: skip(1, 1)
 def case_skip1__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.num 1), .num 1])])
-#guard obs case_skip1__n1 == "ok raw=S[] n=1"
+#guard obs case_skip1__n1 == "ok raw=L[] n=1"
 
 -- skip1__p1: skip((1), 1)
 def case_skip1__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])
-#guard obs case_skip1__p1 == "ok raw=S[] n=1"
+#guard obs case_skip1__p1 == "ok raw=L[] n=1"
 
 -- skip1__p12: skip((1, 2), 1)
 def case_skip1__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])
-#guard obs case_skip1__p12 == "ok raw=2 n=1"
+#guard obs case_skip1__p12 == "ok raw=L[2] n=1"
 
 -- skip1__p123: skip((1, 2, 3), 1)
 def case_skip1__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])
-#guard obs case_skip1__p123 == "ok raw=S[2, 3] n=1"
+#guard obs case_skip1__p123 == "ok raw=L[2, 3] n=1"
 
 -- skip1__pee: skip(((), ()), 1)
 def case_skip1__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])
-#guard obs case_skip1__pee == "ok raw=S[] n=1"
+#guard obs case_skip1__pee == "ok raw=L[S[]] n=1"
 
 -- skip1__pe1: skip(((), 1), 1)
 def case_skip1__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])
-#guard obs case_skip1__pe1 == "ok raw=1 n=1"
+#guard obs case_skip1__pe1 == "ok raw=L[1] n=1"
 
 -- skip1__p1e: skip((1, ()), 1)
 def case_skip1__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])
-#guard obs case_skip1__p1e == "ok raw=S[] n=1"
+#guard obs case_skip1__p1e == "ok raw=L[S[]] n=1"
 
 -- skip1__p12_3: skip(((1, 2), 3), 1)
 def case_skip1__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])
-#guard obs case_skip1__p12_3 == "ok raw=3 n=1"
+#guard obs case_skip1__p12_3 == "ok raw=L[3] n=1"
 
 -- skip1__p12_34: skip(((1, 2), (3, 4)), 1)
 def case_skip1__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])
-#guard obs case_skip1__p12_34 == "ok raw=S[3, 4] n=1"
+#guard obs case_skip1__p12_34 == "ok raw=L[S[3, 4]] n=1"
 
 -- skip1__pe_12: skip(((), (1, 2)), 1)
 def case_skip1__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])
-#guard obs case_skip1__pe_12 == "ok raw=S[1, 2] n=1"
+#guard obs case_skip1__pe_12 == "ok raw=L[S[1, 2]] n=1"
 
 -- skip1__ppe1_2: skip((((), 1), 2), 1)
 def case_skip1__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])
-#guard obs case_skip1__ppe1_2 == "ok raw=2 n=1"
+#guard obs case_skip1__ppe1_2 == "ok raw=L[2] n=1"
 
 -- skip1__p12_e: skip(((1, 2), ()), 1)
 def case_skip1__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])
-#guard obs case_skip1__p12_e == "ok raw=S[] n=1"
+#guard obs case_skip1__p12_e == "ok raw=L[S[]] n=1"
 
 -- skip1__ppe: skip((()), 1)
 def case_skip1__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])
-#guard obs case_skip1__ppe == "ok raw=S[] n=1"
+#guard obs case_skip1__ppe == "ok raw=L[] n=1"
 
 -- skip1__pp1: skip(((1)), 1)
 def case_skip1__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])
-#guard obs case_skip1__pp1 == "ok raw=S[] n=1"
+#guard obs case_skip1__pp1 == "ok raw=L[] n=1"
 
 -- skip1__ppp12: skip((((1, 2))), 1)
 def case_skip1__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])
-#guard obs case_skip1__ppp12 == "ok raw=2 n=1"
+#guard obs case_skip1__ppp12 == "ok raw=L[2] n=1"
 
 -- skip1__le: skip([], 1)
 def case_skip1__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral []), .num 1])])
-#guard obs case_skip1__le == "err type"
+#guard obs case_skip1__le == "ok raw=L[] n=1"
 
 -- skip1__l7: skip([7], 1)
 def case_skip1__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])
-#guard obs case_skip1__l7 == "err type"
+#guard obs case_skip1__l7 == "ok raw=L[] n=1"
 
 -- skip1__l12: skip([1, 2], 1)
 def case_skip1__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])
-#guard obs case_skip1__l12 == "err type"
+#guard obs case_skip1__l12 == "ok raw=L[2] n=1"
 
 -- skip1__l12_3: skip([[1, 2], 3], 1)
 def case_skip1__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])
-#guard obs case_skip1__l12_3 == "err type"
+#guard obs case_skip1__l12_3 == "ok raw=L[3] n=1"
 
 -- skip1__lle: skip([[]], 1)
 def case_skip1__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])
-#guard obs case_skip1__lle == "err type"
+#guard obs case_skip1__lle == "ok raw=L[] n=1"
 
 -- skip1__l_e: skip([()], 1)
 def case_skip1__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])
-#guard obs case_skip1__l_e == "err type"
+#guard obs case_skip1__l_e == "ok raw=L[] n=1"
 
 -- skip1__l_p12: skip([(1, 2)], 1)
 def case_skip1__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])
-#guard obs case_skip1__l_p12 == "err type"
+#guard obs case_skip1__l_p12 == "ok raw=L[] n=1"
 
 -- skip1__p_l12: skip(([1, 2], 3), 1)
 def case_skip1__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])
-#guard obs case_skip1__p_l12 == "err type"
+#guard obs case_skip1__p_l12 == "ok raw=L[3] n=1"
 
 -- skip1__pl1: skip(([1]), 1)
 def case_skip1__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])
-#guard obs case_skip1__pl1 == "err type"
+#guard obs case_skip1__pl1 == "ok raw=L[] n=1"
 
 -- distinct__e: distinct(())
 def case_distinct__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.emptySequence 0)])])
-#guard obs case_distinct__e == "ok raw=S[] n=1"
+#guard obs case_distinct__e == "ok raw=L[] n=1"
 
 -- distinct__n0: distinct(0)
 def case_distinct__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.num 0)])])
-#guard obs case_distinct__n0 == "ok raw=0 n=1"
+#guard obs case_distinct__n0 == "ok raw=L[0] n=1"
 
 -- distinct__n1: distinct(1)
 def case_distinct__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.num 1)])])
-#guard obs case_distinct__n1 == "ok raw=1 n=1"
+#guard obs case_distinct__n1 == "ok raw=L[1] n=1"
 
 -- distinct__p1: distinct((1))
 def case_distinct__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])])
-#guard obs case_distinct__p1 == "ok raw=1 n=1"
+#guard obs case_distinct__p1 == "ok raw=L[1] n=1"
 
 -- distinct__p12: distinct((1, 2))
 def case_distinct__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])
-#guard obs case_distinct__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_distinct__p12 == "ok raw=L[1, 2] n=1"
 
 -- distinct__p123: distinct((1, 2, 3))
 def case_distinct__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
-#guard obs case_distinct__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_distinct__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- distinct__pee: distinct(((), ()))
 def case_distinct__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
-#guard obs case_distinct__pee == "ok raw=S[] n=1"
+#guard obs case_distinct__pee == "ok raw=L[S[]] n=1"
 
 -- distinct__pe1: distinct(((), 1))
 def case_distinct__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
-#guard obs case_distinct__pe1 == "ok raw=S[S[], 1] n=1"
+#guard obs case_distinct__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- distinct__p1e: distinct((1, ()))
 def case_distinct__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
-#guard obs case_distinct__p1e == "ok raw=S[1, S[]] n=1"
+#guard obs case_distinct__p1e == "ok raw=L[1, S[]] n=1"
 
 -- distinct__p12_3: distinct(((1, 2), 3))
 def case_distinct__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
-#guard obs case_distinct__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
+#guard obs case_distinct__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- distinct__p12_34: distinct(((1, 2), (3, 4)))
 def case_distinct__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
-#guard obs case_distinct__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
+#guard obs case_distinct__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- distinct__pe_12: distinct(((), (1, 2)))
 def case_distinct__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
-#guard obs case_distinct__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
+#guard obs case_distinct__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- distinct__ppe1_2: distinct((((), 1), 2))
 def case_distinct__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
-#guard obs case_distinct__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
+#guard obs case_distinct__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- distinct__p12_e: distinct(((1, 2), ()))
 def case_distinct__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
-#guard obs case_distinct__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
+#guard obs case_distinct__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- distinct__ppe: distinct((()))
 def case_distinct__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])])
-#guard obs case_distinct__ppe == "ok raw=S[] n=1"
+#guard obs case_distinct__ppe == "ok raw=L[] n=1"
 
 -- distinct__pp1: distinct(((1)))
 def case_distinct__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
-#guard obs case_distinct__pp1 == "ok raw=1 n=1"
+#guard obs case_distinct__pp1 == "ok raw=L[1] n=1"
 
 -- distinct__ppp12: distinct((((1, 2))))
 def case_distinct__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
-#guard obs case_distinct__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_distinct__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- distinct__le: distinct([])
 def case_distinct__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [])])])
-#guard obs case_distinct__le == "err type"
+#guard obs case_distinct__le == "ok raw=L[] n=1"
 
 -- distinct__l7: distinct([7])
 def case_distinct__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.num 7)])])])
-#guard obs case_distinct__l7 == "err type"
+#guard obs case_distinct__l7 == "ok raw=L[7] n=1"
 
 -- distinct__l12: distinct([1, 2])
 def case_distinct__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])])
-#guard obs case_distinct__l12 == "err type"
+#guard obs case_distinct__l12 == "ok raw=L[1, 2] n=1"
 
 -- distinct__l12_3: distinct([[1, 2], 3])
 def case_distinct__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
-#guard obs case_distinct__l12_3 == "err type"
+#guard obs case_distinct__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- distinct__lle: distinct([[]])
 def case_distinct__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.listLiteral [])])])])
-#guard obs case_distinct__lle == "err type"
+#guard obs case_distinct__lle == "ok raw=L[L[]] n=1"
 
 -- distinct__l_e: distinct([()])
 def case_distinct__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])])
-#guard obs case_distinct__l_e == "err type"
+#guard obs case_distinct__l_e == "ok raw=L[S[]] n=1"
 
 -- distinct__l_p12: distinct([(1, 2)])
 def case_distinct__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
-#guard obs case_distinct__l_p12 == "err type"
+#guard obs case_distinct__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- distinct__p_l12: distinct(([1, 2], 3))
 def case_distinct__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
-#guard obs case_distinct__p_l12 == "err type"
+#guard obs case_distinct__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- distinct__pl1: distinct(([1]))
 def case_distinct__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
-#guard obs case_distinct__pl1 == "err type"
+#guard obs case_distinct__pl1 == "ok raw=L[1] n=1"
 
 -- order__e: order(())
 def case_order__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.emptySequence 0)])])
-#guard obs case_order__e == "ok raw=S[] n=1"
+#guard obs case_order__e == "ok raw=L[] n=1"
 
 -- order__n0: order(0)
 def case_order__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.num 0)])])
-#guard obs case_order__n0 == "ok raw=0 n=1"
+#guard obs case_order__n0 == "ok raw=L[0] n=1"
 
 -- order__n1: order(1)
 def case_order__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.num 1)])])
-#guard obs case_order__n1 == "ok raw=1 n=1"
+#guard obs case_order__n1 == "ok raw=L[1] n=1"
 
 -- order__p1: order((1))
 def case_order__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])])
-#guard obs case_order__p1 == "ok raw=1 n=1"
+#guard obs case_order__p1 == "ok raw=L[1] n=1"
 
 -- order__p12: order((1, 2))
 def case_order__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])
-#guard obs case_order__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_order__p12 == "ok raw=L[1, 2] n=1"
 
 -- order__p123: order((1, 2, 3))
 def case_order__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
-#guard obs case_order__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_order__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- order__pee: order(((), ()))
 def case_order__pee : Expr :=
@@ -5626,92 +5626,92 @@ def case_order__p12_e : Expr :=
 -- order__ppe: order((()))
 def case_order__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])])
-#guard obs case_order__ppe == "ok raw=S[] n=1"
+#guard obs case_order__ppe == "ok raw=L[] n=1"
 
 -- order__pp1: order(((1)))
 def case_order__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
-#guard obs case_order__pp1 == "ok raw=1 n=1"
+#guard obs case_order__pp1 == "ok raw=L[1] n=1"
 
 -- order__ppp12: order((((1, 2))))
 def case_order__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
-#guard obs case_order__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_order__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- order__le: order([])
 def case_order__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [])])])
-#guard obs case_order__le == "err type"
+#guard obs case_order__le == "ok raw=L[] n=1"
 
 -- order__l7: order([7])
 def case_order__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.num 7)])])])
-#guard obs case_order__l7 == "err type"
+#guard obs case_order__l7 == "ok raw=L[7] n=1"
 
 -- order__l12: order([1, 2])
 def case_order__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])])
-#guard obs case_order__l12 == "err type"
+#guard obs case_order__l12 == "ok raw=L[1, 2] n=1"
 
 -- order__l12_3: order([[1, 2], 3])
 def case_order__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
-#guard obs case_order__l12_3 == "err type"
+#guard obs case_order__l12_3 == "err arity"
 
 -- order__lle: order([[]])
 def case_order__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.listLiteral [])])])])
-#guard obs case_order__lle == "err type"
+#guard obs case_order__lle == "err arity"
 
 -- order__l_e: order([()])
 def case_order__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])])
-#guard obs case_order__l_e == "err type"
+#guard obs case_order__l_e == "err arity"
 
 -- order__l_p12: order([(1, 2)])
 def case_order__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
-#guard obs case_order__l_p12 == "err type"
+#guard obs case_order__l_p12 == "err arity"
 
 -- order__p_l12: order(([1, 2], 3))
 def case_order__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
-#guard obs case_order__p_l12 == "err type"
+#guard obs case_order__p_l12 == "err arity"
 
 -- order__pl1: order(([1]))
 def case_order__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
-#guard obs case_order__pl1 == "err type"
+#guard obs case_order__pl1 == "ok raw=L[1] n=1"
 
 -- mapId__e: M(a) = a \n map((), M)
 def case_mapId__e : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.emptySequence 0), .resolve "M"])])
-#guard obs case_mapId__e == "ok raw=S[] n=1"
+#guard obs case_mapId__e == "ok raw=L[] n=1"
 
 -- mapId__n0: M(a) = a \n map(0, M)
 def case_mapId__n0 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.num 0), .resolve "M"])])
-#guard obs case_mapId__n0 == "ok raw=0 n=1"
+#guard obs case_mapId__n0 == "ok raw=L[0] n=1"
 
 -- mapId__n1: M(a) = a \n map(1, M)
 def case_mapId__n1 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.num 1), .resolve "M"])])
-#guard obs case_mapId__n1 == "ok raw=1 n=1"
+#guard obs case_mapId__n1 == "ok raw=L[1] n=1"
 
 -- mapId__p1: M(a) = a \n map((1), M)
 def case_mapId__p1 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .resolve "M"])])
-#guard obs case_mapId__p1 == "ok raw=1 n=1"
+#guard obs case_mapId__p1 == "ok raw=L[1] n=1"
 
 -- mapId__p12: M(a) = a \n map((1, 2), M)
 def case_mapId__p12 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .resolve "M"])])
-#guard obs case_mapId__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_mapId__p12 == "ok raw=L[1, 2] n=1"
 
 -- mapId__p123: M(a) = a \n map((1, 2, 3), M)
 def case_mapId__p123 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .resolve "M"])])
-#guard obs case_mapId__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_mapId__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- mapId__pee: M(a) = a \n map(((), ()), M)
 def case_mapId__pee : Expr :=
@@ -5756,192 +5756,192 @@ def case_mapId__p12_e : Expr :=
 -- mapId__ppe: M(a) = a \n map((()), M)
 def case_mapId__ppe : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .resolve "M"])])
-#guard obs case_mapId__ppe == "ok raw=S[] n=1"
+#guard obs case_mapId__ppe == "ok raw=L[] n=1"
 
 -- mapId__pp1: M(a) = a \n map(((1)), M)
 def case_mapId__pp1 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .resolve "M"])])
-#guard obs case_mapId__pp1 == "ok raw=1 n=1"
+#guard obs case_mapId__pp1 == "ok raw=L[1] n=1"
 
 -- mapId__ppp12: M(a) = a \n map((((1, 2))), M)
 def case_mapId__ppp12 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .resolve "M"])])
-#guard obs case_mapId__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_mapId__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- mapId__le: M(a) = a \n map([], M)
 def case_mapId__le : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral []), .resolve "M"])])
-#guard obs case_mapId__le == "err type"
+#guard obs case_mapId__le == "ok raw=L[] n=1"
 
 -- mapId__l7: M(a) = a \n map([7], M)
 def case_mapId__l7 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.num 7)]), .resolve "M"])])
-#guard obs case_mapId__l7 == "err type"
+#guard obs case_mapId__l7 == "ok raw=L[7] n=1"
 
 -- mapId__l12: M(a) = a \n map([1, 2], M)
 def case_mapId__l12 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .resolve "M"])])
-#guard obs case_mapId__l12 == "err type"
+#guard obs case_mapId__l12 == "ok raw=L[1, 2] n=1"
 
 -- mapId__l12_3: M(a) = a \n map([[1, 2], 3], M)
 def case_mapId__l12_3 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .resolve "M"])])
-#guard obs case_mapId__l12_3 == "err type"
+#guard obs case_mapId__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- mapId__lle: M(a) = a \n map([[]], M)
 def case_mapId__lle : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .resolve "M"])])
-#guard obs case_mapId__lle == "err type"
+#guard obs case_mapId__lle == "ok raw=L[L[]] n=1"
 
 -- mapId__l_e: M(a) = a \n map([()], M)
 def case_mapId__l_e : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__l_e == "err type"
+#guard obs case_mapId__l_e == "err arity"
 
 -- mapId__l_p12: M(a) = a \n map([(1, 2)], M)
 def case_mapId__l_p12 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .resolve "M"])])
-#guard obs case_mapId__l_p12 == "err type"
+#guard obs case_mapId__l_p12 == "err arity"
 
 -- mapId__p_l12: M(a) = a \n map(([1, 2], 3), M)
 def case_mapId__p_l12 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .resolve "M"])])
-#guard obs case_mapId__p_l12 == "err type"
+#guard obs case_mapId__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- mapId__pl1: M(a) = a \n map(([1]), M)
 def case_mapId__pl1 : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .resolve "M"])])
-#guard obs case_mapId__pl1 == "err type"
+#guard obs case_mapId__pl1 == "ok raw=L[1] n=1"
 
 -- filterKeep__e: T(a) = 1 \n filter((), T)
 def case_filterKeep__e : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.emptySequence 0), .resolve "T"])])
-#guard obs case_filterKeep__e == "ok raw=S[] n=1"
+#guard obs case_filterKeep__e == "ok raw=L[] n=1"
 
 -- filterKeep__n0: T(a) = 1 \n filter(0, T)
 def case_filterKeep__n0 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.num 0), .resolve "T"])])
-#guard obs case_filterKeep__n0 == "ok raw=0 n=1"
+#guard obs case_filterKeep__n0 == "ok raw=L[0] n=1"
 
 -- filterKeep__n1: T(a) = 1 \n filter(1, T)
 def case_filterKeep__n1 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.num 1), .resolve "T"])])
-#guard obs case_filterKeep__n1 == "ok raw=1 n=1"
+#guard obs case_filterKeep__n1 == "ok raw=L[1] n=1"
 
 -- filterKeep__p1: T(a) = 1 \n filter((1), T)
 def case_filterKeep__p1 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .resolve "T"])])
-#guard obs case_filterKeep__p1 == "ok raw=1 n=1"
+#guard obs case_filterKeep__p1 == "ok raw=L[1] n=1"
 
 -- filterKeep__p12: T(a) = 1 \n filter((1, 2), T)
 def case_filterKeep__p12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .resolve "T"])])
-#guard obs case_filterKeep__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_filterKeep__p12 == "ok raw=L[1, 2] n=1"
 
 -- filterKeep__p123: T(a) = 1 \n filter((1, 2, 3), T)
 def case_filterKeep__p123 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .resolve "T"])])
-#guard obs case_filterKeep__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_filterKeep__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- filterKeep__pee: T(a) = 1 \n filter(((), ()), T)
 def case_filterKeep__pee : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .resolve "T"])])
-#guard obs case_filterKeep__pee == "ok raw=S[S[], S[]] n=1"
+#guard obs case_filterKeep__pee == "ok raw=L[S[], S[]] n=1"
 
 -- filterKeep__pe1: T(a) = 1 \n filter(((), 1), T)
 def case_filterKeep__pe1 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .resolve "T"])])
-#guard obs case_filterKeep__pe1 == "ok raw=S[S[], 1] n=1"
+#guard obs case_filterKeep__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- filterKeep__p1e: T(a) = 1 \n filter((1, ()), T)
 def case_filterKeep__p1e : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .resolve "T"])])
-#guard obs case_filterKeep__p1e == "ok raw=S[1, S[]] n=1"
+#guard obs case_filterKeep__p1e == "ok raw=L[1, S[]] n=1"
 
 -- filterKeep__p12_3: T(a) = 1 \n filter(((1, 2), 3), T)
 def case_filterKeep__p12_3 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .resolve "T"])])
-#guard obs case_filterKeep__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
+#guard obs case_filterKeep__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
 -- filterKeep__p12_34: T(a) = 1 \n filter(((1, 2), (3, 4)), T)
 def case_filterKeep__p12_34 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .resolve "T"])])
-#guard obs case_filterKeep__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
+#guard obs case_filterKeep__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
 -- filterKeep__pe_12: T(a) = 1 \n filter(((), (1, 2)), T)
 def case_filterKeep__pe_12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .resolve "T"])])
-#guard obs case_filterKeep__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
+#guard obs case_filterKeep__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- filterKeep__ppe1_2: T(a) = 1 \n filter((((), 1), 2), T)
 def case_filterKeep__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .resolve "T"])])
-#guard obs case_filterKeep__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
+#guard obs case_filterKeep__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
 -- filterKeep__p12_e: T(a) = 1 \n filter(((1, 2), ()), T)
 def case_filterKeep__p12_e : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .resolve "T"])])
-#guard obs case_filterKeep__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
+#guard obs case_filterKeep__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- filterKeep__ppe: T(a) = 1 \n filter((()), T)
 def case_filterKeep__ppe : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .resolve "T"])])
-#guard obs case_filterKeep__ppe == "ok raw=S[] n=1"
+#guard obs case_filterKeep__ppe == "ok raw=L[] n=1"
 
 -- filterKeep__pp1: T(a) = 1 \n filter(((1)), T)
 def case_filterKeep__pp1 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .resolve "T"])])
-#guard obs case_filterKeep__pp1 == "ok raw=1 n=1"
+#guard obs case_filterKeep__pp1 == "ok raw=L[1] n=1"
 
 -- filterKeep__ppp12: T(a) = 1 \n filter((((1, 2))), T)
 def case_filterKeep__ppp12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .resolve "T"])])
-#guard obs case_filterKeep__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_filterKeep__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- filterKeep__le: T(a) = 1 \n filter([], T)
 def case_filterKeep__le : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral []), .resolve "T"])])
-#guard obs case_filterKeep__le == "err type"
+#guard obs case_filterKeep__le == "ok raw=L[] n=1"
 
 -- filterKeep__l7: T(a) = 1 \n filter([7], T)
 def case_filterKeep__l7 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.num 7)]), .resolve "T"])])
-#guard obs case_filterKeep__l7 == "err type"
+#guard obs case_filterKeep__l7 == "ok raw=L[7] n=1"
 
 -- filterKeep__l12: T(a) = 1 \n filter([1, 2], T)
 def case_filterKeep__l12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .resolve "T"])])
-#guard obs case_filterKeep__l12 == "err type"
+#guard obs case_filterKeep__l12 == "ok raw=L[1, 2] n=1"
 
 -- filterKeep__l12_3: T(a) = 1 \n filter([[1, 2], 3], T)
 def case_filterKeep__l12_3 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .resolve "T"])])
-#guard obs case_filterKeep__l12_3 == "err type"
+#guard obs case_filterKeep__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- filterKeep__lle: T(a) = 1 \n filter([[]], T)
 def case_filterKeep__lle : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .resolve "T"])])
-#guard obs case_filterKeep__lle == "err type"
+#guard obs case_filterKeep__lle == "ok raw=L[L[]] n=1"
 
 -- filterKeep__l_e: T(a) = 1 \n filter([()], T)
 def case_filterKeep__l_e : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .resolve "T"])])
-#guard obs case_filterKeep__l_e == "err type"
+#guard obs case_filterKeep__l_e == "ok raw=L[S[]] n=1"
 
 -- filterKeep__l_p12: T(a) = 1 \n filter([(1, 2)], T)
 def case_filterKeep__l_p12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .resolve "T"])])
-#guard obs case_filterKeep__l_p12 == "err type"
+#guard obs case_filterKeep__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- filterKeep__p_l12: T(a) = 1 \n filter(([1, 2], 3), T)
 def case_filterKeep__p_l12 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .resolve "T"])])
-#guard obs case_filterKeep__p_l12 == "err type"
+#guard obs case_filterKeep__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- filterKeep__pl1: T(a) = 1 \n filter(([1]), T)
 def case_filterKeep__pl1 : Expr :=
   .block (alg [] [] [privateProp "T" (alg ["a"] [] [] [.num 1])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .resolve "T"])])
-#guard obs case_filterKeep__pl1 == "err type"
+#guard obs case_filterKeep__pl1 == "ok raw=L[1] n=1"
 
 -- atoms__e: atoms(())
 def case_atoms__e : Expr :=
@@ -6076,262 +6076,262 @@ def case_atoms__pl1 : Expr :=
 -- takeCapture__e: x = take((), 1) \n x
 def case_takeCapture__e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__e == "ok raw=S[] n=1"
+#guard obs case_takeCapture__e == "ok raw=L[] n=1"
 
 -- takeCapture__n0: x = take(0, 1) \n x
 def case_takeCapture__n0 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__n0 == "ok raw=0 n=1"
+#guard obs case_takeCapture__n0 == "ok raw=L[0] n=1"
 
 -- takeCapture__n1: x = take(1, 1) \n x
 def case_takeCapture__n1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__n1 == "ok raw=1 n=1"
+#guard obs case_takeCapture__n1 == "ok raw=L[1] n=1"
 
 -- takeCapture__p1: x = take((1), 1) \n x
 def case_takeCapture__p1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p1 == "ok raw=1 n=1"
+#guard obs case_takeCapture__p1 == "ok raw=L[1] n=1"
 
 -- takeCapture__p12: x = take((1, 2), 1) \n x
 def case_takeCapture__p12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p12 == "ok raw=1 n=1"
+#guard obs case_takeCapture__p12 == "ok raw=L[1] n=1"
 
 -- takeCapture__p123: x = take((1, 2, 3), 1) \n x
 def case_takeCapture__p123 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p123 == "ok raw=1 n=1"
+#guard obs case_takeCapture__p123 == "ok raw=L[1] n=1"
 
 -- takeCapture__pee: x = take(((), ()), 1) \n x
 def case_takeCapture__pee : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__pee == "ok raw=S[] n=1"
+#guard obs case_takeCapture__pee == "ok raw=L[S[]] n=1"
 
 -- takeCapture__pe1: x = take(((), 1), 1) \n x
 def case_takeCapture__pe1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__pe1 == "ok raw=S[] n=1"
+#guard obs case_takeCapture__pe1 == "ok raw=L[S[]] n=1"
 
 -- takeCapture__p1e: x = take((1, ()), 1) \n x
 def case_takeCapture__p1e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p1e == "ok raw=1 n=1"
+#guard obs case_takeCapture__p1e == "ok raw=L[1] n=1"
 
 -- takeCapture__p12_3: x = take(((1, 2), 3), 1) \n x
 def case_takeCapture__p12_3 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p12_3 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeCapture__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeCapture__p12_34: x = take(((1, 2), (3, 4)), 1) \n x
 def case_takeCapture__p12_34 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p12_34 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeCapture__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeCapture__pe_12: x = take(((), (1, 2)), 1) \n x
 def case_takeCapture__pe_12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__pe_12 == "ok raw=S[] n=1"
+#guard obs case_takeCapture__pe_12 == "ok raw=L[S[]] n=1"
 
 -- takeCapture__ppe1_2: x = take((((), 1), 2), 1) \n x
 def case_takeCapture__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__ppe1_2 == "ok raw=S[S[], 1] n=1"
+#guard obs case_takeCapture__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
 -- takeCapture__p12_e: x = take(((1, 2), ()), 1) \n x
 def case_takeCapture__p12_e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p12_e == "ok raw=S[1, 2] n=1"
+#guard obs case_takeCapture__p12_e == "ok raw=L[S[1, 2]] n=1"
 
 -- takeCapture__ppe: x = take((()), 1) \n x
 def case_takeCapture__ppe : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__ppe == "ok raw=S[] n=1"
+#guard obs case_takeCapture__ppe == "ok raw=L[] n=1"
 
 -- takeCapture__pp1: x = take(((1)), 1) \n x
 def case_takeCapture__pp1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__pp1 == "ok raw=1 n=1"
+#guard obs case_takeCapture__pp1 == "ok raw=L[1] n=1"
 
 -- takeCapture__ppp12: x = take((((1, 2))), 1) \n x
 def case_takeCapture__ppp12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__ppp12 == "ok raw=1 n=1"
+#guard obs case_takeCapture__ppp12 == "ok raw=L[1] n=1"
 
 -- takeCapture__le: x = take([], 1) \n x
 def case_takeCapture__le : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__le == "err type"
+#guard obs case_takeCapture__le == "ok raw=L[] n=1"
 
 -- takeCapture__l7: x = take([7], 1) \n x
 def case_takeCapture__l7 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__l7 == "err type"
+#guard obs case_takeCapture__l7 == "ok raw=L[7] n=1"
 
 -- takeCapture__l12: x = take([1, 2], 1) \n x
 def case_takeCapture__l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__l12 == "err type"
+#guard obs case_takeCapture__l12 == "ok raw=L[1] n=1"
 
 -- takeCapture__l12_3: x = take([[1, 2], 3], 1) \n x
 def case_takeCapture__l12_3 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__l12_3 == "err type"
+#guard obs case_takeCapture__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeCapture__lle: x = take([[]], 1) \n x
 def case_takeCapture__lle : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__lle == "err type"
+#guard obs case_takeCapture__lle == "ok raw=L[L[]] n=1"
 
 -- takeCapture__l_e: x = take([()], 1) \n x
 def case_takeCapture__l_e : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__l_e == "err type"
+#guard obs case_takeCapture__l_e == "ok raw=L[S[]] n=1"
 
 -- takeCapture__l_p12: x = take([(1, 2)], 1) \n x
 def case_takeCapture__l_p12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__l_p12 == "err type"
+#guard obs case_takeCapture__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeCapture__p_l12: x = take(([1, 2], 3), 1) \n x
 def case_takeCapture__p_l12 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__p_l12 == "err type"
+#guard obs case_takeCapture__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeCapture__pl1: x = take(([1]), 1) \n x
 def case_takeCapture__pl1 : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])] [.resolve "x"])
-#guard obs case_takeCapture__pl1 == "err type"
+#guard obs case_takeCapture__pl1 == "ok raw=L[1] n=1"
 
 -- takeIdentity__e: I(a) = a \n I(take((), 1))
 def case_takeIdentity__e : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 1])])])
-#guard obs case_takeIdentity__e == "ok raw=S[] n=1"
+#guard obs case_takeIdentity__e == "ok raw=L[] n=1"
 
 -- takeIdentity__n0: I(a) = a \n I(take(0, 1))
 def case_takeIdentity__n0 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 1])])])
-#guard obs case_takeIdentity__n0 == "ok raw=0 n=1"
+#guard obs case_takeIdentity__n0 == "ok raw=L[0] n=1"
 
 -- takeIdentity__n1: I(a) = a \n I(take(1, 1))
 def case_takeIdentity__n1 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 1])])])
-#guard obs case_takeIdentity__n1 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__n1 == "ok raw=L[1] n=1"
 
 -- takeIdentity__p1: I(a) = a \n I(take((1), 1))
 def case_takeIdentity__p1 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])])
-#guard obs case_takeIdentity__p1 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__p1 == "ok raw=L[1] n=1"
 
 -- takeIdentity__p12: I(a) = a \n I(take((1, 2), 1))
 def case_takeIdentity__p12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])])
-#guard obs case_takeIdentity__p12 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__p12 == "ok raw=L[1] n=1"
 
 -- takeIdentity__p123: I(a) = a \n I(take((1, 2, 3), 1))
 def case_takeIdentity__p123 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])])
-#guard obs case_takeIdentity__p123 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__p123 == "ok raw=L[1] n=1"
 
 -- takeIdentity__pee: I(a) = a \n I(take(((), ()), 1))
 def case_takeIdentity__pee : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeIdentity__pee == "ok raw=S[] n=1"
+#guard obs case_takeIdentity__pee == "ok raw=L[S[]] n=1"
 
 -- takeIdentity__pe1: I(a) = a \n I(take(((), 1), 1))
 def case_takeIdentity__pe1 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])])
-#guard obs case_takeIdentity__pe1 == "ok raw=S[] n=1"
+#guard obs case_takeIdentity__pe1 == "ok raw=L[S[]] n=1"
 
 -- takeIdentity__p1e: I(a) = a \n I(take((1, ()), 1))
 def case_takeIdentity__p1e : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeIdentity__p1e == "ok raw=1 n=1"
+#guard obs case_takeIdentity__p1e == "ok raw=L[1] n=1"
 
 -- takeIdentity__p12_3: I(a) = a \n I(take(((1, 2), 3), 1))
 def case_takeIdentity__p12_3 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])])
-#guard obs case_takeIdentity__p12_3 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeIdentity__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeIdentity__p12_34: I(a) = a \n I(take(((1, 2), (3, 4)), 1))
 def case_takeIdentity__p12_34 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])])
-#guard obs case_takeIdentity__p12_34 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeIdentity__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeIdentity__pe_12: I(a) = a \n I(take(((), (1, 2)), 1))
 def case_takeIdentity__pe_12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])])
-#guard obs case_takeIdentity__pe_12 == "ok raw=S[] n=1"
+#guard obs case_takeIdentity__pe_12 == "ok raw=L[S[]] n=1"
 
 -- takeIdentity__ppe1_2: I(a) = a \n I(take((((), 1), 2), 1))
 def case_takeIdentity__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])])
-#guard obs case_takeIdentity__ppe1_2 == "ok raw=S[S[], 1] n=1"
+#guard obs case_takeIdentity__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
 -- takeIdentity__p12_e: I(a) = a \n I(take(((1, 2), ()), 1))
 def case_takeIdentity__p12_e : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeIdentity__p12_e == "ok raw=S[1, 2] n=1"
+#guard obs case_takeIdentity__p12_e == "ok raw=L[S[1, 2]] n=1"
 
 -- takeIdentity__ppe: I(a) = a \n I(take((()), 1))
 def case_takeIdentity__ppe : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])])
-#guard obs case_takeIdentity__ppe == "ok raw=S[] n=1"
+#guard obs case_takeIdentity__ppe == "ok raw=L[] n=1"
 
 -- takeIdentity__pp1: I(a) = a \n I(take(((1)), 1))
 def case_takeIdentity__pp1 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])])
-#guard obs case_takeIdentity__pp1 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__pp1 == "ok raw=L[1] n=1"
 
 -- takeIdentity__ppp12: I(a) = a \n I(take((((1, 2))), 1))
 def case_takeIdentity__ppp12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])])
-#guard obs case_takeIdentity__ppp12 == "ok raw=1 n=1"
+#guard obs case_takeIdentity__ppp12 == "ok raw=L[1] n=1"
 
 -- takeIdentity__le: I(a) = a \n I(take([], 1))
 def case_takeIdentity__le : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])])
-#guard obs case_takeIdentity__le == "err type"
+#guard obs case_takeIdentity__le == "ok raw=L[] n=1"
 
 -- takeIdentity__l7: I(a) = a \n I(take([7], 1))
 def case_takeIdentity__l7 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])])
-#guard obs case_takeIdentity__l7 == "err type"
+#guard obs case_takeIdentity__l7 == "ok raw=L[7] n=1"
 
 -- takeIdentity__l12: I(a) = a \n I(take([1, 2], 1))
 def case_takeIdentity__l12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])])
-#guard obs case_takeIdentity__l12 == "err type"
+#guard obs case_takeIdentity__l12 == "ok raw=L[1] n=1"
 
 -- takeIdentity__l12_3: I(a) = a \n I(take([[1, 2], 3], 1))
 def case_takeIdentity__l12_3 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])])
-#guard obs case_takeIdentity__l12_3 == "err type"
+#guard obs case_takeIdentity__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeIdentity__lle: I(a) = a \n I(take([[]], 1))
 def case_takeIdentity__lle : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])])
-#guard obs case_takeIdentity__lle == "err type"
+#guard obs case_takeIdentity__lle == "ok raw=L[L[]] n=1"
 
 -- takeIdentity__l_e: I(a) = a \n I(take([()], 1))
 def case_takeIdentity__l_e : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])])
-#guard obs case_takeIdentity__l_e == "err type"
+#guard obs case_takeIdentity__l_e == "ok raw=L[S[]] n=1"
 
 -- takeIdentity__l_p12: I(a) = a \n I(take([(1, 2)], 1))
 def case_takeIdentity__l_p12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])])
-#guard obs case_takeIdentity__l_p12 == "err type"
+#guard obs case_takeIdentity__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeIdentity__p_l12: I(a) = a \n I(take(([1, 2], 3), 1))
 def case_takeIdentity__p_l12 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])])
-#guard obs case_takeIdentity__p_l12 == "err type"
+#guard obs case_takeIdentity__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeIdentity__pl1: I(a) = a \n I(take(([1]), 1))
 def case_takeIdentity__pl1 : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
-#guard obs case_takeIdentity__pl1 == "err type"
+#guard obs case_takeIdentity__pl1 == "ok raw=L[1] n=1"
 
 -- takeCount__e: count(take((), 1))
 def case_takeCount__e : Expr :=
@@ -6366,12 +6366,12 @@ def case_takeCount__p123 : Expr :=
 -- takeCount__pee: count(take(((), ()), 1))
 def case_takeCount__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeCount__pee == "ok raw=0 n=1"
+#guard obs case_takeCount__pee == "ok raw=1 n=1"
 
 -- takeCount__pe1: count(take(((), 1), 1))
 def case_takeCount__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])])
-#guard obs case_takeCount__pe1 == "ok raw=0 n=1"
+#guard obs case_takeCount__pe1 == "ok raw=1 n=1"
 
 -- takeCount__p1e: count(take((1, ()), 1))
 def case_takeCount__p1e : Expr :=
@@ -6381,27 +6381,27 @@ def case_takeCount__p1e : Expr :=
 -- takeCount__p12_3: count(take(((1, 2), 3), 1))
 def case_takeCount__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])])
-#guard obs case_takeCount__p12_3 == "ok raw=2 n=1"
+#guard obs case_takeCount__p12_3 == "ok raw=1 n=1"
 
 -- takeCount__p12_34: count(take(((1, 2), (3, 4)), 1))
 def case_takeCount__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])])
-#guard obs case_takeCount__p12_34 == "ok raw=2 n=1"
+#guard obs case_takeCount__p12_34 == "ok raw=1 n=1"
 
 -- takeCount__pe_12: count(take(((), (1, 2)), 1))
 def case_takeCount__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])])
-#guard obs case_takeCount__pe_12 == "ok raw=0 n=1"
+#guard obs case_takeCount__pe_12 == "ok raw=1 n=1"
 
 -- takeCount__ppe1_2: count(take((((), 1), 2), 1))
 def case_takeCount__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])])
-#guard obs case_takeCount__ppe1_2 == "ok raw=2 n=1"
+#guard obs case_takeCount__ppe1_2 == "ok raw=1 n=1"
 
 -- takeCount__p12_e: count(take(((1, 2), ()), 1))
 def case_takeCount__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeCount__p12_e == "ok raw=2 n=1"
+#guard obs case_takeCount__p12_e == "ok raw=1 n=1"
 
 -- takeCount__ppe: count(take((()), 1))
 def case_takeCount__ppe : Expr :=
@@ -6421,177 +6421,177 @@ def case_takeCount__ppp12 : Expr :=
 -- takeCount__le: count(take([], 1))
 def case_takeCount__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])])
-#guard obs case_takeCount__le == "err type"
+#guard obs case_takeCount__le == "ok raw=0 n=1"
 
 -- takeCount__l7: count(take([7], 1))
 def case_takeCount__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])])
-#guard obs case_takeCount__l7 == "err type"
+#guard obs case_takeCount__l7 == "ok raw=1 n=1"
 
 -- takeCount__l12: count(take([1, 2], 1))
 def case_takeCount__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])])
-#guard obs case_takeCount__l12 == "err type"
+#guard obs case_takeCount__l12 == "ok raw=1 n=1"
 
 -- takeCount__l12_3: count(take([[1, 2], 3], 1))
 def case_takeCount__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])])
-#guard obs case_takeCount__l12_3 == "err type"
+#guard obs case_takeCount__l12_3 == "ok raw=1 n=1"
 
 -- takeCount__lle: count(take([[]], 1))
 def case_takeCount__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])])
-#guard obs case_takeCount__lle == "err type"
+#guard obs case_takeCount__lle == "ok raw=1 n=1"
 
 -- takeCount__l_e: count(take([()], 1))
 def case_takeCount__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])])
-#guard obs case_takeCount__l_e == "err type"
+#guard obs case_takeCount__l_e == "ok raw=1 n=1"
 
 -- takeCount__l_p12: count(take([(1, 2)], 1))
 def case_takeCount__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])])
-#guard obs case_takeCount__l_p12 == "err type"
+#guard obs case_takeCount__l_p12 == "ok raw=1 n=1"
 
 -- takeCount__p_l12: count(take(([1, 2], 3), 1))
 def case_takeCount__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])])
-#guard obs case_takeCount__p_l12 == "err type"
+#guard obs case_takeCount__p_l12 == "ok raw=1 n=1"
 
 -- takeCount__pl1: count(take(([1]), 1))
 def case_takeCount__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
-#guard obs case_takeCount__pl1 == "err type"
+#guard obs case_takeCount__pl1 == "ok raw=1 n=1"
 
 -- takeVariadic__e: G(a...) = a \n G(take((), 1))
 def case_takeVariadic__e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 1])])])
-#guard obs case_takeVariadic__e == "ok raw=S[] n=1"
+#guard obs case_takeVariadic__e == "ok raw=L[] n=1"
 
 -- takeVariadic__n0: G(a...) = a \n G(take(0, 1))
 def case_takeVariadic__n0 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 1])])])
-#guard obs case_takeVariadic__n0 == "ok raw=0 n=1"
+#guard obs case_takeVariadic__n0 == "ok raw=L[0] n=1"
 
 -- takeVariadic__n1: G(a...) = a \n G(take(1, 1))
 def case_takeVariadic__n1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 1])])])
-#guard obs case_takeVariadic__n1 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__n1 == "ok raw=L[1] n=1"
 
 -- takeVariadic__p1: G(a...) = a \n G(take((1), 1))
 def case_takeVariadic__p1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])])
-#guard obs case_takeVariadic__p1 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__p1 == "ok raw=L[1] n=1"
 
 -- takeVariadic__p12: G(a...) = a \n G(take((1, 2), 1))
 def case_takeVariadic__p12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])])
-#guard obs case_takeVariadic__p12 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__p12 == "ok raw=L[1] n=1"
 
 -- takeVariadic__p123: G(a...) = a \n G(take((1, 2, 3), 1))
 def case_takeVariadic__p123 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])])
-#guard obs case_takeVariadic__p123 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__p123 == "ok raw=L[1] n=1"
 
 -- takeVariadic__pee: G(a...) = a \n G(take(((), ()), 1))
 def case_takeVariadic__pee : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeVariadic__pee == "ok raw=S[] n=1"
+#guard obs case_takeVariadic__pee == "ok raw=L[S[]] n=1"
 
 -- takeVariadic__pe1: G(a...) = a \n G(take(((), 1), 1))
 def case_takeVariadic__pe1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])])
-#guard obs case_takeVariadic__pe1 == "ok raw=S[] n=1"
+#guard obs case_takeVariadic__pe1 == "ok raw=L[S[]] n=1"
 
 -- takeVariadic__p1e: G(a...) = a \n G(take((1, ()), 1))
 def case_takeVariadic__p1e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeVariadic__p1e == "ok raw=1 n=1"
+#guard obs case_takeVariadic__p1e == "ok raw=L[1] n=1"
 
 -- takeVariadic__p12_3: G(a...) = a \n G(take(((1, 2), 3), 1))
 def case_takeVariadic__p12_3 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])])
-#guard obs case_takeVariadic__p12_3 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeVariadic__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeVariadic__p12_34: G(a...) = a \n G(take(((1, 2), (3, 4)), 1))
 def case_takeVariadic__p12_34 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])])
-#guard obs case_takeVariadic__p12_34 == "ok raw=S[1, 2] n=1"
+#guard obs case_takeVariadic__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeVariadic__pe_12: G(a...) = a \n G(take(((), (1, 2)), 1))
 def case_takeVariadic__pe_12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])])
-#guard obs case_takeVariadic__pe_12 == "ok raw=S[] n=1"
+#guard obs case_takeVariadic__pe_12 == "ok raw=L[S[]] n=1"
 
 -- takeVariadic__ppe1_2: G(a...) = a \n G(take((((), 1), 2), 1))
 def case_takeVariadic__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])])
-#guard obs case_takeVariadic__ppe1_2 == "ok raw=S[S[], 1] n=1"
+#guard obs case_takeVariadic__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
 -- takeVariadic__p12_e: G(a...) = a \n G(take(((1, 2), ()), 1))
 def case_takeVariadic__p12_e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])])
-#guard obs case_takeVariadic__p12_e == "ok raw=S[1, 2] n=1"
+#guard obs case_takeVariadic__p12_e == "ok raw=L[S[1, 2]] n=1"
 
 -- takeVariadic__ppe: G(a...) = a \n G(take((()), 1))
 def case_takeVariadic__ppe : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])])
-#guard obs case_takeVariadic__ppe == "ok raw=S[] n=1"
+#guard obs case_takeVariadic__ppe == "ok raw=L[] n=1"
 
 -- takeVariadic__pp1: G(a...) = a \n G(take(((1)), 1))
 def case_takeVariadic__pp1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])])
-#guard obs case_takeVariadic__pp1 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__pp1 == "ok raw=L[1] n=1"
 
 -- takeVariadic__ppp12: G(a...) = a \n G(take((((1, 2))), 1))
 def case_takeVariadic__ppp12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])])
-#guard obs case_takeVariadic__ppp12 == "ok raw=1 n=1"
+#guard obs case_takeVariadic__ppp12 == "ok raw=L[1] n=1"
 
 -- takeVariadic__le: G(a...) = a \n G(take([], 1))
 def case_takeVariadic__le : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])])
-#guard obs case_takeVariadic__le == "err type"
+#guard obs case_takeVariadic__le == "ok raw=L[] n=1"
 
 -- takeVariadic__l7: G(a...) = a \n G(take([7], 1))
 def case_takeVariadic__l7 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])])
-#guard obs case_takeVariadic__l7 == "err type"
+#guard obs case_takeVariadic__l7 == "ok raw=L[7] n=1"
 
 -- takeVariadic__l12: G(a...) = a \n G(take([1, 2], 1))
 def case_takeVariadic__l12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])])
-#guard obs case_takeVariadic__l12 == "err type"
+#guard obs case_takeVariadic__l12 == "ok raw=L[1] n=1"
 
 -- takeVariadic__l12_3: G(a...) = a \n G(take([[1, 2], 3], 1))
 def case_takeVariadic__l12_3 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])])
-#guard obs case_takeVariadic__l12_3 == "err type"
+#guard obs case_takeVariadic__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeVariadic__lle: G(a...) = a \n G(take([[]], 1))
 def case_takeVariadic__lle : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])])
-#guard obs case_takeVariadic__lle == "err type"
+#guard obs case_takeVariadic__lle == "ok raw=L[L[]] n=1"
 
 -- takeVariadic__l_e: G(a...) = a \n G(take([()], 1))
 def case_takeVariadic__l_e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])])
-#guard obs case_takeVariadic__l_e == "err type"
+#guard obs case_takeVariadic__l_e == "ok raw=L[S[]] n=1"
 
 -- takeVariadic__l_p12: G(a...) = a \n G(take([(1, 2)], 1))
 def case_takeVariadic__l_p12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])])
-#guard obs case_takeVariadic__l_p12 == "err type"
+#guard obs case_takeVariadic__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- takeVariadic__p_l12: G(a...) = a \n G(take(([1, 2], 3), 1))
 def case_takeVariadic__p_l12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])])
-#guard obs case_takeVariadic__p_l12 == "err type"
+#guard obs case_takeVariadic__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
 -- takeVariadic__pl1: G(a...) = a \n G(take(([1]), 1))
 def case_takeVariadic__pl1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
-#guard obs case_takeVariadic__pl1 == "err type"
+#guard obs case_takeVariadic__pl1 == "ok raw=L[1] n=1"
 
 -- special__multiProp: P = 1, 2, 3 \n P
 def case_special__multiProp : Expr :=
@@ -6661,12 +6661,12 @@ def case_special__variadicJoin : Expr :=
 -- special__range13: range(1, 3)
 def case_special__range13 : Expr :=
   .block (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])
-#guard obs case_special__range13 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_special__range13 == "ok raw=L[1, 2, 3] n=1"
 
 -- special__rangeCapture: x = range(1, 3) \n x
 def case_special__rangeCapture : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])] [.resolve "x"])
-#guard obs case_special__rangeCapture == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_special__rangeCapture == "ok raw=L[1, 2, 3] n=1"
 
 -- special__rangeCount: count(range(1, 3))
 def case_special__rangeCount : Expr :=
@@ -6676,47 +6676,47 @@ def case_special__rangeCount : Expr :=
 -- special__rangeIndex0: range(1, 3):0
 def case_special__rangeIndex0 : Expr :=
   .block (alg [] [] [] [.index (.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])) (.num 0)])
-#guard obs case_special__rangeIndex0 == "ok raw=1 n=1"
+#guard obs case_special__rangeIndex0 == "ok raw=L[1, 2, 3] n=1"
 
 -- special__takeOneSurvivorPair: take(((1, 2), (3, 4)), 1)
 def case_special__takeOneSurvivorPair : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1])])
-#guard obs case_special__takeOneSurvivorPair == "ok raw=S[1, 2] n=1"
+#guard obs case_special__takeOneSurvivorPair == "ok raw=L[S[1, 2]] n=1"
 
 -- special__takeOneSurvivorPairCount: count(take(((1, 2), (3, 4)), 1))
 def case_special__takeOneSurvivorPairCount : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1])])])
-#guard obs case_special__takeOneSurvivorPairCount == "ok raw=2 n=1"
+#guard obs case_special__takeOneSurvivorPairCount == "ok raw=1 n=1"
 
 -- special__takeOneSurvivorPairEq: take(((1, 2), (3, 4)), 1) == (1, 2)
 def case_special__takeOneSurvivorPairEq : Expr :=
   .block (alg [] [] [] [.binary .eq (.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1])) (.block (alg [] [] [] [.num 1, .num 2]))])
-#guard obs case_special__takeOneSurvivorPairEq == "ok raw=1 n=1"
+#guard obs case_special__takeOneSurvivorPairEq == "ok raw=0 n=1"
 
 -- special__skipToOnePair: skip(((1, 2), (3, 4)), 1)
 def case_special__skipToOnePair : Expr :=
   .block (alg [] [] [] [.call (.resolve "skip") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .num 1])])
-#guard obs case_special__skipToOnePair == "ok raw=S[3, 4] n=1"
+#guard obs case_special__skipToOnePair == "ok raw=L[S[3, 4]] n=1"
 
 -- special__distinctEmpties: distinct((), ())
 def case_special__distinctEmpties : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [.emptySequence 0, .emptySequence 0])])
-#guard obs case_special__distinctEmpties == "ok raw=S[] n=1"
+#guard obs case_special__distinctEmpties == "err arity"
 
 -- special__distinctPairsToOne: distinct((1, 2), (1, 2))
 def case_special__distinctPairsToOne : Expr :=
   .block (alg [] [] [] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 1, .num 2]))])])
-#guard obs case_special__distinctPairsToOne == "ok raw=S[1, 2] n=1"
+#guard obs case_special__distinctPairsToOne == "err arity"
 
 -- special__takeEmpties: take((), (), 2)
 def case_special__takeEmpties : Expr :=
   .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.emptySequence 0, .emptySequence 0, .num 2])])
-#guard obs case_special__takeEmpties == "ok raw=S[S[], S[]] n=1"
+#guard obs case_special__takeEmpties == "err arity"
 
 -- special__filterOneSurvivor: Big(a) = a > 2 \n filter((1, 2, 3), Big)
 def case_special__filterOneSurvivor : Expr :=
   .block (alg [] [] [privateProp "Big" (alg ["a"] [] [] [.binary .gt (.param "a") (.num 2)])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .resolve "Big"])])
-#guard obs case_special__filterOneSurvivor == "ok raw=3 n=1"
+#guard obs case_special__filterOneSurvivor == "ok raw=L[3] n=1"
 
 -- special__filterOneSurvivorCount: Big(a) = a > 2 \n count(filter((1, 2, 3), Big))
 def case_special__filterOneSurvivorCount : Expr :=
@@ -6726,7 +6726,7 @@ def case_special__filterOneSurvivorCount : Expr :=
 -- special__filterZeroSurvivors: No(a) = 0 \n filter((1, 2, 3), No)
 def case_special__filterZeroSurvivors : Expr :=
   .block (alg [] [] [privateProp "No" (alg ["a"] [] [] [.num 0])] [.call (.resolve "filter") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3])), .resolve "No"])])
-#guard obs case_special__filterZeroSurvivors == "ok raw=S[] n=1"
+#guard obs case_special__filterZeroSurvivors == "ok raw=L[] n=1"
 
 -- special__mapPairSwap: Swap(a, b) = b, a \n map(((1, 2), (3, 4)), Swap)
 def case_special__mapPairSwap : Expr :=
@@ -6736,22 +6736,22 @@ def case_special__mapPairSwap : Expr :=
 -- special__mapPairSwapOk: Swap(a, b) = (b, a) \n map(((1, 2), (3, 4)), Swap)
 def case_special__mapPairSwapOk : Expr :=
   .block (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [.block (alg [] [] [] [.param "b", .param "a"])])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .resolve "Swap"])])
-#guard obs case_special__mapPairSwapOk == "ok raw=S[S[2, 1], S[4, 3]] n=1"
+#guard obs case_special__mapPairSwapOk == "ok raw=L[S[2, 1], S[4, 3]] n=1"
 
 -- special__mapToOne: M(a) = a \n map((7), M)
 def case_special__mapToOne : Expr :=
   .block (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [.num 7])), .resolve "M"])])
-#guard obs case_special__mapToOne == "ok raw=7 n=1"
+#guard obs case_special__mapToOne == "ok raw=L[7] n=1"
 
 -- special__orderSingle: order(5)
 def case_special__orderSingle : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [.num 5])])
-#guard obs case_special__orderSingle == "ok raw=5 n=1"
+#guard obs case_special__orderSingle == "ok raw=L[5] n=1"
 
 -- special__orderEmpty: order(())
 def case_special__orderEmpty : Expr :=
   .block (alg [] [] [] [.call (.resolve "order") (alg [] [] [] [.emptySequence 0])])
-#guard obs case_special__orderEmpty == "ok raw=S[] n=1"
+#guard obs case_special__orderEmpty == "ok raw=L[] n=1"
 
 -- special__atomsNested: atoms(((1, 2), (3, 4)))
 def case_special__atomsNested : Expr :=
@@ -8419,20 +8419,20 @@ def case_internal__sc_count_arg : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceConstruct (.emptySequence 0) (.num 1)])])
 #guard obs case_internal__sc_count_arg == "ok raw=1 n=1"
 
--- internal__sc_take_suffix: lone SequenceConstruct arg to a suffix builtin binds like the grouped surface form
-def case_internal__sc_take_suffix : Expr :=
-  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])])
-#guard obs case_internal__sc_take_suffix == "ok raw=S[1, 2] n=1"
+-- internal__sc_take_collection: a SequenceConstruct collection argument binds like the grouped surface form
+def case_internal__sc_take_collection : Expr :=
+  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2])])
+#guard obs case_internal__sc_take_collection == "ok raw=L[1, 2] n=1"
 
--- internal__sc_take_suffix_empty: () leaf vanishes from a lone SequenceConstruct arg before suffix binding
-def case_internal__sc_take_suffix_empty : Expr :=
-  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2)])])
-#guard obs case_internal__sc_take_suffix_empty == "ok raw=1 n=1"
+-- internal__sc_take_collection_empty: () leaf vanishes from a SequenceConstruct collection argument (written parens keep it)
+def case_internal__sc_take_collection_empty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2), .num 2])])
+#guard obs case_internal__sc_take_collection_empty == "ok raw=L[1, 2] n=1"
 
--- internal__sc_take_block_leaf: a nested pair inside a lone SequenceConstruct arg is one item, so it binds the count suffix and fails
+-- internal__sc_take_block_leaf: a nested pair inside a SequenceConstruct collection argument stays one item
 def case_internal__sc_take_block_leaf : Expr :=
-  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.num 1) (.block (alg [] [] [] [.num 2, .num 5]))])])
-#guard obs case_internal__sc_take_block_leaf == "err arity"
+  .block (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [.sequenceConstruct (.num 1) (.block (alg [] [] [] [.num 2, .num 5])), .num 2])])
+#guard obs case_internal__sc_take_block_leaf == "ok raw=L[1, S[2, 5]] n=1"
 
 -- internal__sc_sum_arg: sum of the internal node matches the grouped surface form
 def case_internal__sc_sum_arg : Expr :=
@@ -8452,8 +8452,8 @@ def internalNodeCaseIds : List String := [
   "internal__sc_p12_p34",
   "internal__sc_spread_3",
   "internal__sc_count_arg",
-  "internal__sc_take_suffix",
-  "internal__sc_take_suffix_empty",
+  "internal__sc_take_collection",
+  "internal__sc_take_collection_empty",
   "internal__sc_take_block_leaf",
   "internal__sc_sum_arg"
 ]

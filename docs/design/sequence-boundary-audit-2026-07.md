@@ -4,6 +4,18 @@ Status: completed audit + durable validator. This document is the Phase-1
 receiver/boundary review deliverable for the small-state arity-semantics
 validator, and the reference for the invariants that validator enforces.
 
+> **Update (2026-07-17, builtin-list follow-up).** Collection-producing
+> builtins (`filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`,
+> `range`) now materialize ONE exact immutable list value via
+> `makeCollectionListResult` / `MakeCollectionListResult`;
+> `combineCollectionResult` / `CombineCollectionResult` no longer exists:
+> zero kept items form `[]`, one kept item forms `[item]`, and builtin
+> collection binding opens a lone bound LIST like a lone sequence value.
+> Canonical arity capture, output-slot combination, and variadic/rest binding
+> remain sequence-centered. The semantic descriptions below have been updated;
+> the corpus/accounting history remains the July 2026 audit record. See
+> AGENTS.md and `src/KatLang/CALLABLES.md` for the operational rules.
+
 The validator itself lives in:
 
 - `tests/KatLang.Tests/SemanticExplorerCorpus.cs` — bounded value space x receiver templates (shared corpus),
@@ -15,7 +27,7 @@ The validator itself lives in:
 ## 1. The current boundary model (as implemented)
 
 One rule with four explicitly documented non-boundary exceptions, confirmed by
-executable evidence on the 931-case surface corpus (accounting in §5.1).
+executable evidence on the current 1,409-case surface corpus (accounting in §5.1).
 
 **Counts.** Every evaluation step carries `CountedResult = (value, emittedCount)`.
 `Result.valueCount` is 0 for `()` and 1 for everything else.
@@ -48,14 +60,15 @@ Written singleton parens are transparent (`(1)` = `1`, `(())` = `()`,
 construction/capture sites whose inputs are already canonical, so it never
 flattens meaningful nested multi-item structure.
 
-**Collection builtin returns.** Kept items recombine with the shallow
-singleton-erasing `CombineCollectionResult`: 0 items -> `()`, 1 kept item IS
-the result (no orphan wrapper), 2+ items -> one sequence value preserving all
-sibling boundaries including `()` items.
+**Collection builtin returns.** `filter`, `map`, `order`, `orderDesc`,
+`distinct`, `take`, `skip`, and `range` materialize one exact immutable list:
+0 items -> `[]`, 1 item -> `[item]`, and 2+ items -> `[item, ...]`, preserving
+all sibling boundaries including `()` items. This exact materialization is not
+canonical arity capture. `atoms` remains sequence-centered and list-opaque.
 
-**Spread.** `expr...` opens exactly one layer via `toItems`: `()...`
-contributes zero items, an atom spreads to itself, nested sequence items stay
-intact.
+**Spread.** `expr...` opens exactly one layer via `spreadItems`: `()...` and
+`[]...` contribute zero items, an atom spreads to itself, a sequence or list
+supplies its immediate items, and nested values stay intact.
 
 **Indexing.** `x:i` selects one top-level item and projects its content one
 level, emitting `(projectedValue, itemCount)` — a *supply*, not a value. The
@@ -69,10 +82,12 @@ compare unequal. `()` is transparent for every *non*-comparison binary
 operator (`() > 1` = `1`, `() + ()` = `()`) and for unary operators, but is a
 first-class operand for `==`/`!=`.
 
-**count / .count.** Both paths reach the same item-supply binding: one grouped
-argument is opened one level (singleton-boundary normalization), sibling
-groups are preserved. `count`, `.count`, `count(V...)`, and spread-supply
-counts all observe the same layer.
+**count / .count.** Both paths supply exactly one fixed `collection` argument.
+Only after fixed binding, the builtin collection view opens one outer sequence
+or exact-list boundary; sibling groups remain items. `count(V)` and `V.count`
+therefore agree. `count(V...)` has ordinary spread-call meaning instead: it is
+valid only when the spread supplies exactly one argument, and otherwise is an
+ordinary arity error for `count(collection)`.
 
 **Cache.** `A` vs `A()` changes only the per-run zero-arg property cache
 usage; the cached raw count is re-counted at every observable boundary, so
@@ -82,7 +97,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 931 surface cases is in the machine-readable report
+all 1,409 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -120,22 +135,23 @@ observable count at root; notes):
 | deconstruction `x, y = V` | `items(V)` | element-wise match | 1 | `= V` ≡ `= V...` (unpacking receiver) |
 | explicit seq `(V, 99)` | 2 slots | `S[V, 99]` | 1 | `()` survives as item; nesting intact |
 | spread in seq `(V..., 99)` | items+1 | shallow combine | 1 | `(()..., 99)` = `99` (singleton collapse) |
-| `count(V)` / `V.count` / `count(V...)` | items | `items(V).count` | 1 | same layer for all four forms |
+| `count(V)` / `V.count` | 1 fixed collection arg | `items(V).count` | 1 | collection view opens one bound sequence/list boundary |
+| `count(V...)` | `items(V).count` ordinary args | count or `E:arity` | 1 / — | succeeds only when spread supplies exactly one argument |
 | `x:0` (item = pair) | — | projected item content | `max(1, k)` | supply at root; 1 value everywhere else |
 | `x:0` (item = `()`) | — | `S[]` | 1 | projection count 0, root bump to 1 row |
 | `x:9` / `x:-1` | — | `E:index` / parse error | — | negative selector rejected at parse (C#) |
 | `==` / `!=` | 2 values | `1`/`0` | 1 | structural, reflexive, path-independent |
 | re-entry `I(x)`, `P = R` | 1 | unchanged | 1 | validated across double re-entry |
-| `take/skip/filter/distinct/order/map` | items | shallow-combined survivors | 1 | 1 survivor IS the result (no wrapper) |
-| `range`, `atoms` | — | flat atom sequence | 1 | `atoms` is the recursive flattener |
+| `take/skip/filter/distinct/order/map` | items | exact list of survivors/results | 1 | zero -> `[]`; one -> `[item]`; never singleton-erased |
+| `range` | — | exact integer list | 1 | inclusive ascending/descending span |
+| `atoms` | — | flat canonical atom sequence | 0/1 | recursive sequence flattener; lists remain opaque |
 
 ## 3. Answers to the architectural questions
 
-1. **Should collection builtins always return one captured sequence-value
-   boundary?** They return one *value* whose boundary erases a single
-   survivor (documented #133 rule). This is coherent with capture/`combineOutputSlots`
-   and is what keeps display/count/equality/indexing agreeing on one canonical
-   value. Keep.
+1. **Should collection-producing builtins return a captured sequence-value
+   boundary?** No. They return one exact immutable list value. Empty and
+   singleton list boundaries remain visible (`[]`, `[item]`); canonical
+   sequence capture remains reserved for arity storage and combination.
 2. **Should lexical zero-arg access and structural dot access re-count
    identically?** They already do (validated: `capture`/`captureCall`/
    `dotAccess`/`dotAccessCall` agree on every corpus value).
@@ -145,9 +161,9 @@ observable count at root; notes):
 4. **Which must expose a captured value?** Every property/call/builtin result,
    argument slot, sequence-literal item, and stored binding.
 5. **Where is capture/normalization applied?** Deep `normalize` at written
-   construction and variadic capture (inputs canonical); shallow combine at
-   output slots and collection returns. The two agree because item internals
-   are never renormalized.
+   sequence construction and variadic capture (inputs canonical); shallow
+   combine at output slots. Collection-producing builtins instead construct an
+   exact list and never renormalize item internals.
 6. **Where may spread reopen a value?** Any expression-list context (root/body
    slots, call args, sequence literals, builtin supplies) — exactly one layer.
 7. **Can any operation construct a literal-unwritable value?** No. 0 orphan
@@ -162,12 +178,10 @@ observable count at root; notes):
 10. **Can one raw value observe differently by construction path?** No.
     Equality/count/indexing agree across literal, capture, call-return,
     builtin-return, deconstruction, and cache/no-cache paths (validated).
-11. **Can a builtin one-survivor reduction leave a hidden wrapper?** No — the
-    survivor IS the result. Consequence worth knowing: `count(take(V, 1))` is
-    the *survivor's* item count (e.g. 2 for `take(((1,2),3),1)`, 0 for a kept
-    `()`), not 1. That follows from the same two documented rules
-    (single-survivor erasure + count's singleton opening) and is pinned by the
-    validator.
+11. **Can a collection builtin erase a one-survivor boundary?** No. The exact
+    result is `[survivor]`, so `count(take(V, 1))` is 1 whenever `V` supplies an
+    item, including when that item is a sequence value or `()`. Explicit
+    `take(V, 1)...` re-opens the list and supplies the survivor itself.
 12. **Can a non-spread `()` disappear from an item position?** Not from any
     parser-reachable position (root rows, property bodies, sequence literals,
     argument slots, builtin supplies all preserve it — validated as
@@ -178,9 +192,10 @@ observable count at root; notes):
     (strict-variadic suffix splitting) and in Lean-side test constructions.
     See §6 (residual risks).
 13. **Can singleton erasure flatten meaningful nested structure?** No. Deep
-    normalize sites receive canonical inputs; combine sites are shallow.
+    sequence-normalize sites receive canonical inputs; arity combine sites are
+    shallow; exact list materialization applies no singleton erasure.
     Validated by `UnexpectedFlattening` on nested values incl. `((), (1, 2))`,
-    `(((), 1), 2)`.
+    `(((), 1), 2)`, and exact nested list elements.
 14. **Are root output, property access, function return, builtin return one
     rule?** One rule + the four *documented* exceptions of §1. The only
     subtle interaction is `:` projection emitting a supply that root rows
@@ -244,7 +259,7 @@ root output displaying as empty text (not reconstructable as a program).
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**911 surface cases** as of this audit — the surface corpus minus its 20
+(**1,377 surface cases** as of this update — the surface corpus minus its 32
 parse-level cases such as `(3,)`, `x:-1`, `A... == A...`, and `1 ; 2`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **13**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
@@ -287,22 +302,21 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 931 | 867 template cases (51 receiver templates x 17 values) + 64 specials; outcomes 816 ok / 95 err / 20 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 911 | the 931 above minus the 20 parse-level cases (17 `indexNeg__*` + `trailingComma`, `spreadAsBinaryOperand`, `semicolonSeparator`) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact footer |
+| Surface corpus (= C# semantic report surface section) | 1,409 | 1,326 template cases (51 receiver templates x 26 values) + 83 specials; outcomes 1,207 ok / 170 err / 32 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 1,377 | the 1,409 above minus the 32 parse-level cases (26 `indexNeg__*` + six deliberate parse-error specials) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 13 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean guards | 924 | 911 surface + 13 internal-node (one `#guard` per case) | nothing (footer states the split) | `SemanticExplorerCases.lean` footer: `-- Total: 924 guards (911 surface + 13 internal-node).` |
+| Generated Lean case guards | 1,390 | 1,377 surface + 13 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 13 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 931 attempted, 911 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 20 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
-| Containment test invocations | 32 | 18-form parser theory, corpus sweep, AST-family pins, visitor-preservation fact, 8 direct-node pins, difference fact, 2 lone-argument facts | explorer/anchor tests (counted separately) | `dotnet test --filter SequenceConstructContainment` |
-| Explorer test invocations | 30 | anchor pins, invariant sweep, artifact freshness + comparable-observations + partition facts | — | `dotnet test --filter SemanticExplorer` |
-| Full .NET suite | 2348 | everything incl. all of the above | — | `dotnet test .\KatLang.slnx` |
+| Parser/elaboration reachability sweep | 1,409 attempted, 1,377 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 32 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Containment test invocations | 41 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, and difference facts | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
+| Explorer test invocations | 39 | anchor pins, invariant sweep, artifact freshness + comparable-observations + partition facts | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
+| Full .NET suite | 2,868 | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
 
-The previously reported pairs reconcile as: **931 vs 912** — 931 is the full
-surface corpus; the Lean artifact excludes exactly the 20 parse-level cases,
-giving 911 (the old "912" additionally counted the artifact's header comment
-that mentions `#guard`). **925 guards** similarly overcounted 924 by that
-same header line. **"~970" sweep programs** was an estimate; the sweep
-attempts all 931 corpus sources and scans the 911 that parse.
+Historical accounting note: the original audit's **931 vs 912** and
+**925 vs 924** discrepancies came from counting a header comment that mentioned
+`#guard`. The corpus has since expanded; the generated header, partition guards,
+JSON report, and table above now agree on 1,409 surface cases, 32 parse-level
+exclusions, 1,377 Lean-representable surface cases, and 13 internal-node cases.
 
 ## 6. Recommended rule and residual risks
 
@@ -312,11 +326,13 @@ to keep it and enforce it):**
 > Every property/call/builtin result, argument slot, sequence-literal item,
 > and stored binding is a *value* boundary: one value, count `valueCount`.
 > Item supplies exist only inside root/body output accumulation, raw variadic
-> storage, loop state, and builtin collection binding; only written `...`
-> (or the documented openers: deconstruction RHS, builtin singleton-boundary
-> normalization, `:` projection) may open one layer of a value into a supply.
-> All construction paths erase exactly the unwritable boundaries (singleton
-> wrap, redundant empty nesting) and nothing else.
+> storage, and loop state; only written `...` (or the documented openers:
+> deconstruction RHS and `:` projection) may open one layer of a value into a
+> surrounding supply. Collection builtins first bind one ordinary fixed
+> `collection` value, then apply their separate post-binding one-level view.
+> Sequence-centered arity construction erases exactly the unwritable
+> boundaries (singleton wrap, redundant empty nesting) and nothing else;
+> collection-producing builtins construct exact writable list boundaries.
 
 The smallest implementation change needed to enforce it: **none** — the rule
 holds today; the change delivered is the validator that keeps it holding.
@@ -325,8 +341,9 @@ holds today; the change delivered is the validator that keeps it holding.
 
 1. `Expr.SequenceConstruct`'s `()`-dropping evaluation is intentional
    internal-join semantics, contained and guarded — see §7.
-2. New builtins that return collections must use `CombineCollectionResult` +
-   `ReCountValueBoundary`; adding one to the corpus is one template entry.
+2. New builtins that return collections must use
+   `MakeCollectionListResult` / `makeCollectionListResult`; adding one to the
+   corpus is one template entry.
 3. Numeric divergence (Lean `Int` vs C# `decimal`) is out of scope for the
    integer-only corpus; extending values to decimals would surface it
    deliberately.
@@ -381,29 +398,30 @@ shape, so **no KatLang source program is affected** — the path was reachable
 only through manually authored or externally supplied semantic ASTs built
 with the public AST API. The reshape had no Lean counterpart, was exercised
 by zero tests, and could produce results different from Lean; it was
-inconsistent with the ordinary boundary model, which treats a lone grouped
-argument as one value opened once by singleton-boundary normalization rather
-than structurally redistributing written slots across the suffix boundary.
-It has been **removed**: an externally constructed lone `SequenceConstruct`
-argument now value-evaluates to one grouped value and follows the ordinary
-grouped-argument path on both implementations. This is a
+inconsistent with the then-current boundary model, which treated a lone
+grouped source as one collection value rather than structurally redistributing
+written slots across the control-argument boundary. It was **removed** before
+the fixed-collection migration. Under the current model, an externally
+constructed `SequenceConstruct` used as the collection argument value-evaluates
+once, binds as the one fixed `collection` value, and is opened only by the
+post-binding collection view on both implementations. This is a
 **compatibility-affecting bug fix for public semantic-AST consumers**, even
 though it is not a surface-language change. Verified outcomes (pinned in
 `SequenceConstructContainmentTests` and the `internal__sc_*` differential
 cases):
 
-| Hand-built AST input | Former C# (reshape) | Lean | Current aligned |
-|---|---|---|---|
-| `take(SC[1, (2, 5)])` | `(1, 2)` | `err arity` (take count must be one whole number) | `err arity` on both |
-| `take(SC[1, 2, 5])` | `(1, 2)` | `(1, 2)` | `(1, 2)` (unchanged) |
-| `take(SC[(), 1, 2])` | `1` | `1` | `1` (unchanged) |
-| `sum(SC[1, 2])` | `3` | `3` | `3` (unchanged) |
+| Current hand-built AST input | Current aligned result |
+|---|---|
+| `take(SC[1, (2, 5)], 2)` | `[1, (2, 5)]` on both; the nested pair stays one item |
+| `take(SC[1, 2, 5], 2)` | `[1, 2]` on both |
+| `take(SC[(), 1, 2], 2)` | `[1, 2]` on both; the internal join drops the `()` leaf |
+| `sum(SC[1, 2])` | `3` on both |
 
 **Containment guarantees and their enforcing tests:**
 
 | Guarantee | Enforced by |
 |---|---|
-| Surface syntax never parses or elaborates to the node (zero origin sites) | `SequenceConstructContainmentTests.SurfaceSequenceSyntax_NeverParsesToSequenceConstruct` (18 forms) + `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` (931 corpus programs attempted, 911 scanned post-elaboration; see §5.1) + pre-existing `ParserTests` absence assertions |
+| Surface syntax never parses or elaborates to the node (zero origin sites) | `SequenceConstructContainmentTests.SurfaceSequenceSyntax_NeverParsesToSequenceConstruct` + `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` (1,409 corpus programs attempted, 1,377 scanned post-elaboration; see §5.1) + pre-existing `ParserTests` absence assertions |
 | Surface forms keep their intended AST family | `ParenthesizedSequenceSyntax_UsesExpectedNodes` |
 | Production visitors rebuild, never drop or originate | `ProductionVisitor_PreservesExternallyOriginatedNode` |
 | Node semantics pinned (incl. `()`-drop, spread splice) | `DirectSequenceConstruct_DropsEmptyLeavesAndSplicesSpreads` (C#), `internalSequenceConstruct*` guards (Lean CoreTests) |

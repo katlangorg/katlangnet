@@ -408,14 +408,18 @@ public static class LanguageSpecCorpus
         {
             Id = "empty-count-two-args",
             Category = "empty-visible-vs-spread",
-            Source = "count((), ())",
+            Source = "count(((), ()))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("count", LEmpty, LEmpty)]),
+            LeanProgram = LProg([], [LCall("count", LBlock(LEmpty, LEmpty))]),
+            Probes =
+            [
+                new SpecProbe("count((), ())", "err arity"),
+            ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Two supplied `()` values are two visible items: singleton-boundary normalization applies only to a single grouped value, and sibling `()` items are preserved.",
+            Explanation = "`count(collection)` takes exactly one collection argument. The grouped `((), ())` collection holds two visible `()` items, so its count is 2; the bare two-argument form `count((), ())` is an ordinary arity error.",
         },
         new()
         {
@@ -1015,20 +1019,21 @@ public static class LanguageSpecCorpus
             Category = "access-boundaries",
             Source = "x = take((1, 2, 3), 2)\nx",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2)",
-            ExpectedRaw = "S[1, 2]",
+            ExpectedDisplay = "[1, 2]",
+            ExpectedRaw = "L[1, 2]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LProp("x", LCall("take", LBlock(LNums(1, 2, 3)), ".num 2"))],
                 [".resolve \"x\""]),
             Probes =
             [
-                new SpecProbe("I(a) = a\nI(take((1, 2, 3), 2))", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("G(a...) = a\nG(take((1, 2, 3), 2))", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("take((1, 2, 3), 2) == (1, 2)", "ok raw=1 n=1"),
+                new SpecProbe("I(a) = a\nI(take((1, 2, 3), 2))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("G(a...) = a\nG(take((1, 2, 3), 2))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("take((1, 2, 3), 2) == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("take((1, 2, 3), 2) == [1, 2]", "ok raw=1 n=1"),
                 new SpecProbe("count(take((1, 2, 3), 2))", "ok raw=2 n=1"),
             ],
-            Explanation = "A collection builtin's result re-enters every receiver unchanged: capture, identity calls, variadic binding, equality, and count all observe the same canonical value.",
+            Explanation = "A collection builtin's exact list result re-enters every receiver unchanged: capture, identity calls, and variadic binding all observe the same list value, count opens its one list boundary, and the list never equals a sequence value.",
         },
         new()
         {
@@ -1050,11 +1055,11 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "take((1, 2, 3, 4, 5), 3)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3)",
-            ExpectedRaw = "S[1, 2, 3]",
+            ExpectedDisplay = "[1, 2, 3]",
+            ExpectedRaw = "L[1, 2, 3]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("take", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3")]),
-            Explanation = "`take` keeps the first `count` items and returns them as one sequence value.",
+            Explanation = "`take` keeps the first `count` items and materializes them as one exact immutable list value.",
         },
         new()
         {
@@ -1062,17 +1067,18 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "take(((1, 2), (3, 4)), 1)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2)",
-            ExpectedRaw = "S[1, 2]",
+            ExpectedDisplay = "[(1, 2)]",
+            ExpectedRaw = "L[S[1, 2]]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("take", PairOfPairs, ".num 1")]),
             Probes =
             [
-                new SpecProbe("count(take(((1, 2), (3, 4)), 1))", "ok raw=2 n=1"),
-                new SpecProbe("take(((1, 2), (3, 4)), 1) == (1, 2)", "ok raw=1 n=1"),
+                new SpecProbe("count(take(((1, 2), (3, 4)), 1))", "ok raw=1 n=1"),
+                new SpecProbe("take(((1, 2), (3, 4)), 1) == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("take(((1, 2), (3, 4)), 1)...", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A single kept item IS the result: `take(((1, 2), (3, 4)), 1)` is the pair `(1, 2)` itself, never the unwritable one-item wrapper `((1, 2))`; its count is therefore 2.",
+            Explanation = "Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and explicit spread `...` re-opens the list to the kept pair.",
         },
         new()
         {
@@ -1080,11 +1086,11 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "take((1, 2, 3), 0)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "()",
-            ExpectedRaw = "S[]",
+            ExpectedDisplay = "[]",
+            ExpectedRaw = "L[]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("take", LBlock(LNums(1, 2, 3)), ".num 0")]),
-            Explanation = "Zero kept items form the empty sequence value `()`.",
+            Explanation = "Zero kept items form the empty list `[]` — one visible value, distinct from the empty sequence value `()`.",
         },
         new()
         {
@@ -1092,16 +1098,16 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "skip((1, 2, 3, 4, 5), 3)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(4, 5)",
-            ExpectedRaw = "S[4, 5]",
+            ExpectedDisplay = "[4, 5]",
+            ExpectedRaw = "L[4, 5]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("skip", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3")]),
             Probes =
             [
-                new SpecProbe("skip(((1, 2), (3, 4)), 1)", "ok raw=S[3, 4] n=1"),
-                new SpecProbe("skip((1, 2), 5)", "ok raw=S[] n=1"),
+                new SpecProbe("skip(((1, 2), (3, 4)), 1)", "ok raw=L[S[3, 4]] n=1"),
+                new SpecProbe("skip((1, 2), 5)", "ok raw=L[] n=1"),
             ],
-            Explanation = "`skip` drops the first `count` items; a single remaining item is that item itself, and skipping everything leaves `()`.",
+            Explanation = "`skip` drops the first `count` items and materializes the rest as one exact list: a single remaining item stays a one-element list, and skipping everything leaves the empty list `[]`.",
         },
         new()
         {
@@ -1109,13 +1115,13 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "IsEven = x mod 2 == 0\nfilter((1, 2, 3, 4, 5, 6), IsEven)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(2, 4, 6)",
-            ExpectedRaw = "S[2, 4, 6]",
+            ExpectedDisplay = "[2, 4, 6]",
+            ExpectedRaw = "L[2, 4, 6]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("IsEven", ["x"], ".binary .eq (.binary .mod (.param \"x\") (.num 2)) (.num 0)")],
                 [LCall("filter", LBlock(LNums(1, 2, 3, 4, 5, 6)), ".resolve \"IsEven\"")]),
-            Explanation = "`filter` keeps items whose predicate result is one nonzero atomic value, returning one sequence value.",
+            Explanation = "`filter` keeps items whose predicate result is one nonzero atomic value, returning one exact list value.",
         },
         new()
         {
@@ -1123,13 +1129,13 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "Big(a) = a > 2\nfilter((1, 2, 3), Big)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "3",
-            ExpectedRaw = "3",
+            ExpectedDisplay = "[3]",
+            ExpectedRaw = "L[3]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("Big", ["a"], ".binary .gt (.param \"a\") (.num 2)")],
                 [LCall("filter", LBlock(LNums(1, 2, 3)), ".resolve \"Big\"")]),
-            Explanation = "The multi-item-to-singleton transition: one surviving item is returned as that item itself.",
+            Explanation = "One surviving item forms the exact one-element list `[3]` — list results never erase the one-item boundary.",
         },
         new()
         {
@@ -1137,17 +1143,18 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "No(a) = 0\nfilter((1, 2, 3), No)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "()",
-            ExpectedRaw = "S[]",
+            ExpectedDisplay = "[]",
+            ExpectedRaw = "L[]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("No", ["a"], ".num 0")],
                 [LCall("filter", LBlock(LNums(1, 2, 3)), ".resolve \"No\"")]),
             Probes =
             [
-                new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == ()", "ok raw=1 n=1"),
+                new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == ()", "ok raw=0 n=1"),
+                new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == []", "ok raw=1 n=1"),
             ],
-            Explanation = "Zero survivors form the empty sequence value, which equals `()` structurally.",
+            Explanation = "Zero survivors form the empty list `[]`, which is one visible value and never equals the empty sequence value `()`.",
         },
         new()
         {
@@ -1155,13 +1162,13 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "Double = x * 2\nmap((1, 2, 3), Double)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(2, 4, 6)",
-            ExpectedRaw = "S[2, 4, 6]",
+            ExpectedDisplay = "[2, 4, 6]",
+            ExpectedRaw = "L[2, 4, 6]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("Double", ["x"], ".binary .mul (.param \"x\") (.num 2)")],
                 [LCall("map", LBlock(LNums(1, 2, 3)), ".resolve \"Double\"")]),
-            Explanation = "`map` replaces each top-level item with the callback result, preserving order and count.",
+            Explanation = "`map` replaces each top-level item with the callback result, preserving order and count, and materializes the mapped items as one exact list.",
         },
         new()
         {
@@ -1169,13 +1176,13 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "M(a) = a\nmap((7), M)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "7",
-            ExpectedRaw = "7",
+            ExpectedDisplay = "[7]",
+            ExpectedRaw = "L[7]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("M", ["a"], ".param \"a\"")],
                 [LCall("map", LBlock(".num 7"), ".resolve \"M\"")]),
-            Explanation = "`(7)` is the atom 7 (singleton parens are transparent), so mapping over it yields the single mapped item itself.",
+            Explanation = "`(7)` is the atom 7 (singleton parens are transparent), so the supply has one item — and the exact list result keeps it as the one-element list `[7]`.",
         },
         new()
         {
@@ -1183,13 +1190,13 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "((2, 1), (4, 3))",
-            ExpectedRaw = "S[S[2, 1], S[4, 3]]",
+            ExpectedDisplay = "[(2, 1), (4, 3)]",
+            ExpectedRaw = "L[S[2, 1], S[4, 3]]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("Swap", ["a", "b"], LBlock(".param \"b\", .param \"a\""))],
                 [LCall("map", PairOfPairs, ".resolve \"Swap\"")]),
-            Explanation = "Sequence-value callback items are projected one level to the callback's parameters; the callback must return exactly one value per item.",
+            Explanation = "Sequence-value callback items are projected one level to the callback's parameters; the callback must return exactly one value per item, and each captured result stays one exact list element (never flattened).",
         },
         new()
         {
@@ -1197,8 +1204,8 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "distinct((3, 1, 3, 2, 1, 2))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(3, 1, 2)",
-            ExpectedRaw = "S[3, 1, 2]",
+            ExpectedDisplay = "[3, 1, 2]",
+            ExpectedRaw = "L[3, 1, 2]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("distinct", LBlock(LNums(3, 1, 3, 2, 1, 2)))]),
             Explanation = "`distinct` keeps the first occurrence of each structurally-equal item.",
@@ -1209,8 +1216,8 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "distinct(((1, 2), (1, 2), (3, 4)))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "((1, 2), (3, 4))",
-            ExpectedRaw = "S[S[1, 2], S[3, 4]]",
+            ExpectedDisplay = "[(1, 2), (3, 4)]",
+            ExpectedRaw = "L[S[1, 2], S[3, 4]]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("distinct",
                 LBlock(LBlock(LNums(1, 2)), LBlock(LNums(1, 2)), LBlock(LNums(3, 4))))]),
@@ -1222,14 +1229,14 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "take((1, 2, 3, 4, 5), 3)\n\ntake(((1, 2), (3, 4)), 1)\n\nrange(1, 5).take(2)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3)\n(1, 2)\n(1, 2)",
-            ExpectedRaw = "S[S[1, 2, 3], S[1, 2], S[1, 2]]",
+            ExpectedDisplay = "[1, 2, 3]\n[(1, 2)]\n[1, 2]",
+            ExpectedRaw = "S[L[1, 2, 3], L[S[1, 2]], L[1, 2]]",
             ExpectedEmittedCount = 3,
             LeanProgram = LProg([],
                 [LCall("take", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3"),
                  LCall("take", PairOfPairs, ".num 1"),
                  $".dotCall ({LCall("range", ".num 1", ".num 5")}) \"take\" (some (alg [] [] [] [.num 2]))"]),
-            Explanation = "The tutorial's `take` examples: a plain prefix, the single-survivor case (the kept pair itself, no wrapper), and the dot-call form.",
+            Explanation = "The tutorial's `take` examples: a plain prefix list, the single-survivor case (the exact one-element list `[(1, 2)]`), and the dot-call form over a `range` list receiver.",
         },
         new()
         {
@@ -1237,8 +1244,8 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "distinct((3, 1, 3, 2, 1, 2))\n\ndistinct(((1, 2), (1, 2), (3, 4)))\n\nValues = 3, 1, 3, 2, 1, 2\nValues.distinct",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(3, 1, 2)\n((1, 2), (3, 4))\n(3, 1, 2)",
-            ExpectedRaw = "S[S[3, 1, 2], S[S[1, 2], S[3, 4]], S[3, 1, 2]]",
+            ExpectedDisplay = "[3, 1, 2]\n[(1, 2), (3, 4)]\n[3, 1, 2]",
+            ExpectedRaw = "S[L[3, 1, 2], L[S[1, 2], S[3, 4]], L[3, 1, 2]]",
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
                 [LProp("Values", LNums(3, 1, 3, 2, 1, 2))],
@@ -1266,13 +1273,17 @@ public static class LanguageSpecCorpus
         {
             Id = "distinct-empties-collapse",
             Category = "collection-builtins",
-            Source = "distinct((), ())",
+            Source = "distinct(((), ()))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "()",
-            ExpectedRaw = "S[]",
+            ExpectedDisplay = "[()]",
+            ExpectedRaw = "L[S[]]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("distinct", LEmpty, LEmpty)]),
-            Explanation = "Two supplied `()` items deduplicate to one kept `()`, and a single kept item is the result itself: `()`.",
+            LeanProgram = LProg([], [LCall("distinct", LBlock(LEmpty, LEmpty))]),
+            Probes =
+            [
+                new SpecProbe("distinct((), ())", "err arity"),
+            ],
+            Explanation = "The grouped collection's two `()` items deduplicate to one kept `()`, and the exact list result keeps it as the one-element list `[()]` — list results never erase the one-item boundary. `distinct(collection)` takes exactly one argument, so the bare two-argument form is an arity error.",
         },
         new()
         {
@@ -1280,16 +1291,16 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "order((3, 4, 2, 1, 3, 3))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3, 3, 3, 4)",
-            ExpectedRaw = "S[1, 2, 3, 3, 3, 4]",
+            ExpectedDisplay = "[1, 2, 3, 3, 3, 4]",
+            ExpectedRaw = "L[1, 2, 3, 3, 3, 4]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("order", LBlock(LNums(3, 4, 2, 1, 3, 3)))]),
             Probes =
             [
-                new SpecProbe("order(5)", "ok raw=5 n=1"),
-                new SpecProbe("order(())", "ok raw=S[] n=1"),
+                new SpecProbe("order(5)", "ok raw=L[5] n=1"),
+                new SpecProbe("order(())", "ok raw=L[] n=1"),
             ],
-            Explanation = "`order` sorts numeric items ascending; a single item or empty input passes through canonically.",
+            Explanation = "`order` sorts numeric items ascending into one exact list; a single item forms `[5]` and empty input forms `[]`.",
         },
         new()
         {
@@ -1297,16 +1308,17 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "range(1, 5)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3, 4, 5)",
-            ExpectedRaw = "S[1, 2, 3, 4, 5]",
+            ExpectedDisplay = "[1, 2, 3, 4, 5]",
+            ExpectedRaw = "L[1, 2, 3, 4, 5]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("range", ".num 1", ".num 5")]),
             Probes =
             [
                 new SpecProbe("count(range(1, 5))", "ok raw=5 n=1"),
-                new SpecProbe("range(1, 3):0", "ok raw=1 n=1"),
+                new SpecProbe("range(1, 3):0", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("x = range(1, 3)...\nx:0", "ok raw=1 n=1"),
             ],
-            Explanation = "`range` returns every integer from start to stop inclusive as one sequence value.",
+            Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; indexing keeps the list opaque (spread and re-capture first to index its items).",
         },
         new()
         {
@@ -1314,12 +1326,12 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "range(3, 3)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "3",
-            ExpectedRaw = "3",
+            ExpectedDisplay = "[3]",
+            ExpectedRaw = "L[3]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("range", ".num 3", ".num 3")]),
             IncludeInGeneratorPrompt = true,
-            Explanation = "A one-integer range is that integer itself — collection builtins never mint one-item wrappers.",
+            Explanation = "A one-integer range is the exact one-element list `[3]` — collection-producing builtins always materialize a list, and the one-item boundary is never erased.",
         },
         new()
         {
@@ -1335,15 +1347,20 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "sum-of-opened-range",
+            Id = "sum-of-range-collection",
             Category = "collection-builtins",
-            Source = "sum(range(1, 3)...)",
+            Source = "sum(range(1, 3))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "6",
             ExpectedRaw = "6",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("sum", $".sequenceSpread ({LCall("range", ".num 1", ".num 3")})")]),
-            Explanation = "Caller-site spread opens a builtin result into the consuming builtin's item supply.",
+            LeanProgram = LProg([], [LCall("sum", LCall("range", ".num 1", ".num 3"))]),
+            Probes =
+            [
+                new SpecProbe("sum(range(1, 3)...)", "err arity"),
+                new SpecProbe("sum((range(1, 3)...))", "ok raw=6 n=1"),
+            ],
+            Explanation = "A collection builtin's list result is one collection argument for the next builtin: `sum` opens the bound list one level and sums its items. Spreading the result instead supplies its items as separate arguments — an arity error for the one-parameter `sum(collection)` — unless the spread is re-grouped into one collection value.",
         },
         new()
         {
@@ -1418,6 +1435,31 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "builtin-fixed-collection-arity",
+            Category = "collection-builtins",
+            Source = "count((1, 2, 3))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [LCall("count", LBlock(LNums(1, 2, 3)))]),
+            Probes =
+            [
+                new SpecProbe("count(1, 2, 3)", "err arity"),
+                new SpecProbe("count()", "err arity"),
+                new SpecProbe("count(3)", "ok raw=1 n=1"),
+                new SpecProbe("take((1, 2, 3), 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("take([1, 2, 3], 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("take((1, 2, 3))", "err arity"),
+                new SpecProbe("take([1, 2, 3])", "err arity"),
+                new SpecProbe("take([1, 2, 3]..., 2)", "err arity"),
+                new SpecProbe("Inspect(items...) = items\nInspect(1, 2, 3)", "ok raw=S[1, 2, 3] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread-opened items (`take([1, 2, 3]..., 2)`) are ordinary arity errors. A scalar is a one-element collection, and USER-DEFINED variadic functions are unaffected (`Inspect(1, 2, 3)` still captures `(1, 2, 3)`).",
+        },
+        new()
+        {
             Id = "reduce-accumulates-value",
             Category = "collection-builtins",
             Source = "Append(item, history...) = (history..., item)\nreduce((2, 3, 4), Append, 1)",
@@ -1431,11 +1473,11 @@ public static class LanguageSpecCorpus
                 [LCall("reduce", LBlock(LNums(2, 3, 4)), ".resolve \"Append\"", ".num 1")]),
             Probes =
             [
-                new SpecProbe("Append(item, history...) = (history..., item)\nreduce(2, 3, 4, Append, 1)", "ok raw=S[1, 2, 3, 4] n=1"),
+                new SpecProbe("Append(item, history...) = (history..., item)\nreduce(2, 3, 4, Append, 1)", "err arity"),
                 new SpecProbe("Add(a, b) = a + b\nreduce((1, 2, 3, 4), Add, 0)", "ok raw=10 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`reduce` threads one accumulator value; the grouped-collection and open-supply call shapes bind the same items, and the result displays as ONE sequence value `(1, 2, 3, 4)` — not as separate rows.",
+            Explanation = "`reduce(collection, reducer, initial)` takes exactly three arguments and threads one accumulator value; the result displays as ONE sequence value `(1, 2, 3, 4)` — not as separate rows. Supplying the items inline (`reduce(2, 3, 4, Append, 1)`) is an ordinary five-argument arity error.",
         },
 
         // ==================== equality-and-indexing ====================
@@ -2058,9 +2100,12 @@ public static class LanguageSpecCorpus
                 new SpecProbe("x, rest... = [1, 2]\nrest", "ok raw=2 n=1"),
                 new SpecProbe("x, rest... = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("x, rest... = 1, [2, 3], 4\nrest", "ok raw=S[L[2, 3], 4] n=1"),
+                new SpecProbe("x, rest... = 1, [2, 3]..., (4, 5)...\nrest", "ok raw=S[2, 3, 4, 5] n=1"),
+                new SpecProbe("skip([1, 2, 3], 1)", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("x, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=0 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Rest capture groups the unmatched items as one canonical SEQUENCE value regardless of source container: it never reconstructs the list.",
+            Explanation = "Rest capture groups the unmatched items as one canonical SEQUENCE value regardless of source container: it never reconstructs the list. The intended contrast: `rest` from `x, rest... = [1, 2, 3]` is `(2, 3)` (canonical arity capture), while `skip([1, 2, 3], 1)` is the exact list `[2, 3]` (collection materialization) — the two are intentionally different values.",
         },
         new()
         {
@@ -2072,20 +2117,28 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "list-builtins-deferred",
+            Id = "list-builtin-collection",
             Category = "lists",
             Source = "count([1, 2, 3])",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "type",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("count", "(.listLiteral [.num 1, .num 2, .num 3])")]),
             Probes =
             [
-                new SpecProbe("count([1, 2, 3]...)", "ok raw=3 n=1"),
-                new SpecProbe("sum([1, 2, 3]...)", "ok raw=6 n=1"),
-                new SpecProbe("A = [1, 2]\nA.count", "err type"),
+                new SpecProbe("count([1, 2, 3]...)", "err arity"),
+                new SpecProbe("sum([1, 2, 3])", "ok raw=6 n=1"),
+                new SpecProbe("sum(([1, 2, 3]...))", "ok raw=6 n=1"),
+                new SpecProbe("A = [1, 2]\nA.count", "ok raw=2 n=1"),
+                new SpecProbe("count([], [])", "err arity"),
+                new SpecProbe("count(([], []))", "ok raw=2 n=1"),
+                new SpecProbe("count([1, [2], 3])", "ok raw=3 n=1"),
+                new SpecProbe("take([1, 2, 3], 1)", "ok raw=L[1] n=1"),
+                new SpecProbe("contains([1, 2, 3], 2)", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Builtin collection binding does not open list values yet (deferred to the follow-up builtin work): a list in an item supply is a targeted type error, while explicit spread `count([1, 2, 3]...)` supplies the elements and is fully supported.",
+            Explanation = "A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3]...)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3]...))`) to pass its items as one collection.",
         },
 
         // ==================== implementation-only (C# decimal runtime) ====================

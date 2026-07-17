@@ -82,26 +82,29 @@ theorem normalize_sequenceValue_pair (a b : Result) :
   simp [Result.normalize]
 
 /-
-The real model opens a single grouped collection boundary for sequence-builtin
-binding (`count(A)`, `sum(A)`). This is not arbitrary recursive flattening. It is
-NOT used by function-call parameter binding — a call keeps a single sequence
-argument as one item. Assignment deconstruction also opens its single right-hand
-side value, but through a different mechanism: the sequence-value parameter pattern
-(`.sequenceValue`), not this builtin singleton opening (see the deconstruction
-bridge laws at the end of this file).
+The real model interprets a collection builtin's bound `collection` argument
+through the POST-BINDING one-level view `builtinCollectionItems` (`count(A)`,
+`sum(A)`). This is not arbitrary recursive flattening, and it never alters
+argument boundaries BEFORE binding — collection builtins are ordinary
+fixed-arity callables (`count(collection)`, `take(collection, count)`), so an
+unspread sequence or list is one argument like at every other call boundary.
+Function-call parameter binding never uses this view. Assignment
+deconstruction opens its single right-hand side value through a different
+mechanism: the sequence-value parameter pattern (`.sequenceValue`), not the
+builtin collection view (see the deconstruction bridge laws at the end of
+this file).
 -/
-theorem openLoneSequence_single_sequenceValue (xs : List Result) :
-    normalizeSingletonBoundaryForItemSupplyOf
-      (fun value => some value) (fun value => value) [Result.sequenceValue xs]
-      = xs := by
-  simp [normalizeSingletonBoundaryForItemSupplyOf]
+theorem builtinCollectionItems_sequence (xs : List Result) :
+    builtinCollectionItems (Result.sequenceValue xs) = xs := rfl
 
-theorem openLoneSequence_nested_pair_opens_one_boundary :
-    normalizeSingletonBoundaryForItemSupplyOf
-      (fun value => some value) (fun value => value)
-      [Result.sequenceValue [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]]]
-      = [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]] := by
-  rfl
+theorem builtinCollectionItems_nested_pair_opens_one_boundary :
+    builtinCollectionItems
+      (Result.sequenceValue [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]])
+      = [Result.atom 1, Result.sequenceValue [Result.atom 2, Result.atom 3]] := rfl
+
+/-- A scalar collection argument is a one-element collection (`count(7)` is 1). -/
+theorem builtinCollectionItems_atom (n : Int) :
+    builtinCollectionItems (Result.atom n) = [Result.atom n] := rfl
 
 private theorem collectValues_valueInputs (xs : List Result) :
     bindParameterPatternList.collectValues
@@ -287,11 +290,11 @@ theorem deconstruct_rest_single_sequence_opens :
 ## List bridge laws (exact list values)
 
 Exact list values (`Result.listValue`) join the deconstruction opening rule but
-are preserved everywhere else: `Result.toItems` keeps a list opaque (one item),
-only postfix spread (`Result.spreadItems`) and the deconstruction pattern
-(`Result.structureItems?`) open a list boundary, and builtin singleton-boundary
-opening deliberately does NOT open a lone list. The laws below pin each of
-those decisions over the real model, mirroring the sequence laws above.
+remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
+list as one item, while postfix spread (`Result.spreadItems`), the
+deconstruction pattern (`Result.structureItems?`), and the post-binding builtin
+collection view open one list boundary in their documented contexts. The laws
+below pin each decision over the real model, mirroring the sequence laws above.
 -/
 
 /-- Spread opens exactly one list boundary: `[1, 2, 3]...` supplies the items. -/
@@ -306,7 +309,10 @@ theorem spreadItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).spreadItems = xs := rfl
 
 /-- The non-spread item view keeps a list OPAQUE: a list is one item, so
-value boundaries, indexing projection, and builtin item views never open it. -/
+value boundaries and indexing projection never open it. (The post-binding
+builtin collection view opens the bound list through
+`builtinCollectionItems`, not through `toItems` — see
+`builtinCollectionItems_list` below.) -/
 theorem toItems_listValue_opaque (xs : List Result) :
     (Result.listValue xs).toItems = [Result.listValue xs] := rfl
 
@@ -322,13 +328,29 @@ theorem structureItems_sequenceValue (xs : List Result) :
 theorem structureItems_atom (n : Int) :
     Result.structureItems? (Result.atom n) = none := rfl
 
-/-- Builtin singleton-boundary opening does NOT open a lone list: builtin
-collection binding keeps a list argument as one opaque item (final builtin list
-semantics are deferred; only explicit `...` supplies list items to builtins). -/
-theorem builtin_singleton_boundary_preserves_list (xs : List Result) :
-    normalizeSingletonBoundaryForItemSupplyOf
-      (fun value => some value) (fun value => value) [Result.listValue xs]
-      = [Result.listValue xs] := rfl
+/-- The post-binding builtin collection view opens a bound list exactly like a
+bound sequence value: ONE outer boundary, so `count([1, 2, 3])` counts three
+items just as `count((1, 2, 3))` does. Opening is never recursive — nested
+lists stay intact as single items (`count((1, [2], 3))` is 3, and a
+collection element `[..]` inside the bound collection is one item). The view
+applies only AFTER ordinary fixed binding: `count(1, 2, 3)` and
+`count([1, 2, 3]...)` are ordinary arity errors, never collections. -/
+theorem builtinCollectionItems_list (xs : List Result) :
+    builtinCollectionItems (Result.listValue xs) = xs := rfl
+
+theorem builtinCollectionItems_keeps_nested_list_opaque (xs : List Result) :
+    builtinCollectionItems
+      (Result.sequenceValue [Result.atom 1, Result.listValue xs, Result.atom 3])
+      = [Result.atom 1, Result.listValue xs, Result.atom 3] := rfl
+
+/-- Collection-producing builtins materialize EXACT lists: zero kept items form
+`[]`, one kept item forms `[item]` (never erased to the item), and the emitted
+count is always 1 — the builtin result re-enters arity as one value. -/
+theorem makeCollectionListResult_exact (x : Result) :
+    makeCollectionListResult [x] = (Result.listValue [x], 1) := rfl
+
+theorem makeCollectionListResult_empty :
+    makeCollectionListResult [] = (Result.listValue [], 1) := rfl
 
 /-- Normalization preserves list structure exactly: elements canonicalize but
 the list boundary never collapses (`[7]` stays `[7]`). -/

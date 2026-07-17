@@ -29,12 +29,17 @@ sequenceItems?                  artifact-local structural projection (the
 items                           Result.toItems
 normalize                       Result.normalize
 capture                         Result.normalize after Result.sequenceValue
-openLoneSequence                normalizeSingletonBoundaryForItemSupplyOf /
-                                normalizeSingletonBoundaryForItemSupply
-                                (sequence-builtin collection binding; the
-                                deconstruction receiver reaches the same
-                                one-boundary opening via the sequence-value
-                                parameter pattern, not via this function)
+openLoneSequence                builtinCollectionItems (sequence case; the
+                                full model applies this one-level view to a
+                                collection builtin's already-bound
+                                `collection` argument, strictly AFTER
+                                ordinary fixed binding, and it also opens a
+                                lone exact list value, which this
+                                sequence-only artifact intentionally does not
+                                model. The deconstruction receiver reaches
+                                the same one-boundary opening via the
+                                sequence-value parameter pattern, not via
+                                this function)
 captureVariadic                 variadic call argument capture
 Pat / bindArgs / bindDeconstruct / bindPats
                                 bindParameterPatternList name/rest binding model;
@@ -106,8 +111,8 @@ is observed.
 
 Raw `Val.seq` may still be appropriate internally, for example when modeling
 syntax, pre-normalization structure, or already-canonical shallow combination
-(the full model's `combineOutputSlots` / `combineCollectionResult`, which
-coincide with `normalize` on canonical items). The invariant is only that
+(the full model's `combineOutputSlots`, which
+coincides with `normalize` on canonical items). The invariant is only that
 observable capture/construction boundaries must not mint literal-unwritable
 singleton "orphan" values such as a stored `(5)` that compares unequal to `5`.
 

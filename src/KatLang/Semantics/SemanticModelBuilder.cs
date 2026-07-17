@@ -885,10 +885,13 @@ public static class SemanticModelBuilder
         {
             var parameterList = string.Join(", ", signature.Parameters.Select(parameter => parameter.DisplayName));
 
+            // Dot-call syntax injects the receiver as the fixed `collection`
+            // argument, so the receiver placeholder mirrors that parameter
+            // name: `collection.take(count)`, `collection.count`.
             return callStyle switch
             {
-                PropertyCallStyle.Dot when signature.Parameters.Count == 0 => $"values.{signature.Name}",
-                PropertyCallStyle.Dot => $"values.{signature.Name}({parameterList})",
+                PropertyCallStyle.Dot when signature.Parameters.Count == 0 => $"collection.{signature.Name}",
+                PropertyCallStyle.Dot => $"collection.{signature.Name}({parameterList})",
                 _ => signature.DisplayText,
             };
         }

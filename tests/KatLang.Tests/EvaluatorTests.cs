@@ -21,7 +21,7 @@ public class EvaluatorTests
         var full = EvalFull(source, enableLoopOptimization);
         return full.IsError
             ? full.Error
-            : EvalResult<IReadOnlyList<decimal>>.Ok(full.Value.ToAtoms());
+            : EvalResult<IReadOnlyList<decimal>>.Ok(full.Value.ToHostAtoms());
     }
 
     /// <summary>
@@ -93,6 +93,8 @@ public class EvaluatorTests
     private static Result Atom(decimal value) => new Result.Atom(value);
 
     private static Result SequenceValue(params Result[] items) => new Result.SequenceValue(items);
+
+    private static Result ListValue(params Result[] items) => new Result.ListValue(items);
 
     private static void AssertEvalCounted(string source, int expectedEmittedCount, Result expectedValue)
     {
@@ -359,7 +361,7 @@ public class EvaluatorTests
             enableSequencePipelineOptimization: false);
         if (generic.IsError)
             Assert.Fail($"Expected generic sequence success but got error: {generic.Error}");
-        Assert.Equal(expected, generic.Value.ToAtoms());
+        Assert.Equal(expected, generic.Value.ToHostAtoms());
 
         var optimized = EvalFull(
             source,
@@ -367,7 +369,7 @@ public class EvaluatorTests
             enableSequencePipelineOptimization: true);
         if (optimized.IsError)
             Assert.Fail($"Expected optimized sequence success but got error: {optimized.Error}");
-        Assert.Equal(expected, optimized.Value.ToAtoms());
+        Assert.Equal(expected, optimized.Value.ToHostAtoms());
     }
 
     private static void AssertEvalResultSequenceModes(string source, Result expected)
@@ -689,6 +691,27 @@ public class EvaluatorTests
         }
     }
 
+    /// <summary>
+    /// Asserts that <paramref name="value"/> is an exact list value whose
+    /// elements are sequence values with the given atom contents — the shape
+    /// collection-producing builtins return for kept sequence-valued items.
+    /// </summary>
+    private static void AssertListOfSequenceValueAtoms(Result value, params decimal[][] expectedGroups)
+    {
+        var outer = Assert.IsType<Result.ListValue>(value);
+        Assert.Equal(expectedGroups.Length, outer.Items.Count);
+
+        for (var groupIndex = 0; groupIndex < expectedGroups.Length; groupIndex++)
+        {
+            var group = Assert.IsType<Result.SequenceValue>(outer.Items[groupIndex]);
+            var expected = expectedGroups[groupIndex];
+            Assert.Equal(expected.Length, group.Items.Count);
+
+            for (var itemIndex = 0; itemIndex < expected.Length; itemIndex++)
+                Assert.Equal(expected[itemIndex], Assert.IsType<Result.Atom>(group.Items[itemIndex]).Value);
+        }
+    }
+
     private static void AssertAtomValue(Result value, decimal expected)
         => Assert.Equal(expected, Assert.IsType<Result.Atom>(value).Value);
 
@@ -802,13 +825,18 @@ public class EvaluatorTests
     [Fact]
     public void Eval_RecursiveDotCallArgumentUsesCurrentValueBinding()
     {
+        // atoms stays list-opaque: skip returns an exact list value, and
+        // atoms(list) would be (). Spread the skip result back into a sequence
+        // (`rest = list.skip(1)...`) before the recursive dot-call, which still
+        // exercises the current-value binding of the recursion argument.
         var source = """
             reduceCollection(values) = {
                 list = atoms(values)
+                rest = list.skip(1)...
                 if(
                     list.count <= 1,
                     list,
-                    list.skip(1).reduceCollection
+                    rest.reduceCollection
                 )
             }
             reduceCollection((1,2,3,4))
@@ -2034,40 +2062,41 @@ public class EvaluatorTests
     public void Eval_VariadicForwarding_PreservesRawItemSupply(string source, int expected)
         => AssertEval(source, expected);
 
-    // Collection-producing builtins return one sequence value; spread opens it.
+    // Collection-producing builtins return one exact immutable list value;
+    // spread opens it.
     [Theory]
     [InlineData("X = 3, 1, 2\nX.order", 1)]
     [InlineData("X = 1, 2, 3, 3\nX.distinct", 1)]
-    public void Eval_CollectionBuiltin_IsOneSequenceValue(string source, int expectedCount)
-        => AssertEvalCounted(source, expectedCount, ResultFromAtoms(1, 2, 3));
+    public void Eval_CollectionBuiltin_IsOneExactListValue(string source, int expectedCount)
+        => AssertEvalCounted(source, expectedCount, ListValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderSpread_OpensIntoItems()
         => AssertEvalCounted("X = 3, 1, 2\nX.order...", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Take_IsOneSequenceValue()
-        => AssertEvalCounted("X = 1, 2, 3\nX.take(2)", 1, ResultFromAtoms(1, 2));
+    public void Eval_CollectionBuiltin_Take_IsOneExactListValue()
+        => AssertEvalCounted("X = 1, 2, 3\nX.take(2)", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void Eval_CollectionBuiltin_TakeSpread_OpensIntoItems()
         => AssertEvalCounted("X = 1, 2, 3\nX.take(2)...", 2, ResultFromAtoms(1, 2));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Skip_IsOneSequenceValue()
-        => AssertEvalCounted("X = 1, 2, 3\nX.skip(1)", 1, ResultFromAtoms(2, 3));
+    public void Eval_CollectionBuiltin_Skip_IsOneExactListValue()
+        => AssertEvalCounted("X = 1, 2, 3\nX.skip(1)", 1, ListValue(Atom(2), Atom(3)));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Filter_IsOneSequenceValue()
-        => AssertEvalCounted("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig)", 1, ResultFromAtoms(2, 3));
+    public void Eval_CollectionBuiltin_Filter_IsOneExactListValue()
+        => AssertEvalCounted("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig)", 1, ListValue(Atom(2), Atom(3)));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Map_IsOneSequenceValue()
-        => AssertEvalCounted("Double = x * 2\nX = 1, 2, 3\nX.map(Double)", 1, ResultFromAtoms(2, 4, 6));
+    public void Eval_CollectionBuiltin_Map_IsOneExactListValue()
+        => AssertEvalCounted("Double = x * 2\nX = 1, 2, 3\nX.map(Double)", 1, ListValue(Atom(2), Atom(4), Atom(6)));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Range_IsOneSequenceValue()
-        => AssertEvalCounted("range(1, 3)", 1, ResultFromAtoms(1, 2, 3));
+    public void Eval_CollectionBuiltin_Range_IsOneExactListValue()
+        => AssertEvalCounted("range(1, 3)", 1, ListValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void Eval_CollectionBuiltin_RangeSpread_OpensIntoItems()
@@ -2078,8 +2107,8 @@ public class EvaluatorTests
         => AssertEvalCounted("atoms((1, (2, 3)))", 1, ResultFromAtoms(1, 2, 3));
 
     [Fact]
-    public void Eval_CollectionBuiltin_OrderDesc_IsOneSequenceValue()
-        => AssertEvalCounted("X = 3, 1, 2\nX.orderDesc", 1, ResultFromAtoms(3, 2, 1));
+    public void Eval_CollectionBuiltin_OrderDesc_IsOneExactListValue()
+        => AssertEvalCounted("X = 3, 1, 2\nX.orderDesc", 1, ListValue(Atom(3), Atom(2), Atom(1)));
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderDescSpread_OpensIntoItems()
@@ -2114,10 +2143,10 @@ public class EvaluatorTests
         => AssertEval(source, expected);
 
     // Chaining a collection builtin onto a collection builtin still works: the
-    // count-1 result is re-opened as a collection by the next builtin.
+    // lone list result is opened as the collection input of the next builtin.
     [Fact]
-    public void Eval_CollectionBuiltin_ChainedOrder_IsOneSequenceValue()
-        => AssertEvalCounted("X = 3, 1, 2\nX.order.order", 1, ResultFromAtoms(1, 2, 3));
+    public void Eval_CollectionBuiltin_ChainedOrder_IsOneExactListValue()
+        => AssertEvalCounted("X = 3, 1, 2\nX.order.order", 1, ListValue(Atom(1), Atom(2), Atom(3)));
 
     // Regression: scalar/reduction builtins were already arity 1 and are unchanged.
     [Fact]
@@ -3186,25 +3215,8 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        var outer = Assert.IsType<Result.SequenceValue>(result.Value);
-        Assert.Collection(
-            outer.Items,
-            first =>
-            {
-                var pair = Assert.IsType<Result.SequenceValue>(first);
-                Assert.Collection(
-                    pair.Items,
-                    a => Assert.Equal(2m, Assert.IsType<Result.Atom>(a).Value),
-                    b => Assert.Equal(20m, Assert.IsType<Result.Atom>(b).Value));
-            },
-            second =>
-            {
-                var pair = Assert.IsType<Result.SequenceValue>(second);
-                Assert.Collection(
-                    pair.Items,
-                    a => Assert.Equal(4m, Assert.IsType<Result.Atom>(a).Value),
-                    b => Assert.Equal(40m, Assert.IsType<Result.Atom>(b).Value));
-            });
+        // The kept pairs stay whole sequence values, held as exact list elements.
+        AssertListOfSequenceValueAtoms(result.Value, [2m, 20m], [4m, 40m]);
     }
 
     [Fact]
@@ -3254,19 +3266,22 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Filter_ArityMismatch_FollowsBuiltinConvention()
     {
+        // filter(collection, predicate) is an ordinary fixed-arity callable:
+        // a zero-argument call is a plain arity error carrying the fixed
+        // signature.
         var result = EvalFull("filter()");
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        var error = result.Error;
-        var contexts = new List<string>();
-        while (error is EvalError.WithContext wc)
-        {
-            contexts.Add(wc.Context);
-            error = wc.Inner;
-        }
+        var formatted = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Equal(
+            "Callable `filter(collection, predicate)` expects 2 arguments, but was called with 0 arguments.",
+            formatted);
 
-        Assert.Contains(contexts, context => context.Contains("expects at least 1 item(s)"));
+        var error = result.Error;
+        while (error is EvalError.WithContext wc)
+            error = wc.Inner;
+
         Assert.IsType<EvalError.ArityMismatch>(error);
         Assert.False(error is EvalError.VariadicArityMismatch);
     }
@@ -3352,44 +3367,37 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        var outer = Assert.IsType<Result.SequenceValue>(result.Value);
-        Assert.Collection(
-            outer.Items,
-            first =>
-            {
-                var pair = Assert.IsType<Result.SequenceValue>(first);
-                Assert.Collection(
-                    pair.Items,
-                    a => Assert.Equal(1m, Assert.IsType<Result.Atom>(a).Value),
-                    b => Assert.Equal(1m, Assert.IsType<Result.Atom>(b).Value));
-            },
-            second =>
-            {
-                var pair = Assert.IsType<Result.SequenceValue>(second);
-                Assert.Collection(
-                    pair.Items,
-                    a => Assert.Equal(2m, Assert.IsType<Result.Atom>(a).Value),
-                    b => Assert.Equal(4m, Assert.IsType<Result.Atom>(b).Value));
-            },
-            third =>
-            {
-                var pair = Assert.IsType<Result.SequenceValue>(third);
-                Assert.Collection(
-                    pair.Items,
-                    a => Assert.Equal(3m, Assert.IsType<Result.Atom>(a).Value),
-                    b => Assert.Equal(9m, Assert.IsType<Result.Atom>(b).Value));
-            });
+        // Each mapped sequence value is one exact list element of the map result.
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 1m], [2m, 4m], [3m, 9m]);
     }
 
     [Fact]
     public void Eval_Map_EmptyTransformResult_FailsWithContext()
     {
+        // A transform whose body is the truly empty result `()` still fails the
+        // strict single-element contract. (A collection builtin like take(1, 0)
+        // no longer produces this failure — it returns the empty list [], which
+        // is one valid element; see the exact-list acceptance test below.)
         var source = """
-            Bad(x) = take(1, 0)
+            Bad(x) = ()
             map((1, 2, 3), Bad)
             """;
 
         AssertMapTransformShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Map_EmptyListTransformResult_IsOneMappedElementPerItem()
+    {
+        // take(1, 0) returns the exact empty list value [] — ONE valid mapped
+        // element per item, so the transform succeeds with result [[], [], []].
+        AssertEvalCounted(
+            """
+            EmptyList(x) = take(1, 0)
+            map((1, 2, 3), EmptyList)
+            """,
+            1,
+            ListValue(ListValue(), ListValue(), ListValue()));
     }
 
     [Fact]
@@ -3579,51 +3587,55 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequencePipelineS1_FilterCount_SingleKeptSequenceItem_CountsOpenedItems()
+    public void Eval_SequencePipelineS1_FilterCount_SingleKeptSequenceItem_CountsKeptItem()
     {
-        // filter keeps exactly one sequence-valued item. The generic composition
-        // erases the one-item collection boundary (the kept `(1, 2)` IS the filter
-        // result), so `count` opens the kept item itself: 2 items, not 1. The fused
-        // filter.count path must agree.
+        // filter keeps exactly one sequence-valued item. The filter result is the
+        // exact list [(1, 2)], and `count` opens the lone list boundary: the count
+        // is the kept-item count 1, in both the generic composition and the fused
+        // filter.count path.
         var source = """
             KeepFirstPair(pair) = pair:0 == 1
             (((1, 2), (3, 4))).filter(KeepFirstPair).count
             """;
 
-        AssertEvalSequenceModes(source, 2);
+        AssertEvalSequenceModes(source, 1);
 
         var (result, stats) = EvalFullWithSequenceDiagnostics(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([2m], result.Value.ToAtoms());
+        Assert.Equal([1m], result.Value.ToAtoms());
         Assert.Equal(1, stats.FilterCountFusionHits);
     }
 
     [Fact]
-    public void Eval_SequencePipelineS1_FilterCount_SingleKeptEmptyItem_CountsZero()
+    public void Eval_SequencePipelineS1_FilterCount_SingleKeptEmptyItem_CountsOneKeptItem()
     {
-        // A lone kept `()` erases to `()` itself, so the count is 0 in both the
-        // generic composition and the fused filter.count path.
+        // A lone kept `()` stays an exact list element ([()]), so the count is
+        // the kept-item count 1 in both the generic composition and the fused
+        // filter.count path.
         var source = """
             KeepEmpty(x) = x.count == 0
             Values = (), 1
             Values.filter(KeepEmpty).count
             """;
 
-        AssertEvalSequenceModes(source, 0);
+        AssertEvalSequenceModes(source, 1);
 
         var (result, stats) = EvalFullWithSequenceDiagnostics(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([0m], result.Value.ToAtoms());
+        Assert.Equal([1m], result.Value.ToAtoms());
         Assert.Equal(1, stats.FilterCountFusionHits);
     }
 
     [Fact]
     public void Eval_SequencePipelineS1_FilterCount_FusesPlainCountDotFilter()
     {
+        // Under fixed collection-object arity the BARE one-argument form
+        // count(src.filter(pred)) is the valid plain composition, and it is
+        // the form the filter->count fusion recognizes.
         var source = """
             IsEven = x mod 2 == 0
             CountEven(N) = count(range(1, N).filter(IsEven))
@@ -3637,14 +3649,29 @@ public class EvaluatorTests
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([5m], result.Value.ToAtoms());
-        Assert.Equal(0, stats.FilterCountFusionHits);
-        Assert.Equal(0, stats.DirectRangeFusionHits);
-        Assert.DoesNotContain(stats.Pipelines, pipeline => pipeline.Optimized);
+        Assert.Equal(1, stats.FilterCountFusionHits);
+        Assert.Equal(0, stats.FilterCountFusionFallbacks);
+        Assert.Equal(1, stats.DirectRangeFusionHits);
+        Assert.Equal(0, stats.DirectRangeFusionFallbacks);
+        Assert.Equal(10, stats.FilterCountPredicateCalls);
+        Assert.Equal(5, stats.AvoidedFilteredResultMaterializations);
+        Assert.Equal(10, stats.AvoidedSourceMaterializations);
+
+        var pipeline = Assert.Single(stats.Pipelines, pipeline => pipeline.Optimized);
+        Assert.Equal("plain-count-dot-filter", pipeline.Form);
+        Assert.Equal("filter.count -> countWhere", pipeline.Fusion);
+        Assert.Equal("builtin range", pipeline.SourceKind);
+        Assert.Equal("direct range iteration", pipeline.SourceExecution);
+        Assert.Equal("IsEven", pipeline.PredicateSummary);
+        Assert.Equal(10, pipeline.PredicateCalls);
+        Assert.Equal(5, pipeline.ResultCount);
     }
 
     [Fact]
     public void Eval_SequencePipelineS1_FilterCount_FusesPlainCountPlainFilter()
     {
+        // The BARE nested plain form count(filter(src, pred)) — filter's exact
+        // list result is count's one collection argument — also fuses.
         var source = """
             IsEven = x mod 2 == 0
             CountEven(N) = count(filter(range(1, N), IsEven))
@@ -3658,9 +3685,22 @@ public class EvaluatorTests
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([5m], result.Value.ToAtoms());
-        Assert.Equal(0, stats.FilterCountFusionHits);
-        Assert.Equal(0, stats.DirectRangeFusionHits);
-        Assert.DoesNotContain(stats.Pipelines, pipeline => pipeline.Optimized);
+        Assert.Equal(1, stats.FilterCountFusionHits);
+        Assert.Equal(0, stats.FilterCountFusionFallbacks);
+        Assert.Equal(1, stats.DirectRangeFusionHits);
+        Assert.Equal(0, stats.DirectRangeFusionFallbacks);
+        Assert.Equal(10, stats.FilterCountPredicateCalls);
+        Assert.Equal(5, stats.AvoidedFilteredResultMaterializations);
+        Assert.Equal(10, stats.AvoidedSourceMaterializations);
+
+        var pipeline = Assert.Single(stats.Pipelines, pipeline => pipeline.Optimized);
+        Assert.Equal("plain-count-plain-filter", pipeline.Form);
+        Assert.Equal("filter.count -> countWhere", pipeline.Fusion);
+        Assert.Equal("builtin range", pipeline.SourceKind);
+        Assert.Equal("direct range iteration", pipeline.SourceExecution);
+        Assert.Equal("IsEven", pipeline.PredicateSummary);
+        Assert.Equal(10, pipeline.PredicateCalls);
+        Assert.Equal(5, pipeline.ResultCount);
     }
 
     [Fact]
@@ -3843,8 +3883,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_CountFilter_PlainCallCountsFilteredItems_OptimizedMatchesGeneric()
     {
-        // Plain count of a filter result uses the strict sequence-builtin
-        // contract: filter returns one sequence value and count destructures it.
+        // Plain count of a filter result: filter returns one exact list value
+        // and count opens that lone collection boundary.
         AssertEvalSequenceModes(
             "IsEven = x mod 2 == 0\ncount(filter(range(1, 10), IsEven))",
             5m);
@@ -3894,6 +3934,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequencePipeline_DirectRangeSource_StillFusesViaDirectRange()
     {
+        // The bare plain composition over a direct `range(...)` source fuses
+        // via direct-range iteration and matches the generic result.
         var source = """
             IsEven = x mod 2 == 0
             count(filter(range(1, 10), IsEven))
@@ -3909,8 +3951,8 @@ public class EvaluatorTests
         Assert.Equal([5m], optimized.Value.ToAtoms());
 
         var (_, stats) = EvalFullWithSequenceDiagnostics(source);
-        Assert.Equal(0, stats.FilterCountFusionHits);
-        Assert.Equal(0, stats.DirectRangeFusionHits);
+        Assert.Equal(1, stats.FilterCountFusionHits);
+        Assert.Equal(1, stats.DirectRangeFusionHits);
     }
 
     [Fact]
@@ -4202,8 +4244,8 @@ public class EvaluatorTests
 
         Assert.Equal([1m], plainFilterResult.Value.ToAtoms());
         Assert.Equal(0, plainFilterStats.FilterCountFusionHits);
-        Assert.Equal(0, plainFilterStats.FilterCountFusionFallbacks);
-        Assert.DoesNotContain("filter does not resolve to builtin", plainFilterStats.FallbackReasons.Keys);
+        Assert.Equal(1, plainFilterStats.FilterCountFusionFallbacks);
+        Assert.Equal(1, plainFilterStats.FallbackReasons["filter does not resolve to builtin"]);
 
         // User count shadowing keeps the pipeline from using the builtin count
         // fusion and the shadowed count sees the filter result as one argument.
@@ -4219,7 +4261,8 @@ public class EvaluatorTests
 
         Assert.Equal([999m], plainCountResult.Value.ToAtoms());
         Assert.Equal(0, plainCountStats.FilterCountFusionHits);
-        Assert.Equal(0, plainCountStats.FilterCountFusionFallbacks);
+        Assert.Equal(1, plainCountStats.FilterCountFusionFallbacks);
+        Assert.Equal(1, plainCountStats.FallbackReasons["count does not resolve to builtin"]);
     }
 
     [Fact]
@@ -4248,31 +4291,55 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequencePipelineS1_FilterCount_CountConsumesMultipleArgumentsAsItemSupply()
+    public void Eval_SequencePipelineS1_FilterCount_ExtraCountArgument_IsArityErrorInBothModes()
     {
-        // count(values...) is an item supply, so extra top-level arguments join the
-        // collection rather than over-supplying a strict one-slot signature:
-        // count(filteredSequence, 0) counts the two top-level items.
+        // count(collection) is fixed one-argument: an extra argument beside the
+        // filter pipeline is an ordinary arity error, and the optimizer must
+        // not recognize the over-supplied call in either mode.
         var source = """
             IsEven = x mod 2 == 0
             count(range(1, 10).filter(IsEven), 0)
             """;
 
-        AssertEval(source, 2m);
+        foreach (var enableSequencePipelineOptimization in new[] { false, true })
+        {
+            var result = EvalFull(
+                source,
+                enableLoopOptimization: true,
+                enableSequencePipelineOptimization: enableSequencePipelineOptimization);
+            if (result.IsOk)
+                Assert.Fail($"Expected arity failure but got: {result.Value}");
+
+            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+            Assert.Equal(1, arity.Expected);
+            Assert.Equal(2, arity.Actual);
+        }
     }
 
     [Fact]
-    public void Eval_SequencePipelineS1_FilterExtraArgument_JoinsCollectionAndFailsOnNonNumericItem()
+    public void Eval_SequencePipelineS1_FilterExtraArgument_IsArityErrorInBothModes()
     {
-        // filter(values..., predicate) is an item supply: the extra `0` joins the collection
-        // alongside the range value, so the predicate runs against a non-numeric grouped
-        // item and fails with a type mismatch (rather than a strict arity rejection).
+        // filter(collection, predicate) is fixed two-argument: the extra `0`
+        // over-supplies the call, an ordinary arity error in both the generic
+        // and the sequence-pipeline-optimized evaluator.
         var source = """
             IsEven = x mod 2 == 0
             count(filter(range(1, 10), 0, IsEven))
             """;
 
-        AssertEvalFails(source);
+        foreach (var enableSequencePipelineOptimization in new[] { false, true })
+        {
+            var result = EvalFull(
+                source,
+                enableLoopOptimization: true,
+                enableSequencePipelineOptimization: enableSequencePipelineOptimization);
+            if (result.IsOk)
+                Assert.Fail($"Expected arity failure but got: {result.Value}");
+
+            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+            Assert.Equal(2, arity.Expected);
+            Assert.Equal(3, arity.Actual);
+        }
     }
 
     [Fact]
@@ -4453,7 +4520,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([2m, 3m], result.Value.ToAtoms());
+        Assert.Equal([2m, 3m], result.Value.ToHostAtoms());
         Assert.Equal(0, loopStats.CountedParameterReferencesPlanned);
 
         var plan = AssertSingleLoopPlan(loopStats, "Inner.Step.while");
@@ -4489,7 +4556,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([2m, 3m], result.Value.ToAtoms());
+        Assert.Equal([2m, 3m], result.Value.ToHostAtoms());
         Assert.Equal(0, loopStats.CountedParameterReferencesPlanned);
 
         var plan = AssertSingleLoopPlan(loopStats, "Inner.Step.repeat");
@@ -4561,7 +4628,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([13m, 17m], result.Value.ToAtoms());
+        Assert.Equal([13m, 17m], result.Value.ToHostAtoms());
 
         var reversePlan = AssertSingleLoopPlan(loopStats, "Reverse.Step.while");
         var revOutput = AssertLoopExpression(reversePlan, "output", 1);
@@ -4645,7 +4712,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        Assert.Equal([2m, 3m], result.Value.ToAtoms());
+        Assert.Equal([2m, 3m], result.Value.ToHostAtoms());
         Assert.True(loopStats.CountedParameterReferencesPlanned > 0);
 
         var plan = AssertSingleLoopPlan(loopStats, "UsesLimit.Step.while");
@@ -4804,17 +4871,19 @@ public class EvaluatorTests
         AssertEval("A = (())\nA.count", 0);
     }
 
-    // ── Collection builtins erase the one-item collection boundary: a single
-    //    kept item IS the result, matching ordinary construction/capture, so no
-    //    literal-unwritable orphan like ((1, 2)) or (()) is ever produced ──
+    // ── Collection builtins return exact immutable list values: kept items stay
+    //    exact list elements (a one-element list [item] is NEVER erased to the
+    //    item), and zero kept items form the empty list [] ──
 
     [Fact]
-    public void Eval_Filter_NestedEmptyInput_CanonicalizesToEmptyCollection()
-        => AssertEvalEmptyOutput(
+    public void Eval_Filter_NestedEmptyInput_CanonicalizesToEmptyList()
+        => AssertEvalCounted(
             """
             AlwaysTrue(x) = 1
             filter((()), AlwaysTrue)
-            """);
+            """,
+            1,
+            ListValue());
 
     [Fact]
     public void Eval_Count_FilterNestedEmptyInput_CountsZeroItems()
@@ -4826,24 +4895,23 @@ public class EvaluatorTests
             0);
 
     [Fact]
-    public void Eval_Take_SingleSequenceValueItem_ErasesBoundary()
-        => AssertEvalCounted("take(((1, 2), (3, 4)), 1)", 1, SequenceValue(Atom(1), Atom(2)));
+    public void Eval_Take_SingleSequenceValueItem_StaysExactListElement()
+        => AssertEvalCounted("take(((1, 2), (3, 4)), 1)", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
 
     [Fact]
-    public void Eval_Skip_SingleSequenceValueItem_ErasesBoundary()
-        => AssertEvalCounted("skip(((1, 2), (3, 4)), 1)", 1, SequenceValue(Atom(3), Atom(4)));
+    public void Eval_Skip_SingleSequenceValueItem_StaysExactListElement()
+        => AssertEvalCounted("skip(((1, 2), (3, 4)), 1)", 1, ListValue(SequenceValue(Atom(3), Atom(4))));
 
     [Fact]
-    public void Eval_Distinct_SingleSequenceValueItem_ErasesBoundary()
-        => AssertEvalCounted("distinct(((1, 2), (1, 2)))", 1, SequenceValue(Atom(1), Atom(2)));
+    public void Eval_Distinct_SingleSequenceValueItem_StaysExactListElement()
+        => AssertEvalCounted("distinct(((1, 2), (1, 2)))", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
 
     [Fact]
-    public void Eval_Filter_KeepsSingleNonEmptySequenceValueItem_ErasesBoundary()
+    public void Eval_Filter_KeepsSingleNonEmptySequenceValueItem_StaysExactListElement()
     {
         // Filtering a two-item collection down to one kept sequence-valued item
-        // erases the one-item collection boundary: the kept `(1, 2)` IS the result,
-        // matching ordinary construction where a literal `((1, 2))` also collapses
-        // to the two-item collection `(1, 2)`.
+        // keeps that item as an exact list element: the result is [(1, 2)] —
+        // no singleton erasure ever applies to list structure.
         var result = EvalFull(
             """
             KeepFirstPair(pair) = pair:0 == 1
@@ -4852,64 +4920,83 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        AssertSequenceValueAtoms(result.Value, 1, 2);
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m]);
     }
 
     [Fact]
     public void Eval_Take_SingleKeptItem_ReproAgreesAcrossObservations()
     {
-        // Regression for the former builtin singleton-boundary orphan: T must be
-        // the writable value (1, 2), so display, equality, count(T), and T.count
-        // all agree on the same observable shape.
-        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, SequenceValue(Atom(1), Atom(2)));
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 2);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT.count", 2);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", 1);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", 1);
-        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT:0", 1);
+        // T is the exact list [(1, 2)]: display, count(T), T.count, equality, and
+        // indexing all observe the same one-element list value. Lists are not
+        // equal to sequences, and `:` indexing keeps lists opaque (T:0 is the
+        // whole list, like a scalar).
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 1);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT.count", 1);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", 0);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", 0);
+        AssertEval("T = take(((1, 2), (3, 4)), 1)\nT == [(1, 2)]", 1);
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT:0", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
     }
 
     [Fact]
-    public void Eval_Distinct_SingleKeptEmptyItem_ErasesBoundary()
+    public void Eval_Distinct_SingleKeptEmptyItem_StaysExactListElement()
     {
-        // distinct((), ()) dedups two equal `()` items to one kept item; the
-        // one-item collection boundary is erased, so the result is `()` itself
-        // (count 0), never the literal-unwritable orphan `(())`. At the root it
-        // is still one visible output slot, like any other non-spread `()` row.
-        AssertEvalCounted("distinct((), ())", 1, SequenceValue());
-        AssertEval("count(distinct((), ()))", 0);
-        AssertEval("distinct((), ()) == ()", 1);
+        // distinct(((), ())) dedups the collection's two equal `()` items to one
+        // kept item; the kept `()` stays an exact list element, so the result is
+        // [()] (one element, count 1) and is NOT equal to the empty sequence `()`.
+        AssertEvalCounted("distinct(((), ()))", 1, ListValue(SequenceValue()));
+        AssertEval("count(distinct(((), ())))", 1);
+        AssertEval("distinct(((), ())) == ()", 0);
+
+        // The old bare two-argument form over-supplies the fixed
+        // distinct(collection) signature.
+        AssertEvalFailsWithArityMismatch("distinct((), ())", expected: 1, actual: 2);
     }
 
     [Fact]
     public void Eval_Take_MultipleEmptyItems_PreservesSiblingBoundaries()
     {
-        // Guard against over-normalization: multiple kept empty-sequence items keep
-        // their sibling boundaries. The combiner is shallow — it never collapses or
-        // drops meaningful sibling items, so take((), (), 2) stays ((), ()).
-        AssertEvalCounted("take((), (), 2)", 1, SequenceValue(SequenceValue(), SequenceValue()));
-        AssertEval("count(take((), (), 2))", 2);
-        AssertEvalCounted("distinct((), (), 1)", 1, SequenceValue(SequenceValue(), Atom(1)));
+        // Kept empty-sequence items stay exact list elements with their sibling
+        // boundaries preserved raw: take(((), ()), 2) is [(), ()] — never
+        // collapsed or dropped.
+        AssertEvalCounted("take(((), ()), 2)", 1, ListValue(SequenceValue(), SequenceValue()));
+        AssertEval("count(take(((), ()), 2))", 2);
+        AssertEvalCounted("distinct(((), (), 1))", 1, ListValue(SequenceValue(), Atom(1)));
+
+        // The old bare form supplied the empty items as separate arguments —
+        // now an ordinary arity error against take(collection, count).
+        AssertEvalFailsWithArityMismatch("take((), (), 2)", expected: 2, actual: 3);
     }
 
     [Fact]
-    public void Eval_Filter_SingleKeptEmptyItem_ErasesBoundary()
+    public void Eval_Filter_SingleKeptEmptyItem_StaysExactListElement()
     {
-        // Filtering down to exactly one kept `()` item returns `()` itself
-        // (one visible output slot at the root, value the empty sequence).
+        // Filtering down to exactly one kept `()` item returns the exact list
+        // [()]: one visible output slot whose one element is the empty sequence.
         AssertEvalCounted(
+            """
+            KeepEmpty(x) = x.count == 0
+            filter(((), 1), KeepEmpty)
+            """,
+            1,
+            ListValue(SequenceValue()));
+        AssertEval(
+            """
+            KeepEmpty(x) = x.count == 0
+            count(filter(((), 1), KeepEmpty))
+            """,
+            1);
+
+        // The old bare three-argument form over-supplies the fixed
+        // filter(collection, predicate) signature.
+        AssertEvalFailsWithArityMismatch(
             """
             KeepEmpty(x) = x.count == 0
             filter((), 1, KeepEmpty)
             """,
-            1,
-            SequenceValue());
-        AssertEval(
-            """
-            KeepEmpty(x) = x.count == 0
-            count(filter((), 1, KeepEmpty))
-            """,
-            0);
+            expected: 2,
+            actual: 3);
     }
 
     [Fact]
@@ -4997,19 +5084,21 @@ public class EvaluatorTests
         AssertEval("() != (())", 0);
         AssertEval("(()) == (())", 1);
         AssertEval("A = ()\nA == ()", 1);
+        // Collection-builtin results are exact lists: the empty list [] is NOT
+        // equal to the empty sequence ().
         AssertEval(
             """
             IsEven = x mod 2 == 0
             filter((1, 3, 5), IsEven) == ()
             """,
-            1);
+            0);
         AssertEval(
             """
             IsEven = x mod 2 == 0
             () == filter((1, 3, 5), IsEven)
             """,
-            1);
-        AssertEval("(0).skip(1) == ()", 1);
+            0);
+        AssertEval("(0).skip(1) == ()", 0);
     }
 
     [Fact]
@@ -5607,11 +5696,13 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Contains_OneArgumentSearchesEmptySequence()
+    public void Eval_Contains_OneArgument_IsArityError()
     {
-        // contains(values..., item) is an item supply: with one argument the rest captures
-        // nothing, so the item is searched in an empty collection and the result is false (0).
-        AssertEval("contains(1)", 0m);
+        // contains(collection, item) is fixed two-argument, so contains(1) is
+        // an ordinary arity error. Searching nothing is spelled with an
+        // explicit empty collection argument and finds nothing.
+        AssertEvalFailsWithArityMismatch("contains(1)", expected: 2, actual: 1);
+        AssertEval("contains((), 2)", 0m);
     }
 
     // ── First/last builtins ────────────────────────────────────────────────
@@ -5756,7 +5847,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
     }
 
     [Fact]
@@ -5771,7 +5862,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
     }
 
     [Fact]
@@ -5786,7 +5877,7 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        AssertNestedSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m], [3m, 4m]);
     }
 
     [Fact]
@@ -5843,6 +5934,27 @@ public class EvaluatorTests
             4,
             5,
             5);
+
+    [Fact]
+    public void Eval_LoopOptimizer_ListValuedStateSlot_MatchesGenericMode()
+    {
+        // A step expression may produce an exact list state value via a
+        // collection builtin; optimized and generic loop modes must carry the
+        // same list value through repeat and while state slots.
+        AssertEvalResultLoopModes(
+            """
+            Step(a, b) = take(a, 1), count(a)
+            Step.repeat(2, 1, 0)
+            """,
+            Result.FromItems([ListValue(Atom(1)), Atom(1)]));
+
+        AssertEvalResultLoopModes(
+            """
+            Step(a, b) = take(a, 1), b + 1, b < 2
+            Step.while(5, 0)
+            """,
+            Result.FromItems([ListValue(Atom(5)), Atom(2)]));
+    }
 
     [Fact]
     public void Eval_LoopOptimizer_CanonicalizesNestedEmptyStateSlot_MatchesGenericMode()
@@ -5940,8 +6052,11 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequenceReceiverBoundary_YellowstoneSequenceValueHistoryUsesSpread()
+    public void Eval_SequenceReceiverBoundary_YellowstoneSequenceValueHistoryPassedWhole()
     {
+        // `history` holds one grouped sequence value, which is exactly the one
+        // collection argument contains(collection, item) expects — the wrapper
+        // passes it whole and the collection view opens the lone boundary.
         var expectedHistory = new decimal[]
         {
             1, 2, 3, 4, 9, 8, 15, 14, 5, 6,
@@ -5954,7 +6069,7 @@ public class EvaluatorTests
             Gcd = GcdStep.while(a, b):1
 
             FindNext(history, pre1, pre2) = {
-                IsYSCandidate(candidate) = not contains(history..., candidate) and
+                IsYSCandidate(candidate) = not contains(history, candidate) and
                     Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
                 FindStep.while(1):0
@@ -6042,27 +6157,27 @@ public class EvaluatorTests
         => AssertEval("skip((1, 2, 3), 10)");
 
     [Fact]
-    public void Eval_Take_SequenceValueItems_ReturnsFirstGroupItself()
+    public void Eval_Take_SequenceValueItems_KeepsFirstGroupAsExactListElement()
     {
         var result = EvalFull("take(((1, 2), (3, 4)), 1)");
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // The one kept sequence-valued item IS the result: the one-item collection
-        // boundary is erased, so take(..., 1) agrees with first(...).
-        AssertSequenceValueAtoms(result.Value, 1, 2);
+        // The one kept sequence-valued item stays an exact list element: the
+        // result is [(1, 2)] (first(...) still selects the item itself).
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m]);
     }
 
     [Fact]
-    public void Eval_Skip_SequenceValueItems_ReturnsSecondGroupItself()
+    public void Eval_Skip_SequenceValueItems_KeepsSecondGroupAsExactListElement()
     {
         var result = EvalFull("skip(((1, 2), (3, 4)), 1)");
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // The one remaining sequence-valued item IS the result: the one-item
-        // collection boundary is erased, so skip to one item agrees with last(...).
-        AssertSequenceValueAtoms(result.Value, 3, 4);
+        // The one remaining sequence-valued item stays an exact list element:
+        // the result is [(3, 4)] (last(...) still selects the item itself).
+        AssertListOfSequenceValueAtoms(result.Value, [3m, 4m]);
     }
 
     [Fact]
@@ -6162,17 +6277,17 @@ public class EvaluatorTests
             "skip count must be exactly one whole-number value");
 
     [Fact]
-    public void Eval_Skip_SpreadArgumentsJoinItemSupply()
+    public void Eval_Skip_SpreadArguments_FollowOrdinaryFixedArity()
     {
-        // skip(values..., count) is an item supply: the spread opens its items into the call's
-        // item supply, the last item binds `count`, and the rest is the collection. Here the
-        // collection is ((3, 4), 1) and skipping 2 leaves nothing.
+        // Spread has only its ordinary meaning: `Bad...` opens to two argument
+        // slots, so skip((3, 4), Bad...) supplies three arguments to the fixed
+        // skip(collection, count) signature — an ordinary arity error.
         var source = """
             Bad = 1, 2
             skip((3, 4), Bad...)
             """;
 
-        Assert.Empty(KatLangEngine.EvaluateToAtoms(source));
+        AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 3);
     }
 
     // ── Min builtin ──────────────────────────────────────────────────────────
@@ -6557,8 +6672,11 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Reduce_ArityMismatch_RequiresReducerAndInitialSuffixes()
+    public void Eval_Reduce_ArityMismatch_ReportsFixedThreeArgumentSignature()
     {
+        // reduce(collection, reducer, initial) is an ordinary fixed-arity
+        // callable: an under-supplied call is a plain arity error carrying the
+        // fixed signature.
         var result = EvalFull(
             """
             Add = x + total
@@ -6568,8 +6686,9 @@ public class EvaluatorTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("expects at least 2 item(s)", formatted);
-        Assert.Contains("while evaluating call to reduce", formatted);
+        Assert.Equal(
+            "Callable `reduce(collection, reducer, initial)` expects 3 arguments, but was called with 1 argument.",
+            formatted);
 
         var error = result.Error;
         while (error is EvalError.WithContext wc)
@@ -6577,19 +6696,23 @@ public class EvaluatorTests
 
         Assert.IsType<EvalError.ArityMismatch>(error);
         Assert.False(error is EvalError.VariadicArityMismatch);
+
+        // The old two-argument shape (collection + reducer, no initial) is the
+        // same kind of plain arity error — no suffix binding, no hint.
+        AssertEvalFailsWithArityMismatch("Add = x + total\nreduce((1, 2, 3), Add)", expected: 3, actual: 2);
     }
 
     [Fact]
     public void Eval_Reduce_ParameterizedInitialAccumulator_ReportsCallSiteWithHint()
     {
-        var result = EvalFull("Add = x + total\nreduce((1, 2, 3), Add)");
+        // A fully supplied reduce(collection, reducer, initial) whose `initial`
+        // argument is a parameterized algorithm cannot evaluate the starting
+        // accumulator, so the call-site hint fires (rather than a generic
+        // unknown-name error).
+        var result = EvalFull("Add = x + total\nreduce((1, 2, 3), {a + b}, Add)");
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        // reduce(values..., reducer, initial) is an item supply: the two suffix slots bind
-        // reducer = (1, 2, 3) and initial = Add from the back, leaving an empty collection.
-        // Add is parameterized, so it cannot be the starting accumulator and the call-site
-        // hint fires (rather than a generic arity error).
         var formatted = KatLangError.FromEvalError(result.Error);
         Assert.Equal(2, formatted.StartLine);
         Assert.Equal(1, formatted.StartColumn);
@@ -6613,11 +6736,29 @@ public class EvaluatorTests
         var formatted = KatLangError.FromEvalError(result.Error);
         Assert.Equal(3, formatted.StartLine);
         Assert.Equal(1, formatted.StartColumn);
-        Assert.Contains("`reduce` is `reduce(values..., reducer, initial)`", formatted.Message);
+        Assert.Contains("`reduce` is `reduce(collection, reducer, initial)`", formatted.Message);
         Assert.Contains("'x' and 'total'", formatted.Message);
         Assert.Contains("add an initial accumulator", formatted.Message);
         Assert.DoesNotContain("Unknown name: x", formatted.Message);
         Assert.DoesNotContain("Bad arity", formatted.Message);
+    }
+
+    [Fact]
+    public void Eval_Reduce_DotCallOrdinaryValueWithMissingArgument_ReportsFixedArity()
+    {
+        // The missing-initial hint is specific to the common X.reduce(F)
+        // mistake where F is visibly a parameterized reducer. An ordinary
+        // value is not misdescribed as an unevaluable initial accumulator.
+        var result = EvalFull("Values = 1, 2, 3\nValues.reduce(0)");
+        if (result.IsOk)
+            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+
+        var formatted = KatLangError.FromEvalError(result.Error);
+        Assert.Equal(2, formatted.StartLine);
+        Assert.Equal(1, formatted.StartColumn);
+        Assert.Equal(
+            "Property 'reduce' on `Values` expects 3 parameters, but was called with 2 arguments.",
+            formatted.Message);
     }
 
     [Fact]
@@ -6782,12 +6923,30 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Reduce_EmptyStepResult_FailsWithContext()
     {
+        // A step whose body is the truly empty result `()` still fails the strict
+        // single-accumulator contract. (A collection builtin like take(1, 0) no
+        // longer produces this failure — it returns the empty list [], which is
+        // one valid accumulator value; see the exact-list acceptance test below.)
         var source = """
-            Bad(x, acc) = take(1, 0)
+            Bad(x, acc) = ()
             reduce((1, 2, 3), Bad, 0)
             """;
 
         AssertReduceStepShapeFails(source);
+    }
+
+    [Fact]
+    public void Eval_Reduce_ListValuedStepResult_IsAcceptedAsAccumulator()
+    {
+        // take(a, 1) returns an exact list — ONE valid accumulator value per
+        // step, so the final accumulator is the last step's list [3].
+        AssertEvalCounted(
+            """
+            Step(a, acc) = take(a, 1)
+            reduce((1, 2, 3), Step, 0)
+            """,
+            1,
+            ListValue(Atom(3)));
     }
 
     [Fact]
@@ -7018,9 +7177,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (1, 2) is kept; the one-item collection boundary is erased, so the
-        // kept `(1, 2)` itself is the result.
-        AssertSequenceValueAtoms(result.Value, 1, 2);
+        // Only (1, 2) is kept; it stays an exact list element, so the result is
+        // the exact list [(1, 2)].
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m]);
     }
 
     [Fact]
@@ -7091,9 +7250,11 @@ public class EvaluatorTests
             Items.filter{x.count == 3}.count
             """;
 
-        // filter keeps only the (1, 2, 3) item; the one-item collection boundary is
-        // erased, so .count opens the kept sequence itself: 3 items, not 1.
-        AssertEval(source, 1, 7, 3);
+        // range(1, 3) is an exact list item: `x:0` keeps it opaque (indexing does
+        // not open lists), so the map projects the whole [1, 2, 3] element (host
+        // atoms 1, 2, 3) beside 7. filter keeps the one list item whose opened
+        // count is 3, and .count reports the kept-item count 1.
+        AssertEval(source, 1, 2, 3, 7, 1);
     }
 
     [Fact]
@@ -7153,9 +7314,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only the first report is kept; the one-item collection boundary is erased,
-        // so the kept report `(7, 6, 4, 2, 1)` itself is the result.
-        AssertSequenceValueAtoms(result.Value, 7, 6, 4, 2, 1);
+        // Only the first report is kept; it stays an exact list element, so the
+        // result is the exact list [(7, 6, 4, 2, 1)].
+        AssertListOfSequenceValueAtoms(result.Value, [7m, 6m, 4m, 2m, 1m]);
     }
 
     [Fact]
@@ -7188,9 +7349,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (1, 2) is kept; the one-item collection boundary is erased, so the
-        // kept `(1, 2)` itself is the result.
-        AssertSequenceValueAtoms(result.Value, 1, 2);
+        // Only (1, 2) is kept; it stays an exact list element, so the result is
+        // the exact list [(1, 2)].
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 2m]);
     }
 
     [Fact]
@@ -13155,7 +13316,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter_ReturnsKeptItemItself()
+    public void Eval_HigherOrder_InlinePredicate_CapturesOuterValueParameter_ReturnsKeptItemAsListElement()
     {
         var source = """
             OccurrenceCount(target) = {
@@ -13169,9 +13330,9 @@ public class EvaluatorTests
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
-        // Only (2, 20) matches; the one-item collection boundary is erased, so the
-        // kept `(2, 20)` itself passes through the user-call boundary unchanged.
-        AssertSequenceValueAtoms(result.Value, 2, 20);
+        // Only (2, 20) matches; it stays an exact list element, and the list
+        // [(2, 20)] passes through the user-call boundary unchanged.
+        AssertListOfSequenceValueAtoms(result.Value, [2m, 20m]);
     }
 
     [Fact]
@@ -13664,12 +13825,29 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ClauseGroup_DoubleParenSequenceValuePattern_MatchesSingleRangeArgument()
+    public void Eval_ClauseGroup_DoubleParenSequenceValuePattern_FallsThroughForListRangeArgument()
     {
+        // range returns an exact list value, and multi-clause conditional
+        // sequence-value patterns match sequence values only (list patterns are
+        // deferred by design), so the list argument takes the fallback clause.
         var source = """
             MarkSequenceValueRange((a, b, c)) = 1
             MarkSequenceValueRange(x) = 0
             MarkSequenceValueRange(range(1, 3))
+            """;
+
+        AssertEval(source, 0);
+    }
+
+    [Fact]
+    public void Eval_ClauseGroup_DoubleParenSequenceValuePattern_MatchesSpreadRangeArgument()
+    {
+        // Spreading the range list inside parentheses builds a sequence value
+        // (1, 2, 3), which the sequence-value pattern clause matches.
+        var source = """
+            MarkSequenceValueRange((a, b, c)) = 1
+            MarkSequenceValueRange(x) = 0
+            MarkSequenceValueRange((range(1, 3)...))
             """;
 
         AssertEval(source, 1);
