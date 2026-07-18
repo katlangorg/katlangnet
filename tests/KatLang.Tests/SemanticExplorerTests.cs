@@ -421,13 +421,14 @@ public class SemanticExplorerTests
                 $"expected single-element contract error, observed {mapId.Neutral}"));
         }
 
-        // `atoms` is intentionally UNCHANGED by the builtin-list work: it
-        // flattens through Result.ToAtoms (canonical sequence result; lists
-        // are omitted like strings). Direct list support for `atoms` is a
-        // deferred follow-up.
+        // `atoms` recursively collects numeric atoms through BOTH sequence
+        // and exact list boundaries (depth-first, left-to-right) and
+        // materializes them as ONE exact immutable list. Truth testing stays
+        // list-opaque and is pinned separately. The expectation uses an
+        // independent local traversal so the sweep checks the runtime
+        // collector rather than restating it.
         var atoms = Obs("atoms", valueId);
-        var expectedAtoms = Result.FromItems(
-            captured.Value!.ToAtoms().Select(a => (Result)new Result.Atom(a)));
+        var expectedAtoms = new Result.ListValue(CollectNumericAtomsRecursively(captured.Value!));
         if (atoms.Outcome != "ok" || !Result.ValueComparer.Equals(atoms.Value, expectedAtoms))
         {
             findings.Add(new Finding(
@@ -453,6 +454,19 @@ public class SemanticExplorerTests
                 $"expected {expectedTakeCount}, observed {takeCount.Neutral}"));
         }
     }
+
+    /// <summary>
+    /// Independent model of the `atoms` builtin's collection rule: numeric
+    /// atoms gathered depth-first, left-to-right, through both sequence and
+    /// exact list boundaries; strings and other leaves contribute none.
+    /// </summary>
+    private static List<Result> CollectNumericAtomsRecursively(Result value) => value switch
+    {
+        Result.Atom(var n) => [new Result.Atom(n)],
+        Result.SequenceValue(var items) => items.SelectMany(CollectNumericAtomsRecursively).ToList(),
+        Result.ListValue(var items) => items.SelectMany(CollectNumericAtomsRecursively).ToList(),
+        _ => [],
+    };
 
     private static void ExpectExactList(List<Finding> findings, ExplorerObservation observation, IReadOnlyList<Result> keptItems)
     {

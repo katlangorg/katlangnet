@@ -282,6 +282,9 @@ public class SequenceValueImmutabilityTests
     [InlineData("take((1, 2, 3, 4), 2)", "[1, 2]")]
     [InlineData("skip((1, 2, 3, 4), 2)", "[3, 4]")]
     [InlineData("distinct((1, 2, 2, 3))", "[1, 2, 3]")]
+    [InlineData("atoms((1, 2, 3))", "[1, 2, 3]")]
+    [InlineData("atoms([1, [2, (3, [4])]])", "[1, 2, 3, 4]")]
+    [InlineData("atoms('text')", "[]")]
     public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
     {
         // Collection-producing builtins return one exact immutable list value.
@@ -298,8 +301,11 @@ public class SequenceValueImmutabilityTests
     [Fact]
     public void BuiltinProducedSequence_ResistsHostMutation()
     {
-        // atoms keeps its canonical sequence result.
-        var run = Run("atoms((1, 2, 3))");
+        // `first` returns the stored item unchanged, so a sequence-valued
+        // item surfaces as a builtin-produced sequence value. (`atoms` now
+        // materializes one exact immutable list like the other
+        // collection-producing builtins; see ListValueImmutabilityTests.)
+        var run = Run("first(((1, 2, 3), 4))");
         var value = Assert.IsType<Result.SequenceValue>(run.Value);
 
         Assert.Equal("(1, 2, 3)", run.ToDisplayString());

@@ -851,3 +851,171 @@ the count is 0 (empty sequence value) or 1, never a multi-item count. -/
 theorem reCountValueBoundary_count_le_one (p : CountedResult) :
     (reCountValueBoundary p).snd ≤ 1 :=
   valueCount_le_one p.fst
+
+/-
+## `atoms` builtin laws (issue #136)
+
+`Result.languageAtoms` is the atoms builtin's collector: numeric atoms
+gathered depth-first, left to right, through BOTH sequence and exact list
+boundaries; strings contribute no atoms. The builtin materializes the
+collection as ONE exact immutable list via `makeCollectionListResult`, so the
+result kind never depends on the input kind or on the collected count. Truth
+testing (`truthValue?`) reads the separate sequence-only `Result.atoms` view,
+so lists still have no truth value — the traversal laws here can never leak
+into `if`.
+-/
+
+/-- The atoms builtin's observable materialization in closed form: what the
+`.atomsBuiltin` dispatch in `applyBuiltinCounted` returns for an evaluated
+argument value. -/
+def atomsBuiltinResultForLaw (r : Result) : CountedResult :=
+  makeCollectionListResult ((Result.languageAtoms r).map Result.atom)
+
+-- `languageAtoms` (like `Result.atoms`/`hostAtoms`) recurses through
+-- `List.flatMap`, so it compiles via well-founded recursion and its
+-- equations are established by `simp` rather than `rfl`.
+
+theorem atoms_number (n : Int) :
+    Result.languageAtoms (Result.atom n) = [n] := by
+  simp [Result.languageAtoms]
+
+theorem atoms_string (s : String) :
+    Result.languageAtoms (Result.str s) = [] := by
+  simp [Result.languageAtoms]
+
+/-- Sequence traversal is concatenation of element traversals, which is
+exactly depth-first left-to-right order. -/
+theorem atoms_sequence (rs : List Result) :
+    Result.languageAtoms (Result.sequenceValue rs)
+      = rs.flatMap Result.languageAtoms := by
+  simp [Result.languageAtoms]
+
+/-- List traversal follows the same rule as sequence traversal: both
+boundary kinds open, and neither is preserved in the result. -/
+theorem atoms_list (rs : List Result) :
+    Result.languageAtoms (Result.listValue rs)
+      = rs.flatMap Result.languageAtoms := by
+  simp [Result.languageAtoms]
+
+theorem atoms_empty_sequence :
+    Result.languageAtoms (Result.sequenceValue []) = [] := by
+  simp [atoms_sequence]
+
+theorem atoms_empty_list :
+    Result.languageAtoms (Result.listValue []) = [] := by
+  simp [atoms_list]
+
+/-- Order preservation in concatenation form: element order is result order,
+with no sorting, deduplication, or per-container grouping. -/
+theorem atoms_order_preserved (a b : List Result) :
+    Result.languageAtoms (Result.sequenceValue (a ++ b))
+      = Result.languageAtoms (Result.sequenceValue a)
+        ++ Result.languageAtoms (Result.sequenceValue b) := by
+  simp [atoms_sequence]
+
+theorem atoms_nested_sequence :
+    Result.languageAtoms (Result.sequenceValue
+      [Result.sequenceValue [Result.atom 1, Result.atom 2],
+       Result.sequenceValue [Result.atom 3, Result.atom 4]]) = [1, 2, 3, 4] := by
+  simp [Result.languageAtoms]
+
+theorem atoms_nested_list :
+    Result.languageAtoms (Result.listValue
+      [Result.listValue [Result.atom 1, Result.atom 2],
+       Result.listValue [Result.atom 3, Result.atom 4]]) = [1, 2, 3, 4] := by
+  simp [Result.languageAtoms]
+
+/-- Mixed nesting: `atoms([(1, 2), [3, [4]], 5])` collects `[1, 2, 3, 4, 5]` —
+sequence and list boundaries interleave freely and flatten uniformly. -/
+theorem atoms_mixed_sequence_list :
+    Result.languageAtoms (Result.listValue
+      [Result.sequenceValue [Result.atom 1, Result.atom 2],
+       Result.listValue [Result.atom 3, Result.listValue [Result.atom 4]],
+       Result.atom 5]) = [1, 2, 3, 4, 5] := by
+  simp [Result.languageAtoms]
+
+/-- The atoms builtin returns ONE exact list value with emitted count 1 for
+EVERY input — including a zero-atom collection, where the visible result is
+the empty list `[]` (never the invisible empty sequence). -/
+theorem atoms_result_is_list (r : Result) :
+    atomsBuiltinResultForLaw r
+      = (Result.listValue ((Result.languageAtoms r).map Result.atom), 1) := rfl
+
+/-- Singleton results stay singleton lists: no canonical erasure applies to
+the materialized collection. -/
+theorem atoms_singleton_preserved (n : Int) :
+    atomsBuiltinResultForLaw (Result.atom n)
+      = (Result.listValue [Result.atom n], 1) := by
+  simp [atomsBuiltinResultForLaw, makeCollectionListResult, atoms_number]
+
+/-- `atoms(7)` is `[7]`, never `7`: the materialized list is structurally
+distinct from the bare atom. -/
+theorem atoms_singleton_list_ne_atom (n : Int) :
+    (atomsBuiltinResultForLaw (Result.atom n)).fst ≠ Result.atom n := by
+  simp [atomsBuiltinResultForLaw, makeCollectionListResult, atoms_number]
+
+-- Local equation lemmas for `hostAtoms` (same well-founded shape), used by
+-- the agreement proof below.
+
+theorem hostAtoms_atom (n : Int) :
+    Result.hostAtoms (Result.atom n) = [n] := by
+  simp [Result.hostAtoms]
+
+theorem hostAtoms_str (s : String) :
+    Result.hostAtoms (Result.str s) = [] := by
+  simp [Result.hostAtoms]
+
+theorem hostAtoms_sequence (rs : List Result) :
+    Result.hostAtoms (Result.sequenceValue rs) = rs.flatMap Result.hostAtoms := by
+  simp [Result.hostAtoms]
+
+theorem hostAtoms_list (rs : List Result) :
+    Result.hostAtoms (Result.listValue rs) = rs.flatMap Result.hostAtoms := by
+  simp [Result.hostAtoms]
+
+/-
+The language collector and the host projection agree on numeric content.
+They stay SEPARATE definitions with separate contracts (exact list value vs
+host atom list); this proven agreement documents the coincidence without
+letting either drift silently.
+-/
+mutual
+  theorem languageAtoms_eq_hostAtoms : ∀ r : Result,
+      Result.languageAtoms r = Result.hostAtoms r
+    | .atom n => by rw [atoms_number, hostAtoms_atom]
+    | .str s => by rw [atoms_string, hostAtoms_str]
+    | .sequenceValue rs => by
+        rw [atoms_sequence, hostAtoms_sequence]
+        exact languageAtomsList_eq_hostAtomsList rs
+    | .listValue rs => by
+        rw [atoms_list, hostAtoms_list]
+        exact languageAtomsList_eq_hostAtomsList rs
+  termination_by r => sizeOf r
+
+  theorem languageAtomsList_eq_hostAtomsList : ∀ rs : List Result,
+      rs.flatMap Result.languageAtoms = rs.flatMap Result.hostAtoms
+    | [] => by simp
+    | r :: rs => by
+        rw [List.flatMap_cons, List.flatMap_cons,
+            languageAtoms_eq_hostAtoms r, languageAtomsList_eq_hostAtomsList rs]
+  termination_by rs => sizeOf rs
+end
+
+/-- Truth testing stays list-opaque: a list value never has a truth value,
+whatever its contents. `atoms` traversing lists introduces no list
+truthiness because `truthValue?` reads `Result.atoms`, not
+`Result.languageAtoms`. -/
+theorem truthValue_list_none (rs : List Result) :
+    Result.truthValue? (Result.listValue rs) = none := by
+  simp [Result.truthValue?, Result.atoms]
+
+/-- Truth flattening skips list elements inside sequence conditions: a
+leading list element never changes the truth value of the rest, exactly as
+before the atoms change. -/
+theorem truthValue_skips_leading_list_element (xs rs : List Result) :
+    Result.truthValue? (Result.sequenceValue (Result.listValue xs :: rs))
+      = Result.truthValue? (Result.sequenceValue rs) := by
+  have h : Result.atoms (Result.sequenceValue (Result.listValue xs :: rs))
+      = Result.atoms (Result.sequenceValue rs) := by
+    simp [Result.atoms]
+  simp [Result.truthValue?, h]

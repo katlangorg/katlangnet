@@ -942,18 +942,41 @@ namespace Result
     -- itself — `[7]` stays `[7]`, never `7`.
     | listValue rs => listValue (rs.map normalize)
 
+  /-- Truth-testing numeric flattening: the numeric atoms reachable through
+      SEQUENCE boundaries only. This view backs `truthValue?` and is NOT the
+      `atoms` builtin's collector — that is `languageAtoms`, which also opens
+      list boundaries. Keeping the two separate means the builtin's traversal
+      can never leak into truth testing: lists have no truth value.
+      C#: `Result.ToAtoms`. -/
   def atoms : Result -> List Int
     | atom n    => [n]
     | str _     => []       -- strings are not numeric; silently omitted from atom lists
     | sequenceValue rs => rs.flatMap atoms
-    | listValue _ => []     -- lists are opaque values to numeric flattening, like strings
+    | listValue _ => []     -- lists are opaque to truth testing, like strings
+
+  /-- Language-level atom collection for the `atoms` builtin: recursively
+      collect numeric atoms depth-first, left-to-right, through BOTH sequence
+      and exact list boundaries. Strings and other non-numeric leaves
+      contribute no atoms. The builtin materializes this collection as ONE
+      exact immutable list value (`makeCollectionListResult`).
+      Deliberately separate from `Result.atoms` (truth testing stays
+      list-opaque) and `Result.hostAtoms` (host projection), so none of the
+      three contracts can drift through shared code.
+      C#: `Result.LanguageAtoms`. -/
+  def languageAtoms : Result -> List Int
+    | atom n    => [n]
+    | str _     => []
+    | sequenceValue rs => rs.flatMap languageAtoms
+    | listValue rs => rs.flatMap languageAtoms
 
   /-- Host-boundary numeric flattening used by `runFlat`: like `Result.atoms`,
       but also opens exact list boundaries so collection-builtin results
       surface their numeric contents at the embedding boundary. This is a host
-      projection, not language semantics: the `atoms` builtin and truth
-      testing keep lists opaque (`Result.atoms`), and no in-language
-      conversion between lists and sequences is implied.
+      projection, not language semantics: truth testing keeps lists opaque
+      (`Result.atoms`), the `atoms` builtin collects through its own separate
+      collector (`Result.languageAtoms`) and returns one exact list value
+      rather than a host atom list, and no in-language conversion between
+      lists and sequences is implied.
       C#: `Result.ToHostAtoms`. -/
   def hostAtoms : Result -> List Int
     | atom n    => [n]
@@ -4466,8 +4489,10 @@ mutual
 
         | .atomsBuiltin, [a] => do
             let r <- evalAlgOutput a ctx env
-            let xs := Result.atoms r
-            pure (reCountValueBoundary (Result.normalize (Result.sequenceValue (xs.map Result.atom)), xs.length))
+            -- `atoms` materializes a collection: one exact immutable list of
+            -- the recursively collected numeric atoms (sequence AND list
+            -- boundaries open; truth testing stays list-opaque).
+            pure (makeCollectionListResult ((Result.languageAtoms r).map Result.atom))
 
         | .rangeBuiltin, [startAlg, stopAlg] => do
             let start <- expectInt (<- evalAlgOutput startAlg ctx env)

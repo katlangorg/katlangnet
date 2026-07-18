@@ -1339,11 +1339,115 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "atoms(((1, 2), (3, 4)))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3, 4)",
-            ExpectedRaw = "S[1, 2, 3, 4]",
+            ExpectedDisplay = "[1, 2, 3, 4]",
+            ExpectedRaw = "L[1, 2, 3, 4]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("atoms", PairOfPairs)]),
-            Explanation = "`atoms` recursively erases all sequence-value structure — the explicit contrast to one-level spread.",
+            Explanation = "`atoms` recursively erases all sequence-value structure and materializes the collected atoms as one exact immutable list — the explicit contrast to one-level spread.",
+        },
+        new()
+        {
+            Id = "atoms-exact-list-result",
+            Category = "collection-builtins",
+            Source = "atoms(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[7]",
+            ExpectedRaw = "L[7]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [LCall("atoms", ".num 7")]),
+            IncludeInGeneratorPrompt = true,
+            Probes =
+            [
+                new SpecProbe("atoms(7) == [7]", "ok raw=1 n=1"),
+                new SpecProbe("atoms(7) == 7", "ok raw=0 n=1"),
+                new SpecProbe("atoms((1, 2)) == [1, 2]", "ok raw=1 n=1"),
+                new SpecProbe("atoms((1, 2)) == (1, 2)", "ok raw=0 n=1"),
+                new SpecProbe("atoms(()) == []", "ok raw=1 n=1"),
+                new SpecProbe("atoms(()) == ()", "ok raw=0 n=1"),
+                new SpecProbe("atoms('text')", "ok raw=L[] n=1"),
+            ],
+            Explanation = "`atoms` always returns one exact immutable list, whatever the input kind or atom count: a lone number yields the singleton list `[7]` (never the bare `7`), a no-atom input yields `[]`, and the result is list-exact, never a sequence.",
+        },
+        new()
+        {
+            Id = "atoms-list-traversal",
+            Category = "collection-builtins",
+            Source = "atoms([1, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]",
+            ExpectedRaw = "L[1, 2]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [LCall("atoms", ".listLiteral [.num 1, .num 2]")]),
+            IncludeInGeneratorPrompt = true,
+            Probes =
+            [
+                new SpecProbe("atoms(1, 2)", "err arity"),
+                new SpecProbe("atoms([1, 2]...)", "err arity"),
+                new SpecProbe("atoms(([1, 2]...))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("[1, [2, 3]].atoms == atoms([1, [2, 3]])", "ok raw=1 n=1"),
+            ],
+            Explanation = "`atoms` traverses exact list boundaries just like sequence boundaries. The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, and spreading a multi-element list into the call is an ordinary arity error.",
+        },
+        new()
+        {
+            Id = "atoms-mixed-traversal",
+            Category = "collection-builtins",
+            Source = "atoms([(1, 2), [3, [4]]])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3, 4]",
+            ExpectedRaw = "L[1, 2, 3, 4]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [LCall(
+                "atoms",
+                $".listLiteral [{LBlock(".num 1", ".num 2")}, .listLiteral [.num 3, .listLiteral [.num 4]]]")]),
+            Probes =
+            [
+                new SpecProbe("atoms([3, (1, [4, 2])])", "ok raw=L[3, 1, 4, 2] n=1"),
+                new SpecProbe("atoms([[], (), [1]])", "ok raw=L[1] n=1"),
+                new SpecProbe("atoms([10, [20, 30]]):2", "ok raw=30 n=1"),
+            ],
+            Explanation = "Mixed sequence/list nesting flattens depth-first, left to right, into one flat exact list: container boundaries are opened, never preserved, and structural order is kept without sorting or deduplication.",
+        },
+        new()
+        {
+            Id = "atoms-list-composition",
+            Category = "collection-builtins",
+            Source = "[1, 2, 3].skip(1).atoms",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[2, 3]",
+            ExpectedRaw = "L[2, 3]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [".dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) \"skip\" (some (alg [] [] [] [.num 1]))) \"atoms\" none"]),
+            Probes =
+            [
+                new SpecProbe("range(1, 3).atoms", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("atoms((3, 1, 2)).order", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("atoms((1, 2, 3)).count", "ok raw=3 n=1"),
+            ],
+            Explanation = "List-producing builtins compose directly with `atoms` — no spread-and-recapture workaround is needed — and the exact-list result of `atoms` composes directly with every collection consumer.",
+        },
+        new()
+        {
+            Id = "atoms-no-truthiness",
+            Category = "collection-builtins",
+            Source = "if((1, [2]), 10, 20)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg([], [LCall(
+                "if",
+                LBlock(".num 1", ".listLiteral [.num 2]"),
+                ".num 10",
+                ".num 20")]),
+            Probes =
+            [
+                new SpecProbe("if([1], 10, 20)", "err arity"),
+                new SpecProbe("if([], 10, 20)", "err arity"),
+                new SpecProbe("if(atoms((1, 2)), 10, 20)", "err arity"),
+                new SpecProbe("if(([1], 0), 10, 20)", "ok raw=20 n=1"),
+            ],
+            Explanation = "`atoms` does not define truthiness: truth testing still flattens through sequence boundaries only, so list values contribute no atoms — a list condition (including an `atoms` result) stays invalid, and list elements inside a sequence condition are skipped.",
         },
         new()
         {

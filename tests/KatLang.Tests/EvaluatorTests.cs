@@ -825,10 +825,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_RecursiveDotCallArgumentUsesCurrentValueBinding()
     {
-        // atoms stays list-opaque: skip returns an exact list value, and
-        // atoms(list) would be (). Spread the skip result back into a sequence
-        // (`rest = list.skip(1)...`) before the recursive dot-call, which still
-        // exercises the current-value binding of the recursion argument.
+        // `atoms` now traverses list values directly, so `atoms(values)` on a
+        // spread-recaptured list works without a workaround. The explicit
+        // spread (`rest = list.skip(1)...`) is kept because a sequence-shaped
+        // recursion argument is what exercises the current-value binding here.
         var source = """
             reduceCollection(values) = {
                 list = atoms(values)
@@ -2337,8 +2337,8 @@ public class EvaluatorTests
         => AssertEvalCounted("range(1, 3)...", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
-    public void Eval_CollectionBuiltin_Atoms_IsOneSequenceValue()
-        => AssertEvalCounted("atoms((1, (2, 3)))", 1, ResultFromAtoms(1, 2, 3));
+    public void Eval_CollectionBuiltin_Atoms_IsOneExactListValue()
+        => AssertEvalCounted("atoms((1, (2, 3)))", 1, ListValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderDesc_IsOneExactListValue()

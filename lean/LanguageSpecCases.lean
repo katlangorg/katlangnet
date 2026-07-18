@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 134
+- specification surface cases: 139
 - excluded parse-level cases (Lean has no surface parser): 7
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 126
-- probe observations (C#-only by design): 122
+- Lean-guarded cases: 131
+- probe observations (C#-only by design): 143
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -487,7 +487,32 @@ def case_range_single_value : Expr :=
 -- atoms-recursive-flatten [collection-builtins]: atoms(((1, 2), (3, 4)))
 def case_atoms_recursive_flatten : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])])
-#guard obs case_atoms_recursive_flatten == "ok raw=S[1, 2, 3, 4] n=1"
+#guard obs case_atoms_recursive_flatten == "ok raw=L[1, 2, 3, 4] n=1"
+
+-- atoms-exact-list-result [collection-builtins]: atoms(7)
+def case_atoms_exact_list_result : Expr :=
+  .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [.num 7])])
+#guard obs case_atoms_exact_list_result == "ok raw=L[7] n=1"
+
+-- atoms-list-traversal [collection-builtins]: atoms([1, 2])
+def case_atoms_list_traversal : Expr :=
+  .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [.listLiteral [.num 1, .num 2]])])
+#guard obs case_atoms_list_traversal == "ok raw=L[1, 2] n=1"
+
+-- atoms-mixed-traversal [collection-builtins]: atoms([(1, 2), [3, [4]]])
+def case_atoms_mixed_traversal : Expr :=
+  .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [.listLiteral [(.block (alg [] [] [] [.num 1, .num 2])), .listLiteral [.num 3, .listLiteral [.num 4]]]])])
+#guard obs case_atoms_mixed_traversal == "ok raw=L[1, 2, 3, 4] n=1"
+
+-- atoms-list-composition [collection-builtins]: [1, 2, 3].skip(1).atoms
+def case_atoms_list_composition : Expr :=
+  .block (alg [] [] [] [.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "skip" (some (alg [] [] [] [.num 1]))) "atoms" none])
+#guard obs case_atoms_list_composition == "ok raw=L[2, 3] n=1"
+
+-- atoms-no-truthiness [collection-builtins]: if((1, [2]), 10, 20)
+def case_atoms_no_truthiness : Expr :=
+  .block (alg [] [] [] [.call (.resolve "if") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .listLiteral [.num 2]])), .num 10, .num 20])])
+#guard obs case_atoms_no_truthiness == "ok raw=10 n=1"
 
 -- sum-of-range-collection [collection-builtins]: sum(range(1, 3))
 def case_sum_of_range_collection : Expr :=
@@ -729,7 +754,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 126 canonical Lean-guarded specification cases.
+-- 131 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -815,6 +840,11 @@ def specCaseIds : List String := [
   "range-inclusive",
   "range-single-value",
   "atoms-recursive-flatten",
+  "atoms-exact-list-result",
+  "atoms-list-traversal",
+  "atoms-mixed-traversal",
+  "atoms-list-composition",
+  "atoms-no-truthiness",
   "sum-of-range-collection",
   "count-family",
   "count-scalar-and-string",
@@ -864,6 +894,6 @@ def specCaseIds : List String := [
   "list-rest-capture-is-sequence",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 126
+#guard specCaseIds.length == 131
 
 end LanguageSpecCases

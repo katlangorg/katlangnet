@@ -5946,132 +5946,132 @@ def case_filterKeep__pl1 : Expr :=
 -- atoms__e: atoms(())
 def case_atoms__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.emptySequence 0)])])
-#guard obs case_atoms__e == "ok raw=S[] n=1"
+#guard obs case_atoms__e == "ok raw=L[] n=1"
 
 -- atoms__n0: atoms(0)
 def case_atoms__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.num 0)])])
-#guard obs case_atoms__n0 == "ok raw=0 n=1"
+#guard obs case_atoms__n0 == "ok raw=L[0] n=1"
 
 -- atoms__n1: atoms(1)
 def case_atoms__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.num 1)])])
-#guard obs case_atoms__n1 == "ok raw=1 n=1"
+#guard obs case_atoms__n1 == "ok raw=L[1] n=1"
 
 -- atoms__p1: atoms((1))
 def case_atoms__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])])
-#guard obs case_atoms__p1 == "ok raw=1 n=1"
+#guard obs case_atoms__p1 == "ok raw=L[1] n=1"
 
 -- atoms__p12: atoms((1, 2))
 def case_atoms__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])
-#guard obs case_atoms__p12 == "ok raw=S[1, 2] n=1"
+#guard obs case_atoms__p12 == "ok raw=L[1, 2] n=1"
 
 -- atoms__p123: atoms((1, 2, 3))
 def case_atoms__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
-#guard obs case_atoms__p123 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_atoms__p123 == "ok raw=L[1, 2, 3] n=1"
 
 -- atoms__pee: atoms(((), ()))
 def case_atoms__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
-#guard obs case_atoms__pee == "ok raw=S[] n=1"
+#guard obs case_atoms__pee == "ok raw=L[] n=1"
 
 -- atoms__pe1: atoms(((), 1))
 def case_atoms__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
-#guard obs case_atoms__pe1 == "ok raw=1 n=1"
+#guard obs case_atoms__pe1 == "ok raw=L[1] n=1"
 
 -- atoms__p1e: atoms((1, ()))
 def case_atoms__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
-#guard obs case_atoms__p1e == "ok raw=1 n=1"
+#guard obs case_atoms__p1e == "ok raw=L[1] n=1"
 
 -- atoms__p12_3: atoms(((1, 2), 3))
 def case_atoms__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
-#guard obs case_atoms__p12_3 == "ok raw=S[1, 2, 3] n=1"
+#guard obs case_atoms__p12_3 == "ok raw=L[1, 2, 3] n=1"
 
 -- atoms__p12_34: atoms(((1, 2), (3, 4)))
 def case_atoms__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
-#guard obs case_atoms__p12_34 == "ok raw=S[1, 2, 3, 4] n=1"
+#guard obs case_atoms__p12_34 == "ok raw=L[1, 2, 3, 4] n=1"
 
 -- atoms__pe_12: atoms(((), (1, 2)))
 def case_atoms__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
-#guard obs case_atoms__pe_12 == "ok raw=S[1, 2] n=1"
+#guard obs case_atoms__pe_12 == "ok raw=L[1, 2] n=1"
 
 -- atoms__ppe1_2: atoms((((), 1), 2))
 def case_atoms__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
-#guard obs case_atoms__ppe1_2 == "ok raw=S[1, 2] n=1"
+#guard obs case_atoms__ppe1_2 == "ok raw=L[1, 2] n=1"
 
 -- atoms__p12_e: atoms(((1, 2), ()))
 def case_atoms__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
-#guard obs case_atoms__p12_e == "ok raw=S[1, 2] n=1"
+#guard obs case_atoms__p12_e == "ok raw=L[1, 2] n=1"
 
 -- atoms__ppe: atoms((()))
 def case_atoms__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])])
-#guard obs case_atoms__ppe == "ok raw=S[] n=1"
+#guard obs case_atoms__ppe == "ok raw=L[] n=1"
 
 -- atoms__pp1: atoms(((1)))
 def case_atoms__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
-#guard obs case_atoms__pp1 == "ok raw=1 n=1"
+#guard obs case_atoms__pp1 == "ok raw=L[1] n=1"
 
 -- atoms__ppp12: atoms((((1, 2))))
 def case_atoms__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
-#guard obs case_atoms__ppp12 == "ok raw=S[1, 2] n=1"
+#guard obs case_atoms__ppp12 == "ok raw=L[1, 2] n=1"
 
 -- atoms__le: atoms([])
 def case_atoms__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [])])])
-#guard obs case_atoms__le == "ok raw=S[] n=1"
+#guard obs case_atoms__le == "ok raw=L[] n=1"
 
 -- atoms__l7: atoms([7])
 def case_atoms__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.num 7)])])])
-#guard obs case_atoms__l7 == "ok raw=S[] n=1"
+#guard obs case_atoms__l7 == "ok raw=L[7] n=1"
 
 -- atoms__l12: atoms([1, 2])
 def case_atoms__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])])
-#guard obs case_atoms__l12 == "ok raw=S[] n=1"
+#guard obs case_atoms__l12 == "ok raw=L[1, 2] n=1"
 
 -- atoms__l12_3: atoms([[1, 2], 3])
 def case_atoms__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
-#guard obs case_atoms__l12_3 == "ok raw=S[] n=1"
+#guard obs case_atoms__l12_3 == "ok raw=L[1, 2, 3] n=1"
 
 -- atoms__lle: atoms([[]])
 def case_atoms__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.listLiteral [])])])])
-#guard obs case_atoms__lle == "ok raw=S[] n=1"
+#guard obs case_atoms__lle == "ok raw=L[] n=1"
 
 -- atoms__l_e: atoms([()])
 def case_atoms__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])])
-#guard obs case_atoms__l_e == "ok raw=S[] n=1"
+#guard obs case_atoms__l_e == "ok raw=L[] n=1"
 
 -- atoms__l_p12: atoms([(1, 2)])
 def case_atoms__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
-#guard obs case_atoms__l_p12 == "ok raw=S[] n=1"
+#guard obs case_atoms__l_p12 == "ok raw=L[1, 2] n=1"
 
 -- atoms__p_l12: atoms(([1, 2], 3))
 def case_atoms__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
-#guard obs case_atoms__p_l12 == "ok raw=3 n=1"
+#guard obs case_atoms__p_l12 == "ok raw=L[1, 2, 3] n=1"
 
 -- atoms__pl1: atoms(([1]))
 def case_atoms__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
-#guard obs case_atoms__pl1 == "ok raw=S[] n=1"
+#guard obs case_atoms__pl1 == "ok raw=L[1] n=1"
 
 -- takeCapture__e: x = take((), 1) \n x
 def case_takeCapture__e : Expr :=
@@ -6756,7 +6756,7 @@ def case_special__orderEmpty : Expr :=
 -- special__atomsNested: atoms(((1, 2), (3, 4)))
 def case_special__atomsNested : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])])
-#guard obs case_special__atomsNested == "ok raw=S[1, 2, 3, 4] n=1"
+#guard obs case_special__atomsNested == "ok raw=L[1, 2, 3, 4] n=1"
 
 -- special__emptyOpGreater: () > 1
 def case_special__emptyOpGreater : Expr :=

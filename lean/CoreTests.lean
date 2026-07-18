@@ -2385,9 +2385,10 @@ def test12 : Bool :=
 -- Regression: recursive dot-call arguments bind both value and algorithm views,
 -- but builtin argument preparation must use the current parameter value when it
 -- exists. Otherwise atoms(values) re-enters list.skip(1) while list is computing.
--- With exact-list builtin results, `atoms` stays list-opaque, so the recursion
--- spread-captures the skip result first (`rest = list.skip(1)...`) and recurses
--- on that canonical sequence — mirroring the C# regression test.
+-- `atoms` now traverses list values directly (issue #136); the explicit spread
+-- (`rest = list.skip(1)...`) is kept because a sequence-shaped recursion
+-- argument is what exercises the current-value binding — mirroring the C#
+-- regression test.
 def recursiveDotCallListAlg : Algorithm :=
   alg [] [] [] [
     .call (resolve "atoms") (alg [] [] [] [.param "values"])
@@ -11598,13 +11599,14 @@ def boundaryMapSpreadOpensItems : Bool :=
 
 #guard boundaryMapSpreadOpensItems
 
-/-- `atoms((1, (2, 3)))` is one value; `atoms(...)...` opens it. -/
+/-- `atoms((1, (2, 3)))` is ONE exact list value `[1, 2, 3]`;
+    `atoms(...)...` opens the one list boundary into three items. -/
 def boundaryAtomsArg : Algorithm := alg [] [] [] [sequenceItems [.num 1, sequenceItems [.num 2, .num 3]]]
 
 def boundaryAtomsIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] []
       [.call (.resolve "atoms") boundaryAtomsArg])) with
-  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryAtomsIsOneValue
@@ -11616,6 +11618,170 @@ def boundaryAtomsSpreadOpensItems : Bool :=
   | _ => false
 
 #guard boundaryAtomsSpreadOpensItems
+
+--------------------------------------------------------------------------------
+-- atoms builtin: recursive list traversal and exact-list results (issue #136)
+--------------------------------------------------------------------------------
+-- `atoms` materializes ONE exact immutable list of the recursively collected
+-- numeric atoms: sequence AND list boundaries open depth-first, left to right;
+-- strings contribute no atoms; the result kind never depends on the input
+-- kind, and the emitted count is always 1 (including the empty result `[]`).
+-- Truth testing stays list-opaque (`Result.atoms`), so none of these guards
+-- changes any `if` outcome — see the truth-value non-regression guards below.
+
+def atomsCallOn (argBody : List KatLang.Expr) : KatLang.Expr :=
+  .block (algPrivate [] [] [] [.call (.resolve "atoms") (alg [] [] [] argBody)])
+
+def atomsNumberIsSingletonList : Bool :=
+  match runCountedProgram (atomsCallOn [.num 7]) with
+  | .ok (Result.listValue [Result.atom 7], 1) => true
+  | _ => false
+
+#guard atomsNumberIsSingletonList
+
+def atomsStringIsEmptyList : Bool :=
+  match runCountedProgram (atomsCallOn [.stringLiteral "text"]) with
+  | .ok (Result.listValue [], 1) => true
+  | _ => false
+
+#guard atomsStringIsEmptyList
+
+def atomsEmptySequenceIsEmptyList : Bool :=
+  match runCountedProgram (atomsCallOn [.emptySequence 0]) with
+  | .ok (Result.listValue [], 1) => true
+  | _ => false
+
+#guard atomsEmptySequenceIsEmptyList
+
+def atomsEmptyListIsEmptyList : Bool :=
+  match runCountedProgram (atomsCallOn [.listLiteral []]) with
+  | .ok (Result.listValue [], 1) => true
+  | _ => false
+
+#guard atomsEmptyListIsEmptyList
+
+-- atoms([1, 2]) → [1, 2] (lists are traversed, not opaque)
+def atomsListTraversalIsExactList : Bool :=
+  match runCountedProgram (atomsCallOn [.listLiteral [.num 1, .num 2]]) with
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2], 1) => true
+  | _ => false
+
+#guard atomsListTraversalIsExactList
+
+-- atoms([[1, 2], [3, 4]]) → [1, 2, 3, 4]
+def atomsNestedListsFlatten : Bool :=
+  match runCountedProgram (atomsCallOn [.listLiteral [
+      .listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]]) with
+  | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3, Result.atom 4], 1) => true
+  | _ => false
+
+#guard atomsNestedListsFlatten
+
+-- atoms([(1, 2), [3, [4]], 5]) → [1, 2, 3, 4, 5]
+def atomsMixedStructuresFlatten : Bool :=
+  match runCountedProgram (atomsCallOn [.listLiteral [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .listLiteral [.num 3, .listLiteral [.num 4]],
+      .num 5]]) with
+  | .ok (Result.listValue
+      [Result.atom 1, Result.atom 2, Result.atom 3, Result.atom 4, Result.atom 5], 1) => true
+  | _ => false
+
+#guard atomsMixedStructuresFlatten
+
+-- atoms([3, (1, [4, 2])]) → [3, 1, 4, 2] (structural left-to-right order)
+def atomsPreservesLeftToRightOrder : Bool :=
+  match runCountedProgram (atomsCallOn [.listLiteral [
+      .num 3,
+      .block (alg [] [] [] [.num 1, .listLiteral [.num 4, .num 2]])]]) with
+  | .ok (Result.listValue [Result.atom 3, Result.atom 1, Result.atom 4, Result.atom 2], 1) => true
+  | _ => false
+
+#guard atomsPreservesLeftToRightOrder
+
+-- [1, 2, 3].skip(1).atoms → [2, 3] (builtin-produced lists compose directly)
+def atomsComposesWithListProducingBuiltins : Bool :=
+  match runCountedProgram (.block (algPrivate [] [] []
+      [.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "skip"
+          (some (alg [] [] [] [.num 1]))) "atoms" none])) with
+  | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
+  | _ => false
+
+#guard atomsComposesWithListProducingBuiltins
+
+-- The three atom views stay distinct on a list-bearing value: language
+-- collection opens lists, truth flattening does not, host flattening agrees
+-- with language collection on numeric content.
+def atomViewSeparationValue : Result :=
+  Result.listValue [Result.atom 1, Result.sequenceValue [Result.atom 2], Result.str "s"]
+
+#guard Result.languageAtoms atomViewSeparationValue == [1, 2]
+#guard Result.atoms atomViewSeparationValue == []
+#guard Result.hostAtoms atomViewSeparationValue == [1, 2]
+#guard Result.truthValue? atomViewSeparationValue == none
+
+--------------------------------------------------------------------------------
+-- truth-value non-regression guards (atoms/#136 must not change truthiness)
+--------------------------------------------------------------------------------
+-- `truthValue?` still reads the sequence-only `Result.atoms` view: lists have
+-- no truth value, and list elements inside sequence conditions are skipped.
+
+def truthIfCall (cond : KatLang.Expr) : KatLang.Expr :=
+  .call (.resolve "if") (alg [] [] [] [cond, .num 10, .num 20])
+
+def ifListConditionStillInvalid : Bool :=
+  match runFlat (truthIfCall (.listLiteral [.num 1])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false
+
+#guard ifListConditionStillInvalid
+
+def ifEmptyListConditionStillInvalid : Bool :=
+  match runFlat (truthIfCall (.listLiteral [])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false
+
+#guard ifEmptyListConditionStillInvalid
+
+def ifZeroListConditionStillInvalid : Bool :=
+  match runFlat (truthIfCall (.listLiteral [.num 0])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false
+
+#guard ifZeroListConditionStillInvalid
+
+def ifNestedListConditionStillInvalid : Bool :=
+  match runFlat (truthIfCall (.listLiteral [.listLiteral [.num 1]])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false
+
+#guard ifNestedListConditionStillInvalid
+
+-- if((1, [2]), 10, 20) → 10: the list element is skipped, first atom 1 decides
+def ifMixedConditionReadsFirstNumericAtom : Bool :=
+  match runFlat (truthIfCall (.block (alg [] [] [] [.num 1, .listLiteral [.num 2]]))) with
+  | Except.ok [10] => true
+  | _ => false
+
+#guard ifMixedConditionReadsFirstNumericAtom
+
+-- if(([1], 0), 10, 20) → 20: the leading list is skipped, first atom 0 decides
+def ifMixedConditionSkipsLeadingListElement : Bool :=
+  match runFlat (truthIfCall (.block (alg [] [] [] [.listLiteral [.num 1], .num 0]))) with
+  | Except.ok [20] => true
+  | _ => false
+
+#guard ifMixedConditionSkipsLeadingListElement
+
+-- if(atoms((1, 2)), 10, 20) is invalid: the atoms result is a list like any
+-- other, so `atoms` introduces no list truthiness.
+def ifAtomsResultConditionInvalid : Bool :=
+  match runFlat (truthIfCall (.call (.resolve "atoms")
+      (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]))) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false
+
+#guard ifAtomsResultConditionInvalid
 
 --------------------------------------------------------------------------------
 -- dot-call projection parity guards

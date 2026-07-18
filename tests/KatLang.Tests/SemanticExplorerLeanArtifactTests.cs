@@ -100,6 +100,39 @@ public class SemanticExplorerLeanArtifactTests
         Assert.Equal(expected, excluded);
     }
 
+    [Fact]
+    public void SequenceBoundaryAudit_AccountingMatchesCurrentCorpus()
+    {
+        static string Count(int value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+        var allCases = SemanticExplorerCorpus.AllCases();
+        var observations = allCases.Select(SemanticExplorerHarness.Observe).ToList();
+        var surface = allCases.Count;
+        var templates = allCases.Count(c => !c.Id.StartsWith("special__", StringComparison.Ordinal));
+        var specials = surface - templates;
+        var leanRepresentable = allCases.Count(c => c.LeanProgram is not null);
+        var internalNodes = SemanticExplorerCorpus.InternalNodeCases().Count;
+        var outcomes = observations.GroupBy(o => o.Outcome).ToDictionary(g => g.Key, g => g.Count());
+
+        var path = Path.Combine(FindRepoRoot(), "docs/design/sequence-boundary-audit-2026-07.md");
+        var document = File.ReadAllText(path).ReplaceLineEndings("\n");
+
+        Assert.Contains($"all {Count(surface)} surface cases", document, StringComparison.Ordinal);
+        Assert.Contains($"(**{Count(leanRepresentable)} surface cases**", document, StringComparison.Ordinal);
+        Assert.Contains(
+            $"| Surface corpus (= C# semantic report surface section) | {Count(surface)} | " +
+            $"{Count(templates)} template cases (51 receiver templates x 26 values) + {specials} specials; " +
+            $"outcomes {Count(outcomes["ok"])} ok / {Count(outcomes["err"])} err / " +
+            $"{Count(outcomes["parseError"])} parse-error |",
+            document,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"| Generated Lean case guards | {Count(leanRepresentable + internalNodes)} | " +
+            $"{Count(leanRepresentable)} surface + {internalNodes} internal-node",
+            document,
+            StringComparison.Ordinal);
+    }
+
     internal static string GenerateArtifact()
     {
         var allCases = SemanticExplorerCorpus.AllCases();

@@ -153,9 +153,13 @@ public abstract record Result
     }
 
     /// <summary>
-    /// Flatten result to a list of numbers.
-    /// Lean: Result.atoms — strings are silently omitted from atom lists, and
-    /// list values are opaque to numeric flattening (omitted like strings).
+    /// Truth-testing numeric flattening: the list of numeric atoms reachable
+    /// through SEQUENCE boundaries only. Strings are silently omitted, and
+    /// list values are opaque (omitted like strings), so lists never gain a
+    /// truth value. This view backs <see cref="TruthValue"/> and is NOT the
+    /// <c>atoms</c> builtin's collector — that is <see cref="LanguageAtoms"/>,
+    /// which also opens list boundaries.
+    /// Lean: Result.atoms.
     /// </summary>
     public IReadOnlyList<decimal> ToAtoms()
     {
@@ -170,13 +174,54 @@ public abstract record Result
     }
 
     /// <summary>
+    /// Language-level atom collection for the <c>atoms</c> builtin:
+    /// recursively collect numeric atoms depth-first, left-to-right, through
+    /// BOTH sequence and exact list boundaries. Strings and any other
+    /// non-numeric leaves contribute no atoms. The builtin materializes this
+    /// collection as ONE exact immutable list value.
+    /// Deliberately separate from <see cref="ToAtoms"/> (truth testing stays
+    /// list-opaque) and <see cref="ToHostAtoms"/> (host projection returns
+    /// host decimals), so none of the three contracts can drift through
+    /// shared code.
+    /// Lean: <c>Result.languageAtoms</c>.
+    /// </summary>
+    public IReadOnlyList<decimal> LanguageAtoms()
+    {
+        var collected = new List<decimal>();
+        CollectLanguageAtoms(collected);
+        return collected;
+    }
+
+    private void CollectLanguageAtoms(List<decimal> collected)
+    {
+        switch (this)
+        {
+            case Atom(var n):
+                collected.Add(n);
+                break;
+            case SequenceValue(var items):
+                foreach (var item in items)
+                    item.CollectLanguageAtoms(collected);
+                break;
+            case ListValue(var items):
+                foreach (var item in items)
+                    item.CollectLanguageAtoms(collected);
+                break;
+            default:
+                break; // strings and any other non-numeric leaves contribute no atoms
+        }
+    }
+
+    /// <summary>
     /// Host-boundary numeric flattening used by <c>Evaluator.RunFlat</c> and
     /// <c>KatLangEngine.EvaluateToAtoms</c>: like <see cref="ToAtoms"/>, but
     /// also opens exact list boundaries so collection-builtin results surface
     /// their numeric contents to embedding hosts. This is a host projection,
-    /// not language semantics: the <c>atoms</c> builtin and truth testing keep
-    /// lists opaque (<see cref="ToAtoms"/>), and no in-language conversion
-    /// between lists and sequences is implied.
+    /// not language semantics: truth testing keeps lists opaque
+    /// (<see cref="ToAtoms"/>), the <c>atoms</c> builtin collects through its
+    /// own separate collector (<see cref="LanguageAtoms"/>) and returns one
+    /// exact list value rather than host decimals, and no in-language
+    /// conversion between lists and sequences is implied.
     /// Lean: <c>Result.hostAtoms</c>.
     /// </summary>
     public IReadOnlyList<decimal> ToHostAtoms()

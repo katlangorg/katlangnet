@@ -41,11 +41,16 @@ public class ListValueTests
     private static Result ListValue(params Result[] items) => new Result.ListValue(items);
 
     [Fact]
-    public void LanguageAndHostAtomViews_RemainDistinctForLists()
+    public void TruthAndHostAtomViews_RemainDistinctForLists()
     {
+        // Three atom views: ToAtoms (truth testing) keeps lists opaque, while
+        // LanguageAtoms (the atoms builtin's collector) and ToHostAtoms (host
+        // projection) both open them — separate contracts that agree on
+        // numeric content (Lean: languageAtoms_eq_hostAtoms).
         var value = ListValue(Atom(1), SequenceValue(Atom(2), Atom(3)), ListValue(Atom(4)));
 
         Assert.Empty(value.ToAtoms());
+        Assert.Equal([1m, 2m, 3m, 4m], value.LanguageAtoms());
         Assert.Equal([1m, 2m, 3m, 4m], value.ToHostAtoms());
         Assert.Equal([1m, 2m, 3m], KatLangEngine.EvaluateToAtoms("range(1, 3)"));
     }

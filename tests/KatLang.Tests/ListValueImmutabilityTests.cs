@@ -136,6 +136,9 @@ public class ListValueImmutabilityTests
     [InlineData("take((1, 2, 3), 2)", "[1, 2]")]
     [InlineData("range(1, 3)", "[1, 2, 3]")]
     [InlineData("Double = x * 2\nmap((1, 2, 3), Double)", "[2, 4, 6]")]
+    [InlineData("atoms((1, [2, 3]))", "[1, 2, 3]")]
+    [InlineData("atoms(7)", "[7]")]
+    [InlineData("atoms('text')", "[]")]
     public void BuiltinProducedList_ResistsHostMutation(string source, string expectedDisplay)
     {
         // Collection-producing builtins return one exact immutable list value;

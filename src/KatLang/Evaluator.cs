@@ -4407,9 +4407,12 @@ public static class Evaluator
             {
                 var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
-                var atoms = atomsR.Value.ToAtoms();
-                var value = Result.FromItems(atoms.Select(n => new Result.Atom(n)));
-                return EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(value, atoms.Count)));
+                // `atoms` materializes a collection: one exact immutable list
+                // of the recursively collected numeric atoms (sequence AND
+                // list boundaries open; truth testing stays list-opaque).
+                var atoms = atomsR.Value.LanguageAtoms();
+                return EvalResult<CountedResult>.Ok(
+                    MakeCollectionListResult(atoms.Select(static n => new Result.Atom(n))));
             }
 
             case (BuiltinId.@range, 2):
@@ -5137,14 +5140,14 @@ public static class Evaluator
                 return RepeatLoop(args[0], n, initialStateR.Value, ctx, valEnv);
             }
 
-            // atoms(alg) — flatten to atoms
+            // atoms(value) — recursively collect numeric atoms into one exact list
             case (BuiltinId.@atoms, 1):
             {
                 var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
-                var atoms = atomsR.Value.ToAtoms();
+                var atoms = atomsR.Value.LanguageAtoms();
                 return EvalResult<Result>.Ok(
-                    Result.FromItems(atoms.Select(n => new Result.Atom(n))));
+                    MakeCollectionListResult(atoms.Select(static n => new Result.Atom(n))).Value);
             }
 
             // range(start, stop) — inclusive integers materialized as one exact list.

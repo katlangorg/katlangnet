@@ -637,7 +637,7 @@ F(5, 9)...
 
 The body's internal shape is preserved inside the returned value — only the boundary count changes. `F(a...) = a, 0` returns `((5, 9), 0)` (the capture stays grouped as a nested value), while `F(a...) = a..., 0` returns `(5, 9, 0)` (the body spread flattens first). Either way the call returns **one** value; spread at the call site is the only way to re-open it.
 
-The same rule governs collection-producing builtins, with one refinement: `order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, and `range` each materialize their result as one exact immutable [list value](#lists); postfix `...` opens it. (`atoms` is the exception — it returns one flat canonical sequence value; see [Atoms](#atoms).)
+The same rule governs collection-producing builtins, with one refinement: `order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, and `atoms` each materialize their result as one exact immutable [list value](#lists); postfix `...` opens it.
 
 ```
 X = 1, 2, 3
@@ -2939,7 +2939,7 @@ count([1, 2, 3])
 
 **Result:** `3`
 
-And the collection-producing builtins (`filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `range`) materialize their results as exact immutable lists: zero kept items produce `[]`, one kept item produces the one-element list `[item]`, and nested elements stay exact.
+And the collection-producing builtins (`filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `range`, `atoms`) materialize their results as exact immutable lists: zero kept items produce `[]`, one kept item produces the one-element list `[item]`, and nested elements stay exact.
 
 ```
 A = [1, 2, 3]
@@ -2990,32 +2990,75 @@ order([3, 1, 2])
 
 Only a LONE list opens during collection binding: a nested list stays one opaque item (`count((1, [2], 3))` is `3`), and sibling lists inside one collection stay separate items (`count(([], []))` is `2` — note the grouping parentheses; the bare two-argument `count([], [])` is an arity error). Spread does not feed the collection parameter either: `count([1, 2, 3]...)` and `sum([1, 2, 3]...)` supply three ordinary arguments each and are arity errors — use the spread-free `count([1, 2, 3])` and `sum([1, 2, 3])`, which bind the list as the one collection argument.
 
-(`atoms` is the exception: it still flattens numeric structure directly into one canonical sequence value and omits list values exactly like strings — direct list support for `atoms` is deferred follow-up work.)
+`atoms` also traverses list values: it recursively collects every numeric atom through both sequence and list boundaries and returns them as one exact list — see [Atoms](#atoms).
 
 ---
 
 ## Atoms
 
-Algorithms in KatLang can produce structured, nested outputs — for example, a sequence value inside a sequence value. The `atoms` builtin strips away all of that sequence-value structure and returns one flat canonical sequence value of plain numeric values.
+Algorithms in KatLang can produce structured, nested outputs — sequence values inside sequence values, exact lists inside lists, or any mix of the two. The `atoms` builtin recursively collects every numeric atom from that structure — opening **both** sequence and list boundaries, depth-first and left to right — and returns them as one exact immutable [list value](#lists).
 
+<!-- spec:atoms-recursive-flatten -->
 ```
-A = 1...2, 3
-atoms(A)
-atoms(A)...
+atoms(((1, 2), (3, 4)))
 ```
 
 **Results:**
 ```
-(1, 2, 3)
-
-1
-2
-3
+[1, 2, 3, 4]
 ```
 
-`atoms` is a value boundary: the bare call returns one flat canonical **sequence** value — unlike the collection-producing builtins, `atoms` does not return an exact list — and caller-site spread `...` opens it into an item supply. This is useful when you need to treat a complex algorithm's output as a simple sequence of numbers, regardless of its original sequence-value structure.
+`atoms` is a collection-producing builtin like `order` or `range`: the call always returns one exact list, whatever the input kind and however many atoms were found. Empty and singleton results keep their list structure:
 
-`atoms` omits list values exactly like strings: `atoms([1, 2])` is `()`, and `atoms(((1, 2), [3, 4]))` is `(1, 2)`. Because the collection-producing builtins return exact lists, applying `atoms` directly to such a result also yields `()` — spread the list back into a sequence first when composing, e.g. `T = take((1, 2, 3), 2)` followed by `atoms((T...))` is `(1, 2)`. (Direct list support for `atoms` is deferred follow-up work.)
+<!-- spec:atoms-exact-list-result -->
+```
+atoms(7)
+```
+
+**Results:**
+```
+[7]
+```
+
+`atoms(7)` is the singleton list `[7]`, never the bare `7` (`atoms(7) == [7]` is `1`; `atoms(7) == 7` is `0`), and `atoms((1, 2))` is the exact list `[1, 2]`, never the sequence `(1, 2)`. A no-atom input — `atoms('text')`, `atoms(())`, `atoms([])` — is the visible empty list `[]`. Strings and other non-numeric leaves contribute no atoms: `atoms((1, ['a', 2]))` is `[1, 2]`.
+
+Exact list values are traversed exactly like sequence values:
+
+<!-- spec:atoms-list-traversal -->
+```
+atoms([1, 2])
+```
+
+**Results:**
+```
+[1, 2]
+```
+
+Mixed nesting flattens depth-first, left to right, into one flat list of atoms — container boundaries are opened, never preserved, with no sorting and no deduplication:
+
+<!-- spec:atoms-mixed-traversal -->
+```
+atoms([(1, 2), [3, [4]]])
+```
+
+**Results:**
+```
+[1, 2, 3, 4]
+```
+
+Because the result is an ordinary exact list, it composes directly with every collection consumer — `atoms((3, 1, 2)).order` is `[1, 2, 3]`, `atoms((1, 2, 3)).count` is `3`, and list indexing works: `atoms((10, 20)):0` is `10`. List-producing builtins compose directly with `atoms` too, with no spread-and-recapture workaround:
+
+<!-- spec:atoms-list-composition -->
+```
+[1, 2, 3].skip(1).atoms
+```
+
+**Results:**
+```
+[2, 3]
+```
+
+The call boundary is unchanged: `atoms(value)` takes exactly one argument, an unspread list is one argument, `atoms(1, 2)` is an arity error, and `atoms([1, 2]...)` spreads two ordinary arguments — also an arity error (regroup with `atoms(([1, 2]...))` if you need to pass spread items as one value). Only explicit caller-site spread turns the result into an item supply: `atoms(A)...` contributes the collected atoms to the surrounding items. Finally, `atoms` does not define truthiness — its result is a list like any other, so `if(atoms((1, 2)), a, b)` is invalid, and truth testing still ignores list values entirely.
 
 ### Opening one level vs flattening
 
@@ -3023,7 +3066,7 @@ KatLang keeps three operations distinct, so pick the one that matches your inten
 
 - A plain value reference such as `X` **preserves one value boundary** — a sequence value travels as one value.
 - Postfix spread `X...` **opens one level**, contributing the sequence value's immediate items to the surrounding output, argument list, or item supply.
-- `atoms(X)` **recursively projects** every numeric atom, erasing all sequence-value structure (list values are omitted, like strings).
+- `atoms(X)` **recursively collects** every numeric atom, erasing all sequence-value and list structure, and materializes them as one exact list.
 
 ```
 X = (1, 2, 3)
@@ -3038,7 +3081,7 @@ produces:
 3
 ```
 
-`X...` opens only one level, so `((1, 2), (3, 4))...` produces `(1, 2), (3, 4)` with the inner boundaries intact, while `((1, 2), (3, 4)).atoms` recursively flattens to the single sequence value `(1, 2, 3, 4)` (append `...` to open it into an item supply).
+`X...` opens only one level, so `((1, 2), (3, 4))...` produces `(1, 2), (3, 4)` with the inner boundaries intact, while `((1, 2), (3, 4)).atoms` recursively flattens to the single exact list `[1, 2, 3, 4]` (append `...` to open it into an item supply).
 
 ---
 
@@ -3412,7 +3455,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 
 ### Builtin Algorithms, Intrinsics, and Keywords
 
-The collection builtins below receive ONE collection argument plus fixed control arguments. The bound collection is viewed one level deep: a lone sequence value or exact list value opens into its immediate items, so `count(Values)`, `count((1, 2, 3))`, and `count([1, 2, 3])` all count three items; an atom or string is a one-element collection (`count(7)` is `1`); and nested sequence or list elements stay opaque items. Multi-item inline forms are arity errors (`count(1, 2, 3)` fails — `count(collection)` expects one argument), and spread supplies ordinary call arguments rather than feeding the collection parameter (`count(Values...)` fails; re-group as `count((Values..., 8))` or `sum((A..., B...))` when combining items into one collection). The collection-producing builtins (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`) materialize their results as one exact immutable list value (`[]` for zero items, `[item]` for one). Dot-call supplies the receiver as the collection argument, for example `collection.take(2)`. Selection already projects one level of selected content, so `(A:0).count` follows the ordinary collection rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not recursively flatten sequence-value elements beyond that.
+The collection builtins below receive ONE collection argument plus fixed control arguments. The bound collection is viewed one level deep: a lone sequence value or exact list value opens into its immediate items, so `count(Values)`, `count((1, 2, 3))`, and `count([1, 2, 3])` all count three items; an atom or string is a one-element collection (`count(7)` is `1`); and nested sequence or list elements stay opaque items. Multi-item inline forms are arity errors (`count(1, 2, 3)` fails — `count(collection)` expects one argument), and spread supplies ordinary call arguments rather than feeding the collection parameter (`count(Values...)` fails; re-group as `count((Values..., 8))` or `sum((A..., B...))` when combining items into one collection). The collection-producing builtins (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) materialize their results as one exact immutable list value (`[]` for zero items, `[item]` for one). Dot-call supplies the receiver as the collection argument, for example `collection.take(2)`. Selection already projects one level of selected content, so `(A:0).count` follows the ordinary collection rules for the selected content without any extra builtin-specific expansion. Higher-order builtins such as `filter`, `map`, and `reduce` do not recursively flatten sequence-value elements beyond that.
 
 For `repeat` and `while`, each explicit init argument becomes one initial state slot. `Step.repeat(3, a, b)` starts with two slots, while `Step.repeat(3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Use selections such as `Pair:0, Pair:1` or spread such as `Pair...` when you want a multi-output value to provide multiple initial slots; capture the step result as a sequence value when one structured slot should be preserved across iterations. `...` is postfix with no right operand, so `Step = history... next` emits history's items followed by `next` as multiple next-state slots, while `Step = (history..., next)` captures them into one next-state slot.
 
@@ -3438,7 +3481,7 @@ For `repeat` and `while`, each explicit init argument becomes one initial state 
 | `sum` | `sum(collection)` or `collection.sum` — add top-level numeric elements; each element must be a single atomic numeric value and sequence values are not flattened |
 | `avg` | `avg(collection)` or `collection.avg` — average top-level numeric elements and return the decimal arithmetic mean (total divided by count); the sequence must be non-empty, each element must be a single atomic numeric value, and sequence values are not flattened |
 | `reduce` | `reduce(collection, reducer, initial)` or `collection.reduce(reducer, initial)` — fold left over top-level elements; the current item behaves like `S:i`, normal accumulator parameters receive one structural state value, top-level variadic accumulator parameters receive state slots, and the reducer must return exactly one accumulator value |
-| `atoms` | `atoms(value)` — recursively flatten to numeric atoms |
+| `atoms` | `atoms(value)` or `value.atoms` — recursively collect numeric atoms through both sequence and exact-list boundaries (left to right; strings contribute none) and return them as one exact immutable list |
 | `string` | `value.string` — value intrinsic that converts an atomic numeric result to a first-class string value; non-numeric receivers (strings, sequence values) are errors |
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |

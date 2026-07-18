@@ -20,6 +20,11 @@ public enum UnaryOp { Minus, Not }
 /// receivers fill the <c>collection</c> argument.
 /// <c>range(start, stop)</c> materializes the inclusive integer span as one
 /// exact immutable list value.
+/// <c>atoms(value)</c> recursively collects numeric atoms depth-first, left to
+/// right, through both sequence and exact-list boundaries (strings and other
+/// non-numeric leaves contribute no atoms) and materializes them as one exact
+/// immutable list value; it does not use the post-binding collection view and
+/// it does not define truthiness — truth testing stays list-opaque.
 /// <c>filter(collection, predicate)</c> keeps the original top-level sequence
 /// items whose predicate returns exactly one atomic numeric truth value after
 /// seeing each callback item through the same one-level projection rule as
