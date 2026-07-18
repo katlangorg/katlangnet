@@ -212,10 +212,12 @@ public class CallableBindingPlanParityTests
         Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
         Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
 
+        // Three inline argument slots are collected as the exact list [1, 2, 3];
+        // a single grouped `(1, 2, 3)` argument would be one collected item.
         AssertEval(
             """
             CountValues(values...) = values.count
-            CountValues((1, 2, 3))
+            CountValues(1, 2, 3)
             """,
             3);
     }
@@ -233,13 +235,13 @@ public class CallableBindingPlanParityTests
         Assert.Equal(["Capture(factor:Explicit)"], plan.TopLevelPatternList.Suffix.Select(DescribeNode).ToArray());
         AssertCaptures(plan, "items...:Explicit", "factor:Explicit");
         // Deconstruction-shaped: the fixed `factor` is the only required slot and
-        // the rest captures any number of prefix items.
+        // the rest collects any number of prefix items as one exact list.
         AssertArity(plan, min: 1, max: null, hasTopLevelVariadic: true);
 
         AssertEval(
             """
             Scale(items..., factor) = items.map{n * factor}
-            Scale((1, 2, 3), 10)
+            Scale((1, 2, 3)..., 10)
             """,
             10, 20, 30);
     }
@@ -263,11 +265,12 @@ public class CallableBindingPlanParityTests
             """,
             3);
 
-        AssertEvalFails(
+        var message = AssertEvalFails(
             """
             CountSequenceValue((values...)) = values.count
             CountSequenceValue(1, 2, 3)
             """);
+        Assert.Contains("CountSequenceValue((values...))", message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -321,15 +324,19 @@ public class CallableBindingPlanParityTests
             Output = (10, 20, 30).Collect
             """,
             3);
+        // (fixed parameter: the receiver binds untouched and the collection
+        // view opens the lone sequence — count 3)
 
         var variadicPlan = PlanFor("Collect(list...) = list.count", "Collect");
         AssertTopLevelNodes(variadicPlan, "Variadic(list:Explicit:top)");
         AssertArity(variadicPlan, min: 0, max: null, hasTopLevelVariadic: true);
 
+        // The parenthesized-spread receiver supplies the items to the leading
+        // flat variadic; an ordinary receiver would be one collected item.
         AssertEval(
             """
             Collect(list...) = list.count
-            Output = (10...20...30).Collect
+            Output = ((10, 20, 30)...).Collect
             """,
             3);
     }
@@ -372,6 +379,8 @@ public class CallableBindingPlanParityTests
     [Fact]
     public void FlatVariadicPrefixMiddleSuffix_UserCallAndLoopStepPreserveSameObservableLayout()
     {
+        // The grouped middle argument/state slot is one collected item in both
+        // contexts, so middle.count is 1 for the user call and the loop step.
         AssertUserCallAndLoopStepParity(
             userSource:
             """
@@ -383,17 +392,19 @@ public class CallableBindingPlanParityTests
             Step(first, middle..., last) = first, middle.count, last
             Step.repeat(1, 10, (20, 30), 40)
             """,
-            expected: ResultFromAtoms(10, 2, 40));
+            expected: ResultFromAtoms(10, 1, 40));
     }
 
     [Fact]
     public void FlatVariadicCountedCapture_UserCallAndLoopStepExposeSameCount()
     {
+        // The spread call supplies three slots exactly like the three loop state
+        // slots, so both contexts collect the list [7, 8, 9].
         AssertUserCallAndLoopStepParity(
             userSource:
             """
             CountValues(values...) = values.count
-            CountValues((7, 8, 9))
+            CountValues((7, 8, 9)...)
             """,
             loopSource:
             """
@@ -413,7 +424,9 @@ public class CallableBindingPlanParityTests
             """,
             enableLoopOptimization: true);
 
-        AssertResult(ResultFromAtoms(1, 2, 3), result);
+        // The step returns the rest unspread, so the final state is the one
+        // collected list slot [1, 2, 3].
+        AssertResult(new Result.ListValue([new Result.Atom(1), new Result.Atom(2), new Result.Atom(3)]), result);
         Assert.Contains(
             stats.FallbackReasons,
             reason => reason.Key == "variadic loop step" && reason.Value >= 1);

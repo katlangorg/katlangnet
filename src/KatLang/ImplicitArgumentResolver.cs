@@ -109,6 +109,7 @@ public static class ImplicitArgumentResolver
         if (alg.ExplicitParameterPatterns.Count > 0)
         {
             var explicitExistingParams = new HashSet<string>(alg.Params);
+            var explicitBindingKinds = BuildSourceBindingKinds(alg.ParameterPatterns);
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
             {
@@ -117,6 +118,7 @@ public static class ImplicitArgumentResolver
                         expr,
                         visibleParamMap,
                         alg.ParameterPatterns,
+                        explicitBindingKinds,
                         inCallPosition: false,
                         requireExistingParameters: true,
                         explicitExistingParams));
@@ -162,7 +164,12 @@ public static class ImplicitArgumentResolver
             }
         }
 
-        // Rewrite output expressions
+        // Rewrite output expressions. Source binding kinds come from the
+        // LIFTED pattern list: a callee name missing from the original caller
+        // parameters binds through the capture lifted above (possibly by an
+        // earlier dependency with a different kind), and that lifted capture
+        // is the forwarding source.
+        var liftedBindingKinds = BuildSourceBindingKinds(newPatterns);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
@@ -173,6 +180,7 @@ public static class ImplicitArgumentResolver
                         expr,
                         visibleParamMap,
                         alg.ParameterPatterns,
+                        liftedBindingKinds,
                         inCallPosition: false));
         }
 
@@ -351,9 +359,25 @@ public static class ImplicitArgumentResolver
         return true;
     }
 
+    /// <summary>
+    /// Maps every caller-side capture name (top-level and nested) to its
+    /// binding kind. Implicit forwarding consults this map so the decision to
+    /// re-open a forwarded value is made from the SOURCE binding, never from
+    /// the destination parameter kind alone.
+    /// </summary>
+    private static Dictionary<string, ParameterKind> BuildSourceBindingKinds(
+        IEnumerable<ParameterPattern> callerPatterns)
+    {
+        var kinds = new Dictionary<string, ParameterKind>(StringComparer.Ordinal);
+        foreach (var capture in ParameterPattern.FlattenCaptures(callerPatterns))
+            kinds.TryAdd(capture.Name, capture.Kind);
+        return kinds;
+    }
+
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(
         IReadOnlyList<ParameterPattern> calleePatterns,
-        IReadOnlyList<ParameterPattern> callerPatterns)
+        IReadOnlyList<ParameterPattern> callerPatterns,
+        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds)
     {
         TryGetSingleVariadicForwarding(
             callerPatterns,
@@ -361,46 +385,60 @@ public static class ImplicitArgumentResolver
             out var forwardedCalleeName,
             out var forwardedCallerName);
 
-        if (forwardedCallerName is not null
-            && calleePatterns.Count == 1
-            && calleePatterns[0] is CaptureParameterPattern { Kind: ParameterKind.Variadic })
-        {
-            return [new Expr.Param(forwardedCallerName)];
-        }
-
         string MapCaptureName(CaptureParameterPattern capture)
             => forwardedCalleeName is not null
                 && capture.Name == forwardedCalleeName
                 ? forwardedCallerName!
                 : capture.Name;
 
+        // A rest DESTINATION re-opens the forwarded value only when the
+        // SOURCE binding is itself a rest-collected list: then
+        // `callee(rest...)` re-supplies exactly the collected items
+        // (open(collect(xs)) = xs). An ordinary source binding always
+        // forwards as ONE argument, even into a variadic destination. A name
+        // absent from the caller's bindings is about to be lifted as a copy
+        // of the callee's own pattern, so its source kind IS the callee kind.
+        bool ForwardAsSpread(CaptureParameterPattern calleeCapture)
+            => sourceBindingKinds.TryGetValue(MapCaptureName(calleeCapture), out var sourceKind)
+                ? sourceKind == ParameterKind.Variadic
+                : calleeCapture.Kind == ParameterKind.Variadic;
+
         return calleePatterns
-            .Select(pattern => BuildPatternArgument(pattern, MapCaptureName))
+            .Select(pattern => BuildPatternArgument(pattern, MapCaptureName, ForwardAsSpread))
             .ToList();
     }
 
     private static Expr BuildPatternArgument(
         ParameterPattern pattern,
-        Func<CaptureParameterPattern, string> mapCaptureName)
+        Func<CaptureParameterPattern, string> mapCaptureName,
+        Func<CaptureParameterPattern, bool> forwardAsSpread)
     {
         return pattern switch
         {
+            // A rest destination whose source binding is a rest-collected
+            // list forwards through explicit spread so the callee's rest
+            // binding re-collects exactly the caller's items; every other
+            // capture forwards as one argument slot.
+            CaptureParameterPattern { Kind: ParameterKind.Variadic } variadic
+                when forwardAsSpread(variadic) =>
+                new Expr.SequenceSpread(new Expr.Param(mapCaptureName(variadic))),
             CaptureParameterPattern capture => new Expr.Param(mapCaptureName(capture)),
             SequenceValueParameterPattern group => new Expr.Block(new Algorithm.User(
                 Parent: null,
                 Parameters: [],
                 Opens: [],
                 Properties: [],
-                Output: BuildPatternArgumentOutput(group.Items, mapCaptureName))),
+                Output: BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread))),
             _ => throw new InvalidOperationException("Unknown parameter pattern."),
         };
     }
 
     private static IReadOnlyList<Expr> BuildPatternArgumentOutput(
         IReadOnlyList<ParameterPattern> patterns,
-        Func<CaptureParameterPattern, string> mapCaptureName)
+        Func<CaptureParameterPattern, string> mapCaptureName,
+        Func<CaptureParameterPattern, bool> forwardAsSpread)
         => patterns
-            .Select(pattern => BuildPatternArgument(pattern, mapCaptureName))
+            .Select(pattern => BuildPatternArgument(pattern, mapCaptureName, forwardAsSpread))
             .ToList();
 
     /// <summary>
@@ -511,6 +549,7 @@ public static class ImplicitArgumentResolver
         Expr expr,
         Dictionary<string, CallableSignature> paramMap,
         IReadOnlyList<ParameterPattern> callerParameterPatterns,
+        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
         bool inCallPosition,
         bool requireExistingParameters = false,
         IReadOnlySet<string>? existingParameterNames = null)
@@ -537,7 +576,7 @@ public static class ImplicitArgumentResolver
                         Parameters: [],
                         Opens: [],
                         Properties: [],
-                        Output: BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns));
+                        Output: BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
 
                     return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, argsAlg) { Span = expr.Span };
                 }
@@ -552,6 +591,7 @@ public static class ImplicitArgumentResolver
                         func,
                         paramMap,
                         callerParameterPatterns,
+                        sourceBindingKinds,
                         inCallPosition: false,
                         requireExistingParameters,
                         existingParameterNames);
@@ -561,29 +601,29 @@ public static class ImplicitArgumentResolver
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                return new Expr.Unary(op, RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(selector, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(selector, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames),
-                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(left, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(right, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
 
             case Expr.ListLiteral(var listItems):
                 return new Expr.ListLiteral(
-                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, false, requireExistingParameters, existingParameterNames)).ToList())
+                    listItems.Select(item => RewriteImplicitCalls(item, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)).ToList())
                 { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, null)
@@ -604,10 +644,10 @@ public static class ImplicitArgumentResolver
                     Parameters: [],
                     Opens: [],
                     Properties: [],
-                    Output: BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns));
+                    Output: BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
 
                 return new Expr.DotCall(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
                     name,
                     dotArgsAlg)
                 {
@@ -618,7 +658,7 @@ public static class ImplicitArgumentResolver
             case Expr.DotCall(var target, var name, var dotArgs):
                 // DotCall target is in algorithm position (resolveAlg, not eval).
                 return new Expr.DotCall(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
                     name,
                     dotArgs is not null
                         ? IsMathValueDotCall(target, name)
@@ -631,7 +671,7 @@ public static class ImplicitArgumentResolver
                 };
 
             case Expr.Grace(var inner, _):
-                return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, inCallPosition, requireExistingParameters, existingParameterNames);
+                return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition, requireExistingParameters, existingParameterNames);
 
             case Expr.Block(var alg):
                 return new Expr.Block(ProcessAlgorithm(alg, paramMap)) { Span = expr.Span };
@@ -649,8 +689,9 @@ public static class ImplicitArgumentResolver
             return ProcessAlgorithm(args, paramMap);
 
         var newOutput = new List<Expr>(args.Output.Count);
+        var argBindingKinds = BuildSourceBindingKinds(args.ParameterPatterns);
         foreach (var expr in args.Output)
-            newOutput.Add(RewriteImplicitCalls(expr, paramMap, args.ParameterPatterns, inCallPosition: false));
+            newOutput.Add(RewriteImplicitCalls(expr, paramMap, args.ParameterPatterns, argBindingKinds, inCallPosition: false));
 
         var newProperties = new List<Property>(args.Properties.Count);
         foreach (var prop in args.Properties)

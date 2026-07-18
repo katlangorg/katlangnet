@@ -240,27 +240,37 @@ public class SemanticExplorerTests
         // captured value with emitted count 1.
         AssertSame(findings, "LexicalDotMismatch", valueId, captured, "dotAccess", "dotAccessCall", "captureCall");
         AssertSame(findings, "BoundaryReentryChange", valueId, captured, "identity", "identityTwice", "propChain", "fixed", "root", "seqWrapSolo");
-        AssertSame(findings, "BoundaryReentryChange", valueId, captured, "variadic", "variadicViaProp");
 
-        // The grouped/spread coincidence `F(x) == F(x...)` for a rest-only
-        // callee is SEQUENCE-specific: canonical capture erases a redundant
-        // sequence boundary but never a list boundary, so spreading a lone
-        // list re-captures as the sequence of its elements.
-        if (!isListValue)
+        // Rest binding COLLECTS: a rest-only callee binds its ONE grouped
+        // argument as the one-element exact list holding the value
+        // (`F(x...) = x` with `F(V)` observes `[V]`), never the value itself —
+        // the old grouped/singleton coincidence is gone for every value kind.
+        var expectedCollectedOne = new Result.ListValue([capturedValue]);
+        foreach (var template in new[] { "variadic", "variadicViaProp" })
         {
-            AssertSame(findings, "BoundaryReentryChange", valueId, captured, "variadicSpread");
-        }
-        else
-        {
-            var variadicSpread = Obs("variadicSpread", valueId);
-            var expectedRecapture = Result.FromItems(spreadItems);
-            if (variadicSpread.Outcome != "ok"
-                || !Result.ValueComparer.Equals(variadicSpread.Value, expectedRecapture))
+            var observation = Obs(template, valueId);
+            if (observation.Outcome != "ok"
+                || !Result.ValueComparer.Equals(observation.Value, expectedCollectedOne)
+                || observation.Emitted != 1)
             {
                 findings.Add(new Finding(
-                    "BoundaryReentryChange", variadicSpread.CaseId,
-                    $"expected list spread to re-capture as {SemanticExplorerHarness.Neutral(expectedRecapture)}, observed {variadicSpread.Neutral}"));
+                    "BoundaryReentryChange", observation.CaseId,
+                    $"expected rest to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
             }
+        }
+
+        // The spread call `F(V...)` collects the spread-opened items as an
+        // exact list, uniformly for sequences and lists (open/collect round
+        // trip: spreading a list re-collects the same list).
+        var variadicSpread = Obs("variadicSpread", valueId);
+        var expectedCollectedSpread = new Result.ListValue(spreadItems);
+        if (variadicSpread.Outcome != "ok"
+            || !Result.ValueComparer.Equals(variadicSpread.Value, expectedCollectedSpread)
+            || variadicSpread.Emitted != 1)
+        {
+            findings.Add(new Finding(
+                "BoundaryReentryChange", variadicSpread.CaseId,
+                $"expected spread supply to collect as {SemanticExplorerHarness.Neutral(expectedCollectedSpread)} n=1, observed {variadicSpread.Neutral}"));
         }
 
         // count(...) vs .count observe the bound collection through the shared
@@ -436,10 +446,31 @@ public class SemanticExplorerTests
                 $"expected {SemanticExplorerHarness.Neutral(expectedAtoms)}, observed {atoms.Neutral}"));
         }
 
-        // A builtin result re-enters every boundary unchanged (a list value is
-        // one value for capture, identity calls, and variadic binding alike).
-        AssertSame(findings, "BuiltinBoundaryMismatch", valueId, Obs("take1", valueId),
-            "takeCapture", "takeIdentity", "takeVariadic");
+        // A builtin result re-enters value boundaries unchanged (a list value
+        // is one value for capture and identity calls), while a rest binding
+        // collects it as the one-element list holding it.
+        var take1 = Obs("take1", valueId);
+        AssertSame(findings, "BuiltinBoundaryMismatch", valueId, take1,
+            "takeCapture", "takeIdentity");
+        var takeVariadic = Obs("takeVariadic", valueId);
+        if (take1.Outcome == "ok")
+        {
+            var expectedTakeCollected = new Result.ListValue([take1.Value!]);
+            if (takeVariadic.Outcome != "ok"
+                || !Result.ValueComparer.Equals(takeVariadic.Value, expectedTakeCollected)
+                || takeVariadic.Emitted != 1)
+            {
+                findings.Add(new Finding(
+                    "BuiltinBoundaryMismatch", takeVariadic.CaseId,
+                    $"expected rest to collect {SemanticExplorerHarness.Neutral(expectedTakeCollected)} n=1, observed {takeVariadic.Neutral}"));
+            }
+        }
+        else if (takeVariadic.Outcome != take1.Outcome)
+        {
+            findings.Add(new Finding(
+                "BuiltinBoundaryMismatch", takeVariadic.CaseId,
+                $"observed {takeVariadic.Neutral}, but {take1.CaseId} observed {take1.Neutral}"));
+        }
 
         // count() of a take(x, 1) result opens exactly the one list boundary
         // that take materialized, so it counts the kept items: 1 when the
@@ -636,7 +667,7 @@ public class SemanticExplorerTests
         { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
-        { "F(a...) = a\nF(1, 2, 3)", "ok raw=S[1, 2, 3] n=1" },
+        { "F(a...) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         { "() > 1", "ok raw=1 n=1" },
         { "() == (())", "ok raw=1 n=1" },
         { "x = (1, 2)\n(x..., 99)", "ok raw=S[1, 2, 99] n=1" },

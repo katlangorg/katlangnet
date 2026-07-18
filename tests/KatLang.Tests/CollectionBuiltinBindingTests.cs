@@ -108,8 +108,8 @@ public class CollectionBuiltinBindingTests
     [Fact]
     public void UserVariadic_ForwardsCapturedValueAsOneCollectionArgument()
     {
-        // A user-defined variadic still captures the argument stream as ONE
-        // grouped value, so forwarding it (`values.sum`) binds the single
+        // A user-defined variadic collects the argument stream as ONE exact
+        // list value, so forwarding it (`values.sum`) binds the single
         // `collection` parameter. The builtin itself has no variadic shape:
         // the equivalent inline call is an arity error.
         AssertAtoms("G(values...) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);

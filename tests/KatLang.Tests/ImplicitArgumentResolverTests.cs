@@ -8,12 +8,33 @@ public class ImplicitArgumentResolverTests
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
         => Evaluator.RunFlat(new Expr.Block(Resolve(source)));
 
+    /// <summary>
+    /// Evaluate to the single structured root value. Unlike <see cref="Eval"/>
+    /// (which flattens through the host-atom boundary), this preserves list
+    /// and sequence kinds so tests can assert exact value structure.
+    /// </summary>
+    private static Result EvalValue(string source)
+    {
+        var result = Evaluator.RunCounted(new Expr.Block(Resolve(source)));
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+        return result.Value.Value;
+    }
+
     private static void AssertEval(string source, params decimal[] expected)
     {
         var result = Eval(source);
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
         Assert.Equal(expected, result.Value);
+    }
+
+    private static EvalError Innermost(EvalError error)
+    {
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+
+        return error;
     }
 
     // â”€â”€ AST-level tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -178,7 +199,7 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_VariadicImplicitCall_NameMismatchForwardsCallerSequenceSlotWithoutLiftingCalleeName()
+    public void Resolve_VariadicImplicitCall_NameMismatchForwardsCallerStreamAsSpreadWithoutLiftingCalleeName()
     {
         var source = """
             CountItems(items...) = items.count
@@ -195,7 +216,11 @@ public class ImplicitArgumentResolverTests
         var function = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("CountItems", function.Name);
 
-        var param = Assert.IsType<Expr.Param>(Assert.Single(call.Args.Output));
+        // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values...)`):
+        // the caller's rest holds one exact list, and the spread re-supplies its
+        // collected items so the callee's rest re-collects exactly them.
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var param = Assert.IsType<Expr.Param>(spread.Operand);
         Assert.Equal("values", param.Name);
     }
 
@@ -421,55 +446,132 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_SameNameTopLevelVariadic_ForwardsCallerSequenceSlot()
+    public void Eval_VariadicImplicitCall_SameNameTopLevelVariadic_ForwardsCallerStream()
     {
+        // The root spread supplies the three items, and the synthesized spread
+        // forwarding re-supplies them to the callee's rest binding.
         var source = """
             CountValues(values...) = values.count
             Use(values...) = CountValues
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_NameMismatchTopLevelVariadic_ForwardsCallerSequenceSlot()
+    public void Eval_VariadicImplicitCall_NameMismatchTopLevelVariadic_ForwardsCallerStream()
     {
         var source = """
             CountItems(items...) = items.count
             Use(values...) = CountItems
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_SequenceValueVariadicImplicitCall_SameNameCalleePattern_ForwardsCallerSequenceSlot()
+    public void Eval_SequenceValueVariadicImplicitCall_SameNameCalleePattern_ForwardsCallerStream()
     {
         var source = """
             CountSequenceValue((values...)) = values.count
             Use(values...) = CountSequenceValue
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_SequenceValueVariadicImplicitCall_NameMismatchCalleePattern_ForwardsCallerSequenceSlot()
+    public void Eval_SequenceValueVariadicImplicitCall_NameMismatchCalleePattern_ForwardsCallerStream()
     {
         var source = """
             CountSequenceValue((items...)) = items.count
             Use(values...) = CountSequenceValue
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_SequenceValueOrdinaryCaller_DoesNotFlattenSequenceValueForVariadicImplicitCall()
+    public void Eval_OrdinarySourceParameter_ForwardsAsOneArgumentIntoVariadicCallee()
     {
-        // The ordinary sequence-value parameter is not a top-level variadic stream.
-        // This may fail during binding or evaluate with a separate lifted
-        // variadic suffix, but it must not treat sequenceValue as values....
+        // The implicit spread decision is made from the SOURCE binding kind:
+        // `Use.items` is an ordinary fixed parameter, so the synthesized call
+        // is `Target(items)` — one argument — and the callee's rest collects
+        // exactly one slot. The destination being variadic must not open it.
+        var source = """
+            Target(items...) = items
+            Use(items) = Target
+            Use([1, 2])
+            """;
+
+        var listResult = Assert.IsType<Result.ListValue>(EvalValue(source));
+        var element = Assert.IsType<Result.ListValue>(Assert.Single(listResult.Items));
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], element.Items, Result.ValueComparer);
+
+        var sequenceSource = """
+            Target(items...) = items
+            Use(items) = Target
+            Use((1, 2))
+            """;
+        var sequenceList = Assert.IsType<Result.ListValue>(EvalValue(sequenceSource));
+        var sequenceElement = Assert.IsType<Result.SequenceValue>(Assert.Single(sequenceList.Items));
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], sequenceElement.Items, Result.ValueComparer);
+
+        var scalarSource = """
+            Target(items...) = items
+            Use(items) = Target
+            Use(7)
+            """;
+        var scalarList = Assert.IsType<Result.ListValue>(EvalValue(scalarSource));
+        Assert.Equal([new Result.Atom(7)], scalarList.Items, Result.ValueComparer);
+    }
+
+    [Fact]
+    public void Resolve_OrdinarySourceParameter_SynthesizesUnspreadArgument()
+    {
+        // The synthesized implicit call passes the ordinary source parameter
+        // as a bare Expr.Param — never wrapped in Expr.SequenceSpread.
+        var root = Resolve("""
+            Target(items...) = items
+            Use(items) = Target
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+        var call = Assert.IsType<Expr.Call>(Assert.Single(use.Output));
+        var param = Assert.IsType<Expr.Param>(Assert.Single(call.Args.Output));
+        Assert.Equal("items", param.Name);
+    }
+
+    [Fact]
+    public void Eval_RestSourceParameter_ForwardsCollectedItemsAsSpread()
+    {
+        // Genuine rest forwarding: the caller's own rest is the source, so
+        // the synthesized call is `Target(items...)` and the collected items
+        // round-trip exactly (open(collect(xs)) = xs).
+        var source = """
+            Target(items...) = items
+            Use(items...) = Target
+            Use(1, 2)
+            """;
+        var list = Assert.IsType<Result.ListValue>(EvalValue(source));
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], list.Items, Result.ValueComparer);
+
+        var listArgSource = """
+            Target(items...) = items
+            Use(items...) = Target
+            Use([1, 2])
+            """;
+        var outerList = Assert.IsType<Result.ListValue>(EvalValue(listArgSource));
+        var innerList = Assert.IsType<Result.ListValue>(Assert.Single(outerList.Items));
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], innerList.Items, Result.ValueComparer);
+    }
+
+    [Fact]
+    public void Eval_SequenceValueOrdinaryCaller_NameMismatchStaysUnresolved()
+    {
+        // The callee's parameter name does not match any caller parameter, so
+        // the reference is not rewritten and fails at runtime instead of
+        // silently spreading the ordinary sequence-value parameter.
         var result = Eval(
             """
             CountValues(values...) = values.count
@@ -477,10 +579,10 @@ public class ImplicitArgumentResolverTests
             Use((1, 2, 3))
             """);
 
-        if (result.IsError)
-            return;
-
-        Assert.NotEqual([3m], result.Value);
+        Assert.True(result.IsError);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(0, arity.Actual);
     }
 
     // â”€â”€ Transitive ordering: zero-param intermediaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

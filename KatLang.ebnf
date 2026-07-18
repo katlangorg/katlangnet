@@ -40,8 +40,8 @@ BindingTarget            = NonOutputIdentifier [ "..." ] ;
                         function parameter binding. The right-hand side is matched
                         against the targets prefix/rest/suffix: fixed targets bind
                         from the start and end, and at most one rest target
-                        `name...` captures the remaining middle items as one grouped
-                        sequence value (possibly zero items). The rest target may
+                        `name...` collects the remaining middle items as one exact
+                        immutable list value (possibly zero items). The rest target may
                         appear at the start, middle, or end. Recognized in
                         definition position only when the left-hand side has a comma
                         (two or more targets); a plain `name = ...` stays an ordinary
@@ -75,7 +75,8 @@ ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBu
                         consumes one parent-level argument slot, so F((head,
                         tail...), suffix) takes one sequence-value first argument and
                         binds its immediate contents. Variadic captures consume
-                        sibling values at their own pattern-list level.
+                        sibling values at their own pattern-list level and collect
+                        the assigned slots as one exact immutable list.
                         Multi-clause families and literal/mixed heads elaborate as
                         conditional algorithms.
                         `Output(...) = ...` is invalid; declare parameters and

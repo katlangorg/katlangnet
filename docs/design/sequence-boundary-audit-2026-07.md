@@ -11,8 +11,8 @@ validator, and the reference for the invariants that validator enforces.
 > `combineCollectionResult` / `CombineCollectionResult` no longer exists:
 > zero kept items form `[]`, one kept item forms `[item]`, and builtin
 > collection binding opens a lone bound LIST like a lone sequence value.
-> Canonical arity capture, output-slot combination, and variadic/rest binding
-> remain sequence-centered. The semantic descriptions below have been updated;
+> Canonical arity capture and output-slot combination remain sequence-centered.
+> Variadic/rest binding now uses exact immutable list collection instead. The semantic descriptions below have been updated;
 > the corpus/accounting history remains the July 2026 audit record. See
 > AGENTS.md and `src/KatLang/CALLABLES.md` for the operational rules.
 
@@ -27,7 +27,7 @@ The validator itself lives in:
 ## 1. The current boundary model (as implemented)
 
 One rule with four explicitly documented non-boundary exceptions, confirmed by
-executable evidence on the current 1,409-case surface corpus (accounting in §5.1).
+executable evidence on the surface corpus (current accounting in §5.1).
 
 **Counts.** Every evaluation step carries `CountedResult = (value, emittedCount)`.
 `Result.valueCount` is 0 for `()` and 1 for everything else.
@@ -44,13 +44,17 @@ collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`,
 1. Root/body output accumulation: a spread slot contributes its opened item
    count (possibly 0); a **non-spread slot contributes `max(1, emitted)`** —
    so `()` stays one visible row, and a supply-emitting expression such as
-   `x:0` or a variadic parameter reference emits several rows at root.
-2. Raw variadic parameter storage (`countedParamEnv` / `VariadicStreamEnv`):
-   the captured value keeps its raw item count, which is what makes
-   internal forwarding (`sum(a)`, `a...`) work.
-3. `while`/`repeat` multi-slot loop state.
-4. The strict single-value `map`/`reduce` callback contract (multi-output or
+   `x:0` emits several rows at root.
+2. `while`/`repeat` multi-slot loop state.
+3. The strict single-value `map`/`reduce` callback contract (multi-output or
    `()`-valued callback results are errors, not grouped values).
+
+*(Superseded, July 2026 rest-collection change: raw variadic parameter
+storage — `variadicSupplyEnv` / `VariadicStreamEnv` with raw item counts —
+was removed. Rest bindings now collect ONE exact immutable list with emitted
+count 1 (`collectRest` / `CollectRest`), and forwarding is ordinary list
+spread: `sum(a)` passes the bound list as the one collection argument, and
+`a...` re-opens exactly the collected items.)*
 
 **Construction.** Parenthesized lists parse to zero-parameter blocks whose
 output slots keep `()` items visible; slots are combined with the shallow
@@ -101,7 +105,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 1,413 surface cases is in the machine-readable report
+all 1,417 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -134,8 +138,8 @@ observable count at root; notes):
 | capture `x = V` | 1 | canonical V | 1 | identical for `x`, `x()`, `A.X`, `A.X()` |
 | fixed param `F(V)` | 1 arg | V | 1 | call never opens a grouped arg |
 | fixed `F(V...)` | `items(V)` args | item / `E:arity` | 1 | succeeds iff exactly 1 item |
-| variadic `F(V)` / `F(V...)` | 1 arg / items | V (rest-only coincidence) | 1 | mixed shapes distinguish the two |
-| mixed `F(h, t...)(V...)` | items | front/back split; rest groups middle | 1 | rest of 1 item collapses (capture law) |
+| variadic `F(V)` / `F(V...)` | 1 arg / items | `L[V]` / `L[items(V)...]` | 1 | rest COLLECTS an exact list; grouped and spread calls always differ (July 2026 supersession of the old rest-only coincidence) |
+| mixed `F(h, t...)(V...)` | items | front/back split; rest collects middle as `L[...]` | 1 | a 1-item rest stays `[item]` (no collapse; July 2026 supersession of the old capture law) |
 | deconstruction `x, y = V` | `items(V)` | element-wise match | 1 | `= V` ≡ `= V...` (unpacking receiver) |
 | explicit seq `(V, 99)` | 2 slots | `S[V, 99]` | 1 | `()` survives as item; nesting intact |
 | spread in seq `(V..., 99)` | items+1 | shallow combine | 1 | `(()..., 99)` = `99` (singleton collapse) |
@@ -165,9 +169,9 @@ observable count at root; notes):
 4. **Which must expose a captured value?** Every property/call/builtin result,
    argument slot, sequence-literal item, and stored binding.
 5. **Where is capture/normalization applied?** Deep `normalize` at written
-   sequence construction and variadic capture (inputs canonical); shallow
-   combine at output slots. Collection-producing builtins instead construct an
-   exact list and never renormalize item internals.
+   sequence construction and ordinary value capture (inputs canonical); shallow
+   combine at output slots. Rest binding and collection-producing builtins
+   instead construct exact lists and never renormalize item internals.
 6. **Where may spread reopen a value?** Any expression-list context (root/body
    slots, call args, sequence literals, builtin supplies) — exactly one layer.
 7. **Can any operation construct a literal-unwritable value?** No. 0 orphan
@@ -252,18 +256,30 @@ documented rules. Candidates examined and resolved as rule-consistent:
 
 **Intentional behavior (documented):** singleton-paren transparency;
 `()` operator transparency for non-comparison operators; call-vs-
-deconstruction opening asymmetry (proven in `CoreArityAlgebraProofs`:
-`agree_on_lone_seq_iff_lone_rest`); rest-only coincidence `F(V)` ≡ `F(V...)`;
-strict map/reduce callback contract; string display non-roundtrip.
+deconstruction opening asymmetry; strict single-value map/reduce callback
+result contract; string display non-roundtrip.
 
-**Unresolved design choices (pre-existing, unchanged):** callback
-deconstruction (deferred per BINDING-ARCHITECTURE.md Phase 26); zero-item
-root output displaying as empty text (not reconstructable as a program).
+*(Superseded, July 2026 rest-collection change: the rest-only coincidence
+`F(V)` ≡ `F(V...)` and its theorem `agree_on_lone_seq_iff_lone_rest` are
+GONE — rest bindings collect exact immutable lists, so `F(V)` and `F(V...)`
+always differ, and the receiver contrast is now proven by
+`receivers_never_agree_on_lone_seq` / `lone_rest_disagrees_on_lone_list` in
+`CoreArityAlgebraProofs.lean` plus the collect bridge laws in
+`KatLangArityLaws.lean`. The correction pass additionally routed flat
+callbacks with a top-level rest through the shared prefix/rest/suffix binder,
+so `[7].map(Collect)` collects `items = [7]`.)*
+
+**Unresolved design choices (pre-existing, unchanged):** sequence-value
+callback deconstruction on scalar elements (still strict; deferred per
+BINDING-ARCHITECTURE.md Phase 26 — flat top-level rest callbacks now bind
+through the shared binder, but the nested-pattern scalar fallback stays
+singleton-only); zero-item root output displaying as empty text (not
+reconstructable as a program).
 
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**1,381 surface cases** as of this update — the surface corpus minus its 32
+(**1,385 surface cases** as of this update — the surface corpus minus its 32
 parse-level cases such as `(3,)`, `x:-1`, `A... == A...`, and `1 ; 2`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **13**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
@@ -306,10 +322,10 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 1,413 | 1,326 template cases (51 receiver templates x 26 values) + 87 specials; outcomes 1,212 ok / 169 err / 32 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Surface corpus (= C# semantic report surface section) | 1,417 | 1,326 template cases (51 receiver templates x 26 values) + 91 specials; outcomes 1,216 ok / 169 err / 32 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
 | Lean-representable surface differential | 1,381 | the 1,413 above minus the 32 parse-level cases (26 `indexNeg__*` + six deliberate parse-error specials) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 13 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 1,394 | 1,381 surface + 13 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 1,398 | 1,385 surface + 13 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 13 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
 | Parser/elaboration reachability sweep | 1,413 attempted, 1,381 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 32 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 41 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, and difference facts | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
@@ -319,8 +335,8 @@ parse-level set) is enforced by
 Historical accounting note: the original audit's **931 vs 912** and
 **925 vs 924** discrepancies came from counting a header comment that mentioned
 `#guard`. The corpus has since expanded; the generated header, partition guards,
-JSON report, and table above now agree on 1,413 surface cases, 32 parse-level
-exclusions, 1,381 Lean-representable surface cases, and 13 internal-node cases.
+JSON report, and table above now agree on 1,417 surface cases, 32 parse-level
+exclusions, 1,385 Lean-representable surface cases, and 13 internal-node cases.
 
 ## 6. Recommended rule and residual risks
 
@@ -329,14 +345,20 @@ to keep it and enforce it):**
 
 > Every property/call/builtin result, argument slot, sequence-literal item,
 > and stored binding is a *value* boundary: one value, count `valueCount`.
-> Item supplies exist only inside root/body output accumulation, raw variadic
-> storage, and loop state; only written `...` (or the documented openers:
-> deconstruction RHS and `:` projection) may open one layer of a value into a
-> surrounding supply. Collection builtins first bind one ordinary fixed
-> `collection` value, then apply their separate post-binding one-level view.
+> Item supplies exist only inside root/body output accumulation and loop
+> state; only written `...` (or the documented openers: deconstruction RHS
+> and `:` projection) may open one layer of a value into a surrounding
+> supply. Collection builtins first bind one ordinary fixed `collection`
+> value, then apply their separate post-binding one-level view.
 > Sequence-centered arity construction erases exactly the unwritable
 > boundaries (singleton wrap, redundant empty nesting) and nothing else;
 > collection-producing builtins construct exact writable list boundaries.
+
+*(July 2026 rest-collection update: the original recommendation listed "raw
+variadic storage" as a third item-supply site. That storage no longer exists —
+rest bindings collect ONE exact immutable list (`collectRest`), a value
+boundary like every other stored binding, and forwarding re-opens it only
+through written `...`.)*
 
 The smallest implementation change needed to enforce it: **none** — the rule
 holds today; the change delivered is the validator that keeps it holding.

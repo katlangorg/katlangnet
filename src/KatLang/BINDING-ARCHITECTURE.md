@@ -13,7 +13,7 @@ This note locks down binding ownership boundaries before any future `BindingInpu
 - `CallableBindingPlan`: binding shape.
 - `FlatVariadicBindingLayout`: plan-derived runtime layout for flat variadic user calls and generic `Algorithm.User` loop-step evaluated-slot binding.
 - `BindCallableArguments`: suffix-from-back binding kernel over already-built items.
-- `CreateVariadicCapture`: variadic `Result` / `CountedResult` construction.
+- `CollectRest` / `CreateVariadicCapture`: rest materialization — the collected rest is ONE exact immutable `Result.ListValue` with emitted count 1 (the `collect` operation; Lean `collectRest`). No raw-supply counts or forwarding provenance are stored.
 - Runtime executors: context-specific semantics.
 
 ## Runtime executor ownership
@@ -138,11 +138,13 @@ Reopen patterned executor policy only if a second non-evaluator consumer of patt
 
 Callback binding unification is deferred. Callback binding remains executor-owned runtime policy across counted callback evaluation, flat callback parameter binding, patterned callback parameter binding, conditional callback dispatch, map callbacks, filter callbacks, reduce step callbacks, and builtin-as-callback paths. `CallableBindingPlan` may describe callback signature shape, but it does not own callback input shaping or execution policy.
 
+Rest parameter kinds are never discarded on any callback route (July 2026 correction): a flat callee whose top-level parameters include a rest routes through `BindCountedCallbackParameterPatternList` (Lean `bindCountedCallbackParameterPatternList`), which applies the established flat-callback row expansion to the supplied argument slots and then delegates to the shared `BindCountedParameterPatternList`, so the rest COLLECTS an exact immutable list — there is no callback-specific rest algorithm. Only fixed-only flat callees stay on `BindCountedCallbackParams`.
+
 `UsesPatternBinding` remains for now because callbacks, evaluated loop slots, and loop fallbacks still share that runtime helper. Do not partially migrate only the callback call site to `CallableBindingPlan.RequiresPatternedBinding`.
 
 Callbacks receive already-evaluated `CountedResult` values; sequence-value callback items preserve structure through callback item projection; reducer accumulator input is shaped differently from ordinary element input; `EmittedCount` threads through counted callback paths; callbacks do not allow algorithm-channel binding; and callback diagnostics are selected and wrapped by the relevant executor call site. Counted and uncounted binders are not unified now because `CountedResult` versus `Result` is a structural difference, not accidental duplication.
 
-`BindingInputSlot` stays a narrow flat-variadic slot model. Its variadic-slot emitted count is only for flat variadic user-call capture supply. It intentionally lacks explicit sequence-value items, reducer accumulator policy, and callback projection policy, and it should not be widened to support callbacks.
+`BindingInputSlot` stays a narrow flat-variadic slot model. It intentionally lacks explicit sequence-value items, reducer accumulator policy, and callback projection policy, and it should not be widened to support callbacks. (It once carried a variadic-slot emitted count for raw capture-supply forwarding; exact list collection made that metadata obsolete and it was removed.)
 
 Reopen callback binding unification only if `UsesPatternBinding`'s evaluated-loop-slot and loop-fallback consumers are migrated so the helper can be retired in one coherent pass; a new callback family appears outside the current executor paths; a second non-executor consumer needs the same callback binding logic; a real callback bug requires unification to fix correctly; Lean callback semantics change and force a C# refactor; or a real `BindingPolicy` abstraction already exists with multiple concrete consumers.
 

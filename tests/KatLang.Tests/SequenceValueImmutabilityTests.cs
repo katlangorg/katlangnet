@@ -16,6 +16,8 @@ public class SequenceValueImmutabilityTests
 
     private static Result.SequenceValue Seq(params Result[] items) => new(items);
 
+    private static Result.ListValue Lst(params Result[] items) => new(items);
+
     private static RunResult.Success Run(string source)
         => Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
 
@@ -246,30 +248,32 @@ public class SequenceValueImmutabilityTests
         AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), value);
     }
 
-    // ── 8. Rest and variadic capture ─────────────────────────────────────────
+    // ── 8. Rest and variadic capture (exact immutable list values) ───────────
 
     [Fact]
-    public void RestCapturedSequence_BehaviorRetained_AndImmutable()
+    public void RestCapturedList_IsExactList_AndImmutable()
     {
+        // Rest bindings collect their assigned slots as one exact immutable
+        // list value, probed like ListValueImmutabilityTests probes lists.
         var run = Run("head, rest... = 1, 2, 3\nrest");
-        var value = Assert.IsType<Result.SequenceValue>(run.Value);
+        var value = Assert.IsType<Result.ListValue>(run.Value);
 
         ProbeAllViews(value);
 
-        Assert.Equal("(2, 3)", run.ToDisplayString());
-        AssertSemanticallyEqual(Seq(Atom(2), Atom(3)), value);
+        Assert.Equal("[2, 3]", run.ToDisplayString());
+        AssertSemanticallyEqual(Lst(Atom(2), Atom(3)), value);
     }
 
     [Fact]
-    public void VariadicCapturedSequence_BehaviorRetained_AndImmutable()
+    public void VariadicCapturedList_IsExactList_AndImmutable()
     {
         var run = Run("Inspect(items...) = items\nInspect(1, 2, 3)");
-        var value = Assert.IsType<Result.SequenceValue>(run.Value);
+        var value = Assert.IsType<Result.ListValue>(run.Value);
 
         ProbeAllViews(value);
 
-        Assert.Equal("(1, 2, 3)", run.ToDisplayString());
-        AssertSemanticallyEqual(Seq(Atom(1), Atom(2), Atom(3)), value);
+        Assert.Equal("[1, 2, 3]", run.ToDisplayString());
+        AssertSemanticallyEqual(Lst(Atom(1), Atom(2), Atom(3)), value);
     }
 
     // ── 9. Builtin-produced collections ───────────────────────────────────────
@@ -413,9 +417,10 @@ public class SequenceValueImmutabilityTests
     [InlineData("A = 1, 2, 3\nx = A\nx", "(1, 2, 3)")]
     [InlineData("F(x) = x\nA = 1, 2, 3\nF(A)", "(1, 2, 3)")]
     [InlineData("F(a, b, c) = a + b + c\nA = 1, 2, 3\nF(A...)", "6")]
-    [InlineData("Sum(items...) = items.sum\nA = 1, 2, 3\nSum(A)", "6")]
     [InlineData("Sum(items...) = items.sum\nA = 1, 2, 3\nSum(A...)", "6")]
     public void RepresentativeSequenceSemantics_Unchanged(string source, string expected)
+        // (The grouped rest call `Sum(A)` is intentionally absent: the rest
+        // binding collects [A] whose element is non-numeric, so it errors.)
         => Assert.Equal(expected, Run(source).ToDisplayString());
 
     [Fact]

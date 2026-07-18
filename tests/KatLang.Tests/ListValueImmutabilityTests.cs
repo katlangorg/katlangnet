@@ -330,8 +330,10 @@ public class ListValueImmutabilityTests
         => Assert.Equal(expected, Display(source));
 
     [Fact]
-    public void RestBinding_BehaviorRetained()
+    public void RestBinding_CollectsExactList()
+        // The rest binding collects the remaining opened elements as one exact
+        // immutable list value.
         => Assert.Equal(
-            string.Join(Environment.NewLine, "1", "(2, 3)"),
+            string.Join(Environment.NewLine, "1", "[2, 3]"),
             Display("A = [1, 2, 3]\nx, rest... = A\nx, rest"));
 }

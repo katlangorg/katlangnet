@@ -284,13 +284,16 @@ public class CallableSignatureTests
     }
 
     [Fact]
-    public void ImplicitResolver_VariadicForwardingBehavior_RemainsUnchanged()
+    public void ImplicitResolver_VariadicForwarding_StillForwardsTheStream()
     {
+        // The implicit forwarding synthesizes spread arguments, so a stream
+        // supplied at the root (spread call) round-trips through the lifted
+        // callee — for the top-level variadic and the pattern callee alike.
         AssertEval(
             """
             CountItems(items...) = items.count
             Use(values...) = CountItems
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """,
             3);
 
@@ -298,7 +301,7 @@ public class CallableSignatureTests
             """
             CountSequenceValue((items...)) = items.count
             Use(values...) = CountSequenceValue
-            Use((1, 2, 3))
+            Use((1, 2, 3)...)
             """,
             3);
     }

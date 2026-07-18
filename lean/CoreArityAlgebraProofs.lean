@@ -18,8 +18,16 @@ mutual
         match Val.decEqList xs ys with
         | .isTrue h => .isTrue (by rw [h])
         | .isFalse h => .isFalse (by intro he; cases he; exact h rfl)
+    | .list xs, .list ys =>
+        match Val.decEqList xs ys with
+        | .isTrue h => .isTrue (by rw [h])
+        | .isFalse h => .isFalse (by intro he; cases he; exact h rfl)
     | .atom _, .seq _ => .isFalse (by intro he; cases he)
+    | .atom _, .list _ => .isFalse (by intro he; cases he)
     | .seq _, .atom _ => .isFalse (by intro he; cases he)
+    | .seq _, .list _ => .isFalse (by intro he; cases he)
+    | .list _, .atom _ => .isFalse (by intro he; cases he)
+    | .list _, .seq _ => .isFalse (by intro he; cases he)
 
   def Val.decEqList : (xs ys : List Val) -> Decidable (xs = ys)
     | [], [] => .isTrue rfl
@@ -36,11 +44,21 @@ instance : DecidableEq Val := Val.decEq
 
 theorem sequenceItems?_seq (xs : Supply) : sequenceItems? (Val.seq xs) = some xs := rfl
 
+theorem listItems?_list (xs : Supply) : listItems? (Val.list xs) = some xs := rfl
+
 theorem items_seq (xs : Supply) : items (Val.seq xs) = xs := rfl
+
+/-- Spread opens one LIST boundary exactly like one sequence boundary
+(`[1, 2, 3]...` supplies the items). -/
+theorem items_list (xs : Supply) : items (Val.list xs) = xs := rfl
 
 /-- Spreading the empty sequence contributes no items. -/
 theorem items_empty :
     items (Val.seq []) = [] := rfl
+
+/-- Spreading the empty list contributes no items either. -/
+theorem items_empty_list :
+    items (Val.list []) = [] := rfl
 
 /-- An empty spread contributes nothing to a surrounding item supply. -/
 theorem spread_empty_neutral (before after : Supply) :
@@ -53,15 +71,17 @@ theorem seq_items_atom (n : Int) : Val.seq (items (Val.atom n)) = Val.seq [Val.a
 
 example : Val.seq (items (Val.atom 7)) ≠ Val.atom 7 := by decide
 
-theorem items_eq_sequenceItems? (v : Val) : items v = (sequenceItems? v).getD [v] := by
-  cases v <;> rfl
-
 example : (Val.seq [Val.atom 1, Val.atom 2]) = (Val.seq [Val.atom 1, Val.atom 2]) := rfl
 
 theorem nesting_matters :
     Val.seq [Val.atom 1, Val.seq [Val.atom 2, Val.atom 3]]
       ≠ Val.seq [Val.seq [Val.atom 1, Val.atom 2], Val.atom 3] := by
   decide
+
+/-- A list value never equals the sequence value with the same elements: the
+two collection kinds stay distinct. -/
+theorem list_ne_seq (xs : Supply) : Val.list xs ≠ Val.seq xs := by
+  intro he; cases he
 
 theorem normalize_atom (n : Int) : normalize (Val.atom n) = Val.atom n := rfl
 
@@ -77,6 +97,14 @@ theorem normalize_deep_nested_empty_collapses :
 
 theorem normalize_keeps_pair (a b : Val) :
     normalize (Val.seq [a, b]) = Val.seq [normalize a, normalize b] := rfl
+
+/-- List normalization is element-wise only: the boundary never collapses,
+so `[7]` stays `[7]` and `[]` stays `[]`. -/
+theorem normalize_list_exact (xs : Supply) :
+    normalize (Val.list xs) = Val.list (normalizeList xs) := rfl
+
+theorem normalize_singleton_list_kept (v : Val) :
+    normalize (Val.list [v]) = Val.list [normalize v] := rfl
 
 theorem capture_eq_normalize_seq (xs : Supply) :
     capture xs = normalize (Val.seq xs) := rfl
@@ -140,90 +168,189 @@ theorem capture_atom_empty_spread (n : Int) :
           simpa using capture_empty_spread_neutral [Val.atom n] []
     _ = Val.atom n := capture_singleton_atom n
 
-theorem openLoneSequence_empty : openLoneSequence [] = [] := rfl
+theorem openLoneStructure_empty : openLoneStructure [] = [] := rfl
 
-theorem openLoneSequence_singleSeq (xs : Supply) :
-    openLoneSequence [Val.seq xs] = xs := rfl
+theorem openLoneStructure_singleSeq (xs : Supply) :
+    openLoneStructure [Val.seq xs] = xs := rfl
 
-theorem openLoneSequence_singleAtom (n : Int) :
-    openLoneSequence [Val.atom n] = [Val.atom n] := rfl
+/-- Deconstruction opens a lone LIST exactly like a lone sequence value. -/
+theorem openLoneStructure_singleList (xs : Supply) :
+    openLoneStructure [Val.list xs] = xs := rfl
 
-theorem openLoneSequence_multi (a b : Val) (rest : Supply) :
-    openLoneSequence (a :: b :: rest) = a :: b :: rest := by
+theorem openLoneStructure_singleAtom (n : Int) :
+    openLoneStructure [Val.atom n] = [Val.atom n] := rfl
+
+theorem openLoneStructure_multi (a b : Val) (rest : Supply) :
+    openLoneStructure (a :: b :: rest) = a :: b :: rest := by
   cases a <;> rfl
 
-theorem openLoneSequence_nested_empty_opens_one_boundary :
-    openLoneSequence [Val.seq [Val.seq []]] = [Val.seq []] := rfl
+theorem openLoneStructure_nested_empty_opens_one_boundary :
+    openLoneStructure [Val.seq [Val.seq []]] = [Val.seq []] := rfl
 
-theorem variadic_empty : captureVariadic [] = Val.seq [] := rfl
+/-! ## Exact rest collection (`collect`)
 
-theorem variadic_singleton_empty : captureVariadic [Val.seq []] = Val.seq [] := rfl
+`collect : Supply -> ListValue` is the rest/variadic binding operation.
+The laws below establish the required exactness properties: stable result
+kind, exact length and elements, singleton preservation, the open/collect
+round trip, and provenance independence. They intentionally supersede the
+pre-list `captureVariadic := capture` coincidence model.
+-/
 
-theorem variadic_singleton_scalar (n : Int) :
-    captureVariadic [Val.atom n] = Val.atom n := rfl
+/-- Stable result kind + exact elements: `collect` always produces the exact
+list of precisely the assigned items (`listItems?` is total on collect
+results — a section law that `capture` deliberately fails on singletons). -/
+theorem collect_is_list (xs : Supply) : listItems? (collect xs) = some xs := rfl
 
-theorem variadic_two_scalars (m n : Int) :
-    captureVariadic [Val.atom m, Val.atom n] = Val.seq [Val.atom m, Val.atom n] := rfl
+/-- Exact length: collecting never adds, drops, or merges items. -/
+theorem collect_length (xs : Supply) : (items (collect xs)).length = xs.length := rfl
 
-/-- Universal value-level form of the grouped/spread agreement: variadic
-capture of one grouped sequence value equals variadic capture of its stored
-items — the item supply an explicit spread provides (`items_seq`). The
-boundary is erased by canonical capture (`normalize_singleton`), not by any
-opening of the supply. The binding-level paper theorem is
-`variadic_capture_unchanged_by_spread`. -/
-theorem captureVariadic_lone_seq (ys : Supply) :
-    captureVariadic [Val.seq ys] = captureVariadic ys := by
-  show normalize (Val.seq [Val.seq ys]) = normalize (Val.seq ys)
-  exact normalize_singleton (Val.seq ys)
+/-- Zero assigned items collect to the empty list `[]` — a visible exact
+value, never the empty sequence value `()`. -/
+theorem collect_empty : collect [] = Val.list [] := rfl
 
-/-- Concrete `(1, 2, 3)` regression instance of `captureVariadic_lone_seq`
-(kept under its original name for compatibility). -/
-theorem variadic_grouped_eq_spread :
-    captureVariadic [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
-      = captureVariadic (items (Val.seq [Val.atom 1, Val.atom 2, Val.atom 3])) :=
-  captureVariadic_lone_seq [Val.atom 1, Val.atom 2, Val.atom 3]
+theorem collect_empty_ne_empty_seq : collect [] ≠ Val.seq [] := by decide
 
-theorem variadic_grouped_eq_spread_value :
-    captureVariadic [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
-      = Val.seq [Val.atom 1, Val.atom 2, Val.atom 3] := by
-  decide
+/-- Singleton preservation: one assigned item collects to the one-element
+list `[v]`, for every value kind. -/
+theorem collect_singleton (v : Val) : collect [v] = Val.list [v] := rfl
+
+example : collect [Val.atom 7] = Val.list [Val.atom 7] := rfl
+example : collect [Val.seq []] = Val.list [Val.seq []] := rfl
+example : collect [Val.list []] = Val.list [Val.list []] := rfl
+example : collect [Val.seq [Val.atom 2, Val.atom 3]]
+    = Val.list [Val.seq [Val.atom 2, Val.atom 3]] := rfl
+
+/-- No value is an element of its own payload list: an element of `ys` is
+structurally smaller than `Val.seq ys`. -/
+theorem mem_ne_seq {w : Val} {ys : List Val} (h : w ∈ ys) : w ≠ Val.seq ys := by
+  intro he
+  have hlt : sizeOf w < sizeOf ys := List.sizeOf_lt_of_mem h
+  have hsz : sizeOf (Val.seq ys) = 1 + sizeOf ys := by simp
+  rw [he, hsz] at hlt
+  omega
+
+/-- The list twin of `mem_ne_seq`. -/
+theorem mem_ne_list {w : Val} {ys : List Val} (h : w ∈ ys) : w ≠ Val.list ys := by
+  intro he
+  have hlt : sizeOf w < sizeOf ys := List.sizeOf_lt_of_mem h
+  have hsz : sizeOf (Val.list ys) = 1 + sizeOf ys := by simp
+  rw [he, hsz] at hlt
+  omega
+
+/-- A singleton rest is NEVER erased to its item: `collect [v] ≠ v`. This is
+the load-bearing difference from canonical capture (`capture [v] = normalize v`),
+and what keeps one remaining structured row distinct from the row's own
+elements. -/
+theorem collect_singleton_ne_item (v : Val) : collect [v] ≠ v := by
+  intro he
+  exact absurd he.symm (mem_ne_list List.mem_cons_self)
+
+/-- `collect` and `capture` are different operations on the same supply. -/
+theorem collect_singleton_atom_ne_capture (n : Int) :
+    collect [Val.atom n] ≠ capture [Val.atom n] := by
+  intro he
+  rw [capture_singleton_atom] at he
+  exact collect_singleton_ne_item (Val.atom n) he
+
+/-- Open/collect round trip: surface spread (`items`, the `open` operation)
+re-supplies EXACTLY the collected items, so variadic forwarding
+(`Forward(items...) = Target(items...)`) is ordinary list spread. -/
+theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
+
+/-- Provenance independence: `collect` depends only on the assembled item
+supply, never on which structures were spread to produce it. Collecting the
+concatenation of two spread supplies is exactly the list of those items,
+whatever `a` and `b` were (`first, rest... = 1, [2, 3]..., (4, 5)...` gives
+`rest = [2, 3, 4, 5]`). -/
+theorem collect_spread_concat_exact (a b : Val) :
+    collect (items a ++ items b) = Val.list (items a ++ items b) := rfl
+
+/-- Equal supplies collect equal lists — the general form of provenance
+independence (a function of the supply alone). -/
+theorem collect_congr {xs ys : Supply} (h : xs = ys) : collect xs = collect ys :=
+  congrArg collect h
+
+/-- Grouped and spread supplies collect DIFFERENT values: `collect` of one
+grouped sequence value is the one-element list holding it, never the collect
+of its stored items (unless the sequence were its own element, which the
+structural order excludes). Supersedes the obsolete coincidence
+`captureVariadic [Val.seq ys] = captureVariadic ys` of the pre-list model. -/
+theorem collect_lone_seq_ne_collect_items (ys : Supply) :
+    collect [Val.seq ys] ≠ collect (items (Val.seq ys)) := by
+  intro he
+  have hpay : [Val.seq ys] = ys := by
+    simpa [collect, items] using he
+  cases ys with
+  | nil => cases hpay
+  | cons w t =>
+      have hw : Val.seq (w :: t) = w := by
+        have := List.cons.inj hpay
+        exact this.1
+      have ht : t = [] := by
+        have := List.cons.inj hpay
+        simpa using this.2.symm
+      subst ht
+      exact absurd hw.symm (mem_ne_seq List.mem_cons_self)
+
+/-- The list twin: a grouped list argument and its spread items collect
+different values as well. -/
+theorem collect_lone_list_ne_collect_items (ys : Supply) :
+    collect [Val.list ys] ≠ collect (items (Val.list ys)) := by
+  intro he
+  have hpay : [Val.list ys] = ys := by
+    simpa [collect, items] using he
+  cases ys with
+  | nil => cases hpay
+  | cons w t =>
+      have hw : Val.list (w :: t) = w := by
+        have := List.cons.inj hpay
+        exact this.1
+      have ht : t = [] := by
+        have := List.cons.inj hpay
+        simpa using this.2.symm
+      subst ht
+      exact absurd hw.symm (mem_ne_list List.mem_cons_self)
+
+/-! ## Binding checks -/
 
 theorem rest_tail :
     bindArgs [Pat.name "x", Pat.rest "rest"] [Val.atom 1, Val.atom 2, Val.atom 3]
-      = some [("x", Val.atom 1), ("rest", Val.seq [Val.atom 2, Val.atom 3])] := by
+      = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
 theorem rest_empty :
     bindArgs [Pat.name "x", Pat.rest "rest"] [Val.atom 1]
-      = some [("x", Val.atom 1), ("rest", Val.seq [])] := by
+      = some [("x", Val.atom 1), ("rest", Val.list [])] := by
   decide
 
 theorem rest_head :
     bindArgs [Pat.rest "head", Pat.name "last"] [Val.atom 1, Val.atom 2, Val.atom 3]
-      = some [("head", Val.seq [Val.atom 1, Val.atom 2]), ("last", Val.atom 3)] := by
+      = some [("head", Val.list [Val.atom 1, Val.atom 2]), ("last", Val.atom 3)] := by
   decide
 
 theorem rest_middle :
     bindArgs [Pat.name "first", Pat.rest "middle", Pat.name "last"]
         [Val.atom 1, Val.atom 2, Val.atom 3, Val.atom 4]
       = some [("first", Val.atom 1),
-              ("middle", Val.seq [Val.atom 2, Val.atom 3]),
+              ("middle", Val.list [Val.atom 2, Val.atom 3]),
               ("last", Val.atom 4)] := by
   decide
 
-theorem rest_singleton_collapses :
+/-- A one-item rest stays a one-element list: no singleton collapse
+(the pre-list model bound `rest = 2` here; exact collection binds `[2]`). -/
+theorem rest_singleton_collected :
     bindArgs [Pat.name "x", Pat.rest "rest"] [Val.atom 1, Val.atom 2]
-      = some [("x", Val.atom 1), ("rest", Val.atom 2)] := by
+      = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2])] := by
   decide
 
 theorem call_bind_rest_does_not_open_lone_sequence :
     bindArgs [Pat.name "x", Pat.rest "rest"] [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
-      = some [("x", Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]), ("rest", Val.seq [])] := by
+      = some [("x", Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]), ("rest", Val.list [])] := by
   decide
 
 -- Assignment deconstruction is an unpacking receiver: a single stored sequence
--- value is opened and matched element-by-element. Function calls (`bindArgs`)
--- do NOT open. These checks pin that contrast.
+-- or list value is opened and matched element-by-element. Function calls
+-- (`bindArgs`) do NOT open. These checks pin that contrast.
 
 /-- `Add(A)` / function parameter binding: a single sequence-valued argument against
 two fixed parameters is an arity error — the call binder does not open `A`. -/
@@ -233,11 +360,25 @@ theorem args_fixed_single_sequence_rejected :
       = none := by
   decide
 
+/-- The list twin: `Add(A)` with a stored list is an arity error too. -/
+theorem args_fixed_single_list_rejected :
+    bindArgs [Pat.name "x", Pat.name "y"]
+      [Val.list [Val.atom 1, Val.atom 2]]
+      = none := by
+  decide
+
 /-- `x, y = A`: deconstruction opens the single sequence-valued right-hand side, so
 the two targets bind `x = 1`, `y = 2`. -/
 theorem deconstruct_fixed_single_sequence_opens :
     bindDeconstruct [Pat.name "x", Pat.name "y"]
       [Val.seq [Val.atom 1, Val.atom 2]]
+      = some [("x", Val.atom 1), ("y", Val.atom 2)] := by
+  decide
+
+/-- `x, y = [1, 2]`: deconstruction opens a lone LIST the same way. -/
+theorem deconstruct_fixed_single_list_opens :
+    bindDeconstruct [Pat.name "x", Pat.name "y"]
+      [Val.list [Val.atom 1, Val.atom 2]]
       = some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
@@ -251,12 +392,21 @@ theorem deconstruct_fixed_explicit_spread_succeeds :
   decide
 
 /-- `first, rest... = A`: deconstruction opens `A`, so `first = 1` and the rest
-captures the remaining items as one grouped value `(2, 3)`. -/
+COLLECTS the remaining items as the exact list `[2, 3]`. -/
 theorem deconstruct_rest_single_sequence_opens :
     bindDeconstruct [Pat.name "first", Pat.rest "rest"]
       [Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]]
       = some [("first", Val.atom 1),
-              ("rest", Val.seq [Val.atom 2, Val.atom 3])] := by
+              ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
+  decide
+
+/-- `first, rest... = [1, 2, 3]`: the lone-list right-hand side opens the same
+way, and the rest collects `[2, 3]`. -/
+theorem deconstruct_rest_single_list_opens :
+    bindDeconstruct [Pat.name "first", Pat.rest "rest"]
+      [Val.list [Val.atom 1, Val.atom 2, Val.atom 3]]
+      = some [("first", Val.atom 1),
+              ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
 /-- `first, rest... = A...`: the explicit spread supplies the same opened items as
@@ -265,7 +415,7 @@ theorem deconstruct_rest_explicit_spread :
     bindDeconstruct [Pat.name "first", Pat.rest "rest"]
       (items (Val.seq [Val.atom 1, Val.atom 2, Val.atom 3]))
       = some [("first", Val.atom 1),
-              ("rest", Val.seq [Val.atom 2, Val.atom 3])] := by
+              ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
 /-- Deconstruction opens where the call binder preserves: on a single stored
@@ -293,48 +443,45 @@ syntax can still reject rest-only assignment targets before they reach this
 binder model.
 -/
 theorem variadic_is_single_rest (xs : Supply) :
-    bindArgs [Pat.rest "x"] xs = some [("x", captureVariadic xs)] := by
-  unfold bindArgs captureVariadic
+    bindArgs [Pat.rest "x"] xs = some [("x", collect xs)] := by
+  unfold bindArgs
   simp [bindPats, bindFixed, Pat.isRest, Pat.key, List.take_length, List.drop_length]
 
-/-! ## Receiver-agreement theorems
+/-! ## Receiver theorems
 
 The concrete checks above pin the call/deconstruction contrast on specific
 values. The theorems below establish the contrast in general:
 
-* `receivers_agree_of_not_lone_seq` — the two receivers agree on every supply
-  that is not a single sequence value, so the entire asymmetry is confined to
-  the lone-sequence-value case;
+* `receivers_agree_of_not_lone_structure` — the two receivers agree on every
+  supply that is not a single sequence or list value, so the entire asymmetry
+  is confined to the lone-structure case;
 * `deconstruct_singleton_eq_args_items` — on a single-value supply the
   deconstruction receiver binds exactly the value's item view, the item supply
   an explicit spread provides (`x, y = A` binds as `x, y = A...`);
-* `agree_on_lone_seq_iff_lone_rest` — on a lone sequence value the two
-  receivers produce the same successful binding exactly when the pattern list
-  is a single rest binding; together with `deconstruct_singleton_eq_args_items`,
-  this implies the rest-only grouped/spread call coincidence.
+* `receivers_never_agree_on_lone_seq` — on a lone sequence value the two
+  receivers NEVER produce the same successful binding, for any pattern list.
+  This replaces the pre-list characterization
+  (`agree_on_lone_seq_iff_lone_rest`), whose rest-only agreement depended on
+  the canonical-capture coincidence: exact rest collection distinguishes the
+  grouped argument (`rest = [A]`) from the opened items (`rest = [a1, …]`),
+  so even the lone-rest shape now disagrees;
+* `lone_rest_disagrees_on_lone_list` — the concrete lone-rest disagreement on
+  a lone LIST supply, mirroring the sequence-side theorem on the list kind.
 -/
-
-/-- No value is an element of its own payload list: an element of `ys` is
-structurally smaller than `Val.seq ys`. -/
-theorem mem_ne_seq {w : Val} {ys : List Val} (h : w ∈ ys) : w ≠ Val.seq ys := by
-  intro he
-  have hlt : sizeOf w < sizeOf ys := List.sizeOf_lt_of_mem h
-  have hsz : sizeOf (Val.seq ys) = 1 + sizeOf ys := by simp
-  rw [he, hsz] at hlt
-  omega
 
 /-- The deconstruction receiver's implicit opening of a single-value supply is
 the total item view `items` — the same item supply the surface spread `...`
 provides. -/
-theorem openLoneSequence_singleton (v : Val) : openLoneSequence [v] = items v := by
+theorem openLoneStructure_singleton (v : Val) : openLoneStructure [v] = items v := by
   cases v <;> rfl
 
 /-- Localization: the call and deconstruction receivers agree on every supply
-that is not a single sequence value. -/
-theorem receivers_agree_of_not_lone_seq (ps : List Pat) (xs : Supply)
-    (h : ∀ ys : List Val, xs ≠ [Val.seq ys]) :
+that is not a single sequence value and not a single list value. -/
+theorem receivers_agree_of_not_lone_structure (ps : List Pat) (xs : Supply)
+    (hseq : ∀ ys : List Val, xs ≠ [Val.seq ys])
+    (hlist : ∀ ys : List Val, xs ≠ [Val.list ys]) :
     bindDeconstruct ps xs = bindArgs ps xs := by
-  have hn : openLoneSequence xs = xs := by
+  have hn : openLoneStructure xs = xs := by
     cases xs with
     | nil => rfl
     | cons a t =>
@@ -342,7 +489,8 @@ theorem receivers_agree_of_not_lone_seq (ps : List Pat) (xs : Supply)
       | nil =>
         cases a with
         | atom n => rfl
-        | seq ys => exact absurd rfl (h ys)
+        | seq ys => exact absurd rfl (hseq ys)
+        | list ys => exact absurd rfl (hlist ys)
       | cons b t2 => cases a <;> rfl
   unfold bindDeconstruct bindArgs
   rw [hn]
@@ -352,25 +500,44 @@ what a call binds on the value's item view. -/
 theorem deconstruct_singleton_eq_args_items (ps : List Pat) (v : Val) :
     bindDeconstruct ps [v] = bindArgs ps (items v) := by
   unfold bindDeconstruct bindArgs
-  rw [openLoneSequence_singleton]
+  rw [openLoneStructure_singleton]
 
 /-- `variadic_is_single_rest`, generalized to an arbitrary rest name. -/
 theorem bindArgs_lone_rest (r : String) (xs : Supply) :
-    bindArgs [Pat.rest r] xs = some [(r, captureVariadic xs)] := by
-  unfold bindArgs captureVariadic
+    bindArgs [Pat.rest r] xs = some [(r, collect xs)] := by
+  unfold bindArgs
   simp [bindPats, bindFixed, Pat.isRest, Pat.key, List.take_length, List.drop_length]
 
-/-- Rest-only coincidence (agreement direction): a lone rest pattern binds a
-single sequence value and its opened items to the same environment. -/
-theorem lone_rest_agrees_on_lone_seq (r : String) (ys : List Val) :
-    bindArgs [Pat.rest r] [Val.seq ys] = bindDeconstruct [Pat.rest r] [Val.seq ys] := by
-  have h1 : bindDeconstruct [Pat.rest r] [Val.seq ys] = bindArgs [Pat.rest r] ys := by
-    unfold bindDeconstruct bindArgs
-    rw [openLoneSequence_singleSeq]
-  have hcap : captureVariadic [Val.seq ys] = captureVariadic ys := by
-    show normalize (Val.seq [Val.seq ys]) = normalize (Val.seq ys)
-    exact normalize_singleton (Val.seq ys)
-  rw [h1, bindArgs_lone_rest, bindArgs_lone_rest, hcap]
+/-- Grouped/spread DISTINCTION for a rest-only variadic parameter: `F(A)` with
+a stored sequence `A` binds `rest = [A]` (one collected argument), while
+`F(A...)` binds `rest = [a1, …, an]` (the collected opened items) — always
+different bindings. Supersedes the obsolete paper theorem
+`variadic_capture_unchanged_by_spread`. -/
+theorem variadic_collect_distinguishes_spread (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] [Val.seq ys]
+      ≠ bindArgs [Pat.rest r] (items (Val.seq ys)) := by
+  rw [bindArgs_lone_rest, bindArgs_lone_rest]
+  intro he
+  have hv : collect [Val.seq ys] = collect (items (Val.seq ys)) := by
+    have := Option.some.inj he
+    have hpair := List.cons.inj this
+    have := congrArg Prod.snd hpair.1
+    simpa [items] using this
+  exact collect_lone_seq_ne_collect_items ys (by simpa [items] using hv)
+
+/-- Exact bound value, grouped side: `F(A)` binds `r` to `collect [A]` — the
+one-element list holding the grouped argument. -/
+theorem variadic_collect_value_grouped (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] [Val.seq ys]
+      = some [(r, Val.list [Val.seq ys])] :=
+  bindArgs_lone_rest r [Val.seq ys]
+
+/-- Exact bound value, spread side: `F(A...)` binds `r` to `collect ys` — the
+exact list of `A`'s stored items. -/
+theorem variadic_collect_value_spread (r : String) (ys : Supply) :
+    bindArgs [Pat.rest r] (items (Val.seq ys))
+      = some [(r, Val.list ys)] :=
+  bindArgs_lone_rest r ys
 
 /-- The shared binder fails whenever the supply is at least two items shorter
 than the pattern list: even a rest binding cannot stand in for two missing
@@ -385,14 +552,24 @@ theorem bindPats_none_of_undersupplied (ps : List Pat) (xs : Supply)
     | some i => exact if_pos (by omega)
   · rfl
 
-/-- Rest-only coincidence (uniqueness direction): if the call receiver and the
-deconstruction receiver both succeed with the same environment on a supply of
-exactly one sequence value, the pattern list is a single rest binding. -/
-theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : Env)
-    (hA : bindArgs ps [Val.seq ys] = some env)
-    (hD : bindDeconstruct ps [Val.seq ys] = some env) :
-    ∃ r, ps = [Pat.rest r] := by
-  rw [bindDeconstruct, openLoneSequence_singleSeq] at hD
+private theorem list_payload_not_self (ys : List Val) (hkind : Val) (hpay : [hkind] = ys)
+    (hmem : ∀ w ∈ ys, w ≠ hkind) : False := by
+  cases ys with
+  | nil => cases hpay
+  | cons w t =>
+      have hw : hkind = w := (List.cons.inj hpay).1
+      exact absurd hw.symm (hmem w List.mem_cons_self)
+
+/-- Receiver disagreement on a lone sequence value, in full generality: for
+EVERY pattern list, the call receiver and the deconstruction receiver never
+both succeed with the same environment on a supply of exactly one sequence
+value. The pre-list model's rest-only agreement was a canonical-capture
+coincidence; exact rest collection removes it. -/
+theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
+    ¬ ∃ env, bindArgs ps [Val.seq ys] = some env
+        ∧ bindDeconstruct ps [Val.seq ys] = some env := by
+  rintro ⟨env, hA, hD⟩
+  rw [bindDeconstruct, openLoneStructure_singleSeq] at hD
   cases ps with
   | nil =>
     simp [bindArgs, bindPats] at hA
@@ -400,7 +577,18 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
     cases ps1 with
     | nil =>
       cases p with
-      | rest r => exact ⟨r, rfl⟩
+      | rest r =>
+        rw [bindArgs_lone_rest] at hA
+        rw [show bindPats [Pat.rest r] ys = bindArgs [Pat.rest r] ys from rfl,
+            bindArgs_lone_rest] at hD
+        rw [← hA] at hD
+        have hv : collect ys = collect [Val.seq ys] := by
+          have := Option.some.inj hD
+          have hpair := List.cons.inj this
+          simpa using congrArg Prod.snd hpair.1
+        have hpay : [Val.seq ys] = ys := by
+          simpa [collect] using hv.symm
+        exact list_payload_not_self ys (Val.seq ys) hpay (fun w hw => mem_ne_seq hw)
       | name x =>
         have eA : bindArgs [Pat.name x] [Val.seq ys]
             = some [(x, Val.seq ys)] := rfl
@@ -415,12 +603,12 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
           | nil =>
             have eD : bindPats [Pat.name x] [w] = some [(x, w)] := rfl
             rw [eD] at hD
-            rw [← hD] at hA
-            simp at hA
+            rw [← hA] at hD
+            simp at hD
             have hne : w ≠ Val.seq [w] := mem_ne_seq List.mem_cons_self
             first
-            | exact absurd hA hne
-            | exact absurd hA.symm hne
+            | exact absurd hD hne
+            | exact absurd hD.symm hne
           | cons b t2 =>
             have h0 : bindPats [Pat.name x] (w :: b :: t2) = none := by
               unfold bindPats
@@ -437,7 +625,7 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
             simp [bindArgs, bindPats, Pat.isRest] at hA
           | rest r =>
             have eA : bindArgs [Pat.name x, Pat.rest r] [Val.seq ys]
-                = some [(x, Val.seq ys), (r, Val.seq [])] := rfl
+                = some [(x, Val.seq ys), (r, Val.list [])] := rfl
             rw [eA] at hA
             cases ys with
             | nil =>
@@ -446,7 +634,7 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
               cases hD
             | cons w t =>
               have eD : bindPats [Pat.name x, Pat.rest r] (w :: t)
-                  = some [(x, w), (r, capture t)] := by
+                  = some [(x, w), (r, collect t)] := by
                 simp [bindPats, Pat.isRest, Pat.key, bindFixed,
                       show List.findIdx? Pat.isRest [Pat.name x, Pat.rest r]
                         = some 1 from rfl]
@@ -463,7 +651,7 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
             simp [bindArgs, bindPats, Pat.isRest] at hA
           | name y =>
             have eA : bindArgs [Pat.rest r, Pat.name y] [Val.seq ys]
-                = some [(r, Val.seq []), (y, Val.seq ys)] := rfl
+                = some [(r, Val.list []), (y, Val.seq ys)] := rfl
             rw [eA] at hA
             cases ys with
             | nil =>
@@ -472,7 +660,7 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
               cases hD
             | cons w t =>
               have eD : bindPats [Pat.rest r, Pat.name y] (w :: t)
-                  = some ((r, capture ((w :: t).take t.length))
+                  = some ((r, collect ((w :: t).take t.length))
                       :: bindFixed [Pat.name y] ((w :: t).drop t.length)) := by
                 simp [bindPats, Pat.isRest, Pat.key, bindFixed,
                       show List.findIdx? Pat.isRest [Pat.rest r, Pat.name y]
@@ -508,70 +696,24 @@ theorem lone_rest_of_agree_on_lone_seq (ps : List Pat) (ys : List Val) (env : En
         rw [hnone] at hA
         cases hA
 
-/-- Receiver agreement on a lone sequence value, characterized: the two
-receivers produce the same successful binding exactly when the pattern list is
-one rest binding. -/
-theorem agree_on_lone_seq_iff_lone_rest (ps : List Pat) (ys : List Val) :
-    (∃ env, bindArgs ps [Val.seq ys] = some env ∧
-            bindDeconstruct ps [Val.seq ys] = some env)
-      ↔ ∃ r, ps = [Pat.rest r] := by
-  constructor
-  · intro ⟨env, hA, hD⟩
-    exact lone_rest_of_agree_on_lone_seq ps ys env hA hD
-  · intro ⟨r, hp⟩
-    subst hp
-    refine ⟨[(r, captureVariadic [Val.seq ys])], bindArgs_lone_rest r _, ?_⟩
-    rw [← lone_rest_agrees_on_lone_seq, bindArgs_lone_rest]
-
-/-! ## Variadic capture under explicit spread (paper theorem)
-
-For a rest-only variadic function such as `Sum(items...) = items.sum`, the
-grouped call `Sum(A)` and the explicitly spread call `Sum(A...)` bind the
-parameter identically. In the model, `[Pat.rest r]` is the rest-only variadic
-parameter, the one-item supply `[Val.seq ys]` is the grouped call's argument
-supply (`A` passed as one sequence-valued argument), and `items (Val.seq ys)`
-is the item supply the explicit spread provides. The agreement is a
-canonical-capture fact (`captureVariadic_lone_seq`): `bindArgs` never opens a
-lone sequence argument (`call_bind_rest_does_not_open_lone_sequence`); both
-supplies simply capture to the same canonical value. It is specific to the
-rest-only shape. The theorem `agree_on_lone_seq_iff_lone_rest` characterizes
-successful call/deconstruction agreement on a lone sequence value, while
-`deconstruct_singleton_eq_args_items` bridges deconstruction of that value to
-call binding on its item view; together they pin rest-only as exactly the
-successful grouped/spread coincidence shape. The equality direction also
-follows by composing `lone_rest_agrees_on_lone_seq` with that bridge; the direct
-proofs below keep the capture-based explanation primary.
--/
-
-/-- Paper theorem, universal over the parameter name and the stored items: a
-rest-only variadic parameter captures the same value whether a sequence value
-is supplied as one grouped argument (`Sum(A)`) or explicitly spread into its
-items (`Sum(A...)`). `variadic_grouped_eq_spread` is a concrete instance of
-the underlying capture law. Mixed fixed/rest parameter lists are not covered. -/
-theorem variadic_capture_unchanged_by_spread
-    (r : String) (ys : Supply) :
-    bindArgs [Pat.rest r] [Val.seq ys] =
-      bindArgs [Pat.rest r] (items (Val.seq ys)) := by
-  rw [items_seq, bindArgs_lone_rest, bindArgs_lone_rest,
-      captureVariadic_lone_seq]
-
-/-- Exact bound value, grouped side: `Sum(A)` binds `r` to `capture ys`, the
-canonical grouped value of `A`'s stored items. -/
-theorem variadic_capture_value
-    (r : String) (ys : Supply) :
-    bindArgs [Pat.rest r] [Val.seq ys] =
-      some [(r, capture ys)] := by
-  rw [bindArgs_lone_rest, captureVariadic_lone_seq]
-  rfl
-
-/-- Exact bound value, spread side: `Sum(A...)` binds `r` to the same
-`capture ys`. -/
-theorem variadic_capture_value_spread
-    (r : String) (ys : Supply) :
-    bindArgs [Pat.rest r] (items (Val.seq ys)) =
-      some [(r, capture ys)] :=
-  (variadic_capture_unchanged_by_spread r ys).symm.trans
-    (variadic_capture_value r ys)
+/-- The lone-rest disagreement on a lone LIST supply: call binding collects
+the one supplied argument (`rest = [[1, 2]]`-style nesting), while
+deconstruction opens the lone list and collects its items — never the same
+binding. -/
+theorem lone_rest_disagrees_on_lone_list (r : String) (ys : List Val) :
+    bindArgs [Pat.rest r] [Val.list ys]
+      ≠ bindDeconstruct [Pat.rest r] [Val.list ys] := by
+  rw [bindArgs_lone_rest, bindDeconstruct, openLoneStructure_singleList,
+      show bindPats [Pat.rest r] ys = bindArgs [Pat.rest r] ys from rfl,
+      bindArgs_lone_rest]
+  intro he
+  have hv : collect [Val.list ys] = collect ys := by
+    have := Option.some.inj he
+    have hpair := List.cons.inj this
+    simpa using congrArg Prod.snd hpair.1
+  have hpay : [Val.list ys] = ys := by
+    simpa [collect] using hv
+  exact list_payload_not_self ys (Val.list ys) hpay (fun w hw => mem_ne_list hw)
 
 /-! ## Canonical-form theorems (general)
 
@@ -581,11 +723,17 @@ story over all values:
 
 * `normalize_idempotent` — `normalize` is a projection onto canonical values;
 * `orphanFree_normalize` — canonical values contain no redundant singleton
-  sequence boundary anywhere in their tree (no literal-unwritable "orphans");
+  sequence boundary anywhere in their tree (no literal-unwritable "orphans";
+  exact list values carry no singleton-orphan rule, since `[x]` is
+  literal-writable);
 * `capture_canonical` / `capture_orphanFree` — capture boundaries only ever
   produce canonical, orphan-free values;
+* `collect_normalize_elementwise` — collected rest values normalize
+  element-wise only: the collected boundary itself is stable;
 * `capture_items_of_canonical` — capture after spread is the identity on
-  canonical values, so re-capturing a spread supply loses nothing.
+  canonical NON-LIST values; spreading a list opens its boundary, so
+  re-capture converts it to the canonical capture of its elements
+  (`capture_items_of_list`).
 -/
 
 /-- Unfolding case split for `normalize` on a sequence value: an empty
@@ -631,6 +779,9 @@ mutual
                 rw [normalize_seq_of_list_multi h]
                 rw [h] at hl
                 exact normalize_seq_of_list_multi hl
+    | .list xs => by
+        have hl := normalizeList_idempotent xs
+        rw [normalize_list_exact, normalize_list_exact, hl]
   termination_by v => sizeOf v
 
   /-- Element-wise idempotence for the mutual payload traversal of
@@ -645,15 +796,23 @@ mutual
   termination_by xs => sizeOf xs
 end
 
+/-- Collected rest values normalize element-wise only: the collect boundary is
+already canonical (`normalize (collect xs) = collect (normalizeList xs)`). -/
+theorem collect_normalize_elementwise (xs : Supply) :
+    normalize (collect xs) = collect (normalizeList xs) := rfl
+
 mutual
   /-- Orphan-freedom: `true` iff no singleton sequence boundary `Val.seq [x]`
-  appears anywhere in the value. A singleton boundary is a literal-unwritable
-  "orphan" (a stored `(5)` distinct from `5`): `normalize` erases such
-  boundaries at every construction/capture site, so no canonical value
-  contains one (`orphanFree_normalize`). -/
+  appears anywhere in the value. A singleton sequence boundary is a
+  literal-unwritable "orphan" (a stored `(5)` distinct from `5`): `normalize`
+  erases such boundaries at every construction/capture site, so no canonical
+  value contains one (`orphanFree_normalize`). Exact list values carry NO
+  singleton-orphan rule — `[x]` is literal-writable — so only their elements
+  are checked. -/
   def orphanFree : Val -> Bool
     | .atom _ => true
     | .seq xs => xs.length != 1 && orphanFreeList xs
+    | .list xs => orphanFreeList xs
 
   /-- List traversal for `orphanFree`. -/
   def orphanFreeList : List Val -> Bool
@@ -666,6 +825,10 @@ example : orphanFree (Val.seq []) = true := by decide
 example : orphanFree (Val.seq [Val.atom 1]) = false := by decide
 example : orphanFree (Val.seq [Val.atom 1, Val.seq [Val.atom 2]]) = false := by decide
 example : orphanFree (Val.seq [Val.atom 1, Val.seq []]) = true := by decide
+example : orphanFree (Val.list []) = true := by decide
+example : orphanFree (Val.list [Val.atom 1]) = true := by decide
+example : orphanFree (Val.list [Val.list [Val.atom 1]]) = true := by decide
+example : orphanFree (Val.list [Val.seq [Val.atom 1]]) = false := by decide
 
 mutual
   /-- Orphan-freedom of canonical values: normalization never leaves a
@@ -694,6 +857,11 @@ mutual
                 show ((v :: w :: tl2).length != 1 && orphanFreeList (v :: w :: tl2)) = true
                 rw [hlen, hl]
                 rfl
+    | .list xs => by
+        have hl := orphanFreeList_normalizeList xs
+        rw [normalize_list_exact]
+        show orphanFreeList (normalizeList xs) = true
+        exact hl
   termination_by v => sizeOf v
 
   /-- List form of `orphanFree_normalize` for the mutual payload traversal. -/
@@ -718,19 +886,28 @@ theorem capture_canonical (xs : Supply) : normalize (capture xs) = capture xs :=
 theorem capture_orphanFree (xs : Supply) : orphanFree (capture xs) = true :=
   orphanFree_normalize (Val.seq xs)
 
-/-- Spread/capture round-trip: on a canonical value, re-capturing the item view
-(the supply an explicit spread `...` provides) reproduces the value exactly.
-Opening a canonical value and grouping it back is lossless. -/
-theorem capture_items_of_canonical (v : Val) (h : normalize v = v) :
+/-- Spread/capture round-trip, restricted to non-list values: on a canonical
+value that is not an exact list, re-capturing the item view (the supply an
+explicit spread `...` provides) reproduces the value exactly. -/
+theorem capture_items_of_canonical (v : Val) (h : normalize v = v)
+    (hl : ∀ xs, v ≠ Val.list xs) :
     capture (items v) = v := by
   cases v with
   | atom n => rfl
   | seq xs => exact h
+  | list xs => exact absurd rfl (hl xs)
 
-/-- Capture/spread/capture collapse: since captured values are canonical, a
-second capture of a captured value's items is just the first capture. -/
-theorem capture_items_capture (xs : Supply) :
-    capture (items (capture xs)) = capture xs :=
-  capture_items_of_canonical _ (capture_canonical xs)
+/-- Spread-then-CAPTURE on a list yields the canonical capture of its
+elements — never the same list back: `x = A...` re-groups list items into
+the sequence world. (Spread-then-COLLECT, by contrast, reproduces the list:
+`items_collect`.) -/
+theorem capture_items_of_list (xs : Supply) :
+    capture (items (Val.list xs)) = capture xs := rfl
+
+/-- Collect/spread/collect collapse: re-collecting a collected value's items
+is the identity — the list-side round trip composes (corollary of
+`items_collect`). -/
+theorem collect_items_collect (xs : Supply) :
+    collect (items (collect xs)) = collect xs := rfl
 
 end CoreArityAlgebra

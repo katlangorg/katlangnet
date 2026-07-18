@@ -156,6 +156,14 @@ namespace ParameterPattern
       | .sequenceValue _ => true
       | _ => false)
 
+  /-- True when the pattern list itself contains a rest capture (nested
+      captures inside sequence-value patterns do not count).
+      C#: `ParameterPattern.HasVariadicCaptureAtCurrentLevel`. -/
+  def hasVariadicCaptureAtCurrentLevel (patterns : List ParameterPattern) : Bool :=
+    patterns.any (fun
+      | .capture parameter => parameter.kind == ParameterKind.variadic
+      | _ => false)
+
   def hasRepeatedCaptureNames (patterns : List ParameterPattern) : Bool :=
     let names := (patterns.flatMap captures).map (fun parameter => parameter.name)
     names.length != names.eraseDups.length
@@ -1136,7 +1144,11 @@ end AlgEnv
 
 /-- Counted parameter environment for callback-bound values that must preserve
     expression-level emitted counts, for example higher-order sequence items
-    projected through the same one-level rule as `:`. -/
+    projected through the same one-level rule as `:`. Rest/variadic captures
+    also record their bound value here; since rest binding collects ONE exact
+    immutable list value, those entries always carry emitted count 1 and agree
+    with ordinary value-environment lookup (there is no separate raw-supply
+    forwarding environment). -/
 abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
 
 namespace CountedParamEnv
@@ -1147,19 +1159,6 @@ namespace CountedParamEnv
     env.filter (fun entry => !names.contains entry.fst)
 end CountedParamEnv
 
-/-- Bindings created by variadic captures that may be forwarded as supplies into
-    compatible flat variadic callees. This deliberately excludes ordinary
-    counted callback parameters. -/
-abbrev VariadicSupplyEnv := Assoc Ident (Prod Result Nat)
-
-namespace VariadicSupplyEnv
-  def lookup (env : VariadicSupplyEnv) (x : Ident) : Option (Prod Result Nat) :=
-    lookupAssoc x env
-
-  def shadow (env : VariadicSupplyEnv) (names : List Ident) : VariadicSupplyEnv :=
-    env.filter (fun entry => !names.contains entry.fst)
-end VariadicSupplyEnv
-
 inductive ZeroArgPropertyAccessKind where
   | lexical
   | structural
@@ -1169,13 +1168,7 @@ inductive ZeroArgPropertyAccessKind where
     immutable AST values rather than C# object identities.  The key still
     distinguishes access shape, resolved owner/property, and the current
     lexical/value binding context, so it is intentionally more specific than a
-    simple property name.
-
-    `variadicSupplyEnv` is intentionally not part of the key: supply entries
-    are only ever created together with identical `countedParamEnv` entries,
-    and forwarding a supply yields the same counted item as evaluating the
-    parameter through `countedParamEnv`, so the counted-parameter component
-    already discriminates every observable context. -/
+    simple property name. -/
 structure ZeroArgPropertyCacheKey where
   accessKind : ZeroArgPropertyAccessKind
   owner      : String
@@ -1253,24 +1246,17 @@ structure EvalCtx where
   callStack : List Algorithm
   algEnv    : AlgEnv := []
   countedParamEnv : CountedParamEnv := []
-  variadicSupplyEnv : VariadicSupplyEnv := []
   deriving Repr
 
 namespace EvalCtx
-  def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [], variadicSupplyEnv := [] }
+  def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := ctx.countedParamEnv,
-      variadicSupplyEnv := ctx.variadicSupplyEnv }
+    { callStack := a :: ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := ctx.countedParamEnv }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
   def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := env, countedParamEnv := ctx.countedParamEnv,
-      variadicSupplyEnv := ctx.variadicSupplyEnv }
+    { callStack := ctx.callStack, algEnv := env, countedParamEnv := ctx.countedParamEnv }
   def withCountedParamEnv (env : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := env,
-      variadicSupplyEnv := ctx.variadicSupplyEnv }
-  def withVariadicSupplyEnv (env : VariadicSupplyEnv) (ctx : EvalCtx) : EvalCtx :=
-    { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := ctx.countedParamEnv,
-      variadicSupplyEnv := env }
+    { callStack := ctx.callStack, algEnv := ctx.algEnv, countedParamEnv := env }
 end EvalCtx
 
 abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
@@ -1827,7 +1813,6 @@ def sortIntsDesc (xs : List Int) : List Int :=
 
 structure CountedParameterPatternBindings where
   countedParamEnv : CountedParamEnv := []
-  variadicSupplyEnv : VariadicSupplyEnv := []
   deriving Repr
 
 partial def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
@@ -1909,7 +1894,6 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
 structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
-  variadicSlotCount? : Option Nat := none
   deriving Repr
 
 structure FlatFixedCallSlot where
@@ -1935,7 +1919,6 @@ structure ParameterPatternInput where
 structure ParameterPatternBindings where
   argEnv : ValEnv := []
   countedParamEnv : CountedParamEnv := []
-  variadicSupplyEnv : VariadicSupplyEnv := []
   algEnv : AlgEnv := []
   deriving Repr
 
@@ -2089,8 +2072,8 @@ def combineOutputSlots : List Result -> Result
 
 /-- Materialize a collection-producing builtin's kept/projected items as ONE
     exact immutable list value. Unlike canonical arity capture (ordinary
-    construction via `Result.normalize`, variadic capture grouping,
-    `combineOutputSlots`), the list boundary is exact: zero items form `[]`, a
+    construction via `Result.normalize`, `combineOutputSlots`), the list
+    boundary is exact: zero items form `[]`, a
     single kept item forms `[item]` (the one-item collection boundary is NEVER
     erased, so `take(((1, 2), (3, 4)), 1)` yields `[(1, 2)]`), and item
     internals are never renormalized, dropped, or flattened -- nested sequence
@@ -2100,6 +2083,33 @@ def combineOutputSlots : List Result -> Result
     C#: `MakeCollectionListResult`. -/
 def makeCollectionListResult (items : List Result) : CountedResult :=
   (Result.listValue items, 1)
+
+/-- Collect a rest-assigned item supply as ONE exact immutable list value.
+
+    KatLang distinguishes three item-supply operations by receiver purpose:
+
+    - `capture : Supply -> Value` — ordinary value/output capture, the
+      canonicalizing boundary `Result.normalize (Result.sequenceValue xs)`
+      (singleton erasure applies: `x = 1, 2, 3` is `(1, 2, 3)`, one supplied
+      item is itself);
+    - `collect : Supply -> ListValue` — THIS operation: rest/variadic binding
+      materializes exactly the assigned items as one exact immutable list
+      (`collectRest [] = []`, `collectRest [v] = [v]`, never erased);
+    - `open : Value -> Supply` — postfix spread (`Result.spreadItems`), which
+      opens one sequence OR list boundary.
+
+    Every rest binding — deconstruction rest, rest-only variadic parameters,
+    and mixed prefix/rest/suffix parameter lists — binds its assigned middle
+    supply through this single helper, after the receiver-specific supply
+    preparation (call binding preserves argument slots; deconstruction may
+    open one lone sequence or list). The round trip
+    `Result.spreadItems (collectRest xs) = xs` makes variadic forwarding
+    ordinary list spread: `Forward(items...) = Target(items...)` re-supplies
+    exactly the collected items with no hidden raw-supply metadata. A rest
+    value is one visible value, so its emitted count is always 1 (including
+    `[]`). C#: `CollectRest` (inside `CreateVariadicCapture`). -/
+def collectRest (items : List Result) : Result :=
+  Result.listValue items
 
 /-- Re-count a counted result at a public property/call/builtin RESULT boundary.
 
@@ -2113,10 +2123,12 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already canonicalized redundant unary empty structure. It is
     applied only to public result boundaries, never to internal
-    body/root output accumulation (`evalAlgOutputCountedCore`) or to raw variadic
-    parameter storage, both of which must keep their multi-item counts. Lexical
-    zero-arg property access (`evalCounted .resolve`) and the `if` builtin already
-    perform this same re-count inline; this helper generalizes it. -/
+    body/root output accumulation (`evalAlgOutputCountedCore`), which must keep
+    its multi-item counts. (Rest/variadic parameter storage needs no re-count:
+    rest binding collects one exact list value, so its stored count is already
+    1.) Lexical zero-arg property access (`evalCounted .resolve`) and the `if`
+    builtin already perform this same re-count inline; this helper generalizes
+    it. -/
 def reCountValueBoundary (r : CountedResult) : CountedResult :=
   (r.fst, Result.valueCount r.fst)
 
@@ -2217,7 +2229,7 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
   match pattern with
   | .capture parameter =>
       match parameter.kind with
-      | .normal => pure { countedParamEnv := [(parameter.name, input)], variadicSupplyEnv := [] }
+      | .normal => pure { countedParamEnv := [(parameter.name, input)] }
       | .variadic => .error Error.badArity
   | .sequenceValue items =>
       let sequenceValueItems? :=
@@ -2252,9 +2264,7 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
   let merge (left right : CountedParameterPatternBindings)
       : EvalM CountedParameterPatternBindings := do
     let countedParamEnv <- mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
-    let variadicSupplyEnv <-
-      mergeEqualCountedParamEnv left.variadicSupplyEnv right.variadicSupplyEnv
-    pure { countedParamEnv := countedParamEnv, variadicSupplyEnv := variadicSupplyEnv }
+    pure { countedParamEnv := countedParamEnv }
   let rec bindPairs : List ParameterPattern -> List CountedResult -> EvalM CountedParameterPatternBindings
     | [], [] => pure {}
     | pattern :: patterns', input :: inputs' => do
@@ -2282,13 +2292,35 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let prefixBindings <- bindPairs prefixPatterns prefixInputs
         let suffixBindings <- bindPairs suffixPatterns suffixInputs
         let capturedValues := capturedInputs.map Prod.fst
-        let captured := Result.normalize (.sequenceValue capturedValues)
-        let capturedBinding := (variadicParameter.name, (captured, capturedValues.length))
+        -- Rest binding COLLECTS: the assigned supply becomes one exact
+        -- immutable list value, emitted count 1 (a list is one visible value).
+        let captured := collectRest capturedValues
+        let capturedBinding := (variadicParameter.name, (captured, 1))
         let variadicBindings : CountedParameterPatternBindings :=
-          { countedParamEnv := [capturedBinding], variadicSupplyEnv := [capturedBinding] }
+          { countedParamEnv := [capturedBinding] }
         let withVariadic <- merge prefixBindings variadicBindings
         merge withVariadic suffixBindings
       end
+
+/-- Callback binding for a flat callee whose top-level parameters include a
+    rest parameter. The callback argument supply keeps the established
+    flat-callback row convention: when fewer argument slots are supplied than
+    top-level parameters, the final supplied argument opens into its items
+    (matching `callee(S:i)`; exact lists stay opaque), exactly as
+    `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
+    slots then bind through the shared prefix/rest/suffix binder, so the rest
+    parameter COLLECTS its allocated slots as one exact immutable list.
+    C#: `BindCountedCallbackParameterPatternList`. -/
+def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
+    (args : List CountedResult) : EvalM CountedParameterPatternBindings :=
+  let slots :=
+    if args.length != 0 && args.length < patterns.length then
+      match args.getLast? with
+      | some last => args.dropLast ++ unpackCountedArg last
+      | none => args
+    else
+      args
+  bindCountedParameterPatternList patterns slots
 
 def describeSequenceItem : Result -> String
   | .atom n => s!"numeric value {n}"
@@ -3189,13 +3221,6 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-def forwardedVariadicCaptureSupply? (e : Expr) (ctx : EvalCtx)
-    : Option CountedResult :=
-  match e with
-  | .param name => ctx.variadicSupplyEnv.lookup name
-  | _ => none
-
-
 /-- Recognize a parenthesized spread receiver such as `(Arg...)`:
     a bare zero-parameter block whose single output is a `sequenceSpread`.
     This explicit spread form is the only receiver shape that may feed its
@@ -3742,13 +3767,10 @@ mutual
       let argEnv <- mergeEqualValEnv left.argEnv right.argEnv
       let countedParamEnv <-
         mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
-      let variadicSupplyEnv <-
-        mergeEqualCountedParamEnv left.variadicSupplyEnv right.variadicSupplyEnv
       let algEnv <- mergePatternAlgEnv left.argEnv right.argEnv left.algEnv right.algEnv
       pure {
         argEnv := argEnv,
         countedParamEnv := countedParamEnv,
-        variadicSupplyEnv := variadicSupplyEnv,
         algEnv := algEnv
       }
     let rec bindPairs : List ParameterPattern -> List ParameterPatternInput -> EvalM ParameterPatternBindings
@@ -3790,11 +3812,12 @@ mutual
                     pure (value :: values)
                 | none => .error (input.error?.getD Error.badArity)
           let capturedValues <- collectValues capturedInputs
-          let captured := Result.normalize (.sequenceValue capturedValues)
+          -- Rest binding COLLECTS: the assigned supply becomes one exact
+          -- immutable list value, emitted count 1 (a list is one visible value).
+          let captured := collectRest capturedValues
           let variadicBindings : ParameterPatternBindings :=
             { argEnv := [(variadicParameter.name, captured)],
-              countedParamEnv := [(variadicParameter.name, (captured, capturedValues.length))],
-              variadicSupplyEnv := [(variadicParameter.name, (captured, capturedValues.length))],
+              countedParamEnv := [(variadicParameter.name, (captured, 1))],
               algEnv := [] }
           let withVariadic <- merge prefixBindings variadicBindings
           merge withVariadic suffixBindings
@@ -3810,20 +3833,20 @@ mutual
 end
 
 def bindStructuredLoopState (step : Algorithm) (stateValues : List Result)
-    : EvalM (ValEnv × CountedParamEnv × VariadicSupplyEnv) := do
+    : EvalM (ValEnv × CountedParamEnv) := do
   let inputs := stateValues.map (fun value => { value? := some value : ParameterPatternInput })
   let bindings <- bindParameterPatternList (Algorithm.parameterPatterns step) inputs false
-  pure (bindings.argEnv, bindings.countedParamEnv, bindings.variadicSupplyEnv)
+  pure (bindings.argEnv, bindings.countedParamEnv)
 
 def bindLoopStepState (step : Algorithm) (stateValues : List Result)
-    : EvalM (ValEnv × CountedParamEnv × VariadicSupplyEnv) := do
+    : EvalM (ValEnv × CountedParamEnv) := do
   if Algorithm.requiresPatternBinding step then
     bindStructuredLoopState step stateValues
   else
     match Algorithm.variadicParam? step with
     | none => do
         let argEnv <- bindParams (Algorithm.params step) stateValues
-        pure (argEnv, [], [])
+        pure (argEnv, [])
     | some _ => do
         let signature := Algorithm.callableSignature "loop step" step
         let bindings <-
@@ -3833,10 +3856,12 @@ def bindLoopStepState (step : Algorithm) (stateValues : List Result)
         match bindings.variadicName? with
         | none => .error Error.badArity
         | some variadicName =>
-            let captured := Result.normalize (.sequenceValue bindings.variadicItems)
+            -- Rest binding COLLECTS (same rule as the pattern binders): the
+            -- assigned state slots become one exact immutable list value.
+            let captured := collectRest bindings.variadicItems
             let argEnv <- bindLoopStepValueEnv signature.parameters bindings.normalBindings variadicName captured
-            let variadicBinding := (variadicName, (captured, bindings.variadicItems.length))
-            pure (argEnv, [variadicBinding], [variadicBinding])
+            let variadicBinding := (variadicName, (captured, 1))
+            pure (argEnv, [variadicBinding])
 
 /-
 Evaluator recursion core.
@@ -3934,11 +3959,9 @@ mutual
 
   partial def runStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (stateSlots : List Result) : EvalM (List Result) := do
-    let (argEnv, countedParamEnv, variadicSupplyEnv) <- bindLoopStepState step stateSlots
+    let (argEnv, countedParamEnv) <- bindLoopStepState step stateSlots
     let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params step)
-    let shadowedVariadicSupplyEnv := VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params step)
-    let stepCtx := (ctx.withCountedParamEnv (countedParamEnv ++ shadowedCountedParamEnv)).withVariadicSupplyEnv
-      (variadicSupplyEnv ++ shadowedVariadicSupplyEnv)
+    let stepCtx := ctx.withCountedParamEnv (countedParamEnv ++ shadowedCountedParamEnv)
     evalAlgOutputSlots step stepCtx (argEnv ++ env) (Algorithm.requiresPatternBinding step)
 
   /-- Run a step algorithm with the given state bound to its params. -/
@@ -4050,9 +4073,8 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := ((EvalCtx.push callee ctx).withCountedParamEnv
-            (bindings ++ CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-            (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
+            (bindings ++ CountedParamEnv.shadow ctx.countedParamEnv names)
           let newEnv := (bindings.map fun | (name, value) => (name, value.fst)) ++ env
           evalAlgOutputCounted wiredBody newCtx newEnv
       | none =>
@@ -4080,9 +4102,8 @@ mutual
             else do
               let countedParamEnv <- bindCountedCallbackParams (Algorithm.params simple) args
               let names := Algorithm.params simple
-              let newCtx := (ctx.withCountedParamEnv
-                (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-                (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+              let newCtx := ctx.withCountedParamEnv
+                (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
               evalAlgOutputCounted simple newCtx env
         | none =>
             evalConditionalCallbackCallCounted callee args ctx env calleeName
@@ -4093,26 +4114,34 @@ mutual
           if Algorithm.requiresPatternBinding callee then do
             let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) args
             let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx := (ctx.withCountedParamEnv
-              (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-              (bindings.variadicSupplyEnv ++ VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+            let newCtx := ctx.withCountedParamEnv
+              (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
+            evalAlgOutputCounted callee newCtx env
+          -- A flat callee with a top-level rest parameter (`Rows.map(F)` with
+          -- `F(x, y..., z)` or a rest-only `Collect(items...)`) binds through
+          -- the shared prefix/rest/suffix binder so the rest parameter
+          -- COLLECTS an exact immutable list, after the same final-argument
+          -- row expansion the fixed-only flat path uses below. Rest-only
+          -- callees keep the whole iterated element as one collected slot.
+          else if ParameterPattern.hasVariadicCaptureAtCurrentLevel
+              (Algorithm.parameterPatterns callee) then do
+            let bindings <- bindCountedCallbackParameterPatternList
+              (Algorithm.parameterPatterns callee) args
+            let names := bindings.countedParamEnv.map Prod.fst
+            let newCtx := ctx.withCountedParamEnv
+              (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
           else do
-            -- Callback deconstruction is intentionally deferred. A deconstruction-shaped
-            -- callback (`Rows.map(F)` with `F(x, y..., z)`) is not `requiresPatternBinding`,
-            -- so it routes to flat callback binding rather than the shared item-supply
-            -- deconstruction matcher. Flat callback binding projects each callback item into
-            -- slots and binds those slots to the algorithm's flat parameter names (the final
-            -- item is unpacked across any remaining names); it does not apply item-supply rest
-            -- grouping or singleton-boundary normalization. This preserves existing callback
-            -- semantics and covers simple row cases with matching projected arity. Scalar
-            -- callback deconstruction stays deferred so the counted callback path keeps
-            -- Lean/C# parity.
+            -- Fixed-only flat callback binding projects each callback item into
+            -- slots and binds those slots to the algorithm's flat parameter
+            -- names (the final item is unpacked across any remaining names);
+            -- it does not apply item-supply singleton-boundary normalization.
+            -- Scalar callback deconstruction stays deferred so the counted
+            -- callback path keeps Lean/C# parity.
             let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
             let names := Algorithm.params callee
-            let newCtx := (ctx.withCountedParamEnv
-              (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-              (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+            let newCtx := ctx.withCountedParamEnv
+              (countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
 
   /-- Non-counted wrapper for callback calls that still preserve projected item
@@ -4135,9 +4164,8 @@ mutual
         else do
           let bindings <- bindCountedParameterPatternList patterns args
           let names := bindings.countedParamEnv.map Prod.fst
-          let newCtx := (ctx.withCountedParamEnv
-            (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-            (bindings.variadicSupplyEnv ++ VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+          let newCtx := ctx.withCountedParamEnv
+            (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
           evalAlgOutputCounted callee newCtx env
     | _ =>
         evalResolvedCallbackCallCounted callee args ctx env calleeName
@@ -4582,13 +4610,7 @@ mutual
         expanded.reverse ++ acc
       else
         { value? := some counted.fst,
-          algorithm? := maybeAlg,
-          variadicSlotCount? := some counted.snd : VariadicItem } :: acc
-    let appendSupply (counted : CountedResult) (maybeAlg : Option Algorithm)
-        (acc : List VariadicItem) : List VariadicItem :=
-      { value? := some counted.fst,
-        algorithm? := maybeAlg,
-        variadicSlotCount? := some counted.snd : VariadicItem } :: acc
+          algorithm? := maybeAlg : VariadicItem } :: acc
     let shouldExpand (e : Expr) (preserveBoundary : Bool) : Bool :=
       match e with
       | .sequenceSpread _ => !preserveBoundary
@@ -4598,57 +4620,41 @@ mutual
       | e :: es, ma :: mas, preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match if expand || preserveBoundary then none else forwardedVariadicCaptureSupply? e ctx with
-          | some counted =>
-            loop es mas preserveBoundaries false (appendSupply counted ma acc)
-          | none =>
-            match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-            | .ok counted =>
-              loop es mas preserveBoundaries false (appendCounted counted ma expand acc)
-            | .error err =>
-              match ma with
-              | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg : VariadicItem } :: acc)
-              | none => .error err
+          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
+          | .ok counted =>
+            loop es mas preserveBoundaries false (appendCounted counted ma expand acc)
+          | .error err =>
+            match ma with
+            | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg : VariadicItem } :: acc)
+            | none => .error err
       | e :: es, [], preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match if expand || preserveBoundary then none else forwardedVariadicCaptureSupply? e ctx with
-          | some counted =>
-            loop es [] preserveBoundaries false (appendSupply counted none acc)
-          | none =>
-            match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-            | .ok counted =>
-              loop es [] preserveBoundaries false (appendCounted counted none expand acc)
-            | .error err => .error err
+          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
+          | .ok counted =>
+            loop es [] preserveBoundaries false (appendCounted counted none expand acc)
+          | .error err => .error err
       | e :: es, ma :: mas, [], _, acc => do
           let expand :=
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match if expand then none else forwardedVariadicCaptureSupply? e ctx with
-          | some counted =>
-            loop es mas [] false (appendSupply counted ma acc)
-          | none =>
-            match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-            | .ok counted =>
-              loop es mas [] false (appendCounted counted ma expand acc)
-            | .error err =>
-              match ma with
-              | some alg => loop es mas [] false ({ algorithm? := some alg : VariadicItem } :: acc)
-              | none => .error err
+          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
+          | .ok counted =>
+            loop es mas [] false (appendCounted counted ma expand acc)
+          | .error err =>
+            match ma with
+            | some alg => loop es mas [] false ({ algorithm? := some alg : VariadicItem } :: acc)
+            | none => .error err
       | e :: es, [], [], _, acc => do
           let expand :=
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match if expand then none else forwardedVariadicCaptureSupply? e ctx with
-          | some counted =>
-            loop es [] [] false (appendSupply counted none acc)
-          | none =>
-            match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-            | .ok counted =>
-              loop es [] [] false (appendCounted counted none expand acc)
-            | .error err => .error err
+          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
+          | .ok counted =>
+            loop es [] [] false (appendCounted counted none expand acc)
+          | .error err => .error err
     loop (Algorithm.output wiredArgs) maybeAlgs argBoundaryFlags true []
 
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
@@ -4657,11 +4663,11 @@ mutual
       contributes the opened items. -/
   partial def bindDeconstructionUserCall (callee : Algorithm) (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
-      : EvalM (ValEnv × CountedParamEnv × VariadicSupplyEnv × AlgEnv) := do
+      : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
     let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
-    pure (bindings.argEnv, bindings.countedParamEnv, bindings.variadicSupplyEnv, bindings.algEnv)
+    pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
 
   partial def evalExplicitSequenceValueItems (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
@@ -4730,7 +4736,7 @@ mutual
     | _ => pure none
 
   partial def bindPatternedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM (ValEnv × CountedParamEnv × VariadicSupplyEnv × AlgEnv) := do
+      (ctx : EvalCtx) (env : ValEnv) : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
     let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
     let argEvalCtx := EvalCtx.push wiredArgs ctx
     let rec buildInputs : List Expr -> List (Option Algorithm) -> EvalM (List ParameterPatternInput)
@@ -4753,7 +4759,7 @@ mutual
               pure ({ value? := none, algorithm? := none, error? := some err } :: tail)
     let inputs <- buildInputs (Algorithm.output wiredArgs) maybeAlgs
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
-    pure (bindings.argEnv, bindings.countedParamEnv, bindings.variadicSupplyEnv, bindings.algEnv)
+    pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
 
   partial def collectFlatFixedCallSlots (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (List FlatFixedCallSlot) := do
@@ -4832,32 +4838,27 @@ mutual
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
-          let (argEnv, countedParamEnv, variadicSupplyEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
+          let (argEnv, countedParamEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let shadowedVariadicSupplyEnv := VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee)
           let newCtx :=
-            ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)).withVariadicSupplyEnv
-              (variadicSupplyEnv ++ shadowedVariadicSupplyEnv)
+            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+              (countedParamEnv ++ shadowedCountedParamEnv)
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
     else match Algorithm.variadicParam? callee with
       | some _ =>
           -- Any top-level variadic binds the supplied call argument stream.
-          let (argEnv, countedParamEnv, variadicSupplyEnv, algBindings) <-
+          let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let shadowedVariadicSupplyEnv := VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee)
           let newCtx :=
-            ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)).withVariadicSupplyEnv
-              (variadicSupplyEnv ++ shadowedVariadicSupplyEnv)
+            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+              (countedParamEnv ++ shadowedCountedParamEnv)
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
       | none =>
       do
         let (argEnv, algBindings) <- bindFlatFixedUserCall callee wiredArgs ctx env
-        let newCtx := ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))).withVariadicSupplyEnv
-          (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee))
+        let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
         reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
 
   /-- Counted conditional call evaluation.
@@ -4878,9 +4879,8 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := ((EvalCtx.push callee ctx).withCountedParamEnv
-            (CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-            (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
+            (CountedParamEnv.shadow ctx.countedParamEnv names)
           reCountValueBoundary <$> evalAlgOutputCounted wiredBody newCtx (bindings ++ env)
       | none =>
           .error (Error.noMatchingBranch calleeName)
@@ -5283,33 +5283,28 @@ mutual
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
-          let (argEnv, countedParamEnv, variadicSupplyEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
+          let (argEnv, countedParamEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let shadowedVariadicSupplyEnv := VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee)
           let newCtx :=
-            ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)).withVariadicSupplyEnv
-              (variadicSupplyEnv ++ shadowedVariadicSupplyEnv)
+            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+              (countedParamEnv ++ shadowedCountedParamEnv)
           evalAlgOutput callee newCtx (argEnv ++ env)
     else match Algorithm.variadicParam? callee with
       | some _ =>
           -- Any top-level variadic (rest-only or comma deconstruction) binds
           -- through the shared item-supply matcher.
-          let (argEnv, countedParamEnv, variadicSupplyEnv, algBindings) <-
+          let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
-          let shadowedVariadicSupplyEnv := VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee)
           let newCtx :=
-            ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-              (countedParamEnv ++ shadowedCountedParamEnv)).withVariadicSupplyEnv
-              (variadicSupplyEnv ++ shadowedVariadicSupplyEnv)
+            (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+              (countedParamEnv ++ shadowedCountedParamEnv)
           evalAlgOutput callee newCtx (argEnv ++ env)
       | none =>
       do
         let (argEnv, algBindings) <- bindFlatFixedUserCall callee wiredArgs ctx env
-        let newCtx := ((ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
-          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))).withVariadicSupplyEnv
-          (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv (Algorithm.params callee))
+        let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
+          (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
         evalAlgOutput callee newCtx (argEnv ++ env)
 
   /-- Evaluate a conditional algorithm call.
@@ -5345,9 +5340,8 @@ mutual
       | some (branch, bindings) =>
           let wiredBody := Algorithm.childOf callee branch.body
           let names := bindings.map Prod.fst
-          let newCtx := ((EvalCtx.push callee ctx).withCountedParamEnv
-            (CountedParamEnv.shadow ctx.countedParamEnv names)).withVariadicSupplyEnv
-            (VariadicSupplyEnv.shadow ctx.variadicSupplyEnv names)
+          let newCtx := (EvalCtx.push callee ctx).withCountedParamEnv
+            (CountedParamEnv.shadow ctx.countedParamEnv names)
           evalAlgOutput wiredBody newCtx (bindings ++ env)
       | none =>
           .error (Error.noMatchingBranch calleeName)

@@ -15,7 +15,6 @@ public class BindingInputSlotTests
         Assert.Same(value, slot.Value);
         Assert.Null(slot.Algorithm);
         Assert.Null(slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     [Fact]
@@ -29,7 +28,6 @@ public class BindingInputSlotTests
         Assert.Same(value, slot.Value);
         Assert.Same(algorithm, slot.Algorithm);
         Assert.Null(slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     [Fact]
@@ -43,7 +41,6 @@ public class BindingInputSlotTests
         Assert.Null(slot.Value);
         Assert.Same(algorithm, slot.Algorithm);
         Assert.Same(error, slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     [Fact]
@@ -56,7 +53,6 @@ public class BindingInputSlotTests
         Assert.Null(slot.Value);
         Assert.Null(slot.Algorithm);
         Assert.Same(error, slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     [Fact]
@@ -69,7 +65,6 @@ public class BindingInputSlotTests
         Assert.Same(value, slot.Value);
         Assert.Null(slot.Algorithm);
         Assert.Null(slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     [Fact]
@@ -135,7 +130,6 @@ public class BindingInputSlotTests
         Assert.NotNull(slot.Value);
         Assert.Null(slot.Algorithm);
         Assert.Null(slot.ValueError);
-        Assert.Null(slot.VariadicSlotEmittedCount);
     }
 
     private static decimal[] AtomValues(IEnumerable<BindingInputSlot> slots)

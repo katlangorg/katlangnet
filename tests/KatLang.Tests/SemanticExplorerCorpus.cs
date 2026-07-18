@@ -549,10 +549,27 @@ public static class SemanticExplorerCorpus
                 [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
                  "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
                 [".binary .eq (.resolve \"B\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
-        ("listRestCaptureIsSequence", "x, rest... = [1, 2, 3]\nrest == (2, 3)",
+        ("listRestNotSequenceKind", "x, rest... = [1, 2, 3]\nrest == (2, 3)",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
                 [".binary .eq (.resolve \"rest\") (.block (alg [] [] [] [.num 2, .num 3]))"])),
+        ("listRestCollectsExactList", "x, rest... = [1, 2, 3]\nrest == [2, 3]",
+            LProg(
+                [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
+                [".binary .eq (.resolve \"rest\") (.listLiteral [.num 2, .num 3])"])),
+        ("implicitForwardOrdinarySource", "Target(items...) = items\nUse(items) = Target\nUse([1, 2])",
+            LProg(
+                ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])",
+                 "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") (alg [] [] [] [.param \"items\"])])"],
+                [LCall("Use", "(.listLiteral [.num 1, .num 2])")])),
+        ("callbackRestOnlyMap", "Collect(items...) = items\n[7].map(Collect)",
+            LProg(
+                ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])"],
+                [".dotCall (.listLiteral [.num 7]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"])),
+        ("callbackMixedRestRow", "F(first, middle..., last) = middle\n[(1, 2, 3, 4)].map(F)",
+            LProg(
+                ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .variadic }, { name := \"last\" }] [] [] [.param \"middle\"])"],
+                [".dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]) \"map\" (some (alg [] [] [] [.resolve \"F\"]))"])),
         ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)...",
             LProg([LVal("A", List12)],
                 [".sequenceSpread (.block (alg [] [] [] [.resolve \"A\", .num 9]))"])),

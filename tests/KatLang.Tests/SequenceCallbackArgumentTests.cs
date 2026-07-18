@@ -31,14 +31,16 @@ public class SequenceCallbackArgumentTests
     public void CallbackParamCollidesWithSiblingArgument_FailsCleanly()
     {
         // Vector's parameter `x` collides with X's pattern variable `x`. The
-        // single-vector call collapses `vectors` to scalar items, so map(X) is
-        // an invalid shape. It must report a structured error, not recurse.
+        // spread call supplies the vector's scalar items as separate slots, so
+        // `vectors` collects [1, 2] and map(X) is an invalid shape (scalar
+        // elements against a deconstruction callback). It must report a
+        // structured error, not recurse.
         var source = """
             Vector(x, y) = (x, y)
             X((x, y)) = x
             Y((x, y)) = y
             Sum(vectors...) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
-            Sum(Vector(1, 2))
+            Sum(Vector(1, 2)...)
             """;
 
         var result = Eval(source);
@@ -73,13 +75,14 @@ public class SequenceCallbackArgumentTests
     public void MapSum_CallbackArgumentInsideUserCall_StillWorks()
     {
         // Same structural shape as the crash repro (callback inside a user call),
-        // but a valid collection of whole vectors → must compute, not error.
+        // but the spread supplies whole vectors as the collected elements →
+        // must compute, not error.
         var source = """
             Vector(x, y) = (x, y)
             X((x, y)) = x
             Y((x, y)) = y
             Sum(vectors...) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
-            Sum((Vector(1, 2), Vector(3, 4), Vector(5, 6)))
+            Sum((Vector(1, 2), Vector(3, 4), Vector(5, 6))...)
             """;
         Assert.Equal(new decimal[] { 9, 12 }, Atoms(source));
     }

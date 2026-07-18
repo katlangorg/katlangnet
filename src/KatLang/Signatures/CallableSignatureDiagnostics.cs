@@ -44,7 +44,8 @@ public static class CallableSignatureDiagnostics
 
     // A top-level variadic signature consumes an item supply (a user-defined
     // shape such as `Inspect(items...)` or `Scale(values..., factor)`): the
-    // fixed captures bind and the rest captures any number of items, so
+    // fixed captures bind and the rest accepts any number of argument slots
+    // (collected as one exact immutable list at binding time), so
     // min = fixed count and max is unbounded. Collection builtins are NOT
     // item-supply signatures — they use one fixed `collection` parameter.
     private static bool IsItemSupplySignature(CallableSignature signature, int topLevelVariadicCount)

@@ -48,14 +48,13 @@ public static class Evaluator
         IReadOnlyList<Algorithm> CallStack,
         IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
         IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
-        IReadOnlyList<(string Name, CountedResult Value)> VariadicStreamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
         bool EnableLoopOptimization,
         LoopOptimizationDiagnostics? LoopDiagnostics,
         bool EnableSequencePipelineOptimization,
         SequencePipelineDiagnostics? SequenceDiagnostics)
     {
-        public static readonly EvalCtx Empty = new([], [], [], [], UncachedZeroArgPropertyResultCache.Instance, true, null, true, null);
+        public static readonly EvalCtx Empty = new([], [], [], UncachedZeroArgPropertyResultCache.Instance, true, null, true, null);
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
         public EvalCtx Push(Algorithm alg)
@@ -63,7 +62,6 @@ public static class Evaluator
                 Prepend(alg, CallStack),
                 AlgEnv,
                 CountedParamEnv,
-                VariadicStreamEnv,
                 ZeroArgPropertyResultCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
@@ -79,7 +77,6 @@ public static class Evaluator
                 CallStack,
                 algEnv,
                 CountedParamEnv,
-                VariadicStreamEnv,
                 ZeroArgPropertyResultCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
@@ -92,20 +89,6 @@ public static class Evaluator
                 CallStack,
                 AlgEnv,
                 countedParamEnv,
-                VariadicStreamEnv,
-                ZeroArgPropertyResultCache,
-                EnableLoopOptimization,
-                LoopDiagnostics,
-                EnableSequencePipelineOptimization,
-                SequenceDiagnostics);
-
-        /// <summary>Replace bindings that carry variadic-capture stream provenance.</summary>
-        public EvalCtx WithVariadicStreamEnv(IReadOnlyList<(string, CountedResult)> variadicStreamEnv)
-            => new(
-                CallStack,
-                AlgEnv,
-                CountedParamEnv,
-                variadicStreamEnv,
                 ZeroArgPropertyResultCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
@@ -118,7 +101,6 @@ public static class Evaluator
                 CallStack,
                 AlgEnv,
                 CountedParamEnv,
-                VariadicStreamEnv,
                 zeroArgPropertyResultCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
@@ -1053,12 +1035,10 @@ public static class Evaluator
     private readonly record struct UserCallBindings(
         IReadOnlyList<(string, Result)> ValueBindings,
         IReadOnlyList<(string, CountedResult)> CountedBindings,
-        IReadOnlyList<(string, CountedResult)> VariadicStreamBindings,
         IReadOnlyList<(string, Algorithm)> AlgorithmBindings);
 
     private readonly record struct CountedParameterPatternBindings(
-        IReadOnlyList<(string, CountedResult)> CountedBindings,
-        IReadOnlyList<(string, CountedResult)> VariadicStreamBindings);
+        IReadOnlyList<(string, CountedResult)> CountedBindings);
 
     private readonly record struct FlatFixedCallSlot(
         Result? Value,
@@ -1071,8 +1051,7 @@ public static class Evaluator
 
     private readonly record struct EvaluatedSlotBindings(
         IReadOnlyList<(string Name, Result Value)> ValueBindings,
-        IReadOnlyList<(string Name, CountedResult Value)> CountedBindings,
-        IReadOnlyList<(string Name, CountedResult Value)> VariadicStreamBindings);
+        IReadOnlyList<(string Name, CountedResult Value)> CountedBindings);
 
     private enum GenericLoopStepBindingShape
     {
@@ -1115,14 +1094,6 @@ public static class Evaluator
     private static bool UsesPatternBinding(Algorithm algorithm)
         => HasStructuredParameterPattern(algorithm)
             || ParameterPattern.HasRepeatedCaptureNames(algorithm.ParameterPatterns);
-
-    private static CountedResult? TryGetVariadicCaptureStream(Expr expr, EvalCtx ctx)
-    {
-        if (expr is not Expr.Param(var name))
-            return null;
-
-        return LookupCountedParam(ctx.VariadicStreamEnv, name);
-    }
 
     private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm step)
     {
@@ -1268,8 +1239,8 @@ public static class Evaluator
         }
 
         // The default minimum is the structural parameter count (loop-state binding,
-        // where the rest captures at least one slot). Item-supply callers — user
-        // calls — pass the fixed (non-variadic) count so the rest may capture
+        // where the rest is assigned at least one slot). Item-supply callers — user
+        // calls — pass the fixed (non-variadic) count so the rest may collect
         // zero items. (Collection builtins no longer bind here: they are
         // ordinary fixed-arity callables bound in BindSequenceBuiltinArguments.)
         var requiredNormalItemCount = minimumItemCount ?? signature.RequiredNormalParameterCount;
@@ -1307,13 +1278,36 @@ public static class Evaluator
         Func<int, int, EvalError> arityMismatch)
         => BindCallableArguments(layout.Signature, items, arityMismatch);
 
+    /// <summary>
+    /// Collect a rest-assigned item supply as ONE exact immutable list value.
+    ///
+    /// KatLang distinguishes three item-supply operations by receiver purpose:
+    /// <c>capture</c> — ordinary value/output capture, the canonicalizing
+    /// boundary (<see cref="Result.FromItems"/>, singleton erasure applies);
+    /// <c>collect</c> — THIS operation: rest/variadic binding materializes
+    /// exactly the assigned items as one exact immutable list
+    /// (<c>CollectRest([]) == []</c>, <c>CollectRest([v]) == [v]</c>, never
+    /// erased); and <c>open</c> — postfix spread
+    /// (<see cref="Result.SpreadItems"/>), which opens one sequence OR list
+    /// boundary. The round trip <c>SpreadItems(CollectRest(xs)) == xs</c>
+    /// makes variadic forwarding ordinary list spread with no hidden
+    /// raw-supply metadata. Snapshot construction: the public
+    /// <see cref="Result.ListValue"/> constructor copies the supplied items,
+    /// so no caller-retained buffer can mutate the collected value.
+    /// Lean: <c>collectRest</c>.
+    /// </summary>
+    private static Result.ListValue CollectRest(IReadOnlyList<Result> capturedValues)
+        => new(capturedValues);
+
     private static VariadicCapture CreateVariadicCapture(string name, IReadOnlyList<Result> capturedValues)
     {
-        var capturedResult = Result.FromItems(capturedValues);
+        var capturedResult = CollectRest(capturedValues);
+        // A list value is one visible value, so a rest binding always carries
+        // emitted count 1 (including the empty rest `[]`).
         return new VariadicCapture(
             name,
             capturedResult,
-            new CountedResult(capturedResult, capturedValues.Count));
+            new CountedResult(capturedResult, 1));
     }
 
     private static EvalResult<IReadOnlyList<Result>?> TryGetExplicitSequenceValueItems(
@@ -1439,7 +1433,7 @@ public static class Evaluator
                 if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
                     return input.ValueError ?? new EvalError.BadArity();
 
-                return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], [], algorithmBindings));
+                return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], algorithmBindings));
             }
 
             case CaptureParameterPattern { Kind: ParameterKind.Variadic }:
@@ -1452,7 +1446,7 @@ public static class Evaluator
                 // prefix/rest/suffix matcher (the same normalization the function
                 // deconstruction path applies via rule 4). This lets a scalar
                 // right-hand side bind a rest pattern that captures zero items,
-                // e.g. `first, tail... = 1` (first = 1, tail = ()), instead of being
+                // e.g. `first, tail... = 1` (first = 1, tail = []), instead of being
                 // rejected before the matcher runs.
                 if (itemsR.IsError && input.Value is not null)
                 {
@@ -1496,7 +1490,6 @@ public static class Evaluator
 
         var valueBindings = new List<(string, Result)>();
         var countedBindings = new List<(string, CountedResult)>();
-        var variadicStreamBindings = new List<(string, CountedResult)>();
         var algorithmBindings = new List<(string, Algorithm)>();
 
         EvalResult<bool> AddBindings(UserCallBindings bindings)
@@ -1532,19 +1525,6 @@ public static class Evaluator
                 }
 
                 countedBindings.Add(binding);
-            }
-
-            foreach (var binding in bindings.VariadicStreamBindings)
-            {
-                var existing = LookupCountedParam(variadicStreamBindings, binding.Item1);
-                if (existing is not null)
-                {
-                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Item2.Value))
-                        return new EvalError.BadArity();
-                    continue;
-                }
-
-                variadicStreamBindings.Add(binding);
             }
 
             foreach (var binding in bindings.AlgorithmBindings)
@@ -1586,7 +1566,7 @@ public static class Evaluator
                 if (boundR.IsError) return boundR.Error;
             }
 
-            return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, countedBindings, variadicStreamBindings, algorithmBindings));
+            return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, countedBindings, algorithmBindings));
         }
 
         var requiredCount = patterns.Count - 1;
@@ -1622,11 +1602,10 @@ public static class Evaluator
         var captureBindingsR = AddBindings(new UserCallBindings(
             [(capture.Name, capture.Value)],
             [(capture.Name, capture.CountedValue)],
-            [(capture.Name, capture.CountedValue)],
             []));
         if (captureBindingsR.IsError) return captureBindingsR.Error;
 
-        return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, countedBindings, variadicStreamBindings, algorithmBindings));
+        return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, countedBindings, algorithmBindings));
     }
 
     private static EvalResult<UserCallBindings> BindPatternedUserCall(
@@ -1710,19 +1689,6 @@ public static class Evaluator
                 continue;
             }
 
-            var forwardedStream = preserveArgBoundary
-                ? null
-                : TryGetVariadicCaptureStream(argExpr, ctx);
-            if (forwardedStream is not null)
-            {
-                items.Add(BindingInputSlot.FromUserCallItem(
-                    forwardedStream.Value.Value,
-                    maybeAlg,
-                    valueError: null,
-                    variadicSlotEmittedCount: forwardedStream.Value.EmittedCount));
-                continue;
-            }
-
             var evaluatedR = isDotReceiverSegment
                 ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, argEvalCtx, valEnv)
                 : EvalCounted(argExpr, argEvalCtx, valEnv);
@@ -1731,8 +1697,7 @@ public static class Evaluator
                 items.Add(BindingInputSlot.FromUserCallItem(
                     evaluatedR.Value.Value,
                     maybeAlg,
-                    valueError: null,
-                    variadicSlotEmittedCount: evaluatedR.Value.EmittedCount));
+                    valueError: null));
                 continue;
             }
 
@@ -1852,20 +1817,17 @@ public static class Evaluator
         var shadowed = shadowedNames.ToArray();
         return ctx
             .WithAlgEnv(Concat(bindings.AlgorithmBindings, ctx.AlgEnv))
-            .WithCountedParamEnv(Concat(bindings.CountedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)))
-            .WithVariadicStreamEnv(Concat(bindings.VariadicStreamBindings, ShadowCountedParamEnv(ctx.VariadicStreamEnv, shadowed)));
+            .WithCountedParamEnv(Concat(bindings.CountedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)));
     }
 
     private static EvalCtx WithCountedParameterEnvironments(
         EvalCtx ctx,
         IReadOnlyList<(string, CountedResult)> countedBindings,
-        IReadOnlyList<(string, CountedResult)> variadicStreamBindings,
         IEnumerable<string> shadowedNames)
     {
         var shadowed = shadowedNames.ToArray();
         return ctx
-            .WithCountedParamEnv(Concat(countedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)))
-            .WithVariadicStreamEnv(Concat(variadicStreamBindings, ShadowCountedParamEnv(ctx.VariadicStreamEnv, shadowed)));
+            .WithCountedParamEnv(Concat(countedBindings, ShadowCountedParamEnv(ctx.CountedParamEnv, shadowed)));
     }
 
     private static EvalResult<FlatFixedUserCallBindings> BindFlatFixedUserCallArguments(
@@ -1956,11 +1918,9 @@ public static class Evaluator
             return argEnvR.Error;
         }
 
-        var shadowedStreamEnv = ShadowCountedParamEnv(ctx.VariadicStreamEnv, parameterNames);
         var boundCtx = ctx
             .WithAlgEnv(Concat(algBindings, ctx.AlgEnv))
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames))
-            .WithVariadicStreamEnv(shadowedStreamEnv);
+            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
         var boundEnv = Concat(argEnvR.Value, valEnv);
         return EvalResult<FlatFixedUserCallBindings>.Ok(new FlatFixedUserCallBindings(boundCtx, boundEnv));
     }
@@ -2502,6 +2462,38 @@ public static class Evaluator
         return EvalResult<IReadOnlyList<(string, CountedResult)>>.Ok(bindings);
     }
 
+    /// <summary>
+    /// Callback binding for a flat callee whose top-level parameters include a
+    /// rest parameter. The callback argument supply keeps the established
+    /// flat-callback row convention: when fewer argument slots are supplied
+    /// than top-level parameters, the final supplied argument opens into its
+    /// items (matching <c>callee(S:i)</c>; exact lists stay opaque), exactly
+    /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
+    /// callees. The resulting slots then bind through the shared
+    /// prefix/rest/suffix binder, so the rest parameter COLLECTS its allocated
+    /// slots as one exact immutable list. Lean:
+    /// <c>bindCountedCallbackParameterPatternList</c>.
+    /// </summary>
+    private static EvalResult<CountedParameterPatternBindings> BindCountedCallbackParameterPatternList(
+        IReadOnlyList<ParameterPattern> patterns,
+        IReadOnlyList<CountedResult> args)
+    {
+        var slots = args;
+        if (args.Count > 0 && args.Count < patterns.Count)
+        {
+            var expanded = new List<CountedResult>(patterns.Count);
+            for (var index = 0; index < args.Count - 1; index++)
+                expanded.Add(args[index]);
+            expanded.AddRange(UnpackCountedArg(args[^1]));
+            slots = expanded;
+        }
+
+        return BindCountedParameterPatternList(
+            patterns,
+            slots,
+            static (required, actual) => new EvalError.ArityMismatch(required, actual));
+    }
+
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPattern(
         ParameterPattern pattern,
         CountedResult input)
@@ -2510,8 +2502,7 @@ public static class Evaluator
         {
             case CaptureParameterPattern { Kind: ParameterKind.Normal } capture:
                 return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(
-                    [(capture.Name, input)],
-                    []));
+                    [(capture.Name, input)]));
 
             case CaptureParameterPattern { Kind: ParameterKind.Variadic }:
                 return new EvalError.BadArity();
@@ -2521,7 +2512,9 @@ public static class Evaluator
                 // A received sequence value or exact list value opens to its
                 // immediate items (Lean: Result.structureItems?); the counted
                 // callback path keeps its stricter singleton-only scalar
-                // fallback (callback deconstruction deferred).
+                // fallback (sequence-value-pattern callback deconstruction of
+                // scalar elements stays deferred; flat top-level rest
+                // callbacks bind via BindCountedCallbackParameterPatternList).
                 var items = input.Value.StructureItems();
                 if (items is null && group.Items.Count == 1)
                     items = [input.Value];
@@ -2561,7 +2554,6 @@ public static class Evaluator
         }
 
         var bindings = new List<(string, CountedResult)>();
-        var variadicStreamBindings = new List<(string, CountedResult)>();
 
         EvalResult<bool> AddBindings(CountedParameterPatternBindings added)
         {
@@ -2576,19 +2568,6 @@ public static class Evaluator
                 }
 
                 bindings.Add(binding);
-            }
-
-            foreach (var binding in added.VariadicStreamBindings)
-            {
-                var existing = LookupCountedParam(variadicStreamBindings, binding.Item1);
-                if (existing is not null)
-                {
-                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Item2.Value))
-                        return new EvalError.BadArity();
-                    continue;
-                }
-
-                variadicStreamBindings.Add(binding);
             }
 
             return EvalResult<bool>.Ok(true);
@@ -2613,7 +2592,7 @@ public static class Evaluator
                 if (boundR.IsError) return boundR.Error;
             }
 
-            return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings, variadicStreamBindings));
+            return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
         }
 
         var requiredCount = patterns.Count - 1;
@@ -2640,14 +2619,15 @@ public static class Evaluator
             .Take(suffixInputStart - variadicIndex)
             .Select(static input => input.Value)
             .ToList();
-        var capturedResult = Result.FromItems(capturedValues);
-        var captured = new CountedResult(capturedResult, capturedValues.Count);
+        // Rest binding COLLECTS: the assigned supply becomes one exact
+        // immutable list value, emitted count 1 (a list is one visible value).
+        var capturedResult = CollectRest(capturedValues);
+        var captured = new CountedResult(capturedResult, 1);
         var captureBindingsR = AddBindings(new CountedParameterPatternBindings(
-            [(variadicCapture.Name, captured)],
             [(variadicCapture.Name, captured)]));
         if (captureBindingsR.IsError) return captureBindingsR.Error;
 
-        return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings, variadicStreamBindings));
+        return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
     }
 
     /// <summary>
@@ -2691,7 +2671,7 @@ public static class Evaluator
                     var countedEnvR = BindCountedCallbackParams(simpleCallee.Params, args);
                     if (countedEnvR.IsError) return countedEnvR.Error;
 
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, [], simpleCallee.Params);
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, simpleCallee.Params);
                     return EvalAlgOutputCounted(simpleCallee, newCtx, valEnv);
                 }
 
@@ -2714,25 +2694,41 @@ public static class Evaluator
                     var patternCtx = WithCountedParameterEnvironments(
                         ctx,
                         patternBindings.CountedBindings,
-                        patternBindings.VariadicStreamBindings,
                         patternBindings.CountedBindings.Select(static binding => binding.Item1));
                     return EvalAlgOutputCounted(callee, patternCtx, valEnv);
                 }
 
-                // Callback deconstruction is intentionally deferred. A deconstruction-shaped
-                // callback (`Rows.map(F)` with `F(x, y..., z)`) is not UsesPatternBinding, so it
-                // routes here to flat callback binding rather than the shared item-supply
-                // deconstruction matcher. Flat callback binding projects each callback item into
-                // slots and binds those slots to the algorithm's flat parameter names (the final
-                // item is unpacked across any remaining names); it does not apply item-supply rest
-                // grouping or singleton-boundary normalization. This preserves existing callback
-                // semantics and covers simple row cases with matching projected arity. Scalar
-                // callback deconstruction stays deferred so the counted callback path keeps
-                // Lean/C# parity.
+                // A flat callee with a top-level rest parameter (`Rows.map(F)`
+                // with `F(x, y..., z)` or a rest-only `Collect(items...)`)
+                // binds through the shared prefix/rest/suffix binder so the
+                // rest parameter COLLECTS an exact immutable list, after the
+                // same final-argument row expansion the fixed-only flat path
+                // uses below. Rest-only callees keep the whole iterated
+                // element as one collected slot.
+                if (ParameterPattern.HasVariadicCaptureAtCurrentLevel(callee.ParameterPatterns))
+                {
+                    var restPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args);
+                    if (restPatternEnvR.IsError) return restPatternEnvR.Error;
+
+                    var restBindings = restPatternEnvR.Value;
+                    var restCtx = WithCountedParameterEnvironments(
+                        ctx,
+                        restBindings.CountedBindings,
+                        restBindings.CountedBindings.Select(static binding => binding.Item1));
+                    return EvalAlgOutputCounted(callee, restCtx, valEnv);
+                }
+
+                // Fixed-only flat callback binding projects each callback item
+                // into slots and binds those slots to the algorithm's flat
+                // parameter names (the final item is unpacked across any
+                // remaining names); it does not apply item-supply
+                // singleton-boundary normalization. Scalar callback
+                // deconstruction stays deferred so the counted callback path
+                // keeps Lean/C# parity.
                 var countedEnvR = BindCountedCallbackParams(callee.Params, args);
                 if (countedEnvR.IsError) return countedEnvR.Error;
 
-                var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, [], callee.Params);
+                var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, callee.Params);
                 return EvalAlgOutputCounted(callee, newCtx, valEnv);
             }
         }
@@ -2839,8 +2835,8 @@ public static class Evaluator
 
     // Materialize a collection-producing builtin's kept/projected items as ONE
     // exact immutable list value. Unlike canonical arity capture (ordinary
-    // construction via <see cref="Result.Normalize"/>, variadic capture
-    // grouping, <see cref="CombineOutputSlots"/>), the list boundary is exact:
+    // construction via <see cref="Result.Normalize"/>,
+    // <see cref="CombineOutputSlots"/>), the list boundary is exact:
     // zero items form `[]`, a single kept item forms `[item]` (the one-item
     // collection boundary is NEVER erased, so `take(((1, 2), (3, 4)), 1)`
     // yields `[(1, 2)]`), and item internals are never renormalized, dropped,
@@ -2864,10 +2860,12 @@ public static class Evaluator
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already canonicalized redundant unary empty structure.
     // It is applied only to public result boundaries, never to internal
-    // body/root output accumulation (EvalAlgOutputCountedCore) or to raw variadic
-    // parameter storage, both of which must keep their multi-item counts. Lexical
-    // zero-arg property access (EvalCounted Expr.Resolve) and the `if` builtin
-    // already perform this same re-count inline; this helper generalizes it.
+    // body/root output accumulation (EvalAlgOutputCountedCore) or to multi-slot
+    // while/repeat loop state, both of which must keep their multi-item counts.
+    // (Rest bindings need no re-count: CollectRest stores one exact list with
+    // emitted count 1.) Lexical zero-arg property access (EvalCounted
+    // Expr.Resolve) and the `if` builtin already perform this same re-count
+    // inline; this helper generalizes it.
     // Lean: reCountValueBoundary.
     private static CountedResult ReCountValueBoundary(CountedResult r)
         => new(r.Value, r.Value.ValueCount());
@@ -3000,7 +2998,6 @@ public static class Evaluator
         var newCtx = WithCountedParameterEnvironments(
             ctx.Push(callee),
             bindings,
-            [],
             bindings.Select(static binding => binding.Item1));
         var newEnv = Concat(bindings.Select(static binding => (binding.Item1, binding.Item2.Value)).ToList(), valEnv);
         return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
@@ -3041,7 +3038,6 @@ public static class Evaluator
         var callbackCtx = WithCountedParameterEnvironments(
             ctx,
             patternBindings.CountedBindings,
-            patternBindings.VariadicStreamBindings,
             patternBindings.CountedBindings.Select(static binding => binding.Item1));
         return EvalAlgOutputCounted(callee, callbackCtx, valEnv);
     }
@@ -4834,8 +4830,7 @@ public static class Evaluator
 
             return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(
                 bindingsR.Value.ValueBindings,
-                bindingsR.Value.CountedBindings,
-                bindingsR.Value.VariadicStreamBindings));
+                bindingsR.Value.CountedBindings));
         }
 
         EvalResult<EvaluatedSlotBindings> BindFlatFixedSlots()
@@ -4846,7 +4841,7 @@ public static class Evaluator
             var boundR = BindParams(algorithm.Params, evaluatedSlots);
             if (boundR.IsError) return boundR.Error;
 
-            return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(boundR.Value, [], []));
+            return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(boundR.Value, []));
         }
 
         EvalResult<EvaluatedSlotBindings> BindFlatVariadicSlots(FlatVariadicBindingLayout layout)
@@ -4886,7 +4881,6 @@ public static class Evaluator
 
             return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(
                 valueBindingsR.Value,
-                [(variadicCapture.Name, variadicCapture.CountedValue)],
                 [(variadicCapture.Name, variadicCapture.CountedValue)]));
         }
 
@@ -5034,10 +5028,8 @@ public static class Evaluator
         if (boundR.IsError) return boundR.Error;
 
         var shadowedCountedParamEnv = ShadowCountedParamEnv(ctx.CountedParamEnv, step.Params);
-        var shadowedStreamEnv = ShadowCountedParamEnv(ctx.VariadicStreamEnv, step.Params);
         var stepCtx = ctx
-            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, shadowedCountedParamEnv))
-            .WithVariadicStreamEnv(Concat(boundR.Value.VariadicStreamBindings, shadowedStreamEnv));
+            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, shadowedCountedParamEnv));
         return EvalAlgOutputSlots(
             step,
             stepCtx,
@@ -6037,8 +6029,7 @@ public static class Evaluator
         var wiredBody = ChildOf(callee, branch.Body);
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ctx.Push(callee)
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames))
-            .WithVariadicStreamEnv(ShadowCountedParamEnv(ctx.VariadicStreamEnv, shadowedNames));
+            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
         var newEnv = Concat(bindings, valEnv);
         return EvalAlgOutput(wiredBody, newCtx, newEnv);
     }
@@ -6081,8 +6072,7 @@ public static class Evaluator
         var wiredBody = ChildOf(callee, branch.Body);
         var shadowedNames = bindings.Select(static binding => binding.Item1).ToArray();
         var newCtx = ctx.Push(callee)
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames))
-            .WithVariadicStreamEnv(ShadowCountedParamEnv(ctx.VariadicStreamEnv, shadowedNames));
+            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, shadowedNames));
         var newEnv = Concat(bindings, valEnv);
         return ReCountValueBoundary(EvalAlgOutputCounted(wiredBody, newCtx, newEnv));
     }
@@ -6825,7 +6815,6 @@ public static class Evaluator
             [PreludeAlg],
             [],
             [],
-            [],
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
@@ -6852,7 +6841,6 @@ public static class Evaluator
             [PreludeAlg],
             [],
             [],
-            [],
             zeroArgPropertyResultCache,
             EnableLoopOptimization: true,
             LoopDiagnostics: null,
@@ -6876,7 +6864,6 @@ public static class Evaluator
 
         var ctx = new EvalCtx(
             [PreludeAlg],
-            [],
             [],
             [],
             zeroArgPropertyResultCache,

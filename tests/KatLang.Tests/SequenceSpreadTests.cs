@@ -257,14 +257,17 @@ public class SequenceSpreadTests
             37m);
 
     [Fact]
-    public void VariadicSuffixBinding_NormalArgumentSpreadsOnlyVariadicSlot()
-        => AssertEval(
+    public void VariadicSuffixBinding_NormalArgumentIsOneCollectedItem()
+        // The plain argument is one supplied slot: the rest collects the
+        // one-element list [(10, 20)], so the numeric `.sum` fails on the
+        // sequence-valued element. The spread segment form above supplies
+        // the items.
+        => AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(values..., val) = values.sum + val
             Sum(Values, 7)
-            """,
-            37m);
+            """);
 
     [Fact]
     public void VariadicSuffixBinding_NormalArgumentPreservesSingleGroupedValue()
@@ -288,14 +291,16 @@ public class SequenceSpreadTests
             """);
 
     [Fact]
-    public void VariadicSuffixBinding_DotCallReceiverWithSuffixSpreadsVariadicSlot()
-        => AssertEval(
+    public void VariadicSuffixBinding_DotCallReceiverWithSuffixIsOneCollectedItem()
+        // The receiver is one leading argument (Sum(Values, 7)), so the rest
+        // collects [(10, 20)] and the numeric body fails exactly like the
+        // canonical call above.
+        => AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(values..., val) = values.sum + val
             Values.Sum(7)
-            """,
-            37m);
+            """);
 
     [Fact]
     public void VariadicSuffixBinding_ExplicitSpreadCanSatisfySuffixWhenSlotCountMatches()
@@ -308,54 +313,66 @@ public class SequenceSpreadTests
             30m);
 
     [Fact]
-    public void StrictVariadicSequenceSlot_QmeanNormalCallSucceeds()
+    public void RestOnlyBinding_QmeanSpreadCallSucceedsWhileGroupedCallFails()
+    {
+        // Vector is the exact list [1..10]. The plain call collects it as one
+        // non-numeric element, so the numeric body fails; explicit spread
+        // supplies the ten items.
+        AssertEvaluationFailure(
+            """
+            Vector = range(1, 10)
+            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(Vector)
+            """);
+
+        AssertEval(
+            """
+            Vector = range(1, 10)
+            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(Vector...) == Math.Sqrt(385 / 10)
+            """,
+            1m);
+    }
+
+    [Fact]
+    public void RestOnlyBinding_QmeanSpreadDotCallMatchesSpreadCall()
         => AssertEval(
             """
             Vector = range(1, 10)
             Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
-            Qmean(Vector) == Math.Sqrt(385 / 10)
+            (Vector...).Qmean() == Qmean(Vector...)
             """,
             1m);
 
     [Fact]
-    public void StrictVariadicSequenceSlot_QmeanDotCallMatchesNormalCall()
-        => AssertEval(
-            """
-            Vector = range(1, 10)
-            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
-            Vector.Qmean() == Qmean(Vector)
-            """,
-            1m);
-
-    [Fact]
-    public void StrictVariadicSequenceSlot_MultiOutputPropertySpreadsSequenceValue()
+    public void RestOnlyBinding_MultiOutputPropertyIsOneCollectedItem()
         => AssertEval(
             """
             Values = 10, 20
             Count(args...) = args.count
             Count(Values)
             """,
-            2m);
+            1m);
 
     [Fact]
-    public void StrictVariadicSequenceSlot_VisibleGroupCountsSequenceItems()
+    public void RestOnlyBinding_VisibleGroupIsOneCollectedItem()
         => AssertEval(
             """
             Pair = (10, 20)
             Count(args...) = args.count
             Count(Pair)
             """,
-            2m);
+            1m);
 
     [Fact]
-    public void StrictVariadicSequenceSlot_DotCallVisibleGroupCountsSequenceItems()
+    public void RestOnlyBinding_DotCallVisibleGroupIsOneCollectedItem()
         => AssertEval(
             """
             Pair = (10, 20)
             Count(args...) = args.count
             Pair.Count()
             """,
-            2m);
+            1m);
 
     [Fact]
     public void FlatFixedCall_DotCallReceiverDoesNotImplicitlySpreadMultiOutputProperty()
@@ -367,103 +384,113 @@ public class SequenceSpreadTests
             """);
 
     [Fact]
-    public void VariadicParameterForwarding_DirectCallSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_DirectCallForwardsStreamWithExplicitSpread()
+        // Forwarding a rest capture's ITEMS is explicit spread at the forwarding
+        // call (and the root call supplies the stream by spreading too); a bare
+        // `CountItem(values, 1)` would pass the whole collected list as one
+        // argument.
         => AssertEval(
             """
             CountItem(values..., item) = values.filter{value == item}.count
-            Use(values...) = CountItem(values, 1)
-            Use((1, 1, 2, 4, 4))
+            Use(values...) = CountItem(values..., 1)
+            Use((1, 1, 2, 4, 4)...)
             """,
             2m);
 
     [Fact]
-    public void VariadicParameterForwarding_CallbackBodySpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_CallbackBodyForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
             CountItem(values..., item) = values.filter{value == item}.count
 
             Mode(values...) = {
-                Freqs = values.distinct.map{CountItem(values, candidate)}
+                Freqs = values.distinct.map{CountItem(values..., candidate)}
                 Freqs
             }
 
-            Mode((1, 1, 2, 4, 4))
+            Mode((1, 1, 2, 4, 4)...)
             """,
             2m, 1m, 2m);
 
     [Fact]
-    public void VariadicParameterForwarding_FullModeExampleSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_FullModeExampleForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
             CountItem(values..., item) = values.filter{value == item}.count
 
             Mode(values...) = {
-                Freqs = values.distinct.map{CountItem(values, candidate)}
+                Freqs = values.distinct.map{CountItem(values..., candidate)}
                 MaxFreq = Freqs.max
 
-                values.distinct.filter{CountItem(values, candidate) == MaxFreq}
+                values.distinct.filter{CountItem(values..., candidate) == MaxFreq}
             }
 
-            Mode((1, 1, 2, 4, 4))
+            Mode((1, 1, 2, 4, 4)...)
             """,
             1m, 4m);
 
     [Fact]
-    public void VariadicParameterForwarding_NonVariadicCalleeStillReceivesOneSequenceValue()
+    public void VariadicParameterForwarding_NonVariadicCalleeReceivesOneListValue()
+        // Passing the rest capture bare hands the callee the whole collected
+        // list as ONE argument; the fixed parameter's collection view then
+        // counts its three elements.
         => AssertEval(
             """
             Collect(list) = list.count
             Use(values...) = Collect(values)
-            Use((10, 20, 30))
+            Use((10, 20, 30)...)
             """,
             3m);
 
     [Fact]
-    public void VariadicParameterForwarding_CompatibleTopLevelVariadicCalleeReceivesStream()
+    public void VariadicParameterForwarding_TopLevelVariadicCalleeReceivesStreamViaSpread()
         => AssertEval(
             """
             Collect(list...) = list.count
-            Use(values...) = Collect(values)
-            Use((10, 20, 30))
+            Use(values...) = Collect(values...)
+            Use((10, 20, 30)...)
             """,
             3m);
 
     [Fact]
-    public void VariadicParameterForwarding_TopLevelCaptureStillSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_TopLevelCaptureRoundTripsThroughSpread()
+        // Round trip: the callee's rest re-collects exactly the caller's items.
         => AssertEval(
             """
             CountItems(items...) = items.count
-            Use(values...) = CountItems(values)
-            Use((1, 2, 3))
+            Use(values...) = CountItems(values...)
+            Use((1, 2, 3)...)
             """,
             3m);
 
     [Fact]
-    public void VariadicParameterForwarding_SequenceValueVariadicPatternKeepsSequenceValueBindingBehavior()
+    public void VariadicParameterForwarding_SequenceValueVariadicPatternOpensForwardedList()
+        // The pattern callee wants ONE grouped value, so the collected list is
+        // passed bare and the sequence-value pattern opens its one boundary.
         => AssertEval(
             """
             CountSequenceValue((values...)) = values.count
             Use(values...) = CountSequenceValue(values)
-            Use((10, 20, 30))
+            Use((10, 20, 30)...)
             """,
             3m);
 
     [Fact]
-    public void VariadicParameterForwarding_SequenceValueVariadicCaptureSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_SequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
             FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
-            YSStep((history...), pre2, pre1) = FindNext(history, pre1, pre2)
+            YSStep((history...), pre2, pre1) = FindNext(history..., pre1, pre2)
             YSStep((1, 2, 3), 2, 3)
             """,
             8m);
 
     [Fact]
-    public void VariadicParameterForwarding_SequenceValueCaptureStillSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_SequenceValueCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
             CountItems(items...) = items.count
-            Use((history...)) = CountItems(history)
+            Use((history...)) = CountItems(history...)
             Use((1, 2, 3))
             """,
             3m);
@@ -479,11 +506,13 @@ public class SequenceSpreadTests
             2m);
 
     [Fact]
-    public void VariadicParameterForwarding_SequenceValueVariadicCaptureForwardsByProvenanceNotName()
+    public void VariadicParameterForwarding_ExplicitSpreadForwardsRegardlessOfName()
+        // Explicit spread forwards the capture's items whatever the callee's
+        // parameter is called — no name matching is involved.
         => AssertEval(
             """
             CountItems(items..., last) = items.count + last
-            Use((history...), last) = CountItems(history, last)
+            Use((history...), last) = CountItems(history..., last)
             Use((10, 20, 30), 7)
             """,
             10m);
@@ -509,11 +538,11 @@ public class SequenceSpreadTests
             1m);
 
     [Fact]
-    public void VariadicParameterForwarding_LoopStepSequenceValueVariadicCaptureSpreadsCompatibleVariadicSlot()
+    public void VariadicParameterForwarding_LoopStepSequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
             FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
-            YSStep((history...), pre2, pre1) = FindNext(history, pre1, pre2), pre1, pre2
+            YSStep((history...), pre2, pre1) = FindNext(history..., pre1, pre2), pre1, pre2
             YSStep.repeat(1, (1, 2, 3), 2, 3):0
             """,
             8m);
@@ -625,17 +654,30 @@ public class SequenceSpreadTests
             """,
             30m);
 
+    // `(Values...7)` materializes ONE sequence value (10, 20, 7): unlike the lone
+    // `(Values...)` spread receiver it is an ordinary grouped receiver, so the
+    // rest collects [(10, 20, 7)] and the numeric body fails. Re-spreading the
+    // group — `((Values...7)...)` — supplies the items.
     [Theory]
     [InlineData("(Values...7).Sum")]
     [InlineData("(Values ...7).Sum")]
-    public void DotCall_SequenceSpreadReceiverBindsTopLevelVariadicFirstParameter(string call)
-        => AssertEval(
+    public void DotCall_SpreadJoinGroupReceiver_IsOneCollectedItem(string call)
+        => AssertEvaluationFailure(
             $$"""
             Values = 10, 20
             Sum(values...) = values.sum
             Output = {{call}}
+            """);
+
+    [Fact]
+    public void DotCall_RespreadSpreadJoinGroupReceiver_SuppliesItems()
+        => AssertEval(
+            """
+            Values = 10, 20
+            Sum(values...) = values.sum
+            Output = ((Values...7)...).Sum
             """,
-            call.Contains('7', StringComparison.Ordinal) ? 37m : 30m);
+            37m);
 
     // `(Pair...)` spreads the receiver items into the item supply, so
     // `Sum(values...)` binds [10, 20] and sums to 30.
@@ -649,16 +691,27 @@ public class SequenceSpreadTests
             """,
             30m);
 
-    [Theory]
-    [InlineData("(Pair...7).Sum", 37)]
-    public void DotCall_GroupSequenceSpreadReceiverBindsTopLevelVariadicFirstParameter(string call, decimal expected)
-        => AssertEval(
-            $$"""
+    [Fact]
+    public void DotCall_GroupSpreadJoinReceiver_IsOneCollectedItem()
+    {
+        // Same rule for a sequence-valued source: `(Pair...7)` is one grouped
+        // receiver argument, so the rest collects [(10, 20, 7)] and the numeric
+        // body fails; re-spreading the group supplies the items.
+        AssertEvaluationFailure(
+            """
             Pair = (10, 20)
             Sum(values...) = values.sum
-            Output = {{call}}
+            Output = (Pair...7).Sum
+            """);
+
+        AssertEval(
+            """
+            Pair = (10, 20)
+            Sum(values...) = values.sum
+            Output = ((Pair...7)...).Sum
             """,
-            expected);
+            37m);
+    }
 
     [Fact]
     public void DotCall_SequenceSpreadReceiverDoesNotSpreadIntoFixedParameters()
@@ -681,13 +734,16 @@ public class SequenceSpreadTests
     [Fact]
     public void PostfixSequenceSpreadInsideSequenceValueArgument_SpreadsImmediateExpressionOnly()
     {
+        // The inner `...` binds to `b` only: `(a, b...)` is (1, 2, 3) while
+        // `(a, (b...))` is (1, (2, 3)). Spreading the outer group at the call
+        // exposes the distinct item counts through the rest binding.
         AssertEval(
             """
             a = 1
             b = 2, 3
             X(values...) = values.count
 
-            X((a, b...))
+            X((a, b...)...)
             """,
             3m);
 
@@ -697,7 +753,7 @@ public class SequenceSpreadTests
             b = 2, 3
             X(values...) = values.count
 
-            X((a, (b...)))
+            X((a, (b...))...)
             """,
             2m);
     }
@@ -720,13 +776,13 @@ public class SequenceSpreadTests
     public void SequenceSpread_VersusVariadicCapture_AreDistinct()
     {
         // Definition side: `values...` is a VARIADIC (rest) CAPTURE — NOT a spread.
-        // A named sequence value is still supplied as one call argument; the rest-only
-        // capture plus the builtin `sum(values)` can display the same result as an
-        // explicit spread, so fixed and mixed signatures are the boundary proof.
+        // The call-site spread supplies Vals's items as the collected list
+        // [1, 2, 3]; a bare `Sum(Vals)` would collect [(1, 2, 3)] whose element
+        // is non-numeric.
         const string variadicDef = """
             Sum(values...) = sum(values)
             Vals = (1, 2, 3)
-            Sum(Vals)
+            Sum(Vals...)
             """;
         AssertEval(variadicDef, 6m);
 

@@ -110,10 +110,10 @@ public class KatLangEngineTests
     [Fact]
     public void Run_EmptyRestOutputSlot_StaysVisibleUnlessSpread()
     {
-        // A normal output expression that evaluates to () stays a visible slot.
-        AssertDisplay("x, rest... = 1\nrest", "()");
-        AssertDisplay("x, rest... = 1\nrest\nx", "()\n1");
-        // Spreading the empty sequence opens it and contributes zero items.
+        // The empty rest is the exact empty list [] and stays a visible slot.
+        AssertDisplay("x, rest... = 1\nrest", "[]");
+        AssertDisplay("x, rest... = 1\nrest\nx", "[]\n1");
+        // Spreading the empty list opens it and contributes zero items.
         AssertDisplay("x, rest... = 1\nrest...\nx", "1");
     }
 
@@ -849,29 +849,30 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsSingleSequenceValueResult()
+    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsSingleListResult()
     {
-        // A call boundary always returns one value. Even a variadic callee that
-        // forwards its captured item supply (`Collect(list...) = list`) yields one
-        // sequence value at the call boundary, displayed as a single row.
+        // A call boundary always returns one value. The receiver is one leading
+        // argument, so the rest binding collects it as the one-element list
+        // [(10, 20, 30)], displayed as a single row.
         var result = KatLangEngine.Run(
             """
             Collect(list...) = list
             Output = (10, 20, 30).Collect
             """);
 
-        Assert.Equal("(10, 20, 30)", result.ToDisplayString());
+        Assert.Equal("[(10, 20, 30)]", result.ToDisplayString());
     }
 
     [Fact]
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
-        // Explicit caller-site postfix `...` re-opens the returned sequence value
-        // into the surrounding item supply, so it displays as separate rows.
+        // The spread receiver supplies the items, so the collected list is
+        // [10, 20, 30]; explicit caller-site postfix `...` re-opens the returned
+        // list into the surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """
             Collect(list...) = list
-            Output = (10, 20, 30).Collect...
+            Output = ((10, 20, 30)...).Collect...
             """);
 
         Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());
