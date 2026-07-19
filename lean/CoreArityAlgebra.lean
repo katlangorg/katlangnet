@@ -11,12 +11,14 @@ arity algebra used in the paper. It distinguishes:
   spread operator `...` (`open : Value -> Supply`);
 - persistent-value canonicalization `normalize`, with `capture` as the
   canonicalizing ordinary value-capture boundary
-  (`capture : Supply -> Value`);
+  (`capture : Supply -> Value`), and `canonicalSupply` as the invariant that
+  an observable item supply already holds canonical values;
 - exact rest collection `collect`, the rest/variadic binding operation
   (`collect : Supply -> ListValue`, implemented as `Supply -> Val` with a
   proven `Val.list` result kind);
-- deconstruction-specific lone-structure opening of a supply,
-  `openLoneStructure`;
+- the shared openable-structure projection `structureItems?` with the
+  deconstruction-specific lone-structure opening of a supply,
+  `openLoneStructure`, and its characterizing predicate `loneStructure`;
 - the shared name/rest binder `bindPats`, consumed by ordinary call binding
   (`bindArgs`) and by deconstruction binding (`bindDeconstruct`).
 
@@ -32,21 +34,29 @@ Val.list                        Result.listValue
 sequenceItems? / listItems?     artifact-local structural projections (the
                                 full model pattern-matches the payloads
                                 directly)
+structureItems?                 Result.structureItems? (the shared
+                                deconstruction-openable structure view: a
+                                sequence or list value opens to its items)
 items                           Result.spreadItems (the surface `...` view,
                                 which opens one sequence OR list boundary;
                                 the full model's non-spread `Result.toItems`
                                 keeps lists opaque and is not modeled here)
 normalize                       Result.normalize
 capture                         Result.normalize after Result.sequenceValue
+canonicalSupply                 invariant of observable supplies (the full
+                                model normalizes at every construction
+                                boundary rather than naming the invariant)
 collect                         collectRest (exact immutable list collection)
 openLoneStructure               deconstruction receiver opening of a lone
                                 sequence or lone list
-                                (SequenceValueParameterPattern via
-                                Result.structureItems?); the collection
-                                builtins' POST-BINDING view
-                                builtinCollectionItems applies the same
-                                one-boundary opening to the bound
-                                `collection` argument
+                                ((Result.structureItems? value).getD [value]
+                                inside the sequence-value parameter pattern
+                                binder); the collection builtins'
+                                POST-BINDING view builtinCollectionItems
+                                applies the same one-boundary opening to the
+                                bound `collection` argument
+loneStructure                   artifact-local characterization of the one
+                                supply shape openLoneStructure rewrites
 Pat / bindArgs / bindDeconstruct / bindPats
                                 bindParameterPatternList name/rest binding model;
                                 bindDeconstruct adds the deconstruction-receiver
@@ -87,6 +97,24 @@ never canonicalized away, so this projection is a section of the constructor
 on every payload, including singletons (`listItems? (collect [v]) = some [v]`).
 -/
 def listItems? : Val -> Option Supply
+  | Val.list xs => some xs
+  | _ => none
+
+/--
+The shared openable-structure projection: the stored items of either
+collection kind. A sequence value or an exact list value projects to its
+immediate items; an atom is not an openable structure.
+
+This is the deconstruction receiver's structure view (the full model's
+`Result.structureItems?`): `openLoneStructure` opens a single received value
+through it, with a one-item fallback for non-structures. It is partial where
+`items` (surface spread) is total — spread supplies an atom as itself, while
+deconstruction distinguishes "openable structure" from "scalar". The
+kind-specific projections `sequenceItems?` / `listItems?` remain for
+constructor-section laws; this projection unifies their openable half.
+-/
+def structureItems? : Val -> Option Supply
+  | Val.seq xs => some xs
   | Val.list xs => some xs
   | _ => none
 
@@ -146,6 +174,24 @@ be fixed at the construction/capture boundary, not inside equality. -/
 def capture (xs : Supply) : Val := normalize (Val.seq xs)
 
 /--
+The canonical-supply invariant: every value in the supply is already in
+canonical form (`normalizeList xs = xs`, equivalently `normalize v = v` for
+each member — `canonicalSupply_iff_forall`).
+
+The abstract `Supply` type admits raw non-canonical members, but observable
+runtime supplies satisfy this invariant: they are assembled from literals,
+canonical stored values, and spreads of canonical values (opening a canonical
+value yields a canonical supply — `canonicalSupply_items_of_canonical`), and
+every construction/capture boundary normalizes before storing. The invariant
+is what makes `collect` exactness meaningful without extra work: `collect`
+preserves the number, order, kinds, and boundaries of the supplied values
+as-is, and canonicality of the input — not renormalization inside `collect` —
+guarantees the collected list is canonical
+(`normalize_collect_of_canonicalSupply`).
+-/
+def canonicalSupply (xs : Supply) : Prop := normalizeList xs = xs
+
+/--
 Exact rest collection: `collect : Supply -> ListValue`.
 
 Every rest binding — deconstruction rest, rest-only variadic parameters, and
@@ -169,24 +215,39 @@ def collect (xs : Supply) : Val := Val.list xs
 /--
 Deconstruction-specific lone-structure opening.
 
-If the complete item supply consists of exactly one sequence value or exactly
-one exact list value, this operation removes that one outer boundary; every
-other supply — empty, a lone atom, or two or more items — is unchanged. It
-does not recursively normalize the values inside the supply.
+If the complete item supply consists of exactly one openable structure — one
+sequence value or one exact list value (`structureItems?`) — this operation
+removes that one outer boundary; every other supply — empty, a lone atom, or
+two or more items — is unchanged. It does not recursively normalize the
+values inside the supply.
 
 It prepares the supply for assignment-deconstruction binding
 (`bindDeconstruct`); in the full model the same one-boundary opening also
-underlies the collection builtins' post-binding collection view. It is NOT
-applied by function-call binding (`bindArgs`): a stored sequence or list
-value is reopened for a call only by an explicit spread.
+underlies the collection builtins' post-binding collection view. Those are
+two runtime code paths with the same one-boundary behaviour, unified here as
+one operation — not a claim that assignment deconstruction and collection
+builtins share one runtime call path. It is NOT applied by function-call
+binding (`bindArgs`): a stored sequence or list value is reopened for a call
+only by an explicit spread.
 
 (Before exact list values entered the algebra this operation was named
 `openLoneSequence` and opened lone sequence values only.)
 -/
 def openLoneStructure : Supply -> Supply
-  | [Val.seq xs] => xs
-  | [Val.list xs] => xs
+  | [v] => (structureItems? v).getD [v]
   | xs => xs
+
+/--
+Characterizes exactly the supplies `openLoneStructure` rewrites: a single
+openable structure value — `[Val.seq ys]` or `[Val.list ys]`. On every supply
+with `loneStructure xs = false` the call and deconstruction receivers agree
+(`receivers_agree_outside_lone_structure`); on every supply with
+`loneStructure xs = true` they never share a successful binding
+(`receivers_never_same_on_lone_structure`).
+-/
+def loneStructure : Supply -> Bool
+  | [v] => (structureItems? v).isSome
+  | _ => false
 
 inductive Pat where
   | name : String -> Pat
@@ -239,7 +300,12 @@ def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
 Assignment deconstruction applies lone-structure opening before the shared
 name/rest binder: a lone sequence- or list-valued right-hand side `A` is
 opened into its items and matched element-by-element, so `x, y, z = A` splits
-`A`, and `x, y, z = A...` supplies the same items. The opening is
+`A`. At this receiver boundary, `bindDeconstruct ps [A]` therefore binds the
+same immediate supply that `bindArgs ps (items A)` receives. This is not an
+unrestricted surface rewrite from `x, y = A` to `x, y = A...`: a written
+deconstruction RHS is captured before this receiver runs, and that capture can
+erase a singleton sequence boundary before the receiver opens again (pinned by
+`deconstruct_spread_capture_can_open_further`). The opening remains
 deconstruction-specific: ordinary call binding (`bindArgs`) does not perform
 it, so `Add(A)` stays one argument while `Add(A...)` opens.
 -/

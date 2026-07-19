@@ -46,6 +46,39 @@ theorem sequenceItems?_seq (xs : Supply) : sequenceItems? (Val.seq xs) = some xs
 
 theorem listItems?_list (xs : Supply) : listItems? (Val.list xs) = some xs := rfl
 
+/-! ## Shared openable-structure projection (`structureItems?`)
+
+`structureItems?` unifies the openable halves of `sequenceItems?` and
+`listItems?`: both collection kinds project to their immediate items, and an
+atom is not an openable structure. It matches the full model's
+`Result.structureItems?`, the deconstruction receiver's structure view.
+-/
+
+theorem structureItems?_seq (xs : Supply) :
+    structureItems? (Val.seq xs) = some xs := rfl
+
+theorem structureItems?_list (xs : Supply) :
+    structureItems? (Val.list xs) = some xs := rfl
+
+theorem structureItems?_atom (n : Int) :
+    structureItems? (Val.atom n) = none := rfl
+
+/-- On sequence values the shared projection agrees with the kind-specific
+one. -/
+theorem structureItems?_eq_sequenceItems?_on_seq (xs : Supply) :
+    structureItems? (Val.seq xs) = sequenceItems? (Val.seq xs) := rfl
+
+/-- On list values the shared projection agrees with the kind-specific one. -/
+theorem structureItems?_eq_listItems?_on_list (xs : Supply) :
+    structureItems? (Val.list xs) = listItems? (Val.list xs) := rfl
+
+/-- The structural projection with a one-item fallback is exactly the total
+item view: `open` treats a non-structure as one item, and `openLoneStructure`
+opens a single received value through this same expression. -/
+theorem structureItems?_getD_eq_items (v : Val) :
+    (structureItems? v).getD [v] = items v := by
+  cases v <;> rfl
+
 theorem items_seq (xs : Supply) : items (Val.seq xs) = xs := rfl
 
 /-- Spread opens one LIST boundary exactly like one sequence boundary
@@ -60,10 +93,31 @@ theorem items_empty :
 theorem items_empty_list :
     items (Val.list []) = [] := rfl
 
+/-- The two empty structures are exactly the zero-item opens: `()` and `[]`
+are the only values whose spread contributes nothing. -/
+theorem items_eq_nil_iff (v : Val) :
+    items v = [] ↔ v = Val.seq [] ∨ v = Val.list [] := by
+  cases v with
+  | atom n => simp [items]
+  | seq xs => simp [items]
+  | list xs => simp [items]
+
+/-- Generic zero-item-open neutrality at the supply level: a spread that
+contributes no items leaves the surrounding item supply unchanged. -/
+theorem open_zero_items_neutral {v : Val} (h : items v = [])
+    (before after : Supply) :
+    before ++ items v ++ after = before ++ after := by
+  rw [h]; simp
+
 /-- An empty spread contributes nothing to a surrounding item supply. -/
 theorem spread_empty_neutral (before after : Supply) :
-    before ++ items (Val.seq []) ++ after = before ++ after := by
-  simp [items]
+    before ++ items (Val.seq []) ++ after = before ++ after :=
+  open_zero_items_neutral items_empty before after
+
+/-- The list twin: `[]...` contributes nothing to a surrounding item supply. -/
+theorem spread_empty_list_neutral (before after : Supply) :
+    before ++ items (Val.list []) ++ after = before ++ after :=
+  open_zero_items_neutral items_empty_list before after
 
 theorem seq_items_seq (xs : Supply) : Val.seq (items (Val.seq xs)) = Val.seq xs := rfl
 
@@ -133,15 +187,33 @@ theorem sequenceItems?_capture_singleton_atom :
     sequenceItems? (capture [Val.atom 1]) = none := by
   decide
 
-/-! ## Empty spread neutrality
+/-! ## Zero-item-open neutrality (`()...` and `[]...`)
 
-`Val.seq []` is the empty sequence value `()`, and `items (Val.seq [])` is
-the item supply of the explicit spread `()...`: it contributes zero items
-(`items_empty`, `spread_empty_neutral`). The theorems below lift that
-neutrality to `capture`, the canonical written-construction boundary. The
-core model does not model root output, so the claims here are about item
-supplies and captured values, not output emission.
+`Val.seq []` is the empty sequence value `()` and `Val.list []` is the empty
+list value `[]`; their item views are the supplies of the explicit spreads
+`()...` and `[]...`, and both contribute zero items (`items_empty`,
+`items_empty_list` — by `items_eq_nil_iff` they are the only such values).
+The theorems below lift that neutrality to the two receiver-purpose
+materializations: `capture`, the canonical written-construction boundary, and
+`collect`, the rest-binding boundary. The core model does not model root
+output, so the claims here are about item supplies and materialized values,
+not output emission.
 -/
+
+/-- Generic neutral open at the capture boundary: any zero-item spread leaves
+the captured value unchanged wherever it is inserted. -/
+theorem capture_zero_item_open_neutral {v : Val} (h : items v = [])
+    (before after : Supply) :
+    capture (before ++ items v ++ after) = capture (before ++ after) :=
+  congrArg capture (open_zero_items_neutral h before after)
+
+/-- Generic neutral open at the rest-collection boundary: any zero-item
+spread leaves the collected list unchanged wherever it is inserted
+(`first, rest... = 1, 2, ()...` collects `rest = [2]`). -/
+theorem collect_zero_item_open_neutral {v : Val} (h : items v = [])
+    (before after : Supply) :
+    collect (before ++ items v ++ after) = collect (before ++ after) :=
+  congrArg collect (open_zero_items_neutral h before after)
 
 /-- An empty spread is neutral at a canonical capture or written-construction
 boundary: `()...` contributes no items to the surrounding supply, so the
@@ -150,7 +222,15 @@ theorem capture_empty_spread_neutral
     (before after : Supply) :
     capture (before ++ items (Val.seq []) ++ after) =
       capture (before ++ after) :=
-  congrArg capture (spread_empty_neutral before after)
+  capture_zero_item_open_neutral items_empty before after
+
+/-- The list twin: the empty-list spread `[]...` is equally neutral at the
+capture boundary. -/
+theorem capture_empty_list_spread_neutral
+    (before after : Supply) :
+    capture (before ++ items (Val.list []) ++ after) =
+      capture (before ++ after) :=
+  capture_zero_item_open_neutral items_empty_list before after
 
 /-- `(n, ()...) == n`. `Val.seq []` is the empty sequence value `()`,
 `items (Val.seq [])` is its explicit spread `()...`, and the surrounding
@@ -168,6 +248,23 @@ theorem capture_atom_empty_spread (n : Int) :
           simpa using capture_empty_spread_neutral [Val.atom n] []
     _ = Val.atom n := capture_singleton_atom n
 
+/-- `(n, []...) == n`: the list twin of `capture_atom_empty_spread` — the
+empty-list spread is just as invisible to the captured value, even though the
+unspread `[]` itself is a visible one-item value. -/
+theorem capture_atom_empty_list_spread (n : Int) :
+    capture ([Val.atom n] ++ items (Val.list [])) = Val.atom n := by
+  calc
+    capture ([Val.atom n] ++ items (Val.list []))
+        = capture [Val.atom n] := by
+          simpa using capture_empty_list_spread_neutral [Val.atom n] []
+    _ = Val.atom n := capture_singleton_atom n
+
+/-- `openLoneStructure` on a single-value supply is definitionally the shared
+structural projection with a one-item fallback — the exact shape of the full
+model's deconstruction binder (`(Result.structureItems? value).getD [value]`). -/
+theorem openLoneStructure_single_eq_structureItems?_getD (v : Val) :
+    openLoneStructure [v] = (structureItems? v).getD [v] := rfl
+
 theorem openLoneStructure_empty : openLoneStructure [] = [] := rfl
 
 theorem openLoneStructure_singleSeq (xs : Supply) :
@@ -181,11 +278,88 @@ theorem openLoneStructure_singleAtom (n : Int) :
     openLoneStructure [Val.atom n] = [Val.atom n] := rfl
 
 theorem openLoneStructure_multi (a b : Val) (rest : Supply) :
-    openLoneStructure (a :: b :: rest) = a :: b :: rest := by
-  cases a <;> rfl
+    openLoneStructure (a :: b :: rest) = a :: b :: rest := rfl
+
+/-- The shared-projection implementation is extensionally identical to the
+previous explicit sequence/list case split, for every possible supply. -/
+theorem openLoneStructure_eq_explicit (xs : Supply) :
+    openLoneStructure xs =
+      match xs with
+      | [Val.seq ys] => ys
+      | [Val.list ys] => ys
+      | other => other := by
+  cases xs with
+  | nil => rfl
+  | cons v tail =>
+      cases tail with
+      | nil => cases v <;> rfl
+      | cons w rest => simp [openLoneStructure]
 
 theorem openLoneStructure_nested_empty_opens_one_boundary :
     openLoneStructure [Val.seq [Val.seq []]] = [Val.seq []] := rfl
+
+/-! ## Lone-structure characterization (`loneStructure`)
+
+`loneStructure` picks out exactly the supplies `openLoneStructure` rewrites —
+a single sequence value or a single exact list value. The receiver theorems
+later in this file split the whole receiver story on this predicate: outside
+lone structures the call and deconstruction receivers agree; on lone
+structures they never share a successful binding.
+-/
+
+theorem loneStructure_lone_seq (xs : Supply) :
+    loneStructure [Val.seq xs] = true := rfl
+
+theorem loneStructure_lone_list (xs : Supply) :
+    loneStructure [Val.list xs] = true := rfl
+
+theorem loneStructure_nil : loneStructure [] = false := rfl
+
+theorem loneStructure_lone_atom (n : Int) :
+    loneStructure [Val.atom n] = false := rfl
+
+theorem loneStructure_multi (a b : Val) (rest : Supply) :
+    loneStructure (a :: b :: rest) = false := rfl
+
+/-- On single-value supplies the predicate is exactly "the value is an
+openable structure". -/
+theorem loneStructure_singleton (v : Val) :
+    loneStructure [v] = (structureItems? v).isSome := rfl
+
+/-- Specification: `loneStructure` holds exactly on `[Val.seq ys]` and
+`[Val.list ys]` supplies. -/
+theorem loneStructure_eq_true_iff (xs : Supply) :
+    loneStructure xs = true ↔
+      (∃ ys, xs = [Val.seq ys]) ∨ (∃ ys, xs = [Val.list ys]) := by
+  constructor
+  · intro h
+    cases xs with
+    | nil => exact Bool.noConfusion h
+    | cons a t =>
+      cases t with
+      | cons b t2 => exact Bool.noConfusion h
+      | nil =>
+        cases a with
+        | atom n => exact Bool.noConfusion h
+        | seq ys => exact Or.inl ⟨ys, rfl⟩
+        | list ys => exact Or.inr ⟨ys, rfl⟩
+  · rintro (⟨ys, rfl⟩ | ⟨ys, rfl⟩) <;> rfl
+
+/-- Outside the lone-structure shape, deconstruction's supply preparation is
+the identity: nothing but a lone structure is ever opened. -/
+theorem openLoneStructure_of_not_loneStructure {xs : Supply}
+    (h : loneStructure xs = false) :
+    openLoneStructure xs = xs := by
+  cases xs with
+  | nil => rfl
+  | cons a t =>
+    cases t with
+    | cons b t2 => rfl
+    | nil =>
+      cases a with
+      | atom n => rfl
+      | seq ys => exact Bool.noConfusion h
+      | list ys => exact Bool.noConfusion h
 
 /-! ## Exact rest collection (`collect`)
 
@@ -214,11 +388,23 @@ theorem collect_empty_ne_empty_seq : collect [] ≠ Val.seq [] := by decide
 list `[v]`, for every value kind. -/
 theorem collect_singleton (v : Val) : collect [v] = Val.list [v] := rfl
 
+/-- Singleton preservation for a grouped sequence value of ANY payload:
+`first, rest... = 1, (…)` collects `rest = [(…)]`. -/
+theorem collect_singleton_seq (ys : Supply) :
+    collect [Val.seq ys] = Val.list [Val.seq ys] := rfl
+
+/-- Singleton preservation for an exact list value of ANY payload:
+`first, rest... = 1, […]` collects `rest = [[…]]`. -/
+theorem collect_singleton_list (ys : Supply) :
+    collect [Val.list ys] = Val.list [Val.list ys] := rfl
+
 example : collect [Val.atom 7] = Val.list [Val.atom 7] := rfl
 example : collect [Val.seq []] = Val.list [Val.seq []] := rfl
 example : collect [Val.list []] = Val.list [Val.list []] := rfl
 example : collect [Val.seq [Val.atom 2, Val.atom 3]]
     = Val.list [Val.seq [Val.atom 2, Val.atom 3]] := rfl
+example : collect [Val.list [Val.atom 2, Val.atom 3]]
+    = Val.list [Val.list [Val.atom 2, Val.atom 3]] := rfl
 
 /-- No value is an element of its own payload list: an element of `ys` is
 structurally smaller than `Val.seq ys`. -/
@@ -252,10 +438,30 @@ theorem collect_singleton_atom_ne_capture (n : Int) :
   rw [capture_singleton_atom] at he
   exact collect_singleton_ne_item (Val.atom n) he
 
+/-! ### Round-trip laws
+
+The three receiver-purpose operations compose as partial inverses, each on
+its own domain:
+
+* `open ∘ collect = id` on supplies — `items_collect`;
+* `collect ∘ open = id` on exact list values — `collect_items_list`;
+* `capture ∘ open = id` on canonical non-list values —
+  `capture_items_of_canonical` (later in this file; spreading a list and
+  re-CAPTURING converts it to the sequence world, `capture_items_of_list`,
+  so the unrestricted claim would be false).
+-/
+
 /-- Open/collect round trip: surface spread (`items`, the `open` operation)
 re-supplies EXACTLY the collected items, so variadic forwarding
 (`Forward(items...) = Target(items...)`) is ordinary list spread. -/
 theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
+
+/-- Collect/open round trip on the list side: re-collecting a spread list's
+items reproduces the list exactly — `collect` is a section of `open` on exact
+list values. Definitionally trivial, conceptually load-bearing: a rest that
+re-collects a forwarded rest's spread observes the original list. -/
+theorem collect_items_list (xs : Supply) :
+    collect (items (Val.list xs)) = Val.list xs := rfl
 
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it. Collecting the
@@ -447,60 +653,233 @@ theorem variadic_is_single_rest (xs : Supply) :
   unfold bindArgs
   simp [bindPats, bindFixed, Pat.isRest, Pat.key, List.take_length, List.drop_length]
 
+/-! ## Generic rest collection (the `bindPats` split theorem)
+
+The concrete binding checks above pin specific shapes; the theorems below
+establish the general law. For EVERY parameter list with exactly one rest —
+written `front ++ Pat.rest r :: back` with rest-free `front` and `back` — and
+every sufficiently long supply, the bind SUCCEEDS and the environment is,
+structurally, the front captures, then the rest name bound to `collect` of
+exactly the middle supply, then the back captures. Leading, middle, trailing,
+and rest-only shapes and empty/singleton/multiple middles are all instances.
+
+The environment is stated structurally (an association list assembled
+positionally), so no name-uniqueness premise is needed: duplicate names in
+this abstract binder simply contribute multiple entries, and surface KatLang
+separately rejects duplicate parameter names before this model is reached.
+(The full model's binder additionally MERGES duplicate bindings with an
+equality check — `mergeEqualValEnv` — which the extraction deliberately
+omits; the bridge theorems in `KatLangArityLaws.lean` use distinct names.)
+-/
+
+private theorem filter_isRest_eq_nil : ∀ {ps : List Pat},
+    (∀ p ∈ ps, p.isRest = false) -> ps.filter Pat.isRest = []
+  | [], _ => rfl
+  | p :: ps, h => by
+      have hp := h p List.mem_cons_self
+      have ih := filter_isRest_eq_nil (ps := ps)
+        (fun q hq => h q (List.mem_cons_of_mem p hq))
+      simp [hp, ih]
+
+private theorem filter_isRest_single_rest (front back : List Pat) (r : String)
+    (hf : ∀ p ∈ front, p.isRest = false) (hb : ∀ p ∈ back, p.isRest = false) :
+    (front ++ Pat.rest r :: back).filter Pat.isRest = [Pat.rest r] := by
+  rw [List.filter_append, filter_isRest_eq_nil hf]
+  simp [Pat.isRest, filter_isRest_eq_nil hb]
+
+private theorem findIdx?_isRest_first_rest : ∀ (front : List Pat) (r : String)
+    (back : List Pat), (∀ p ∈ front, p.isRest = false) ->
+    (front ++ Pat.rest r :: back).findIdx? Pat.isRest = some front.length
+  | [], r, back, _ => by simp [List.findIdx?_cons, Pat.isRest]
+  | p :: front, r, back, h => by
+      have hp := h p List.mem_cons_self
+      have ih := findIdx?_isRest_first_rest front r back
+        (fun q hq => h q (List.mem_cons_of_mem p hq))
+      simp [List.findIdx?_cons, hp, ih]
+
+private theorem take_length_append {A : Type} : ∀ (front tail : List A),
+    (front ++ tail).take front.length = front
+  | [], _ => rfl
+  | a :: front, tail => by simp [take_length_append front tail]
+
+private theorem drop_length_append {A : Type} : ∀ (front tail : List A),
+    (front ++ tail).drop front.length = tail
+  | [], _ => rfl
+  | a :: front, tail => by simp [drop_length_append front tail]
+
+private theorem drop_length_succ_append {A : Type} : ∀ (front : List A) (x : A)
+    (tail : List A), (front ++ x :: tail).drop (front.length + 1) = tail
+  | [], _, _ => rfl
+  | a :: front, x, tail => by simp [drop_length_succ_append front x tail]
+
+/-- The split form of the general rest-binding law: under the binder's
+ordinary length condition, binding `front ++ rest r :: back` against `xs`
+succeeds with the exact `take`/`drop` allocation — front captures from the
+front, back captures from the back, and the rest name bound to `collect` of
+precisely the remaining middle. -/
+theorem bindPats_rest_split (front back : List Pat) (r : String) (xs : Supply)
+    (hf : ∀ p ∈ front, p.isRest = false)
+    (hb : ∀ p ∈ back, p.isRest = false)
+    (hlen : front.length + back.length ≤ xs.length) :
+    bindPats (front ++ Pat.rest r :: back) xs
+      = some (bindFixed front (xs.take front.length)
+          ++ (r, collect ((xs.drop front.length).take
+                (xs.length - back.length - front.length)))
+             :: bindFixed back (xs.drop (xs.length - back.length))) := by
+  have hfilter := filter_isRest_single_rest front back r hf hb
+  have hfind := findIdx?_isRest_first_rest front r back hf
+  simp only [bindPats, hfilter, hfind, take_length_append,
+    drop_length_succ_append, Pat.key, List.length_append, List.length_cons]
+  simp
+  omega
+
+/-- The supplied-slots form of the general rest-binding law: when the supply
+is written as `frontVals ++ mid ++ backVals` with lengths matching the fixed
+captures, the environment is EXACTLY the front bindings, the rest name bound
+to `collect mid`, and the back bindings — for every middle supply (empty,
+singleton, or many) and every leading/middle/trailing rest position. -/
+theorem bindPats_rest_exact (front back : List Pat) (r : String)
+    (frontVals mid backVals : Supply)
+    (hf : ∀ p ∈ front, p.isRest = false)
+    (hb : ∀ p ∈ back, p.isRest = false)
+    (hfl : frontVals.length = front.length)
+    (hbl : backVals.length = back.length) :
+    bindPats (front ++ Pat.rest r :: back) (frontVals ++ mid ++ backVals)
+      = some (bindFixed front frontVals
+          ++ (r, collect mid) :: bindFixed back backVals) := by
+  have hlen : front.length + back.length ≤ (frontVals ++ mid ++ backVals).length := by
+    simp only [List.length_append]
+    omega
+  have htake : (frontVals ++ mid ++ backVals).take front.length = frontVals := by
+    rw [← hfl, List.append_assoc, take_length_append]
+  have hdropf : (frontVals ++ mid ++ backVals).drop front.length = mid ++ backVals := by
+    rw [← hfl, List.append_assoc, drop_length_append]
+  have hmidlen : (frontVals ++ mid ++ backVals).length - back.length - front.length
+      = mid.length := by
+    simp only [List.length_append]
+    omega
+  have hbacklen : (frontVals ++ mid ++ backVals).length - back.length
+      = (frontVals ++ mid).length := by
+    simp only [List.length_append]
+    omega
+  rw [bindPats_rest_split front back r _ hf hb hlen, htake, hdropf, hmidlen,
+    take_length_append, hbacklen, drop_length_append]
+
+/-- Trailing rest (`Tail(first, rest...)`), for every middle supply. -/
+theorem bindPats_trailing_rest (a : String) (x : Val) (r : String) (mid : Supply) :
+    bindPats [Pat.name a, Pat.rest r] (x :: mid)
+      = some [(a, x), (r, collect mid)] := by
+  have h := bindPats_rest_exact [Pat.name a] [] r [x] mid []
+    (by intro p hp; simp at hp; simp [hp, Pat.isRest])
+    (by intro p hp; simp at hp)
+    rfl rfl
+  simpa [bindFixed] using h
+
+/-- Leading rest (`Init(init..., last)`), for every middle supply. -/
+theorem bindPats_leading_rest (r : String) (mid : Supply) (z : String) (y : Val) :
+    bindPats [Pat.rest r, Pat.name z] (mid ++ [y])
+      = some [(r, collect mid), (z, y)] := by
+  have h := bindPats_rest_exact [] [Pat.name z] r [] mid [y]
+    (by intro p hp; simp at hp)
+    (by intro p hp; simp at hp; simp [hp, Pat.isRest])
+    rfl rfl
+  simpa [bindFixed] using h
+
+/-- Middle rest (`F(x, y..., z)`), for every middle supply. -/
+theorem bindPats_middle_rest (a : String) (x : Val) (r : String) (mid : Supply)
+    (z : String) (y : Val) :
+    bindPats [Pat.name a, Pat.rest r, Pat.name z] (x :: (mid ++ [y]))
+      = some [(a, x), (r, collect mid), (z, y)] := by
+  have h := bindPats_rest_exact [Pat.name a] [Pat.name z] r [x] mid [y]
+    (by intro p hp; simp at hp; simp [hp, Pat.isRest])
+    (by intro p hp; simp at hp; simp [hp, Pat.isRest])
+    rfl rfl
+  simpa [bindFixed] using h
+
+/-- Rest-only (`F(items...)`), re-derived as the degenerate split instance —
+agrees with the directly proved `variadic_is_single_rest`/`bindArgs_lone_rest`. -/
+theorem bindPats_rest_only (r : String) (xs : Supply) :
+    bindPats [Pat.rest r] xs = some [(r, collect xs)] := by
+  have h := bindPats_rest_exact [] [] r [] xs []
+    (by intro p hp; simp at hp)
+    (by intro p hp; simp at hp)
+    rfl rfl
+  simpa [bindFixed] using h
+
 /-! ## Receiver theorems
 
 The concrete checks above pin the call/deconstruction contrast on specific
-values. The theorems below establish the contrast in general:
+values. The theorems below establish the contrast in general, split exactly
+on the `loneStructure` predicate:
 
-* `receivers_agree_of_not_lone_structure` — the two receivers agree on every
-  supply that is not a single sequence or list value, so the entire asymmetry
-  is confined to the lone-structure case;
+* `receivers_agree_outside_lone_structure` — on every supply with
+  `loneStructure xs = false` the two receivers are the SAME function, so the
+  entire receiver asymmetry is confined to the lone-structure case;
 * `deconstruct_singleton_eq_args_items` — on a single-value supply the
-  deconstruction receiver binds exactly the value's item view, the item supply
-  an explicit spread provides (`x, y = A` binds as `x, y = A...`);
-* `receivers_never_agree_on_lone_seq` — on a lone sequence value the two
-  receivers NEVER produce the same successful binding, for any pattern list.
-  This replaces the pre-list characterization
-  (`agree_on_lone_seq_iff_lone_rest`), whose rest-only agreement depended on
-  the canonical-capture coincidence: exact rest collection distinguishes the
-  grouped argument (`rest = [A]`) from the opened items (`rest = [a1, …]`),
-  so even the lone-rest shape now disagrees;
+  deconstruction receiver binds exactly what the CALL receiver binds on the
+  value's immediate item view. This is a receiver-level equation, not an
+  unrestricted surface equivalence with a written deconstruction RHS spread:
+  the surface spread passes through `capture` before deconstruction sees its
+  single shared value (`deconstruct_spread_capture_can_open_further` pins the
+  boundary-sensitive counterexample);
+* `receivers_never_same_on_lone_structure` — on every lone-structure supply
+  (`[Val.seq ys]` and `[Val.list ys]` alike) the two receivers NEVER both
+  succeed with the same environment, for any pattern list. The corollaries
+  `receivers_never_agree_on_lone_seq` / `receivers_never_agree_on_lone_list`
+  are the per-kind instances. This unified statement replaces the pre-list
+  characterization (`agree_on_lone_seq_iff_lone_rest`), whose rest-only
+  agreement depended on the canonical-capture coincidence: exact rest
+  collection distinguishes the grouped argument (`rest = [A]`) from the
+  opened items (`rest = [a1, …]`), so even the lone-rest shape disagrees;
+* the theorem is deliberately about shared SUCCESS, not Option inequality:
+  both receivers can fail identically on a lone structure (see the example
+  after the corollaries), so `bindArgs ps xs ≠ bindDeconstruct ps xs` would
+  be false as a general lone-structure claim;
 * `lone_rest_disagrees_on_lone_list` — the concrete lone-rest disagreement on
-  a lone LIST supply, mirroring the sequence-side theorem on the list kind.
+  a lone LIST supply (there both modes DO succeed, so the Option values
+  really differ).
 -/
 
 /-- The deconstruction receiver's implicit opening of a single-value supply is
 the total item view `items` — the same item supply the surface spread `...`
-provides. -/
-theorem openLoneStructure_singleton (v : Val) : openLoneStructure [v] = items v := by
-  cases v <;> rfl
+provides (`structureItems?` with the one-item scalar fallback). -/
+theorem openLoneStructure_singleton (v : Val) : openLoneStructure [v] = items v :=
+  structureItems?_getD_eq_items v
 
-/-- Localization: the call and deconstruction receivers agree on every supply
-that is not a single sequence value and not a single list value. -/
-theorem receivers_agree_of_not_lone_structure (ps : List Pat) (xs : Supply)
-    (hseq : ∀ ys : List Val, xs ≠ [Val.seq ys])
-    (hlist : ∀ ys : List Val, xs ≠ [Val.list ys]) :
+/-- Localization: outside the lone-structure shape the call and deconstruction
+receivers agree — deconstruction's extra behaviour is confined to
+`loneStructure` supplies. -/
+theorem receivers_agree_outside_lone_structure (ps : List Pat) (xs : Supply)
+    (h : loneStructure xs = false) :
     bindDeconstruct ps xs = bindArgs ps xs := by
-  have hn : openLoneStructure xs = xs := by
-    cases xs with
-    | nil => rfl
-    | cons a t =>
-      cases t with
-      | nil =>
-        cases a with
-        | atom n => rfl
-        | seq ys => exact absurd rfl (hseq ys)
-        | list ys => exact absurd rfl (hlist ys)
-      | cons b t2 => cases a <;> rfl
   unfold bindDeconstruct bindArgs
-  rw [hn]
+  rw [openLoneStructure_of_not_loneStructure h]
 
-/-- Spread equivalence: on a single-value supply, deconstruction binds exactly
-what a call binds on the value's item view. -/
+/-- Receiver/item-view equation: on a single-value supply, deconstruction binds
+exactly what a call binds on the value's immediate item view. A written spread
+on an assignment RHS additionally passes through `capture`; the next theorem
+pins why this equation must not be presented as an unrestricted surface
+rewrite. -/
 theorem deconstruct_singleton_eq_args_items (ps : List Pat) (v : Val) :
     bindDeconstruct ps [v] = bindArgs ps (items v) := by
   unfold bindDeconstruct bindArgs
   rw [openLoneStructure_singleton]
+
+/-- Surface-capture boundary counterexample. Let `A = [(1, 2)]`. Bare
+deconstruction of `A` opens the outer list once and leaves the sequence row as
+one item, so two fixed targets fail. A written `A...` first supplies that row
+to the assignment's ordinary capture boundary; singleton capture returns the
+row itself, after which deconstruction opens it and the two targets succeed.
+The core intentionally exposes the operations needed to state this boundary
+effect without modeling parser elaboration as another evaluator. -/
+theorem deconstruct_spread_capture_can_open_further :
+    let row := Val.seq [Val.atom 1, Val.atom 2]
+    let a := Val.list [row]
+    let ps := [Pat.name "x", Pat.name "y"]
+    bindDeconstruct ps [a] = none ∧
+      bindDeconstruct ps [capture (items a)] =
+        some [("x", Val.atom 1), ("y", Val.atom 2)] := by
+  decide
 
 /-- `variadic_is_single_rest`, generalized to an arbitrary rest name. -/
 theorem bindArgs_lone_rest (r : String) (xs : Supply) :
@@ -560,16 +939,19 @@ private theorem list_payload_not_self (ys : List Val) (hkind : Val) (hpay : [hki
       have hw : hkind = w := (List.cons.inj hpay).1
       exact absurd hw.symm (hmem w List.mem_cons_self)
 
-/-- Receiver disagreement on a lone sequence value, in full generality: for
-EVERY pattern list, the call receiver and the deconstruction receiver never
-both succeed with the same environment on a supply of exactly one sequence
-value. The pre-list model's rest-only agreement was a canonical-capture
-coincidence; exact rest collection removes it. -/
-theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
-    ¬ ∃ env, bindArgs ps [Val.seq ys] = some env
-        ∧ bindDeconstruct ps [Val.seq ys] = some env := by
+/-- The engine of the unified lone-structure theorem: for a single-value call
+supply `[v]` and ANY deconstruction supply `ys` avoiding `v` (no member of
+`ys` equals `v` — instantiated with a structure's own payload, which cannot
+contain the structure), the call binder on `[v]` and the shared binder on
+`ys` never both succeed with the same environment, for every pattern list.
+Each successful agreement would force some member of `ys` to BE `v` (fixed
+positions bind `v` on the call side and members of `ys` on the other) or
+force `[v] = ys` (the lone-rest shape collects both sides), contradicting the
+avoidance premise. -/
+private theorem receivers_never_same_on_singleton (ps : List Pat) (v : Val)
+    (ys : Supply) (hmem : ∀ w ∈ ys, w ≠ v) :
+    ¬ ∃ env, bindArgs ps [v] = some env ∧ bindPats ps ys = some env := by
   rintro ⟨env, hA, hD⟩
-  rw [bindDeconstruct, openLoneStructure_singleSeq] at hD
   cases ps with
   | nil =>
     simp [bindArgs, bindPats] at hA
@@ -582,16 +964,16 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
         rw [show bindPats [Pat.rest r] ys = bindArgs [Pat.rest r] ys from rfl,
             bindArgs_lone_rest] at hD
         rw [← hA] at hD
-        have hv : collect ys = collect [Val.seq ys] := by
+        have hv : collect ys = collect [v] := by
           have := Option.some.inj hD
           have hpair := List.cons.inj this
           simpa using congrArg Prod.snd hpair.1
-        have hpay : [Val.seq ys] = ys := by
+        have hpay : [v] = ys := by
           simpa [collect] using hv.symm
-        exact list_payload_not_self ys (Val.seq ys) hpay (fun w hw => mem_ne_seq hw)
+        exact list_payload_not_self ys v hpay hmem
       | name x =>
-        have eA : bindArgs [Pat.name x] [Val.seq ys]
-            = some [(x, Val.seq ys)] := rfl
+        have eA : bindArgs [Pat.name x] [v]
+            = some [(x, v)] := rfl
         rw [eA] at hA
         cases ys with
         | nil =>
@@ -605,7 +987,7 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
             rw [eD] at hD
             rw [← hA] at hD
             simp at hD
-            have hne : w ≠ Val.seq [w] := mem_ne_seq List.mem_cons_self
+            have hne : w ≠ v := hmem w List.mem_cons_self
             first
             | exact absurd hD hne
             | exact absurd hD.symm hne
@@ -624,8 +1006,8 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
           | name y =>
             simp [bindArgs, bindPats, Pat.isRest] at hA
           | rest r =>
-            have eA : bindArgs [Pat.name x, Pat.rest r] [Val.seq ys]
-                = some [(x, Val.seq ys), (r, Val.list [])] := rfl
+            have eA : bindArgs [Pat.name x, Pat.rest r] [v]
+                = some [(x, v), (r, Val.list [])] := rfl
             rw [eA] at hA
             cases ys with
             | nil =>
@@ -641,7 +1023,7 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
               rw [eD] at hD
               rw [← hD] at hA
               simp at hA
-              have hne : w ≠ Val.seq (w :: t) := mem_ne_seq List.mem_cons_self
+              have hne : w ≠ v := hmem w List.mem_cons_self
               first
               | exact absurd hA.1 hne
               | exact absurd hA.1.symm hne
@@ -650,8 +1032,8 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
           | rest b =>
             simp [bindArgs, bindPats, Pat.isRest] at hA
           | name y =>
-            have eA : bindArgs [Pat.rest r, Pat.name y] [Val.seq ys]
-                = some [(r, Val.list []), (y, Val.seq ys)] := rfl
+            have eA : bindArgs [Pat.rest r, Pat.name y] [v]
+                = some [(r, Val.list []), (y, v)] := rfl
             rw [eA] at hA
             cases ys with
             | nil =>
@@ -682,19 +1064,68 @@ theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
                   | exact List.mem_of_mem_drop hbdrop
                   | exact List.drop_subset _ _ hbdrop
                   | exact List.drop_subset _ hbdrop
-                have hne : b ≠ Val.seq (w :: t) := mem_ne_seq hbmem
+                have hne : b ≠ v := hmem b hbmem
                 first
                 | exact absurd hA.2 hne
                 | exact absurd hA.2.symm hne
                 | exact absurd hA.2.1 hne
                 | exact absurd hA.2.1.symm hne
       | cons s ps3 =>
-        have hnone : bindPats (p :: q :: s :: ps3) [Val.seq ys] = none := by
+        have hnone : bindPats (p :: q :: s :: ps3) [v] = none := by
           apply bindPats_none_of_undersupplied
           simp
         rw [bindArgs] at hA
         rw [hnone] at hA
         cases hA
+
+/-- Receiver non-coincidence on a lone structure, in full generality: for
+EVERY pattern list and BOTH structure kinds (`[Val.seq ys]` and
+`[Val.list ys]`), the call receiver and the deconstruction receiver never
+both succeed with the same environment. The pre-list model's rest-only
+agreement was a canonical-capture coincidence; exact rest collection removes
+it. (Shared success is the strongest correct claim: both receivers CAN fail
+identically on a lone structure, so plain Option inequality would be false —
+see the example below.) -/
+theorem receivers_never_same_on_lone_structure (ps : List Pat) (xs : Supply)
+    (h : loneStructure xs = true) :
+    ¬ ∃ env, bindArgs ps xs = some env ∧ bindDeconstruct ps xs = some env := by
+  cases xs with
+  | nil => exact Bool.noConfusion h
+  | cons a t =>
+    cases t with
+    | cons b t2 => exact Bool.noConfusion h
+    | nil =>
+      cases a with
+      | atom n => exact Bool.noConfusion h
+      | seq ys =>
+        simp only [bindDeconstruct, openLoneStructure_singleSeq]
+        exact receivers_never_same_on_singleton ps (Val.seq ys) ys
+          (fun w hw => mem_ne_seq hw)
+      | list ys =>
+        simp only [bindDeconstruct, openLoneStructure_singleList]
+        exact receivers_never_same_on_singleton ps (Val.list ys) ys
+          (fun w hw => mem_ne_list hw)
+
+/-- Sequence-kind corollary of `receivers_never_same_on_lone_structure`. -/
+theorem receivers_never_agree_on_lone_seq (ps : List Pat) (ys : List Val) :
+    ¬ ∃ env, bindArgs ps [Val.seq ys] = some env
+        ∧ bindDeconstruct ps [Val.seq ys] = some env :=
+  receivers_never_same_on_lone_structure ps [Val.seq ys] (loneStructure_lone_seq ys)
+
+/-- List-kind corollary of `receivers_never_same_on_lone_structure`. -/
+theorem receivers_never_agree_on_lone_list (ps : List Pat) (ys : List Val) :
+    ¬ ∃ env, bindArgs ps [Val.list ys] = some env
+        ∧ bindDeconstruct ps [Val.list ys] = some env :=
+  receivers_never_same_on_lone_structure ps [Val.list ys] (loneStructure_lone_list ys)
+
+/-- Why the lone-structure theorem is stated over shared SUCCESS: both
+receivers can fail identically on a lone structure. Two fixed names against a
+lone one-item sequence value fail on both sides (arity 2 vs 1 either way), so
+option-level inequality would be a false general claim. -/
+example :
+    bindArgs [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1]]
+      = bindDeconstruct [Pat.name "x", Pat.name "y"] [Val.seq [Val.atom 1]] := by
+  decide
 
 /-- The lone-rest disagreement on a lone LIST supply: call binding collects
 the one supplied argument (`rest = [[1, 2]]`-style nesting), while
@@ -909,5 +1340,161 @@ is the identity — the list-side round trip composes (corollary of
 `items_collect`). -/
 theorem collect_items_collect (xs : Supply) :
     collect (items (collect xs)) = collect xs := rfl
+
+/-! ## Canonical-supply invariant (`canonicalSupply`)
+
+The abstract `Supply` type admits raw non-canonical members; observable
+runtime supplies do not. `canonicalSupply` names that invariant, and the laws
+below close it under the algebra's operations: the empty supply is canonical,
+normalization produces canonical supplies, opening a canonical VALUE yields a
+canonical supply, and collecting a canonical supply yields an
+already-canonical list. That last law is the precise sense in which `collect`
+needs no normalization of its own: `collect` preserves the number, order,
+kinds, and boundaries of the supplied values as-is, and canonicality of the
+result comes from the input invariant, not from work performed inside
+`collect` (the full model's `collectRest` likewise stores its supply
+unchanged).
+-/
+
+/-- Element-wise normalization preserves length, so canonicalization never
+changes how many items a supply carries. -/
+theorem normalizeList_length : ∀ xs : Supply,
+    (normalizeList xs).length = xs.length
+  | [] => rfl
+  | x :: t => by
+      show (normalize x :: normalizeList t).length = (x :: t).length
+      simp [normalizeList_length t]
+
+/-- The two formulations of the invariant agree: a supply is canonical iff
+every member is a `normalize` fixed point. -/
+theorem canonicalSupply_iff_forall (xs : Supply) :
+    canonicalSupply xs ↔ ∀ v ∈ xs, normalize v = v := by
+  induction xs with
+  | nil =>
+      constructor
+      · intro _ v hv
+        cases hv
+      · intro _
+        rfl
+  | cons x t ih =>
+      constructor
+      · intro h v hv
+        have h' : normalize x :: normalizeList t = x :: t := h
+        have hx : normalize x = x := (List.cons.inj h').1
+        have ht : canonicalSupply t := (List.cons.inj h').2
+        rcases List.mem_cons.mp hv with hveq | hvt
+        · rw [hveq]; exact hx
+        · exact (ih.mp ht) v hvt
+      · intro h
+        have hx : normalize x = x := h x List.mem_cons_self
+        have ht : canonicalSupply t :=
+          ih.mpr (fun v hv => h v (List.mem_cons_of_mem x hv))
+        show normalize x :: normalizeList t = x :: t
+        rw [hx, show normalizeList t = t from ht]
+
+theorem canonicalSupply_nil : canonicalSupply [] := rfl
+
+-- Representative invariant checks: empty structures and exact nested lists
+-- are canonical, while raw singleton-sequence orphans are not, including when
+-- one is nested inside an exact list.
+example : canonicalSupply [Val.seq []] := rfl
+example : canonicalSupply [Val.list []] := rfl
+example : canonicalSupply [Val.list [Val.list [Val.atom 7]]] := rfl
+example : ¬ canonicalSupply [Val.seq [Val.atom 7]] := by
+  simp [canonicalSupply, normalizeList, normalize]
+example : ¬ canonicalSupply [Val.list [Val.seq [Val.atom 7]]] := by
+  simp [canonicalSupply, normalizeList, normalize]
+
+/-- Normalization always produces a canonical supply (corollary of
+`normalizeList_idempotent`). -/
+theorem canonicalSupply_normalizeList (xs : Supply) :
+    canonicalSupply (normalizeList xs) :=
+  normalizeList_idempotent xs
+
+/-- Collecting a canonical supply is already canonical: rest binding stores
+observable (canonical) values without renormalizing them, and the collected
+list is a `normalize` fixed point purely because its INPUT satisfied the
+invariant. -/
+theorem normalize_collect_of_canonicalSupply {xs : Supply}
+    (h : canonicalSupply xs) :
+    normalize (collect xs) = collect xs := by
+  rw [collect_normalize_elementwise, show normalizeList xs = xs from h]
+
+/-- Membership form of `orphanFreeList` for supply-level reasoning. -/
+theorem orphanFreeList_of_forall {xs : Supply}
+    (h : ∀ v ∈ xs, orphanFree v = true) : orphanFreeList xs = true := by
+  induction xs with
+  | nil => rfl
+  | cons x t ih =>
+      show (orphanFree x && orphanFreeList t) = true
+      rw [h x List.mem_cons_self,
+        ih (fun v hv => h v (List.mem_cons_of_mem x hv))]
+      rfl
+
+/-- Exact collection preserves orphan-freedom: when every supplied value is
+orphan-free, the collected list is orphan-free as well — the list boundary
+itself carries no orphan rule (`[x]` is literal-writable), so nothing about
+`collect` can mint one. -/
+theorem collect_orphanFree_of_elements {xs : Supply}
+    (h : ∀ v ∈ xs, orphanFree v = true) :
+    orphanFree (collect xs) = true := by
+  show orphanFreeList xs = true
+  exact orphanFreeList_of_forall h
+
+/-- Opening a canonical value yields a canonical supply: the invariant is
+closed under `open`, so supplies assembled from spreads of canonical stored
+values are canonical without renormalization. (For a canonical sequence value
+the stored payload is its own normalization — the singleton-collapse case is
+impossible because it would leave an orphan boundary, contradicting
+`orphanFree_normalize`.) -/
+theorem canonicalSupply_items_of_canonical {v : Val} (h : normalize v = v) :
+    canonicalSupply (items v) := by
+  cases v with
+  | atom n => rfl
+  | list xs =>
+      have h' : Val.list (normalizeList xs) = Val.list xs := h
+      show normalizeList xs = xs
+      exact Val.list.inj h'
+  | seq xs =>
+      show normalizeList xs = xs
+      cases hl : normalizeList xs with
+      | nil =>
+          have h0 := normalize_seq_of_list_nil hl
+          rw [h] at h0
+          have hx : xs = [] := Val.seq.inj h0
+          subst hx
+          rfl
+      | cons u tl =>
+          cases tl with
+          | nil =>
+              have hu : Val.seq xs = u :=
+                h.symm.trans (normalize_seq_of_list_singleton hl)
+              have hlen := normalizeList_length xs
+              rw [hl] at hlen
+              cases xs with
+              | nil => simp at hlen
+              | cons w t =>
+                  cases t with
+                  | cons b t2 => simp at hlen
+                  | nil =>
+                      have hnu : normalize w = u := by
+                        have h' : ([normalize w] : List Val) = [u] := hl
+                        exact (List.cons.inj h').1
+                      have hw : normalize w = Val.seq [w] := hnu.trans hu.symm
+                      have ho := orphanFree_normalize w
+                      rw [hw] at ho
+                      simp [orphanFree, orphanFreeList] at ho
+          | cons b tl2 =>
+              have hx : Val.seq xs = Val.seq (u :: b :: tl2) :=
+                h.symm.trans (normalize_seq_of_list_multi hl)
+              exact (Val.seq.inj hx).symm
+
+/-- The invariant composes with the receiver operations end to end: a rest
+that collects the spread of a canonical stored value stores a canonical list
+(`normalize_collect_of_canonicalSupply` after
+`canonicalSupply_items_of_canonical`). -/
+theorem normalize_collect_items_of_canonical {v : Val} (h : normalize v = v) :
+    normalize (collect (items v)) = collect (items v) :=
+  normalize_collect_of_canonicalSupply (canonicalSupply_items_of_canonical h)
 
 end CoreArityAlgebra

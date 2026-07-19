@@ -10,7 +10,7 @@ Selected arity laws proved directly over the authoritative `KatLang.lean` model.
 `CoreArityAlgebra.lean` defines the small paper-facing algebra, while
 `CoreArityAlgebraProofs.lean` proves its small laws and executable checks.
 This file is the bridge: it proves the load-bearing laws over real KatLang
-`Result` constructors, normalization, lone-sequence item-supply opening, and
+`Result` constructors, normalization, lone-structure item-supply opening, and
 real binding helpers.
 -/
 
@@ -182,6 +182,19 @@ theorem mem_ne_listValue {w : Result} {ys : List Result} (h : w ∈ ys) :
 theorem collectRest_singleton (v : Result) :
     collectRest [v] = Result.listValue [v] := rfl
 
+-- Structured singleton rests over the real model: the boundary of the one
+-- remaining item is preserved exactly, for every structure kind.
+example (ys : List Result) :
+    collectRest [Result.sequenceValue ys]
+      = Result.listValue [Result.sequenceValue ys] := rfl
+example (ys : List Result) :
+    collectRest [Result.listValue ys]
+      = Result.listValue [Result.listValue ys] := rfl
+example : collectRest [Result.sequenceValue []]
+    = Result.listValue [Result.sequenceValue []] := rfl
+example : collectRest [Result.listValue []]
+    = Result.listValue [Result.listValue []] := rfl
+
 /-- A singleton rest is NEVER erased to its item: `collect [v] ≠ v`. This is
 the load-bearing difference from canonical capture (`capture [v] = v` after
 normalization), and what keeps one remaining structured row distinct from the
@@ -211,6 +224,41 @@ whatever `a` and `b` were (`first, rest... = 1, [2, 3]..., (4, 5)...` gives
 theorem collectRest_spread_concat_exact (a b : Result) :
     collectRest (a.spreadItems ++ b.spreadItems)
       = Result.listValue (a.spreadItems ++ b.spreadItems) := rfl
+
+/-- Collect/open round trip on the list side: re-collecting a spread list's
+items reproduces the list exactly (`collect ∘ open = id` on exact list
+values, the real-model face of the core `collect_items_list`). -/
+theorem collectRest_spreadItems_listValue (xs : List Result) :
+    collectRest ((Result.listValue xs).spreadItems) = Result.listValue xs := rfl
+
+/-- `collectRest` normalizes element-wise only: the collected list boundary is
+already canonical, so normalization can only touch the stored elements
+(the real-model face of the core `collect_normalize_elementwise`). -/
+theorem collectRest_normalize_elementwise (xs : List Result) :
+    (collectRest xs).normalize = collectRest (xs.map Result.normalize) := by
+  simp [collectRest, Result.normalize]
+
+private theorem map_normalize_id_of_canonical : ∀ {xs : List Result},
+    (∀ r ∈ xs, r.normalize = r) -> xs.map Result.normalize = xs
+  | [], _ => rfl
+  | r :: rs, h => by
+      have hr := h r List.mem_cons_self
+      have ih := map_normalize_id_of_canonical (xs := rs)
+        (fun q hq => h q (List.mem_cons_of_mem r hq))
+      simp [hr, ih]
+
+/-- Canonical-supply invariant at the real rest boundary: when every supplied
+value is already canonical — which observable runtime supplies are, since
+every construction/capture boundary normalizes before storing — the collected
+rest is itself a `Result.normalize` fixed point. `collectRest` performs no
+normalization of its own (`collectRest xs = Result.listValue xs` stores the
+supply unchanged); canonicality of the result comes entirely from the input
+invariant. This is the real-model face of the core
+`normalize_collect_of_canonicalSupply`. -/
+theorem collectRest_canonical_of_canonical_elements {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) :
+    (collectRest xs).normalize = collectRest xs := by
+  rw [collectRest_normalize_elementwise, map_normalize_id_of_canonical h]
 
 /--
 The real parameter-pattern binder uses `collectRest` directly for a single
@@ -1001,6 +1049,38 @@ supply. This is the item-view statement of the visible-empty spread law (the
 empty instance of `toItems_sequenceValue` / `spreadItems_sequenceValue`;
 `spreadItems_empty_list` is the list twin). -/
 theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
+
+/-
+## Zero-item-open neutrality at the real capture boundary
+
+`()` and `[]` spread to zero items, so inserting either spread anywhere in a
+captured item supply changes nothing — while the UNSPREAD values stay visible
+one-item slots. These are the real-model faces of the core
+`capture_zero_item_open_neutral` family.
+-/
+
+/-- Generic neutral open at the real capture expression: any value whose
+spread supplies no items leaves the captured value unchanged wherever the
+spread is inserted. -/
+theorem capture_zero_item_spread_neutral {r : Result}
+    (h : r.spreadItems = []) (before after : List Result) :
+    captureForArityLaw (before ++ r.spreadItems ++ after)
+      = captureForArityLaw (before ++ after) := by
+  rw [h]
+  simp
+
+/-- `()...` is neutral at the capture boundary (`(n, ()...) == n`-style). -/
+theorem capture_empty_sequence_spread_neutral (before after : List Result) :
+    captureForArityLaw (before ++ (Result.sequenceValue []).spreadItems ++ after)
+      = captureForArityLaw (before ++ after) :=
+  capture_zero_item_spread_neutral rfl before after
+
+/-- `[]...` is neutral at the capture boundary (`(n, []...) == n`-style),
+even though the unspread `[]` is a visible one-item value. -/
+theorem capture_empty_list_spread_neutral (before after : List Result) :
+    captureForArityLaw (before ++ (Result.listValue []).spreadItems ++ after)
+      = captureForArityLaw (before ++ after) :=
+  capture_zero_item_spread_neutral rfl before after
 
 /-
 ## Result-boundary re-count laws

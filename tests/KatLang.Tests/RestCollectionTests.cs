@@ -123,6 +123,21 @@ public class RestCollectionTests
         AssertCollects("first, rest... = [1, 2, 3]...\nrest", List(Atom(2), Atom(3)));
     }
 
+    [Fact]
+    public void DeconstructionSpread_CaptureBoundaryCanOpenSingletonStructuredElementFurther()
+    {
+        // A written RHS spread is captured into the parser-elaborated shared
+        // value before the deconstruction receiver opens it. Bare [(1, 2)]
+        // therefore supplies one row and cannot bind two fixed targets, while
+        // spreading it lets singleton capture return the row; deconstruction
+        // then opens that row into the two target slots.
+        Assert.IsType<RunResult.EvalFailure>(
+            KatLangEngine.Run("x, y = [(1, 2)]\nx, y"));
+        AssertCollects(
+            "x, y = [(1, 2)]...\nx, y",
+            Seq(Atom(1), Atom(2)));
+    }
+
     // ── Provenance independence ─────────────────────────────────────────────
 
     [Fact]
@@ -162,6 +177,18 @@ public class RestCollectionTests
     public void VariadicCounting_ObservesSuppliedSlots(string call, decimal expected)
         => AssertCollects("CountArgs(items...) = items.count\n" + call, Atom(expected));
 
+    // ── Empty-structure arguments: unspread stays a visible slot, spread vanishes ─
+
+    [Fact]
+    public void VariadicCapture_EmptyStructureArgumentsAreVisibleSlotsUntilSpread()
+    {
+        const string inspect = "Inspect(items...) = items\n";
+        AssertCollects(inspect + "Inspect(())", List(Seq()));
+        AssertCollects(inspect + "Inspect(()...)", List());
+        AssertCollects(inspect + "Inspect([])", List(List()));
+        AssertCollects(inspect + "Inspect([]...)", List());
+    }
+
     // ── Mixed parameter patterns ────────────────────────────────────────────
 
     [Fact]
@@ -171,6 +198,25 @@ public class RestCollectionTests
         AssertCollects("F(first, middle..., last) = middle\nF(1, 2)", List());
         AssertCollects("F(prefix..., last) = prefix\nF(1, 2, 3)", List(Atom(1), Atom(2)));
         AssertCollects("F(first, suffix...) = suffix\nF(1, [2, 3])", List(List(Atom(2), Atom(3))));
+    }
+
+    [Fact]
+    public void MixedPatterns_GroupedMiddleStaysOneCollectedSlotUntilSpread()
+    {
+        // Direct user call: the grouped middle argument is ONE collected slot
+        // preserving its boundary; explicit spread supplies the opened items.
+        AssertCollects(
+            "Middle(first, middle..., last) = middle\nMiddle(10, (20, 30), 40)",
+            List(Seq(Atom(20), Atom(30))));
+        AssertCollects(
+            "Middle(first, middle..., last) = middle\nMiddle(10, (20, 30)..., 40)",
+            List(Atom(20), Atom(30)));
+        AssertCollects(
+            "Middle(first, middle..., last) = middle\nMiddle(10, [20, 30], 40)",
+            List(List(Atom(20), Atom(30))));
+        AssertCollects(
+            "Middle(first, middle..., last) = middle\nMiddle(10, [20, 30]..., 40)",
+            List(Atom(20), Atom(30)));
     }
 
     // ── Forwarding ──────────────────────────────────────────────────────────

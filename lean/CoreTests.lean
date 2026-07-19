@@ -12651,6 +12651,24 @@ def deconRestImplicitOpeningMatchesSpread : Bool :=
 
 #guard deconRestImplicitOpeningMatchesSpread
 
+-- The receiver-level item-view law is not an unrestricted source rewrite:
+-- a written deconstruction RHS spread first passes through the shared
+-- property's ordinary capture boundary. Bare `x, y = [(1, 2)]` opens the
+-- outer list once and has only one row for two targets (arity mismatch 2/1),
+-- while `x, y = [(1, 2)]...` captures that one row as `(1, 2)` and the
+-- deconstruction receiver then opens the row into `x = 1`, `y = 2`.
+def deconSpreadCaptureCanOpenSingletonStructuredElementFurther : Bool :=
+  (match runCollectDecon [collectFix "x", collectFix "y"] "x"
+      [.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]] with
+   | Except.error err => innermostIsArityMismatch 2 1 err
+   | _ => false) &&
+  (match runCollectDecon [collectFix "x", collectFix "y"] "x"
+      [.sequenceSpread (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])])] with
+   | Except.ok (Result.atom 1) => true
+   | _ => false)
+
+#guard deconSpreadCaptureCanOpenSingletonStructuredElementFurther
+
 -- Provenance independence: `first, rest... = 1, [2, 3]..., (4, 5)...` collects
 -- exactly the assembled item supply, regardless of the spread sources.
 def deconRestProvenanceIndependent : Bool :=
@@ -12694,6 +12712,48 @@ def variadicCaptureCollectsExactList : Bool :=
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false)
 
 #guard variadicCaptureCollectsExactList
+
+-- Empty-structure arguments: an unspread `()` or `[]` is ONE visible argument
+-- slot (`Inspect(())` collects `[()]`, `Inspect([])` collects `[[]]`), while
+-- the spreads contribute zero items (`Inspect(()...)` and `Inspect([]...)`
+-- both collect `[]`) — zero-item-open neutrality at the rest boundary.
+def variadicCaptureEmptyStructureArguments : Bool :=
+  (match runCollectInspect [.emptySequence 0] with
+   | Except.ok (Result.listValue [Result.sequenceValue []]) => true | _ => false) &&
+  (match runCollectInspect [.sequenceSpread (.emptySequence 0)] with
+   | Except.ok (Result.listValue []) => true | _ => false) &&
+  (match runCollectInspect [.listLiteral []] with
+   | Except.ok (Result.listValue [Result.listValue []]) => true | _ => false) &&
+  (match runCollectInspect [.sequenceSpread (.listLiteral [])] with
+   | Except.ok (Result.listValue []) => true | _ => false)
+
+#guard variadicCaptureEmptyStructureArguments
+
+-- Middle rest, direct user call: `Middle(first, middle..., last) = middle`.
+-- A grouped middle argument stays ONE collected slot with its boundary
+-- (`Middle(10, (20, 30), 40)` collects `[(20, 30)]`), while the explicit
+-- spread supplies the opened items (`Middle(10, (20, 30)..., 40)` collects
+-- `[20, 30]`).
+def collectMiddleAlg : Algorithm :=
+  algWithParameters
+    [{ name := "first" }, { name := "middle", kind := .variadic }, { name := "last" }]
+    [] [] [.param "middle"]
+
+def runCollectMiddle (args : List KatLang.Expr) : Except KatLang.Error Result :=
+  runResult (.block (algPrivate [] [] [("Middle", collectMiddleAlg)]
+    [.call (resolve "Middle") (alg [] [] [] args)]))
+
+def middleRestGroupedAndSpreadDirectCall : Bool :=
+  (match runCollectMiddle
+      [.num 10, .block (alg [] [] [] [.num 20, .num 30]), .num 40] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 20, Result.atom 30]]) =>
+       true
+   | _ => false) &&
+  (match runCollectMiddle
+      [.num 10, .sequenceSpread (.block (alg [] [] [] [.num 20, .num 30])), .num 40] with
+   | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true | _ => false)
+
+#guard middleRestGroupedAndSpreadDirectCall
 
 -- Variadic forwarding through ordinary list spread:
 -- Target(items...) = items; Forward(items...) = Target(items...).
