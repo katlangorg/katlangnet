@@ -24,6 +24,13 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Phase-2 depth characterization subcommands (process-isolated). Kept
+        // separate from replay so a probe never collides with a corpus path.
+        if (args.Length > 0 && args[0] == "probe-child")
+            return DepthProbe.RunChild(args);   // dangerous parse in an isolated child
+        if (args.Length > 0 && args[0] == "probe")
+            return DepthProbe.RunParent(args);  // coordinator: exp+binary search
+
         if (args.Length > 0)
             return Replay.Run(args);
 

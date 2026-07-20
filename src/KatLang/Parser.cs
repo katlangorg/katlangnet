@@ -36,6 +36,50 @@ public sealed class Parser
         _diagnostics = diagnostics;
     }
 
+    // ── Parser recursion-depth budget ───────────────────────────────────────
+    // Deeply nested surface input — parentheses, brackets, braces, calls, prefix
+    // operators, right-associative power, and clause-head patterns — drives the
+    // recursive-descent parser into a fatal, host-terminating StackOverflowException.
+    // The fuzz depth probe measured native boundaries as small as ~329 nesting levels
+    // (~330 bytes) on a 1 MiB Windows stack. This budget converts such pathological
+    // input into ONE structured, source-positioned diagnostic instead of a process
+    // crash. It is enforced at the two chokepoints every nested construct passes
+    // through once per level — ParseUnary (all expression nesting, because
+    // ParseExpression always calls ParseUnary) and ParsePatternAtom (clause-head
+    // pattern nesting) — so one shared counter bounds every recursive syntax form.
+    // The limit sits far above any realistic KatLang program (including the 256-
+    // container-boundary generated-nesting regression test) yet safely below the
+    // smallest measured native boundary (~329 structural levels ≈ counter 660 on a
+    // 1 MiB Windows Debug stack; Release has more headroom). This is a C#-parser
+    // robustness concern only: the Lean model does not describe surface parsing, and
+    // every in-budget program parses identically (same AST, spans, and diagnostics).
+    //
+    // The counter increments per recursive frame, so structural nesting (which passes
+    // through both ParseExpression and ParseUnary each level) counts ~2 per level,
+    // while prefix/operator/pattern nesting counts ~1 per level. 580 therefore admits
+    // ~289 structural levels and ~579 prefix/pattern levels — both well above the
+    // 256-boundary bar and below every native crash boundary.
+    internal const int MaxNestingDepth = 580;
+    private int _nestingDepth;
+
+    private sealed class NestingLimitExceededException : Exception { }
+
+    /// <summary>
+    /// Aborts the whole parse with a single structured diagnostic when the recursion
+    /// budget is exceeded. Recursive callers increment <see cref="_nestingDepth"/>,
+    /// call this, and decrement in a <c>finally</c>.
+    /// </summary>
+    private void GuardNestingDepth()
+    {
+        if (_nestingDepth <= MaxNestingDepth)
+            return;
+
+        ReportError(
+            "Nesting is too deep for the parser to process safely. " +
+            "Reduce the depth of nested parentheses, brackets, braces, calls, operators, or patterns.");
+        throw new NestingLimitExceededException();
+    }
+
     // ── Entry points ─────────────────────────────────────────────────────────
 
     internal static SyntaxParseResult ParseSyntax(string source)
@@ -43,10 +87,21 @@ public sealed class Parser
         var (tokens, lexDiags) = Lexer.Tokenize(source);
         var diagnostics = new List<Diagnostic>(lexDiags);
         var parser = new Parser(tokens, diagnostics);
-        var root = parser.ParseAlgorithm(isParametrized: true);
-        if (parser.Current.Kind != TokenKind.EndOfFile)
+        Algorithm root;
+        try
         {
-            parser.ReportError($"Expected end of input, got '{parser.Current.Kind}'.");
+            root = parser.ParseAlgorithm(isParametrized: true);
+            if (parser.Current.Kind != TokenKind.EndOfFile)
+            {
+                parser.ReportError($"Expected end of input, got '{parser.Current.Kind}'.");
+            }
+        }
+        catch (NestingLimitExceededException)
+        {
+            // Pathological nesting exceeded the recursion budget. The structured depth
+            // diagnostic is already recorded; return a placeholder root so downstream
+            // consumers stay well-defined (ParseResult.HasErrors is true).
+            root = new Algorithm.User(null, [], [], [], []);
         }
 
         foreach (var violation in AlgorithmValidation.FindExplicitParameterOutputViolations(root))
@@ -1196,6 +1251,19 @@ public sealed class Parser
     /// </summary>
     private Pattern ParsePatternAtom()
     {
+        // Clause-head pattern nesting recurses through here (the nested `(pattern)`
+        // case), so enforce the shared parser recursion budget once per level.
+        _nestingDepth++;
+        try
+        {
+            GuardNestingDepth();
+            return ParsePatternAtomCore();
+        }
+        finally { _nestingDepth--; }
+    }
+
+    private Pattern ParsePatternAtomCore()
+    {
         switch (Current.Kind)
         {
             case TokenKind.Tilde:
@@ -1620,6 +1688,20 @@ public sealed class Parser
 
     private Expr ParseExpression(int minPrecedence = 0)
     {
+        // Also a recursion chokepoint: right-associative operators (notably `^`)
+        // right-recurse through ParseExpression AFTER ParseUnary has returned the
+        // operand, so the ParseUnary guard alone does not bound them.
+        _nestingDepth++;
+        try
+        {
+            GuardNestingDepth();
+            return ParseExpressionCore(minPrecedence);
+        }
+        finally { _nestingDepth--; }
+    }
+
+    private Expr ParseExpressionCore(int minPrecedence = 0)
+    {
         var lhs = minPrecedence <= 9 ? ParseUnary() : ParsePostfix();
 
         while (true)
@@ -1669,19 +1751,28 @@ public sealed class Parser
 
     private Expr ParseUnary()
     {
-        if (Current.Kind == TokenKind.Minus)
+        // Recursion chokepoint for ALL expression nesting: ParseExpression always
+        // enters through ParseUnary, and `-`/`not` chains self-recurse here.
+        _nestingDepth++;
+        try
         {
-            var start = Advance(); // consume '-'
-            var operand = ParseUnary();
-            return new Expr.Unary(UnaryOp.Minus, operand) { Span = MakeSpan(start) };
+            GuardNestingDepth();
+
+            if (Current.Kind == TokenKind.Minus)
+            {
+                var start = Advance(); // consume '-'
+                var operand = ParseUnary();
+                return new Expr.Unary(UnaryOp.Minus, operand) { Span = MakeSpan(start) };
+            }
+            if (Current.Kind is TokenKind.KeywordNot)
+            {
+                var start = Advance(); // consume 'not'
+                var operand = ParseUnary();
+                return new Expr.Unary(UnaryOp.Not, operand) { Span = MakeSpan(start) };
+            }
+            return ParsePostfix();
         }
-        if (Current.Kind is TokenKind.KeywordNot)
-        {
-            var start = Advance(); // consume 'not'
-            var operand = ParseUnary();
-            return new Expr.Unary(UnaryOp.Not, operand) { Span = MakeSpan(start) };
-        }
-        return ParsePostfix();
+        finally { _nestingDepth--; }
     }
 
     // ── Postfix (dot, colon, call) ──────────────────────────────────────────

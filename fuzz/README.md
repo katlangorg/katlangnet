@@ -144,3 +144,32 @@ character mixtures. Keep new seeds small and reviewable; do not commit generated
 
 `katlang.dict` lists KatLang keywords, operator spellings, paired delimiters, and a few
 common definition/call/open shapes so the mutator can reach deeper grammar states.
+
+## Depth-limit probing (`DepthProbe.cs`)
+
+A process-isolated depth probe characterizes the parser's recursion boundaries per
+grammar family (parentheses, lists, braces, mixed delimiters, calls, prefix `-`/`not`,
+right-associative `^`, clause-head patterns, and malformed/unclosed variants). Because a
+deep parse can trigger an uncatchable `StackOverflowException`, the dangerous parse runs
+in a **child** process; a **parent** coordinator uses exponential + binary search to find
+each family's boundary and records results under `fuzz/artifacts/depth-probe/`. Running
+each family in `parser`-only vs `parser+invariants` mode isolates a genuine parser
+overflow from an AST-walker overflow.
+
+```powershell
+# characterize on Windows (writes depth-probe-windows.json + a table)
+dotnet run --project fuzz\KatLang.ParserFuzz -- probe --out fuzz\artifacts\depth-probe\depth-probe-windows.json --platform windows
+# a single isolated parse (child mode): FAMILY DEPTH MODE MAXBYTES
+dotnet run --project fuzz\KatLang.ParserFuzz -- probe-child paren 5000 invariants 4000000
+```
+
+Cross-platform (Linux) probing runs the self-contained publish under WSL (see
+`scripts/fuzz-parser.ps1` for the publish step, then invoke the apphost's `probe`
+subcommand). The parser now bounds recursion via `Parser.MaxNestingDepth`, so every
+family is `success-through` (a structured "nesting is too deep" diagnostic, never a
+crash) on both platforms.
+
+The **near-boundary** campaign fuzzes around the recursion limit with generated
+(untracked) seeds at depths near `Parser.MaxNestingDepth` plus a larger `-max_len`
+(e.g. 64 KiB); the nesting diagnostic is an ordinary result, not a crash. Seeds live in
+`fuzz/artifacts/nearboundary-seeds/` and are not tracked.
