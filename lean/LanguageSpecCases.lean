@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 144
+- specification surface cases: 149
 - excluded parse-level cases (Lean has no surface parser): 7
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 136
-- probe observations (C#-only by design): 184
+- Lean-guarded cases: 141
+- probe observations (C#-only by design): 192
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -339,6 +339,21 @@ def case_redundant_call_parens_canonical : Expr :=
   .block (alg [] [] [privateProp "Inner" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .variadic }]] [] [] [.dotCall (.param "values") "count" none]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .variadic }]]] [] [] [.dotCall (.param "values") "count" none])] [.call (.resolve "CountSequenceValue") (alg [] [] [] [.resolve "Inner"]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [.resolve "Inner"]))]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]))])])
 #guard obs case_redundant_call_parens_canonical == "ok raw=S[3, 1, 1, 3, 3] n=5"
 
+-- call-spread-into-conditional-clauses [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (1, 2) \n F(A...)
+def case_call_spread_into_conditional_clauses : Expr :=
+  .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, ⟨.sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")]⟩]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
+#guard obs case_call_spread_into_conditional_clauses == "ok raw=3 n=1"
+
+-- call-spread-dispatches-before-clause-selection [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (0, 0) \n F(A...)
+def case_call_spread_dispatches_before_clause_selection : Expr :=
+  .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, ⟨.sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")]⟩]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 0, .num 0]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
+#guard obs case_call_spread_dispatches_before_clause_selection == "ok raw=100 n=1"
+
+-- call-spread-into-patterned-callee [variadic-calls]: F(x, x) = x + 1 \n A = (7, 7) \n F(A...)
+def case_call_spread_into_patterned_callee : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "x" }] [] [] [.binary .add (.param "x") (.num 1)]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 7, .num 7]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
+#guard obs case_call_spread_into_patterned_callee == "ok raw=8 n=1"
+
 -- wrapped-pair-collapses [sequence-construction]: ((1, 2))
 def case_wrapped_pair_collapses : Expr :=
   .block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))])
@@ -574,6 +589,11 @@ def case_reduce_accumulates_value : Expr :=
   .block (alg [] [] [privateProp "Append" (algWithParameters [{ name := "item" }, { name := "history", kind := .variadic }] [] [] [(.block (alg [] [] [] [.sequenceSpread (.param "history"), .param "item"]))])] [.call (.resolve "reduce") (alg [] [] [] [(.block (alg [] [] [] [.num 2, .num 3, .num 4])), .resolve "Append", .num 1])])
 #guard obs case_reduce_accumulates_value == "ok raw=S[1, 2, 3, 4] n=1"
 
+-- reduce-empty-initial-is-one-value [collection-builtins]: R(x, acc) = acc + x \n Init = 1, 2 \n reduce((), R, Init)
+def case_reduce_empty_initial_is_one_value : Expr :=
+  .block (alg [] [] [privateProp "R" (alg ["x", "acc"] [] [] [.binary .add (.param "acc") (.param "x")]), privateProp "Init" (alg [] [] [] [.num 1, .num 2])] [.call (.resolve "reduce") (alg [] [] [] [(.emptySequence 0), .resolve "R", .resolve "Init"])])
+#guard obs case_reduce_empty_initial_is_one_value == "ok raw=S[1, 2] n=1"
+
 -- eq-structural-nested [equality-and-indexing]: A = 1, (2, 3) \n B = 1, (2, 3) \n A == B
 def case_eq_structural_nested : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), privateProp "B" (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))])] [.binary .eq (.resolve "A") (.resolve "B")])
@@ -749,6 +769,11 @@ def case_list_elements_preserve_boundaries : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.resolve "A", .resolve "B"], .listLiteral [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")], .listLiteral [.resolve "A", .sequenceSpread (.resolve "B")]])
 #guard obs case_list_elements_preserve_boundaries == "ok raw=S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]] n=3"
 
+-- list-written-slot-reifies-projection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0..., 5]
+def case_list_written_slot_reifies_projection : Expr :=
+  .block (alg [] [] [privateProp "S" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])] [.listLiteral [.index (.resolve "S") (.num 0), .num 5], .listLiteral [.sequenceSpread (.index (.resolve "S") (.num 0)), .num 5]])
+#guard obs case_list_written_slot_reifies_projection == "ok raw=S[L[S[1, 2], 5], L[1, 2, 5]] n=2"
+
 -- list-empty-spread-neutral [lists]: [1, []..., 2] \n [1, ()..., 2]
 def case_list_empty_spread_neutral : Expr :=
   .block (alg [] [] [] [.listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2], .listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]])
@@ -779,7 +804,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 136 canonical Lean-guarded specification cases.
+-- 141 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -835,6 +860,9 @@ def specCaseIds : List String := [
   "variadic-nested-not-flattened",
   "supply-vs-value-patterns",
   "redundant-call-parens-canonical",
+  "call-spread-into-conditional-clauses",
+  "call-spread-dispatches-before-clause-selection",
+  "call-spread-into-patterned-callee",
   "wrapped-pair-collapses",
   "pair-of-pairs-preserved",
   "pair-then-empty-preserved",
@@ -882,6 +910,7 @@ def specCaseIds : List String := [
   "if-value-boundary",
   "builtin-fixed-collection-arity",
   "reduce-accumulates-value",
+  "reduce-empty-initial-is-one-value",
   "eq-structural-nested",
   "index-selects-atom",
   "index-projects-one-level",
@@ -917,6 +946,7 @@ def specCaseIds : List String := [
   "list-spread-edges",
   "list-literal-spread-elements",
   "list-elements-preserve-boundaries",
+  "list-written-slot-reifies-projection",
   "list-empty-spread-neutral",
   "list-call-boundary",
   "list-lone-deconstruction",
@@ -924,6 +954,6 @@ def specCaseIds : List String := [
   "rest-collects-exact-list",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 136
+#guard specCaseIds.length == 141
 
 end LanguageSpecCases

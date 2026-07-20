@@ -174,7 +174,7 @@ Rules:
 - Variadic captures are explicit only; do not infer them from free identifiers.
 - Do not combine a variadic capture with grace `~`.
 - Do not write `Output(values...) = ...`; declare parameters on the enclosing algorithm/property head.
-- A lone rest-only `values...` parameter collects the supplied call arguments (the degenerate single-rest case): with `Arg = 1, 2, 3`, `Many(Arg...)` and `Many(1, 2, 3)` collect `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Many((1, 2, 3))` supply ONE grouped argument and collect `values = [Arg]` (count 1) — the argument is NOT opened, and grouped vs spread calls are always observably different. Supply items with explicit `...`. An empty call `Many()` collects `[]`; multiple sibling grouped values are preserved as separate elements unless each is opened with `...`.
+- A lone rest-only `values...` parameter collects the supplied call arguments (the degenerate single-rest case): with `Arg = 1, 2, 3`, `Many(Arg...)` and `Many(1, 2, 3)` collect `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Many((1, 2, 3))` supply ONE grouped argument and collect `values = [Arg]` (count 1) — the argument is NOT opened, and grouped vs spread calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total). Supply items with explicit `...`. An empty call `Many()` collects `[]`; multiple sibling grouped values are preserved as separate elements unless each is opened with `...`.
 - A parameter list with two or more captures that contains one rest is the general comma deconstruction form of the same item-supply binding. Fixed captures before the rest bind from the front, fixed captures after it bind from the back, and the rest collects the remaining middle items (possibly zero) as one exact immutable list.
 - An item-supply call consumes the supplied argument slots as given. With `Scale(values..., factor) = values.map{n * factor}` and `Arg = 1, 2, 3`, `factor` binds from the back and `values...` collects the front: `Scale(Arg..., 10)` and `Scale(1, 2, 3, 10)` supply three front slots collected as `values = [1, 2, 3]` and return the exact list value `[10, 20, 30]` (use `Scale(Arg..., 10)...` to open it into separate rows). `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as ONE front slot, collected as `values = [Arg]`, so the numeric `map` callback fails on the sequence element — always spread when the helper needs the items. The plain argument is never opened during binding.
 - Forwarding a collected rest is ordinary spread: `Forward(items...) = Target(items...)` re-supplies exactly the collected items; `Target(items)` without spread passes the whole list as one argument. Inside a helper body, pass the rest unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)` — the builtin opens the bound list one level); `sum(values...)` is an arity error.
@@ -219,7 +219,7 @@ Important distinction:
     Collect(values...) = values   // collects the item supply as one exact immutable list
     SequenceValueCount((values...)) = values.count // one sequence-value argument slot, then immediate contents
 
-For `Arg = 1, 2, 3`, `Arg.Collect.count` is `3` with `Collect(list) = list` because `count` later consumes the returned sequence value. With `Collect(values...) = values`, `Collect(Arg).count`, `Arg.Collect.count`, and `Collect(Arg...).count` are all `3` (the spread items join the item supply).
+For `Arg = 1, 2, 3`, `Arg.Collect.count` is `3` with `Collect(list) = list` because `count` later consumes the returned sequence value. With `Collect(values...) = values`, `Collect(Arg).count` and `Arg.Collect.count` are `1` (the stored sequence is ONE collected element, `values = [Arg]`), while `Collect(Arg...).count` is `3` (explicit spread opens the items into separate argument slots first). The old coincidence where grouped and spread variadic calls agreed is intentionally gone.
 
 For `Arg = (1, 2), (3, 4)` and `Many(values...) = values.count`, `Many(Arg)` is `1` because the stored sequence is one grouped argument, while `Many(Arg...)` is `2` because spread exposes its two row values. Do not use `atoms(Arg)` to simulate variadic binding; `atoms` would recursively flatten to four numeric atoms. Use postfix spread `value...` only when opening one sequence value into the surrounding item supply; do not generate `content(...)`, which is no longer a builtin.
 
@@ -570,12 +570,12 @@ Use dot-call when one scalar receiver is naturally the first argument:
 
 Do not use dot-call to spread a multi-output receiver into fixed parameters. Use `Add(3, 7)`, not a multi-output receiver dot-call.
 
-If a property receives a sequence-valued or multi-output value as one parameter, comma preserves that receiver boundary. A later sequence builtin may still destructure the returned sequence value:
+If a property receives a sequence-valued or multi-output value as one parameter, the receiver stays ONE value boundary; use explicit postfix spread inside the body to join its items with siblings:
     A = 1, 2
     KeepBoundary = a, 3
-    JoinBoundary = (a, 3)
+    JoinBoundary = (a..., 3)
 
-    A.KeepBoundary        // (1, 2), 3
+    A.KeepBoundary        // ((1, 2), 3)
     A.JoinBoundary        // (1, 2, 3)
 
 If `f` is a structural property of receiver `a`, `a.f(args)` calls it directly without receiver injection. Otherwise lexical fallback injects `a` as the first argument.
@@ -589,12 +589,13 @@ Collection builtins are ordinary fixed-arity callables such as `count(collection
     filter((range(1, 3)..., 4), IsEven)
     take((1, 2, 3), 2)
     Scale(values..., factor) = values.map{n * factor}
-    Scale(Arg, 10)
-    Arg.Scale(10)
+    Scale(Arg..., 10)    // spread the items into the rest; Scale(Arg, 10) binds values = [Arg]
     Values = 10, 20
     Sum(values..., last) = values.sum + last
-    Sum(Values, 7)       // 37: Values is the one values... slot
-    Sum(Values...)       // 30: explicit spread opens exactly two slots here
+    Sum(Values..., 7)    // 37: spread opens two value slots, then 7 fills last
+    Sum(Values...)       // 30: the back-bound last takes 20, values = [10]
+    // Sum(Values, 7) is an ERROR: the unspread Values is ONE collected
+    // element (values = [(10, 20)]), which sum rejects.
     Window((first, rest...), factor) = first * factor, rest.count
     Output = (1, 2, 3).Window(10)
 
@@ -1040,7 +1041,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (39 of the 144-case canonical language specification,
+Verified reference examples (41 of the 149-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1216,6 +1217,16 @@ Regenerate this block from the repo root with:
   Displays:
     15
 
+[call-spread-into-conditional-clauses] Explicit call-site spread has identical meaning for every callable shape: `F(A...)` supplies A's opened items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.
+
+    F(0, 0) = 100
+    F(x, y) = x + y
+    A = (1, 2)
+    F(A...)
+
+  Displays:
+    3
+
 [spread-one-level-only] Spread opens exactly one level: the inner `(2, 3)` stays intact, and `4` is a separate expression-list slot.
 
     (1, (2, 3))...4
@@ -1370,6 +1381,17 @@ Regenerate this block from the repo root with:
   Displays:
     [1, 2, 3]
     [0, 1, 2, 3, 4]
+
+[list-written-slot-reifies-projection] A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only explicit `...` opens the projected value into the surrounding slots.
+
+    S = ((1, 2), (3, 4))
+
+    [S:0, 5]
+    [S:0..., 5]
+
+  Displays:
+    [(1, 2), 5]
+    [1, 2, 5]
 
 [list-call-boundary] Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A...)` explicitly supplies its three elements, and `F([]...)` supplies zero arguments.
 

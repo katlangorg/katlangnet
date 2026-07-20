@@ -872,9 +872,10 @@ public sealed class Parser
     /// left-hand side always has two or more comma-separated targets (guaranteed by
     /// <see cref="LookaheadIsBindingPatternAssignment"/>): the right-hand side is
     /// evaluated once and its items are bound to the targets by the shared
-    /// deconstruction matcher, with one optional movable rest binding captured as a
-    /// grouped sequence value. A single rest target <c>name... = RHS</c> is not a
-    /// binding pattern and never reaches this method.
+    /// deconstruction matcher, with one optional movable rest binding that COLLECTS
+    /// its assigned items as one exact immutable list (<c>CollectRest</c>). A single
+    /// rest target <c>name... = RHS</c> is not a binding pattern and never reaches
+    /// this method.
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
@@ -970,6 +971,7 @@ public sealed class Parser
                 ExplicitParameterPatterns = [seqPattern],
                 ExplicitParameters = explicitParameters,
                 IsParametrized = true,
+                IsAssignmentDeconstructionHelper = true,
             };
 
             var args = new Algorithm.User(

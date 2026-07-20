@@ -844,6 +844,16 @@ public abstract record Algorithm
         public override IReadOnlyList<Expr> Output { get; init; } = [];
         internal override bool IsParametrized { get; init; }
 
+        /// <summary>
+        /// True for the synthetic inline helper the parser elaborates an
+        /// assignment deconstruction (<c>x, y..., z = RHS</c>) into.
+        /// Diagnostics-only metadata: binding failures are phrased against the
+        /// written assignment pattern instead of the anonymous helper call.
+        /// Never encoded to the Lean model (wording-only, the structured error
+        /// kind is unchanged).
+        /// </summary>
+        internal bool IsAssignmentDeconstructionHelper { get; init; }
+
         internal User WithParameterPatternList(IReadOnlyList<ParameterPattern> parameterPatterns)
             => this with
             {

@@ -49,10 +49,11 @@ BindingTarget            = NonOutputIdentifier [ "..." ] ;
                         not a binding pattern (rest-only item-supply binding belongs
                         to function parameters, not assignment). Assignment
                         deconstruction is an unpacking receiver (Python-style): a
-                        single sequence-valued right-hand side is unpacked into its
-                        items. So `x, y..., z = A` (A a stored sequence value) unpacks
-                        A, and `x, y..., z = A...` and `x, y..., z = 1, 2, 3, 4, 5`
-                        supply the same items. This unpacking is assignment-specific
+                        single sequence-valued OR exact-list-valued right-hand side
+                        is unpacked into its items (Result.structureItems?). So
+                        `x, y..., z = A` (A a stored sequence value or exact list)
+                        unpacks A, and `x, y..., z = A...` and
+                        `x, y..., z = 1, 2, 3, 4, 5` supply the same items. This unpacking is assignment-specific
                         and does NOT change function calls, which still pass A as one
                         argument unless `...` is written. More than one rest target is
                         a parse error. A function parameter list with a top-level rest,

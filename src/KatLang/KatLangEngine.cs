@@ -99,8 +99,13 @@ public abstract record RunResult
 
     internal static string FormatAtom(decimal value, DisplayOptions displayOptions)
     {
+        // Canonical KatLang value display is culture-invariant on every path:
+        // the decimal point is always `.` so fractional atoms can never
+        // collide with the `, ` element separator of sequence/list rendering,
+        // and output is identical on every machine (matching the lexer,
+        // `.string`, diagnostics, and the differential harness).
         if (displayOptions.Decimals is not { } decimals)
-            return value.ToString();
+            return value.ToString(CultureInfo.InvariantCulture);
 
         if (value == Math.Truncate(value) && DecimalScale(value) == 0)
             return value.ToString(CultureInfo.InvariantCulture);

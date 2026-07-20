@@ -11705,6 +11705,9 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicLoopStep_ReportsMinimumStateArityWhenFixedParametersCannotBind()
     {
+        // The minimum for Step(first, rest..., last) is the FIXED parameter
+        // count (2), so a single state slot cannot bind first + last. The rest
+        // itself may collect zero slots (see Eval_VariadicLoopStep_TwoStateSlots_*).
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             Step(first, rest..., last) = first...rest...last
@@ -11714,40 +11717,192 @@ public class EvaluatorTests
         foreach (var error in new[] { generic, optimized })
         {
             var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
-            Assert.Equal(3, arity.Expected);
+            Assert.Equal(2, arity.Expected);
             Assert.Equal(1, arity.Actual);
 
             var formatted = KatLangError.FromEvalError(error).Message;
-            Assert.Contains("`repeat` variadic step expects at least 3 state values", formatted, StringComparison.Ordinal);
+            Assert.Contains("`repeat` variadic step expects at least 2 state values", formatted, StringComparison.Ordinal);
+            Assert.Contains("for fixed parameter(s) 'first' and 'last'", formatted, StringComparison.Ordinal);
             Assert.Contains("current loop state has 1 state value", formatted, StringComparison.Ordinal);
             Assert.DoesNotContain("Callable `Step(first, rest..., last)`", formatted, StringComparison.Ordinal);
         }
     }
 
     [Fact]
-    public void Eval_VariadicLoopStep_TwoStateSlots_FailBelowStructuralMinimum()
+    public void Eval_VariadicLoopStep_TwoStateSlots_BindEmptyRestList()
     {
-        // The structural minimum for Step(first, middle..., last) is 3 (parameter count),
-        // so exactly two state slots cannot bind first + middle + last. Pins the parity
-        // boundary: 2 slots fail, 3 succeed (Eval_VariadicLoopStep_WithPrefixMiddleSuffix_*),
-        // 4+ succeed (Eval_VariadicLoopStep_ExtraMiddleStateSlots_RepeatTwoIterations). Mirrors
-        // the Lean guard variadicLoopStepBelowStructuralMinimumFails.
-        var (generic, optimized) = AssertEvalFailsInBothLoopModes(
+        // Empty loop-state rest follows the SAME rule as every other rest
+        // receiver: Step(first, middle..., last) with exactly two state slots
+        // binds first/last from the ends and middle collects ZERO slots as the
+        // exact empty list `[]` (count 0). Pins the parity boundary: 1 slot
+        // fails (Eval_VariadicLoopStep_ReportsMinimumStateArity*), 2 bind an
+        // empty rest, 3 a singleton, 4+ a multi-item rest. Mirrors the Lean
+        // guard variadicLoopStepEmptyMiddleBindsEmptyList.
+        AssertEvalLoopModes(
             """
-            Step(first, middle..., last) = first...middle...last
+            Step(first, middle..., last) = first, (middle == []), middle.count, last
             Step.repeat(1, 10, 20)
+            """,
+            10, 1, 0, 20);
+    }
+
+    [Fact]
+    public void Eval_OptimizedLoop_MultiEmittingStateExpression_MatchesGenericPath()
+    {
+        // A state expression whose counted supply emits more than one value
+        // (an index projection here) grows the generic state-slot vector; the
+        // optimizer must observe the identical value shape (it finishes the
+        // current iteration once, then hands its assembled state slots to the
+        // generic evaluator when an expression does not emit exactly one value).
+        AssertEvalLoopModes(
+            """
+            S = (1, 2), (3, 4)
+            repeat({S:0, a + b}, 1, 0, 0)
+            """,
+            1, 2, 0);
+
+        AssertEvalResultLoopModes(
+            """
+            S = (1, 2), (3, 4)
+            repeat({S:0, a + b}, 1, 0, 0)
+            """,
+            ResultFromAtoms(1, 2, 0));
+
+        // The first iteration stays on the scalar fast path; only the second
+        // projection grows from one emitted item to two. This pins handoff
+        // from the already-advanced state rather than from the initial state.
+        AssertEvalResultLoopModes(
+            """
+            S = 1, (2, 3)
+            repeat({a + 1, S:(a + b - b)}, 2, 0, 9)
+            """,
+            ResultFromAtoms(2, 2, 3));
+    }
+
+    [Fact]
+    public void Eval_OptimizedLoop_MultiEmittingContinuation_MatchesGenericPath()
+    {
+        // A while continuation expression emitting more than one value changes
+        // which generic slot is the continuation flag; the optimizer must
+        // defer to generic semantics (state (1, 0) means the last item, 0,
+        // stops the loop and the pre-iteration state is returned).
+        AssertEvalLoopModes(
+            """
+            S = (1, 0), (2, 2)
+            while({a + 1, S:0}, 9)
+            """,
+            9);
+    }
+
+    [Fact]
+    public void Eval_OptimizedLoop_ZeroEmittingStateAndContinuation_MatchGenericPath()
+    {
+        // A spread empty value contributes no generic state slot. The
+        // optimizer must complete that iteration once and hand off the
+        // shrunken slot vector without replaying it.
+        AssertEvalResultLoopModes(
+            "repeat({if(a == 0, (), ())..., b}, 1, 0, 9)",
+            ResultFromAtoms(9));
+
+        // A spread-empty continuation leaves the preceding numeric output as
+        // the generic continuation slot; zero stops and returns the old state.
+        AssertEvalResultLoopModes(
+            "while({a + 1, if(a == -1, (), ())...}, -1)",
+            ResultFromAtoms(-1));
+
+        // Non-spread `()` is a visible output slot, so it is an invalid
+        // continuation value in both modes rather than disappearing.
+        var (generic, optimized) = AssertEvalFailsInBothLoopModes("while({a + 1, ()}, 0)");
+        Assert.IsType<EvalError.BadArity>(Innermost(generic));
+        Assert.IsType<EvalError.BadArity>(Innermost(optimized));
+        Assert.Equal(
+            KatLangError.FromEvalError(generic).Message,
+            KatLangError.FromEvalError(optimized).Message);
+    }
+
+    [Fact]
+    public void Eval_OptimizedLoop_MultiEmittingStateExpression_ErrorMatchesGenericPath()
+    {
+        // Error identity parity: a spread state expression makes the next
+        // state three slots against a two-parameter step; both modes must
+        // report the same loop-state arity mismatch at the same program point.
+        var (generic, optimized) = AssertEvalFailsInBothLoopModes(
+            "repeat({(a + 1, a + 2)..., b}, 2, 0, 9)");
+
+        var genericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(generic));
+        var optimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(optimized));
+        Assert.Equal(genericArity.Expected, optimizedArity.Expected);
+        Assert.Equal(genericArity.Actual, optimizedArity.Actual);
+        Assert.Equal(
+            KatLangError.FromEvalError(generic).Message,
+            KatLangError.FromEvalError(optimized).Message);
+
+        // One scalar iteration succeeds before the second iteration grows the
+        // state from two slots to three; the next bind then fails identically.
+        var (laterGeneric, laterOptimized) = AssertEvalFailsInBothLoopModes(
+            """
+            S = 1, (2, 3)
+            repeat({a + 1, S:(a + b - b)}, 3, 0, 9)
             """);
+        var laterGenericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterGeneric));
+        var laterOptimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterOptimized));
+        Assert.Equal((2, 3), (laterGenericArity.Expected, laterGenericArity.Actual));
+        Assert.Equal(
+            KatLangError.FromEvalError(laterGeneric).Message,
+            KatLangError.FromEvalError(laterOptimized).Message);
+    }
 
-        foreach (var error in new[] { generic, optimized })
-        {
-            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
-            Assert.Equal(3, arity.Expected);
-            Assert.Equal(2, arity.Actual);
+    [Fact]
+    public void Eval_OptimizedLoop_ListAndSequenceValuedState_MatchesGenericPath()
+    {
+        // Structural state slots (exact lists, growing via spread) are bound
+        // and rebuilt identically in both loop modes.
+        AssertEvalResultLoopModes(
+            "repeat({[a..., 1]}, 3, [])",
+            ListValue(ResultFromAtoms(1), ResultFromAtoms(1), ResultFromAtoms(1)));
 
-            var formatted = KatLangError.FromEvalError(error).Message;
-            Assert.Contains("`repeat` variadic step expects at least 3 state values", formatted, StringComparison.Ordinal);
-            Assert.Contains("current loop state has 2 state values", formatted, StringComparison.Ordinal);
-        }
+        AssertEvalResultLoopModes(
+            """
+            Step(acc, x...) = acc + x.count, 0
+            repeat(Step, 1, 5)
+            """,
+            SequenceValue(ResultFromAtoms(5), ResultFromAtoms(0)));
+    }
+
+    [Fact]
+    public void Eval_PatternedAndFlatLoopSteps_ShareTheEmptyRestRule()
+    {
+        // The flat variadic loop path and the patterned loop path both allow a
+        // rest that collects zero state slots (the exact empty list `[]`) —
+        // the same rule as every other rest receiver.
+        AssertEvalResultLoopModes(
+            """
+            Step(a, rest..., a) = rest, 0
+            repeat(Step, 1, 7, 7)
+            """,
+            SequenceValue(ListValue(), ResultFromAtoms(0)));
+    }
+
+    [Fact]
+    public void Eval_RestOnlyLoopStep_MayShrinkStateToZeroSlots()
+    {
+        // Deliberate consequence of the uniform empty-rest rule: a rest-only
+        // step has zero fixed parameters, so the state vector may shrink all
+        // the way to zero slots, and the loop result is then the visible
+        // empty sequence value `()`.
+        AssertEvalResultLoopModes(
+            """
+            Step(x...) = x.skip(1)...
+            repeat(Step, 3, 7, 8)
+            """,
+            SequenceValue());
+
+        AssertEvalResultLoopModes(
+            """
+            Step(x...) = x.skip(1)...
+            repeat(Step, 1, 7, 8)
+            """,
+            ResultFromAtoms(8));
     }
 
     [Fact]

@@ -68,9 +68,12 @@ public sealed record CallableSignature
 
     public CallableArityFacts ArityFacts => CallableSignatureDiagnostics.GetArityFacts(this);
 
-    // The flat-variadic / loop-step binding kernel uses the exact top-level slot
-    // count, independent of the deconstruction-aware minimum reported by ArityFacts
-    // (so loop-state collecting behavior is unchanged).
+    /// <summary>
+    /// Gets the structural count of top-level parameter patterns.
+    /// Retained for source and binary compatibility; callable minimum arity is
+    /// exposed by <see cref="CallableArityFacts.MinTopLevelArgumentCount"/>.
+    /// </summary>
+    [Obsolete("Use TopLevelParameterCount for structural shape or ArityFacts.MinTopLevelArgumentCount for callable minimum arity.")]
     public int RequiredNormalParameterCount => ParameterPatterns.Count;
 
     public int VariadicParameterCount => ArityFacts.TopLevelVariadicCount;

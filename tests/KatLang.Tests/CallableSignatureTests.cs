@@ -47,6 +47,17 @@ public class CallableSignatureTests
     }
 
     [Fact]
+    public void RequiredNormalParameterCount_CompatibilityShim_PreservesStructuralCount()
+    {
+        var signature = SignatureFor("F(head, middle..., tail) = head", "F");
+
+#pragma warning disable CS0618 // Compatibility member is the subject of this test.
+        Assert.Equal(3, signature.RequiredNormalParameterCount);
+#pragma warning restore CS0618
+        Assert.Equal(2, signature.ArityFacts.MinTopLevelArgumentCount);
+    }
+
+    [Fact]
     public void FromAlgorithm_ImplicitOnlySignature_MarksParametersImplicit()
     {
         var signature = SignatureFor("Add = x + y", "Add");

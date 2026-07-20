@@ -7,7 +7,7 @@ internal static partial class LoopOptimizer
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
         IReadOnlyList<(string Name, Result Value)> valEnv,
-        Func<Result, EvalResult<Evaluator.CountedResult>> genericFallback,
+        Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
         var plan = TryBuildLoopPlanTemplate(LoopKind.While, step, stateValues.Count, ctx, valEnv);
@@ -23,6 +23,8 @@ internal static partial class LoopOptimizer
         {
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
+            var outputSlots = new List<Result>();
+            var requiresGenericContinuation = false;
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
             {
@@ -33,14 +35,24 @@ internal static partial class LoopOptimizer
                     return true;
                 }
 
-                if (outputR.Value.EmittedCount == 0)
-                {
-                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression emitted no state value");
-                    result = genericFallback(frame.CurrentStateResult());
-                    return true;
-                }
+                AppendGenericLoopOutputSlots(outputSlots, plan.NextStateOutputs[i].Source, outputR.Value);
 
-                frame.SetScratchSlot(i, outputR.Value.ToResult());
+                // The optimized frame packs one value per state slot, so it can
+                // only represent step expressions that emit EXACTLY one value.
+                // A zero- or multi-emitting expression grows/shrinks the generic
+                // state-slot vector. Finish THIS iteration once, using the same
+                // already-evaluated slots, then continue generically from the
+                // resulting next state. Never restart the iteration: doing so
+                // would duplicate property evaluation, random draws, or errors.
+                if (outputR.Value.EmittedCount != 1)
+                {
+                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    requiresGenericContinuation = true;
+                }
+                else if (!requiresGenericContinuation)
+                {
+                    frame.SetScratchSlot(i, outputR.Value.ToResult());
+                }
             }
 
             var continuationR = EvalTopLevelLoopExprPlan(plan.ContinuationOutput!, frame);
@@ -50,10 +62,31 @@ internal static partial class LoopOptimizer
                 return true;
             }
 
-            if (continuationR.Value.EmittedCount == 0)
+            AppendGenericLoopOutputSlots(outputSlots, plan.ContinuationOutput!.Source, continuationR.Value);
+
+            // A continuation expression emitting other than one value changes
+            // which generic slot is the continuation flag; generic semantics
+            // must decide from the already-evaluated iteration slots.
+            if (continuationR.Value.EmittedCount != 1)
             {
-                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop continuation emitted no value");
-                result = genericFallback(frame.CurrentStateResult());
+                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop continuation did not emit exactly one value");
+                requiresGenericContinuation = true;
+            }
+
+            if (requiresGenericContinuation)
+            {
+                var splitR = Evaluator.SplitContSlots(outputSlots);
+                if (splitR.IsError)
+                {
+                    result = splitR.Error;
+                    return true;
+                }
+
+                var (nextStateSlots, continueValue) = splitR.Value;
+                result = continueValue == 0
+                    ? EvalResult<Evaluator.CountedResult>.Ok(
+                        new Evaluator.CountedResult(frame.CurrentStateResult(), plan.StateArity))
+                    : genericContinuation(nextStateSlots);
                 return true;
             }
 
@@ -76,7 +109,7 @@ internal static partial class LoopOptimizer
             if (!frame.TryCommitScratchFast())
             {
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
-                result = genericFallback(frame.CurrentStateResult());
+                result = genericContinuation(outputSlots.Take(outputSlots.Count - 1).ToList());
                 return true;
             }
         }
@@ -88,7 +121,7 @@ internal static partial class LoopOptimizer
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
         IReadOnlyList<(string Name, Result Value)> valEnv,
-        Func<long, Result, EvalResult<Evaluator.CountedResult>> genericFallback,
+        Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
         var plan = TryBuildLoopPlanTemplate(LoopKind.Repeat, step, stateValues.Count, ctx, valEnv);
@@ -104,6 +137,8 @@ internal static partial class LoopOptimizer
         {
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
+            var outputSlots = new List<Result>();
+            var requiresGenericContinuation = false;
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
             {
@@ -114,14 +149,31 @@ internal static partial class LoopOptimizer
                     return true;
                 }
 
-                if (outputR.Value.EmittedCount == 0)
-                {
-                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression emitted no state value");
-                    result = genericFallback(count - iteration, frame.CurrentStateResult());
-                    return true;
-                }
+                AppendGenericLoopOutputSlots(outputSlots, plan.NextStateOutputs[i].Source, outputR.Value);
 
-                frame.SetScratchSlot(i, outputR.Value.ToResult());
+                // Same exactly-one-value rule as the while path: the optimized
+                // frame cannot represent a changed state-slot vector. Complete
+                // the current iteration exactly once, then hand its assembled
+                // next state to the generic evaluator for remaining iterations.
+                if (outputR.Value.EmittedCount != 1)
+                {
+                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    requiresGenericContinuation = true;
+                }
+                else if (!requiresGenericContinuation)
+                {
+                    frame.SetScratchSlot(i, outputR.Value.ToResult());
+                }
+            }
+
+            if (requiresGenericContinuation)
+            {
+                var remainingCount = count - iteration - 1;
+                result = remainingCount == 0
+                    ? EvalResult<Evaluator.CountedResult>.Ok(
+                        new Evaluator.CountedResult(Result.FromItems(outputSlots), outputSlots.Count))
+                    : genericContinuation(remainingCount, outputSlots);
+                return true;
             }
 
             if (iteration == count - 1)
@@ -134,7 +186,11 @@ internal static partial class LoopOptimizer
             if (!frame.TryCommitScratchFast())
             {
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
-                result = genericFallback(count - iteration, frame.CurrentStateResult());
+                var remainingCount = count - iteration - 1;
+                result = remainingCount == 0
+                    ? EvalResult<Evaluator.CountedResult>.Ok(
+                        new Evaluator.CountedResult(Result.FromItems(outputSlots), outputSlots.Count))
+                    : genericContinuation(remainingCount, outputSlots);
                 return true;
             }
         }
@@ -142,6 +198,34 @@ internal static partial class LoopOptimizer
         result = EvalResult<Evaluator.CountedResult>.Ok(
             new Evaluator.CountedResult(frame.CurrentStateResult(), plan.StateArity));
         return true;
+    }
+
+    /// <summary>
+    /// Assemble one already-evaluated loop output expression exactly as the
+    /// generic <c>EvalAlgOutputSlots</c> path does for flat loop steps. A
+    /// non-spread zero-emission expression remains one visible state slot;
+    /// spread contributes its emitted items only; and multi-emission results
+    /// reopen their top-level sequence supply.
+    /// </summary>
+    private static void AppendGenericLoopOutputSlots(
+        List<Result> slots,
+        Expr source,
+        PlannedLoopValue output)
+    {
+        if (output.EmittedCount == 0)
+        {
+            if (source is not Expr.SequenceSpread)
+                slots.Add(output.ToResult());
+            return;
+        }
+
+        if (output.EmittedCount == 1)
+        {
+            slots.Add(output.ToResult());
+            return;
+        }
+
+        slots.AddRange(output.ToResult().ToItems());
     }
 
     private static LoopPlanTemplate? TryBuildLoopPlanTemplate(

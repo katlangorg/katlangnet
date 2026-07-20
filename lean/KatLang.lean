@@ -316,14 +316,15 @@ def CallableSignature.validate (signature : CallableSignature) : Except Error Un
 
 /-- Variable-middle variadic binding (mirrors C# `BindCallableArguments`). The fixed
     prefix binds from the front, the fixed suffix from the back, and the variadic
-    captures the remaining middle items (zero or more). The default minimum is the full
-    structural parameter count (`parameters.length`) — loop-state binding, where the rest
-    captures at least one slot. Item-supply callers may pass
-    `minimumItemCount := fixed count` so the rest can capture zero items.
+    captures the remaining middle items (zero or more). The minimum is the FIXED
+    (non-variadic) parameter count: like every other rest receiver, the rest may
+    collect ZERO items (an empty rest is the exact list `[]`) — the same rule the
+    shared pattern binder applies (`bindParameterPatternList`: required =
+    patterns - 1).
     (Collection builtins no longer bind here: they are ordinary fixed-arity
     callables bound in `bindSequenceBuiltinArguments`.) -/
 def bindCallableArguments (signature : CallableSignature) (items : List α)
-    (arityMismatch : Nat -> Nat -> Error) (minimumItemCount : Option Nat := none)
+    (arityMismatch : Nat -> Nat -> Error)
     : Except Error (CallableArgumentBindings α) :=
   match signature.validate with
   | .error err => .error err
@@ -337,11 +338,10 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
           else
             .error (arityMismatch signature.parameters.length items.length)
       | some variadicIndex =>
-          -- Default minimum is the structural parameter count (loop-state binding, rest >= 1).
-          -- User-call item-supply binding passes the fixed (non-variadic) count
-          -- so the rest may capture zero items. Collection builtins are ordinary
-          -- fixed-arity callables and do not use this variadic branch.
-          let minimum := minimumItemCount.getD signature.parameters.length
+          -- Minimum = fixed (non-variadic) parameter count, so the rest may
+          -- collect zero items (empty rest = `[]`) at every receiver,
+          -- including loop-state binding.
+          let minimum := signature.parameters.length - 1
           if items.length < minimum then
             .error (arityMismatch minimum items.length)
           else
@@ -773,9 +773,12 @@ mutual
     --   not surface expression syntax. Source `A...B` is `A..., B`. Nested spread
     --   such as `A......` is `sequenceSpread (sequenceSpread A)`; evaluation
     --   unwraps the chain iteratively (`peelSequenceSpreadLayers`, stack-safe)
-    --   and applies each written layer compositionally — one boundary opening
-    --   per `...` — so `A......` agrees with `(A...)...` (a fixed point for
-    --   sequence values, one more list boundary per layer for exact lists).
+    --   and applies each written layer compositionally — every layer opens one
+    --   boundary of the value the previous layer's supply would re-capture —
+    --   so `A......` agrees with `(A...)...` (a fixed point for sequence
+    --   values; a singleton-list chain such as `[[7]]......` opens one list
+    --   boundary per layer, while a multi-element list re-captures as a
+    --   sequence after the first layer and then stays fixed).
     | sequenceSpread : Expr -> Expr
     -- * listLiteral: surface list literal `[e1, ..., en]`. Evaluates to exactly
     --   ONE exact immutable list value (`Result.listValue`). Element slots follow
@@ -1894,6 +1897,8 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
 structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
+  error? : Option Error := none
+  explicitItems? : Option (List Result) := none
   deriving Repr
 
 structure FlatFixedCallSlot where
@@ -1938,7 +1943,10 @@ def builtinCollectionItems : Result -> List Result
   | value => [value]
 
 def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
-  { value? := item.value?, algorithm? := item.algorithm? }
+  { value? := item.value?,
+    algorithm? := item.algorithm?,
+    error? := item.error?,
+    explicitSequenceValueItems? := item.explicitItems? }
 
 /-- Compatibility fallback for manually constructed core conditionals.
   Surface clause elaboration should already route eligible single-branch
@@ -2045,8 +2053,10 @@ def expectSingleAccumulator (out : CountedResult) : EvalM Result :=
     out
 
 /-- Validate the output shape required by `map`.
-    The transform must emit exactly one mapped element: one atom or one sequence-value
-    value is valid, while empty and multi-output results are rejected. -/
+    The transform must emit exactly one mapped element: one atom, one string,
+    one sequence value, or one exact list value is valid (the empty list `[]`
+    counts as one value), while empty-sequence and multi-output results are
+    rejected. -/
 def expectSingleMappedElement (out : CountedResult) : EvalM Result :=
   expectSingleValueWith
     "map transform must return a single element"
@@ -2083,6 +2093,18 @@ def combineOutputSlots : List Result -> Result
     C#: `MakeCollectionListResult`. -/
 def makeCollectionListResult (items : List Result) : CountedResult :=
   (Result.listValue items, 1)
+
+/-- True when an argument's resolved algorithm meaning is genuinely
+    FUNCTION-shaped — a builtin, a conditional clause family, or an algorithm
+    declaring parameters/patterns — as opposed to a zero-parameter VALUE
+    property that merely resolved through the dual algorithm channel. Used to
+    decide whether a valueless rest-bound argument gets the targeted
+    "collects values, but ... is a function" diagnostic or surfaces its
+    genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
+def Algorithm.isFunctionShaped : Algorithm -> Bool
+  | .builtin _ => true
+  | .conditional _ _ _ => true
+  | a => !(Algorithm.params a).isEmpty || !(Algorithm.parameterPatterns a).isEmpty
 
 /-- Collect a rest-assigned item supply as ONE exact immutable list value.
 
@@ -3659,10 +3681,9 @@ def resolveArgAlgsWithSequenceSpread (args : Algorithm) (ctx : EvalCtx) (env : V
     whether they emit one value or many, so higher-order probing never grants
     them callable `AlgEnv` bindings based on output count. Only liftable
     errors → none; genuine lookup failures propagate.
-    Used by the user-call argument binding paths (`collectFlatFixedCallSlots`,
-    `bindPatternedUserCall`, and variadic capture via
-    `collectVariadicCallItems`) to build AlgEnv for higher-order algorithm
-    parameters. -/
+    Used by the shared call argument-slot assembly
+    (`collectVariadicCallItems`, serving every callable shape) to build AlgEnv
+    for higher-order algorithm parameters. -/
 def tryResolveArgAlgs (args : Algorithm) (ctx : EvalCtx) : EvalM (List (Option Algorithm)) :=
   (Algorithm.output args).mapM (fun e => do
     if shouldWrapArgExprAsValue e then
@@ -3810,7 +3831,25 @@ mutual
                 | some value => do
                     let values <- collectValues rest
                     pure (value :: values)
-                | none => .error (input.error?.getD Error.badArity)
+                | none =>
+                    -- A rest binding collects VALUES. A FUNCTION-shaped
+                    -- argument (builtin, clause family, or parameterized
+                    -- algorithm) has no value to collect — only fixed
+                    -- parameters keep the dual algorithm channel — so name
+                    -- the actual conflict instead of surfacing the argument's
+                    -- incidental value-evaluation error. A zero-parameter
+                    -- VALUE property whose body failed is NOT a function: its
+                    -- genuine evaluation error surfaces.
+                    -- C#: `BindParameterPatternList` (whose message also
+                    -- names the rest parameter).
+                    match input.algorithm? with
+                    | some alg =>
+                        if alg.isFunctionShaped then
+                          .error (Error.typeMismatch
+                            "A rest parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
+                        else
+                          .error (input.error?.getD Error.badArity)
+                    | none => .error (input.error?.getD Error.badArity)
           let capturedValues <- collectValues capturedInputs
           -- Rest binding COLLECTS: the assigned supply becomes one exact
           -- immutable list value, emitted count 1 (a list is one visible value).
@@ -4287,10 +4326,13 @@ mutual
       intact. Normal accumulator parameters keep ordinary structural semantics,
       while top-level variadic accumulator parameters receive accumulator state
       slots. The step must
-      return exactly one accumulator value: one atom or one sequence value is
-      valid, while empty and multi-output results are rejected.
+      return exactly one accumulator value: one atom, one string, one sequence
+      value, or one exact list value is valid (the empty list `[]` counts as
+      one value), while empty-sequence and multi-output results are rejected.
 
-      Empty collections return the initial accumulator unchanged. -/
+      The initial accumulator expression occupies one written accumulator
+      slot (reified via `reCountValueBoundary` before reduction), so empty
+      collections return the initial accumulator as ONE value. -/
   partial def evalReduceCounted (collection : List CountedResult)
       (stepAlg initialAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -4306,11 +4348,16 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected; sequence parameters use values... top-level binding, nested sequence values stay intact, and top-level variadic accumulator parameters receive state slots)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
-    reduceLoop collection initOut
+    -- The initial accumulator expression occupies ONE written accumulator
+    -- slot: its result is reified as one persistent value at the ordinary
+    -- value boundary (`reCountValueBoundary`) BEFORE reduction begins, so an
+    -- initial expression that emitted multiple items cannot leak that supply
+    -- through the empty-collection return.
+    reduceLoop collection (reCountValueBoundary initOut)
 
     /-- Evaluate `filter(collection, predicate)`.
       The fixed `collection` argument supplies the items through the
@@ -4325,7 +4372,7 @@ mutual
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
       | _, [] => pure []
       | index, item :: rest => do
-        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact)") <|
+        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
           evalSequenceCallbackCall predicateAlg item ctx env "filter predicate") with
           | .error err =>
               .error err
@@ -4362,7 +4409,7 @@ mutual
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact)" <|
+            "while evaluating map transform (map passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
             evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
@@ -4594,23 +4641,44 @@ mutual
     else
       evalCounted e argEvalCtx env
 
+  /-- Shared call argument-slot assembly used by EVERY callable shape (flat
+      fixed, flat/mixed variadic, patterned, and multi-clause conditional):
+      each written argument slot is evaluated, every non-spread slot is
+      reified as exactly ONE argument value (with its dual algorithm view
+      where resolvable), and every explicit spread slot is expanded by
+      exactly one value boundary into ordinary argument slots. The final
+      argument supply is formed BEFORE any arity checking, clause selection,
+      conditional dispatch, or pattern binding — the callee's internal
+      representation never influences the meaning of caller-side spread.
+      Dot-call receiver segments honor `preserveArgBoundaries` (an injected
+      receiver stays one boundary and is never expanded). When
+      `includeExplicitItems` is set (patterned callees), a non-spread written
+      zero-parameter block also records its written item slots for
+      sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
   partial def collectVariadicCallItems (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (includeExplicitItems : Bool := false)
       : EvalM (List VariadicItem) := do
     let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
     let argEvalCtx := EvalCtx.push wiredArgs ctx
     let hasExplicitBoundaryFlags := !preserveArgBoundaries.isEmpty
     let argBoundaryFlags :=
       (List.range (Algorithm.output wiredArgs).length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
+    let explicitItemsFor (e : Expr) : EvalM (Option (List Result)) :=
+      if includeExplicitItems then
+        explicitSequenceValueItems? e argEvalCtx env
+      else
+        pure none
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
-        (acc : List VariadicItem) : List VariadicItem :=
+        (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
         let expanded := (countedTopLevelValues counted).map (fun value =>
-          { value? := some value, algorithm? := maybeAlg : VariadicItem })
+          { value? := some value : VariadicItem })
         expanded.reverse ++ acc
       else
         { value? := some counted.fst,
-          algorithm? := maybeAlg : VariadicItem } :: acc
+          algorithm? := maybeAlg,
+          explicitItems? := explicitItems : VariadicItem } :: acc
     let shouldExpand (e : Expr) (preserveBoundary : Bool) : Bool :=
       match e with
       | .sequenceSpread _ => !preserveBoundary
@@ -4621,18 +4689,20 @@ mutual
           let expand :=
             shouldExpand e preserveBoundary
           match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-          | .ok counted =>
-            loop es mas preserveBoundaries false (appendCounted counted ma expand acc)
+          | .ok counted => do
+            let explicit <- if expand then pure none else explicitItemsFor e
+            loop es mas preserveBoundaries false (appendCounted counted ma expand explicit acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg : VariadicItem } :: acc)
+            | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
             | none => .error err
       | e :: es, [], preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
           match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-          | .ok counted =>
-            loop es [] preserveBoundaries false (appendCounted counted none expand acc)
+          | .ok counted => do
+            let explicit <- if expand then pure none else explicitItemsFor e
+            loop es [] preserveBoundaries false (appendCounted counted none expand explicit acc)
           | .error err => .error err
       | e :: es, ma :: mas, [], _, acc => do
           let expand :=
@@ -4640,11 +4710,12 @@ mutual
             | .sequenceSpread _ => true
             | _ => false
           match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-          | .ok counted =>
-            loop es mas [] false (appendCounted counted ma expand acc)
+          | .ok counted => do
+            let explicit <- if expand then pure none else explicitItemsFor e
+            loop es mas [] false (appendCounted counted ma expand explicit acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas [] false ({ algorithm? := some alg : VariadicItem } :: acc)
+            | some alg => loop es mas [] false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
             | none => .error err
       | e :: es, [], [], _, acc => do
           let expand :=
@@ -4652,8 +4723,9 @@ mutual
             | .sequenceSpread _ => true
             | _ => false
           match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-          | .ok counted =>
-            loop es [] [] false (appendCounted counted none expand acc)
+          | .ok counted => do
+            let explicit <- if expand then pure none else explicitItemsFor e
+            loop es [] [] false (appendCounted counted none expand explicit acc)
           | .error err => .error err
     loop (Algorithm.output wiredArgs) maybeAlgs argBoundaryFlags true []
 
@@ -4709,20 +4781,18 @@ mutual
           pure [combineOutputSlots items]
         else
           let out <- evalCounted expr ctx env
-          pure (countedTopLevelValues out)
+          pure [out.fst]
     | .sequenceSpread _ =>
         let out <- evalCounted expr ctx env
         pure (countedTopLevelValues out)
     | _ =>
         let out <- evalCounted expr ctx env
-        -- Mirror the output-slot rule of `evalAlgOutputCountedCore`: a
-        -- non-spread item expression is one item even when it evaluates to
-        -- the empty sequence value `()`; only an explicit spread contributes
-        -- zero items.
-        if out.snd = 0 then
-          pure [out.fst]
-        else
-          pure (countedTopLevelValues out)
+        -- WRITTEN-SLOT REIFICATION: a non-spread expression occupying one
+        -- written slot contributes exactly ONE persistent value — the value
+        -- its counted supply denotes — regardless of how many items the
+        -- expression emitted (zero, one, or many). Only an explicit spread
+        -- opens the value into the surrounding item slots.
+        pure [out.fst]
 
   partial def explicitSequenceValueItems? (argExpr : Expr)
       (argEvalCtx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) := do
@@ -4736,71 +4806,22 @@ mutual
     | _ => pure none
 
   partial def bindPatternedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
-    let argEvalCtx := EvalCtx.push wiredArgs ctx
-    let rec buildInputs : List Expr -> List (Option Algorithm) -> EvalM (List ParameterPatternInput)
-      | [], _ => pure []
-      | argExpr :: rest, maybeAlg :: maybeAlgs' => do
-          let tail <- buildInputs rest maybeAlgs'
-          match <- evalAttempt (eval argExpr argEvalCtx env) with
-          | .ok value => do
-              let explicit <- explicitSequenceValueItems? argExpr argEvalCtx env
-              pure ({ value? := some value, algorithm? := maybeAlg, explicitSequenceValueItems? := explicit } :: tail)
-          | .error err =>
-              pure ({ value? := none, algorithm? := maybeAlg, error? := some err } :: tail)
-      | argExpr :: rest, [] => do
-          let tail <- buildInputs rest []
-          match <- evalAttempt (eval argExpr argEvalCtx env) with
-          | .ok value => do
-              let explicit <- explicitSequenceValueItems? argExpr argEvalCtx env
-              pure ({ value? := some value, algorithm? := none, explicitSequenceValueItems? := explicit } :: tail)
-          | .error err =>
-              pure ({ value? := none, algorithm? := none, error? := some err } :: tail)
-    let inputs <- buildInputs (Algorithm.output wiredArgs) maybeAlgs
+      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
+    let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
+      (includeExplicitItems := true)
+    let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
-
-  partial def collectFlatFixedCallSlots (wiredArgs : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM (List FlatFixedCallSlot) := do
-    let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
-    let argEvalCtx := EvalCtx.push wiredArgs ctx
-    let rec loop : List Expr -> List (Option Algorithm) -> List FlatFixedCallSlot -> EvalM (List FlatFixedCallSlot)
-      | [], _, acc => pure acc.reverse
-      | e :: es, ma :: mas, acc => do
-          match e with
-          | .sequenceSpread _ => do
-              let supplied <- evalCounted e argEvalCtx env
-              let expanded := (countedTopLevelValues supplied).map (fun value =>
-                { value? := some value : FlatFixedCallSlot })
-              loop es mas (expanded.reverse ++ acc)
-          | _ =>
-              match <- evalAttempt (eval e argEvalCtx env) with
-              | .ok value =>
-                  loop es mas ({ value? := some value, algorithm? := ma : FlatFixedCallSlot } :: acc)
-              | .error err =>
-                  match ma with
-                  | some alg =>
-                      loop es mas ({ algorithm? := some alg, error? := some err : FlatFixedCallSlot } :: acc)
-                  | none => .error err
-      | e :: es, [], acc => do
-          match e with
-          | .sequenceSpread _ => do
-              let supplied <- evalCounted e argEvalCtx env
-              let expanded := (countedTopLevelValues supplied).map (fun value =>
-                { value? := some value : FlatFixedCallSlot })
-              loop es [] (expanded.reverse ++ acc)
-          | _ =>
-              match <- evalAttempt (eval e argEvalCtx env) with
-              | .ok value =>
-                  loop es [] ({ value? := some value : FlatFixedCallSlot } :: acc)
-              | .error err => .error err
-    loop (Algorithm.output wiredArgs) maybeAlgs []
 
   partial def bindFlatFixedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (ValEnv × AlgEnv) := do
     let params := Algorithm.params callee
-    let slots <- collectFlatFixedCallSlots wiredArgs ctx env
+    -- Shared argument-slot assembly (spread expansion happens there, before
+    -- any arity checking).
+    let items <- collectVariadicCallItems wiredArgs ctx env
+    let slots := items.map (fun item =>
+      { value? := item.value?, algorithm? := item.algorithm?, error? := item.error? : FlatFixedCallSlot })
     if slots.length > params.length then
       .error (Error.arityMismatch params.length slots.length)
     else
@@ -4838,7 +4859,8 @@ mutual
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
-          let (argEnv, countedParamEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
+          let (argEnv, countedParamEnv, algBindings) <-
+            bindPatternedUserCall callee wiredArgs ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -4861,17 +4883,32 @@ mutual
           (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
         reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
 
+  /-- Assemble the evaluated argument values for a conditional (multi-clause)
+      call through the shared call argument pipeline
+      (`collectVariadicCallItems`): non-spread slots reify as one value each
+      and explicit spread expands by one value boundary, exactly as for every
+      other callable shape. Clause matching needs plain values, so an
+      algorithm-only argument surfaces its value-evaluation error.
+      C#: `EvalConditionalCallArguments`. -/
+  partial def evalConditionalCallArguments (wiredArgs : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool)
+      : EvalM (List Result) := do
+    let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
+    items.mapM (fun item =>
+      match item.value? with
+      | some value => pure value
+      | none => .error (item.error?.getD Error.badArity))
+
   /-- Counted conditional call evaluation.
       The argument matching semantics are unchanged; the selected branch is a
       value boundary, so its public result re-counts the emitted arity to
       `Result.valueCount` (via `reCountValueBoundary`) -- a multi-output branch
       becomes one sequence value (count 1), matching `if` and plain calls. -/
   partial def evalConditionalCallCounted (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
     let wiredArgs := wireToCaller ctx args
-    let argExprs := Algorithm.output wiredArgs
-    let argEvalCtx := EvalCtx.push wiredArgs ctx
-    let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
+    let argResults <- evalConditionalCallArguments wiredArgs ctx env preserveArgBoundaries
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else
@@ -4896,7 +4933,7 @@ mutual
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
       | some simple => evalUserCall simple args ctx env preserveArgBoundaries
-      | none => evalConditionalCall callee args ctx env calleeName
+      | none => evalConditionalCall callee args ctx env calleeName preserveArgBoundaries
     | _ => evalUserCall callee args ctx env preserveArgBoundaries
 
   /-- Dispatch an already-resolved callee in counted evaluation. -/
@@ -4910,7 +4947,7 @@ mutual
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
       | some simple => evalUserCallCounted simple args ctx env preserveArgBoundaries
-      | none => evalConditionalCallCounted callee args ctx env calleeName
+      | none => evalConditionalCallCounted callee args ctx env calleeName preserveArgBoundaries
     | _ => evalUserCallCounted callee args ctx env preserveArgBoundaries
 
   /-- Context-aware counted call evaluation for expression position;
@@ -4920,17 +4957,16 @@ mutual
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
-  /-- Sequence builtins in dot-call form pass the receiver as one counted
-      source to the shared sequence collector.
+  /-- Sequence builtins in dot-call form evaluate the receiver to ONE value,
+      re-counted to `Result.valueCount`, and pass it as the ordinary fixed
+      `collection` argument (the post-binding collection view opens it,
+      exactly as for the plain call form).
 
       A direct inline receiver block first exposes its inner algorithm output
       count, which strips exactly one receiver-scoping block layer for forms
       like `(1, 2, 3).take(2)` while still keeping `((1, 2, 3)).take(2)` and
-      named sequence-valued helpers intact.
-
-      The receiver expression is then evaluated once, reified as one counted
-      ordinary leading source, and any extra dot-call arguments still follow
-      the plain-call argument path.
+      named sequence-valued helpers intact. Any extra dot-call arguments
+      still follow the plain-call argument path.
 
       This keeps plain-call boundary preservation unchanged while making
       `receiver.builtin(...)` operate on the same top-level collection that
@@ -5056,36 +5092,6 @@ mutual
         callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error e => .error e
 
-  partial def evalAlgorithmOutputSequenceSpreadItems (a : Algorithm) (ctx : EvalCtx)
-      (env : ValEnv) : EvalM (List Result) := do
-    match a with
-    | .builtin b => do
-        let out <- evalBuiltinValueCounted b
-        pure (countedTopLevelValues out)
-    | _ =>
-      match a.findDuplicatePropName with
-      | some n => .error (Error.duplicateProperty n)
-      | none =>
-        match conditionalValueAccessError? "conditional" a with
-        | some err => .error err
-        | none => pure ()
-        match a with
-        | .mk _ _ _ _ [] => .error Error.spreadMissingOutput
-        | _ =>
-          let innerCtx := EvalCtx.push a ctx
-          let rec loop : List Expr -> List Result -> EvalM (List Result)
-            | [], acc =>
-                pure acc.reverse
-            | expr :: rest, acc => do
-                match <- evalAttempt (evalCounted expr innerCtx env) with
-                | .ok out => loop rest ((countedTopLevelValues out).reverse ++ acc)
-                | .error err =>
-                    if isMissingOutputError err then
-                      .error Error.spreadMissingOutput
-                    else
-                      .error err
-          loop (Algorithm.output a) []
-
   partial def evalSequenceSpreadOperandItems (e : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM (List Result) := do
     match e with
@@ -5114,8 +5120,10 @@ mutual
       `...` opens exactly one boundary of the value the previous layer would
       have captured, so `A......` agrees with `(A...)...`. For sequence values
       the extra layers are fixed points (value-equivalent to a single spread);
-      for exact LIST values each layer opens one more list boundary
-      (`[[7]]......` supplies `7`). -/
+      a singleton-list chain opens one list boundary per layer
+      (`[[7]]......` supplies `7`), while a multi-element list re-captures as
+      a sequence after the first layer and then stays fixed
+      (`[[1, 2], [3, 4]]......` supplies the two inner lists unchanged). -/
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let (operand, layers) := peelSequenceSpreadLayers e 0
@@ -5283,7 +5291,8 @@ mutual
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
-          let (argEnv, countedParamEnv, algBindings) <- bindPatternedUserCall callee wiredArgs ctx env
+          let (argEnv, countedParamEnv, algBindings) <-
+            bindPatternedUserCall callee wiredArgs ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5327,12 +5336,13 @@ mutual
       all branches produce the same top-level output arity.  The evaluator does
       not re-check this at runtime. -/
   partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
+      (preserveArgBoundaries : List Bool := []) : EvalM Result := do
     let wiredArgs := wireToCaller ctx args
-    let argExprs := Algorithm.output wiredArgs
-    let argEvalCtx := EvalCtx.push wiredArgs ctx
-    -- Evaluate all argument expressions eagerly
-    let argResults <- argExprs.mapM (fun e => eval e argEvalCtx env)
+    -- Shared argument-slot assembly: explicit spread expands into ordinary
+    -- argument slots BEFORE clause matching, so a multi-clause callee sees
+    -- the same argument supply as every other callable shape.
+    let argResults <- evalConditionalCallArguments wiredArgs ctx env preserveArgBoundaries
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else

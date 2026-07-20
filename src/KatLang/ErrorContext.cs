@@ -56,6 +56,20 @@ public sealed record VariadicLoopStateBindingContext(
     public override string ToLegacyString() => $"while binding {LoopName} step state";
 }
 
+/// <summary>
+/// Binding failure of a parser-elaborated assignment deconstruction
+/// (<c>x, y..., z = RHS</c>). Diagnostics phrase the failure against the
+/// WRITTEN pattern instead of exposing the synthetic inline helper the parser
+/// elaborates the assignment into.
+/// </summary>
+public sealed record DeconstructionBindingContext(
+    IReadOnlyList<string> TargetDisplayNames,
+    bool HasRestTarget) : ErrorContext
+{
+    public override string ToLegacyString()
+        => $"while binding assignment pattern {string.Join(", ", TargetDisplayNames)}";
+}
+
 public sealed record OpenResolutionContext(string OpenDescription) : ErrorContext
 {
     public override string ToLegacyString() => $"while resolving open: {OpenDescription}";

@@ -89,6 +89,8 @@ public abstract record Result
     /// storage via <see cref="TakeOwnership"/>; internal mutation of list
     /// storage is permitted only before the value is published or under proven
     /// exclusive ownership where no previously observable value can change.
+    /// Note: C# record equality is not KatLang language equality — KatLang
+    /// structural equality uses <see cref="ValueComparer"/>.
     /// Lean: <c>Result.listValue</c>.
     /// </summary>
     public sealed record ListValue : Result

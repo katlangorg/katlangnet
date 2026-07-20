@@ -297,7 +297,6 @@ theorem bindCallableArguments_single_variadic_items (xs : List Result) :
       singleVariadicSignatureForArityLaw
       xs
       (fun required actual => Error.arityMismatch required actual)
-      (some 0)
       = .ok { normalBindings := [], variadicName? := some "x", variadicItems := xs } := by
   unfold singleVariadicSignatureForArityLaw
   have hvalid :
@@ -311,12 +310,61 @@ theorem bindCallableArguments_variadic_items_then_collect (xs : List Result) :
     (match bindCallableArguments
         singleVariadicSignatureForArityLaw
         xs
-        (fun required actual => Error.arityMismatch required actual)
-        (some 0) with
+        (fun required actual => Error.arityMismatch required actual) with
     | .ok bindings => Except.ok (collectRest bindings.variadicItems)
     | .error err => Except.error err)
       = Except.ok (collectRest xs) := by
   simp [bindCallableArguments_single_variadic_items]
+
+/-- Mixed prefix/rest/suffix signature used to expose the loop-state binder's
+empty-rest rule. -/
+def mixedVariadicSignatureForArityLaw : CallableSignature :=
+  { name := "F",
+    parameters :=
+      [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] }
+
+/-- EMPTY LOOP-STATE REST over the real flat-variadic binder: supplying exactly
+the fixed parameters binds them from the ends and the rest is assigned ZERO
+middle items — the same `collectRest [] = []` rule as every other rest
+receiver (`bindParameterPatternList`: required = patterns - 1). This pins the
+uniform minimum (fixed parameter count), replacing the old loop-only
+"rest collects at least one slot" restriction. -/
+theorem bindCallableArguments_mixed_fixed_only_empty_rest (a b : Result) :
+    bindCallableArguments
+      mixedVariadicSignatureForArityLaw
+      [a, b]
+      (fun required actual => Error.arityMismatch required actual)
+      = .ok {
+          normalBindings := [("first", a), ("last", b)],
+          variadicName? := some "rest",
+          variadicItems := [] } := by
+  unfold mixedVariadicSignatureForArityLaw
+  have hvalid :
+      CallableSignature.validationError?
+        { name := "F",
+          parameters :=
+            [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] } = none := by
+    decide
+  simp [bindCallableArguments, CallableSignature.validate, hvalid,
+    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
+
+/-- Below the fixed minimum the mixed binder fails with the fixed parameter
+count — one state slot cannot bind `first` and `last`. -/
+theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
+    bindCallableArguments
+      mixedVariadicSignatureForArityLaw
+      [a]
+      (fun required actual => Error.arityMismatch required actual)
+      = .error (Error.arityMismatch 2 1) := by
+  unfold mixedVariadicSignatureForArityLaw
+  have hvalid :
+      CallableSignature.validationError?
+        { name := "F",
+          parameters :=
+            [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] } = none := by
+    decide
+  simp [bindCallableArguments, CallableSignature.validate, hvalid,
+    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
 
 /-
 ## Generic mixed-pattern bridge theorems

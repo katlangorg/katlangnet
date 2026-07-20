@@ -456,7 +456,7 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact", error.Message);
+        Assert.Contains("filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
         Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 
@@ -993,6 +993,55 @@ public class KatLangEngineTests
             """);
 
         Assert.Equal("3.14 2.72", text);
+    }
+
+    private static void RunUnderCulture(string cultureName, Action assertions)
+    {
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture =
+                System.Globalization.CultureInfo.GetCultureInfo(cultureName);
+            assertions();
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    [InlineData("en-US")]
+    public void Display_CanonicalNumberFormatting_IsCultureInvariant(string cultureName)
+    {
+        // Canonical KatLang value display always uses `.` as the decimal
+        // point, so fractional atoms can never collide with the `, ` element
+        // separator of sequence/list rendering and output is identical on
+        // every machine.
+        RunUnderCulture(cultureName, () =>
+        {
+            Assert.Equal("(2.5, 3.5)", KatLangEngine.Run("(2.5, 3.5)").ToDisplayString());
+            Assert.Equal("[1.5, -2.25]", KatLangEngine.Run("[1.5, -2.25]").ToDisplayString());
+            Assert.Equal("1.0", KatLangEngine.Run("0.5 + 0.5").ToDisplayString());
+            Assert.Equal("[1, (2.5, [3.5])]", KatLangEngine.Run("[1, (2.5, [3.5])]").ToDisplayString());
+            Assert.Equal(
+                "3.1415926535897932384626433833",
+                KatLangEngine.Run("Math.Pi").ToDisplayString());
+
+            // DisplayDecimals path stays invariant too.
+            Assert.Equal(
+                "3.14",
+                KatLangEngine.Run("DisplayDecimals = 2\nMath.Pi").ToDisplayString());
+
+            // Flat-atom string output.
+            Assert.Equal("2.5 3.5", KatLangEngine.EvaluateToString("2.5\n3.5"));
+
+            // Diagnostics that render values keep the invariant form.
+            var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("[1.5] + 1"));
+            Assert.Contains("[1.5]", failure.ToDisplayString(), StringComparison.Ordinal);
+        });
     }
 
     [Fact]

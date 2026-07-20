@@ -938,6 +938,65 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "A pattern-shaped callee consumes written grouping levels: a bare reference opens to its three items, while ONE extra written level around the argument leaves a single grouped item, which the rest collects exactly (`[Inner]`, count 1). Levels beyond the first stay redundant (unary sequence structure canonicalizes during value construction), and the declared nested pattern depth consumes matching written depth.",
         },
+        new()
+        {
+            Id = "call-spread-into-conditional-clauses",
+            Category = "variadic-calls",
+            Source = "F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A...)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                ["privateProp \"F\" (.conditional none [] [" +
+                     "⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, " +
+                     "⟨.sequenceValue [.bind \"x\", .bind \"y\"], alg [] [] [] [.binary .add (.param \"x\") (.param \"y\")]⟩])",
+                 LProp("A", LBlock(LNums(1, 2)))],
+                [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
+            Probes =
+            [
+                new SpecProbe("F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A)", "err branch"),
+            ],
+            Explanation = "Explicit call-site spread has identical meaning for every callable shape: `F(A...)` supplies A's opened items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.",
+            IncludeInGeneratorPrompt = true,
+        },
+        new()
+        {
+            Id = "call-spread-dispatches-before-clause-selection",
+            Category = "variadic-calls",
+            Source = "F(0, 0) = 100\nF(x, y) = x + y\nA = (0, 0)\nF(A...)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "100",
+            ExpectedRaw = "100",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                ["privateProp \"F\" (.conditional none [] [" +
+                     "⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, " +
+                     "⟨.sequenceValue [.bind \"x\", .bind \"y\"], alg [] [] [] [.binary .add (.param \"x\") (.param \"y\")]⟩])",
+                 LProp("A", LBlock(LNums(0, 0)))],
+                [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
+            Explanation = "Clause selection happens strictly AFTER spread expansion: `F(A...)` with A = (0, 0) supplies the two literal-matching slots, so the literal clause wins. A catch-all clause can never absorb a spread argument as one closed value.",
+        },
+        new()
+        {
+            Id = "call-spread-into-patterned-callee",
+            Category = "variadic-calls",
+            Source = "F(x, x) = x + 1\nA = (7, 7)\nF(A...)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFnP("F", [LFix("x"), LFix("x")], ".binary .add (.param \"x\") (.num 1)"),
+                 LProp("A", LBlock(LNums(7, 7)))],
+                [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
+            Probes =
+            [
+                new SpecProbe("F(x, x) = x + 1\nA = (7, 7)\nF(A)", "err arity"),
+                new SpecProbe("F(x, x) = x + 1\nA = (7, 8)\nF(A...)", "err arity"),
+            ],
+            Explanation = "The repeated-name (patterned) callee shape does not change caller-side spread: `F(A...)` supplies two argument slots that must satisfy the repeated-bind equality, exactly like the flat callee `G(x, y)` would receive them. The unspread `F(A)` is one argument against two parameters.",
+        },
 
         // ==================== sequence-construction ====================
         new()
@@ -1727,6 +1786,26 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = true,
             Explanation = "`reduce(collection, reducer, initial)` takes exactly three arguments and threads one accumulator value; the result displays as ONE sequence value `(1, 2, 3, 4)` — not as separate rows. Supplying the items inline (`reduce(2, 3, 4, Append, 1)`) is an ordinary five-argument arity error.",
         },
+        new()
+        {
+            Id = "reduce-empty-initial-is-one-value",
+            Category = "collection-builtins",
+            Source = "R(x, acc) = acc + x\nInit = 1, 2\nreduce((), R, Init)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 2)",
+            ExpectedRaw = "S[1, 2]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFn("R", ["x", "acc"], ".binary .add (.param \"acc\") (.param \"x\")"),
+                 LProp("Init", LNums(1, 2))],
+                [LCall("reduce", LEmpty, ".resolve \"R\"", ".resolve \"Init\"")]),
+            Probes =
+            [
+                new SpecProbe("R(x, acc) = acc + x\nreduce([], R, [5])", "ok raw=L[5] n=1"),
+                new SpecProbe("Add(a, b) = a + b\nreduce((), Add, 5)", "ok raw=5 n=1"),
+            ],
+            Explanation = "The initial accumulator expression occupies ONE written accumulator slot: its result is reified as one value before reduction begins, so an empty reduction returns the initial accumulator as ONE value (`(1, 2)`, count 1) — never as an unbounded multi-item supply — exactly like the non-empty case threads it.",
+        },
 
         // ==================== equality-and-indexing ====================
         new()
@@ -2318,6 +2397,28 @@ public static class LanguageSpecCorpus
                  ".listLiteral [.sequenceSpread (.resolve \"A\"), .sequenceSpread (.resolve \"B\")]",
                  ".listLiteral [.resolve \"A\", .sequenceSpread (.resolve \"B\")]"]),
             Explanation = "Non-spread list values stay single elements; only explicit `...` opens a list into the surrounding list literal.",
+        },
+        new()
+        {
+            Id = "list-written-slot-reifies-projection",
+            Category = "lists",
+            Source = "S = ((1, 2), (3, 4))\n\n[S:0, 5]\n[S:0..., 5]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(1, 2), 5]\n[1, 2, 5]",
+            ExpectedRaw = "S[L[S[1, 2], 5], L[1, 2, 5]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LProp("S", LBlock(LBlock(LNums(1, 2)), LBlock(LNums(3, 4))))],
+                [".listLiteral [.index (.resolve \"S\") (.num 0), .num 5]",
+                 ".listLiteral [.sequenceSpread (.index (.resolve \"S\") (.num 0)), .num 5]"]),
+            Probes =
+            [
+                new SpecProbe("S = ((1, 2), (3, 4))\nz = (S:0, 5)\nz", "ok raw=S[S[1, 2], 5] n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = (x == (1, 2)) + y\nF((S:0, 5))", "ok raw=6 n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S:0..., 5))", "ok raw=8 n=1"),
+            ],
+            Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only explicit `...` opens the projected value into the surrounding slots.",
+            IncludeInGeneratorPrompt = true,
         },
         new()
         {

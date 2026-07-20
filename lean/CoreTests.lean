@@ -43,6 +43,11 @@ def innermostIsMissingOutput : Error -> Bool
   | .missingOutput => true
   | _ => false
 
+def innermostIsDivByZero : Error -> Bool
+  | .withContext _ inner => innermostIsDivByZero inner
+  | .divByZero => true
+  | _ => false
+
 def innermostIsSpreadMissingOutput : Error -> Bool
   | .withContext _ inner => innermostIsSpreadMissingOutput inner
   | .spreadMissingOutput => true
@@ -4965,7 +4970,7 @@ def test75 : Bool :=
     "filter"
     (some (alg [] [] [] [.num 1]))) with
   | Except.error err =>
-      hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact)" err &&
+      hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
       innermostIsArityMismatch 0 1 err
   | _ => false
 
@@ -10009,9 +10014,9 @@ def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :
 -- Aspect 2 loop-state variadic binding (mirrors C# EvaluatorTests.Eval_VariadicLoopStep_*).
 -- A top-level variadic loop interface binds state as an item supply: the fixed prefix
 -- and suffix bind from the ends, and the rest collects the remaining middle state slots
--- as one exact immutable list. The structural minimum is the parameter count (so 2 slots fail
--- for first/middle.../last) and the max is unbounded (extra middle slots are accepted).
--- This is the loop counterpart to the normal user-call path, where the rest may be empty.
+-- as one exact immutable list. The minimum is the FIXED (non-variadic) parameter count —
+-- the rest may collect ZERO slots (empty rest = `[]`), the same rule as every other rest
+-- receiver — and the max is unbounded (extra middle slots are accepted).
 def loopVariadicPrefixMiddleSuffixAlg : Algorithm :=
   algWithParameters [
     { name := "first" },
@@ -10055,16 +10060,28 @@ def variadicLoopStepExactStructuralCountBinds : Bool :=
 
 #guard variadicLoopStepExactStructuralCountBinds
 
--- Structural-minimum failure: only 2 state slots cannot satisfy first + middle + last;
--- the loop requires at least the structural parameter count (3), so this is arityMismatch 3 2.
-def variadicLoopStepBelowStructuralMinimumFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+-- Empty rest: 2 state slots bind first=10/last=20 from the ends and the rest
+-- collects ZERO middle slots (middle = [], count 0) — the same empty-rest rule
+-- as every other rest receiver.
+def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
     .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10, .num 20]))
   ])) with
-  | Except.error err => innermostIsArityMismatch 3 2 err
+  | Except.ok [10, 0, 20] => true
   | _ => false
 
-#guard variadicLoopStepBelowStructuralMinimumFails
+#guard variadicLoopStepEmptyMiddleBindsEmptyList
+
+-- Fixed-minimum failure: only 1 state slot cannot satisfy the two FIXED
+-- parameters first + last, so this is arityMismatch 2 1.
+def variadicLoopStepBelowFixedMinimumFails : Bool :=
+  match runResult (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10]))
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | _ => false
+
+#guard variadicLoopStepBelowFixedMinimumFails
 
 -- The exact reviewed case: Step(first, middle..., last) = first + 1, middle..., last + 1
 -- with Step.repeat(2, 0, 5, 5, 10) binds first=0, middle=[5, 5] (the collected exact
@@ -10874,6 +10891,39 @@ def restOnlyConsumesItemSupply : Bool :=
   singleGroupedArg && multipleSlots
 
 #guard restOnlyConsumesItemSupply
+
+-- A FUNCTION-shaped argument (a builtin here) reaching a rest binding reports
+-- the targeted typeMismatch: a rest binding collects VALUES and has no dual
+-- algorithm channel. C#: `BindParameterPatternList` (same kind; the C#
+-- message additionally names the rest parameter).
+def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("G", algWithParameters [{ name := "fs", kind := .variadic }] [] [] [.param "fs"])
+  ] [
+    .call (resolve "G") (alg [] [] [] [resolve "sum"])
+  ])) with
+  | Except.error err =>
+      innermostIsTypeMismatch
+        "A rest parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected."
+        err
+  | _ => false
+
+#guard restFunctionShapedArgumentReportsTypeMismatch
+
+-- A zero-parameter VALUE property whose body fails is NOT function-shaped
+-- (`Algorithm.isFunctionShaped`): the genuine evaluation error surfaces
+-- through the rest binding instead of the function diagnostic.
+def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
+    ("G", algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"])
+  ] [
+    .call (resolve "G") (alg [] [] [] [resolve "Bad"])
+  ])) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+#guard restErroredValuePropertyArgumentSurfacesRealError
 
 def mixedVariadicBoundaryAlg : Algorithm :=
   algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [

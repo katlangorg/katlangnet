@@ -14,7 +14,7 @@ namespace KatLang;
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
 /// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Contains, First, Last, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
+/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Contains, First, Last, Order, OrderDesc, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
 /// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
 /// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
@@ -1220,8 +1220,7 @@ public static class Evaluator
     private static EvalResult<CallableArgumentBindings<T>> BindCallableArguments<T>(
         CallableSignature signature,
         IReadOnlyList<T> items,
-        Func<int, int, EvalError> arityMismatch,
-        int? minimumItemCount = null)
+        Func<int, int, EvalError> arityMismatch)
     {
         if (signature.Validate() is { } validationError)
             return validationError;
@@ -1238,12 +1237,13 @@ public static class Evaluator
                 VariadicItems: []));
         }
 
-        // The default minimum is the structural parameter count (loop-state binding,
-        // where the rest is assigned at least one slot). Item-supply callers — user
-        // calls — pass the fixed (non-variadic) count so the rest may collect
-        // zero items. (Collection builtins no longer bind here: they are
-        // ordinary fixed-arity callables bound in BindSequenceBuiltinArguments.)
-        var requiredNormalItemCount = minimumItemCount ?? signature.RequiredNormalParameterCount;
+        // The minimum is the FIXED (non-variadic) parameter count: like every
+        // other rest receiver, the rest may collect ZERO items (an empty rest
+        // is the exact list `[]`). This is the same rule the shared pattern
+        // binder applies (BindParameterPatternList: required = patterns - 1).
+        // (Collection builtins no longer bind here: they are ordinary
+        // fixed-arity callables bound in BindSequenceBuiltinArguments.)
+        var requiredNormalItemCount = signature.Parameters.Count - 1;
         if (items.Count < requiredNormalItemCount)
             return arityMismatch(requiredNormalItemCount, items.Count);
 
@@ -1298,6 +1298,24 @@ public static class Evaluator
     /// </summary>
     private static Result.ListValue CollectRest(IReadOnlyList<Result> capturedValues)
         => new(capturedValues);
+
+    /// <summary>
+    /// True when an argument's resolved algorithm meaning is genuinely
+    /// FUNCTION-shaped — a builtin, a conditional clause family, or an
+    /// algorithm declaring parameters/patterns — as opposed to a
+    /// zero-parameter VALUE property that merely resolved through the dual
+    /// algorithm channel. Used to decide whether a valueless rest-bound
+    /// argument gets the targeted "collects values, but ... is a function"
+    /// diagnostic or surfaces its genuine value-evaluation error.
+    /// Lean: <c>Algorithm.isFunctionShaped</c>.
+    /// </summary>
+    private static bool IsFunctionShapedAlgorithm(Algorithm algorithm)
+        => algorithm switch
+        {
+            Algorithm.Builtin => true,
+            Algorithm.Conditional => true,
+            _ => algorithm.Params.Count > 0 || algorithm.ParameterPatterns.Count > 0,
+        };
 
     private static VariadicCapture CreateVariadicCapture(string name, IReadOnlyList<Result> capturedValues)
     {
@@ -1389,12 +1407,15 @@ public static class Evaluator
         var countedR = EvalCounted(expr, ctx, valEnv);
         if (countedR.IsError) return countedR.Error;
 
-        // Mirror the output-slot rule of the algorithm-output accumulator: a
-        // non-spread item expression is one item even when it evaluates to the
-        // empty sequence value `()`; only an explicit spread contributes zero items.
-        return expr is not Expr.SequenceSpread && countedR.Value.EmittedCount == 0
-            ? EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value])
-            : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
+        // WRITTEN-SLOT REIFICATION: a non-spread expression occupying one
+        // written slot contributes exactly ONE persistent value — the value its
+        // counted supply denotes — regardless of how many items the expression
+        // emitted (zero, one, or many; a counted-multi supply such as an index
+        // projection is already represented by one structural value). Only an
+        // explicit spread opens the value into the surrounding item slots.
+        return expr is Expr.SequenceSpread
+            ? EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value))
+            : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
     }
 
     private static EvalResult<IReadOnlyList<Result>> GetSequenceValuePatternItems(ParameterPatternInput input)
@@ -1593,7 +1614,23 @@ public static class Evaluator
         {
             var input = inputs[inputIndex];
             if (input.Value is null)
+            {
+                // A rest binding collects VALUES. A FUNCTION-shaped argument
+                // (a builtin, a clause family, or a parameterized algorithm)
+                // has no value to collect — only fixed parameters keep the
+                // dual algorithm channel — so name the actual conflict instead
+                // of surfacing the argument's incidental value-evaluation
+                // error. A zero-parameter VALUE property whose body failed is
+                // NOT a function: its genuine evaluation error surfaces.
+                if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
+                {
+                    return new EvalError.TypeMismatch(
+                        $"Rest parameter `{variadicCapture.Name}...` collects values, but a supplied argument is a function. " +
+                        "Pass a value, or call the function so its result is collected.");
+                }
+
                 return input.ValueError ?? new EvalError.BadArity();
+            }
 
             capturedValues.Add(input.Value);
         }
@@ -1613,54 +1650,71 @@ public static class Evaluator
         Algorithm wiredArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string? calleeName)
+        string? calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
-        var argExprs = wiredArgs.Output;
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
 
-        var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
-        if (maybeAlgsR.IsError) return maybeAlgsR.Error;
+        var inputsR = BuildCallArgumentInputs(
+            wiredArgs,
+            ctx,
+            valEnv,
+            preserveArgBoundaries,
+            includeExplicitSequenceValueItems: true);
+        if (inputsR.IsError) return inputsR.Error;
 
-        var maybeAlgs = maybeAlgsR.Value;
-        var argEvalCtx = ctx.Push(wiredArgs);
-        var inputs = new List<ParameterPatternInput>(argExprs.Count);
-
-        for (var index = 0; index < argExprs.Count; index++)
-        {
-            var argExpr = argExprs[index];
-            var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
-            var evalR = Eval(argExpr, argEvalCtx, valEnv);
-            IReadOnlyList<Result>? explicitSequenceValueItems = null;
-
-            if (evalR.IsOk)
-            {
-                var explicitSequenceValueItemsR = TryGetExplicitSequenceValueItems(argExpr, argEvalCtx, valEnv);
-                if (explicitSequenceValueItemsR.IsError) return explicitSequenceValueItemsR.Error;
-                explicitSequenceValueItems = explicitSequenceValueItemsR.Value;
-            }
-
-            inputs.Add(new ParameterPatternInput(
-                evalR.IsOk ? evalR.Value : null,
-                maybeAlg,
-                evalR.IsError ? evalR.Error : null,
-                explicitSequenceValueItems));
-        }
-
-        return BindParameterPatternList(
+        var bindingsR = BindParameterPatternList(
             callee.ParameterPatterns,
-            inputs,
+            inputsR.Value,
             allowAlgorithmBindings: true,
             (required, actual) => new EvalError.ArityMismatch(required, actual)
             {
                 Signature = signature,
             });
+
+        // Assignment deconstruction is parser-elaborated into an anonymous
+        // inline helper; phrase its binding failures against the WRITTEN
+        // assignment pattern instead of leaking the synthetic call shape
+        // ("Algorithm `(inline library)` expects ..."). Wrap ONLY genuine
+        // shape failures: when an input slot carried no value, the surfaced
+        // ArityMismatch is (or reflects) that argument's own value-evaluation
+        // error — re-wording it would misattribute unrelated numbers to the
+        // written pattern (e.g. `x, y = sum` leaking sum's 0/0 arity error).
+        if (bindingsR.IsError
+            && bindingsR.Error is EvalError.ArityMismatch deconstructionMismatch
+            && callee is Algorithm.User { IsAssignmentDeconstructionHelper: true }
+            && inputsR.Value.All(static input => input.Value is not null))
+        {
+            return new EvalError.WithContext(
+                new DeconstructionBindingContext(
+                    callee.Parameters.Select(static parameter => parameter.DisplayName).ToList(),
+                    callee.Parameters.Any(static parameter => parameter.Kind == ParameterKind.Variadic)),
+                deconstructionMismatch);
+        }
+
+        return bindingsR;
     }
 
-    private static EvalResult<IReadOnlyList<BindingInputSlot>> BuildVariadicBindingInputSlots(
+    /// <summary>
+    /// Shared call argument-slot assembly used by EVERY callable shape (flat
+    /// fixed, flat/mixed variadic, patterned, and multi-clause conditional):
+    /// each written argument slot is evaluated, every non-spread slot is
+    /// reified as exactly ONE argument value (with its dual algorithm view
+    /// where resolvable), and every explicit spread slot is expanded by
+    /// exactly one value boundary into ordinary argument slots. The final
+    /// argument supply is formed BEFORE any arity checking, clause selection,
+    /// conditional dispatch, or pattern binding — the callee's internal
+    /// representation never influences the meaning of caller-side spread.
+    /// Dot-call receiver segments honor <paramref name="preserveArgBoundaries"/>
+    /// (an injected receiver stays one boundary and is never expanded).
+    /// Lean: <c>collectVariadicCallItems</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
         Algorithm wiredArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        IReadOnlyList<bool>? preserveArgBoundaries = null,
+        bool includeExplicitSequenceValueItems = false)
     {
         var argExprs = wiredArgs.Output;
         var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
@@ -1668,7 +1722,7 @@ public static class Evaluator
 
         var maybeAlgs = maybeAlgsR.Value;
         var argEvalCtx = ctx.Push(wiredArgs);
-        var items = new List<BindingInputSlot>();
+        var inputs = new List<ParameterPatternInput>();
 
         for (var index = 0; index < argExprs.Count; index++)
         {
@@ -1684,7 +1738,7 @@ public static class Evaluator
                     return suppliedR.Error;
 
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
-                    items.Add(BindingInputSlot.FromUserCallItem(value, algorithm: null, valueError: null));
+                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null));
 
                 continue;
             }
@@ -1694,23 +1748,32 @@ public static class Evaluator
                 : EvalCounted(argExpr, argEvalCtx, valEnv);
             if (evaluatedR.IsOk)
             {
-                items.Add(BindingInputSlot.FromUserCallItem(
+                IReadOnlyList<Result>? explicitSequenceValueItems = null;
+                if (includeExplicitSequenceValueItems)
+                {
+                    var explicitSequenceValueItemsR = TryGetExplicitSequenceValueItems(argExpr, argEvalCtx, valEnv);
+                    if (explicitSequenceValueItemsR.IsError) return explicitSequenceValueItemsR.Error;
+                    explicitSequenceValueItems = explicitSequenceValueItemsR.Value;
+                }
+
+                inputs.Add(new ParameterPatternInput(
                     evaluatedR.Value.Value,
                     maybeAlg,
-                    valueError: null));
+                    ValueError: null,
+                    explicitSequenceValueItems));
                 continue;
             }
 
             if (maybeAlg is not null)
             {
-                items.Add(BindingInputSlot.FromUserCallItem(value: null, algorithm: maybeAlg, valueError: evaluatedR.Error));
+                inputs.Add(new ParameterPatternInput(Value: null, maybeAlg, evaluatedR.Error, ExplicitSequenceValueItems: null));
                 continue;
             }
 
             return evaluatedR.Error;
         }
 
-        return EvalResult<IReadOnlyList<BindingInputSlot>>.Ok(items);
+        return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);
     }
 
     private static bool IsInjectedDotCallReceiverSegment(
@@ -1790,21 +1853,17 @@ public static class Evaluator
         string? calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
-        var itemsR = BuildVariadicBindingInputSlots(wiredArgs, ctx, valEnv, preserveArgBoundaries);
-        if (itemsR.IsError) return itemsR.Error;
+        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        if (inputsR.IsError) return inputsR.Error;
 
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
-        var inputs = itemsR.Value
-            .Select(static slot => new ParameterPatternInput(
-                slot.Value, slot.Algorithm, slot.ValueError, ExplicitSequenceValueItems: null))
-            .ToList();
 
         // A deconstruction parameter list always carries a rest binding, so a
         // too-few-items failure reports the fixed-binding minimum ("at least N")
         // rather than the exact-count wording used by strict callables.
         return BindParameterPatternList(
             callee.ParameterPatterns,
-            inputs,
+            inputsR.Value,
             allowAlgorithmBindings: true,
             (required, actual) => VariadicBindingArityMismatch(calleeName, required, actual, signature));
     }
@@ -1837,51 +1896,18 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var argExprs = wiredArgs.Output;
         var paramCount = parameterNames.Count;
 
-        // Try to resolve each arg as algorithm (for AlgEnv bindings)
-        var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
-        if (maybeAlgsR.IsError) return maybeAlgsR.Error;
-        var maybeAlgs = maybeAlgsR.Value;
+        // Shared argument-slot assembly (spread expansion happens there, before
+        // any arity checking). Dot-call fixed receivers that must stay one
+        // boundary are wrapped before this path, so they do not arrive here as
+        // Expr.SequenceSpread.
+        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv);
+        if (inputsR.IsError) return inputsR.Error;
 
-        // Lean: let argEvalCtx := EvalCtx.push wiredArgs ctx
-        var argEvalCtx = ctx.Push(wiredArgs);
-
-        var slots = new List<FlatFixedCallSlot>(argExprs.Count);
-
-        for (var i = 0; i < argExprs.Count; i++)
-        {
-            var argExpr = argExprs[i];
-            if (argExpr is Expr.SequenceSpread)
-            {
-                // Flat fixed calls expand bare spread args. Dot-call
-                // fixed receivers that must stay one boundary are wrapped before
-                // this path, so they do not arrive here as Expr.SequenceSpread.
-                var suppliedR = EvalCounted(argExpr, argEvalCtx, valEnv);
-                if (suppliedR.IsError) return suppliedR.Error;
-
-                foreach (var value in CountedTopLevelValues(suppliedR.Value))
-                    slots.Add(new FlatFixedCallSlot(value, Algorithm: null, ValueError: null));
-
-                continue;
-            }
-
-            var maybeAlg = i < maybeAlgs.Count ? maybeAlgs[i] : null;
-            var evalR = Eval(argExpr, argEvalCtx, valEnv);
-            if (evalR.IsOk)
-            {
-                slots.Add(new FlatFixedCallSlot(evalR.Value, maybeAlg, ValueError: null));
-            }
-            else if (maybeAlg is not null)
-            {
-                slots.Add(new FlatFixedCallSlot(Value: null, maybeAlg, evalR.Error));
-            }
-            else
-            {
-                return evalR.Error;
-            }
-        }
+        var slots = inputsR.Value
+            .Select(static input => new FlatFixedCallSlot(input.Value, input.Algorithm, input.ValueError))
+            .ToList();
 
         if (slots.Count > paramCount)
             return new EvalError.ArityMismatch(paramCount, slots.Count) { Signature = signature };
@@ -3178,47 +3204,6 @@ public static class Evaluator
         _ => false,
     };
 
-    private static EvalResult<IReadOnlyList<Result>> EvalAlgorithmOutputSequenceSpreadItems(
-        Algorithm alg,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        SourceSpan? span)
-    {
-        if (alg is Algorithm.Builtin(var builtin))
-        {
-            var builtinR = EvalBuiltinValueCounted(builtin);
-            return builtinR.IsError
-                ? builtinR.Error
-                : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(builtinR.Value));
-        }
-
-        var dupProp = alg.FindDuplicatePropName();
-        if (dupProp is not null)
-            return new EvalError.DuplicateProperty(dupProp);
-
-        if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
-            return conditionalError;
-
-        if (alg is Algorithm.User { Output.Count: 0 })
-            return SpreadMissingOutput(span);
-
-        var innerCtx = ctx.Push(alg);
-        var items = new List<Result>();
-
-        foreach (var expr in alg.Output)
-        {
-            var countedR = EvalCounted(expr, innerCtx, valEnv);
-            if (countedR.IsError)
-                return IsMissingOutputError(countedR.Error)
-                    ? SpreadMissingOutput(expr.Span ?? span)
-                    : countedR.Error;
-
-            AddCountedTopLevelValues(items, countedR.Value);
-        }
-
-        return EvalResult<IReadOnlyList<Result>>.Ok(items);
-    }
-
     private static EvalResult<IReadOnlyList<Result>> EvalSequenceSpreadOperandItems(
         Expr expr,
         EvalCtx ctx,
@@ -3256,8 +3241,11 @@ public static class Evaluator
     // exactly one boundary of the value the previous layer would have
     // captured, so `A......` agrees with `(A...)...`. For sequence values the
     // extra layers are fixed points (value-equivalent to a single spread);
-    // for exact LIST values each layer opens one more list boundary
-    // (`[[7]]......` supplies `7`). Lean: evalSequenceSpreadCounted.
+    // a singleton-list chain opens one list boundary per layer
+    // (`[[7]]......` supplies `7`), while a multi-element list re-captures as
+    // a sequence after the first layer and then stays fixed
+    // (`[[1, 2], [3, 4]]......` supplies the two inner lists unchanged).
+    // Lean: evalSequenceSpreadCounted.
     private static EvalResult<CountedResult> EvalSequenceSpreadCounted(
         Expr expr,
         EvalCtx ctx,
@@ -3491,7 +3479,7 @@ public static class Evaluator
 
     private static string DescribeSequenceItem(Result item) => item switch
     {
-        Result.Atom(var n) => $"numeric value {n}",
+        Result.Atom(var n) => $"numeric value {n.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
         Result.Str(var s) => $"string value \"{s}\"",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",
@@ -3555,11 +3543,16 @@ public static class Evaluator
             return initialR.Error;
         }
 
-        var accumulator = initialR.Value;
+        // The initial accumulator expression occupies ONE written accumulator
+        // slot: its result is reified as one persistent value at the ordinary
+        // value boundary (ReCountValueBoundary) BEFORE reduction begins, so an
+        // initial expression that emitted multiple items cannot leak that
+        // supply through the empty-collection return.
+        var accumulator = ReCountValueBoundary(initialR.Value);
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; sequence parameters use values... top-level binding, nested sequence values stay intact, and top-level variadic accumulator parameters receive state slots)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)",
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 
@@ -3615,7 +3608,7 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var predicateR = WithCtx(
-            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact)",
+            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
             EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
         if (predicateR.IsError)
             return predicateR.Error;
@@ -3651,7 +3644,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; sequence parameters use values... top-level binding and nested sequence values stay intact)",
+                "while evaluating map transform (map passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
             if (transformR.IsError) return transformR.Error;
 
@@ -4622,7 +4615,7 @@ public static class Evaluator
                 return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
             }
             case Expr.Num(var n):
-                return new EvalError.NotAnAlgorithm($"num({n})") { Span = expr.Span };
+                return new EvalError.NotAnAlgorithm($"num({n.ToString(System.Globalization.CultureInfo.InvariantCulture)})") { Span = expr.Span };
             case Expr.EmptySequence:
                 return new EvalError.NotAnAlgorithm("empty sequence value") { Span = expr.Span };
             case Expr.ListLiteral:
@@ -4768,7 +4761,10 @@ public static class Evaluator
         => new EvalError.WithContext(
             new VariadicLoopStateBindingContext(
                 loopName,
-                step.Parameters.Select(static parameter => parameter.DisplayName).ToList(),
+                step.Parameters
+                    .Where(static parameter => parameter.Kind != ParameterKind.Variadic)
+                    .Select(static parameter => parameter.DisplayName)
+                    .ToList(),
                 expectedMinimumStateValueCount,
                 actualStateValueCount),
             new EvalError.ArityMismatch(expectedMinimumStateValueCount, actualStateValueCount));
@@ -5047,7 +5043,7 @@ public static class Evaluator
             : EvalResult<Result>.Ok(LoopStateResult(outputSlotsR.Value));
     }
 
-    private static EvalResult<(IReadOnlyList<Result> NextStateSlots, decimal Continue)> SplitContSlots(
+    internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, decimal Continue)> SplitContSlots(
         IReadOnlyList<Result> outputSlots)
     {
         if (outputSlots.Count == 0)
@@ -5208,7 +5204,7 @@ public static class Evaluator
             initialStateSlots,
             ctx,
             valEnv,
-            fallbackState => WhileLoopGenericCounted(step, UnpackArgs(fallbackState), ctx, valEnv),
+            fallbackStateSlots => WhileLoopGenericCounted(step, fallbackStateSlots, ctx, valEnv),
             out var optimizedResult)
             ? optimizedResult
             : WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
@@ -5298,7 +5294,7 @@ public static class Evaluator
             initialStateSlots,
             ctx,
             valEnv,
-            (remainingCount, fallbackState) => RepeatLoopGenericCounted(step, remainingCount, UnpackArgs(fallbackState), ctx, valEnv),
+            (remainingCount, fallbackStateSlots) => RepeatLoopGenericCounted(step, remainingCount, fallbackStateSlots, ctx, valEnv),
             out var optimizedResult)
             ? optimizedResult
             : RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
@@ -5999,24 +5995,50 @@ public static class Evaluator
     ///
     /// Lean: evalConditionalCall.
     /// </summary>
+    /// <summary>
+    /// Assemble the evaluated argument values for a conditional (multi-clause)
+    /// call through the shared call argument pipeline
+    /// (<see cref="BuildCallArgumentInputs"/>): non-spread slots reify as one
+    /// value each and explicit spread expands by one value boundary, exactly
+    /// as for every other callable shape. Clause matching needs plain values,
+    /// so an algorithm-only argument surfaces its value-evaluation error.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>> EvalConditionalCallArguments(
+        Algorithm wiredArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<bool>? preserveArgBoundaries)
+    {
+        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        if (inputsR.IsError) return inputsR.Error;
+
+        var argResults = new List<Result>(inputsR.Value.Count);
+        foreach (var input in inputsR.Value)
+        {
+            if (input.Value is null)
+                return input.ValueError ?? new EvalError.BadArity();
+
+            argResults.Add(input.Value);
+        }
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(argResults);
+    }
+
     private static EvalResult<Result> EvalConditionalCall(
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName = "conditional")
+        string calleeName = "conditional",
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         var wiredArgs = WireToCaller(ctx, args);
-        var argExprs = wiredArgs.Output;
-        var argEvalCtx = ctx.Push(wiredArgs);
 
-        // Evaluate all argument expressions eagerly
-        var argResults = new List<Result>();
-        foreach (var expr in argExprs)
-        {
-            var r = Eval(expr, argEvalCtx, valEnv);
-            if (r.IsError) return r.Error;
-            argResults.Add(r.Value);
-        }
+        // Shared argument-slot assembly: explicit spread expands into ordinary
+        // argument slots BEFORE clause matching, so a multi-clause callee sees
+        // the same argument supply as every other callable shape.
+        var argResultsR = EvalConditionalCallArguments(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        if (argResultsR.IsError) return argResultsR.Error;
+        var argResults = argResultsR.Value;
 
         if (callee.HasDuplicateBranchPatterns())
             return new EvalError.DuplicateBranchPattern();
@@ -6047,19 +6069,14 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName = "conditional")
+        string calleeName = "conditional",
+        IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         var wiredArgs = WireToCaller(ctx, args);
-        var argExprs = wiredArgs.Output;
-        var argEvalCtx = ctx.Push(wiredArgs);
 
-        var argResults = new List<Result>();
-        foreach (var expr in argExprs)
-        {
-            var r = Eval(expr, argEvalCtx, valEnv);
-            if (r.IsError) return r.Error;
-            argResults.Add(r.Value);
-        }
+        var argResultsR = EvalConditionalCallArguments(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        if (argResultsR.IsError) return argResultsR.Error;
+        var argResults = argResultsR.Value;
 
         if (callee.HasDuplicateBranchPatterns())
             return new EvalError.DuplicateBranchPattern();
@@ -6119,7 +6136,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName);
+            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -6177,7 +6194,7 @@ public static class Evaluator
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, calleeName);
+            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, calleeName, preserveArgBoundaries);
 
         return EvalUserCall(
             callee,
@@ -6215,7 +6232,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName);
+            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -6273,7 +6290,7 @@ public static class Evaluator
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, calleeName);
+            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, calleeName, preserveArgBoundaries);
 
         return EvalUserCallCounted(
             callee,
@@ -6404,15 +6421,15 @@ public static class Evaluator
         IReadOnlyList<ResolvedArgumentAlgorithm> Args);
 
     /// <summary>
-    /// Sequence builtins in dot-call form pass the receiver as one counted
-    /// source to the shared sequence collector.
+    /// Sequence builtins in dot-call form evaluate the receiver to ONE value,
+    /// re-counted to <c>Result.ValueCount</c>, and pass it as the ordinary
+    /// fixed <c>collection</c> argument (the post-binding collection view
+    /// opens it, exactly as for the plain call form).
     /// A direct inline receiver block first exposes its inner algorithm output
     /// count, which strips exactly one receiver-scoping block layer for forms
     /// like <c>(1, 2, 3).take(2)</c> while still keeping
     /// <c>((1, 2, 3)).take(2)</c> and named sequence-valued helpers intact.
-    /// The resulting counted receiver is reified as one ordinary leading
-    /// source, and any extra dot-call arguments still follow the plain-call
-    /// argument path.
+    /// Any extra dot-call arguments still follow the plain-call argument path.
     /// This keeps plain-call boundary preservation unchanged while making
     /// <c>receiver.builtin(...)</c> operate on the same top-level collection
     /// that <c>receiver:i</c> and higher-order callback projection observe.

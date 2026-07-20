@@ -1,4 +1,5 @@
 using KatLang.Evaluation.Caching;
+using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
 
@@ -611,6 +612,42 @@ public class ZeroArgPropertyResultCacheTests
 
         Assert.False(result.IsError);
         Assert.Equal([6m], result.Value.ToAtoms());
+    }
+
+    [Fact]
+    public void LoopOptimizer_MultiEmissionHandoff_DoesNotReplayCompletedIterationPropertyAccess()
+    {
+        var repeatSource = """
+            Tick = 42
+            S = ((1, 2), (3, 4))
+            repeat({a + b + Tick, S:0}, 1, 0, 0)
+            """;
+        var whileSource = """
+            Tick = 42
+            S = ((1, 0), (2, 2))
+            while({a + Tick, S:0}, 9)
+            """;
+
+        foreach (var source in new[] { repeatSource, whileSource })
+        {
+            var parsed = Parser.Parse(source);
+            Assert.False(
+                parsed.HasErrors,
+                string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+            var cache = new RecordingZeroArgPropertyResultCache(UncachedZeroArgPropertyResultCache.Instance);
+            var diagnostics = new LoopOptimizationDiagnostics();
+
+            var result = Evaluator.Run(
+                new Expr.Block(parsed.Root),
+                cache,
+                enableLoopOptimization: true,
+                diagnostics);
+
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            Assert.Single(cache.Requests, static request => request.Binding.Name == "Tick");
+            Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
+            Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
+        }
     }
 
     private static Algorithm.User NewAlgorithm()

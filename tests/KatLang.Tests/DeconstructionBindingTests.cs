@@ -315,6 +315,43 @@ public class DeconstructionBindingTests
         Assert.Contains("at most one rest binding", result.ToDisplayString(), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(
+        "a, b = ()\na",
+        "Assignment pattern `a, b` expects 2 values from the right-hand side, but it supplied 0 values.")]
+    [InlineData(
+        "x, y = [(1, 2)]\nx",
+        "Assignment pattern `x, y` expects 2 values from the right-hand side, but it supplied 1 value.")]
+    [InlineData(
+        "a, r..., z = 1\na",
+        "Assignment pattern `a, r..., z` expects at least 2 values from the right-hand side, but it supplied 1 value.")]
+    public void Assignment_BindingFailure_PhrasesAgainstWrittenPattern(string source, string expectedMessage)
+    {
+        // Assignment deconstruction is parser-elaborated into a synthetic
+        // inline helper; the diagnostic must describe the WRITTEN pattern, not
+        // the internal helper call ("Algorithm `(inline library)` expects ...").
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var message = failure.ToDisplayString();
+        Assert.Contains(expectedMessage, message, StringComparison.Ordinal);
+        Assert.DoesNotContain("(inline library)", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Assignment_FunctionValuedRhsError_IsNotRewordedAsPatternMismatch()
+    {
+        // A right-hand side whose VALUE evaluation fails (a bare builtin here)
+        // surfaces its own error — the assignment-pattern wording applies only
+        // to genuine binding-shape failures, never to leaked argument errors
+        // (re-wording would misattribute unrelated numbers to the pattern).
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("a, b = sum\na"));
+        var message = failure.ToDisplayString();
+        Assert.DoesNotContain("Assignment pattern", message, StringComparison.Ordinal);
+        Assert.Contains("Expected 0 parameters", message, StringComparison.Ordinal);
+
+        var restFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, rest... = sum\nx"));
+        Assert.DoesNotContain("Assignment pattern", restFailure.ToDisplayString(), StringComparison.Ordinal);
+    }
+
     // ───────────────────── Function-parameter deconstruction ──────────────────
 
     [Fact]

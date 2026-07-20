@@ -323,14 +323,14 @@ parse-level set) is enforced by
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
 | Surface corpus (= C# semantic report surface section) | 1,417 | 1,326 template cases (51 receiver templates x 26 values) + 91 specials; outcomes 1,216 ok / 169 err / 32 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 1,381 | the 1,413 above minus the 32 parse-level cases (26 `indexNeg__*` + six deliberate parse-error specials) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Lean-representable surface differential | 1,385 | the 1,417 above minus the 32 parse-level cases (26 `indexNeg__*` + six deliberate parse-error specials) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 13 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
 | Generated Lean case guards | 1,398 | 1,385 surface + 13 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 13 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 1,413 attempted, 1,381 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 32 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 1,417 attempted, 1,385 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 32 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 41 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, and difference facts | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer test invocations | 40 | anchor pins, invariant sweep, artifact freshness + comparable-observations + partition and documentation-accounting facts | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
-| Full .NET suite | 3,127 | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
+| Full .NET suite | 3,127 (as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
 
 Historical accounting note: the original audit's **931 vs 912** and
 **925 vs 924** discrepancies came from counting a header comment that mentioned
@@ -447,7 +447,7 @@ cases):
 
 | Guarantee | Enforced by |
 |---|---|
-| Surface syntax never parses or elaborates to the node (zero origin sites) | `SequenceConstructContainmentTests.SurfaceSequenceSyntax_NeverParsesToSequenceConstruct` + `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` (1,409 corpus programs attempted, 1,377 scanned post-elaboration; see §5.1) + pre-existing `ParserTests` absence assertions |
+| Surface syntax never parses or elaborates to the node (zero origin sites) | `SequenceConstructContainmentTests.SurfaceSequenceSyntax_NeverParsesToSequenceConstruct` + `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` (all corpus programs attempted, the deliberate parse-error cases skipped; see §5.1) + pre-existing `ParserTests` absence assertions |
 | Surface forms keep their intended AST family | `ParenthesizedSequenceSyntax_UsesExpectedNodes` |
 | Production visitors rebuild, never drop or originate | `ProductionVisitor_PreservesExternallyOriginatedNode` |
 | Node semantics pinned (incl. `()`-drop, spread splice) | `DirectSequenceConstruct_DropsEmptyLeavesAndSplicesSpreads` (C#), `internalSequenceConstruct*` guards (Lean CoreTests) |

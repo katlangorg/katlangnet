@@ -503,6 +503,29 @@ public class RestCollectionTests
             Atom(1));
     }
 
+    [Fact]
+    public void WhileLoopStep_RestCollectsExactList_EmptySingletonAndMulti()
+    {
+        // While twin of LoopStep_GroupedMiddleRemainsOneCollectedSequenceSlot:
+        // the while state-binding path collects its rest through the same
+        // exact-list collector as repeat, deconstruction, and calls. The
+        // `middle == [...]` comparison pins the collected KIND (an exact
+        // immutable list), not just the flattened atoms.
+        AssertCollects(
+            "Step(n, middle..., last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
+            Seq(Atom(11), Atom(1), Atom(40)));
+
+        // Empty rest: `[]`, never `()` and never an arity error.
+        AssertCollects(
+            "Step(n, middle..., last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
+            Seq(Atom(11), Atom(1), Atom(40)));
+
+        // Multi-item rest.
+        AssertCollects(
+            "Step(n, middle..., last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
+            Seq(Atom(11), Atom(1), Atom(40)));
+    }
+
     // ── Equality ────────────────────────────────────────────────────────────
 
     [Theory]

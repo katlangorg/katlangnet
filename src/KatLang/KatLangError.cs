@@ -44,6 +44,8 @@ public sealed class KatLangError
             return formattedMissingOutput;
         if (TryFormatLoopStateArityMismatch(error, out var formattedLoopStateArityMismatch))
             return formattedLoopStateArityMismatch;
+        if (TryFormatDeconstructionBindingMismatch(error, out var formattedDeconstructionMismatch))
+            return formattedDeconstructionMismatch;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
             return formattedArityMismatch;
         if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
@@ -339,6 +341,36 @@ public sealed class KatLangError
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Phrase an assignment-deconstruction binding failure against the WRITTEN
+    /// pattern (<c>a, rest..., z = RHS</c>) instead of the synthetic inline
+    /// helper the parser elaborated the assignment into. The context may be
+    /// nested under ordinary call/property evaluation contexts, so the chain
+    /// is searched.
+    /// </summary>
+    private static bool TryFormatDeconstructionBindingMismatch(EvalError error, out string message)
+    {
+        var current = error;
+        while (current is EvalError.WithContext context)
+        {
+            if (context.ErrorContext is DeconstructionBindingContext deconstruction
+                && context.Inner is EvalError.ArityMismatch mismatch)
+            {
+                var pattern = string.Join(", ", deconstruction.TargetDisplayNames);
+                var expectation = deconstruction.HasRestTarget
+                    ? $"at least {FormatCount(mismatch.Expected, "value")}"
+                    : FormatCount(mismatch.Expected, "value");
+                message = $"Assignment pattern `{pattern}` expects {expectation} from the right-hand side, but it supplied {FormatCount(mismatch.Actual, "value")}.";
+                return true;
+            }
+
+            current = context.Inner;
+        }
+
+        message = string.Empty;
+        return false;
     }
 
     private static bool TryFormatLoopStateArityMismatch(EvalError error, out string message)

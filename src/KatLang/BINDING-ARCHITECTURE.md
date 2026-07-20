@@ -170,11 +170,11 @@ Conditional executor semantics remain executor-owned: ordered first-match select
 
 Reopen only when a concrete consumer appears, such as accepted guard-expression semantics, an editor/analyzer feature requiring cross-branch shape analysis, diagnostics that need normalized available-pattern descriptions, or a real runtime matcher divergence bug. If a future model is introduced, it must be separate from `CallableBindingPlan`, data-only unless explicitly justified, and must not speculate about guards before guard semantics are designed.
 
-### Phase 22 flat fixed executor decision
+### Phase 22 flat fixed executor decision (superseded by the shared call assembly)
 
-Flat fixed user-call binding is intentionally not migrated to `BindingInputSlot` yet. Its policies operate on source arguments, while `BindingInputSlot` is post-expansion slot data. Call-site expression boundaries, explicit spread slot expansion, algorithm/value dual binding, and counted-param shadowing remain executor-owned, and flat fixed user calls currently have no second runtime consumer that justifies extraction.
+Call argument-slot assembly is now centralized: `BuildCallArgumentInputs` (Lean `collectVariadicCallItems`) serves EVERY callable shape — flat fixed, flat/mixed variadic, patterned, and multi-clause conditional. It evaluates each written slot, reifies every non-spread slot as exactly one argument value (with the dual algorithm channel where resolvable), and expands every explicit spread slot by one value boundary BEFORE any arity checking, clause selection, or pattern binding. The July 2026 call-spread repair introduced this after an audit found spread expansion implemented in only two of four per-shape assemblers (patterned and conditional callees silently received a spread argument as one closed value).
 
-Reopen this only when another runtime path needs the same flat fixed source-argument policy, a separate source-argument input model exists, Lean or AST semantics make source-argument shape explicit, or a real divergence bug appears. Do not add source-argument or receiver-boundary fields to `BindingInputSlot`, move flat fixed call-boundary policy into `CallableBindingPlan`, or introduce `BindingPolicy` for flat fixed binding as part of this deferral.
+Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/rest/suffix binder, `ParameterPattern` binding (which additionally consumes the explicit written-item channel for zero-parameter block arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver boundary preservation, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
 
 ## `BindingPolicy` deferred
 
