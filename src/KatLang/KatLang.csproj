@@ -35,6 +35,10 @@
 	<ItemGroup>
 		<InternalsVisibleTo Include="KatLang.Tests" />
 		<InternalsVisibleTo Include="KatLang.Benchmarks" />
+		<!-- Grants the standalone parser fuzzing harness (fuzz/KatLang.ParserFuzz)
+		     access to the internal Parser.ParseSyntax raw-syntax entry point.
+		     Compile-time friend access only; does not change any public API. -->
+		<InternalsVisibleTo Include="KatLang.ParserFuzz" />
 	</ItemGroup>
 
 	<ItemGroup>

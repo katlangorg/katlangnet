@@ -1,0 +1,9 @@
+# Scoped rules for the parser fuzzing harness (repo uses core.autocrlf=true).
+# Seed corpus inputs must keep their EXACT bytes — several deliberately contain
+# CRLF or lone-CR to exercise the lexer's line counting — so never normalize them.
+fuzz/KatLang.ParserFuzz/Testcases/** -text
+
+# The WSL runner and the libFuzzer dictionary are consumed inside Linux/WSL and
+# must stay LF regardless of the Windows checkout setting.
+fuzz/run-campaign.sh text eol=lf
+fuzz/katlang.dict     text eol=lf

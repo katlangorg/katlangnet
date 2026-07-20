@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone coverage-guided fuzzing harness for the raw KatLang parser
+    (Parser.ParseSyntax). This project is intentionally NOT part of KatLang.slnx
+    so that normal repository validation (dotnet test .\KatLang.slnx and
+    scripts/validate-all.ps1) is completely unaffected by it.
+
+    Build/run flow lives in scripts/fuzz-parser.ps1 and fuzz/README.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>KatLang.ParserFuzz</RootNamespace>
+    <AssemblyName>KatLang.ParserFuzz</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- The self-contained linux-x64 publish target used for fuzzing under WSL. -->
+    <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
+    <!-- Fuzzing wants raw stack traces; keep symbols and disable trimming. -->
+    <DebugType>portable</DebugType>
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpFuzz" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
+  </ItemGroup>
+
+  <!-- Seed corpus files are data, never compiled. -->
+  <ItemGroup>
+    <None Update="Testcases\**" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
+</Project>

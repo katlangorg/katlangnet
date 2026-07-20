@@ -1,0 +1,67 @@
+# KatLang parser fuzzing dictionary (libFuzzer format).
+#
+# Each entry is an optional name= followed by a double-quoted token. These are the
+# lexical and syntactic fragments the mutator splices into inputs so it can reach
+# grammar states that random bytes rarely hit (keywords, paired delimiters, operator
+# spellings, and a few common definition/call/open shapes).
+
+# ── Keywords ────────────────────────────────────────────────────────────────
+kw_open="open"
+kw_public="public"
+kw_output="Output"
+kw_div="div"
+kw_mod="mod"
+kw_and="and"
+kw_or="or"
+kw_xor="xor"
+kw_not="not"
+
+# ── Operators & single punctuation ──────────────────────────────────────────
+op_ellipsis="..."
+op_assign="="
+op_eq="=="
+op_neq="!="
+op_le="<="
+op_ge=">="
+op_lt="<"
+op_gt=">"
+op_plus="+"
+op_minus="-"
+op_star="*"
+op_slash="/"
+op_caret="^"
+op_comma=","
+op_semicolon=";"
+op_colon=":"
+op_dot="."
+op_tilde="~"
+op_quote="'"
+op_comment="//"
+
+# ── Delimiters, single and paired (incl. empty forms) ───────────────────────
+lparen="("
+rparen=")"
+lbrace="{"
+rbrace="}"
+lbracket="["
+rbracket="]"
+empty_seq="()"
+empty_brace="{}"
+empty_list="[]"
+
+# ── Common combined shapes ──────────────────────────────────────────────────
+output_assign="Output = "
+open_space="open "
+public_space="public "
+assign_spaced=" = "
+call_open="f("
+brace_call="f{"
+dot_member=".map("
+index_zero=":0"
+spread_close="...)"
+rest_sep="..., "
+seq_pair="(1, 2)"
+list_pair="[1, 2]"
+clause_head="f(x) = "
+cond_literal="(0) = "
+string_lit="'x'"
