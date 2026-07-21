@@ -1,0 +1,2 @@
+open 'https://katlang.org/lib'
+R = 1

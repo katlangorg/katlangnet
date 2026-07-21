@@ -1,0 +1,2 @@
+public p(0) = 1
+p(n) = n

@@ -1,0 +1,3 @@
+priv = 1
+open priv
+R = 1

@@ -1,0 +1,2 @@
+greet('en') = 1
+greet(x) = 0

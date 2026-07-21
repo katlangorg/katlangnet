@@ -2,6 +2,7 @@
 # Seed corpus inputs must keep their EXACT bytes — several deliberately contain
 # CRLF or lone-CR to exercise the lexer's line counting — so never normalize them.
 fuzz/KatLang.ParserFuzz/Testcases/** -text
+fuzz/KatLang.ParserFuzz/FrontendTestcases/** -text
 
 # The WSL runner and the libFuzzer dictionary are consumed inside Linux/WSL and
 # must stay LF regardless of the Windows checkout setting.

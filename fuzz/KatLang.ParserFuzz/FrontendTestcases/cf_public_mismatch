@@ -1,0 +1,3 @@
+public q(0) = 1
+q(n) = n
+public q(1) = 2

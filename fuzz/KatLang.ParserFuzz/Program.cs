@@ -30,20 +30,29 @@ internal static class Program
             return DepthProbe.RunChild(args);   // dangerous parse in an isolated child
         if (args.Length > 0 && args[0] == "probe")
             return DepthProbe.RunParent(args);  // coordinator: exp+binary search
+        if (args.Length > 0 && args[0] == "frontend-replay")
+            return FrontEndReplay.Run(args);    // Phase-3 phase-aware frontend replay
 
         if (args.Length > 0)
-            return Replay.Run(args);
+            return Replay.Run(args);            // raw-parser replay (Phase 1)
 
-        // libFuzzer mode. The delegate must let every unexpected exception,
-        // stack overflow, hang, and invariant violation escape so the fuzzing
-        // engine records them as crashes. We only translate the raw byte input
-        // into the string the parser expects.
-        Fuzzer.LibFuzzer.Run(static bytes =>
+        // libFuzzer mode. The delegate must let every unexpected exception, stack
+        // overflow, hang, and invariant violation escape so the fuzzing engine records
+        // them as crashes. KATLANG_FUZZ_MODE selects the target: default (unset) is the
+        // raw parser — UNCHANGED and never replaced — and "frontend" fuzzes the default
+        // elaborated pipeline (FrontEndPipeline.Process, no downloader).
+        if (string.Equals(Environment.GetEnvironmentVariable("KATLANG_FUZZ_MODE"), "frontend", StringComparison.OrdinalIgnoreCase))
         {
-            var source = DecodeSource(bytes);
-            var result = Parser.ParseSyntax(source);
-            FuzzInvariants.Check(source, result);
-        });
+            Fuzzer.LibFuzzer.Run(static bytes => FrontEndInvariants.Check(DecodeSource(bytes)));
+        }
+        else
+        {
+            Fuzzer.LibFuzzer.Run(static bytes =>
+            {
+                var source = DecodeSource(bytes);
+                FuzzInvariants.Check(source, Parser.ParseSyntax(source));
+            });
+        }
 
         return 0;
     }
