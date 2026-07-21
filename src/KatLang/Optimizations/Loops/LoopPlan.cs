@@ -166,11 +166,11 @@ internal sealed class LoopRunFrame
     public void SetScratchSlot(int index, Result value)
         => _scratchSlots[index] = value;
 
-    public Result CurrentStateResult()
-        => Result.FromItems(_stateSlots);
+    public EvalResult<Evaluator.CountedResult> CurrentStateResult()
+        => Evaluator.MakeCheckedLoopStateResult(IterationCtx, _stateSlots);
 
-    public Result ScratchStateResult()
-        => Result.FromItems(_scratchSlots);
+    public EvalResult<Evaluator.CountedResult> ScratchStateResult()
+        => Evaluator.MakeCheckedLoopStateResult(IterationCtx, _scratchSlots);
 
     public bool TryCommitScratchFast()
     {

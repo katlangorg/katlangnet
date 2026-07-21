@@ -1,4 +1,5 @@
 using KatLang.Evaluation;
+using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
 
@@ -42,6 +43,32 @@ public class StringAndDisplayLimitsTests
 
     private static EvaluationLimits Str(int maxStringLength) => new() { MaxStringLength = maxStringLength };
 
+    private static Expr BuildStringRepeatAst(string value, long count)
+    {
+        var parsed = Parser.Parse($"Step(x) = 'placeholder'\nOutput = Step.repeat({count}, 0)").Root;
+        var properties = parsed.Properties.Select(property =>
+        {
+            if (property.Name != "Step") return property;
+            var step = Assert.IsType<Algorithm.User>(property.Value);
+            return property with
+            {
+                Value = step with { Output = [new Expr.StringLiteral(value)] },
+            };
+        }).ToList();
+
+        return new Expr.Block(parsed with { Properties = properties });
+    }
+
+    private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) ObserveStringRepeat(
+        string value,
+        long count,
+        EvaluationLimits? limits,
+        bool optimized)
+        => Evaluator.RunCountedObserved(
+            BuildStringRepeatAst(value, count),
+            limits,
+            enableOptimizations: optimized);
+
     private const string LimitPrefix = "Display output limit of";
 
     // ── Configuration ────────────────────────────────────────────────────────
@@ -62,7 +89,7 @@ public class StringAndDisplayLimitsTests
         // Zero is a meaningful configuration here (unlike depth): no string may be created
         // and nothing may be rendered.
         Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("Output = 'a'", Str(0)));
-        Assert.StartsWith(LimitPrefix, Display("Output = 1", Display(0)));
+        Assert.Equal(string.Empty, Display("Output = 1", Display(0)));
     }
 
     [Fact]
@@ -136,6 +163,76 @@ public class StringAndDisplayLimitsTests
             ErrorOf("ToText(x) = x.string\nOutput = [12345].map(ToText)", Str(4)));
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
             ErrorOf("Step(x) = 'abcd', 0\nOutput = Step.while(1)", Str(3)));
+    }
+
+    [Fact]
+    public void OptimizedLoop_StringLiteralUsesTheAlwaysActiveCheckedConstructionPath()
+    {
+        var oversized = new string('x', EvaluationLimits.MaxSupportedStringLength + 1);
+        foreach (var limits in new EvaluationLimits?[]
+                 {
+                     null,
+                     new EvaluationLimits { MaxStringLength = EvaluationLimits.MaxSupportedStringLength },
+                 })
+        {
+            foreach (var optimized in new[] { false, true })
+            {
+                var observed = ObserveStringRepeat(oversized, 1, limits, optimized);
+                var error = Assert.IsType<EvalError.StringSizeLimitExceeded>(observed.Result.Error);
+                Assert.Equal(EvaluationLimits.MaxSupportedStringLength, error.Limit);
+                Assert.Equal(oversized.Length, error.Requested);
+                Assert.Equal(0, observed.Budget.MaterializedStringChars);
+            }
+        }
+
+        foreach (var optimized in new[] { false, true })
+        {
+            var observed = ObserveStringRepeat("abcd", 1, Str(3), optimized);
+            Assert.IsType<EvalError.StringSizeLimitExceeded>(observed.Result.Error);
+            Assert.Equal(0, observed.Budget.MaterializedStringChars);
+        }
+    }
+
+    [Fact]
+    public void OptimizedLoop_StringLiteralChargesEveryLogicalEvaluation()
+    {
+        foreach (var optimized in new[] { false, true })
+        {
+            var exact = ObserveStringRepeat(
+                "abc",
+                2,
+                new EvaluationLimits { MaxMaterializedStringChars = 6 },
+                optimized);
+            Assert.False(exact.Result.IsError);
+            Assert.Equal(6, exact.Budget.MaterializedStringChars);
+
+            var failure = ObserveStringRepeat(
+                "abc",
+                2,
+                new EvaluationLimits { MaxMaterializedStringChars = 5 },
+                optimized);
+            Assert.IsType<EvalError.StringMaterializationLimitExceeded>(failure.Result.Error);
+            Assert.Equal(3, failure.Budget.MaterializedStringChars);
+        }
+    }
+
+    [Fact]
+    public void ConfiguredStringBudget_DoesNotDisableLoopOptimization()
+    {
+        var diagnostics = new LoopOptimizationDiagnostics();
+        var result = Evaluator.Run(
+            BuildStringRepeatAst("abc", 2),
+            new KatLang.Evaluation.Caching.RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: true,
+            diagnostics,
+            new EvaluationLimits { MaxMaterializedStringChars = 6 });
+
+        Assert.False(result.IsError);
+        var stats = diagnostics.GetSnapshot();
+        Assert.Equal(1, stats.OptimizedLoopHits);
+        Assert.Equal(2, stats.PlannedExpressionHits);
+        Assert.Equal(0, stats.PlannedExpressionFallbacks);
+        Assert.Equal(0, stats.GenericExpressionEvaluationsInsideOptimizedLoops);
     }
 
     [Fact]
@@ -236,10 +333,11 @@ public class StringAndDisplayLimitsTests
         => Assert.Equal("[1, 2, 3]", Display("Output = [1, 2, 3]", Display(9)));
 
     [Fact]
-    public void Rendering_OneOverTheLimit_ReportsTheLimit()
+    public void Rendering_OneOverTheLimit_UsesBoundedMarker()
     {
         var text = Display("Output = [1, 2, 3]", Display(8));
-        Assert.Equal("Display output limit of 8 UTF-16 code units was exceeded", text);
+        Assert.Equal("…", text);
+        Assert.True(text.Length <= 8);
     }
 
     [Fact]
@@ -247,7 +345,7 @@ public class StringAndDisplayLimitsTests
     {
         // "[1, 2]" is 6 units: two atoms, two brackets, and a two-unit separator.
         Assert.Equal("[1, 2]", Display("Output = [1, 2]", Display(6)));
-        Assert.StartsWith(LimitPrefix, Display("Output = [1, 2]", Display(5)));
+        Assert.Equal("…", Display("Output = [1, 2]", Display(5)));
     }
 
     [Fact]
@@ -259,7 +357,7 @@ public class StringAndDisplayLimitsTests
         // defined in UTF-16 code units.
         var exact = 2 + Environment.NewLine.Length;
         Assert.Equal($"1{Environment.NewLine}2", Display("Output = 1, 2", Display(exact)));
-        Assert.StartsWith(LimitPrefix, Display("Output = 1, 2", Display(exact - 1)));
+        Assert.Equal("…", Display("Output = 1, 2", Display(exact - 1)));
     }
 
     [Theory]
@@ -268,34 +366,76 @@ public class StringAndDisplayLimitsTests
     [InlineData("Output = 'abc', 'def', 'ghi'")]
     public void RenderedText_NeverExceedsTheConfiguredLimit(string source)
     {
-        // Sweep every limit around the natural length: whatever comes back must either be
-        // the limit message or fit inside the limit.
+        // Sweep every limit around the natural length: the contract is unconditional.
         var natural = Display(source).Length;
         for (var limit = 0; limit <= natural + 2; limit++)
         {
             var text = Display(source, Display(limit));
-            if (text.StartsWith(LimitPrefix, StringComparison.Ordinal)) continue;
             Assert.True(text.Length <= limit, $"limit {limit} returned {text.Length} units.");
         }
     }
 
     [Fact]
-    public void TheLimitMessageItselfIsExemptFromTheLimit()
+    public void EveryRunResultVariant_AndEvaluateToString_ObeyTheSameStrictLimit()
     {
-        // The message is not charged, so it is produced even at a limit of zero: a caller
-        // that asks for no output still learns why there is none.
-        var text = Display("Output = 1, 2, 3", Display(0));
-        Assert.StartsWith(LimitPrefix, text);
-        Assert.True(text.Length > 0);
+        var cases = new (string Source, Type ExpectedType)[]
+        {
+            ("Output = [(1, 2), [3, [4]]]", typeof(RunResult.Success)),
+            ("Output = )(", typeof(RunResult.ParseFailure)),
+            ("Output = 1 div 0", typeof(RunResult.EvalFailure)),
+            ("Value = 1", typeof(RunResult.NoProgramOutput)),
+        };
+
+        foreach (var (source, expectedType) in cases)
+        {
+            var naturalResult = KatLangEngine.Run(source);
+            Assert.Equal(expectedType, naturalResult.GetType());
+            var naturalLength = naturalResult.ToDisplayString().Length;
+            for (var limit = 0; limit <= naturalLength + 2; limit++)
+            {
+                var options = new RunOptions { EvaluationLimits = Display(limit) };
+                var result = KatLangEngine.Run(source, options);
+                Assert.Equal(expectedType, result.GetType());
+                var first = result.ToDisplayString();
+                var second = result.ToDisplayString();
+                Assert.Equal(first, second);
+                Assert.True(first.Length <= limit, $"{result.GetType().Name}, limit {limit}, length {first.Length}");
+
+                var evaluated = KatLangEngine.EvaluateToString(source, options);
+                Assert.True(evaluated.Length <= limit, $"EvaluateToString, limit {limit}, length {evaluated.Length}");
+            }
+        }
+    }
+
+    [Fact]
+    public void ManuallyConstructedResults_UseTheDefaultHardDisplayCeiling()
+    {
+        var success = new RunResult.Success(
+            new Algorithm.User(null, [], [], [], []),
+            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)),
+            []);
+
+        Assert.True(success.ToDisplayString().Length <= EvaluationLimits.MaxSupportedDisplayLength);
+    }
+
+    [Fact]
+    public void OverflowReplacement_IsItselfStrictlyBounded()
+    {
+        Assert.Equal(string.Empty, Display("Output = 1, 2, 3", Display(0)));
+        Assert.Equal("…", Display("Output = 1, 2, 3", Display(1)));
+
+        var longOutput = "Output = '" + new string('x', 200) + "'";
+        var completeMessage = Display(longOutput, Display(100));
+        Assert.StartsWith(LimitPrefix, completeMessage);
+        Assert.True(completeMessage.Length <= 100);
     }
 
     [Fact]
     public void OverLimitRendering_IsNeverPartialOrTruncated()
     {
         var text = Display("Output = [111, 222, 333]", Display(10));
-        Assert.StartsWith(LimitPrefix, text);
+        Assert.Equal("…", text);
         Assert.DoesNotContain("111", text);
-        Assert.DoesNotContain("…", text);
     }
 
     // ── Rendering: the compact-source reproducer ─────────────────────────────
@@ -351,9 +491,17 @@ public class StringAndDisplayLimitsTests
     public void EvaluateToString_IsBounded()
     {
         Assert.Equal("1 2 3", KatLangEngine.EvaluateToString("Output = 1, 2, 3"));
+        Assert.Equal(
+            "…",
+            KatLangEngine.EvaluateToString(
+                "Output = 1, 2, 3",
+                new RunOptions { EvaluationLimits = Display(4) }));
+        var longOutput = "Output = " + string.Join(", ", Enumerable.Range(1, 100));
         Assert.StartsWith(
             LimitPrefix,
-            KatLangEngine.EvaluateToString("Output = 1, 2, 3", new RunOptions { EvaluationLimits = Display(4) }));
+            KatLangEngine.EvaluateToString(
+                longOutput,
+                new RunOptions { EvaluationLimits = Display(100) }));
     }
 
     [Fact]
@@ -374,13 +522,16 @@ public class StringAndDisplayLimitsTests
     // ── Precedence with the other limits ─────────────────────────────────────
 
     [Fact]
-    public void EvaluatorResourceErrors_AreNotReplacedByDisplayLimits()
+    public void EvaluatorResourceErrors_RemainStructuredWhenRenderingIsRefused()
     {
-        // Rendering happens after evaluation, so an evaluator resource error still wins.
-        var text = Display(
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(
             "Output = range(1, 1000)",
-            new EvaluationLimits { MaxCollectionItems = 10, MaxDisplayLength = 1 });
-        Assert.Contains("Collection size limit", text);
+            new RunOptions
+            {
+                EvaluationLimits = new EvaluationLimits { MaxCollectionItems = 10, MaxDisplayLength = 1 },
+            }));
+        Assert.Contains("Collection size limit", failure.Errors[0].Message);
+        Assert.Equal("…", failure.ToDisplayString());
     }
 
     [Fact]

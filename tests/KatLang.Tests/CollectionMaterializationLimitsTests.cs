@@ -1,5 +1,6 @@
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
+using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
 
@@ -28,6 +29,15 @@ public class CollectionMaterializationLimitsTests
     private static EvaluationLimits Items(int maxCollectionItems) => new() { MaxCollectionItems = maxCollectionItems };
 
     private static EvaluationLimits Total(long maxMaterializedItems) => new() { MaxMaterializedItems = maxMaterializedItems };
+
+    private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) Observe(
+        string source,
+        EvaluationLimits? limits = null,
+        bool optimized = true)
+        => Evaluator.RunCountedObserved(
+            new Expr.Block(Parser.Parse(source).Root),
+            limits,
+            enableOptimizations: optimized);
 
     // ── Configuration and validation ─────────────────────────────────────────
 
@@ -199,6 +209,105 @@ public class CollectionMaterializationLimitsTests
         const string source = "A = (1, 2, 3)\nB = (A..., A...)\nOutput = B.count";
         Assert.False(Eval(source, Items(6)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
+    }
+
+    [Fact]
+    public void OrdinaryFlatRest_IsCheckedBeforeItsExactListIsCreated()
+    {
+        const string source = "F(items...) = items.count\nOutput = F(1, 2, 3, 4)";
+        var failed = Observe(source, Items(3));
+        var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(failed.Result.Error);
+        Assert.Equal(4, error.Requested);
+        Assert.Equal(0, failed.Budget.MaterializedItems);
+
+        var exact = Observe(source, Total(4));
+        Assert.False(exact.Result.IsError);
+        Assert.Equal(4, exact.Budget.MaterializedItems);
+    }
+
+    [Fact]
+    public void RestCollection_DefaultHardCeilingRejectsDoubledMaximumRange()
+    {
+        const string source =
+            "A = range(1, 100000)\n" +
+            "F(items...) = items.count\n" +
+            "Output = F(A..., A...)";
+
+        var observed = Observe(source);
+        var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(observed.Result.Error);
+        Assert.Equal(EvaluationLimits.MaxSupportedCollectionItems, error.Limit);
+        Assert.Equal(2L * EvaluationLimits.MaxSupportedCollectionItems, error.Requested);
+        // The range and the two explicit caller-side spreads each create one checked
+        // 100,000-slot sequence/list value. The rejected 200,000-item rest list itself
+        // is not charged because its reservation fails before construction.
+        Assert.Equal(3L * EvaluationLimits.MaxSupportedCollectionItems, observed.Budget.MaterializedItems);
+    }
+
+    [Theory]
+    [InlineData("F((head, tail...)) = tail.count\nOutput = F((1, 2, 3))", 5)]
+    [InlineData("x, tail... = [1, 2, 3, 4]\nOutput = tail.count", 7)]
+    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
+    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
+    public void EveryRestBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
+    {
+        var observed = Observe(source, Total(expectedItems));
+        Assert.False(observed.Result.IsError);
+        Assert.Equal(expectedItems, observed.Budget.MaterializedItems);
+
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(
+            Observe(source, Total(expectedItems - 1)).Result.Error);
+    }
+
+    public static TheoryData<string> MultiSlotLoopSources => new()
+    {
+        "Step(a, b) = a, b\nOutput = Step.repeat(0, 1, 2)",
+        "Step(a, b) = a + 1, b + 1\nOutput = Step.repeat(3, 1, 2)",
+        "Step(a, b) = a + 1, b + 1, a < 2\nOutput = Step.while(0, 2)",
+    };
+
+    [Theory]
+    [MemberData(nameof(MultiSlotLoopSources))]
+    public void GenericAndOptimizedLoops_ChargeOnlyTheirFinalPersistentState(string source)
+    {
+        foreach (var optimized in new[] { false, true })
+        {
+            var exact = Observe(source, Total(2), optimized);
+            Assert.False(exact.Result.IsError);
+            Assert.Equal(2, exact.Budget.MaterializedItems);
+
+            Assert.IsType<EvalError.MaterializationLimitExceeded>(
+                Observe(source, Total(1), optimized).Result.Error);
+            Assert.IsType<EvalError.CollectionSizeLimitExceeded>(
+                Observe(source, Items(1), optimized).Result.Error);
+        }
+
+        if (!source.Contains("repeat(0", StringComparison.Ordinal))
+        {
+            var diagnostics = new LoopOptimizationDiagnostics();
+            var result = Evaluator.Run(
+                new Expr.Block(Parser.Parse(source).Root),
+                new RunScopedZeroArgPropertyResultCache(),
+                enableLoopOptimization: true,
+                diagnostics,
+                Total(2));
+            Assert.False(result.IsError);
+            Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
+        }
+    }
+
+    [Fact]
+    public void DirectNestedSpreads_ChargeEveryRealSequenceRecapture()
+    {
+        const string oneLayer = "A = (1, 2, 3)\nOutput = A...";
+        const string twoLayers = "A = (1, 2, 3)\nOutput = A......";
+
+        var one = Observe(oneLayer, Total(9));
+        var two = Observe(twoLayers, Total(12));
+        Assert.False(one.Result.IsError);
+        Assert.False(two.Result.IsError);
+        Assert.Equal(9, one.Budget.MaterializedItems);
+        Assert.Equal(12, two.Budget.MaterializedItems);
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(Observe(twoLayers, Total(11)).Result.Error);
     }
 
     [Fact]

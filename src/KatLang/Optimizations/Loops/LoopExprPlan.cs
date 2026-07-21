@@ -4,6 +4,8 @@ internal abstract record LoopExprPlan(Expr Source)
 {
     public sealed record Constant(Expr Source, PlannedLoopValue Value) : LoopExprPlan(Source);
 
+    public sealed record StringConstant(Expr Source, string Value) : LoopExprPlan(Source);
+
     public sealed record StateSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
 
     public sealed record CapturedSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
@@ -59,7 +61,7 @@ internal static partial class LoopOptimizer
 
             case Expr.StringLiteral(var value):
                 return new LoopExprPlanTryBuildResult(
-                    new LoopExprPlan.Constant(expr, PlannedLoopValue.FromResult(new Result.Str(value))),
+                    new LoopExprPlan.StringConstant(expr, value),
                     null);
 
             case Expr.Param(var name):
@@ -329,6 +331,17 @@ internal static partial class LoopOptimizer
             case LoopExprPlan.Constant constant:
                 return EvalResult<PlannedLoopValue>.Ok(constant.Value);
 
+            case LoopExprPlan.StringConstant constant:
+            {
+                var valueR = Evaluator.MakeStringResult(
+                    frame.IterationCtx,
+                    constant.Value,
+                    constant.Source.Span);
+                return valueR.IsError
+                    ? valueR.Error
+                    : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(valueR.Value));
+            }
+
             case LoopExprPlan.StateSlot stateSlot:
                 return EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetStateSlot(stateSlot.Index)));
 
@@ -525,6 +538,7 @@ internal static partial class LoopOptimizer
         => plan switch
         {
             LoopExprPlan.Constant constant => $"Const({Evaluator.FormatResultForDiagnostic(constant.Value.ToResult())})",
+            LoopExprPlan.StringConstant constant => $"StringConst(length={constant.Value.Length})",
             LoopExprPlan.StateSlot stateSlot => $"StateSlot({stateSlot.Name})",
             LoopExprPlan.CapturedSlot capturedSlot => $"CapturedSlot({capturedSlot.Name})",
             LoopExprPlan.CountedParamSlot countedParamSlot => $"CountedParamSlot({countedParamSlot.Name})",

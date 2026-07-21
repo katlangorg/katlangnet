@@ -84,8 +84,7 @@ internal static partial class LoopOptimizer
 
                 var (nextStateSlots, continueValue) = splitR.Value;
                 result = continueValue == 0
-                    ? EvalResult<Evaluator.CountedResult>.Ok(
-                        new Evaluator.CountedResult(frame.CurrentStateResult(), plan.StateArity))
+                    ? frame.CurrentStateResult()
                     : genericContinuation(nextStateSlots);
                 return true;
             }
@@ -101,8 +100,7 @@ internal static partial class LoopOptimizer
 
             if (contR.Value == 0)
             {
-                result = EvalResult<Evaluator.CountedResult>.Ok(
-                    new Evaluator.CountedResult(frame.CurrentStateResult(), plan.StateArity));
+                result = frame.CurrentStateResult();
                 return true;
             }
 
@@ -170,16 +168,14 @@ internal static partial class LoopOptimizer
             {
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
-                    ? EvalResult<Evaluator.CountedResult>.Ok(
-                        new Evaluator.CountedResult(Result.FromItems(outputSlots), outputSlots.Count))
+                    ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
                     : genericContinuation(remainingCount, outputSlots);
                 return true;
             }
 
             if (iteration == count - 1)
             {
-                result = EvalResult<Evaluator.CountedResult>.Ok(
-                    new Evaluator.CountedResult(frame.ScratchStateResult(), plan.StateArity));
+                result = frame.ScratchStateResult();
                 return true;
             }
 
@@ -188,15 +184,13 @@ internal static partial class LoopOptimizer
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
-                    ? EvalResult<Evaluator.CountedResult>.Ok(
-                        new Evaluator.CountedResult(Result.FromItems(outputSlots), outputSlots.Count))
+                    ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
                     : genericContinuation(remainingCount, outputSlots);
                 return true;
             }
         }
 
-        result = EvalResult<Evaluator.CountedResult>.Ok(
-            new Evaluator.CountedResult(frame.CurrentStateResult(), plan.StateArity));
+        result = frame.CurrentStateResult();
         return true;
     }
 

@@ -957,19 +957,19 @@ public static class Evaluator
     /// builtin and sequence-pipeline direct range iteration.
     /// </summary>
     private static EvalResult<InclusiveRange> EvalBuiltinRangeArguments(
-        IReadOnlyList<Algorithm> args,
+        IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (args.Count != 2)
             return WrongBuiltinArity(BuiltinId.@range, args.Count);
 
-        var startR = EvalAlgOutput(args[0], ctx, valEnv);
+        var startR = EvalResolvedArgument(args[0], ctx, valEnv);
         if (startR.IsError) return startR.Error;
         var startIntR = ExpectWholeInt(startR.Value, "range start");
         if (startIntR.IsError) return startIntR.Error;
 
-        var stopR = EvalAlgOutput(args[1], ctx, valEnv);
+        var stopR = EvalResolvedArgument(args[1], ctx, valEnv);
         if (stopR.IsError) return stopR.Error;
         var stopIntR = ExpectWholeInt(stopR.Value, "range stop");
         if (stopIntR.IsError) return stopIntR.Error;
@@ -1049,21 +1049,23 @@ public static class Evaluator
     private readonly record struct VariadicCallItem(
         Result? Value,
         Algorithm? Algorithm,
-        EvalError? ValueError);
+        EvalError? ValueError,
+        CountedResult? PreparedValue = null);
 
     private readonly record struct ResolvedArgumentAlgorithm(
-        Algorithm Algorithm,
+        Algorithm? Algorithm,
         bool SpreadsSequence)
     {
         /// <summary>
         /// The already-computed value of this argument, when the caller evaluated it before
-        /// assembling the call. Present only for the dotted RECEIVER, which by definition
-        /// has already been evaluated in order to dispatch on it.
+        /// assembling the call. Used for dotted receivers and builtin callback arguments,
+        /// both of which have already been evaluated before builtin binding begins.
         ///
-        /// <para><see cref="Algorithm"/> stays populated so the argument keeps its ordinary
-        /// algorithm channel and every non-value consumer is unchanged; this field only
-        /// tells the value channel that the answer is already known, so the receiver's
-        /// value is computed at most once per dotted operation.</para>
+        /// <para><see cref="Algorithm"/> retains a source-backed algorithm channel when one
+        /// exists. Callback data values leave that channel null so their structure is not
+        /// eagerly rebuilt as an AST; an algorithm-only consumer can recreate the legacy
+        /// channel lazily from this counted value. The value channel always uses this field
+        /// directly and never re-evaluates a reconstructed literal.</para>
         /// </summary>
         public CountedResult? PreparedValue { get; init; }
     }
@@ -1332,8 +1334,17 @@ public static class Evaluator
     /// so no caller-retained buffer can mutate the collected value.
     /// Lean: <c>collectRest</c>.
     /// </summary>
-    private static Result.ListValue CollectRest(IReadOnlyList<Result> capturedValues)
-        => new(capturedValues);
+    private static EvalResult<Result.ListValue> CollectRest(
+        EvalCtx ctx,
+        IReadOnlyList<Result> capturedValues,
+        SourceSpan? span = null)
+    {
+        if (ReserveCollection(ctx, capturedValues.Count, span) is { } error)
+            return error;
+
+        return EvalResult<Result.ListValue>.Ok(
+            Result.ListValue.TakeOwnership(capturedValues.ToArray()));
+    }
 
     /// <summary>
     /// True when an argument's resolved algorithm meaning is genuinely
@@ -1353,15 +1364,21 @@ public static class Evaluator
             _ => algorithm.Params.Count > 0 || algorithm.ParameterPatterns.Count > 0,
         };
 
-    private static VariadicCapture CreateVariadicCapture(string name, IReadOnlyList<Result> capturedValues)
+    private static EvalResult<VariadicCapture> CreateVariadicCapture(
+        EvalCtx ctx,
+        string name,
+        IReadOnlyList<Result> capturedValues,
+        SourceSpan? span = null)
     {
-        var capturedResult = CollectRest(capturedValues);
+        var capturedResultR = CollectRest(ctx, capturedValues, span);
+        if (capturedResultR.IsError) return capturedResultR.Error;
+        var capturedResult = capturedResultR.Value;
         // A list value is one visible value, so a rest binding always carries
         // emitted count 1 (including the empty rest `[]`).
-        return new VariadicCapture(
+        return EvalResult<VariadicCapture>.Ok(new VariadicCapture(
             name,
             capturedResult,
-            new CountedResult(capturedResult, 1));
+            new CountedResult(capturedResult, 1)));
     }
 
     private static EvalResult<IReadOnlyList<Result>?> TryGetExplicitSequenceValueItems(
@@ -1472,6 +1489,7 @@ public static class Evaluator
     private static EvalResult<UserCallBindings> BindParameterPattern(
         ParameterPattern pattern,
         ParameterPatternInput input,
+        EvalCtx ctx,
         bool allowAlgorithmBindings)
     {
         switch (pattern)
@@ -1518,6 +1536,7 @@ public static class Evaluator
                 return BindParameterPatternList(
                     group.Items,
                     nestedInputs,
+                    ctx,
                     allowAlgorithmBindings: false,
                     (required, actual) => new EvalError.ArityMismatch(required, actual));
             }
@@ -1530,6 +1549,7 @@ public static class Evaluator
     private static EvalResult<UserCallBindings> BindParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
         IReadOnlyList<ParameterPatternInput> inputs,
+        EvalCtx ctx,
         bool allowAlgorithmBindings,
         Func<int, int, EvalError> arityMismatch)
     {
@@ -1606,7 +1626,7 @@ public static class Evaluator
 
         EvalResult<bool> BindOne(int patternIndex, int inputIndex)
         {
-            var boundR = BindParameterPattern(patterns[patternIndex], inputs[inputIndex], allowAlgorithmBindings);
+            var boundR = BindParameterPattern(patterns[patternIndex], inputs[inputIndex], ctx, allowAlgorithmBindings);
             if (boundR.IsError) return boundR.Error;
 
             return AddBindings(boundR.Value);
@@ -1671,7 +1691,9 @@ public static class Evaluator
             capturedValues.Add(input.Value);
         }
 
-        var capture = CreateVariadicCapture(variadicCapture.Name, capturedValues);
+        var captureR = CreateVariadicCapture(ctx, variadicCapture.Name, capturedValues, variadicCapture.Span);
+        if (captureR.IsError) return captureR.Error;
+        var capture = captureR.Value;
         var captureBindingsR = AddBindings(new UserCallBindings(
             [(capture.Name, capture.Value)],
             [(capture.Name, capture.CountedValue)],
@@ -1702,6 +1724,7 @@ public static class Evaluator
         var bindingsR = BindParameterPatternList(
             callee.ParameterPatterns,
             inputsR.Value,
+            ctx,
             allowAlgorithmBindings: true,
             (required, actual) => new EvalError.ArityMismatch(required, actual)
             {
@@ -1900,6 +1923,7 @@ public static class Evaluator
         return BindParameterPatternList(
             callee.ParameterPatterns,
             inputsR.Value,
+            ctx,
             allowAlgorithmBindings: true,
             (required, actual) => VariadicBindingArityMismatch(calleeName, required, actual, signature));
     }
@@ -2538,7 +2562,8 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedParameterPatternBindings> BindCountedCallbackParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedResult> args)
+        IReadOnlyList<CountedResult> args,
+        EvalCtx ctx)
     {
         var slots = args;
         if (args.Count > 0 && args.Count < patterns.Count)
@@ -2553,12 +2578,14 @@ public static class Evaluator
         return BindCountedParameterPatternList(
             patterns,
             slots,
+            ctx,
             static (required, actual) => new EvalError.ArityMismatch(required, actual));
     }
 
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPattern(
         ParameterPattern pattern,
-        CountedResult input)
+        CountedResult input,
+        EvalCtx ctx)
     {
         switch (pattern)
         {
@@ -2590,6 +2617,7 @@ public static class Evaluator
                 return BindCountedParameterPatternList(
                     group.Items,
                     nestedInputs,
+                    ctx,
                     (required, actual) => new EvalError.ArityMismatch(required, actual));
             }
 
@@ -2601,6 +2629,7 @@ public static class Evaluator
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
         IReadOnlyList<CountedResult> inputs,
+        EvalCtx ctx,
         Func<int, int, EvalError> arityMismatch)
     {
         var variadicIndex = -1;
@@ -2637,7 +2666,7 @@ public static class Evaluator
 
         EvalResult<bool> BindOne(int patternIndex, int inputIndex)
         {
-            var boundR = BindCountedParameterPattern(patterns[patternIndex], inputs[inputIndex]);
+            var boundR = BindCountedParameterPattern(patterns[patternIndex], inputs[inputIndex], ctx);
             if (boundR.IsError) return boundR.Error;
 
             return AddBindings(boundR.Value);
@@ -2683,7 +2712,9 @@ public static class Evaluator
             .ToList();
         // Rest binding COLLECTS: the assigned supply becomes one exact
         // immutable list value, emitted count 1 (a list is one visible value).
-        var capturedResult = CollectRest(capturedValues);
+        var capturedResultR = CollectRest(ctx, capturedValues, variadicCapture.Span);
+        if (capturedResultR.IsError) return capturedResultR.Error;
+        var capturedResult = capturedResultR.Value;
         var captured = new CountedResult(capturedResult, 1);
         var captureBindingsR = AddBindings(new CountedParameterPatternBindings(
             [(variadicCapture.Name, captured)]));
@@ -2742,9 +2773,14 @@ public static class Evaluator
         switch (callee)
         {
             case Algorithm.Builtin(var builtin):
-                return ApplyBuiltinCounted(
+                return ApplyBuiltinCountedResolved(
                     builtin,
-                    args.Select(CountedArgAlgorithm).ToList(),
+                    args.Select(static arg => new ResolvedArgumentAlgorithm(
+                        Algorithm: null,
+                        SpreadsSequence: false)
+                    {
+                        PreparedValue = arg,
+                    }).ToList(),
                     ctx,
                     valEnv);
 
@@ -2773,6 +2809,7 @@ public static class Evaluator
                     var countedPatternEnvR = BindCountedParameterPatternList(
                         callee.ParameterPatterns,
                         args,
+                        ctx,
                         (required, actual) => new EvalError.ArityMismatch(required, actual));
                     if (countedPatternEnvR.IsError) return countedPatternEnvR.Error;
 
@@ -2793,7 +2830,7 @@ public static class Evaluator
                 // element as one collected slot.
                 if (ParameterPattern.HasVariadicCaptureAtCurrentLevel(callee.ParameterPatterns))
                 {
-                    var restPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args);
+                    var restPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
                     if (restPatternEnvR.IsError) return restPatternEnvR.Error;
 
                     var restBindings = restPatternEnvR.Value;
@@ -2911,7 +2948,7 @@ public static class Evaluator
         // Output-slot capture is a persistent collection: spread can expand it well beyond
         // any single input (`(A..., A...)` doubles), so the reservation happens here, before
         // the sequence value is built.
-        if (ReserveSequenceCapture(ctx, results.Count) is { } capturedLimitError)
+        if (ReserveSequenceCapture(ctx, results.Count, FirstSpan(alg.Output)) is { } capturedLimitError)
             return capturedLimitError;
 
         return EvalResult<CountedResult>.Ok(new CountedResult(CombineOutputSlots(results), emittedCount));
@@ -2968,6 +3005,31 @@ public static class Evaluator
     /// </summary>
     private static EvalError? ReserveSequenceCapture(EvalCtx ctx, int slotCount, SourceSpan? span = null)
         => slotCount >= 2 ? ReserveCollection(ctx, slotCount, span) : null;
+
+    /// <summary>
+    /// Canonically captures an item supply after reserving only the slots that the
+    /// resulting persistent sequence actually stores. Empty capture stores no item
+    /// slots, singleton capture returns the existing child value, and two or more
+    /// items create and charge one sequence value.
+    /// </summary>
+    private static EvalResult<Result> MakeCheckedSequenceCapture(
+        EvalCtx ctx,
+        IReadOnlyList<Result> items,
+        SourceSpan? span = null)
+        => ReserveSequenceCapture(ctx, items.Count, span) is { } error
+            ? error
+            : EvalResult<Result>.Ok(CombineOutputSlots(items));
+
+    internal static EvalResult<CountedResult> MakeCheckedLoopStateResult(
+        EvalCtx ctx,
+        IReadOnlyList<Result> stateSlots,
+        SourceSpan? span = null)
+    {
+        var valueR = MakeCheckedSequenceCapture(ctx, stateSlots, span);
+        return valueR.IsError
+            ? valueR.Error
+            : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, stateSlots.Count));
+    }
 
     private static EvalResult<CountedResult> MakeCollectionListResult(
         EvalCtx ctx,
@@ -3237,6 +3299,7 @@ public static class Evaluator
         var countedPatternEnvR = BindCountedParameterPatternList(
             callee.ParameterPatterns,
             args,
+            ctx,
             (required, actual) => new EvalError.ArityMismatch(required, actual));
         if (countedPatternEnvR.IsError) return countedPatternEnvR.Error;
 
@@ -3371,7 +3434,7 @@ public static class Evaluator
         if (ReserveSequenceCapture(ctx, items.Count) is { } sequenceLimitError)
             return sequenceLimitError;
 
-        var value = Result.FromItems(items);
+        var value = CombineOutputSlots(items);
         return EvalResult<CountedResult>.Ok(new CountedResult(
             value,
             value.ValueCount()));
@@ -3446,15 +3509,18 @@ public static class Evaluator
         if (operandR.IsError) return operandR.Error;
 
         var items = operandR.Value;
-        if (ReserveSequenceCapture(ctx, items.Count) is { } spreadLimitError)
-            return spreadLimitError;
+        for (var layer = 0; layer < layers; layer++)
+        {
+            var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
+            if (capturedR.IsError) return capturedR.Error;
 
-        for (var layer = 1; layer < layers; layer++)
-            items = Result.FromItems(items).SpreadItems();
+            if (layer == layers - 1)
+                return EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count));
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(
-            Result.FromItems(items),
-            items.Count));
+            items = capturedR.Value.SpreadItems();
+        }
+
+        throw new InvalidOperationException("Sequence spread must contain at least one layer.");
     }
 
     /// <summary>
@@ -3476,7 +3542,8 @@ public static class Evaluator
     private static EvalResult<CountedResult> EvalListLiteralCounted(
         IReadOnlyList<Expr> elements,
         EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
+        IReadOnlyList<(string, Result)> valEnv,
+        SourceSpan? span)
     {
         var items = new List<Result>();
         foreach (var element in elements)
@@ -3488,7 +3555,7 @@ public static class Evaluator
 
         // Cardinality is known once the written slots (including spread expansion) are
         // evaluated, so the reservation happens before the persistent list is built.
-        if (ReserveCollection(ctx, items.Count) is { } limitError)
+        if (ReserveCollection(ctx, items.Count, span) is { } limitError)
             return limitError;
 
         return EvalResult<CountedResult>.Ok(new CountedResult(
@@ -3523,28 +3590,44 @@ public static class Evaluator
             // same builtin call and recurses without ever settling on a value. Keep the
             // algorithm unevaluated so it can be applied with bound parameters later;
             // only value-shaped arguments (no parameters) are materialized eagerly.
-            if (arg.Params.Count > 0 || arg.ParameterPatterns.Count > 0)
+            if (arg is not null && (arg.Params.Count > 0 || arg.ParameterPatterns.Count > 0))
             {
-                items.Add(new VariadicCallItem(Value: null, arg, ValueError: null));
+                items.Add(new VariadicCallItem(
+                    Value: null,
+                    arg,
+                    ValueError: null,
+                    resolvedArg.PreparedValue));
                 continue;
             }
 
-            // A prepared argument (the dotted receiver) already holds its counted value and
-            // must not be recomputed: re-evaluating the reified value would repeat every
-            // allocation and every charged unit the first evaluation already paid for.
+            // A prepared argument (a dotted receiver or builtin callback value) already
+            // holds its counted value and must not be recomputed: re-evaluating the reified
+            // value would repeat every allocation and charged unit the first evaluation paid.
             var outputR = resolvedArg.PreparedValue is { } prepared
                 ? EvalResult<CountedResult>.Ok(prepared)
-                : EvalAlgOutputCounted(arg, ctx, valEnv);
+                : arg is { } algorithm
+                    ? EvalAlgOutputCounted(algorithm, ctx, valEnv)
+                    : EvalResult<CountedResult>.Err(new EvalError.BadArity());
             if (outputR.IsOk)
             {
                 if (resolvedArg.SpreadsSequence)
                 {
                     foreach (var value in CountedTopLevelValues(outputR.Value))
-                        items.Add(new VariadicCallItem(value, arg, ValueError: null));
+                    {
+                        items.Add(new VariadicCallItem(
+                            value,
+                            arg,
+                            ValueError: null,
+                            new CountedResult(value, 1)));
+                    }
                 }
                 else
                 {
-                    items.Add(new VariadicCallItem(outputR.Value.Value, arg, ValueError: null));
+                    items.Add(new VariadicCallItem(
+                        outputR.Value.Value,
+                        arg,
+                        ValueError: null,
+                        outputR.Value));
                 }
 
                 continue;
@@ -3565,16 +3648,22 @@ public static class Evaluator
         switch (descriptor.Kind)
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
-                if (item.Algorithm is not null)
+            {
+                var algorithm = item.Algorithm
+                    ?? (item.PreparedValue is { } prepared
+                        ? CountedArgAlgorithm(prepared)
+                        : null);
+                if (algorithm is not null)
                 {
                     return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
                         new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(
-                            NormalizeSequenceCallableSuffixAlgorithm(item.Algorithm, ctx)));
+                            NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx)));
                 }
 
                 return item.ValueError ?? new EvalError.WithContext(
                     SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
                     new EvalError.BadArity());
+            }
 
             case SequenceBuiltinSuffixArgKind.Value:
                 if (item.Value is not null)
@@ -4495,41 +4584,69 @@ public static class Evaluator
         };
     }
 
-    /// <summary>
-    /// Builtin application with counted output shape.
-    /// Used by <c>reduce</c> so step validation can distinguish sequence-value
-    /// accumulator values from multiple top-level outputs.
-    /// Lean: <c>applyBuiltinCounted</c>.
-    /// </summary>
-    private static EvalResult<CountedResult> ApplyBuiltinCounted(
-        BuiltinId builtin,
-        IReadOnlyList<Algorithm> args,
+    private static EvalResult<CountedResult> EvalResolvedArgumentCounted(
+        ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-        => ApplyBuiltinCountedResolved(builtin, WithoutSequenceSpread(args), ctx, valEnv);
+        => arg.PreparedValue is { } prepared
+            ? EvalResult<CountedResult>.Ok(prepared)
+            : arg.Algorithm is { } algorithm
+                ? EvalAlgOutputCounted(algorithm, ctx, valEnv)
+                : new EvalError.BadArity();
 
-    private static EvalResult<IReadOnlyList<Algorithm>> ExpandSequenceSpreadBuiltinArguments(
+    /// <summary>
+    /// Returns the argument's algorithm channel. Already evaluated callback data normally
+    /// never needs one; if an algorithm-only builtin position does request it, build the
+    /// legacy counted-value wrapper at that point rather than for every callback invocation.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveArgumentAlgorithm(ResolvedArgumentAlgorithm arg)
+        => arg.Algorithm is { } algorithm
+            ? EvalResult<Algorithm>.Ok(algorithm)
+            : arg.PreparedValue is { } prepared
+                ? EvalResult<Algorithm>.Ok(CountedArgAlgorithm(prepared))
+                : new EvalError.BadArity();
+
+    private static EvalResult<Result> EvalResolvedArgument(
+        ResolvedArgumentAlgorithm arg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var countedR = EvalResolvedArgumentCounted(arg, ctx, valEnv);
+        return countedR.IsError
+            ? countedR.Error
+            : EvalResult<Result>.Ok(countedR.Value.Value);
+    }
+
+    private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ExpandSequenceSpreadBuiltinArguments(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var expanded = new List<Algorithm>(args.Count);
+        var expanded = new List<ResolvedArgumentAlgorithm>(args.Count);
         foreach (var arg in args)
         {
             if (!arg.SpreadsSequence)
             {
-                expanded.Add(arg.Algorithm);
+                expanded.Add(arg);
                 continue;
             }
 
-            var outputR = EvalAlgOutputCounted(arg.Algorithm, ctx, valEnv);
+            var outputR = EvalResolvedArgumentCounted(arg, ctx, valEnv);
             if (outputR.IsError) return outputR.Error;
 
             foreach (var value in CountedTopLevelValues(outputR.Value))
-                expanded.Add(CountedArgAlgorithm(new CountedResult(value, 1)));
+            {
+                var prepared = new CountedResult(value, 1);
+                expanded.Add(new ResolvedArgumentAlgorithm(
+                    Algorithm: null,
+                    SpreadsSequence: false)
+                {
+                    PreparedValue = prepared,
+                });
+            }
         }
 
-        return EvalResult<IReadOnlyList<Algorithm>>.Ok(expanded);
+        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(expanded);
     }
 
     private static EvalResult<CountedResult> ApplyBuiltinCountedResolved(
@@ -4549,7 +4666,7 @@ public static class Evaluator
         {
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalResolvedArgument(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
@@ -4563,8 +4680,8 @@ public static class Evaluator
                 // Unlike `while`/`repeat`, which intentionally preserve multi-slot
                 // loop state, `if` re-counts the chosen branch value here.
                 var branchR = truth.Value
-                    ? EvalAlgOutputCounted(args[1], ctx, valEnv)
-                    : EvalAlgOutputCounted(args[2], ctx, valEnv);
+                    ? EvalResolvedArgumentCounted(args[1], ctx, valEnv)
+                    : EvalResolvedArgumentCounted(args[2], ctx, valEnv);
                 if (branchR.IsError) return branchR.Error;
                 return EvalResult<CountedResult>.Ok(
                     new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
@@ -4572,14 +4689,18 @@ public static class Evaluator
 
             case (BuiltinId.@while, _) when args.Count >= 2:
             {
+                var stepR = ResolveArgumentAlgorithm(args[0]);
+                if (stepR.IsError) return stepR.Error;
                 var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
                 if (initialStateR.IsError) return initialStateR.Error;
-                return WhileLoopCounted(args[0], initialStateR.Value, ctx, valEnv);
+                return WhileLoopCounted(stepR.Value, initialStateR.Value, ctx, valEnv);
             }
 
             case (BuiltinId.@repeat, _) when args.Count >= 3:
             {
-                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                var stepR = ResolveArgumentAlgorithm(args[0]);
+                if (stepR.IsError) return stepR.Error;
+                var countR = EvalResolvedArgument(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
@@ -4588,12 +4709,12 @@ public static class Evaluator
 
                 var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
                 if (initialStateR.IsError) return initialStateR.Error;
-                return RepeatLoopCounted(args[0], n, initialStateR.Value, ctx, valEnv);
+                return RepeatLoopCounted(stepR.Value, n, initialStateR.Value, ctx, valEnv);
             }
 
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 // `atoms` materializes a collection: one exact immutable list
                 // of the recursively collected numeric atoms (sequence AND
@@ -4681,7 +4802,7 @@ public static class Evaluator
     /// but a hand-built AST passed to the public evaluator API can, and that is the path
     /// this closes.</para>
     /// </summary>
-    private static EvalResult<Result> MakeStringResult(EvalCtx ctx, string text, SourceSpan? span = null)
+    internal static EvalResult<Result> MakeStringResult(EvalCtx ctx, string text, SourceSpan? span = null)
         => ctx.Budget.TryReserveString(text.Length) is { } limitError
             ? AtSpanIfMissing(limitError, span)
             : EvalResult<Result>.Ok(new Result.Str(text));
@@ -4892,11 +5013,8 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
         => EvalAlgOutputCore(alg, ctx, valEnv);
 
-    private static Result LoopStateResult(IReadOnlyList<Result> stateSlots)
-        => Result.FromItems(stateSlots);
-
     private static EvalResult<IReadOnlyList<Result>> EvalInitialLoopStateSlots(
-        IReadOnlyList<Algorithm> initArgs,
+        IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -4907,7 +5025,7 @@ public static class Evaluator
         var stateSlots = new List<Result>(initArgs.Count);
         foreach (var init in initArgs)
         {
-            var slotR = EvalAlgOutput(init, ctx, valEnv);
+            var slotR = EvalResolvedArgument(init, ctx, valEnv);
             if (slotR.IsError) return slotR.Error;
             stateSlots.Add(slotR.Value);
         }
@@ -5020,6 +5138,7 @@ public static class Evaluator
     private static EvalResult<EvaluatedSlotBindings> BindEvaluatedSlotsToParameters(
         Algorithm algorithm,
         IReadOnlyList<Result> evaluatedSlots,
+        EvalCtx ctx,
         string callableName,
         GenericLoopStepBindingSelection bindingSelection,
         Func<int, int, EvalError> fixedArityMismatch,
@@ -5036,6 +5155,7 @@ public static class Evaluator
             var bindingsR = BindParameterPatternList(
                 algorithm.ParameterPatterns,
                 inputs,
+                ctx,
                 allowAlgorithmBindings: false,
                 fixedArityMismatch);
             if (bindingsR.IsError) return bindingsR.Error;
@@ -5083,7 +5203,9 @@ public static class Evaluator
             if (variadicName is null)
                 return new EvalError.BadArity();
 
-            var variadicCapture = CreateVariadicCapture(variadicName, capturedValues);
+            var variadicCaptureR = CreateVariadicCapture(ctx, variadicName, capturedValues);
+            if (variadicCaptureR.IsError) return variadicCaptureR.Error;
+            var variadicCapture = variadicCaptureR.Value;
 
             var valueBindingsR = BindEvaluatedSlotValueBindings(
                 layout,
@@ -5126,6 +5248,7 @@ public static class Evaluator
     private static EvalResult<EvaluatedSlotBindings> BindLoopStepState(
         Algorithm step,
         IReadOnlyList<Result> stateSlots,
+        EvalCtx ctx,
         string loopName,
         GenericLoopStepBindingSelection bindingSelection)
     {
@@ -5135,6 +5258,7 @@ public static class Evaluator
         return BindEvaluatedSlotsToParameters(
             step,
             stateSlots,
+            ctx,
             "loop step",
             bindingSelection,
             (_, actual) => LoopStateArityMismatch(step, actual, loopName),
@@ -5244,7 +5368,7 @@ public static class Evaluator
             return limitError;
 
         var bindingSelection = SelectGenericLoopStepBinding(step);
-        var boundR = BindLoopStepState(step, stateSlots, loopName, bindingSelection);
+        var boundR = BindLoopStepState(step, stateSlots, ctx, loopName, bindingSelection);
         if (boundR.IsError) return boundR.Error;
 
         var shadowedCountedParamEnv = ShadowCountedParamEnv(ctx.CountedParamEnv, step.Params);
@@ -5264,7 +5388,7 @@ public static class Evaluator
         var outputSlotsR = RunStepSlots(step, ctx, valEnv, UnpackArgs(state), loopName);
         return outputSlotsR.IsError
             ? outputSlotsR.Error
-            : EvalResult<Result>.Ok(LoopStateResult(outputSlotsR.Value));
+            : MakeCheckedSequenceCapture(ctx, outputSlotsR.Value);
     }
 
     internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, decimal Continue)> SplitContSlots(
@@ -5321,27 +5445,31 @@ public static class Evaluator
             // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
             case (BuiltinId.@if, 3):
             {
-                var condR = EvalAlgOutput(args[0], ctx, valEnv);
+                var condR = EvalResolvedArgument(args[0], ctx, valEnv);
                 if (condR.IsError) return condR.Error;
                 var truth = condR.Value.TruthValue();
                 if (truth is null) return new EvalError.BadArity();
                 return truth.Value
-                    ? EvalAlgOutput(args[1], ctx, valEnv)
-                    : EvalAlgOutput(args[2], ctx, valEnv);
+                    ? EvalResolvedArgument(args[1], ctx, valEnv)
+                    : EvalResolvedArgument(args[2], ctx, valEnv);
             }
 
             // while(step, init...)
             case (BuiltinId.@while, _) when args.Count >= 2:
             {
+                var stepR = ResolveArgumentAlgorithm(args[0]);
+                if (stepR.IsError) return stepR.Error;
                 var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
                 if (initialStateR.IsError) return initialStateR.Error;
-                return WhileLoop(args[0], initialStateR.Value, ctx, valEnv);
+                return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
             }
 
             // repeat(step, count, init...)
             case (BuiltinId.@repeat, _) when args.Count >= 3:
             {
-                var countR = EvalAlgOutput(args[1], ctx, valEnv);
+                var stepR = ResolveArgumentAlgorithm(args[0]);
+                if (stepR.IsError) return stepR.Error;
+                var countR = EvalResolvedArgument(args[1], ctx, valEnv);
                 if (countR.IsError) return countR.Error;
                 var nR = ExpectWholeInt(countR.Value, "Repeat count");
                 if (nR.IsError) return nR.Error;
@@ -5349,13 +5477,13 @@ public static class Evaluator
                 if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
                 var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
                 if (initialStateR.IsError) return initialStateR.Error;
-                return RepeatLoop(args[0], n, initialStateR.Value, ctx, valEnv);
+                return RepeatLoop(stepR.Value, n, initialStateR.Value, ctx, valEnv);
             }
 
             // atoms(value) — recursively collect numeric atoms into one exact list
             case (BuiltinId.@atoms, 1):
             {
-                var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
+                var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
                 var atomsListR = MakeLanguageAtomsResult(ctx, atomsR.Value);
                 return atomsListR.IsError ? atomsListR.Error : EvalResult<Result>.Ok(atomsListR.Value.Value);
@@ -5376,9 +5504,6 @@ public static class Evaluator
             }
         }
     }
-
-    private static CountedResult CountedLoopStateResult(IReadOnlyList<Result> stateSlots)
-        => new(LoopStateResult(stateSlots), stateSlots.Count);
 
     /// <summary>Lean: While loop → EvalM Result.</summary>
     private static EvalResult<Result> WhileLoop(
@@ -5459,7 +5584,7 @@ public static class Evaluator
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
             var (nextStateSlots, cont) = splitR.Value;
-            if (cont == 0) return EvalResult<CountedResult>.Ok(CountedLoopStateResult(stateSlots));
+            if (cont == 0) return MakeCheckedLoopStateResult(ctx, stateSlots);
             stateSlots = nextStateSlots.ToList();
         }
     }
@@ -5488,7 +5613,7 @@ public static class Evaluator
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
         if (count == 0)
-            return EvalResult<CountedResult>.Ok(CountedLoopStateResult(initialStateSlots));
+            return MakeCheckedLoopStateResult(ctx, initialStateSlots);
 
         if (!ctx.EnableLoopOptimization)
         {
@@ -5550,7 +5675,7 @@ public static class Evaluator
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             stateSlots = outputSlotsR.Value.ToList();
         }
-        return EvalResult<CountedResult>.Ok(CountedLoopStateResult(stateSlots));
+        return MakeCheckedLoopStateResult(ctx, stateSlots);
     }
 
     // ── Main eval ───────────────────────────────────────────────────────────
@@ -5645,7 +5770,7 @@ public static class Evaluator
 
             case Expr.ListLiteral(var listItems):
             {
-                var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv);
+                var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
                 return listLiteralR.IsError
                     ? listLiteralR.Error
                     : EvalResult<Result>.Ok(listLiteralR.Value.Value);
@@ -5768,7 +5893,7 @@ public static class Evaluator
                 return EvalSequenceConstructCounted(expr, ctx, valEnv);
 
             case Expr.ListLiteral(var listItems):
-                return EvalListLiteralCounted(listItems, ctx, valEnv);
+                return EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
 
             case Expr.EmptySequence(var depth):
             {
@@ -6000,9 +6125,17 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var resolvedR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
-        return resolvedR.IsError
-            ? resolvedR.Error
-            : EvalResult<IReadOnlyList<Algorithm>>.Ok(resolvedR.Value.Select(static arg => arg.Algorithm).ToList());
+        if (resolvedR.IsError) return resolvedR.Error;
+
+        var algorithms = new List<Algorithm>(resolvedR.Value.Count);
+        foreach (var arg in resolvedR.Value)
+        {
+            if (arg.Algorithm is null)
+                return new EvalError.BadArity();
+            algorithms.Add(arg.Algorithm);
+        }
+
+        return EvalResult<IReadOnlyList<Algorithm>>.Ok(algorithms);
     }
 
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
@@ -6801,9 +6934,9 @@ public static class Evaluator
             var extraArgAlgsR = ResolveArgAlgsWithSequenceSpread(extraArgs, ctx, valEnv);
             if (extraArgAlgsR.IsError) return extraArgAlgsR.Error;
             if (builtin == BuiltinId.@reduce
-                && extraArgAlgsR.Value is [{ Algorithm.Params.Count: > 0 } missingInitialReducer])
+                && extraArgAlgsR.Value is [{ Algorithm: { Params.Count: > 0 } reducerAlgorithm }])
             {
-                return ReduceInitialAccumulatorRequiresValueError(missingInitialReducer.Algorithm);
+                return ReduceInitialAccumulatorRequiresValueError(reducerAlgorithm);
             }
 
             argAlgs.AddRange(extraArgAlgsR.Value);
@@ -7127,10 +7260,10 @@ public static class Evaluator
     /// <summary>
     /// Run evaluation under explicit resource limits.
     /// <para>The no-limits overloads are NOT unbounded: they use
-    /// <see cref="EvaluationLimits.Default"/>, so the internal depth ceiling
-    /// (<see cref="EvaluationLimits.MaxSupportedDepth"/>) is enforced on every public
-    /// evaluator entry point, exactly as it is through <see cref="KatLangEngine"/>.
-    /// Only the optional step budget is opt-in.</para>
+    /// <see cref="EvaluationLimits.Default"/>, so the hard depth, collection, and string
+    /// ceilings are enforced on every public evaluator entry point, exactly as through
+    /// <see cref="KatLangEngine"/>. Step and cumulative materialization budgets are opt-in;
+    /// display is a host-rendering policy applied by <see cref="RunResult"/>.</para>
     /// </summary>
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
         => Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
@@ -7176,15 +7309,16 @@ public static class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationBudget budget)
     {
-        var optimize = !budget.HasStepLimit && !budget.HasStringLimit;
+        var loopOptimize = !budget.HasStepLimit;
+        var sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit;
         return new EvalCtx(
             [PreludeAlg],
             [],
             [],
             zeroArgPropertyResultCache,
-            enableLoopOptimization && optimize,
+            enableLoopOptimization && loopOptimize,
             loopDiagnostics,
-            enableSequencePipelineOptimization && optimize,
+            enableSequencePipelineOptimization && sequenceOptimize,
             sequenceDiagnostics,
             budget);
     }

@@ -19,8 +19,9 @@ public sealed class RunOptions
 
     /// <summary>
     /// Optional deterministic evaluation resource limits. When null,
-    /// <see cref="KatLang.EvaluationLimits.Default"/> applies: the internal depth
-    /// ceiling is enforced and there is no step budget.
+    /// <see cref="KatLang.EvaluationLimits.Default"/> applies: hard depth, per-collection,
+    /// per-string, and returned-display ceilings are enforced; step and cumulative
+    /// materialization budgets remain optional.
     /// <para>These are immutable configuration and safe to share across runs — the
     /// mutable counters live in run-scoped evaluation state, so every run starts
     /// fresh.</para>

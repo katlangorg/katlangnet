@@ -21,11 +21,11 @@ internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLeng
 /// can never exceed the limit — an exact bound on the real output is worth more than a
 /// canonical abstraction of it. The consequence is that a many-row rendering can cross the
 /// boundary at a different row on a CRLF host (2 units per separator) than on an LF host
-/// (1 unit); both report the same structured limit outcome.</para>
+/// (1 unit); both return a complete bounded overflow indication rather than partial text.</para>
 ///
-/// <para>The limit MESSAGE returned in place of an over-limit rendering is NOT itself
-/// charged, so it is produced even for a limit of zero: a caller that asks for no output
-/// still learns why there is none.</para>
+/// <para>The replacement marker is also bounded. The complete limit message is returned
+/// when it fits; otherwise a complete one-character marker is returned when possible,
+/// and a zero-length limit returns the empty string.</para>
 /// </summary>
 internal sealed class BoundedDisplayWriter(int limit)
 {
@@ -64,6 +64,8 @@ public abstract record RunResult
 {
     private RunResult() { }
 
+    internal DisplayOptions DisplayOptions { get; init; } = DisplayOptions.Default;
+
     /// <summary>True when the run succeeded.</summary>
     public bool IsSuccess => this is Success;
 
@@ -80,8 +82,6 @@ public abstract record RunResult
         IReadOnlyList<decimal> Atoms) : RunResult
     {
         internal int EmittedCount { get; init; } = Value.ValueCount();
-
-        internal DisplayOptions DisplayOptions { get; init; } = DisplayOptions.Default;
     }
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
@@ -111,21 +111,20 @@ public abstract record RunResult
     /// On success: multiple top-level outputs are separated for readability;
     /// sequence values keep parentheses.
     /// On failure: newline-joined error messages.
-    /// </summary>
-    /// <summary>
-    /// Rendering is bounded (see <see cref="BoundedDisplayWriter"/>). When the output would
-    /// exceed the limit this returns the display-limit message INSTEAD of the rendering —
-    /// never a silent prefix, because a truncated value display would misrepresent the
-    /// result. The structured value is unaffected and stays available on
-    /// <see cref="Success"/>; a caller that never renders is never limited. Truncated
-    /// previews for editor UI belong in a separate, explicitly named API.
+    ///
+    /// Rendering is strictly bounded (see <see cref="BoundedDisplayWriter"/>): the returned
+    /// string never exceeds the effective <see cref="EvaluationLimits.MaxDisplayLength"/>.
+    /// On overflow the partial rendering is discarded. The complete limit message is used
+    /// when it fits, otherwise the complete <c>…</c> marker is used when one UTF-16 unit
+    /// fits, otherwise the result is empty. Structured values and diagnostics are unchanged;
+    /// truncated previews for editor UI belong in a separate, explicitly named API.
     /// </summary>
     public string ToDisplayString() => this switch
     {
         Success s => FormatSuccess(s),
-        NoProgramOutput n => n.Message,
-        ParseFailure p => FormatErrors(p.Errors),
-        EvalFailure e => FormatErrors(e.Errors),
+        NoProgramOutput n => FormatText(n.Message, n.DisplayOptions.MaxDisplayLength),
+        ParseFailure p => FormatErrors(p.Errors, p.DisplayOptions.MaxDisplayLength),
+        EvalFailure e => FormatErrors(e.Errors, e.DisplayOptions.MaxDisplayLength),
         _ => throw new InvalidOperationException("Unknown RunResult variant."),
     };
 
@@ -144,13 +143,13 @@ public abstract record RunResult
     }
 
     /// <summary>
-    /// Errors are rendered through the same bounded writer at the hard supported ceiling.
+    /// Errors are rendered through the same configured bounded writer.
     /// The structured diagnostics are never dropped or rewritten to fit — only the final
     /// public rendering surface is bounded.
     /// </summary>
-    private static string FormatErrors(IReadOnlyList<KatLangError> errors)
+    private static string FormatErrors(IReadOnlyList<KatLangError> errors, int limit)
     {
-        var writer = new BoundedDisplayWriter(EvaluationLimits.MaxSupportedDisplayLength);
+        var writer = new BoundedDisplayWriter(limit);
 
         for (var i = 0; i < errors.Count; i++)
         {
@@ -158,13 +157,28 @@ public abstract record RunResult
             if (!writer.Append(errors[i].ToString())) break;
         }
 
-        return Finish(writer, EvaluationLimits.MaxSupportedDisplayLength);
+        return Finish(writer, limit);
+    }
+
+    private static string FormatText(string text, int limit)
+    {
+        var writer = new BoundedDisplayWriter(limit);
+        writer.Append(text);
+        return Finish(writer, limit);
     }
 
     internal static string Finish(BoundedDisplayWriter writer, int limit)
-        => writer.LimitExceeded
-            ? KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit)).Message
-            : writer.ToString();
+    {
+        if (!writer.LimitExceeded)
+            return writer.ToString();
+
+        var message = KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit)).Message;
+        if (message.Length <= limit)
+            return message;
+
+        const string marker = "…";
+        return marker.Length <= limit ? marker : string.Empty;
+    }
 
     private static IReadOnlyList<Result> TopLevelDisplayRows(Result value, int emittedCount)
         => emittedCount switch
@@ -267,6 +281,8 @@ public static class KatLangEngine
     /// </summary>
     public static RunResult Run(string source, RunOptions? options = null)
     {
+        var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
+        var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
         var frontEndResult = FrontEndPipeline.Process(source, options);
 
         if (frontEndResult.HasErrors)
@@ -278,10 +294,12 @@ public static class KatLangEngine
             if (frontEndResult.CanEvaluateAfterLoadErrors)
                 parseErrors.AddRange(EvaluateForAdditionalErrors(frontEndResult.ElaboratedRoot, options?.EvaluationLimits));
 
-            return new RunResult.ParseFailure(parseErrors);
+            return new RunResult.ParseFailure(parseErrors)
+            {
+                DisplayOptions = diagnosticDisplayOptions,
+            };
         }
 
-        var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
 
         // One budget for the whole run: the program output and the DisplayDecimals
@@ -297,10 +315,16 @@ public static class KatLangEngine
         {
             var evalError = KatLangError.FromEvalError(evalResult.Error);
             if (IsTopLevelNoProgramOutput(evalResult.Error))
-                return new RunResult.NoProgramOutput(frontEndResult.ElaboratedRoot, evalError);
+                return new RunResult.NoProgramOutput(frontEndResult.ElaboratedRoot, evalError)
+                {
+                    DisplayOptions = diagnosticDisplayOptions,
+                };
 
             var evalErrors = new[] { evalError };
-            return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors);
+            return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors)
+            {
+                DisplayOptions = diagnosticDisplayOptions,
+            };
         }
 
         // The run's configured rendering limit travels with the result, so ToDisplayString
@@ -313,7 +337,10 @@ public static class KatLangEngine
         {
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                [KatLangError.FromEvalError(displayOptionsResult.Error)]);
+                [KatLangError.FromEvalError(displayOptionsResult.Error)])
+            {
+                DisplayOptions = diagnosticDisplayOptions,
+            };
         }
 
         // Host-atom projection is part of the run's materialization accounting: it opens
@@ -325,7 +352,10 @@ public static class KatLangEngine
         {
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                [KatLangError.FromEvalError(new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L))]);
+                [KatLangError.FromEvalError(new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L))])
+            {
+                DisplayOptions = diagnosticDisplayOptions,
+            };
         }
 
         return new RunResult.Success(

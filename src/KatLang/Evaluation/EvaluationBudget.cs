@@ -4,7 +4,7 @@ namespace KatLang.Evaluation;
 
 /// <summary>
 /// Run-scoped mutable evaluation budget: the single place where one evaluation run's
-/// dynamic depth and consumed step count live.
+/// dynamic depth, consumed steps, materialized item slots, and materialized string units live.
 ///
 /// <para>Exactly one instance is created per top-level run and shared by reference
 /// through every copied <c>EvalCtx</c>, so nested calls, callbacks, properties, loops,
@@ -38,13 +38,8 @@ internal sealed class EvaluationBudget
         _maxStringLength = limits.EffectiveMaxStringLength;
         _maxMaterializedStringChars = limits.EffectiveMaxMaterializedStringChars ?? long.MaxValue;
         HasStepLimit = limits.EffectiveMaxSteps is not null;
-
-        // A CONFIGURED string limit (as opposed to the always-on ceiling) must mean the
-        // same thing with and without optimizations. The loop planner materializes literal
-        // string constants at plan time, outside the charged construction point, so a run
-        // that configures a string limit takes the generic paths — the same rule the step
-        // budget uses, and for the same reason.
-        HasStringLimit = limits.MaxStringLength is not null || limits.MaxMaterializedStringChars is not null;
+        HasConfiguredStringLimit = limits.MaxStringLength is not null
+            || limits.MaxMaterializedStringChars is not null;
     }
 
     /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
@@ -57,8 +52,8 @@ internal sealed class EvaluationBudget
     /// <summary>True when a finite step budget is configured for this run.</summary>
     internal bool HasStepLimit { get; }
 
-    /// <summary>True when a string length or cumulative string budget was explicitly configured.</summary>
-    internal bool HasStringLimit { get; }
+    /// <summary>True when the caller explicitly configured either string limit.</summary>
+    internal bool HasConfiguredStringLimit { get; }
 
     /// <summary>Steps consumed so far by this run. Diagnostics and tests only.</summary>
     internal long ConsumedSteps => _steps;
@@ -145,7 +140,7 @@ internal sealed class EvaluationBudget
         if (requestedCount > _maxMaterializedItems - _materializedItems)
             return new EvalError.MaterializationLimitExceeded(_maxMaterializedItems);
 
-        _materializedItems += requestedCount;
+        _materializedItems = checked(_materializedItems + requestedCount);
         return null;
     }
 
@@ -175,7 +170,7 @@ internal sealed class EvaluationBudget
         if (requestedLength > _maxMaterializedStringChars - _materializedStringChars)
             return new EvalError.StringMaterializationLimitExceeded(_maxMaterializedStringChars);
 
-        _materializedStringChars += requestedLength;
+        _materializedStringChars = checked(_materializedStringChars + requestedLength);
         return null;
     }
 

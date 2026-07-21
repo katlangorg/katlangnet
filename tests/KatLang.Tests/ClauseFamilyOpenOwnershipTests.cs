@@ -104,7 +104,10 @@ public class ClauseFamilyOpenOwnershipTests
     {
         int a = TreeNodes(Parser.Parse(Case(10)).Root);
         int b = TreeNodes(Parser.Parse(Case(20)).Root);
-        // Doubling N previously multiplied node count by ~2^10; require well under 4x.
+        // The lower bound proves the measurement follows the supplied family size instead
+        // of passing vacuously on a constant/empty recovery tree; the upper bound excludes
+        // the former ~2^10 amplification when N doubles.
+        Assert.True(b * 2 >= 3 * a, $"Case(10)={a}, Case(20)={b} — growth is not input-sensitive.");
         Assert.True(b < 4 * a, $"Case(10)={a}, Case(20)={b} — growth looks combinatorial.");
     }
 

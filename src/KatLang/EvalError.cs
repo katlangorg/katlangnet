@@ -41,9 +41,10 @@ public abstract record EvalError
     private EvalError() { }
 
     /// <summary>
-    /// True for the host resource-limit outcomes (depth, steps, stack headroom, collection
-    /// size, cumulative materialization). These stop accumulating call/property context on
-    /// the way out: the limit is a property of the RUN, not of any one call on the chain,
+    /// True for every host resource-limit outcome: depth, steps, stack headroom, collection
+    /// size and cumulative items, string size and cumulative string units, and display.
+    /// These stop accumulating call/property context on the way out: the limit is a
+    /// property of the RUN, not of any one call on the chain,
     /// so the innermost span is preserved and a depth failure does not report one identical
     /// context frame per active invocation.
     /// </summary>

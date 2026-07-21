@@ -137,6 +137,79 @@ public class OperationalMetamorphicTests
         Assert.Equal(a.MaterializedItems, b.MaterializedItems);
     }
 
+    public static TheoryData<string, string> PreparedBuiltinCallbackPairs => new()
+    {
+        {
+            "Rows = [[1, 2]]\nOutput = Rows.map(count)",
+            "C(x) = x.count\nRows = [[1, 2]]\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = ['abc']\nOutput = Rows.map(count)",
+            "C(x) = x.count\nRows = ['abc']\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = [[1, [2, 3]]]\nOutput = Rows.map(atoms)",
+            "C(x) = x.atoms\nRows = [[1, [2, 3]]]\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = [(1, (2, 3))]\nOutput = Rows.map(atoms)",
+            "C(x) = x.atoms\nRows = [(1, (2, 3))]\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = []\nOutput = Rows.map(count)",
+            "C(x) = x.count\nRows = []\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = [[]]\nOutput = Rows.map(first)",
+            "C(x) = x.first\nRows = [[]]\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = ['abc']\nOutput = Rows.map(sum)",
+            "C(x) = x.sum\nRows = ['abc']\nOutput = Rows.map(C)"
+        },
+        {
+            "Rows = [[1, 2], []]\nOutput = Rows.filter(count)",
+            "C(x) = x.count\nRows = [[1, 2], []]\nOutput = Rows.filter(C)"
+        },
+        {
+            "Rows = [2]\nOutput = Rows.reduce(contains, [1, 2])",
+            "C(xs, x) = xs.contains(x)\nRows = [2]\nOutput = Rows.reduce(C, [1, 2])"
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(PreparedBuiltinCallbackPairs))]
+    public void BuiltinCallbacks_ReusePreparedValuesLikeEquivalentUserWrappers(string builtinSource, string wrapperSource)
+    {
+        var builtin = Observe(builtinSource);
+        var wrapper = Observe(wrapperSource);
+
+        Assert.Equal(wrapper.Semantic, builtin.Semantic);
+        Assert.Equal(wrapper.MaterializedItems, builtin.MaterializedItems);
+        Assert.Equal(wrapper.MaterializedStringChars, builtin.MaterializedStringChars);
+    }
+
+    [Fact]
+    public void BuiltinCallback_CumulativeBoundariesMatchEquivalentUserWrapper()
+    {
+        const string builtinSource = "Rows = [[1, 2]]\nOutput = Rows.map(count)";
+        const string wrapperSource = "C(x) = x.count\nRows = [[1, 2]]\nOutput = Rows.map(C)";
+
+        for (var limit = 1L; limit <= 8; limit++)
+        {
+            var limits = new EvaluationLimits { MaxMaterializedItems = limit };
+            Assert.Equal(Observe(wrapperSource, limits).Semantic, Observe(builtinSource, limits).Semantic);
+        }
+
+        const string builtinStringSource = "Rows = ['abc']\nOutput = Rows.map(count)";
+        const string wrapperStringSource = "C(x) = x.count\nRows = ['abc']\nOutput = Rows.map(C)";
+        for (var limit = 0L; limit <= 5; limit++)
+        {
+            var limits = new EvaluationLimits { MaxMaterializedStringChars = limit };
+            Assert.Equal(Observe(wrapperStringSource, limits).Semantic, Observe(builtinStringSource, limits).Semantic);
+        }
+    }
+
     [Fact]
     public void DottedChain_ChargesTheSameAsNestedOrdinaryCalls()
     {
@@ -318,7 +391,6 @@ public class OperationalMetamorphicTests
             var text = run.ToDisplayString();
 
             Assert.Equal(text, run.ToDisplayString());   // repeated rendering is deterministic
-            if (text.Contains("Display output limit", StringComparison.Ordinal)) continue;
             Assert.True(text.Length <= limit, $"limit {limit} returned {text.Length} units.");
         }
     }
@@ -406,32 +478,83 @@ public class OperationalMetamorphicTests
 
     // ── Resource-error context suppression is uniform across all limit kinds ─
 
-    [Theory]
-    [InlineData("f(0) = 0\nf(n) = f(n - 1)\nOutput = f(50)", 8, 0, 0, 0)]
-    [InlineData("Step = x, 1\nOutput = Step.while(0)", 0, 500, 0, 0)]
-    [InlineData("Output = range(1, 50).count", 0, 0, 5, 0)]
-    [InlineData("Output = 12345.string", 0, 0, 0, 1)]
-    public void EveryResourceLimitError_IsReportedWithoutAccumulatedCallContext(
-        string source, int depth, int steps, int items, int stringLength)
+    [Fact]
+    public void EveryResourceLimitVariant_IsClassifiedAndFormattedUniformly()
     {
-        // A limit belongs to the RUN, not to any one call on the chain. Depth, step and
-        // collection errors already suppressed context; the string and display kinds were
-        // MISSING from that predicate, so their messages accumulated one identical frame
-        // per active invocation. This theory covers every kind uniformly.
-        var limits = new EvaluationLimits
+        var span = new SourceSpan(2, 3, 2, 7);
+        EvalError[] allResourceVariants =
         {
-            MaxDepth = depth > 0 ? depth : null,
-            MaxSteps = steps > 0 ? steps : null,
-            MaxCollectionItems = items > 0 ? items : null,
-            MaxStringLength = stringLength > 0 ? stringLength : null,
+            new EvalError.EvaluationDepthExceeded(8) { Span = span },
+            new EvalError.EvaluationStepLimitExceeded(20) { Span = span },
+            new EvalError.EvaluationStackExhausted() { Span = span },
+            new EvalError.CollectionSizeLimitExceeded(5, 6) { Span = span },
+            new EvalError.MaterializationLimitExceeded(5) { Span = span },
+            new EvalError.StringSizeLimitExceeded(5, 6) { Span = span },
+            new EvalError.StringMaterializationLimitExceeded(5) { Span = span },
+            new EvalError.DisplayLengthLimitExceeded(5),
         };
 
-        var result = Evaluator.RunCounted(
-            new Expr.Block(Parser.Parse(source).Root), UncachedZeroArgPropertyResultCache.Instance, limits);
+        Assert.Equal(8, allResourceVariants.Select(static error => error.GetType()).Distinct().Count());
+        Assert.All(allResourceVariants, error =>
+        {
+            Assert.True(error.IsResourceLimit, error.GetType().Name);
+            var publicError = KatLangError.FromEvalError(error);
+            Assert.DoesNotContain("while evaluating", publicError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.InRange(publicError.Message.Length, 1, 240);
 
-        Assert.True(result.IsError);
-        Assert.True(result.Error.IsResourceLimit);
-        Assert.IsNotType<EvalError.WithContext>(result.Error);
+            if (error is not EvalError.DisplayLengthLimitExceeded)
+            {
+                Assert.IsNotType<EvalError.WithContext>(error);
+                Assert.NotNull(error.Span);
+                Assert.NotNull(publicError.StartLine);
+            }
+        });
+
+        // Convention guard: every current resource record is named *Exceeded, except the
+        // explicit host-stack backstop. A new similarly named variant must be added above.
+        var discoverableResourceTypes = typeof(EvalError)
+            .GetNestedTypes(System.Reflection.BindingFlags.Public)
+            .Where(static type => type.Name.EndsWith("Exceeded", StringComparison.Ordinal)
+                || type == typeof(EvalError.EvaluationStackExhausted))
+            .ToHashSet();
+        Assert.True(discoverableResourceTypes.SetEquals(
+            allResourceVariants.Select(static error => error.GetType())));
+    }
+
+    [Fact]
+    public void EvaluatorResourceLimits_PreserveUsefulSpansWithoutContextChains()
+    {
+        static EvalError RunError(string source, EvaluationLimits limits)
+        {
+            var result = Evaluator.RunCounted(
+                new Expr.Block(Parser.Parse(source).Root),
+                UncachedZeroArgPropertyResultCache.Instance,
+                limits);
+            Assert.True(result.IsError);
+            return result.Error;
+        }
+
+        var errors = new EvalError[]
+        {
+            RunError("f(0) = 0\nf(n) = f(n - 1)\nOutput = f(50)", new EvaluationLimits { MaxDepth = 8 }),
+            RunError("Step = x, 1\nOutput = Step.while(0)", new EvaluationLimits { MaxSteps = 25 }),
+            RunError("Output = range(1, 6)", new EvaluationLimits { MaxCollectionItems = 5 }),
+            RunError("Output = [1, 2]", new EvaluationLimits { MaxMaterializedItems = 1 }),
+            RunError("Output = 'abcdef'", new EvaluationLimits { MaxStringLength = 5 }),
+            RunError("Output = 'abc', 'def'", new EvaluationLimits { MaxMaterializedStringChars = 5 }),
+        };
+
+        Assert.All(errors, error =>
+        {
+            Assert.True(error.IsResourceLimit);
+            Assert.IsNotType<EvalError.WithContext>(error);
+            Assert.NotNull(error.Span);
+
+            var publicError = KatLangError.FromEvalError(error);
+            Assert.NotNull(publicError.StartLine);
+            Assert.DoesNotContain("while evaluating", publicError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.InRange(publicError.Message.Length, 1, 240);
+        });
     }
 
     // ── A/B/A state isolation ────────────────────────────────────────────────

@@ -3,13 +3,22 @@ namespace KatLang;
 /// <summary>
 /// Deterministic, run-scoped resource limits for KatLang evaluation.
 ///
-/// <para>Two independent limits are modelled, and they are deliberately NOT one number:</para>
+/// <para>The limits are independent and deliberately not collapsed into one number:</para>
 /// <list type="bullet">
 ///   <item><b>Depth</b> (<see cref="MaxDepth"/>) bounds how many dynamic algorithm
 ///   invocations may be active at once. Its purpose is host-stack safety.</item>
 ///   <item><b>Steps</b> (<see cref="MaxSteps"/>) bounds the cumulative amount of
 ///   semantic work one run may perform. Its purpose is stopping unbounded or
 ///   excessive computation such as a non-terminating loop.</item>
+///   <item><b>Collections</b> (<see cref="MaxCollectionItems"/> and
+///   <see cref="MaxMaterializedItems"/>) bound one persistent collection and cumulative
+///   item-slot construction.</item>
+///   <item><b>Language strings</b> (<see cref="MaxStringLength"/> and
+///   <see cref="MaxMaterializedStringChars"/>) bound one string and cumulative UTF-16
+///   units constructed.</item>
+///   <item><b>Display</b> (<see cref="MaxDisplayLength"/>) strictly bounds every string
+///   returned by <see cref="RunResult.ToDisplayString"/> and
+///   <see cref="KatLangEngine.EvaluateToString(string, RunOptions)"/>.</item>
 /// </list>
 ///
 /// <para>Host cancellation and wall-clock timeouts are a third, different concept.
@@ -91,7 +100,9 @@ public sealed record EvaluationLimits
     }
 
     /// <summary>
-    /// Default limits: the internal depth ceiling applies and there is no step budget.
+    /// Default limits: the always-active hard depth, collection, string, and display
+    /// ceilings apply. Step, cumulative collection, and cumulative string budgets are
+    /// unconfigured.
     /// </summary>
     public static EvaluationLimits Default { get; } = new();
 
@@ -245,9 +256,12 @@ public sealed record EvaluationLimits
     }
 
     /// <summary>
-    /// Maximum UTF-16 code units produced by one rendering operation, or <c>null</c> to use
-    /// <see cref="MaxSupportedDisplayLength"/>. Values above the supported maximum are
-    /// clamped down to it.
+    /// Maximum UTF-16 code units returned by one call to
+    /// <see cref="RunResult.ToDisplayString"/> or
+    /// <see cref="KatLangEngine.EvaluateToString(string, RunOptions)"/>, or <c>null</c>
+    /// to use <see cref="MaxSupportedDisplayLength"/>. This applies to success, parse
+    /// failure, evaluation failure, no-output text, and the overflow replacement itself.
+    /// Values above the supported maximum are clamped down to it.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
     public int? MaxDisplayLength
