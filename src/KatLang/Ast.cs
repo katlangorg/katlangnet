@@ -790,15 +790,31 @@ public abstract record Algorithm
         if (clauses.Count == 0)
             return new Conditional(Parent: null, Opens: [], Branches: []);
 
+        // Open ownership for a clause family is BRANCH-OWNED: an `open` written inside a
+        // clause body stays owned by that branch body, which is the location every
+        // consumer (parameter detection, implicit-argument resolution, exposure, and
+        // evaluator lookup) actually resolves through.
+        //
+        // The conditional previously ALSO received `clauses[0].Body.Opens`, so clause 0's
+        // open expressions stayed reachable through BOTH Conditional.Opens and
+        // Branches[0].Body.Opens. That second path was redundant — emptying it changes no
+        // observable behaviour — but it was actively harmful: an open target can itself
+        // contain a nested algorithm (notably under malformed recovery such as an
+        // unclosed `(open(...`), so the duplicate ownership made the same subtree
+        // reachable by two paths per nesting level. ImplicitArgumentResolver and
+        // PropertyExposureResolver rebuild each path independently, so a linear-size
+        // reference DAG unfolded into an exponential (2^depth) tree.
+        //
+        // Giving every source-derived open exactly one owner removes the duplication at
+        // its source rather than memoizing it away in every frontend visitor.
         var parent = clauses[0].Body.Parent;
-        var opens = clauses[0].Body.Opens;
         var conditionalBranches = clauses
             .Select(branch => new CondBranch(branch.Pattern, branch.Body.WithParams([])))
             .ToList();
 
         return new Conditional(
             parent,
-            opens,
+            Opens: [],
             conditionalBranches);
     }
 

@@ -42,6 +42,10 @@ internal static class Program
             return EvaluatorReplay.RunReplay(args);    // phase-aware evaluator replay
         if (args.Length > 0 && args[0] == "classify")
             return EvaluatorReplay.RunClassify(args);  // eligibility-classifier replay
+        if (args.Length > 0 && args[0] == "run")
+            return FrontEndStageProbe.RunSources(args);   // evaluate sources (semantic matrix)
+        if (args.Length > 0 && args[0] == "stage-probe")
+            return FrontEndStageProbe.Run(args);       // per-stage frontend timing
 
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)
