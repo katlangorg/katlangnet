@@ -88,8 +88,15 @@ internal sealed class EvaluationBudget
             return new EvalError.EvaluationStackExhausted();
 
         _depth++;
+        if (_depth > PeakDepth) PeakDepth = _depth;
         return null;
     }
+
+    /// <summary>
+    /// Deepest dynamic invocation nesting this run reached. Observation only: reading it
+    /// cannot change what was evaluated, and it is run-scoped like every other counter.
+    /// </summary>
+    internal int PeakDepth { get; private set; }
 
     /// <summary>Leaves an invocation entered by a successful <see cref="TryEnterInvocation"/>.</summary>
     internal void ExitInvocation() => _depth--;

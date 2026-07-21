@@ -7160,8 +7160,22 @@ public static class Evaluator
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationLimits? limits)
+        => CreateRootCtx(
+            zeroArgPropertyResultCache,
+            enableLoopOptimization,
+            loopDiagnostics,
+            enableSequencePipelineOptimization,
+            sequenceDiagnostics,
+            EvaluationBudget.Create(limits));
+
+    private static EvalCtx CreateRootCtx(
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        bool enableLoopOptimization,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        bool enableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationBudget budget)
     {
-        var budget = EvaluationBudget.Create(limits);
         var optimize = !budget.HasStepLimit && !budget.HasStringLimit;
         return new EvalCtx(
             [PreludeAlg],
@@ -7225,6 +7239,42 @@ public static class Evaluator
 
     internal static EvalResult<CountedResult> RunCounted(Expr expr)
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
+
+    /// <summary>
+    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?)"/>
+    /// and additionally hands back the run's <see cref="EvaluationBudget"/> so a test can
+    /// read the OPERATIONAL counters this run actually charged (steps, materialized item
+    /// slots and string units, peak dynamic depth).
+    ///
+    /// <para>The budget is created here and belongs to this run alone — no static state,
+    /// nothing shared between runs — and it is the same object the evaluator charged, so
+    /// observing it neither re-evaluates anything nor changes optimizer eligibility. These
+    /// counters are C# implementation observations: they may be compared between C#
+    /// executions, never against Lean.</para>
+    /// </summary>
+    internal static (EvalResult<CountedResult> Result, EvaluationBudget Budget) RunCountedObserved(
+        Expr expr,
+        EvaluationLimits? limits = null,
+        bool enableOptimizations = true,
+        IZeroArgPropertyResultCache? zeroArgPropertyResultCache = null)
+    {
+        var budget = EvaluationBudget.Create(limits);
+        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
+            return (new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span }, budget);
+
+        var ctx = CreateRootCtx(
+            zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: enableOptimizations,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: enableOptimizations,
+            sequenceDiagnostics: null,
+            budget);
+
+        var result = expr is Expr.Block(var alg)
+            ? EvalRootProgramCounted(alg, expr.Span, ctx)
+            : EvalCounted(expr, ctx, []);
+        return (result, budget);
+    }
 
     internal static EvalResult<CountedResult> RunCounted(
         Expr expr,

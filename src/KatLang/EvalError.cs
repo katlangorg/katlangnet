@@ -53,7 +53,10 @@ public abstract record EvalError
             or EvaluationStepLimitExceeded
             or EvaluationStackExhausted
             or CollectionSizeLimitExceeded
-            or MaterializationLimitExceeded => true,
+            or MaterializationLimitExceeded
+            or StringSizeLimitExceeded
+            or StringMaterializationLimitExceeded
+            or DisplayLengthLimitExceeded => true,
         WithContext(_, var inner) => inner.IsResourceLimit,
         _ => false,
     };
