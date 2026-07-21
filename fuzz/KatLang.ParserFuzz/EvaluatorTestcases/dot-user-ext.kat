@@ -1,0 +1,2 @@
+F(c) = c.count
+Output = range(1, 20).F

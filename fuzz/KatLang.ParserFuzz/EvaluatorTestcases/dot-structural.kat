@@ -1,0 +1,4 @@
+Object = (
+    public Value = 7
+)
+Output = Object.Value

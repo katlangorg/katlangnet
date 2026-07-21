@@ -240,11 +240,11 @@ public class CollectionMaterializationLimitsTests
         // an equal collection each time does, and runs out of the same budget.
         Assert.False(Eval(
             "Values = range(1, 10)\nOutput = Values.count + Values.count + Values.count + Values.count",
-            Total(60)).IsError);
+            Total(30)).IsError);
 
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Output = range(1, 10).count + range(1, 10).count + range(1, 10).count + range(1, 10).count",
-            Total(60)));
+            Total(30)));
     }
 
     [Fact]

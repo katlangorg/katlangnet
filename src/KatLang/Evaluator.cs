@@ -1053,7 +1053,20 @@ public static class Evaluator
 
     private readonly record struct ResolvedArgumentAlgorithm(
         Algorithm Algorithm,
-        bool SpreadsSequence);
+        bool SpreadsSequence)
+    {
+        /// <summary>
+        /// The already-computed value of this argument, when the caller evaluated it before
+        /// assembling the call. Present only for the dotted RECEIVER, which by definition
+        /// has already been evaluated in order to dispatch on it.
+        ///
+        /// <para><see cref="Algorithm"/> stays populated so the argument keeps its ordinary
+        /// algorithm channel and every non-value consumer is unchanged; this field only
+        /// tells the value channel that the answer is already known, so the receiver's
+        /// value is computed at most once per dotted operation.</para>
+        /// </summary>
+        public CountedResult? PreparedValue { get; init; }
+    }
 
     private readonly record struct UserCallBindings(
         IReadOnlyList<(string, Result)> ValueBindings,
@@ -3516,7 +3529,12 @@ public static class Evaluator
                 continue;
             }
 
-            var outputR = EvalAlgOutputCounted(arg, ctx, valEnv);
+            // A prepared argument (the dotted receiver) already holds its counted value and
+            // must not be recomputed: re-evaluating the reified value would repeat every
+            // allocation and every charged unit the first evaluation already paid for.
+            var outputR = resolvedArg.PreparedValue is { } prepared
+                ? EvalResult<CountedResult>.Ok(prepared)
+                : EvalAlgOutputCounted(arg, ctx, valEnv);
             if (outputR.IsOk)
             {
                 if (resolvedArg.SpreadsSequence)
@@ -6743,8 +6761,19 @@ public static class Evaluator
         var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError) return receiverR.Error;
 
+        // The receiver has just been evaluated to dispatch on it. Carry that counted value
+        // forward as the argument's PREPARED value: the reified algorithm is kept for the
+        // algorithm channel, but the value channel must not evaluate it again. Without
+        // this, `A.count` re-evaluated the reified literal and materialized a second
+        // identical copy of A — `range(1, 10).count` charged 20 item slots for one
+        // ten-item collection, and a cached receiver property did not help because the
+        // duplicate was a RECONSTRUCTION from the already-evaluated result, not a second
+        // evaluation of the source expression.
         return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            [new ResolvedArgumentAlgorithm(CountedArgAlgorithm(receiverR.Value), SpreadsSequence: false)]);
+            [new ResolvedArgumentAlgorithm(CountedArgAlgorithm(receiverR.Value), SpreadsSequence: false)
+            {
+                PreparedValue = receiverR.Value,
+            }]);
     }
 
     private static EvalResult<SequenceBuiltinDotCall?> TryBuildSequenceBuiltinDotCall(

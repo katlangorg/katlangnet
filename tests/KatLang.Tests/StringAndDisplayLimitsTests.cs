@@ -251,12 +251,42 @@ public class StringAndDisplayLimitsTests
     }
 
     [Fact]
-    public void RowSeparators_CountAsExactlyOneUnitOnEveryPlatform()
+    public void RowSeparators_AreChargedTheirActualLength()
     {
-        // "1" + separator + "2" = 3 charged units regardless of CRLF or LF, so the
-        // boundary is platform-independent.
-        Assert.Equal($"1{Environment.NewLine}2", Display("Output = 1, 2", Display(3)));
-        Assert.StartsWith(LimitPrefix, Display("Output = 1, 2", Display(2)));
+        // The bound is exact on the RETURNED string, so a row separator costs what it
+        // actually occupies: two units on a CRLF host, one on an LF host. Charging a
+        // canonical single unit would have let the returned text exceed a limit that is
+        // defined in UTF-16 code units.
+        var exact = 2 + Environment.NewLine.Length;
+        Assert.Equal($"1{Environment.NewLine}2", Display("Output = 1, 2", Display(exact)));
+        Assert.StartsWith(LimitPrefix, Display("Output = 1, 2", Display(exact - 1)));
+    }
+
+    [Theory]
+    [InlineData("Output = 1, 2, 3, 4, 5")]
+    [InlineData("Output = [1, 2, 3], [4, 5, 6]")]
+    [InlineData("Output = 'abc', 'def', 'ghi'")]
+    public void RenderedText_NeverExceedsTheConfiguredLimit(string source)
+    {
+        // Sweep every limit around the natural length: whatever comes back must either be
+        // the limit message or fit inside the limit.
+        var natural = Display(source).Length;
+        for (var limit = 0; limit <= natural + 2; limit++)
+        {
+            var text = Display(source, Display(limit));
+            if (text.StartsWith(LimitPrefix, StringComparison.Ordinal)) continue;
+            Assert.True(text.Length <= limit, $"limit {limit} returned {text.Length} units.");
+        }
+    }
+
+    [Fact]
+    public void TheLimitMessageItselfIsExemptFromTheLimit()
+    {
+        // The message is not charged, so it is produced even at a limit of zero: a caller
+        // that asks for no output still learns why there is none.
+        var text = Display("Output = 1, 2, 3", Display(0));
+        Assert.StartsWith(LimitPrefix, text);
+        Assert.True(text.Length > 0);
     }
 
     [Fact]

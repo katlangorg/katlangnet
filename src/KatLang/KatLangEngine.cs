@@ -16,11 +16,16 @@ internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLeng
 /// measuring it afterwards.
 ///
 /// <para>Lengths are UTF-16 code units, matching <see cref="string.Length"/>, the source
-/// span column model, and actual CLR string storage. A row separator is charged as exactly
-/// ONE unit while the platform newline is written verbatim, so the limit boundary is
-/// identical on every platform; on CRLF hosts the returned text can therefore be up to
-/// (rows - 1) units longer than the limit, which is deterministic and bounded by the row
-/// count.</para>
+/// span column model, and actual CLR string storage. EVERY append is charged its actual
+/// length, including the platform newline between top-level rows, so the returned string
+/// can never exceed the limit — an exact bound on the real output is worth more than a
+/// canonical abstraction of it. The consequence is that a many-row rendering can cross the
+/// boundary at a different row on a CRLF host (2 units per separator) than on an LF host
+/// (1 unit); both report the same structured limit outcome.</para>
+///
+/// <para>The limit MESSAGE returned in place of an over-limit rendering is NOT itself
+/// charged, so it is produced even for a limit of zero: a caller that asks for no output
+/// still learns why there is none.</para>
 /// </summary>
 internal sealed class BoundedDisplayWriter(int limit)
 {
@@ -44,20 +49,8 @@ internal sealed class BoundedDisplayWriter(int limit)
         return true;
     }
 
-    /// <summary>Writes the platform newline between top-level rows, charged as one unit.</summary>
-    public bool AppendRowSeparator()
-    {
-        if (LimitExceeded) return false;
-        if (limit - _charged < 1)
-        {
-            LimitExceeded = true;
-            return false;
-        }
-
-        _charged += 1;
-        _builder.Append(Environment.NewLine);
-        return true;
-    }
+    /// <summary>Writes the platform newline between top-level rows, charged its actual length.</summary>
+    public bool AppendRowSeparator() => Append(Environment.NewLine);
 
     public override string ToString() => _builder.ToString();
 }
