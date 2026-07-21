@@ -1,0 +1,3 @@
+Apply(g, x) = g(x)
+F(x) = Apply(F, x)
+Output = F(1)

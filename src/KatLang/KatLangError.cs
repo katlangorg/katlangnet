@@ -77,6 +77,11 @@ public sealed class KatLangError
             EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(),
             EvalError.NumericOverflow => "Numeric overflow",
             EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
+            EvalError.EvaluationDepthExceeded e => $"Evaluation recursion limit of {e.Limit} was exceeded",
+            EvalError.EvaluationStepLimitExceeded e => $"Evaluation step limit of {e.Limit} was exceeded",
+            EvalError.EvaluationStackExhausted =>
+                "Evaluation stopped to protect the host stack. "
+                + "Reduce how deeply this program calls into itself, or configure a lower evaluation depth limit",
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
             _ => error.ToString()!,
         };

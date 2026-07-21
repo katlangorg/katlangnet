@@ -142,16 +142,21 @@ public static class KatLangEngine
                 .Select(KatLangError.FromDiagnostic)
                 .ToList();
             if (frontEndResult.CanEvaluateAfterLoadErrors)
-                parseErrors.AddRange(EvaluateForAdditionalErrors(frontEndResult.ElaboratedRoot));
+                parseErrors.AddRange(EvaluateForAdditionalErrors(frontEndResult.ElaboratedRoot, options?.EvaluationLimits));
 
             return new RunResult.ParseFailure(parseErrors);
         }
 
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
+
+        // One budget for the whole run: the program output and the DisplayDecimals
+        // property are evaluated under the same run-scoped budget, so neither can reset
+        // or escape the other's accounting.
         var evalResult = Evaluator.RunCountedWithTopLevelProperty(
             new Expr.Block(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
-            zeroArgPropertyResultCache);
+            zeroArgPropertyResultCache,
+            options?.EvaluationLimits);
 
         if (evalResult.IsError)
         {
@@ -261,9 +266,12 @@ public static class KatLangEngine
             Inner: EvalError.MissingOutput,
         };
 
-    private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(Algorithm root)
+    private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(Algorithm root, EvaluationLimits? limits)
     {
-        var evalResult = Evaluator.RunCounted(new Expr.Block(root));
+        var evalResult = Evaluator.RunCounted(
+            new Expr.Block(root),
+            new RunScopedZeroArgPropertyResultCache(),
+            limits);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
             return [];
 

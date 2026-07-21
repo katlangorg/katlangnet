@@ -124,6 +124,29 @@ public abstract record EvalError
     /// <summary>Top-level program has unresolved implicit parameters (no arguments supplied).</summary>
     public sealed record UnresolvedImplicitParams(IReadOnlyList<string> ParamNames) : EvalError;
 
+    /// <summary>
+    /// Evaluation reached the deterministic limit on simultaneously active dynamic
+    /// algorithm invocations (<see cref="EvaluationLimits.MaxDepth"/>, bounded by
+    /// <see cref="EvaluationLimits.MaxSupportedDepth"/>). Host-runtime resource policy,
+    /// not a property of the KatLang program: an in-budget program is unaffected.
+    /// </summary>
+    public sealed record EvaluationDepthExceeded(int Limit) : EvalError;
+
+    /// <summary>
+    /// Evaluation reached the deterministic step budget
+    /// (<see cref="EvaluationLimits.MaxSteps"/>). One step is charged per dynamic
+    /// algorithm invocation and per loop iteration.
+    /// </summary>
+    public sealed record EvaluationStepLimitExceeded(long Limit) : EvalError;
+
+    /// <summary>
+    /// Evaluation stopped because host stack headroom ran out before the deterministic
+    /// depth limit was reached. This is the machine-dependent backstop that keeps
+    /// stack-expensive evaluation shapes from terminating the process; it carries no
+    /// machine-specific payload precisely because the boundary is not a semantic fact.
+    /// </summary>
+    public sealed record EvaluationStackExhausted() : EvalError;
+
     /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>
     public sealed record WithContext : EvalError
     {

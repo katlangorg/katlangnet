@@ -1,0 +1,3 @@
+G(y) = y + 1
+Inc = G(x)
+Output = Inc.repeat(300, 0)

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Runtime.CompilerServices;
+using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
@@ -42,6 +43,9 @@ public static class Evaluator
     /// Wraps the algorithm chain (current algorithm + enclosing callers) used for
     /// both lexical resolution and runtime dispatch.
     /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
+    /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
+    /// by this copied struct, so every derived context charges the same run's counters
+    /// and no copy can reset them.
     /// Lean: structure EvalCtx where callStack : List Algorithm; algEnv : AlgEnv := [].
     /// </summary>
     internal readonly record struct EvalCtx(
@@ -52,9 +56,17 @@ public static class Evaluator
         bool EnableLoopOptimization,
         LoopOptimizationDiagnostics? LoopDiagnostics,
         bool EnableSequencePipelineOptimization,
-        SequencePipelineDiagnostics? SequenceDiagnostics)
+        SequencePipelineDiagnostics? SequenceDiagnostics,
+        EvaluationBudget Budget)
     {
-        public static readonly EvalCtx Empty = new([], [], [], UncachedZeroArgPropertyResultCache.Instance, true, null, true, null);
+        /// <summary>
+        /// A fresh empty context. This is a PROPERTY, not a shared static instance:
+        /// every use must get its own budget, because a shared one would be global
+        /// mutable evaluation state.
+        /// </summary>
+        public static EvalCtx Empty => new(
+            [], [], [], UncachedZeroArgPropertyResultCache.Instance, true, null, true, null,
+            EvaluationBudget.Create(null));
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
         public EvalCtx Push(Algorithm alg)
@@ -66,7 +78,8 @@ public static class Evaluator
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
-                SequenceDiagnostics);
+                SequenceDiagnostics,
+                Budget);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
@@ -81,7 +94,8 @@ public static class Evaluator
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
-                SequenceDiagnostics);
+                SequenceDiagnostics,
+                Budget);
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
         public EvalCtx WithCountedParamEnv(IReadOnlyList<(string, CountedResult)> countedParamEnv)
@@ -93,7 +107,8 @@ public static class Evaluator
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
-                SequenceDiagnostics);
+                SequenceDiagnostics,
+                Budget);
 
         /// <summary>Replace the zero-argument property cache for a scoped evaluation subtree.</summary>
         public EvalCtx WithZeroArgPropertyResultCache(IZeroArgPropertyResultCache zeroArgPropertyResultCache)
@@ -105,7 +120,8 @@ public static class Evaluator
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
-                SequenceDiagnostics);
+                SequenceDiagnostics,
+                Budget);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -461,17 +477,39 @@ public static class Evaluator
     /// Lean: withCtx.
     /// </summary>
     private static EvalResult<T> WithCtx<T>(ErrorContext context, EvalResult<T> result) =>
-        result.IsError
+        result.IsError && !IsResourceLimitError(result.Error)
             ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
+
+    /// <summary>
+    /// True for the host resource-limit outcomes. These stop accumulating call/property
+    /// context on the way out: the limit is a property of the RUN, not of any one call
+    /// on the chain, and a depth failure would otherwise report one context frame per
+    /// active invocation — hundreds of identical lines saying nothing extra. The
+    /// innermost span (the expression that could not be entered) is preserved.
+    /// </summary>
+    private static bool IsResourceLimitError(EvalError error) => error switch
+    {
+        EvalError.EvaluationDepthExceeded
+            or EvalError.EvaluationStepLimitExceeded
+            or EvalError.EvaluationStackExhausted => true,
+        EvalError.WithContext(_, var inner) => IsResourceLimitError(inner),
+        _ => false,
+    };
 
     private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result)
         => WithCtx(new TextErrorContext(context), result);
 
     private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
-        result.IsError && result.Error.Span is null
-            ? (result.Error with { Span = span })
-            : result;
+        result.IsError ? AtSpanIfMissing(result.Error, span) : result;
+
+    /// <summary>
+    /// Attaches a source span to an error that does not already carry one. The single
+    /// implementation behind <see cref="WithSpan{T}"/> and the resource-limit charge
+    /// points, which hold a bare <see cref="EvalError"/> rather than a result.
+    /// </summary>
+    private static EvalError AtSpanIfMissing(EvalError error, SourceSpan? span)
+        => error.Span is null && span is not null ? error with { Span = span } : error;
 
     private static EvalResult<T> WithPropertyContextOnMissingOutput<T>(string name, SourceSpan? span, EvalResult<T> result)
     {
@@ -2679,6 +2717,30 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional")
     {
+        // Charged dynamic invocation boundary. This is the single callback dispatch
+        // chokepoint: the plain wrapper, the sequence-callback wrappers, and the
+        // conditional-callback path all route through here, so a callback invocation is
+        // charged exactly once regardless of callee shape.
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return limitError;
+
+        try
+        {
+            return EvalResolvedCallbackCallCountedCore(callee, args, ctx, valEnv, calleeName);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<CountedResult> EvalResolvedCallbackCallCountedCore(
+        Algorithm callee,
+        IReadOnlyList<CountedResult> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName)
+    {
         switch (callee)
         {
             case Algorithm.Builtin(var builtin):
@@ -2939,6 +3001,31 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // Charged dynamic invocation boundary, entered BEFORE the cache is consulted so
+        // that recursive property access (`A = A`) is bounded by depth. A cache HIT
+        // charges exactly this one access step and never re-charges the cached
+        // computation; a MISS additionally charges everything its body evaluates.
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return AtSpanIfMissing(limitError, binding.DeclarationSpans.FirstOrDefault());
+
+        try
+        {
+            return GetOrEvaluateZeroArgPropertyResultCore(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResultCore(
+        Algorithm? owner,
+        Property binding,
+        ZeroArgPropertyAccessKind accessKind,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
         if (owner is null)
             return EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv);
 
@@ -3046,6 +3133,28 @@ public static class Evaluator
     }
 
     private static EvalResult<CountedResult> EvalReducerAccumulatorVariadicCallbackCallCounted(
+        Algorithm.User callee,
+        IReadOnlyList<CountedResult> args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        // Charged dynamic invocation boundary. This reducer shape is dispatched INSTEAD
+        // of EvalResolvedCallbackCallCounted, never in addition to it, so charging here
+        // keeps one reduce step at exactly one charged invocation.
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return limitError;
+
+        try
+        {
+            return EvalReducerAccumulatorVariadicCallbackCallCountedCore(callee, args, ctx, valEnv);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<CountedResult> EvalReducerAccumulatorVariadicCallbackCallCountedCore(
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
@@ -5019,6 +5128,14 @@ public static class Evaluator
         IReadOnlyList<Result> stateSlots,
         string loopName)
     {
+        // One loop ITERATION is one charged work unit. Loops repeat work without growing
+        // the host stack, so they charge work only — never depth. This is the single
+        // per-iteration chokepoint shared by generic `while` and `repeat`; the optimized
+        // loop paths never run under a step budget (see CreateRootCtx), so the charged
+        // count is exactly the generic one.
+        if (ctx.Budget.TryChargeStep() is { } limitError)
+            return limitError;
+
         var bindingSelection = SelectGenericLoopStepBinding(step);
         var boundR = BindLoopStepState(step, stateSlots, loopName, bindingSelection);
         if (boundR.IsError) return boundR.Error;
@@ -6031,6 +6148,28 @@ public static class Evaluator
         string calleeName = "conditional",
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
+        // Charged dynamic invocation boundary: clause selection plus the selected
+        // branch body are ONE dynamic invocation, exactly like a flat user call.
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+
+        try
+        {
+            return EvalConditionalCallCore(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<Result> EvalConditionalCallCore(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries)
+    {
         var wiredArgs = WireToCaller(ctx, args);
 
         // Shared argument-slot assembly: explicit spread expands into ordinary
@@ -6071,6 +6210,27 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         string calleeName = "conditional",
         IReadOnlyList<bool>? preserveArgBoundaries = null)
+    {
+        // Charged dynamic invocation boundary (see EvalConditionalCall).
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+
+        try
+        {
+            return EvalConditionalCallCountedCore(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<CountedResult> EvalConditionalCallCountedCore(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries)
     {
         var wiredArgs = WireToCaller(ctx, args);
 
@@ -6125,6 +6285,27 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries = null,
         string? calleeName = null)
+    {
+        // Charged dynamic invocation boundary (see EvaluationBudget).
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+
+        try
+        {
+            return EvalUserCallCore(callee, args, ctx, valEnv, preserveArgBoundaries, calleeName);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<Result> EvalUserCallCore(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<bool>? preserveArgBoundaries,
+        string? calleeName)
     {
         var wiredArgs = WireToCaller(ctx, args);
 
@@ -6221,6 +6402,27 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries = null,
         string? calleeName = null)
+    {
+        // Charged dynamic invocation boundary (see EvaluationBudget).
+        if (ctx.Budget.TryEnterInvocation() is { } limitError)
+            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+
+        try
+        {
+            return EvalUserCallCountedCore(callee, args, ctx, valEnv, preserveArgBoundaries, calleeName);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
+    private static EvalResult<CountedResult> EvalUserCallCountedCore(
+        Algorithm callee, Algorithm args,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        IReadOnlyList<bool>? preserveArgBoundaries,
+        string? calleeName)
     {
         var wiredArgs = WireToCaller(ctx, args);
 
@@ -6789,31 +6991,80 @@ public static class Evaluator
     /// Lean: runResult → EvalM Result.
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
-        => Run(expr, new RunScopedZeroArgPropertyResultCache());
+        => Run(expr, limits: null);
 
-    internal static EvalResult<Result> Run(
-        Expr expr,
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache)
-        => Run(expr, zeroArgPropertyResultCache, enableLoopOptimization: true);
+    /// <summary>
+    /// Run evaluation under explicit resource limits.
+    /// <para>The no-limits overloads are NOT unbounded: they use
+    /// <see cref="EvaluationLimits.Default"/>, so the internal depth ceiling
+    /// (<see cref="EvaluationLimits.MaxSupportedDepth"/>) is enforced on every public
+    /// evaluator entry point, exactly as it is through <see cref="KatLangEngine"/>.
+    /// Only the optional step budget is opt-in.</para>
+    /// </summary>
+    public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
+        => Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
 
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        bool enableLoopOptimization)
-        => Run(expr, zeroArgPropertyResultCache, enableLoopOptimization, loopDiagnostics: null);
+        EvaluationLimits? limits = null)
+        => Run(expr, zeroArgPropertyResultCache, enableLoopOptimization: true, limits);
+
+    /// <summary>
+    /// Builds the root evaluation context for one run, including its fresh
+    /// <see cref="EvaluationBudget"/>.
+    ///
+    /// <para>A configured step budget must mean the same thing no matter which internal
+    /// execution strategy runs. The optimized loop and sequence-pipeline paths collapse
+    /// many generic evaluator operations into specialized routines, so their internal
+    /// operation counts do not match the generic paths. A budgeted run therefore always
+    /// takes the generic paths and charges exactly the generic units; an unbudgeted run
+    /// keeps every optimization. This is optimizer independence by construction rather
+    /// than by parallel accounting.</para>
+    /// </summary>
+    private static EvalCtx CreateRootCtx(
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        bool enableLoopOptimization,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        bool enableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationLimits? limits)
+    {
+        var budget = EvaluationBudget.Create(limits);
+        var optimize = !budget.HasStepLimit;
+        return new EvalCtx(
+            [PreludeAlg],
+            [],
+            [],
+            zeroArgPropertyResultCache,
+            enableLoopOptimization && optimize,
+            loopDiagnostics,
+            enableSequencePipelineOptimization && optimize,
+            sequenceDiagnostics,
+            budget);
+    }
 
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         bool enableLoopOptimization,
-        LoopOptimizationDiagnostics? loopDiagnostics)
+        EvaluationLimits? limits = null)
+        => Run(expr, zeroArgPropertyResultCache, enableLoopOptimization, loopDiagnostics: null, limits);
+
+    internal static EvalResult<Result> Run(
+        Expr expr,
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        bool enableLoopOptimization,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        EvaluationLimits? limits = null)
         => Run(
             expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
             enableSequencePipelineOptimization: true,
-            sequenceDiagnostics: null);
+            sequenceDiagnostics: null,
+            limits);
 
     internal static EvalResult<Result> Run(
         Expr expr,
@@ -6821,22 +7072,21 @@ public static class Evaluator
         bool enableLoopOptimization,
         LoopOptimizationDiagnostics? loopDiagnostics,
         bool enableSequencePipelineOptimization,
-        SequencePipelineDiagnostics? sequenceDiagnostics)
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        EvaluationLimits? limits = null)
     {
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        var ctx = new EvalCtx(
-            [PreludeAlg],
-            [],
-            [],
+        var ctx = CreateRootCtx(
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
             enableSequencePipelineOptimization,
-            sequenceDiagnostics);
+            sequenceDiagnostics,
+            limits);
         return expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
@@ -6847,22 +7097,21 @@ public static class Evaluator
 
     internal static EvalResult<CountedResult> RunCounted(
         Expr expr,
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache)
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        EvaluationLimits? limits = null)
     {
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        var ctx = new EvalCtx(
-            [PreludeAlg],
-            [],
-            [],
+        var ctx = CreateRootCtx(
             zeroArgPropertyResultCache,
-            EnableLoopOptimization: true,
-            LoopDiagnostics: null,
-            EnableSequencePipelineOptimization: true,
-            SequenceDiagnostics: null);
+            enableLoopOptimization: true,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: true,
+            sequenceDiagnostics: null,
+            limits);
         return expr is Expr.Block(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
@@ -6871,7 +7120,8 @@ public static class Evaluator
     internal static EvalResult<CountedRootProgramResult> RunCountedWithTopLevelProperty(
         Expr expr,
         string topLevelPropertyName,
-        IZeroArgPropertyResultCache zeroArgPropertyResultCache)
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache,
+        EvaluationLimits? limits = null)
     {
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
@@ -6879,15 +7129,13 @@ public static class Evaluator
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
 
-        var ctx = new EvalCtx(
-            [PreludeAlg],
-            [],
-            [],
+        var ctx = CreateRootCtx(
             zeroArgPropertyResultCache,
-            EnableLoopOptimization: true,
-            LoopDiagnostics: null,
-            EnableSequencePipelineOptimization: true,
-            SequenceDiagnostics: null);
+            enableLoopOptimization: true,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: true,
+            sequenceDiagnostics: null,
+            limits);
 
         if (expr is Expr.Block(var alg))
             return EvalRootProgramCountedWithTopLevelProperty(alg, expr.Span, ctx, topLevelPropertyName);
@@ -7019,11 +7267,16 @@ public static class Evaluator
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
     public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr)
+        => RunFlat(expr, limits: null);
+
+    /// <summary>Host-boundary flattening run under explicit resource limits.</summary>
+    public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr, EvaluationLimits? limits)
     {
-        var r = Run(expr);
+        var r = Run(expr, limits);
         if (r.IsError) return r.Error;
         return EvalResult<IReadOnlyList<decimal>>.Ok(r.Value.ToHostAtoms());
     }
+
 
     // ── Utility ──────────────────────────────────────────────────────────────
 

@@ -36,6 +36,13 @@ internal static class EvaluatorProbe
         // curve, not to consume the machine's memory (see the task's resource guidance).
         new("rec_finite",     "recursion", n => $"f(0) = 0\nf(n) = f(n - 1)\nOutput = f({n})", 1_000_000, false),
         new("rec_callback",   "recursion", n => $"F(x) = [x].map(F)\nOutput = F({n})", 1, true),
+        // Depth-ceiling calibration shapes (Phase-5). Each recurses once per level but
+        // through a different dispatch path, so the largest completed n measures the
+        // per-level host-stack cost of that path.
+        new("rec_if_finite",  "recursion", n => $"f(n) = if(n > 0, f(n - 1), 0)\nOutput = f({n})", 1_000_000, false),
+        new("rec_nested_finite", "recursion", n => $"f(0) = 0\nf(n) = {new string('(', 10)}f(n - 1){new string(')', 10)}\nOutput = f({n})", 1_000_000, false),
+        new("rec_cb_finite",  "recursion", n => $"F(0) = 0\nF(n) = [n - 1].map(F).first\nOutput = F({n})", 1_000_000, false),
+        new("rec_dot_finite", "recursion", n => $"f(0) = 0\nf(n) = (n - 1).f\nOutput = f({n})", 1_000_000, false),
         // ── loops ────────────────────────────────────────────────────────────
         new("while_infinite", "loop", _ => "Step = x, 1\nOutput = Step.while(0)", 1, true),
         new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nOutput = Step.while({n})", 10_000_000, false),
@@ -66,10 +73,19 @@ internal static class EvaluatorProbe
         var source = family.Gen(n);
         Console.Out.WriteLine($"CHILD family={family.Id} n={n} len={source.Length}");
 
+        // Default options by design: the probes characterize what a caller gets with no
+        // configuration, which is exactly where the process-termination defect lived.
+        // KATLANG_PROBE_MAX_STEPS opts one probe run into a step budget so the
+        // work-budget side can be characterized on the same harness.
+        var options = Environment.GetEnvironmentVariable("KATLANG_PROBE_MAX_STEPS") is { Length: > 0 } rawSteps
+            && long.TryParse(rawSteps, out var maxSteps)
+                ? new RunOptions { EvaluationLimits = new EvaluationLimits { MaxSteps = maxSteps } }
+                : null;
+
         RunResult result;
         try
         {
-            result = KatLangEngine.Run(source);   // real public engine; no downloader, no network
+            result = KatLangEngine.Run(source, options);   // real public engine; no downloader, no network
         }
         catch (Exception ex)
         {

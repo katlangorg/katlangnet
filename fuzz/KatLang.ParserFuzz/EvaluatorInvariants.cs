@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using KatLang;
+using KatLang.Evaluation.Caching;
 
 namespace KatLang.ParserFuzz;
 
@@ -27,6 +28,21 @@ internal sealed class EvaluatorInvariantException(string message) : Exception(me
 /// </summary>
 internal static class EvaluatorInvariants
 {
+    /// <summary>
+    /// Deterministic resource limits used by every evaluation in this harness.
+    ///
+    /// <para>KatLang now stops runaway recursion and unbounded work itself, so the
+    /// campaign no longer depends on libFuzzer's process timeout to survive a
+    /// non-terminating program: an over-budget program returns an ordinary structured
+    /// <see cref="EvalError"/> like any other failure, and is replayed deterministically.
+    /// The values are small enough that an infinite loop stops in milliseconds and large
+    /// enough that ordinary generated programs finish normally.</para>
+    /// </summary>
+    internal static readonly EvaluationLimits CampaignLimits = new() { MaxDepth = 64, MaxSteps = 200_000 };
+
+    /// <summary>Engine-facing form of <see cref="CampaignLimits"/>; no downloader, no network.</summary>
+    internal static readonly RunOptions CampaignOptions = new() { EvaluationLimits = CampaignLimits };
+
     private const uint EngineParitySampleModulus = 4;
     private const uint DeterminismSampleModulus = 16;
     private const uint InputIndependenceSampleModulus = 64;
@@ -53,10 +69,10 @@ internal static class EvaluatorInvariants
         var block = new Expr.Block(parse.Root);
 
         phase = EvaluatorPhase.PlainEval;
-        var plain = Evaluator.Run(block);
+        var plain = Evaluator.Run(block, CampaignLimits);
 
         phase = EvaluatorPhase.CountedEval;
-        var counted = Evaluator.RunCounted(block);
+        var counted = Evaluator.RunCounted(block, new RunScopedZeroArgPropertyResultCache(), CampaignLimits);
 
         phase = EvaluatorPhase.PlainCountCompare;
         if (plain.IsOk != counted.IsOk)
@@ -88,7 +104,7 @@ internal static class EvaluatorInvariants
         if (h % EngineParitySampleModulus == 0)
         {
             phase = EvaluatorPhase.EngineEval;
-            var engine = KatLangEngine.Run(source);
+            var engine = KatLangEngine.Run(source, CampaignOptions);
 
             phase = EvaluatorPhase.EngineParity;
             CheckEngineParity(source, parse.Root, counted, engine);
@@ -229,15 +245,15 @@ internal static class EvaluatorInvariants
         if (!verdict.Eligible) return sb.ToString();
 
         var block = new Expr.Block(parse.Root);
-        var plain = Evaluator.Run(block);
+        var plain = Evaluator.Run(block, CampaignLimits);
         sb.Append("|plain:").Append(plain.IsOk ? Shape(plain.Value) : ErrorKey(plain.Error));
 
-        var counted = Evaluator.RunCounted(block);
+        var counted = Evaluator.RunCounted(block, new RunScopedZeroArgPropertyResultCache(), CampaignLimits);
         sb.Append("|counted:");
         if (counted.IsOk) sb.Append(Shape(counted.Value.Value)).Append("|n=").Append(counted.Value.EmittedCount);
         else sb.Append(ErrorKey(counted.Error));
 
-        var engine = KatLangEngine.Run(source);
+        var engine = KatLangEngine.Run(source, CampaignOptions);
         sb.Append("|engine:").Append(EngineKey(engine));
         return sb.ToString();
     }

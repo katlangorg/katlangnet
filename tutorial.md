@@ -3505,6 +3505,19 @@ Only `public` exported properties are exposed through `load` and `open`.
   F(0) = 1
   F(x) = x + 1  // OK — 0 and a variable are not equivalent
   ```
+
+- **Recursion depth:** evaluation bounds how many algorithm calls may be active at once, so a runaway recursion reports an error instead of taking the host process down with it. A missing base case, a mutual cycle (`f` calls `g` calls `f`), and a self-referential property (`A = A`) all stop the same way:
+
+  ```
+  f(0) = 0
+  f(n) = f(n - 1)
+
+  f(1000)  // error: Evaluation recursion limit of 128 was exceeded
+  ```
+
+  This is a host runtime limit, not a language rule: a program that finishes within the limit produces exactly the result it always did. Recursion deeper than the limit needs an iterative form — `repeat` or `while` — which repeats work without stacking up calls.
+
+- **Loops still run as long as you ask:** there is no work budget by default, so `Step.while(...)` with a condition that never becomes false runs forever. Check your continuation slot. (Hosts embedding KatLang can configure a step budget to bound this.)
 ---
 
 ## Full Reference

@@ -27,28 +27,44 @@ internal static class EvaluatorEligibility
 
     internal sealed record Verdict(bool Eligible, IReadOnlyList<string> Reasons, int NodeCount, IReadOnlyList<string> Cycles)
     {
+        /// <summary>Shapes that are detected but NO LONGER excluded, because KatLang's own
+        /// deterministic limits now bound them. Reported so triage keeps the information.</summary>
+        public IReadOnlyList<string> Notes { get; init; } = [];
+
         public string ReasonText => Reasons.Count == 0 ? "eligible" : string.Join("+", Reasons);
+
+        public string NoteText => Notes.Count == 0 ? "-" : string.Join("+", Notes);
     }
 
     public static Verdict Classify(string source, Algorithm root)
     {
         var reasons = new List<string>();
+        var notes = new List<string>();
         if (source.Length > MaxSourceLength) reasons.Add("source-too-large");
 
         var scan = new Scan();
         scan.Alg(root);
 
         if (scan.Nodes > MaxAstNodes) reasons.Add("ast-too-large");
-        if (scan.HasWhile) reasons.Add("while-call");
-        if (scan.HasUnboundedRepeat) reasons.Add("repeat-unbounded");
+
+        // Non-termination through recursion or looping is now BOUNDED by the campaign's
+        // configured EvaluationLimits (depth + step budget), so these shapes stay in the
+        // deterministic campaign and in replay instead of being excluded. Excluding them
+        // would drop exactly the over-budget regression seeds this phase added.
+        if (scan.HasWhile) notes.Add("while-call");
+        if (scan.HasUnboundedRepeat) notes.Add("repeat-unbounded");
+
+        // Still excluded: the step budget bounds WORK, not memory. These shapes can
+        // allocate or compute enormously before any charged unit is reached, so the
+        // process-isolated resource probes keep covering them.
         if (scan.HasLargeRange) reasons.Add("range-large-or-unbounded");
         if (scan.HasLargePow) reasons.Add("pow-large");
         if (scan.HasNativeOrRandom) reasons.Add("native-or-nondeterministic");
 
         var cycles = FindCycles(scan.PropertyRefs);
-        if (cycles.Count > 0) reasons.Add("recursion-cycle");
+        if (cycles.Count > 0) notes.Add("recursion-cycle");
 
-        return new Verdict(reasons.Count == 0, reasons, scan.Nodes, cycles);
+        return new Verdict(reasons.Count == 0, reasons, scan.Nodes, cycles) { Notes = notes };
     }
 
     /// <summary>Name-based property dependency cycles (self-recursion and mutual

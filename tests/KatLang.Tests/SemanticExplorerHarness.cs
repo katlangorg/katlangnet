@@ -194,6 +194,11 @@ public static class SemanticExplorerHarness
             EvalError.UnresolvedImplicitParams => "unresolvedImplicitParams",
             // C#-only: the Lean core uses unbounded Int and cannot overflow.
             EvalError.NumericOverflow => "numericOverflow",
+            // C#-only host resource policy: the Lean evaluator is unbounded and models
+            // no execution budget, so these categories have no Lean counterpart.
+            EvalError.EvaluationDepthExceeded => "evaluationDepthExceeded",
+            EvalError.EvaluationStepLimitExceeded => "evaluationStepLimitExceeded",
+            EvalError.EvaluationStackExhausted => "evaluationStackExhausted",
             _ => error.GetType().Name,
         };
     }

@@ -1,3 +1,4 @@
+using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
@@ -329,7 +330,8 @@ public class EvaluatorTests
             EnableLoopOptimization: true,
             LoopDiagnostics: null,
             EnableSequencePipelineOptimization: true,
-            SequenceDiagnostics: null);
+            SequenceDiagnostics: null,
+            Budget: EvaluationBudget.Create(null));
 
     private static (
         EvalResult<Result> Result,
