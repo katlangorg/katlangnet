@@ -44,6 +44,8 @@ internal static class EvaluatorInvariants
         MaxSteps = 200_000,
         MaxCollectionItems = 5_000,
         MaxMaterializedItems = 200_000,
+        MaxStringLength = 2_000,
+        MaxDisplayLength = 20_000,
     };
 
     /// <summary>Engine-facing form of <see cref="CampaignLimits"/>; no downloader, no network.</summary>

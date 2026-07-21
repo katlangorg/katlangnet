@@ -166,6 +166,105 @@ public sealed record EvaluationLimits
         }
     }
 
+    /// <summary>
+    /// Internal hard ceiling on the length of ONE language string value
+    /// (<see cref="Result.Str"/>) created by source evaluation, in UTF-16 code units.
+    /// <see cref="MaxStringLength"/> can only request a lower limit.
+    ///
+    /// <para>KatLang has no string concatenation operator — <c>"a" + "b"</c> is a type
+    /// error — so a source program cannot grow a string: the only producers are string
+    /// literals (bounded by the source text) and <c>.string</c> on a number (about 30
+    /// units). This ceiling therefore exists as defence in depth rather than to close a
+    /// known compact-source path, and its practical effect is on hand-built ASTs supplied
+    /// through the public <see cref="Evaluator"/> API, where an arbitrarily long
+    /// <c>Expr.StringLiteral</c> is reachable. If a concatenating operation is ever added
+    /// to the language, this is the ceiling it must charge against.</para>
+    /// </summary>
+    public const int MaxSupportedStringLength = 1_000_000;
+
+    /// <summary>
+    /// Internal hard ceiling on the length of ONE rendered display string, in UTF-16 code
+    /// units, applied to every public rendering surface.
+    /// <see cref="MaxDisplayLength"/> can only request a lower limit.
+    ///
+    /// <para>This is the string ceiling that closes a real compact-source path. Display
+    /// flattens a value recursively, so a value that is legal under every evaluation limit
+    /// can still render enormously: nesting a list inside itself
+    /// (<c>B = [A, A]</c>, <c>C = [B, B]</c>, ...) adds two item slots per level while
+    /// DOUBLING the rendered length, so a handful of lines can ask for gigabytes of text.
+    /// A maximal legal collection renders well inside this ceiling — <c>range(1, 100000)</c>
+    /// is about 689,000 units — while 1,000,000 units is roughly 2 MB of UTF-16 storage,
+    /// which stays affordable for WASM and multi-tenant server embeddings.</para>
+    /// </summary>
+    public const int MaxSupportedDisplayLength = 1_000_000;
+
+    private readonly int? _maxStringLength;
+    private readonly long? _maxMaterializedStringChars;
+    private readonly int? _maxDisplayLength;
+
+    /// <summary>
+    /// Maximum UTF-16 code units in one language string value, or <c>null</c> to use
+    /// <see cref="MaxSupportedStringLength"/>. Values above the supported maximum are
+    /// clamped down to it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
+    public int? MaxStringLength
+    {
+        get => _maxStringLength;
+        init
+        {
+            if (value is < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxStringLength), value, "String length limit cannot be negative.");
+            }
+
+            _maxStringLength = value;
+        }
+    }
+
+    /// <summary>
+    /// Maximum cumulative UTF-16 code units stored in language string values across one
+    /// run, or <c>null</c> for no cumulative budget (the default). Counts units CREATED,
+    /// like <see cref="MaxMaterializedItems"/>, so it is not a live-memory measure.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
+    public long? MaxMaterializedStringChars
+    {
+        get => _maxMaterializedStringChars;
+        init
+        {
+            if (value is < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxMaterializedStringChars), value, "String materialization limit cannot be negative.");
+            }
+
+            _maxMaterializedStringChars = value;
+        }
+    }
+
+    /// <summary>
+    /// Maximum UTF-16 code units produced by one rendering operation, or <c>null</c> to use
+    /// <see cref="MaxSupportedDisplayLength"/>. Values above the supported maximum are
+    /// clamped down to it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
+    public int? MaxDisplayLength
+    {
+        get => _maxDisplayLength;
+        init
+        {
+            if (value is < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxDisplayLength), value, "Display length limit cannot be negative.");
+            }
+
+            _maxDisplayLength = value;
+        }
+    }
+
     /// <summary>The depth limit actually enforced: the ceiling, or a lower configured value.</summary>
     internal int EffectiveMaxDepth
         => _maxDepth is { } depth && depth < MaxSupportedDepth ? depth : MaxSupportedDepth;
@@ -181,4 +280,19 @@ public sealed record EvaluationLimits
 
     /// <summary>The cumulative materialization limit actually enforced, or <c>null</c>.</summary>
     internal long? EffectiveMaxMaterializedItems => _maxMaterializedItems;
+
+    /// <summary>The single-string length limit actually enforced.</summary>
+    internal int EffectiveMaxStringLength
+        => _maxStringLength is { } length && length < MaxSupportedStringLength
+            ? length
+            : MaxSupportedStringLength;
+
+    /// <summary>The cumulative string-materialization limit actually enforced, or <c>null</c>.</summary>
+    internal long? EffectiveMaxMaterializedStringChars => _maxMaterializedStringChars;
+
+    /// <summary>The rendered-output limit actually enforced.</summary>
+    internal int EffectiveMaxDisplayLength
+        => _maxDisplayLength is { } length && length < MaxSupportedDisplayLength
+            ? length
+            : MaxSupportedDisplayLength;
 }

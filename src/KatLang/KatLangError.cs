@@ -83,6 +83,12 @@ public sealed class KatLangError
                 $"Collection size limit of {e.Limit} items was exceeded; requested {e.Requested} items",
             EvalError.MaterializationLimitExceeded e =>
                 $"Evaluation materialization limit of {e.Limit} items was exceeded",
+            EvalError.StringSizeLimitExceeded e =>
+                $"String size limit of {e.Limit} UTF-16 code units was exceeded; requested {e.Requested}",
+            EvalError.StringMaterializationLimitExceeded e =>
+                $"Evaluation string materialization limit of {e.Limit} UTF-16 code units was exceeded",
+            EvalError.DisplayLengthLimitExceeded e =>
+                $"Display output limit of {e.Limit} UTF-16 code units was exceeded",
             EvalError.EvaluationStackExhausted =>
                 "Evaluation stopped to protect the host stack. "
                 + "Reduce how deeply this program calls into itself, or configure a lower evaluation depth limit",

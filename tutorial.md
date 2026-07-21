@@ -3526,6 +3526,18 @@ Only `public` exported properties are exposed through `load` and `open`.
   ```
 
   This counts the items of a single collection, so nesting is fine — `[[1, 2], [3, 4]]` is three small collections, not one big one. Like the recursion limit it is a host runtime limit, not a language rule: results within the limit are exactly what they always were.
+
+- **Displayed output size:** printing a value flattens it, and nesting a value inside itself doubles the printed text each time even though the value itself barely grows:
+
+  ```
+  Values = range(1, 200)
+  L0 = [Values, Values]
+  L1 = [L0, L0]
+  // ... a few more lines and the printed form is megabytes
+
+  ```
+
+  Displayed output is capped at 1,000,000 characters. Past that, printing reports the limit instead of the text — never a silent half-answer. The value itself is unaffected: it evaluated fine, and a host embedding KatLang can still work with it structurally.
 ---
 
 ## Full Reference

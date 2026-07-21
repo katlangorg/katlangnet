@@ -55,6 +55,22 @@ internal static class EvaluatorProbe
         new("distinct_large", "allocation", n => $"Output = range(1, {n}).distinct.count", 2_000_000, false),
         new("order_large",    "allocation", n => $"Output = range(1, {n}).orderDesc.count", 2_000_000, false),
         new("nested_list",    "allocation", n => $"F(x) = [x, x]\nOutput = range(1, {n}).map(F).count", 1_000_000, false),
+        // ── rendering / string growth ────────────────────────────────────────
+        // Display flattens a value recursively, so these render far larger than they
+        // evaluate. `display_nested` is the compact-source reproducer: every extra line
+        // adds two item slots and DOUBLES the rendered length.
+        new("display_nested",  "render", n => "A = range(1, 1000)\n"
+            + string.Concat(Enumerable.Range(0, n).Select(i => $"L{i} = [{(i == 0 ? "A" : $"L{i - 1}")}, {(i == 0 ? "A" : $"L{i - 1}")}]\n"))
+            + $"Output = L{Math.Max(0, n - 1)}", 40, false),
+        // The sharpest reproducer: string elements contribute NO host atoms and each level
+        // adds only two item slots, so no evaluation limit sees it grow — only rendering
+        // does, doubling per line.
+        new("display_str_nested", "render", n => "ToText(x) = x.string\nValues = range(1, 40000).map(ToText)\n"
+            + string.Concat(Enumerable.Range(0, n).Select(i => $"L{i} = [{(i == 0 ? "Values" : $"L{i - 1}")}, {(i == 0 ? "Values" : $"L{i - 1}")}]\n"))
+            + $"Output = L{Math.Max(0, n - 1)}", 40, false),
+        new("display_list",    "render", n => $"Output = range(1, {n})", 1_000_000, false),
+        new("display_rows",    "render", n => $"Output = range(1, {n})...", 1_000_000, false),
+        new("display_string",  "render", n => $"Values = range(1, {n})\nOutput = Values.map(ToText)\nToText(x) = x.string", 1_000_000, false),
         // ── arithmetic stress ────────────────────────────────────────────────
         new("pow_chain",      "arithmetic", n => $"Output = 2 ^ {n}", 100_000, false),
         new("sum_large",      "arithmetic", n => $"Output = range(1, {n}).sum", 5_000_000, false),
@@ -96,8 +112,22 @@ internal static class EvaluatorProbe
             return ExitUnexpected;
         }
 
+        // Rendering is part of what a public caller does, and it is the path that can
+        // allocate far beyond the evaluated value, so the probe always renders.
+        int displayLength;
+        try
+        {
+            displayLength = result.ToDisplayString().Length;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"UNEXPECTED during display {ex.GetType().FullName}: {ex.Message}");
+            return ExitUnexpected;
+        }
+
         // Self-reported resource use: the parent cannot read PeakWorkingSet64 after the
         // child exits, so the child prints its own peak before returning.
+        Console.Out.WriteLine($"DISPLAY chars={displayLength}");
         Console.Out.WriteLine(
             $"RESOURCE peakWorkingSetKb={Process.GetCurrentProcess().PeakWorkingSet64 / 1024} " +
             $"allocatedKb={GC.GetTotalAllocatedBytes() / 1024}");

@@ -1,11 +1,65 @@
 using System.Globalization;
+using System.Text;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang;
 
-internal readonly record struct DisplayOptions(int? Decimals)
+internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLength)
 {
-    public static DisplayOptions Default { get; } = new(null);
+    public static DisplayOptions Default { get; } = new(null, EvaluationLimits.MaxSupportedDisplayLength);
+}
+
+/// <summary>
+/// Bounded display sink. Rendering appends incrementally and checks BEFORE every append,
+/// so the forbidden output is never constructed: the writer stops at the first append that
+/// would cross the limit and reports it, rather than building an oversized string and
+/// measuring it afterwards.
+///
+/// <para>Lengths are UTF-16 code units, matching <see cref="string.Length"/>, the source
+/// span column model, and actual CLR string storage. A row separator is charged as exactly
+/// ONE unit while the platform newline is written verbatim, so the limit boundary is
+/// identical on every platform; on CRLF hosts the returned text can therefore be up to
+/// (rows - 1) units longer than the limit, which is deterministic and bounded by the row
+/// count.</para>
+/// </summary>
+internal sealed class BoundedDisplayWriter(int limit)
+{
+    private readonly StringBuilder _builder = new();
+    private long _charged;
+
+    /// <summary>True once an append was refused; no further output is produced.</summary>
+    public bool LimitExceeded { get; private set; }
+
+    public bool Append(string text)
+    {
+        if (LimitExceeded) return false;
+        if (text.Length > limit - _charged)
+        {
+            LimitExceeded = true;
+            return false;
+        }
+
+        _charged += text.Length;
+        _builder.Append(text);
+        return true;
+    }
+
+    /// <summary>Writes the platform newline between top-level rows, charged as one unit.</summary>
+    public bool AppendRowSeparator()
+    {
+        if (LimitExceeded) return false;
+        if (limit - _charged < 1)
+        {
+            LimitExceeded = true;
+            return false;
+        }
+
+        _charged += 1;
+        _builder.Append(Environment.NewLine);
+        return true;
+    }
+
+    public override string ToString() => _builder.ToString();
 }
 
 /// <summary>
@@ -65,20 +119,59 @@ public abstract record RunResult
     /// sequence values keep parentheses.
     /// On failure: newline-joined error messages.
     /// </summary>
+    /// <summary>
+    /// Rendering is bounded (see <see cref="BoundedDisplayWriter"/>). When the output would
+    /// exceed the limit this returns the display-limit message INSTEAD of the rendering —
+    /// never a silent prefix, because a truncated value display would misrepresent the
+    /// result. The structured value is unaffected and stays available on
+    /// <see cref="Success"/>; a caller that never renders is never limited. Truncated
+    /// previews for editor UI belong in a separate, explicitly named API.
+    /// </summary>
     public string ToDisplayString() => this switch
     {
         Success s => FormatSuccess(s),
         NoProgramOutput n => n.Message,
-        ParseFailure p => string.Join(Environment.NewLine, p.Errors.Select(e => e.ToString())),
-        EvalFailure e => string.Join(Environment.NewLine, e.Errors.Select(e => e.ToString())),
+        ParseFailure p => FormatErrors(p.Errors),
+        EvalFailure e => FormatErrors(e.Errors),
         _ => throw new InvalidOperationException("Unknown RunResult variant."),
     };
 
     private static string FormatSuccess(Success success)
     {
+        var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
         var rows = TopLevelDisplayRows(success.Value, success.EmittedCount);
-        return string.Join(Environment.NewLine, rows.Select(row => Format(row, success.DisplayOptions)));
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i > 0 && !writer.AppendRowSeparator()) break;
+            if (!AppendValue(rows[i], success.DisplayOptions, writer)) break;
+        }
+
+        return Finish(writer, success.DisplayOptions.MaxDisplayLength);
     }
+
+    /// <summary>
+    /// Errors are rendered through the same bounded writer at the hard supported ceiling.
+    /// The structured diagnostics are never dropped or rewritten to fit — only the final
+    /// public rendering surface is bounded.
+    /// </summary>
+    private static string FormatErrors(IReadOnlyList<KatLangError> errors)
+    {
+        var writer = new BoundedDisplayWriter(EvaluationLimits.MaxSupportedDisplayLength);
+
+        for (var i = 0; i < errors.Count; i++)
+        {
+            if (i > 0 && !writer.AppendRowSeparator()) break;
+            if (!writer.Append(errors[i].ToString())) break;
+        }
+
+        return Finish(writer, EvaluationLimits.MaxSupportedDisplayLength);
+    }
+
+    internal static string Finish(BoundedDisplayWriter writer, int limit)
+        => writer.LimitExceeded
+            ? KatLangError.FromEvalError(new EvalError.DisplayLengthLimitExceeded(limit)).Message
+            : writer.ToString();
 
     private static IReadOnlyList<Result> TopLevelDisplayRows(Result value, int emittedCount)
         => emittedCount switch
@@ -88,14 +181,62 @@ public abstract record RunResult
             _ => value.ToItems(),
         };
 
-    private static string Format(Result result, DisplayOptions displayOptions) => result switch
+    /// <summary>
+    /// Appends one value's display form, ITERATIVELY. Recursion plus
+    /// <c>Select(...).Join(...)</c> would build every child string before the parent could
+    /// know its own size — the exact shape that lets a legal but deeply shared value
+    /// allocate far beyond the limit — and would also recurse as deeply as the value
+    /// nests, which for host-constructed <see cref="Result"/> trees is unbounded by the
+    /// parser. The explicit stack holds either a pending value or a literal delimiter.
+    /// </summary>
+    internal static bool AppendValue(Result value, DisplayOptions displayOptions, BoundedDisplayWriter writer)
     {
-        Result.Atom a => FormatAtom(a.Value, displayOptions),
-        Result.Str s => s.Value,
-        Result.SequenceValue g => $"({string.Join(", ", g.Items.Select(item => Format(item, displayOptions)))})",
-        Result.ListValue l => $"[{string.Join(", ", l.Items.Select(item => Format(item, displayOptions)))}]",
-        _ => "",
-    };
+        var pending = new Stack<object>();
+        pending.Push(value);
+
+        while (pending.Count > 0)
+        {
+            var next = pending.Pop();
+            if (next is string literal)
+            {
+                if (!writer.Append(literal)) return false;
+                continue;
+            }
+
+            switch ((Result)next)
+            {
+                case Result.Atom a:
+                    if (!writer.Append(FormatAtom(a.Value, displayOptions))) return false;
+                    break;
+                case Result.Str s:
+                    if (!writer.Append(s.Value)) return false;
+                    break;
+                case Result.SequenceValue g:
+                    PushStructure(pending, "(", ")", g.Items);
+                    break;
+                case Result.ListValue l:
+                    PushStructure(pending, "[", "]", l.Items);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Pushes open, items separated by ", ", and close, in reverse so they pop in order.</summary>
+    private static void PushStructure(Stack<object> pending, string open, string close, IReadOnlyList<Result> items)
+    {
+        pending.Push(close);
+        for (var i = items.Count - 1; i >= 0; i--)
+        {
+            pending.Push(items[i]);
+            if (i > 0) pending.Push(", ");
+        }
+
+        pending.Push(open);
+    }
 
     internal static string FormatAtom(decimal value, DisplayOptions displayOptions)
     {
@@ -147,6 +288,7 @@ public static class KatLangEngine
             return new RunResult.ParseFailure(parseErrors);
         }
 
+        var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
 
         // One budget for the whole run: the program output and the DisplayDecimals
@@ -168,9 +310,12 @@ public static class KatLangEngine
             return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors);
         }
 
+        // The run's configured rendering limit travels with the result, so ToDisplayString
+        // stays bounded without RunResult having to reach back for the RunOptions.
         var displayOptionsResult = CreateDisplayOptions(
             evalResult.Value.TopLevelProperty,
-            FindTopLevelPropertyDeclarationSpan(frontEndResult.ElaboratedRoot, DisplayDecimalsPropertyName));
+            FindTopLevelPropertyDeclarationSpan(frontEndResult.ElaboratedRoot, DisplayDecimalsPropertyName),
+            limits.EffectiveMaxDisplayLength);
         if (displayOptionsResult.IsError)
         {
             return new RunResult.EvalFailure(
@@ -182,7 +327,7 @@ public static class KatLangEngine
         // BOTH sequence and list boundaries recursively, so a modest result value can
         // project into an enormous host list. Bounding it here means a successful
         // evaluation cannot be followed by an unbounded allocation on the way out.
-        var hostAtomLimit = (options?.EvaluationLimits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
+        var hostAtomLimit = limits.EffectiveMaxCollectionItems;
         if (!evalResult.Value.Output.Value.TryToHostAtoms(hostAtomLimit, out var hostAtoms))
         {
             return new RunResult.EvalFailure(
@@ -223,9 +368,27 @@ public static class KatLangEngine
     public static string EvaluateToString(string source, RunOptions? options = null)
         => Run(source, options) switch
         {
-            RunResult.Success s => string.Join(" ", s.Atoms.Select(atom => RunResult.FormatAtom(atom, s.DisplayOptions))),
+            RunResult.Success s => FormatAtomsJoined(s),
             var r => r.ToDisplayString(),
         };
+
+    /// <summary>
+    /// Space-joined host atoms, bounded by the same rendered-output limit as structured
+    /// display. Atom count is already bounded by the collection limits, but atom TEXT is
+    /// not, so the join is written incrementally rather than materialized and measured.
+    /// </summary>
+    private static string FormatAtomsJoined(RunResult.Success success)
+    {
+        var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
+
+        for (var i = 0; i < success.Atoms.Count; i++)
+        {
+            if (i > 0 && !writer.Append(" ")) break;
+            if (!writer.Append(RunResult.FormatAtom(success.Atoms[i], success.DisplayOptions))) break;
+        }
+
+        return RunResult.Finish(writer, success.DisplayOptions.MaxDisplayLength);
+    }
 
     private static SourceSpan? FindTopLevelPropertyDeclarationSpan(Algorithm root, string name)
     {
@@ -240,10 +403,11 @@ public static class KatLangEngine
 
     private static EvalResult<DisplayOptions> CreateDisplayOptions(
         Evaluator.CountedResult? displayDecimals,
-        SourceSpan? span)
+        SourceSpan? span,
+        int maxDisplayLength)
     {
         if (displayDecimals is not { } counted)
-            return EvalResult<DisplayOptions>.Ok(DisplayOptions.Default);
+            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(null, maxDisplayLength));
 
         var value = counted.Value.AsNum();
         if (counted.EmittedCount != 1 || value is null)
@@ -260,7 +424,7 @@ public static class KatLangEngine
 
         try
         {
-            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(decimal.ToInt32(value.Value)));
+            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(decimal.ToInt32(value.Value), maxDisplayLength));
         }
         catch (OverflowException)
         {

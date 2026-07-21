@@ -201,6 +201,9 @@ public static class SemanticExplorerHarness
             EvalError.EvaluationStackExhausted => "evaluationStackExhausted",
             EvalError.CollectionSizeLimitExceeded => "collectionSizeLimitExceeded",
             EvalError.MaterializationLimitExceeded => "materializationLimitExceeded",
+            EvalError.StringSizeLimitExceeded => "stringSizeLimitExceeded",
+            EvalError.StringMaterializationLimitExceeded => "stringMaterializationLimitExceeded",
+            EvalError.DisplayLengthLimitExceeded => "displayLengthLimitExceeded",
             _ => error.GetType().Name,
         };
     }

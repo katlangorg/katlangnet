@@ -4644,12 +4644,29 @@ public static class Evaluator
     /// Canonical representation: culture-invariant decimal string.
     /// Examples: 123 → "123", -5 → "-5", 0 → "0", 1.20 → "1.20".
     /// </summary>
-    private static EvalResult<Result> ResultToString(Result r)
+    private static EvalResult<Result> ResultToString(EvalCtx ctx, Result r)
     {
         if (r is Result.Atom(var n))
-            return EvalResult<Result>.Ok(new Result.Str(n.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            return MakeStringResult(ctx, n.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return new EvalError.TypeMismatch("builtin property `string` expects a numeric receiver");
     }
+
+    /// <summary>
+    /// The single construction point for language string values created by source
+    /// evaluation. Every producer routes through here so the length ceiling and the
+    /// cumulative string budget cannot be forgotten at a scattered site, and so a
+    /// future concatenating operation inherits both automatically.
+    ///
+    /// <para>The reservation happens BEFORE the value is created. In practice a source
+    /// program cannot approach the ceiling — KatLang has no concatenation operator, so
+    /// strings only come from source literals and roughly 30-unit numeric conversions —
+    /// but a hand-built AST passed to the public evaluator API can, and that is the path
+    /// this closes.</para>
+    /// </summary>
+    private static EvalResult<Result> MakeStringResult(EvalCtx ctx, string text, SourceSpan? span = null)
+        => ctx.Budget.TryReserveString(text.Length) is { } limitError
+            ? AtSpanIfMissing(limitError, span)
+            : EvalResult<Result>.Ok(new Result.Str(text));
 
     // ── Open resolution ───────────────────────────────────────────────────
 
@@ -5532,7 +5549,7 @@ public static class Evaluator
                 return EvalResult<Result>.Ok(new Result.Atom(n));
 
             case Expr.StringLiteral(var s):
-                return EvalResult<Result>.Ok(new Result.Str(s));
+                return MakeStringResult(ctx, s, expr.Span);
 
             case Expr.Param(var name):
             {
@@ -6627,7 +6644,7 @@ public static class Evaluator
                 {
                     var val = Eval(target, ctx, valEnv);
                     if (val.IsError) return val.Error;
-                    return ResultToString(val.Value);
+                    return ResultToString(ctx, val.Value);
                 }
                 return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
             }
@@ -6640,7 +6657,7 @@ public static class Evaluator
         {
             var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
-            return ResultToString(val.Value);
+            return ResultToString(ctx, val.Value);
         }
 
         // Structural: property of target (exported only; private export remains accessible)
@@ -6997,7 +7014,7 @@ public static class Evaluator
                 {
                     var val = Eval(target, ctx, valEnv);
                     if (val.IsError) return val.Error;
-                    var outR = ResultToString(val.Value);
+                    var outR = ResultToString(ctx, val.Value);
                     if (outR.IsError) return outR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
                 }
@@ -7013,7 +7030,7 @@ public static class Evaluator
         {
             var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
-            var outR = ResultToString(val.Value);
+            var outR = ResultToString(ctx, val.Value);
             if (outR.IsError) return outR.Error;
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
@@ -7116,7 +7133,7 @@ public static class Evaluator
         EvaluationLimits? limits)
     {
         var budget = EvaluationBudget.Create(limits);
-        var optimize = !budget.HasStepLimit;
+        var optimize = !budget.HasStepLimit && !budget.HasStringLimit;
         return new EvalCtx(
             [PreludeAlg],
             [],

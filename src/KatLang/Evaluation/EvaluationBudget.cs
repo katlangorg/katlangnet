@@ -21,9 +21,12 @@ internal sealed class EvaluationBudget
     private readonly long _maxSteps;
     private readonly int _maxCollectionItems;
     private readonly long _maxMaterializedItems;
+    private readonly int _maxStringLength;
+    private readonly long _maxMaterializedStringChars;
     private int _depth;
     private long _steps;
     private long _materializedItems;
+    private long _materializedStringChars;
 
     internal EvaluationBudget(EvaluationLimits limits)
     {
@@ -32,7 +35,16 @@ internal sealed class EvaluationBudget
         _maxSteps = limits.EffectiveMaxSteps ?? long.MaxValue;
         _maxCollectionItems = limits.EffectiveMaxCollectionItems;
         _maxMaterializedItems = limits.EffectiveMaxMaterializedItems ?? long.MaxValue;
+        _maxStringLength = limits.EffectiveMaxStringLength;
+        _maxMaterializedStringChars = limits.EffectiveMaxMaterializedStringChars ?? long.MaxValue;
         HasStepLimit = limits.EffectiveMaxSteps is not null;
+
+        // A CONFIGURED string limit (as opposed to the always-on ceiling) must mean the
+        // same thing with and without optimizations. The loop planner materializes literal
+        // string constants at plan time, outside the charged construction point, so a run
+        // that configures a string limit takes the generic paths — the same rule the step
+        // budget uses, and for the same reason.
+        HasStringLimit = limits.MaxStringLength is not null || limits.MaxMaterializedStringChars is not null;
     }
 
     /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
@@ -44,6 +56,9 @@ internal sealed class EvaluationBudget
 
     /// <summary>True when a finite step budget is configured for this run.</summary>
     internal bool HasStepLimit { get; }
+
+    /// <summary>True when a string length or cumulative string budget was explicitly configured.</summary>
+    internal bool HasStringLimit { get; }
 
     /// <summary>Steps consumed so far by this run. Diagnostics and tests only.</summary>
     internal long ConsumedSteps => _steps;
@@ -86,18 +101,6 @@ internal sealed class EvaluationBudget
     internal long MaterializedItems => _materializedItems;
 
     /// <summary>
-    /// RESERVES <paramref name="requestedCount"/> item slots for a collection that is
-    /// about to be created. Callers MUST call this before allocating — the whole point
-    /// is that a rejected request never allocates — and must abandon construction when
-    /// it returns an error.
-    ///
-    /// <para>Both limits are checked before either counter moves, so a rejected
-    /// reservation leaves the cumulative total exactly as it was: a failed operation can
-    /// never corrupt the budget or make a later legal collection fail. The cumulative
-    /// check is written as a subtraction against the remaining headroom so it cannot
-    /// overflow for any <see cref="long"/> request.</para>
-    /// </summary>
-    /// <summary>
     /// Checks the single-collection boundary WITHOUT consuming cumulative budget, for a
     /// collection the source asked for but an optimized path will never materialize.
     ///
@@ -112,6 +115,18 @@ internal sealed class EvaluationBudget
             ? new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount)
             : null;
 
+    /// <summary>
+    /// RESERVES <paramref name="requestedCount"/> item slots for a collection that is
+    /// about to be created. Callers MUST call this before allocating — the whole point
+    /// is that a rejected request never allocates — and must abandon construction when
+    /// it returns an error.
+    ///
+    /// <para>Both limits are checked before either counter moves, so a rejected
+    /// reservation leaves the cumulative total exactly as it was: a failed operation can
+    /// never corrupt the budget or make a later legal collection fail. The cumulative
+    /// check is written as a subtraction against the remaining headroom so it cannot
+    /// overflow for any <see cref="long"/> request.</para>
+    /// </summary>
     internal EvalError? TryReserveCollection(long requestedCount)
     {
         if (requestedCount < 0)
@@ -124,6 +139,36 @@ internal sealed class EvaluationBudget
             return new EvalError.MaterializationLimitExceeded(_maxMaterializedItems);
 
         _materializedItems += requestedCount;
+        return null;
+    }
+
+    /// <summary>The enforced single-string length limit, in UTF-16 code units.</summary>
+    internal int MaxStringLength => _maxStringLength;
+
+    /// <summary>String code units materialized so far by this run. Diagnostics and tests only.</summary>
+    internal long MaterializedStringChars => _materializedStringChars;
+
+    /// <summary>
+    /// RESERVES <paramref name="requestedLength"/> UTF-16 code units for a language string
+    /// value that is about to be created. Callers reserve before building the string, and
+    /// abandon construction when this returns an error.
+    ///
+    /// <para>Both limits are checked before either counter moves, so a rejected reservation
+    /// leaves the cumulative total untouched. The cumulative check subtracts against
+    /// remaining headroom, so it cannot overflow for any <see cref="long"/> request.</para>
+    /// </summary>
+    internal EvalError? TryReserveString(long requestedLength)
+    {
+        if (requestedLength < 0)
+            throw new ArgumentOutOfRangeException(nameof(requestedLength), requestedLength, "Length cannot be negative.");
+
+        if (requestedLength > _maxStringLength)
+            return new EvalError.StringSizeLimitExceeded(_maxStringLength, requestedLength);
+
+        if (requestedLength > _maxMaterializedStringChars - _materializedStringChars)
+            return new EvalError.StringMaterializationLimitExceeded(_maxMaterializedStringChars);
+
+        _materializedStringChars += requestedLength;
         return null;
     }
 

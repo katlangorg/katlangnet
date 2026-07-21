@@ -173,6 +173,31 @@ public abstract record EvalError
     public sealed record MaterializationLimitExceeded(long Limit) : EvalError;
 
     /// <summary>
+    /// One language string value would have exceeded the per-string length limit
+    /// (<see cref="EvaluationLimits.MaxStringLength"/>, bounded by
+    /// <see cref="EvaluationLimits.MaxSupportedStringLength"/>). Reported BEFORE the string
+    /// is created. Lengths are UTF-16 code units, never bytes: CLR string representation
+    /// and per-object overhead vary.
+    /// </summary>
+    public sealed record StringSizeLimitExceeded(int Limit, long Requested) : EvalError;
+
+    /// <summary>
+    /// The run's cumulative language-string budget
+    /// (<see cref="EvaluationLimits.MaxMaterializedStringChars"/>) was exhausted. Counts
+    /// UTF-16 code units CREATED across the run; it is not a live-memory measure.
+    /// </summary>
+    public sealed record StringMaterializationLimitExceeded(long Limit) : EvalError;
+
+    /// <summary>
+    /// Rendering a value or error to display text would have exceeded the rendered-output
+    /// limit (<see cref="EvaluationLimits.MaxDisplayLength"/>, bounded by
+    /// <see cref="EvaluationLimits.MaxSupportedDisplayLength"/>). This is a property of the
+    /// RENDERING, not of the value: the structured result is unaffected and remains
+    /// available through <see cref="KatLangEngine.Run(string, RunOptions)"/>.
+    /// </summary>
+    public sealed record DisplayLengthLimitExceeded(int Limit) : EvalError;
+
+    /// <summary>
     /// Evaluation stopped because host stack headroom ran out before the deterministic
     /// depth limit was reached. This is the machine-dependent backstop that keeps
     /// stack-expensive evaluation shapes from terminating the process; it carries no
