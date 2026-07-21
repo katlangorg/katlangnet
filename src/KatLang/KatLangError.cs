@@ -79,6 +79,10 @@ public sealed class KatLangError
             EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
             EvalError.EvaluationDepthExceeded e => $"Evaluation recursion limit of {e.Limit} was exceeded",
             EvalError.EvaluationStepLimitExceeded e => $"Evaluation step limit of {e.Limit} was exceeded",
+            EvalError.CollectionSizeLimitExceeded e =>
+                $"Collection size limit of {e.Limit} items was exceeded; requested {e.Requested} items",
+            EvalError.MaterializationLimitExceeded e =>
+                $"Evaluation materialization limit of {e.Limit} items was exceeded",
             EvalError.EvaluationStackExhausted =>
                 "Evaluation stopped to protect the host stack. "
                 + "Reduce how deeply this program calls into itself, or configure a lower evaluation depth limit",

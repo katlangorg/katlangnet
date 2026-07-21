@@ -178,10 +178,22 @@ public static class KatLangEngine
                 [KatLangError.FromEvalError(displayOptionsResult.Error)]);
         }
 
+        // Host-atom projection is part of the run's materialization accounting: it opens
+        // BOTH sequence and list boundaries recursively, so a modest result value can
+        // project into an enormous host list. Bounding it here means a successful
+        // evaluation cannot be followed by an unbounded allocation on the way out.
+        var hostAtomLimit = (options?.EvaluationLimits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
+        if (!evalResult.Value.Output.Value.TryToHostAtoms(hostAtomLimit, out var hostAtoms))
+        {
+            return new RunResult.EvalFailure(
+                frontEndResult.ElaboratedRoot,
+                [KatLangError.FromEvalError(new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L))]);
+        }
+
         return new RunResult.Success(
             frontEndResult.ElaboratedRoot,
             evalResult.Value.Output.Value,
-            evalResult.Value.Output.Value.ToHostAtoms())
+            hostAtoms)
         {
             EmittedCount = evalResult.Value.Output.EmittedCount,
             DisplayOptions = displayOptionsResult.Value,

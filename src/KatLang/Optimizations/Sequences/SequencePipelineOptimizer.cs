@@ -754,7 +754,9 @@ internal static class SequencePipelineOptimizer
         };
 
     private static EvalResult<T> WithContext<T>(ErrorContext context, EvalResult<T> result)
-        => result.IsError
+        // Resource-limit errors never get extra context, matching the evaluator: the limit
+        // belongs to the run, not to the pipeline stage that happened to reach it.
+        => result.IsError && !result.Error.IsResourceLimit
             ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
 

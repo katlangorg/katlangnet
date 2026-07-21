@@ -242,6 +242,95 @@ public class EvaluationLimitsTests
         Assert.True(Evaluator.RunFlat(new Expr.Block(Parser.Parse("f(x) = f(x)\nOutput = f(1)").Root)).IsError);
     }
 
+    // ── Entry-point x configuration depth matrix ─────────────────────────────
+    //
+    // The SAME recursive family must reach the SAME verdict through every public and
+    // internal evaluator entry point, for every way of expressing the same effective
+    // limit. `f(k)` needs k + 1 nested invocations, so an effective depth of d admits
+    // exactly f(d - 1) and rejects f(d). Default limits, an explicit limit equal to the
+    // ceiling, and any limit above the ceiling must all behave identically.
+
+    /// <summary>Every entry point, reduced to "did this program complete?".</summary>
+    private static IReadOnlyList<(string Entry, bool Completed)> AllEntryPoints(string source, EvaluationLimits? limits)
+    {
+        var expr = new Expr.Block(Parser.Parse(source).Root);
+        var options = new RunOptions { EvaluationLimits = limits };
+
+        bool atomsCompleted;
+        try
+        {
+            _ = KatLangEngine.EvaluateToAtoms(source, options);
+            atomsCompleted = true;
+        }
+        catch (KatLangException)
+        {
+            atomsCompleted = false;
+        }
+
+        return
+        [
+            ("Evaluator.Run", !Evaluator.Run(expr, limits).IsError),
+            ("Evaluator.RunCounted", !Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
+            ("Evaluator.RunCountedWithTopLevelProperty",
+                !Evaluator.RunCountedWithTopLevelProperty(expr, "DisplayDecimals", UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
+            ("KatLangEngine.Run", KatLangEngine.Run(source, options) is RunResult.Success),
+            ("KatLangEngine.EvaluateToAtoms", atomsCompleted),
+            ("KatLangEngine.EvaluateToString", !KatLangEngine.EvaluateToString(source, options).Contains("limit")),
+        ];
+    }
+
+    private static void AssertAllEntryPoints(string source, EvaluationLimits? limits, bool expectCompleted)
+    {
+        foreach (var (entry, completed) in AllEntryPoints(source, limits))
+        {
+            Assert.True(
+                completed == expectCompleted,
+                $"{entry}: expected completed={expectCompleted} but got {completed} for `{source.Replace("\n", " ; ")}`.");
+        }
+    }
+
+    public static TheoryData<int?> EquivalentCeilingConfigurations => new()
+    {
+        null,                                        // default limits
+        EvaluationLimits.MaxSupportedDepth,          // explicitly at the ceiling
+        int.MaxValue,                                // above the ceiling: clamped down
+    };
+
+    [Theory]
+    [MemberData(nameof(EquivalentCeilingConfigurations))]
+    public void CeilingEquivalentConfigurations_AdmitExactlyOneLessThanTheCeiling(int? maxDepth)
+    {
+        var limits = maxDepth is { } d ? new EvaluationLimits { MaxDepth = d } : null;
+        AssertAllEntryPoints($"{CountDown}Output = f({EvaluationLimits.MaxSupportedDepth - 1})", limits, expectCompleted: true);
+        AssertAllEntryPoints($"{CountDown}Output = f({EvaluationLimits.MaxSupportedDepth})", limits, expectCompleted: false);
+    }
+
+    [Theory]
+    [MemberData(nameof(EquivalentCeilingConfigurations))]
+    public void OriginalReproducer_IsRejectedByEveryDefaultPath(int? maxDepth)
+    {
+        // f(223) was the Phase-4 process-termination reproducer. Under the calibrated
+        // ceiling of 128 it needs 224 nested invocations, so it is REJECTED — it does not
+        // succeed on any default path. (The Phase-5 report's "f(223) succeeds" line was
+        // stale text from the earlier 256 calibration and is corrected here.)
+        var limits = maxDepth is { } d ? new EvaluationLimits { MaxDepth = d } : null;
+        AssertAllEntryPoints($"{CountDown}Output = f(223)", limits, expectCompleted: false);
+    }
+
+    [Fact]
+    public void ConfiguredLowerLimit_AdmitsExactlyOneLessThanItself()
+    {
+        AssertAllEntryPoints($"{CountDown}Output = f(63)", Depth(64), expectCompleted: true);
+        AssertAllEntryPoints($"{CountDown}Output = f(64)", Depth(64), expectCompleted: false);
+    }
+
+    [Fact]
+    public void ConfiguredLimitCannotRaiseTheCeiling()
+    {
+        // A request above MaxSupportedDepth is clamped, never honoured.
+        AssertAllEntryPoints($"{CountDown}Output = f(200)", new EvaluationLimits { MaxDepth = 100_000 }, expectCompleted: false);
+    }
+
     // ── Run-scoped state isolation ───────────────────────────────────────────
 
     [Fact]

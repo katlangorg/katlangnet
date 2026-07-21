@@ -54,10 +54,13 @@ internal static class EvaluatorEligibility
         if (scan.HasWhile) notes.Add("while-call");
         if (scan.HasUnboundedRepeat) notes.Add("repeat-unbounded");
 
-        // Still excluded: the step budget bounds WORK, not memory. These shapes can
-        // allocate or compute enormously before any charged unit is reached, so the
-        // process-isolated resource probes keep covering them.
-        if (scan.HasLargeRange) reasons.Add("range-large-or-unbounded");
+        // Large or unbounded ranges are now bounded by the campaign's configured
+        // MaxCollectionItems: an oversized range is rejected BEFORE it allocates, so these
+        // seeds belong in the deterministic campaign rather than only in the probes.
+        if (scan.HasLargeRange) notes.Add("range-large-or-unbounded");
+
+        // Still excluded: no collection is involved, so no materialization limit applies —
+        // a huge exponent is pure arithmetic work the probes keep covering.
         if (scan.HasLargePow) reasons.Add("pow-large");
         if (scan.HasNativeOrRandom) reasons.Add("native-or-nondeterministic");
 

@@ -477,25 +477,10 @@ public static class Evaluator
     /// Lean: withCtx.
     /// </summary>
     private static EvalResult<T> WithCtx<T>(ErrorContext context, EvalResult<T> result) =>
-        result.IsError && !IsResourceLimitError(result.Error)
+        result.IsError && !result.Error.IsResourceLimit
             ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
 
-    /// <summary>
-    /// True for the host resource-limit outcomes. These stop accumulating call/property
-    /// context on the way out: the limit is a property of the RUN, not of any one call
-    /// on the chain, and a depth failure would otherwise report one context frame per
-    /// active invocation — hundreds of identical lines saying nothing extra. The
-    /// innermost span (the expression that could not be entered) is preserved.
-    /// </summary>
-    private static bool IsResourceLimitError(EvalError error) => error switch
-    {
-        EvalError.EvaluationDepthExceeded
-            or EvalError.EvaluationStepLimitExceeded
-            or EvalError.EvaluationStackExhausted => true,
-        EvalError.WithContext(_, var inner) => IsResourceLimitError(inner),
-        _ => false,
-    };
 
     private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result)
         => WithCtx(new TextErrorContext(context), result);
@@ -2910,6 +2895,12 @@ public static class Evaluator
             emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
         }
 
+        // Output-slot capture is a persistent collection: spread can expand it well beyond
+        // any single input (`(A..., A...)` doubles), so the reservation happens here, before
+        // the sequence value is built.
+        if (ReserveSequenceCapture(ctx, results.Count) is { } capturedLimitError)
+            return capturedLimitError;
+
         return EvalResult<CountedResult>.Ok(new CountedResult(CombineOutputSlots(results), emittedCount));
     }
 
@@ -2936,6 +2927,73 @@ public static class Evaluator
     // Lean: makeCollectionListResult.
     private static CountedResult MakeCollectionListResult(IEnumerable<Result> items)
         => new(Result.ListValue.TakeOwnership(items.ToArray()), 1);
+
+    // ── Collection materialization budget ────────────────────────────────────
+
+    /// <summary>
+    /// RESERVES <paramref name="itemCount"/> item slots for a persistent collection that
+    /// is about to be created. Every caller must reserve BEFORE allocating: a rejected
+    /// request must never materialize the collection it is rejecting.
+    /// </summary>
+    private static EvalError? ReserveCollection(EvalCtx ctx, long itemCount, SourceSpan? span = null)
+        => ctx.Budget.TryReserveCollection(itemCount) is { } error
+            ? AtSpanIfMissing(error, span)
+            : null;
+
+    /// <summary>
+    /// Charged form of <see cref="MakeCollectionListResult(IEnumerable{Result})"/>: the
+    /// item count is already known, so the reservation happens before the exact list is
+    /// built. Collection-producing builtins charge their TRUE output count here rather
+    /// than an upper bound, so a cumulative budget is never over-charged.
+    /// </summary>
+    /// <summary>
+    /// Sequence CAPTURE reserves only when a sequence value is actually created: ordinary
+    /// construction erases singleton and empty structure (`(x)` is `x`, `()` stores no item
+    /// slots), so fewer than two slots materialize no collection and cost nothing. Exact
+    /// lists are different — `[x]` really does store one slot — and use
+    /// <see cref="ReserveCollection"/> directly.
+    /// </summary>
+    private static EvalError? ReserveSequenceCapture(EvalCtx ctx, int slotCount, SourceSpan? span = null)
+        => slotCount >= 2 ? ReserveCollection(ctx, slotCount, span) : null;
+
+    private static EvalResult<CountedResult> MakeCollectionListResult(
+        EvalCtx ctx,
+        IReadOnlyList<Result> items,
+        SourceSpan? span = null)
+        => ReserveCollection(ctx, items.Count, span) is { } error
+            ? error
+            : EvalResult<CountedResult>.Ok(MakeCollectionListResult(items));
+
+    /// <summary>
+    /// <c>atoms</c> result construction. Unlike every other collection builtin its output
+    /// is not bounded by its input's item count, so the traversal itself is bounded and
+    /// abandoned as soon as it passes the limit — no oversized intermediate is ever built,
+    /// and no unbounded counting prepass is needed.
+    /// </summary>
+    private static EvalResult<CountedResult> MakeLanguageAtomsResult(
+        EvalCtx ctx,
+        Result value,
+        SourceSpan? span = null)
+    {
+        var limit = ctx.Budget.MaxCollectionItems;
+        if (!value.TryLanguageAtoms(limit, out var atoms))
+            return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
+
+        return MakeCollectionListResult(ctx, atoms.Select(static n => (Result)new Result.Atom(n)).ToList(), span);
+    }
+
+    /// <summary>
+    /// <c>range(start, stop)</c> result construction. The cardinality is computed from the
+    /// bounds WITHOUT enumerating, so an oversized request is rejected before a single item
+    /// is allocated — this is the path that made <c>range(1, 10000000)</c> a process risk.
+    /// </summary>
+    private static EvalResult<Result> BuildInclusiveRangeChecked(
+        EvalCtx ctx,
+        InclusiveRange range,
+        SourceSpan? span = null)
+        => ReserveCollection(ctx, CountInclusiveRangeValues(range), span) is { } error
+            ? error
+            : EvalResult<Result>.Ok(BuildInclusiveRange(range));
 
     // Re-count a counted result at a public property/call/builtin RESULT boundary.
     // A property/call boundary always returns ONE value: the body may internally
@@ -3297,6 +3355,9 @@ public static class Evaluator
                 items.Add(valueR.Value);
         }
 
+        if (ReserveSequenceCapture(ctx, items.Count) is { } sequenceLimitError)
+            return sequenceLimitError;
+
         var value = Result.FromItems(items);
         return EvalResult<CountedResult>.Ok(new CountedResult(
             value,
@@ -3372,6 +3433,9 @@ public static class Evaluator
         if (operandR.IsError) return operandR.Error;
 
         var items = operandR.Value;
+        if (ReserveSequenceCapture(ctx, items.Count) is { } spreadLimitError)
+            return spreadLimitError;
+
         for (var layer = 1; layer < layers; layer++)
             items = Result.FromItems(items).SpreadItems();
 
@@ -3408,6 +3472,11 @@ public static class Evaluator
             if (slotsR.IsError) return slotsR.Error;
             items.AddRange(slotsR.Value);
         }
+
+        // Cardinality is known once the written slots (including spread expansion) are
+        // evaluated, so the reservation happens before the persistent list is built.
+        if (ReserveCollection(ctx, items.Count) is { } limitError)
+            return limitError;
 
         return EvalResult<CountedResult>.Ok(new CountedResult(
             Result.ListValue.TakeOwnership(items.ToArray()), 1));
@@ -3701,7 +3770,7 @@ public static class Evaluator
                 kept.Add(item.Value);
         }
 
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(kept));
+        return MakeCollectionListResult(ctx, kept);
     }
 
     /// <summary>
@@ -3763,7 +3832,7 @@ public static class Evaluator
             mapped.Add(mappedElementR.Value);
         }
 
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(mapped));
+        return MakeCollectionListResult(ctx, mapped);
     }
 
     /// <summary>
@@ -4025,12 +4094,12 @@ public static class Evaluator
     /// rejected, and empty collections yield the empty list <c>[]</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
+        EvalCtx ctx,
         IReadOnlyList<decimal> numbers)
     {
         var sorted = numbers.ToList();
         sorted.Sort();
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(
-            sorted.Select(static value => (Result)new Result.Atom(value))));
+        return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
     }
 
     /// <summary>
@@ -4041,12 +4110,12 @@ public static class Evaluator
     /// rejected, and empty collections yield the empty list <c>[]</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
+        EvalCtx ctx,
         IReadOnlyList<decimal> numbers)
     {
         var sorted = numbers.ToList();
         sorted.Sort(static (left, right) => right.CompareTo(left));
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(
-            sorted.Select(static value => (Result)new Result.Atom(value))));
+        return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
     }
 
     /// <summary>
@@ -4084,6 +4153,7 @@ public static class Evaluator
     /// value, and sequence/list values structurally by their elements.
     /// </summary>
     private static EvalResult<CountedResult> EvalDistinctCounted(
+        EvalCtx ctx,
         IReadOnlyList<Result> items)
     {
         var distinctItems = new List<Result>(items.Count);
@@ -4094,7 +4164,7 @@ public static class Evaluator
                 distinctItems.Add(item);
         }
 
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(distinctItems));
+        return MakeCollectionListResult(ctx, distinctItems);
     }
 
     /// <summary>
@@ -4136,6 +4206,7 @@ public static class Evaluator
     /// elements, and original order is preserved.
     /// </summary>
     private static EvalResult<CountedResult> EvalTakeCounted(
+        EvalCtx ctx,
         IReadOnlyList<Result> items,
         decimal count)
     {
@@ -4143,7 +4214,7 @@ public static class Evaluator
             ? []
             : items.Take((int)count).ToList();
 
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(taken));
+        return MakeCollectionListResult(ctx, taken);
     }
 
     /// <summary>
@@ -4156,6 +4227,7 @@ public static class Evaluator
     /// is preserved.
     /// </summary>
     private static EvalResult<CountedResult> EvalSkipCounted(
+        EvalCtx ctx,
         IReadOnlyList<Result> items,
         decimal count)
     {
@@ -4163,7 +4235,7 @@ public static class Evaluator
             ? items.ToList()
             : items.Skip((int)count).ToList();
 
-        return EvalResult<CountedResult>.Ok(MakeCollectionListResult(remaining));
+        return MakeCollectionListResult(ctx, remaining);
     }
 
     /// <summary>
@@ -4336,8 +4408,8 @@ public static class Evaluator
 
                         return EvalMapCounted(bound.IterationItems, transformR.Value, ctx, valEnv);
                     }),
-            BuiltinId.@order => WithPreparedNumericItems(EvalOrderCounted),
-            BuiltinId.@orderDesc => WithPreparedNumericItems(EvalOrderDescCounted),
+            BuiltinId.@order => WithPreparedNumericItems(numbers => EvalOrderCounted(ctx, numbers)),
+            BuiltinId.@orderDesc => WithPreparedNumericItems(numbers => EvalOrderDescCounted(ctx, numbers)),
             BuiltinId.@count => WithPreparedFlatItems(EvalCountCounted),
             BuiltinId.@contains => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
@@ -4351,7 +4423,7 @@ public static class Evaluator
 
                         return WithPreparedFlatItems(items => EvalContainsCounted(items, searchedItemR.Value));
                     }),
-            BuiltinId.@distinct => WithPreparedFlatItems(EvalDistinctCounted),
+            BuiltinId.@distinct => WithPreparedFlatItems(items => EvalDistinctCounted(ctx, items)),
             BuiltinId.@first => WithPreparedFlatItems(EvalFirstCounted),
             BuiltinId.@last => WithPreparedFlatItems(EvalLastCounted),
             BuiltinId.@take => WithPreparedSuffixArgs(
@@ -4364,7 +4436,7 @@ public static class Evaluator
                             0);
                         if (countR.IsError) return countR.Error;
 
-                        return WithPreparedFlatItems(items => EvalTakeCounted(items, countR.Value));
+                        return WithPreparedFlatItems(items => EvalTakeCounted(ctx, items, countR.Value));
                     }),
             BuiltinId.@skip => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
@@ -4376,7 +4448,7 @@ public static class Evaluator
                             0);
                         if (countR.IsError) return countR.Error;
 
-                        return WithPreparedFlatItems(items => EvalSkipCounted(items, countR.Value));
+                        return WithPreparedFlatItems(items => EvalSkipCounted(ctx, items, countR.Value));
                     }),
             BuiltinId.@min => WithPreparedNumericItems(EvalMinCounted),
             BuiltinId.@max => WithPreparedNumericItems(EvalMaxCounted),
@@ -4508,9 +4580,7 @@ public static class Evaluator
                 // `atoms` materializes a collection: one exact immutable list
                 // of the recursively collected numeric atoms (sequence AND
                 // list boundaries open; truth testing stays list-opaque).
-                var atoms = atomsR.Value.LanguageAtoms();
-                return EvalResult<CountedResult>.Ok(
-                    MakeCollectionListResult(atoms.Select(static n => new Result.Atom(n))));
+                return MakeLanguageAtomsResult(ctx, atomsR.Value);
             }
 
             case (BuiltinId.@range, 2):
@@ -4519,8 +4589,10 @@ public static class Evaluator
                 if (rangeR.IsError) return rangeR.Error;
 
                 // A list value is always one visible value, including `[]`.
-                var value = BuildInclusiveRange(rangeR.Value);
-                return EvalResult<CountedResult>.Ok(new CountedResult(value, 1));
+                var rangeValueR = BuildInclusiveRangeChecked(ctx, rangeR.Value);
+                return rangeValueR.IsError
+                    ? rangeValueR.Error
+                    : EvalResult<CountedResult>.Ok(new CountedResult(rangeValueR.Value, 1));
             }
 
             default:
@@ -5250,9 +5322,8 @@ public static class Evaluator
             {
                 var atomsR = EvalAlgOutput(args[0], ctx, valEnv);
                 if (atomsR.IsError) return atomsR.Error;
-                var atoms = atomsR.Value.LanguageAtoms();
-                return EvalResult<Result>.Ok(
-                    MakeCollectionListResult(atoms.Select(static n => new Result.Atom(n))).Value);
+                var atomsListR = MakeLanguageAtomsResult(ctx, atomsR.Value);
+                return atomsListR.IsError ? atomsListR.Error : EvalResult<Result>.Ok(atomsListR.Value.Value);
             }
 
             // range(start, stop) — inclusive integers materialized as one exact list.
@@ -5261,7 +5332,7 @@ public static class Evaluator
                 var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
                 if (rangeR.IsError) return rangeR.Error;
 
-                return EvalResult<Result>.Ok(BuildInclusiveRange(rangeR.Value));
+                return BuildInclusiveRangeChecked(ctx, rangeR.Value);
             }
 
             default:
@@ -6817,7 +6888,21 @@ public static class Evaluator
         SourceSpan? callSpan,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
-        => WithSpan(callSpan, WithCtx(CtxCall(function), EvalBuiltinRangeCallArguments(argsAlg, ctx, valEnv)));
+    {
+        var rangeR = WithSpan(callSpan, WithCtx(CtxCall(function), EvalBuiltinRangeCallArguments(argsAlg, ctx, valEnv)));
+        if (rangeR.IsError)
+            return rangeR;
+
+        // Optimizer/generic boundary parity: a fused pipeline evaluates the range's
+        // bounds and then iterates them WITHOUT materializing the list, so it must still
+        // reject exactly the sizes the generic `range` builtin rejects. The check
+        // consumes no cumulative budget precisely because nothing is materialized here —
+        // and if the pipeline is not fused after all, the generic path reserves for real,
+        // so the same range is never charged twice.
+        return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
+            ? AtSpanIfMissing(limitError, callSpan)
+            : rangeR;
+    }
 
     private static EvalResult<InclusiveRange> EvalBuiltinRangeCallArguments(
         Algorithm argsAlg,
@@ -7274,7 +7359,13 @@ public static class Evaluator
     {
         var r = Run(expr, limits);
         if (r.IsError) return r.Error;
-        return EvalResult<IReadOnlyList<decimal>>.Ok(r.Value.ToHostAtoms());
+
+        // Same rule as the engine: the host projection is bounded, so a successful
+        // evaluation cannot be followed by an unbounded flattening allocation.
+        var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
+        return r.Value.TryToHostAtoms(limit, out var atoms)
+            ? EvalResult<IReadOnlyList<decimal>>.Ok(atoms)
+            : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
     }
 
 

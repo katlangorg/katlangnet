@@ -40,6 +40,24 @@ public abstract record EvalError
 
     private EvalError() { }
 
+    /// <summary>
+    /// True for the host resource-limit outcomes (depth, steps, stack headroom, collection
+    /// size, cumulative materialization). These stop accumulating call/property context on
+    /// the way out: the limit is a property of the RUN, not of any one call on the chain,
+    /// so the innermost span is preserved and a depth failure does not report one identical
+    /// context frame per active invocation.
+    /// </summary>
+    internal bool IsResourceLimit => this switch
+    {
+        EvaluationDepthExceeded
+            or EvaluationStepLimitExceeded
+            or EvaluationStackExhausted
+            or CollectionSizeLimitExceeded
+            or MaterializationLimitExceeded => true,
+        WithContext(_, var inner) => inner.IsResourceLimit,
+        _ => false,
+    };
+
     /// <summary>Name could not be resolved in any scope.</summary>
     public sealed record UnknownName(string Name) : EvalError;
 
@@ -138,6 +156,21 @@ public abstract record EvalError
     /// algorithm invocation and per loop iteration.
     /// </summary>
     public sealed record EvaluationStepLimitExceeded(long Limit) : EvalError;
+
+    /// <summary>
+    /// A single collection would have exceeded the item-slot limit for one materialized
+    /// sequence or exact list (<see cref="EvaluationLimits.MaxCollectionItems"/>, bounded
+    /// by <see cref="EvaluationLimits.MaxSupportedCollectionItems"/>). Reported BEFORE the
+    /// collection is allocated. Payload is machine-independent: item counts, never bytes.
+    /// </summary>
+    public sealed record CollectionSizeLimitExceeded(int Limit, long Requested) : EvalError;
+
+    /// <summary>
+    /// The run's cumulative materialized item-slot budget
+    /// (<see cref="EvaluationLimits.MaxMaterializedItems"/>) was exhausted. Counts slots
+    /// CREATED across the run; it is not a live-memory measure.
+    /// </summary>
+    public sealed record MaterializationLimitExceeded(long Limit) : EvalError;
 
     /// <summary>
     /// Evaluation stopped because host stack headroom ran out before the deterministic

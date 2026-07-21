@@ -3518,6 +3518,14 @@ Only `public` exported properties are exposed through `load` and `open`.
   This is a host runtime limit, not a language rule: a program that finishes within the limit produces exactly the result it always did. Recursion deeper than the limit needs an iterative form — `repeat` or `while` — which repeats work without stacking up calls.
 
 - **Loops still run as long as you ask:** there is no work budget by default, so `Step.while(...)` with a condition that never becomes false runs forever. Check your continuation slot. (Hosts embedding KatLang can configure a step budget to bound this.)
+
+- **Collection size:** one sequence or list can hold up to 100,000 items. A request for more is rejected before anything is allocated, so an accidental extra zero costs you an error message rather than the whole process:
+
+  ```
+  range(1, 10000000)  // error: Collection size limit of 100000 items was exceeded; requested 10000000 items
+  ```
+
+  This counts the items of a single collection, so nesting is fine — `[[1, 2], [3, 4]]` is three small collections, not one big one. Like the recursion limit it is a host runtime limit, not a language rule: results within the limit are exactly what they always were.
 ---
 
 ## Full Reference

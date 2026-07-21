@@ -38,7 +38,13 @@ internal static class EvaluatorInvariants
     /// The values are small enough that an infinite loop stops in milliseconds and large
     /// enough that ordinary generated programs finish normally.</para>
     /// </summary>
-    internal static readonly EvaluationLimits CampaignLimits = new() { MaxDepth = 64, MaxSteps = 200_000 };
+    internal static readonly EvaluationLimits CampaignLimits = new()
+    {
+        MaxDepth = 64,
+        MaxSteps = 200_000,
+        MaxCollectionItems = 5_000,
+        MaxMaterializedItems = 200_000,
+    };
 
     /// <summary>Engine-facing form of <see cref="CampaignLimits"/>; no downloader, no network.</summary>
     internal static readonly RunOptions CampaignOptions = new() { EvaluationLimits = CampaignLimits };

@@ -96,6 +96,12 @@ internal static class EvaluatorProbe
             return ExitUnexpected;
         }
 
+        // Self-reported resource use: the parent cannot read PeakWorkingSet64 after the
+        // child exits, so the child prints its own peak before returning.
+        Console.Out.WriteLine(
+            $"RESOURCE peakWorkingSetKb={Process.GetCurrentProcess().PeakWorkingSet64 / 1024} " +
+            $"allocatedKb={GC.GetTotalAllocatedBytes() / 1024}");
+
         switch (result)
         {
             case RunResult.Success s:

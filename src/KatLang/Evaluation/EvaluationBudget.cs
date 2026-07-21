@@ -19,14 +19,19 @@ internal sealed class EvaluationBudget
 {
     private readonly int _maxDepth;
     private readonly long _maxSteps;
+    private readonly int _maxCollectionItems;
+    private readonly long _maxMaterializedItems;
     private int _depth;
     private long _steps;
+    private long _materializedItems;
 
     internal EvaluationBudget(EvaluationLimits limits)
     {
         ArgumentNullException.ThrowIfNull(limits);
         _maxDepth = limits.EffectiveMaxDepth;
         _maxSteps = limits.EffectiveMaxSteps ?? long.MaxValue;
+        _maxCollectionItems = limits.EffectiveMaxCollectionItems;
+        _maxMaterializedItems = limits.EffectiveMaxMaterializedItems ?? long.MaxValue;
         HasStepLimit = limits.EffectiveMaxSteps is not null;
     }
 
@@ -73,6 +78,54 @@ internal sealed class EvaluationBudget
 
     /// <summary>Leaves an invocation entered by a successful <see cref="TryEnterInvocation"/>.</summary>
     internal void ExitInvocation() => _depth--;
+
+    /// <summary>The enforced single-collection item limit.</summary>
+    internal int MaxCollectionItems => _maxCollectionItems;
+
+    /// <summary>Item slots materialized so far by this run. Diagnostics and tests only.</summary>
+    internal long MaterializedItems => _materializedItems;
+
+    /// <summary>
+    /// RESERVES <paramref name="requestedCount"/> item slots for a collection that is
+    /// about to be created. Callers MUST call this before allocating — the whole point
+    /// is that a rejected request never allocates — and must abandon construction when
+    /// it returns an error.
+    ///
+    /// <para>Both limits are checked before either counter moves, so a rejected
+    /// reservation leaves the cumulative total exactly as it was: a failed operation can
+    /// never corrupt the budget or make a later legal collection fail. The cumulative
+    /// check is written as a subtraction against the remaining headroom so it cannot
+    /// overflow for any <see cref="long"/> request.</para>
+    /// </summary>
+    /// <summary>
+    /// Checks the single-collection boundary WITHOUT consuming cumulative budget, for a
+    /// collection the source asked for but an optimized path will never materialize.
+    ///
+    /// <para>This is what keeps optimized and generic paths on the same observable
+    /// boundary: a fused pipeline such as <c>range(1, N).count</c> must reject the same
+    /// N as the generic path, even though it allocates nothing. Because it allocates
+    /// nothing it must NOT also consume the cumulative materialization budget — that
+    /// would be exactly the double charging a fused pipeline is supposed to avoid.</para>
+    /// </summary>
+    internal EvalError? CheckCollectionSize(long requestedCount)
+        => requestedCount > _maxCollectionItems
+            ? new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount)
+            : null;
+
+    internal EvalError? TryReserveCollection(long requestedCount)
+    {
+        if (requestedCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(requestedCount), requestedCount, "Item count cannot be negative.");
+
+        if (requestedCount > _maxCollectionItems)
+            return new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount);
+
+        if (requestedCount > _maxMaterializedItems - _materializedItems)
+            return new EvalError.MaterializationLimitExceeded(_maxMaterializedItems);
+
+        _materializedItems += requestedCount;
+        return null;
+    }
 
     /// <summary>
     /// Charges one unit of semantic work (currently: one dynamic invocation, or one

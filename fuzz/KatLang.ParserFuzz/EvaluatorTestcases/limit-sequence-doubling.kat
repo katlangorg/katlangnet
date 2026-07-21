@@ -1,0 +1,3 @@
+A = (1, 2, 3)
+B = (A..., A...)
+Output = B.count

@@ -189,29 +189,49 @@ public abstract record Result
     /// </summary>
     public IReadOnlyList<decimal> LanguageAtoms()
     {
-        var collected = new List<decimal>();
-        CollectLanguageAtoms(collected);
+        _ = TryLanguageAtoms(long.MaxValue, out var collected);
         return collected;
     }
 
-    private void CollectLanguageAtoms(List<decimal> collected)
+    /// <summary>
+    /// Bounded form of <see cref="LanguageAtoms"/>: stops collecting as soon as more than
+    /// <paramref name="maxItems"/> atoms have been found and returns <c>false</c>.
+    ///
+    /// <para>Atom collection is the one collection producer whose output can be far larger
+    /// than its input — nesting a value inside itself repeatedly (<c>[A, A]</c>) doubles the
+    /// atom count per level while adding only two item slots — so its result cannot be
+    /// bounded by counting the input. Stopping the traversal early keeps the intermediate
+    /// list bounded too, which a count-first prepass would not.</para>
+    /// </summary>
+    internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
+    {
+        var collected = new List<decimal>();
+        var withinLimit = CollectLanguageAtoms(collected, maxItems);
+        atoms = collected;
+        return withinLimit;
+    }
+
+    private bool CollectLanguageAtoms(List<decimal> collected, long maxItems)
     {
         switch (this)
         {
             case Atom(var n):
+                if (collected.Count >= maxItems) return false;
                 collected.Add(n);
                 break;
             case SequenceValue(var items):
                 foreach (var item in items)
-                    item.CollectLanguageAtoms(collected);
+                    if (!item.CollectLanguageAtoms(collected, maxItems)) return false;
                 break;
             case ListValue(var items):
                 foreach (var item in items)
-                    item.CollectLanguageAtoms(collected);
+                    if (!item.CollectLanguageAtoms(collected, maxItems)) return false;
                 break;
             default:
                 break; // strings and any other non-numeric leaves contribute no atoms
         }
+
+        return true;
     }
 
     /// <summary>
@@ -228,14 +248,50 @@ public abstract record Result
     /// </summary>
     public IReadOnlyList<decimal> ToHostAtoms()
     {
-        return this switch
+        _ = TryToHostAtoms(long.MaxValue, out var atoms);
+        return atoms;
+    }
+
+    /// <summary>
+    /// Bounded form of <see cref="ToHostAtoms"/>: stops as soon as more than
+    /// <paramref name="maxItems"/> host atoms have been produced and returns <c>false</c>.
+    ///
+    /// <para>The host projection opens BOTH sequence and list boundaries recursively, so
+    /// like <see cref="TryLanguageAtoms"/> it can produce far more atoms than the value has
+    /// item slots. It is a separate traversal from the language-level collector on purpose:
+    /// the two are distinct contracts and must not drift through shared code.</para>
+    /// </summary>
+    internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
+    {
+        var collected = new List<decimal>();
+        var withinLimit = CollectHostAtoms(collected, maxItems);
+        atoms = collected;
+        return withinLimit;
+    }
+
+    private bool CollectHostAtoms(List<decimal> collected, long maxItems)
+    {
+        switch (this)
         {
-            Atom(var n) => [n],
-            Str _ => [],
-            SequenceValue(var items) => items.SelectMany(r => r.ToHostAtoms()).ToList(),
-            ListValue(var items) => items.SelectMany(r => r.ToHostAtoms()).ToList(),
-            _ => [],
-        };
+            case Atom(var n):
+                if (collected.Count >= maxItems) return false;
+                collected.Add(n);
+                break;
+            case Str:
+                break;
+            case SequenceValue(var items):
+                foreach (var item in items)
+                    if (!item.CollectHostAtoms(collected, maxItems)) return false;
+                break;
+            case ListValue(var items):
+                foreach (var item in items)
+                    if (!item.CollectHostAtoms(collected, maxItems)) return false;
+                break;
+            default:
+                break;
+        }
+
+        return true;
     }
 
     /// <summary>
