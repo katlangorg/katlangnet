@@ -1,0 +1,2 @@
+F(x, y) = x
+Output = [1, 2].map(F)

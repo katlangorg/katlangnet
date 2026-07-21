@@ -1,0 +1,3 @@
+apply(fn, v) = fn(v)
+inc(x) = x + 1
+Output = apply(inc, 5)

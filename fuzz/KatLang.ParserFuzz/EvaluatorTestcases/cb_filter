@@ -1,0 +1,2 @@
+P(x) = x mod 2 == 0
+Output = range(1, 6).filter(P)

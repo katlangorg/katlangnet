@@ -1,0 +1,2 @@
+Step = a + 1, b + a
+Output = Step.repeat(3, 0, 0)

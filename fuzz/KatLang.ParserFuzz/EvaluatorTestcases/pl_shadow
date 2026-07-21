@@ -1,0 +1,4 @@
+x = 1
+A = (x = 2
+Output = x)
+Output = A

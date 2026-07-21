@@ -1,0 +1,3 @@
+f(x) = x
+f(a, b) = a
+Output = f(1)

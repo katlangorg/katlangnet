@@ -1,0 +1,2 @@
+F(x) = x * 2
+Output = range(1, 4).map(F)

@@ -1,0 +1,2 @@
+Inc = x + 1
+Output = Inc.repeat(0, 5)

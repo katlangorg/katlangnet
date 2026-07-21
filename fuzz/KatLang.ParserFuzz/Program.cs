@@ -33,6 +33,16 @@ internal static class Program
         if (args.Length > 0 && args[0] == "frontend-replay")
             return FrontEndReplay.Run(args);    // Phase-3 phase-aware frontend replay
 
+        // Phase-4 evaluator subcommands.
+        if (args.Length > 0 && args[0] == "eval-probe-child")
+            return EvaluatorProbe.RunChild(args);      // dangerous evaluation, isolated child
+        if (args.Length > 0 && args[0] == "eval-probe")
+            return EvaluatorProbe.RunParent(args);     // resource-probe coordinator
+        if (args.Length > 0 && args[0] == "evaluator-replay")
+            return EvaluatorReplay.RunReplay(args);    // phase-aware evaluator replay
+        if (args.Length > 0 && args[0] == "classify")
+            return EvaluatorReplay.RunClassify(args);  // eligibility-classifier replay
+
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)
 
@@ -41,9 +51,17 @@ internal static class Program
         // them as crashes. KATLANG_FUZZ_MODE selects the target: default (unset) is the
         // raw parser — UNCHANGED and never replaced — and "frontend" fuzzes the default
         // elaborated pipeline (FrontEndPipeline.Process, no downloader).
-        if (string.Equals(Environment.GetEnvironmentVariable("KATLANG_FUZZ_MODE"), "frontend", StringComparison.OrdinalIgnoreCase))
+        var mode = Environment.GetEnvironmentVariable("KATLANG_FUZZ_MODE");
+        if (string.Equals(mode, "frontend", StringComparison.OrdinalIgnoreCase))
         {
             Fuzzer.LibFuzzer.Run(static bytes => FrontEndInvariants.Check(DecodeSource(bytes)));
+        }
+        else if (string.Equals(mode, "evaluator", StringComparison.OrdinalIgnoreCase))
+        {
+            // Terminating evaluator subset only: EvaluatorEligibility excludes programs
+            // that may not terminate or may allocate without a practical bound; those are
+            // characterized separately by the process-isolated resource probes.
+            Fuzzer.LibFuzzer.Run(static bytes => EvaluatorInvariants.Check(DecodeSource(bytes)));
         }
         else
         {
