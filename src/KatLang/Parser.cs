@@ -62,7 +62,18 @@ public sealed class Parser
     internal const int MaxNestingDepth = 580;
     private int _nestingDepth;
 
-    private sealed class NestingLimitExceededException : Exception { }
+    // Flat left-associative binary and postfix syntax is parsed iteratively, but it
+    // produces a left-deep AST that the frontend's recursive visitors must traverse.
+    // Keep that AST depth on the same conservative scale as the ~289 structural
+    // levels admitted by MaxNestingDepth. This is per expression chain: independent
+    // output rows, comma-separated slots, and list items each start from depth zero.
+    internal const int MaxExpressionChainDepth = 256;
+    private readonly Dictionary<Expr, int> _expressionChainDepths =
+        new(ReferenceEqualityComparer.Instance);
+
+    private abstract class ParserLimitExceededException : Exception { }
+    private sealed class NestingLimitExceededException : ParserLimitExceededException { }
+    private sealed class ExpressionChainLimitExceededException : ParserLimitExceededException { }
 
     /// <summary>
     /// Aborts the whole parse with a single structured diagnostic when the recursion
@@ -80,6 +91,39 @@ public sealed class Parser
         throw new NestingLimitExceededException();
     }
 
+    /// <summary>
+    /// Records the binary/postfix depth of a newly constructed expression and aborts
+    /// before a recursive frontend visitor can receive an excessively deep AST.
+    /// Child depths are looked up by reference so record structural equality never
+    /// recursively walks the very chain this guard is protecting.
+    /// </summary>
+    private Expr GuardExpressionChainDepth(
+        Expr expression,
+        SourceSpan operatorSpan,
+        Expr firstChild,
+        Expr? secondChild = null)
+    {
+        var childDepth = ExpressionChainDepth(firstChild);
+        if (secondChild is not null)
+            childDepth = Math.Max(childDepth, ExpressionChainDepth(secondChild));
+
+        var depth = childDepth + 1;
+        if (depth > MaxExpressionChainDepth)
+        {
+            ReportError(
+                "Expression operator or postfix chain is too deep for the frontend to process safely. " +
+                "Break the expression into named intermediate properties.",
+                operatorSpan);
+            throw new ExpressionChainLimitExceededException();
+        }
+
+        _expressionChainDepths.Add(expression, depth);
+        return expression;
+    }
+
+    private int ExpressionChainDepth(Expr expression)
+        => _expressionChainDepths.TryGetValue(expression, out var depth) ? depth : 0;
+
     // ── Entry points ─────────────────────────────────────────────────────────
 
     internal static SyntaxParseResult ParseSyntax(string source)
@@ -96,11 +140,11 @@ public sealed class Parser
                 parser.ReportError($"Expected end of input, got '{parser.Current.Kind}'.");
             }
         }
-        catch (NestingLimitExceededException)
+        catch (ParserLimitExceededException)
         {
-            // Pathological nesting exceeded the recursion budget. The structured depth
-            // diagnostic is already recorded; return a placeholder root so downstream
-            // consumers stay well-defined (ParseResult.HasErrors is true).
+            // A parser safety budget was exceeded. Its structured diagnostic is already
+            // recorded; return a placeholder root so downstream consumers stay
+            // well-defined (ParseResult.HasErrors is true) and never see the unsafe tree.
             root = new Algorithm.User(null, [], [], [], []);
         }
 
@@ -1590,8 +1634,9 @@ public sealed class Parser
         var expr = ParseExpression();
         while (Current.Kind == TokenKind.Ellipsis && MayContinueClosedExpression(TokenKind.Ellipsis))
         {
-            Advance(); // consume '...'
-            expr = CreateSequenceSpread(expr, SpanFrom(expr));
+            var spreadToken = Advance(); // consume '...'
+            var spread = CreateSequenceSpread(expr, SpanFrom(expr));
+            expr = GuardExpressionChainDepth(spread, TokenSpan(spreadToken), expr);
         }
 
         return expr;
@@ -1715,12 +1760,13 @@ public sealed class Parser
             // exactly like `A` newline `-1` and joins as output adjacency.
             if (!MayContinueClosedExpression(Current.Kind)) break;
 
-            Advance(); // consume operator token
+            var operatorToken = Advance(); // consume operator token
 
             // Right-associative: ^ uses prec (not prec+1) so 2^3^4 = 2^(3^4)
             var nextMin = op is BinaryOp.Pow ? prec : prec + 1;
             var rhs = ParseExpression(nextMin);
-            lhs = new Expr.Binary(op, lhs, rhs) { Span = SpanFrom(lhs) };
+            var binary = new Expr.Binary(op, lhs, rhs) { Span = SpanFrom(lhs) };
+            lhs = GuardExpressionChainDepth(binary, TokenSpan(operatorToken), lhs, rhs);
         }
 
         return lhs;
@@ -1791,9 +1837,10 @@ public sealed class Parser
                     // postfix indexing, mirroring the call-delimiter rule. A
                     // ':'-led line is rejected by ParsePrimary with a
                     // targeted diagnostic.
-                    Advance(); // consume ':'
+                    var colonToken = Advance(); // consume ':'
                     var selector = ParsePrimary();
-                    lhs = new Expr.Index(lhs, selector) { Span = SpanFrom(lhs) };
+                    var index = new Expr.Index(lhs, selector) { Span = SpanFrom(lhs) };
+                    lhs = GuardExpressionChainDepth(index, TokenSpan(colonToken), lhs, selector);
                     break;
 
                 case TokenKind.Dot when MayContinueClosedExpression(TokenKind.Dot):
@@ -1801,7 +1848,7 @@ public sealed class Parser
                     // leading '.' is the one whitelisted postfix continuation
                     // that may cross a physical newline (method-chain layout)
                     // — encoded in the continuation policy table.
-                    Advance(); // consume '.'
+                    var dotToken = Advance(); // consume '.'
                     if (Current.Kind != TokenKind.Identifier)
                     {
                         ReportError("Expected property name after '.'.");
@@ -1820,20 +1867,22 @@ public sealed class Parser
                         // expr.Name(args) → DotCall(expr, Name, args)
                         // Lean: dotCall : Expr → Ident → Option Algorithm → Expr
                         var args = ParseCallArgs();
-                        lhs = new Expr.DotCall(lhs, propName, args)
+                        var dotCall = new Expr.DotCall(lhs, propName, args)
                         {
                             Span = SpanFrom(lhs),
                             MemberSpan = memberSpan
                         };
+                        lhs = GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
                     }
                     else
                     {
                         // expr.Name → DotCall(expr, Name, null)
-                        lhs = new Expr.DotCall(lhs, propName)
+                        var dotCall = new Expr.DotCall(lhs, propName)
                         {
                             Span = SpanFrom(lhs),
                             MemberSpan = memberSpan
                         };
+                        lhs = GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
                     }
                     break;
 
@@ -1850,6 +1899,7 @@ public sealed class Parser
                         && IsCallArgumentStart():
                     // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)
+                    var callToken = Current;
                     var callArgs = ParseCallArgs();
                     // Hook for exact builtin direct-call argument rewrites. repeat/while
                     // init arguments stay intact so the evaluator can preserve explicit
@@ -1857,7 +1907,8 @@ public sealed class Parser
                     callArgs = MaybeLowerBuiltinDirectCallArgs(lhs, callArgs);
                     // Validate if arity.
                     ValidateIfArity(lhs, callArgs);
-                    lhs = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
+                    var call = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
+                    lhs = GuardExpressionChainDepth(call, TokenSpan(callToken), lhs);
                     break;
 
                 default:
