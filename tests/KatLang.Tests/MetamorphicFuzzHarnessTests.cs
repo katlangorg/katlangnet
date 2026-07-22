@@ -21,7 +21,11 @@ public class MetamorphicFuzzHarnessTests
     private static string SeedDirectory =>
         Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "MetamorphicTestcases");
 
-    private static List<MetamorphicParameters> AllParameters => MetamorphicTemplates.EnumerateAllParameters().ToList();
+    private static List<MetamorphicParameters> AllParameters => MetamorphicTemplates.EnumerateLegacyParameters().ToList();
+
+    /// <summary>The Phase 1 family's frozen four-entry limit-mode table.</summary>
+    private static System.Collections.Immutable.ImmutableArray<MetamorphicLimitMode> LegacyLimitModes
+        => MetamorphicFamilyRegistry.Get(MetamorphicFamily.DottedCollectionCall).SupportedLimitModes;
 
     // ── Decoder ──────────────────────────────────────────────────────────────
 
@@ -42,19 +46,19 @@ public class MetamorphicFuzzHarnessTests
     public void Decoder_KeepsEveryDimensionInsideItsConfiguredTable()
     {
         // Every byte value at every position, so no reduction can escape its table.
-        for (var position = 0; position < MetamorphicParameters.EncodedLength; position++)
+        for (var position = 0; position < MetamorphicParameters.CommonPayloadLength; position++)
         {
             for (var value = 0; value <= byte.MaxValue; value++)
             {
-                var payload = new byte[MetamorphicParameters.EncodedLength];
+                var payload = new byte[MetamorphicParameters.CommonPayloadLength];
                 payload[position] = (byte)value;
 
                 var parameters = MetamorphicDecoder.Decode(payload);
                 Assert.InRange(parameters.FamilyIndex, 0, MetamorphicDecoder.FamilyTable.Length - 1);
-                Assert.InRange(parameters.RangeStopIndex, 0, MetamorphicDecoder.RangeStopTable.Length - 1);
-                Assert.InRange(parameters.LimitModeIndex, 0, MetamorphicDecoder.LimitModeTable.Length - 1);
-                Assert.InRange(parameters.CumulativeOffsetIndex, 0, MetamorphicDecoder.OffsetTable.Length - 1);
-                Assert.InRange(parameters.PerCollectionOffsetIndex, 0, MetamorphicDecoder.OffsetTable.Length - 1);
+                Assert.InRange(parameters.LegacyRangeStopIndex, 0, MetamorphicDecoder.RangeStopTable.Length - 1);
+                Assert.InRange(parameters.LimitModeIndex, 0, LegacyLimitModes.Length - 1);
+                Assert.InRange(parameters.PrimaryOffsetIndex, 0, MetamorphicDecoder.OffsetTable.Length - 1);
+                Assert.InRange(parameters.SecondaryOffsetIndex, 0, MetamorphicDecoder.OffsetTable.Length - 1);
                 Assert.InRange(parameters.OptimizeIndex, 0, 1);
                 Assert.Contains(parameters.RangeStop, MetamorphicDecoder.RangeStopTable);
             }
@@ -66,12 +70,12 @@ public class MetamorphicFuzzHarnessTests
     {
         // Missing bytes read as zero, so a truncated input is the same case as the input
         // zero-padded to full length — never an exception and never a discarded run.
-        for (var length = 0; length <= MetamorphicParameters.EncodedLength; length++)
+        for (var length = 0; length <= MetamorphicParameters.CommonPayloadLength; length++)
         {
             var truncated = new byte[length];
             for (var i = 0; i < length; i++) truncated[i] = (byte)(i + 1);
 
-            var padded = new byte[MetamorphicParameters.EncodedLength];
+            var padded = new byte[MetamorphicParameters.CommonPayloadLength];
             truncated.CopyTo(padded, 0);
 
             Assert.Equal(MetamorphicDecoder.Decode(padded), MetamorphicDecoder.Decode(truncated));
@@ -82,11 +86,11 @@ public class MetamorphicFuzzHarnessTests
     public void Decoder_ReadsOnlyThePayloadPrefixOfAnArbitrarilyLargeInput()
     {
         // Guards the "no allocation proportional to arbitrary input" property: a 64 KiB input
-        // decodes to exactly the case its first six bytes select.
+        // decodes to exactly the case its bounded prefix selects, and never reads further.
         var large = new byte[64 * 1024];
         for (var i = 0; i < large.Length; i++) large[i] = (byte)(i * 31 + 7);
 
-        var prefix = large.AsSpan(0, MetamorphicParameters.EncodedLength).ToArray();
+        var prefix = large.AsSpan(0, MetamorphicDecoder.MaxPayloadLength).ToArray();
         Assert.Equal(MetamorphicDecoder.Decode(prefix), MetamorphicDecoder.Decode(large));
     }
 
@@ -98,14 +102,14 @@ public class MetamorphicFuzzHarnessTests
             switch (parameters.LimitMode)
             {
                 case MetamorphicLimitMode.Default:
-                    Assert.Equal(0, parameters.CumulativeOffset);
-                    Assert.Equal(0, parameters.PerCollectionOffset);
+                    Assert.Equal(0, parameters.PrimaryOffset);
+                    Assert.Equal(0, parameters.SecondaryOffset);
                     break;
                 case MetamorphicLimitMode.CumulativeItems:
-                    Assert.Equal(0, parameters.PerCollectionOffset);
+                    Assert.Equal(0, parameters.SecondaryOffset);
                     break;
                 case MetamorphicLimitMode.PerCollectionItems:
-                    Assert.Equal(0, parameters.CumulativeOffset);
+                    Assert.Equal(0, parameters.PrimaryOffset);
                     break;
             }
         }
@@ -117,7 +121,7 @@ public class MetamorphicFuzzHarnessTests
         foreach (var parameters in AllParameters)
         {
             var encoded = parameters.Encode();
-            Assert.Equal(MetamorphicParameters.EncodedLength, encoded.Length);
+            Assert.Equal(MetamorphicParameters.CommonPayloadLength, encoded.Length);
             Assert.Equal(parameters, MetamorphicDecoder.Decode(encoded));
         }
     }
@@ -214,10 +218,10 @@ public class MetamorphicFuzzHarnessTests
                 is MetamorphicLimitMode.PerCollectionItems or MetamorphicLimitMode.Both;
 
             Assert.Equal(
-                wantsCumulative ? Math.Max(1, total + parameters.CumulativeOffset) : null,
+                wantsCumulative ? Math.Max(1, total + parameters.PrimaryOffset) : null,
                 testCase.Limits!.MaxMaterializedItems);
             Assert.Equal(
-                wantsPerCollection ? (int?)Math.Max(1, total + parameters.PerCollectionOffset) : null,
+                wantsPerCollection ? (int?)Math.Max(1, total + parameters.SecondaryOffset) : null,
                 testCase.Limits.MaxCollectionItems);
         }
     }
@@ -335,7 +339,7 @@ public class MetamorphicFuzzHarnessTests
         Assert.Equal("synthetic-precondition", execution.RejectionReason);
         Assert.Null(execution.Left);
         Assert.Null(execution.Right);
-        Assert.Contains("rejected:synthetic-precondition", MetamorphicFingerprint.Describe(execution, null), StringComparison.Ordinal);
+        Assert.Contains("rejection=synthetic-precondition", MetamorphicFingerprint.Describe(execution, null), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -470,17 +474,18 @@ public class MetamorphicFuzzHarnessTests
             seen[fingerprint] = parameters;
         }
 
-        // The dimensions the report must be able to separate are all present.
-        var sample = seen.Keys.First();
-        foreach (var field in new[]
-        {
-            "family=", "status=", "precondition=", "limitMode=", "cumulativeOffset=",
-            "perCollectionOffset=", "optimizer=", "left=", "right=",
+        // The dimensions the report must be able to separate are present on EVERY fingerprint,
+        // including `work=`, which records whether the operational counters were comparable.
+        string[] fields =
+        [
+            "family=", "status=", "precondition=", "limitMode=", "primaryOffset=",
+            "secondaryOffset=", "optimizer=", "left=", "right=", "work=",
             "semanticMismatch=", "resourceMismatch=", "operationalMismatch=",
-        })
-        {
-            Assert.Contains(field, sample, StringComparison.Ordinal);
-        }
+        ];
+
+        foreach (var fingerprint in seen.Keys)
+        foreach (var field in fields)
+            Assert.Contains(field, fingerprint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -686,11 +691,15 @@ public class MetamorphicFuzzHarnessTests
     [Fact]
     public void CuratedSeeds_CoverTheRequiredCategories()
     {
-        var seeds = LoadCuratedSeeds();
+        // Scoped to the Phase 1 family: later phases add their own seeds to the same manifest,
+        // and this test pins the Phase 1 coverage that must never regress.
+        var seeds = LoadCuratedSeeds()
+            .Where(seed => seed.DeclaredFamily == MetamorphicFamily.DottedCollectionCall)
+            .ToList();
         var cases = seeds.Select(seed => MetamorphicTemplates.Build(MetamorphicDecoder.Decode(seed.Payload))).ToList();
 
         Assert.InRange(seeds.Count, 9, 40);
-        Assert.All(seeds, seed => Assert.Equal(MetamorphicFamily.DottedCollectionCall, seed.DeclaredFamily));
+        Assert.All(seeds, seed => Assert.Equal(MetamorphicParameters.CommonPayloadLength, seed.Payload.Length));
         Assert.All(seeds, seed => Assert.NotEqual("", seed.Description));
 
         Assert.Contains(cases, c => c.ExpectedItemTotal == 1);                       // smallest valid range
@@ -715,8 +724,10 @@ public class MetamorphicFuzzHarnessTests
 
             var written = Directory.GetFiles(directory);
             Assert.Equal(LoadCuratedSeeds().Count, written.Length);
-            Assert.All(written, file => Assert.Equal(
-                MetamorphicParameters.EncodedLength, File.ReadAllBytes(file).Length));
+            Assert.All(written, file => Assert.InRange(
+                File.ReadAllBytes(file).Length,
+                MetamorphicParameters.CommonPayloadLength,
+                MetamorphicDecoder.MaxPayloadLength));
         }
         finally
         {
@@ -740,7 +751,7 @@ public class MetamorphicFuzzHarnessTests
         [
             0,
             (byte)MetamorphicDecoder.RangeStopTable.IndexOf(rangeStop),
-            (byte)MetamorphicDecoder.LimitModeTable.IndexOf(mode),
+            (byte)LegacyLimitModes.IndexOf(mode),
             (byte)MetamorphicDecoder.OffsetTable.IndexOf(cumulativeOffset),
             (byte)MetamorphicDecoder.OffsetTable.IndexOf(perCollectionOffset),
             (byte)(optimize ? 0 : 1),

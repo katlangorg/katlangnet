@@ -89,9 +89,14 @@ internal static class MetamorphicInvariants
         ArgumentNullException.ThrowIfNull(mismatch);
 
         var testCase = report.Execution.Case;
+        var definition = testCase.Definition;
+        var variant = definition.DescribeVariant(testCase.Parameters);
         var text = new StringBuilder(1024);
         text.Append("Metamorphic relation violated: ").Append(mismatch.Headline).AppendLine();
-        text.Append("  family:                 ").AppendLine(testCase.FamilyId);
+        text.Append("  family:                 ").Append(testCase.FamilyId)
+            .Append(" (group ").Append(definition.Group).AppendLine(")");
+        if (variant.Length > 0)
+            text.Append("  template variant:       ").AppendLine(variant);
         text.Append("  failed comparison:      ").Append(mismatch.Kind).Append(" (").Append(mismatch.Class).AppendLine(")");
         text.Append("  declared semantic:      ").AppendLine(testCase.SemanticRelation.ToString());
         text.Append("  declared operational:   ").AppendLine(testCase.OperationalRelation.ToString());

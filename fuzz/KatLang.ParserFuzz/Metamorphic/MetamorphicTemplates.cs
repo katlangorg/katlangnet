@@ -1,23 +1,15 @@
 using System.Globalization;
-using KatLang;
 
 namespace KatLang.ParserFuzz;
 
 /// <summary>
 /// Trusted templates: the only place a metamorphic pair is created.
 ///
-/// <para>A template owns an EQUIVALENCE ARGUMENT, not a rewriting. Phase 1's single family
-/// instantiates the two spellings of one call — <c>count(range(1, N))</c> and
-/// <c>range(1, N).count</c> — which are equivalent because KatLang defines the dotted form
-/// as the ordinary receiver-first call (<c>A.F(B)</c> means <c>F(A, B)</c>, and for the fixed
-/// collection builtins the receiver fills the single <c>collection</c> parameter). The pair is
-/// therefore expected to agree on semantics AND on the work it charges, which is why the
-/// operational relation may be exact equality rather than an inequality.</para>
-///
-/// <para>The template also knows the cardinality it asks the language to build, which is how
-/// resource limits can be placed exactly on, just below, and just above the boundary. That
-/// knowledge is used to DERIVE limits and by the deterministic tests; the fuzz target never
-/// asserts it, so the campaign stays a pair comparison rather than an oracle comparison.</para>
+/// <para>A template owns an EQUIVALENCE ARGUMENT, not a rewriting. Each registered family
+/// CONSTRUCTS both members from the same parameters, so the comparison is trustworthy without
+/// any semantic analysis of the generated text. This type owns the shared entry points —
+/// parameter validation, registry dispatch, and the Phase 1 family — while each Phase 2 family
+/// lives in its own template alongside the argument that justifies it.</para>
 /// </summary>
 internal static class MetamorphicTemplates
 {
@@ -29,23 +21,6 @@ internal static class MetamorphicTemplates
     internal static long RangeCardinality(int rangeStop)
         => checked(Math.Abs((long)rangeStop - 1L) + 1L);
 
-    /// <summary>Every normalized parameter point Phase 1's decoder can produce.</summary>
-    internal static IEnumerable<MetamorphicParameters> EnumerateAllParameters()
-    {
-        var seen = new HashSet<MetamorphicParameters>();
-        for (var family = 0; family < MetamorphicDecoder.FamilyTable.Length; family++)
-        for (var stop = 0; stop < MetamorphicDecoder.RangeStopTable.Length; stop++)
-        for (var mode = 0; mode < MetamorphicDecoder.LimitModeTable.Length; mode++)
-        for (var cumulative = 0; cumulative < MetamorphicDecoder.OffsetTable.Length; cumulative++)
-        for (var perCollection = 0; perCollection < MetamorphicDecoder.OffsetTable.Length; perCollection++)
-        for (var optimize = 0; optimize < 2; optimize++)
-        {
-            var parameters = MetamorphicDecoder.Decode(
-                [(byte)family, (byte)stop, (byte)mode, (byte)cumulative, (byte)perCollection, (byte)optimize]);
-            if (seen.Add(parameters)) yield return parameters;
-        }
-    }
-
     /// <summary>Instantiates the template selected by <paramref name="parameters"/>.</summary>
     internal static MetamorphicCase Build(MetamorphicParameters parameters)
     {
@@ -53,23 +28,29 @@ internal static class MetamorphicTemplates
         // entry, so a hand-built parameter point fails loudly instead of silently reading
         // past a table or fabricating an untrusted pair.
         EnsureDecoderProduced(parameters);
-
-        return parameters.Family switch
-        {
-            MetamorphicFamily.DottedCollectionCall => BuildDottedCollectionCall(parameters),
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(parameters), parameters.Family, "No template is registered for this relation family."),
-        };
+        return MetamorphicFamilyRegistry.Get(parameters.Family).Build(parameters);
     }
 
     private static void EnsureDecoderProduced(MetamorphicParameters parameters)
     {
         Check(parameters.FamilyIndex, MetamorphicDecoder.FamilyTable.Length, "relation family");
-        Check(parameters.RangeStopIndex, MetamorphicDecoder.RangeStopTable.Length, "range stop");
-        Check(parameters.LimitModeIndex, MetamorphicDecoder.LimitModeTable.Length, "limit mode");
-        Check(parameters.CumulativeOffsetIndex, MetamorphicDecoder.OffsetTable.Length, "cumulative offset");
-        Check(parameters.PerCollectionOffsetIndex, MetamorphicDecoder.OffsetTable.Length, "per-collection offset");
+
+        var definition = MetamorphicFamilyRegistry.Get(MetamorphicDecoder.FamilyTable[parameters.FamilyIndex]);
+        Check(parameters.LimitModeIndex, definition.SupportedLimitModes.Length, "limit mode");
+        Check(parameters.PrimaryOffsetIndex, MetamorphicDecoder.OffsetTable.Length, "primary offset");
+        Check(parameters.SecondaryOffsetIndex, MetamorphicDecoder.OffsetTable.Length, "secondary offset");
         Check(parameters.OptimizeIndex, 2, "optimizer policy");
+
+        Check(
+            parameters.LegacyRangeStopIndex,
+            definition.UsesLegacyRangeStop ? MetamorphicDecoder.RangeStopTable.Length : 1,
+            "range stop");
+
+        for (var i = 0; i < MetamorphicParameters.MaxExtraDimensions; i++)
+        {
+            var size = i < definition.ExtraDimensionCount ? definition.ExtraDimensionSizes[i] : 1;
+            Check(parameters.Extra(i), size, $"appended dimension {i.ToString(CultureInfo.InvariantCulture)}");
+        }
 
         static void Check(int index, int tableLength, string dimension)
         {
@@ -82,7 +63,22 @@ internal static class MetamorphicTemplates
         }
     }
 
-    private static MetamorphicCase BuildDottedCollectionCall(MetamorphicParameters parameters)
+    // ── Phase 1 family: count(range(1, N)) against range(1, N).count ────────────
+
+    internal static MetamorphicPrecondition ValidateRangeCount(MetamorphicParameters parameters)
+    {
+        var cardinality = RangeCardinality(parameters.RangeStop);
+
+        if (cardinality < 1)
+            return MetamorphicPrecondition.Rejected("non-positive-cardinality");
+
+        if (cardinality > MetamorphicDecoder.MaxPhase1Cardinality)
+            return MetamorphicPrecondition.Rejected("cardinality-above-phase1-bound");
+
+        return MetamorphicPrecondition.Ok;
+    }
+
+    internal static MetamorphicCase BuildRangeCount(MetamorphicParameters parameters)
     {
         var stop = parameters.RangeStop;
         var cardinality = RangeCardinality(stop);
@@ -91,100 +87,128 @@ internal static class MetamorphicTemplates
         var left = $"Output = count(range(1, {stopText}))";
         var right = $"Output = range(1, {stopText}).count";
 
-        var (limits, limitsNote) = DeriveLimits(parameters, cardinality);
-        var precondition = CheckPreconditions(parameters, cardinality, left, right);
-
-        var description =
-            $"{MetamorphicCase.FamilyIdOf(parameters.Family)}: range(1, {stopText}) materializes " +
-            $"{cardinality.ToString(CultureInfo.InvariantCulture)} item slot(s); " +
-            $"limits {MetamorphicCase.DescribeLimits(limits)}{limitsNote}; " +
-            $"optimizations {(parameters.EnableOptimizations ? "on" : "off")}";
-
-        return new MetamorphicCase(
-            Family: parameters.Family,
-            Parameters: parameters,
-            LeftSource: left,
-            RightSource: right,
-            SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
-            OperationalRelation: MetamorphicOperationalRelation.ExactMaterializationEqual,
-            Limits: limits,
-            EnableOptimizations: parameters.EnableOptimizations,
-            Precondition: precondition,
-            // Both members are ordinary KatLang programs whose SEMANTICS Lean models, so either
-            // one could be checked against the Lean differential corpus. The RELATION cannot:
-            // Lean models an unbounded evaluator with no notion of work. See fuzz/README.md.
-            LeanRepresentable: true,
-            Description: description)
-        {
-            ExpectedItemTotal = cardinality,
-        };
+        return MetamorphicCaseFactory.Create(
+            parameters,
+            left,
+            right,
+            ValidateRangeCount(parameters),
+            $"range(1, {stopText}) materializes {cardinality.ToString(CultureInfo.InvariantCulture)} item slot(s)");
     }
 
+    // ── Parameter-space enumeration for the deterministic tests ─────────────────
+
     /// <summary>
-    /// Places the configured budgets relative to the template's expected total. Both KatLang
-    /// limits reject values below 1, so an offset that would ask for 0 is clamped up and the
-    /// clamp is reported rather than silently applied — a "one below" case at cardinality 1
-    /// really is an "exactly at" case.
+    /// Every normalized parameter point of the Phase 1 family — the compatibility surface, so
+    /// it stays exhaustive.
     /// </summary>
-    private static (EvaluationLimits? Limits, string Note) DeriveLimits(
-        MetamorphicParameters parameters, long cardinality)
+    internal static IEnumerable<MetamorphicParameters> EnumerateLegacyParameters()
     {
-        if (parameters.LimitMode == MetamorphicLimitMode.Default)
-            return (null, "");
+        var seen = new HashSet<MetamorphicParameters>();
+        var modes = MetamorphicFamilyRegistry.Get(MetamorphicFamily.DottedCollectionCall).SupportedLimitModes.Length;
 
-        var clamped = false;
-        long? cumulative = null;
-        int? perCollection = null;
-
-        if (parameters.LimitMode is MetamorphicLimitMode.CumulativeItems or MetamorphicLimitMode.Both)
-            cumulative = Place(cardinality, parameters.CumulativeOffset, ref clamped);
-
-        if (parameters.LimitMode is MetamorphicLimitMode.PerCollectionItems or MetamorphicLimitMode.Both)
-            perCollection = (int)Place(cardinality, parameters.PerCollectionOffset, ref clamped);
-
-        var limits = new EvaluationLimits
+        for (var stop = 0; stop < MetamorphicDecoder.RangeStopTable.Length; stop++)
+        for (var mode = 0; mode < modes; mode++)
+        for (var primary = 0; primary < MetamorphicDecoder.OffsetTable.Length; primary++)
+        for (var secondary = 0; secondary < MetamorphicDecoder.OffsetTable.Length; secondary++)
+        for (var optimize = 0; optimize < 2; optimize++)
         {
-            MaxMaterializedItems = cumulative,
-            MaxCollectionItems = perCollection,
-        };
-
-        return (limits, clamped ? " (offset clamped to the minimum legal limit)" : "");
-
-        static long Place(long total, int offset, ref bool clamped)
-        {
-            var requested = checked(total + offset);
-            if (requested >= 1) return requested;
-            clamped = true;
-            return 1;
+            var parameters = MetamorphicDecoder.Decode(
+                [0, (byte)stop, (byte)mode, (byte)primary, (byte)secondary, (byte)optimize]);
+            if (seen.Add(parameters)) yield return parameters;
         }
     }
 
     /// <summary>
-    /// Template preconditions. They are expected to hold by construction; checking them
-    /// anyway keeps a future template's generation bug visible as a counted REJECTION with a
-    /// reason instead of surfacing as a false mismatch.
+    /// A reviewed STRATIFIED sweep over every registered family. The full Cartesian product of
+    /// Phase 2's dimensions is in the millions and mostly redundant, so the sweep crosses each
+    /// family's own dimensions exhaustively under the default policy, then crosses every
+    /// execution policy against a few representative points of that family.
     /// </summary>
-    private static MetamorphicPrecondition CheckPreconditions(
-        MetamorphicParameters parameters, long cardinality, string left, string right)
+    internal static IEnumerable<MetamorphicParameters> EnumerateStratifiedParameters()
     {
-        if (!MetamorphicDecoder.FamilyTable.Contains(parameters.Family))
-            return MetamorphicPrecondition.Rejected("unregistered-family");
+        var seen = new HashSet<MetamorphicParameters>();
 
-        if (cardinality < 1)
-            return MetamorphicPrecondition.Rejected("non-positive-cardinality");
+        foreach (var parameters in EnumerateLegacyParameters())
+        {
+            if (seen.Add(parameters)) yield return parameters;
+        }
 
-        if (cardinality > MetamorphicDecoder.MaxPhase1Cardinality)
-            return MetamorphicPrecondition.Rejected("cardinality-above-phase1-bound");
+        for (var familyIndex = 1; familyIndex < MetamorphicDecoder.FamilyTable.Length; familyIndex++)
+        {
+            var definition = MetamorphicFamilyRegistry.Get(MetamorphicDecoder.FamilyTable[familyIndex]);
 
-        if (left.Length == 0 || right.Length == 0)
-            return MetamorphicPrecondition.Rejected("empty-generated-source");
+            // Stratum 1: the family's own dimensions, exhaustively, under the default policy.
+            foreach (var extras in CrossExtras(definition))
+            {
+                var parameters = DecodeWith(familyIndex, mode: 0, primary: 1, secondary: 1, optimize: 0, extras);
+                if (seen.Add(parameters)) yield return parameters;
+            }
 
-        if (string.Equals(left, right, StringComparison.Ordinal))
-            return MetamorphicPrecondition.Rejected("identical-pair-members");
+            // Stratum 2: every execution policy against a few representative family points.
+            foreach (var extras in RepresentativeExtras(definition))
+            for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
+            for (var primary = 0; primary < MetamorphicDecoder.OffsetTable.Length; primary++)
+            for (var secondary = 0; secondary < MetamorphicDecoder.OffsetTable.Length; secondary++)
+            for (var optimize = 0; optimize < 2; optimize++)
+            {
+                var parameters = DecodeWith(familyIndex, mode, primary, secondary, optimize, extras);
+                if (seen.Add(parameters)) yield return parameters;
+            }
+        }
+    }
 
-        if (!right.Contains(".count", StringComparison.Ordinal))
-            return MetamorphicPrecondition.Rejected("right-member-is-not-the-dotted-form");
+    private static MetamorphicParameters DecodeWith(
+        int familyIndex, int mode, int primary, int secondary, int optimize, IReadOnlyList<int> extras)
+    {
+        var payload = new byte[MetamorphicParameters.CommonPayloadLength + extras.Count];
+        payload[0] = (byte)familyIndex;
+        payload[2] = (byte)mode;
+        payload[3] = (byte)primary;
+        payload[4] = (byte)secondary;
+        payload[5] = (byte)optimize;
+        for (var i = 0; i < extras.Count; i++)
+            payload[MetamorphicParameters.CommonPayloadLength + i] = (byte)extras[i];
+        return MetamorphicDecoder.Decode(payload);
+    }
 
-        return MetamorphicPrecondition.Ok;
+    private static IEnumerable<IReadOnlyList<int>> CrossExtras(MetamorphicFamilyDefinition definition)
+    {
+        var counts = definition.ExtraDimensionSizes;
+        if (counts.Length == 0)
+        {
+            yield return [];
+            yield break;
+        }
+
+        var indices = new int[counts.Length];
+        while (true)
+        {
+            yield return (int[])indices.Clone();
+
+            var position = counts.Length - 1;
+            while (position >= 0)
+            {
+                indices[position]++;
+                if (indices[position] < counts[position]) break;
+                indices[position] = 0;
+                position--;
+            }
+
+            if (position < 0) yield break;
+        }
+    }
+
+    private static IEnumerable<IReadOnlyList<int>> RepresentativeExtras(MetamorphicFamilyDefinition definition)
+    {
+        var counts = definition.ExtraDimensionSizes;
+        if (counts.Length == 0)
+        {
+            yield return [];
+            yield break;
+        }
+
+        // Three points per family: the first entry of every dimension, the middle, and the last.
+        foreach (var pick in new Func<int, int>[] { static _ => 0, static n => n / 2, static n => n - 1 })
+            yield return counts.Select(pick).ToArray();
     }
 }

@@ -7,21 +7,27 @@
 # Line format (fields in this order; `desc` is optional and runs to end of line):
 #   family=<relation-family-id> bytes=<hex payload> desc=<human-readable note>
 #
-# Payload layout (one byte per dimension, each byte an index reduced into its table):
-#   0 relation family        [dotted-collection-call]
-#   1 range stop             [1, 0, 2, 3, 5, 8, -1, -3, 16, 33, 64, 100]
-#   2 limit mode             [Default, CumulativeItems, PerCollectionItems, Both]
-#   3 cumulative offset      [-1, 0, +1, +4]   (relative to the expected item total)
-#   4 per-collection offset  [-1, 0, +1, +4]   (relative to the expected item total)
+# COMMON payload prefix (bytes 0-5) — unchanged since Phase 1:
+#   0 relation family        [dotted-collection-call, dotted-collection-builtin,
+#                             user-extension-call, dotted-chain, builtin-callback-wrapper]
+#   1 legacy range stop      [1, 0, 2, 3, 5, 8, -1, -3, 16, 33, 64, 100]  (Phase 1 family only)
+#   2 limit mode             Phase 1 family: [Default, CumulativeItems, PerCollectionItems, Both]
+#                            others:         + [CumulativeStrings, PerStringLength, Generous]
+#   3 primary limit offset   [-1, 0, +1, +4]   (relative to the MEASURED total the mode bounds)
+#   4 secondary limit offset [-1, 0, +1, +4]
 #   5 optimizer              [on, off]
-# Unused dimensions are normalized to index 1 (offset 0) when the limit mode ignores them.
+# APPENDED family dimensions (bytes 6+), never an overload of an existing byte:
+#   dotted-collection-builtin: 6 builtin, 7 receiver shape, 8 suffix variant
+#   user-extension-call:       6 body template, 7 receiver shape, 8 suffix variant
+#   dotted-chain:              6 chain template, 7 receiver shape
+#   builtin-callback-wrapper:  6 consumer, 7 callback builtin, 8 input shape, 9 wrapper projection
 #
-# KatLang's range is INCLUSIVE and counts downward when start > stop, so it always yields at
-# least one element: there is no empty range, range(1, 1) is the smallest form, and
-# range(1, 0) is the descending two-item case.
+# BACKWARD COMPATIBILITY: a payload of six bytes or fewer is a version-zero payload and always
+# decodes to the Phase 1 family with the Phase 1 tables, exactly as it did before Phase 2.
 #
 # Replay:  dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay fuzz\KatLang.ParserFuzz\MetamorphicTestcases
 
+# ── Phase 1: count(range(1, N)) against range(1, N).count (six-byte payloads) ──────────────
 family=dotted-collection-call bytes=00 00 00 01 01 00 desc=smallest valid range: range(1, 1) is one item, default limits
 family=dotted-collection-call bytes=00 01 00 01 01 00 desc=nearest form to N=0: range(1, 0) descends to two items, default limits
 family=dotted-collection-call bytes=00 04 00 01 01 00 desc=several-item range: range(1, 5), default limits
@@ -35,3 +41,53 @@ family=dotted-collection-call bytes=00 04 02 01 00 00 desc=per-collection ceilin
 family=dotted-collection-call bytes=00 05 03 01 03 00 desc=both budgets: cumulative at the boundary, per-collection clear of it
 family=dotted-collection-call bytes=00 07 01 00 01 00 desc=descending range(1, -3) against a cumulative budget one below
 family=dotted-collection-call bytes=00 0b 03 01 01 01 desc=largest Phase 1 range(1, 100) at both boundaries, optimizations off
+
+# ── Group A: trusted collection builtin, ordinary against dotted ───────────────────────────
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 00 06 00 desc=receiver-only scalar builtin: count on an exact list
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 0b 06 03 desc=builtin with a whole-number suffix: take(list, itemCount)
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 09 07 00 desc=collection-producing builtin: distinct on a nested list
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 0e 06 00 desc=callback-accepting builtin: map with a user callback
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 10 06 00 desc=reduce with a user reducer and initial accumulator
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 00 09 00 desc=nested receiver value: a sequence of exact lists
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 00 04 00 desc=empty receiver: count on the empty list
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 00 02 00 desc=empty receiver: count on the empty sequence
+family=dotted-collection-builtin bytes=01 00 00 01 01 00 01 0a 00 desc=error equivalence: sum over a list of strings fails identically
+family=dotted-collection-builtin bytes=01 00 01 00 01 00 09 06 00 desc=cumulative item budget one below the measured total
+family=dotted-collection-builtin bytes=01 00 04 00 01 00 09 0a 00 desc=cumulative string budget one below the measured total
+family=dotted-collection-builtin bytes=01 00 02 01 00 00 07 0b 00 desc=per-collection ceiling one below, order on a range receiver
+family=dotted-collection-builtin bytes=01 00 04 00 01 01 10 01 02 desc=retained campaign reproducer: both forms hit the same string budget, partial counters differ
+family=dotted-collection-builtin bytes=01 00 06 01 01 01 0d 06 00 desc=generous explicit limits, contains, optimizations disabled
+
+# ── Group B: user-defined extension-style call ─────────────────────────────────────────────
+family=user-extension-call bytes=02 00 00 01 01 00 00 0b 00 desc=zero suffix: identity body on a range receiver
+family=user-extension-call bytes=02 00 00 01 01 00 0f 06 02 desc=two suffix arguments building a list of receiver and suffixes
+family=user-extension-call bytes=02 00 00 01 01 00 06 06 00 desc=multiple body outputs reified at the call boundary
+family=user-extension-call bytes=02 00 00 01 01 00 11 06 00 desc=explicit spread placed identically in the suffix of both forms
+family=user-extension-call bytes=02 00 01 00 01 00 01 0b 00 desc=receiver whose duplicate evaluation would alter item counters
+family=user-extension-call bytes=02 00 00 01 01 00 04 03 00 desc=body spreads the receiver into a list, sequence receiver
+family=user-extension-call bytes=02 00 00 01 01 00 09 07 00 desc=body is itself a dotted chain, nested-list receiver
+family=user-extension-call bytes=02 00 05 01 00 00 01 0a 00 desc=per-string ceiling one below, string-list receiver
+
+# ── Group C: bounded dotted chains against structurally built ordinary equivalents ─────────
+family=dotted-chain bytes=03 00 00 01 01 00 00 06 desc=two-link chain: map then count
+family=dotted-chain bytes=03 00 00 01 01 00 06 06 desc=three-link chain: take, distinct, count
+family=dotted-chain bytes=03 00 00 01 01 00 04 03 desc=collection-producing link followed by a scalar link: order then last
+family=dotted-chain bytes=03 00 00 01 01 00 07 0b desc=callback-containing chain: filter, map, count on a range receiver
+family=dotted-chain bytes=03 00 01 00 01 01 02 06 desc=cumulative item boundary with optimizations OFF (exact relation)
+family=dotted-chain bytes=03 00 02 01 00 00 08 06 desc=per-collection ceiling one below, order/skip/sum chain
+family=dotted-chain bytes=03 00 04 00 01 00 05 0a desc=cumulative string boundary on a string-list receiver
+
+# ── Group D: direct builtin callback against an equivalent user wrapper ────────────────────
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 00 desc=map: nested list passed to the count builtin
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 03 00 desc=map: strings passed to a builtin callback
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 08 00 desc=map over an empty collection
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 01 00 desc=map: sequence rows as callback input
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 07 00 desc=map: exact-list input of scalars
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 04 05 00 desc=callback structured error: min over an empty row
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 01 00 00 00 desc=filter with a direct builtin predicate
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 02 0d 07 00 desc=reduce with the two-argument contains builtin
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 01 desc=wrapper spelled as an ordinary call rather than dotted
+family=builtin-callback-wrapper bytes=04 00 01 00 01 00 00 00 00 00 desc=cumulative item budget one below the measured total
+family=builtin-callback-wrapper bytes=04 00 04 00 01 00 00 00 03 00 desc=cumulative string budget one below the measured total
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: rest projection collects a list, not the supplied value
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 03 desc=REJECTED: wrapper arity does not match the callback projection
