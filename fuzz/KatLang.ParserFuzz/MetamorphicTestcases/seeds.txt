@@ -9,18 +9,27 @@
 #
 # COMMON payload prefix (bytes 0-5) — unchanged since Phase 1:
 #   0 relation family        [dotted-collection-call, dotted-collection-builtin,
-#                             user-extension-call, dotted-chain, builtin-callback-wrapper]
+#                             user-extension-call, dotted-chain, builtin-callback-wrapper,
+#                             optimizer-generic-parity, cached-property-reuse,
+#                             entry-point-parity, budget-law]
 #   1 legacy range stop      [1, 0, 2, 3, 5, 8, -1, -3, 16, 33, 64, 100]  (Phase 1 family only)
 #   2 limit mode             Phase 1 family: [Default, CumulativeItems, PerCollectionItems, Both]
-#                            others:         + [CumulativeStrings, PerStringLength, Generous]
-#   3 primary limit offset   [-1, 0, +1, +4]   (relative to the MEASURED total the mode bounds)
+#                            Phase 2:        + [CumulativeStrings, PerStringLength, Generous]
+#                            Phase 3:        each family declares its own subset; budget-law
+#                                            declares the single FamilyDerived mode
+#   3 primary limit offset   [-1, 0, +1, +4]   (relative to the MEASURED total the mode bounds;
+#                                               for budget-law it is the BOUNDARY offset)
 #   4 secondary limit offset [-1, 0, +1, +4]
-#   5 optimizer              [on, off]
+#   5 optimizer              [on, off]  (normalized away where a family fixes the policy)
 # APPENDED family dimensions (bytes 6+), never an overload of an existing byte:
 #   dotted-collection-builtin: 6 builtin, 7 receiver shape, 8 suffix variant
 #   user-extension-call:       6 body template, 7 receiver shape, 8 suffix variant
 #   dotted-chain:              6 chain template, 7 receiver shape
 #   builtin-callback-wrapper:  6 consumer, 7 callback builtin, 8 input shape, 9 wrapper projection
+#   optimizer-generic-parity:  6 source template, 7 execution order
+#   cached-property-reuse:     6 value/use template, 7 reuse count, 8 execution order
+#   entry-point-parity:        6 source template, 7 surface pair, 8 execution order
+#   budget-law:                6 source template, 7 law, 8 resource dimension, 9 isolation mode
 #
 # BACKWARD COMPATIBILITY: a payload of six bytes or fewer is a version-zero payload and always
 # decodes to the Phase 1 family with the Phase 1 tables, exactly as it did before Phase 2.
@@ -91,3 +100,83 @@ family=builtin-callback-wrapper bytes=04 00 01 00 01 00 00 00 00 00 desc=cumulat
 family=builtin-callback-wrapper bytes=04 00 04 00 01 00 00 00 03 00 desc=cumulative string budget one below the measured total
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: rest projection collects a list, not the supplied value
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 03 desc=REJECTED: wrapper arity does not match the callback projection
+
+# ── Phase 3 Group A: one source, optimizations ON (left) against OFF (right) ───────────────
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 00 00 desc=zero-iteration loop: the count check short-circuits before the optimizer
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 02 00 desc=multi-iteration repeat with a planned loop expression
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 04 00 desc=while loop with a scalar continuation slot
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 0a 00 desc=nested-list loop state: the optimizer is consulted and falls back
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 1a 00 desc=string constant inside an optimized loop body
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 0c 00 desc=fused filter/count pipeline: the optimized side materializes less
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 0c 01 desc=the same fused pipeline with the RIGHT member observed first
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 15 00 desc=fused chain crossed with the whole collection-builtin surface
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 16 00 desc=fused chain crossed with callback pipelines and a reducer
+family=optimizer-generic-parity bytes=05 00 00 01 01 00 18 00 desc=fusion followed by a callback error: both policies fail identically
+family=optimizer-generic-parity bytes=05 00 01 01 01 00 15 00 desc=per-collection ceiling at the measured total: optimized and generic share the verdict
+family=optimizer-generic-parity bytes=05 00 01 01 00 00 0c 00 desc=REJECTED: a ceiling below the source range stops the run before it can fuse
+family=optimizer-generic-parity bytes=05 00 02 01 01 00 19 00 desc=generous explicit limits with both optimizers active
+
+# ── Phase 3 Group B: a reused zero-argument property against the rebuilt form ──────────────
+family=cached-property-reuse bytes=06 00 00 01 01 00 0b 01 00 desc=cached range consumed through the dotted receiver, three uses
+family=cached-property-reuse bytes=06 00 00 01 01 00 06 00 00 desc=cached nested collection, two uses
+family=cached-property-reuse bytes=06 00 00 01 01 00 01 01 00 desc=cached string value reused three times
+family=cached-property-reuse bytes=06 00 00 01 01 00 0c 01 00 desc=cached value used repeatedly as a dotted receiver
+family=cached-property-reuse bytes=06 00 00 01 01 00 0d 00 00 desc=cached collection passed to a callback builtin
+family=cached-property-reuse bytes=06 00 00 01 01 00 0f 01 00 desc=multi-output property reified as one cached value
+family=cached-property-reuse bytes=06 00 00 01 01 00 0a 01 00 desc=argument-position reference: measured NOT to consult the cache
+family=cached-property-reuse bytes=06 00 00 01 01 00 11 01 00 desc=reuse first then an error: what the cache already served is unaffected
+family=cached-property-reuse bytes=06 00 00 01 01 00 12 00 01 desc=erroring property, right member observed first
+family=cached-property-reuse bytes=06 00 03 01 01 01 0e 01 00 desc=generous limits, filter chain, optimizations disabled
+family=cached-property-reuse bytes=06 00 04 00 01 00 02 01 00 desc=REJECTED: cumulative item budget cannot bind equally on both forms
+family=cached-property-reuse bytes=06 00 05 00 01 00 08 01 00 desc=REJECTED: cumulative string budget cannot bind equally on both forms
+
+# ── Phase 3 Group C: one source through two runtime entry points ───────────────────────────
+family=entry-point-parity bytes=07 00 00 01 01 00 00 00 00 desc=scalar success: observed against unobserved counted evaluation
+family=entry-point-parity bytes=07 00 00 01 01 00 02 05 00 desc=exact-list success: counted evaluator against the engine facade
+family=entry-point-parity bytes=07 00 00 01 01 00 04 05 00 desc=multiple emitted rows through the engine facade
+family=entry-point-parity bytes=07 00 00 01 01 00 01 03 00 desc=atom projection: RunFlat against EvaluateToAtoms
+family=entry-point-parity bytes=07 00 00 01 01 00 08 06 00 desc=display rendering: engine Run against EvaluateToString
+family=entry-point-parity bytes=07 00 00 01 01 00 09 02 00 desc=top-level property channel through both counted surfaces
+family=entry-point-parity bytes=07 00 00 01 01 00 0a 00 00 desc=evaluator failure reported identically by both surfaces
+family=entry-point-parity bytes=07 00 00 01 01 00 0c 05 00 desc=resource failure: the collection ceiling stops both surfaces
+family=entry-point-parity bytes=07 00 00 01 01 00 0d 04 00 desc=depth-limit failure through the flat and engine surfaces
+family=entry-point-parity bytes=07 00 00 01 01 00 0f 06 00 desc=parse failure: only the two engine surfaces can observe it
+family=entry-point-parity bytes=07 00 00 01 01 00 00 01 01 desc=plain Run against counted Run, right member observed first
+family=entry-point-parity bytes=07 00 01 01 01 00 03 07 00 desc=generous limits: engine atoms against the engine facade
+family=entry-point-parity bytes=07 00 00 01 01 00 0f 00 00 desc=REJECTED: a malformed source cannot reach an evaluator surface
+
+# ── Phase 3 Group D: resource-budget laws, one dimension at a time ─────────────────────────
+family=budget-law bytes=08 00 00 00 01 00 04 00 00 00 desc=depth one BELOW the boundary fails with the depth error
+family=budget-law bytes=08 00 00 01 01 00 04 00 00 00 desc=depth exactly AT the boundary succeeds
+family=budget-law bytes=08 00 00 02 01 00 04 00 00 00 desc=depth one ABOVE the boundary succeeds identically
+family=budget-law bytes=08 00 00 00 01 00 05 00 01 00 desc=steps one BELOW the boundary fails with the step error
+family=budget-law bytes=08 00 00 01 01 00 05 00 01 00 desc=steps exactly AT the boundary succeeds
+family=budget-law bytes=08 00 00 02 01 00 05 00 01 00 desc=steps one ABOVE the boundary succeeds identically
+family=budget-law bytes=08 00 00 00 01 00 00 00 02 00 desc=per-collection ceiling one BELOW the boundary
+family=budget-law bytes=08 00 00 01 01 00 00 00 02 00 desc=per-collection ceiling exactly AT the boundary
+family=budget-law bytes=08 00 00 02 01 00 00 00 02 00 desc=per-collection ceiling one ABOVE the boundary
+family=budget-law bytes=08 00 00 00 01 00 00 00 03 00 desc=cumulative item budget one BELOW the boundary
+family=budget-law bytes=08 00 00 01 01 00 00 00 03 00 desc=cumulative item budget exactly AT the boundary
+family=budget-law bytes=08 00 00 02 01 00 00 00 03 00 desc=cumulative item budget one ABOVE the boundary
+family=budget-law bytes=08 00 00 00 01 00 02 00 04 00 desc=per-string ceiling one BELOW the boundary
+family=budget-law bytes=08 00 00 01 01 00 02 00 04 00 desc=per-string ceiling exactly AT the boundary
+family=budget-law bytes=08 00 00 02 01 00 02 00 04 00 desc=per-string ceiling one ABOVE the boundary
+family=budget-law bytes=08 00 00 00 01 00 02 00 05 00 desc=cumulative string budget one BELOW the boundary
+family=budget-law bytes=08 00 00 01 01 00 02 00 05 00 desc=cumulative string budget exactly AT the boundary
+family=budget-law bytes=08 00 00 02 01 00 02 00 05 00 desc=cumulative string budget one ABOVE the boundary
+family=budget-law bytes=08 00 00 00 01 00 00 00 06 00 desc=display length one BELOW the natural rendering is bounded and differs
+family=budget-law bytes=08 00 00 01 01 00 00 00 06 00 desc=display length exactly AT the natural rendering is unchanged
+family=budget-law bytes=08 00 00 02 01 00 00 00 06 00 desc=display length one ABOVE the natural rendering is unchanged
+family=budget-law bytes=08 00 00 03 01 00 00 00 06 00 desc=display length comfortably clear of the natural rendering
+family=budget-law bytes=08 00 00 01 01 00 00 01 03 00 desc=in-budget neutrality on the cumulative item budget
+family=budget-law bytes=08 00 00 01 01 00 06 01 01 00 desc=in-budget neutrality on the step budget, map pipeline
+family=budget-law bytes=08 00 00 01 01 00 00 02 03 00 desc=failed cumulative item reservation followed by a clean control run
+family=budget-law bytes=08 00 00 01 01 00 00 02 02 00 desc=failed per-collection reservation followed by a clean control run
+family=budget-law bytes=08 00 00 01 01 00 02 02 05 00 desc=failed cumulative string reservation followed by a clean control run
+family=budget-law bytes=08 00 00 01 01 00 00 02 06 00 desc=REJECTED: a display limit bounds the rendering, it does not fail a reservation
+family=budget-law bytes=08 00 00 01 01 00 00 03 03 00 desc=sequential run isolation over one shared limits instance
+family=budget-law bytes=08 00 00 01 01 00 00 03 03 01 desc=bounded run isolation across distinct threads sharing one limits instance
+family=budget-law bytes=08 00 00 00 01 00 00 04 03 00 desc=equivalent forms cross the same cumulative item boundary
+family=budget-law bytes=08 00 00 01 01 00 00 04 03 00 desc=equivalent forms both succeed exactly at the boundary
+family=budget-law bytes=08 00 00 01 01 00 04 04 01 00 desc=user-extension forms share the step boundary too
+family=budget-law bytes=08 00 00 01 01 00 05 04 00 00 desc=REJECTED: builtin-callback forms do not share a work boundary

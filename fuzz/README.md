@@ -240,6 +240,14 @@ representability, and fingerprint features. Nothing dispatches on source text.
 | `user-extension-call` | dotted-user | `MmF(R, suffix…)` / `R.MmF(suffix…)` |
 | `dotted-chain` | dotted-chain | nested ordinary calls / the equivalent dotted chain |
 | `builtin-callback-wrapper` | callback-wrapper | `Rows.map(count)` / `Rows.map(MmWrap)` |
+| `optimizer-generic-parity` | optimizer | one source with optimizations **on** / the same source with them **off** |
+| `cached-property-reuse` | cache | a reused zero-argument property / the independently rebuilt form |
+| `entry-point-parity` | entry-point | one source through **two runtime entry points** |
+| `budget-law` | budget | resource-budget laws: boundary sweeps, neutrality, failed reservations, isolation |
+
+The first five compare two *programs*. Phase 3's four compare two *executions*: same program (or two trusted
+equivalent programs) under a different optimizer policy, a different entry point, or a different budget. That
+is why Phase 3 added a per-side **execution profile** rather than more templates.
 
 **Phase 1 family.** `count(range(1, N))` against `range(1, N).count`. KatLang's `range` is
 **inclusive** and counts downward when `start > stop`, so it always yields at least one element:
@@ -283,6 +291,177 @@ recovered by reparsing or rewriting dotted source.
 against direct builtin callbacks and equivalent user wrappers, over nine input shapes chosen to
 put non-scalar values (nested lists, sequence rows, strings, empty rows) first, because those are
 what expose accidental rematerialization.
+
+### Phase 3: comparing two EXECUTIONS of one program
+
+Phase 1 and Phase 2 vary the program and hold the execution fixed. Phase 3 does the opposite. A case
+therefore carries a per-side **execution profile** — entry point, limits, optimizer policy — plus a
+**run plan** (what, if anything, is interposed between the two observations), an **execution order**,
+and an **evidence gate**. Every one of those defaults to the Phase 1/2 value, so a Phase 1 or Phase 2
+case is exactly the case it always was: both sides observed through `Evaluator.RunCountedObserved`
+under one shared limits instance and one shared optimizer policy, run sequentially, left first, with
+no evidence requirement (pinned by
+`MetamorphicPhase3FamilyTests.EveryLegacyParameterPoint_KeepsItsExactPrePhase3ExecutionShape`).
+
+#### Group A — optimized versus generic
+
+One trusted source run twice: optimizations **on** as the left member, **off** as the right. Direction
+is fixed and recorded (`direction=optimized-left`), so the inequality always reads "left never exceeds
+right"; what the payload varies instead is the **execution order**, because a relation that only holds
+when a policy runs on a clean process is a state leak rather than an optimization.
+
+**Optimizer-hit proof.** A case is *not* classified as optimizer-versus-generic unless the optimized
+run is measured to have taken the intended path. The evidence comes from the runtime's own
+`LoopOptimizationDiagnostics` and `SequencePipelineDiagnostics`, attached through two optional
+parameters on the internal `Evaluator.RunCountedObserved` — the same channel the internal
+`Evaluator.Run` overloads already expose. They are write-only counters incremented through a
+null-conditional call, so supplying one cannot change optimizer eligibility, evaluation order, or any
+result (pinned by `ObservedExecution_DoesNotChangeSemanticsOrCounters`). No public API changed.
+
+Seven paths are distinguished, and the 28-entry source table exercises all of them:
+
+| Path | Meaning |
+|---|---|
+| `OptimizedLoopSelected` | a loop plan was selected and entered |
+| `PlannedExpressionExecuted` | a planned expression really ran inside that plan |
+| `GenericExpressionInsideOptimizedLoop` | the plan was selected but the body fell back per expression |
+| `LoopFallbackExecuted` | the optimizer was consulted and declined |
+| `GenericLoopExecuted` | the generic loop ran *after* a recorded fallback |
+| `LoopShortCircuited` | the loop returned before the optimizer was consulted at all |
+| `FusedPipelineExecuted` / `PipelineFallbackExecuted` | sequence-pipeline fusion hit, or fell back |
+
+`LoopShortCircuited` is separate from `GenericLoopExecuted` on purpose: `RepeatLoopCounted` returns the
+initial state when the count is zero, *before* the optimizer flag, the shape check, or the state-slot
+check are reached, so nothing records a fallback. Collapsing the two would let the zero-iteration
+template claim it exercised a fallback it never reached. Proving that an outer loop *wrapper* ran is
+explicitly not enough, which is why `LoopExecutions` alone is never a requirement.
+
+**Limit policy.** Only budgets that cannot bind differently on the two sides are generated (`Default`,
+`PerCollectionItems`, `Generous`). A cumulative budget derived from the optimized side's own measurement
+is below what the generic side legitimately materializes, so the generic run would stop at a limit the
+optimized run cleared — a difference in execution policy, not in optimizer setting, and exactly the
+false mismatch Phase 2 already documents for fused chains. The per-collection ceiling *is* kept, because
+the runtime explicitly promises it is optimizer-independent (`EvaluationBudget.CheckCollectionSize`
+exists so a fused pipeline rejects the same collection size a generic one does).
+
+#### Group B — cached versus rebuilt
+
+A program that reuses one zero-argument property against a rebuilt form that binds a *distinct* property
+per use. Both are generated from one (value, use) pair and one reuse count, so the rebuilt side is the
+cached side with the single binding replicated — deliberately **not** an inlined expression, which would
+remove the property-access machinery from one side and make the comparison about something else. The
+cached side must record at least `uses - 1` cache hits and the rebuilt side none at all, which turns
+"distinct names cannot share an entry" from an argument into a measurement.
+
+One entry in the table is there because it was **measured not to cache**: a bare property reference in an
+ordinary call *argument* position (`sum(MmA)`) records no cache request at all, while the same property
+as a dotted receiver (`MmA.sum`) does. Values are identical either way, so this is a missed reuse rather
+than a defect — the repository documents the cache as something property-style access *may* use — and the
+template says so instead of claiming reuse it demonstrably does not get
+(`ArgumentPositionPropertyReference_DoesNotConsultTheCache`).
+
+Cumulative budgets are **rejected** by name (`rebuilt-form-does-not-share-the-cumulative-budget`) for the
+same reason Group A excludes them. Per-*object* ceilings are kept: both forms build the same individual
+collections and strings, so those boundaries genuinely coincide.
+
+#### Group C — entry-point parity
+
+One source through two of eight registered surfaces:
+
+| Surface | Projects |
+|---|---|
+| `evaluator-run-counted-observed` | outcome, structured error, value, emitted count, **counters** |
+| `evaluator-run-counted` | outcome, structured error, value, emitted count |
+| `evaluator-run` | outcome, structured error, value (no emitted count at all) |
+| `evaluator-run-flat` | outcome, structured error, host atoms |
+| `evaluator-run-counted-with-top-level-property` | the above, plus the `DisplayDecimals` channel |
+| `engine-run` | outcome, value, emitted count, host atoms, rendered text |
+| `engine-evaluate-to-atoms` | outcome, host atoms |
+| `engine-evaluate-to-string` | outcome, value, emitted count, host atoms, rendered text |
+
+A pair is compared on the **intersection** of what both surfaces project, so "these two entry points
+agree" can never quietly mean "neither could tell", and the registry refuses a pair whose intersection
+is only the outcome. The facet declarations were read off the production signatures rather than assumed:
+`Evaluator.Run` really has no emitted count, and the engine's public `KatLangError` really keeps a
+formatted message and a span rather than the structured `EvalError`, so **no engine surface claims the
+structured-error facet**. Only the observed evaluator entry point hands back a budget, so every other
+pair declares `NotCompared` rather than comparing two zeroes.
+
+**Rendering.** `KatLangEngine.EvaluateToString` is **not** `Run(...).ToDisplayString()` for a successful
+program — it is documented to return space-joined host atoms on success and the structured diagnostic
+rendering otherwise. Asserting blanket string equality would assert something the runtime never
+promised. Each observation therefore records which **projection** produced its text, and rendered text
+must be exactly equal wherever the two projections coincide (every failure, and every same-surface
+repeat) while the strict length bound is checked on both sides always. The `engine-evaluate-to-string`
+adapter performs two independent engine invocations sharing one immutable `RunOptions` — one for the
+text, one for the structured outcome the text surface does not expose — which is itself the "independent
+runs reusing one configuration agree" property.
+
+**Limits** are held at the default or comfortably generous. Resource-failure coverage comes from source
+templates that exceed the always-on ceilings on their own, because the engine surfaces additionally bound
+the host-atom projection by the per-collection ceiling while `RunCounted` does not; tightening that
+budget would compare two genuinely different contracts rather than two entry points.
+
+#### Group D — budget laws
+
+Not arbitrary limit sweeps: every case knows which resource it exercises and where the boundary came
+from. Seven dimensions, and exactly **one limit varies** between the two members:
+
+| Dimension | Boundary from | One below the boundary |
+|---|---|---|
+| depth (`MaxDepth`) | measured `PeakDepth` | `EvaluationDepthExceeded` |
+| steps (`MaxSteps`) | measured `ConsumedSteps` | `EvaluationStepLimitExceeded` |
+| per-collection (`MaxCollectionItems`) | bounded deterministic search | `CollectionSizeLimitExceeded` |
+| cumulative items (`MaxMaterializedItems`) | measured `MaterializedItems` | `MaterializationLimitExceeded` |
+| per-string (`MaxStringLength`) | bounded deterministic search | `StringSizeLimitExceeded` |
+| cumulative strings (`MaxMaterializedStringChars`) | measured `MaterializedStringChars` | `StringMaterializationLimitExceeded` |
+| rendered output (`MaxDisplayLength`) | measured rendered length | a **bounded truncated rendering**, not an error |
+
+Four boundaries are read straight off the run's own `EvaluationBudget`, which makes them exact rather
+than estimated: a run that charged `S` steps succeeds at `MaxSteps = S` and fails at `S - 1`, and a run
+that reserved `M` item slots fails at `M - 1` on its last reservation (both budgets check before moving
+any counter, so a rejected reservation leaves the total untouched). The two per-*object* ceilings are not
+accumulated anywhere, so they use a deterministic exponential-then-binary probe with a fixed ceiling and
+a fixed 32-probe budget. That search *assumes* monotonicity but never asserts it — whatever it finds is
+verified by the below/at/above executions the law performs, so a violation surfaces as a mismatch rather
+than as a silently wrong boundary. Nothing allocates from an encoded integer and no unbounded search runs.
+
+**Holding the policy constant matters.** Configuring any step budget switches the loop optimizer off, and
+either string budget switches the sequence-pipeline optimizer off (`Evaluator.CreateRootCtx`). Those
+dimensions therefore *measure* under a deliberately non-binding limit of their own kind, so the
+measurement describes the same execution the sweep will run.
+
+**Stack sufficiency is deliberately absent.** The host-stack backstop can only stop a run earlier than
+the deterministic depth limit and is machine-dependent, so it is never a boundary: a case that hits it is
+rejected with its own reason (`platform-dependent-stack-backstop`) rather than compared. The depth
+dimension tests the deterministic `MaxDepth` limit only.
+
+The five laws:
+
+* **`BoundarySweep`** — left at the boundary, right at boundary + offset. A negative offset is the exact
+  failure law (`SameResourceBoundary`: at the boundary must succeed, one below must stop with the
+  dimension's own structured error, or — for rendering — return a bounded, *different* text). A
+  non-negative offset is `MonotonicSuccess` plus `IdenticalWork`, because a limit that does not bind must
+  not change the work either.
+* **`InBudgetNeutral`** — the dimension's baseline policy against a comfortably generous limit, requiring
+  `SemanticEqual` **and** `IdenticalWork`. Identical work here includes the recorded **optimizer path**,
+  which is how the law proves the generous limit did not quietly switch an optimizer off.
+* **`FailedReservationStability`** — control run, then a run at boundary − 1 that must genuinely fail (the
+  executor rejects the case if it does not), then the control run again, requiring `IndependentRunStable`.
+  The rendering dimension is rejected by name here: a display limit bounds the output, it does not fail a
+  reservation.
+* **`RunIsolation`** — the same control run repeated after interleaved unrelated runs, or observed from a
+  bounded set of **distinct coexisting threads** sharing one immutable limits/options instance. Results are
+  collected **by index, never by completion order**, and the lowest differing index is reported, so a leak
+  is a deterministic mismatch rather than a flaky pass. No timing is asserted. See
+  [Why the threaded plan hands the evaluator over](#why-the-threaded-isolation-plan-does-not-overlap)
+  for why the threads do not evaluate simultaneously *inside the fuzzing loop*.
+* **`EquivalentFormBoundaryParity`** — two trusted Phase 1/2 equivalent forms at the *same* derived limit.
+  Applied only where the declared relation is exact: a dotted **builtin** link charges one extra step and
+  one extra depth level than its ordinary spelling, so such a pair may sweep only the materialization and
+  rendering dimensions (`equivalent-forms-do-not-share-a-work-boundary`). Fused chains are absent
+  entirely — their materialization relation is directional by design, so requiring a shared boundary would
+  contradict what Phase 2 established.
 
 ### The dotted rewrite contract, and structural-member exclusion
 
@@ -361,6 +540,33 @@ never a reason to weaken the relation.
   not consume that budget, so the two spellings genuinely cross it at different points. The
   per-collection ceiling *is* enforced identically and stays comparable.
 
+Phase 3 adds five more, all declared for the same reason: the relation must match the pair.
+
+* **Semantic — `SameStructuredOutcome`** (entry-point parity). Agreement on every facet **both**
+  surfaces project, and nothing else. Demanding `SemanticEqual` would compare fields one surface cannot
+  produce and pass on two `null`s.
+* **Semantic — `MonotonicSuccess`** (boundary sweeps at or above the boundary). One-directional: if the
+  left member succeeded, the right member at a larger effective limit must also succeed and agree on
+  every shared facet. A left member that did not succeed places no obligation, which is what makes this
+  a monotonicity law rather than an equality.
+* **Semantic — `SameResourceBoundary`** (one below the boundary). The left member must succeed *at* the
+  derived boundary and the right member must stop the way the case **declared** — with the dimension's
+  structured resource error, or with a bounded truncated rendering. Both the stop kind and the expected
+  error live on the case, so a new dimension adds data rather than a comparator branch.
+* **Semantic — `IndependentRunStable`** (failed-reservation stability, run isolation). Two independent
+  executions must be indistinguishable in *every* recorded respect — semantics, projections, counters,
+  optimizer path, cache profile. Any difference at all means run state survived a run boundary.
+* **`WorkNeverIncreases`** (Groups A and B). The **left** member never charges more materialized items,
+  string units, or steps than the right. The opposite direction from Group C's
+  `MaterializationNeverIncreases`, because here the member permitted to do less is the left one: an
+  optimized run against the generic run of the same source, and a cached run against the rebuilt form.
+  Peak dynamic depth is deliberately excluded — an optimized loop plan reaches a different nesting
+  profile than the generic interpreter by design, so it is recorded and reported but never a failure.
+* **`IdenticalWork`** (in-budget neutrality, isolation, at/above boundary sweeps). Materialized items,
+  string units, steps, peak depth, **and** the recorded optimizer and cache evidence all equal.
+* **`NotCompared`** — declared where at least one surface cannot report counters at all, so the case is
+  a purely semantic comparison and says so rather than pretending equality.
+
 **One qualification applies to every operational relation above.** Operational counters are
 compared only when **both executions complete**. When either side stops at a structured resource
 limit, semantic outcome, resource-limit kind, and structured payload remain comparable, but
@@ -404,6 +610,24 @@ either. Tests pin this: the Phase 1 decoder is reimplemented as an oracle and ch
 every byte value at every position, and every tracked Phase 1 seed is asserted to decode to the
 same case and re-encode to the same six bytes.
 
+Phase 3 kept the same discipline. Its four families were **appended** at registry indices 5–8, its
+dimensions are appended at byte 6 and beyond, and it added one new limit mode (`FamilyDerived`,
+used only by `budget-law`, which derives both sides' limits itself and reads the primary offset byte
+as the *boundary* offset). No existing family's supported-mode list, dimension size, or byte meaning
+changed, so `ShortPayloads_NeverSelectAPhase3Family` and
+`EveryLegacyParameterPoint_KeepsItsExactPrePhase3ExecutionShape` hold by construction. The Phase 3
+additions to the case model are all `init` properties whose defaults are the Phase 1/2 values, so a
+legacy case is not merely decoded the same — it is *executed* the same.
+
+What appending a family *does* change is the meaning of byte-0 values at or above the old family
+count for payloads **longer than six bytes**: the family index is a modulus over the registry, so a
+seven-byte payload whose first byte was `5` used to wrap to index 0 and now reaches the first Phase 3
+family. That was equally true when Phase 2 appended to Phase 1's single-entry table. It is why every
+tracked seed carries a first byte inside the family range, why version-zero payloads force index 0
+unconditionally, and why the registry's first five entries are pinned by identity *and* order
+(`TheFirstFiveRegistryEntries_KeepTheirExactIdentityAndOrder`). Untracked campaign corpora under
+`fuzz/artifacts/` are regenerated scratch data and carry no compatibility claim.
+
 ### Why Lean is not an operational oracle
 
 Lean is the authority on what a KatLang program **means**, not on what the C# runtime
@@ -441,18 +665,23 @@ dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw fuzz\ar
 
 ### Seeds
 
-`KatLang.ParserFuzz/MetamorphicTestcases/seeds.txt` is the tracked corpus (55 seeds: 13 Phase 1
-plus 42 Phase 2). A metamorphic seed is a **template payload**, not a source file — storing
+`KatLang.ParserFuzz/MetamorphicTestcases/seeds.txt` is the tracked corpus (127 seeds: 13 Phase 1,
+42 Phase 2, 72 Phase 3). A metamorphic seed is a **template payload**, not a source file — storing
 sources would duplicate text the template regenerates deterministically — so each line is
 `family=<id> bytes=<hex> desc=<note>`. The declared family is redundant on purpose: replay
 checks it against the family the payload decodes to, so a stale seed is reported instead of
 silently replaying a different case. `metamorphic-seeds OUTDIR MANIFEST` materializes the raw
 payload bytes as a libFuzzer seed corpus.
 
-Two seeds are deliberately **rejected** cases (the rest and arity-mismatched callback
-projections), so replay exercises and reports the rejection path rather than only the happy one.
+Eight seeds are deliberately **rejected** cases, so replay exercises and reports the rejection path
+rather than only the happy one: the two non-equivalent callback projections, the two cumulative
+budgets a cached and a rebuilt form cannot share, a per-collection ceiling that stops a run before it
+can fuse, a malformed source aimed at an evaluator surface, a display limit asked to fail a
+reservation, and an equivalent-form pair asked to share a work boundary it does not have.
 
-### Current Phase 2 limitations
+### Current limitations
+
+*Phase 2:*
 
 * Chains are bounded to three links, drawn from twelve fixed link lists — the fuzzer selects a
   chain, it never assembles one.
@@ -470,9 +699,72 @@ projections), so replay exercises and reports the rejection path rather than onl
 * Group B's exact-work claim covers steps and peak depth only for the shapes in its body table.
 * Rest-parameter and multi-parameter callback wrappers are represented as rejections, not as
   trusted equivalences; establishing a trusted rest-wrapper form is future work.
-* Optimizer policy is a case dimension inherited from Phase 1, not a relation of its own —
-  optimized-versus-generic, cached-versus-rebuilt, entry-point parity, general limit
-  monotonicity, and frontend/Unicode transformations are all out of scope here.
+
+*Phase 3:*
+
+* Groups A and B generate only limit modes that cannot bind differently on their two sides. A
+  cumulative budget derived from the cheaper side's measurement would stop the other side for a
+  reason that is not a defect, so those modes are rejected by name rather than compared. Varying
+  budgets is the budget-law family's job.
+* Group A's optimizer sources are a fixed reviewed table of 28 programs with **declared** paths; the
+  fuzzer selects a source, it never assembles one. A source whose optimizer shape changes makes the
+  case rejected (and the committed sweep fail), never silently compared.
+* Group C compares the intersection of two surfaces' facets. Where that intersection excludes
+  operational counters — every pair but observed-versus-observed — the case makes no operational
+  claim at all. Engine surfaces cannot contribute a structured error kind, because the public
+  `KatLangError` does not carry one.
+* `EvaluateToString` and `Run(...).ToDisplayString()` are compared exactly only where they render the
+  same **projection**, which on current behaviour means every non-success. On success the two return
+  different projections by documented contract, and only the strict length bound and per-surface
+  determinism are claimed.
+* Group D never claims an exact **stack-sufficiency** boundary: that backstop is machine-dependent, so
+  a run that hits it is rejected and classified rather than compared.
+* The two per-object ceilings (`per-collection-items`, `per-string-length`) use a bounded search that
+  *assumes* success is monotone in the limit. The search still never asserts it, but the assumption is no
+  longer only spot-checked: `SearchedBoundaries_AreMonotoneAcrossTheirCompleteInterval` executes **every
+  limit value of the complete bounded interval** — all 4096/4097 of them — for every registered boundary
+  template and **each optimizer policy separately**, using the search's own predicate
+  (`MetamorphicBoundaryPolicy.SucceedsAt`), and requires that once a program fits, every larger limit in
+  the interval still fits with the same neutral value and emitted count. Roughly 377k executions; it is
+  the reason the test suite now takes about a minute and a half rather than half a minute.
+* Threaded isolation uses a fixed, small thread count and asserts only observational equality against a
+  sequential control. Nothing here asserts timing, throughput, or scheduling.
+
+### Why the threaded isolation plan does not overlap
+
+The fuzzing engine's feedback is edge instrumentation woven into `KatLang.dll`, and that instrumentation
+keeps its "previous location" in **one process-wide slot** with no synchronisation and no thread affinity
+(`SharpFuzz.Common.Trace.PrevLocation` is a plain `static int`; `SharedMem` is a shared table). Two
+evaluations running at the same instant therefore interleave their read-modify-writes of that slot and
+stamp edge indices no sequential execution can produce — so **a concurrent run's coverage is a function of
+the thread schedule, not of the input**, which is precisely the thing a coverage-guided fuzzer cannot cope
+with.
+
+Measured on this repository, replaying the same forty corpus files three times:
+
+| corpus | features, three identical passes | covered edges |
+| --- | --- | --- |
+| overlapping evaluations | 69237 / 70798 / 68518 | 8 (stable) |
+| after the hand-off change | 10147 / 10147 / 10146 | 8 (stable) |
+| non-parallel control (unchanged) | 22317 / 22324 / 22329 | 8 (stable) |
+
+Every phantom feature reads as new coverage, so the engine saved the input and mutated around it forever.
+That is how a law with only **40 distinct cases** came to hold **2137 of 2820** corpus units — and, worse,
+how schedule noise came to occupy the shared feature map that every *other* family's genuine coverage has
+to compete for. It is not a decoder-weighting problem: every non-parallel shape stored 683 units for 633
+distinct cases (1.08x), while the parallel plan stored 53x.
+
+So the plan now starts that many real, coexisting threads sharing one immutable configuration instance and
+hands the **evaluator** over in index order. That still exercises everything the law is about — run state
+that is thread-affine, static mutable state, a configuration object that accumulates, a cache or budget
+that outlives its run — because each observation happens on a different thread from the one before it.
+What it deliberately no longer does *inside the fuzzing loop* is overlap two evaluations in time.
+Simultaneous execution did not go away; it moved to `MetamorphicPhase3FamilyTests`, which runs
+uninstrumented and can afford it, and which now rendezvouses its workers on a `Barrier` so they overlap on
+purpose rather than by luck, across both entry-point classes, both execution orders, repeated A/B/A
+rounds, mixed succeeding/failing runs, and cache/budget/diagnostic contamination.
+* Still out of scope, as before: Unicode/UTF-16 fuzzing, parser edit-sequence fuzzing, source-size and
+  module-download policy, and any exact Lean/C# operational-counter comparison.
 
 ### Adding a trusted template later
 

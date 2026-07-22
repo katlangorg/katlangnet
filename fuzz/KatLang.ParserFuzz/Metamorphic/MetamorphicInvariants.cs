@@ -55,9 +55,12 @@ internal static class MetamorphicInvariants
         // never change a later observation of another. Sampled because it triples the work.
         if (report.Accepted && StableHash(input) % IsolationSampleModulus == 0)
         {
+            // Each side is re-checked under the EXECUTION PROFILE it really ran with — its entry
+            // point, its limits, its optimizer policy — not under the case's shared defaults,
+            // which the Phase 3 families deliberately diverge from.
             var testCase = report.Execution.Case;
-            MetamorphicExecutor.AssertIsolated(testCase.LeftSource, testCase.Limits, testCase.EnableOptimizations);
-            MetamorphicExecutor.AssertIsolated(testCase.RightSource, testCase.Limits, testCase.EnableOptimizations);
+            MetamorphicExecutor.AssertIsolated(testCase.LeftSource, testCase.LeftProfile);
+            MetamorphicExecutor.AssertIsolated(testCase.RightSource, testCase.RightProfile);
         }
     }
 
@@ -107,6 +110,25 @@ internal static class MetamorphicInvariants
             .AppendLine(report.Accepted ? "accepted" : "rejected: " + report.RejectionReason);
         text.Append("  replay parameters:      ").AppendLine(report.Parameters.ToString());
         text.Append("  replay payload (hex):   ").AppendLine(report.Parameters.ToHex());
+        // The execution SHAPE: which entry point ran each side, under which limits and optimizer
+        // policy, in which order, and with what interposed between them. For a Phase 1 or Phase 2
+        // case these are the defaults they always were.
+        text.Append("  left profile:           ").AppendLine(testCase.LeftProfile.ToString());
+        text.Append("  right profile:          ").AppendLine(testCase.RightProfile.ToString());
+        text.Append("  run plan:               ")
+            .Append(MetamorphicExecutor.DescribeRunPlan(testCase))
+            .Append(", order ").AppendLine(testCase.ExecutionOrder.ToString());
+        if (testCase.InterferenceSource is { } interference)
+        {
+            text.Append("  interposed run:         ").Append(Escape(interference))
+                .Append(" @ ").AppendLine(MetamorphicCase.DescribeLimits(testCase.InterferenceLimits));
+        }
+
+        if (testCase.BoundaryStop != MetamorphicBoundaryStop.None)
+        {
+            text.Append("  boundary stop:          ").Append(testCase.BoundaryStop)
+                .Append(" (").Append(testCase.ExpectedResourceKind ?? "-").AppendLine(")");
+        }
         text.Append("  raw fuzz input:         ")
             .Append(report.RawInputLength.ToString(CultureInfo.InvariantCulture)).Append(" byte(s), first ")
             .Append(Math.Min(report.RawInputLength, RawPrefixBytes).ToString(CultureInfo.InvariantCulture))

@@ -189,6 +189,108 @@ internal static class MetamorphicFamilyRegistry
             ValidatePreconditions: MetamorphicCallbackWrapperTemplate.Validate,
             Build: MetamorphicCallbackWrapperTemplate.Build,
             DescribeVariantCore: MetamorphicCallbackWrapperTemplate.DescribeVariant),
+
+        // ── Phase 3 Group A ────────────────────────────────────────────────────────
+        new(
+            Family: MetamorphicFamily.OptimizerGenericParity,
+            Id: "optimizer-generic-parity",
+            Group: "optimizer",
+            SupportedLimitModes: MetamorphicOptimizerTemplate.LimitModes,
+            // The family FIXES both policies (optimized left, generic right), so byte 5 has no
+            // meaning here and is normalized away rather than silently selecting one of them.
+            SupportsOptimizerPolicy: false,
+            UsesLegacyRangeStop: false,
+            // source template, execution order
+            ExtraDimensionSizes: [MetamorphicOptimizerTemplate.SourceCount, MetamorphicOptimizerTemplate.Orders.Length],
+            SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
+            // The optimizers exist to do LESS. Equality would forbid them; the inequality still
+            // catches an optimized path that costs more than the generic one it replaced.
+            OperationalRelation: MetamorphicOperationalRelation.WorkNeverIncreases,
+            LeanRepresentable: true,
+            Description: "one source with optimizations enabled against the same source with them disabled",
+            Normalize: MetamorphicOptimizerTemplate.Normalize,
+            ValidatePreconditions: MetamorphicOptimizerTemplate.Validate,
+            Build: MetamorphicOptimizerTemplate.Build,
+            DescribeVariantCore: MetamorphicOptimizerTemplate.DescribeVariant),
+
+        // ── Phase 3 Group B ────────────────────────────────────────────────────────
+        new(
+            Family: MetamorphicFamily.CachedPropertyReuse,
+            Id: "cached-property-reuse",
+            Group: "cache",
+            SupportedLimitModes: MetamorphicCacheTemplate.LimitModes,
+            SupportsOptimizerPolicy: true,
+            UsesLegacyRangeStop: false,
+            // value/use template, reuse count, execution order
+            ExtraDimensionSizes:
+            [
+                MetamorphicCacheTemplate.SourceCount,
+                MetamorphicCacheTemplate.ReuseCounts.Length,
+                MetamorphicCacheTemplate.Orders.Length,
+            ],
+            SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
+            OperationalRelation: MetamorphicOperationalRelation.WorkNeverIncreases,
+            LeanRepresentable: true,
+            Description: "a reused zero-argument property against the independently rebuilt form",
+            Normalize: MetamorphicCacheTemplate.Normalize,
+            ValidatePreconditions: MetamorphicCacheTemplate.Validate,
+            Build: MetamorphicCacheTemplate.Build,
+            DescribeVariantCore: MetamorphicCacheTemplate.DescribeVariant),
+
+        // ── Phase 3 Group C ────────────────────────────────────────────────────────
+        new(
+            Family: MetamorphicFamily.EntryPointParity,
+            Id: "entry-point-parity",
+            Group: "entry-point",
+            SupportedLimitModes: MetamorphicEntryPointTemplate.LimitModes,
+            // Only the observed evaluator entry point accepts an optimizer policy; every other
+            // surface runs the production default, so the family fixes it ON.
+            SupportsOptimizerPolicy: false,
+            UsesLegacyRangeStop: false,
+            // source template, surface pair, execution order
+            ExtraDimensionSizes:
+            [
+                MetamorphicEntryPointTemplate.SourceCount,
+                MetamorphicEntryPointTemplate.PairCount,
+                MetamorphicEntryPointTemplate.Orders.Length,
+            ],
+            SemanticRelation: MetamorphicSemanticRelation.SameStructuredOutcome,
+            // Overridden per case: counters are claimed only when BOTH surfaces hand back a budget.
+            OperationalRelation: MetamorphicOperationalRelation.NotCompared,
+            LeanRepresentable: true,
+            Description: "one source through two runtime entry points, compared on their shared facets",
+            Normalize: MetamorphicEntryPointTemplate.Normalize,
+            ValidatePreconditions: MetamorphicEntryPointTemplate.Validate,
+            Build: MetamorphicEntryPointTemplate.Build,
+            DescribeVariantCore: MetamorphicEntryPointTemplate.DescribeVariant,
+            SelectOperationalRelation: MetamorphicEntryPointTemplate.SelectOperationalRelation),
+
+        // ── Phase 3 Group D ────────────────────────────────────────────────────────
+        new(
+            Family: MetamorphicFamily.BudgetLaw,
+            Id: "budget-law",
+            Group: "budget",
+            // The family derives both sides' limits itself; the shared limit policy has no say.
+            SupportedLimitModes: MetamorphicBudgetLawTemplate.LimitModes,
+            SupportsOptimizerPolicy: false,
+            UsesLegacyRangeStop: false,
+            // source template, law, resource dimension, isolation mode
+            ExtraDimensionSizes:
+            [
+                MetamorphicBudgetLawTemplate.SourceCount,
+                MetamorphicBudgetLawTemplate.Laws.Length,
+                MetamorphicBudgetLawTemplate.Dimensions.Length,
+                MetamorphicBudgetLawTemplate.IsolationModes.Length,
+            ],
+            // Both are overridden per case: each law declares its own relation.
+            SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
+            OperationalRelation: MetamorphicOperationalRelation.NotCompared,
+            LeanRepresentable: true,
+            Description: "resource-budget laws: boundary sweeps, neutrality, failed reservations, run isolation",
+            Normalize: MetamorphicBudgetLawTemplate.Normalize,
+            ValidatePreconditions: MetamorphicBudgetLawTemplate.Validate,
+            Build: MetamorphicBudgetLawTemplate.Build,
+            DescribeVariantCore: MetamorphicBudgetLawTemplate.DescribeVariant),
     ];
 
     static MetamorphicFamilyRegistry()

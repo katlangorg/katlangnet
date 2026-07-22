@@ -100,11 +100,17 @@ internal static class MetamorphicDecoder
         return definition.Normalize(parameters);
     }
 
-    /// <summary>True when <paramref name="mode"/> configures a limit from the PRIMARY offset byte.</summary>
+    /// <summary>
+    /// True when <paramref name="mode"/> configures a limit from the PRIMARY offset byte.
+    /// <see cref="MetamorphicLimitMode.FamilyDerived"/> reads it as the boundary offset, so it
+    /// stays live here and is collapsed by the owning family's normalizer wherever its law
+    /// ignores it.
+    /// </summary>
     internal static bool UsesPrimaryOffset(MetamorphicLimitMode mode) => mode
         is MetamorphicLimitMode.CumulativeItems
         or MetamorphicLimitMode.Both
-        or MetamorphicLimitMode.CumulativeStrings;
+        or MetamorphicLimitMode.CumulativeStrings
+        or MetamorphicLimitMode.FamilyDerived;
 
     /// <summary>True when <paramref name="mode"/> configures a limit from the SECONDARY offset byte.</summary>
     internal static bool UsesSecondaryOffset(MetamorphicLimitMode mode) => mode

@@ -7385,12 +7385,22 @@ public static class Evaluator
     /// observing it neither re-evaluates anything nor changes optimizer eligibility. These
     /// counters are C# implementation observations: they may be compared between C#
     /// executions, never against Lean.</para>
+    ///
+    /// <para>The optional <paramref name="loopDiagnostics"/> and
+    /// <paramref name="sequenceDiagnostics"/> collectors are the SAME channel the internal
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?)"/>
+    /// overload already exposes, so an observed run can additionally record which execution
+    /// path the optimizers actually took (planned, fused, fallen back, or generic). They are
+    /// write-only counters the evaluator increments through a null-conditional call: supplying
+    /// one cannot change optimizer eligibility, evaluation order, or any result.</para>
     /// </summary>
     internal static (EvalResult<CountedResult> Result, EvaluationBudget Budget) RunCountedObserved(
         Expr expr,
         EvaluationLimits? limits = null,
         bool enableOptimizations = true,
-        IZeroArgPropertyResultCache? zeroArgPropertyResultCache = null)
+        IZeroArgPropertyResultCache? zeroArgPropertyResultCache = null,
+        LoopOptimizationDiagnostics? loopDiagnostics = null,
+        SequencePipelineDiagnostics? sequenceDiagnostics = null)
     {
         var budget = EvaluationBudget.Create(limits);
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
@@ -7399,9 +7409,9 @@ public static class Evaluator
         var ctx = CreateRootCtx(
             zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: enableOptimizations,
-            loopDiagnostics: null,
+            loopDiagnostics: loopDiagnostics,
             enableSequencePipelineOptimization: enableOptimizations,
-            sequenceDiagnostics: null,
+            sequenceDiagnostics: sequenceDiagnostics,
             budget);
 
         var result = expr is Expr.Block(var alg)

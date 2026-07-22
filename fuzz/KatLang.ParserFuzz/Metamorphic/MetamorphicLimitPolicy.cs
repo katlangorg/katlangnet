@@ -74,6 +74,10 @@ internal static class MetamorphicLimitPolicy
         var mode = parameters.LimitMode;
         if (mode == MetamorphicLimitMode.Default) return (null, "");
 
+        // The budget-law family derives one dimension's boundary per side; this shared policy
+        // deliberately has no opinion there, and the case's own profiles carry the real limits.
+        if (mode == MetamorphicLimitMode.FamilyDerived) return (null, "");
+
         if (mode == MetamorphicLimitMode.Generous)
         {
             // Explicit limits comfortably above everything the pair needs: the run must behave

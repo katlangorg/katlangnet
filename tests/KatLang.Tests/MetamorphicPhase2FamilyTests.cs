@@ -26,6 +26,27 @@ public class MetamorphicPhase2FamilyTests
     private static IEnumerable<MetamorphicParameters> OfFamily(MetamorphicFamily family)
         => Stratified.Where(parameters => parameters.Family == family);
 
+    /// <summary>
+    /// The families this file is about: Phase 1 plus Phase 2's four.
+    ///
+    /// <para>Phase 3 appended families whose two members are deliberately the SAME source under
+    /// different execution policies, and one whose source deliberately does not parse. Sweeps that
+    /// assert "the two members are different programs" or "every generated source parses" are
+    /// statements about the DOTTED-REWRITE families, so they are scoped here rather than weakened;
+    /// <c>MetamorphicPhase3FamilyTests</c> owns the equivalent statements for its own families.</para>
+    /// </summary>
+    private static readonly MetamorphicFamily[] RewriteFamilies =
+    [
+        MetamorphicFamily.DottedCollectionCall,
+        MetamorphicFamily.DottedCollectionBuiltin,
+        MetamorphicFamily.UserExtensionCall,
+        MetamorphicFamily.DottedChain,
+        MetamorphicFamily.BuiltinCallbackWrapper,
+    ];
+
+    private static IEnumerable<MetamorphicParameters> RewritePoints
+        => Stratified.Where(parameters => RewriteFamilies.Contains(parameters.Family));
+
     /// <summary>The one committed chain measured to FUSE: <c>filter &gt; count</c>.</summary>
     private static byte FusibleChainIndex { get; } = (byte)MetamorphicChainTemplate.Chains
         .Select(static (chain, index) => (Names: chain.Select(static link => link.Builtin).ToArray(), index))
@@ -380,7 +401,7 @@ public class MetamorphicPhase2FamilyTests
     [Fact]
     public void EveryGeneratedPair_ParsesAndNeverUsesStructuralMemberSyntax()
     {
-        foreach (var parameters in Stratified)
+        foreach (var parameters in RewritePoints)
         {
             var testCase = MetamorphicTemplates.Build(parameters);
             foreach (var source in new[] { testCase.LeftSource, testCase.RightSource })
@@ -535,7 +556,7 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(MetamorphicExecutor.TryObserve(structural, null, true, out var member, out _));
         Assert.Equal("7", member.Semantic.Structure);
 
-        foreach (var parameters in Stratified)
+        foreach (var parameters in RewritePoints)
         {
             var testCase = MetamorphicTemplates.Build(parameters);
             Assert.Empty(ExposedMemberNames(testCase.RightSource));
@@ -960,12 +981,15 @@ public class MetamorphicPhase2FamilyTests
             else rejected[$"{family}/{report.RejectionReason}"] = rejected.GetValueOrDefault($"{family}/{report.RejectionReason}") + 1;
         }
 
-        // Every family contributes accepted cases.
+        // Every family contributes accepted cases — including the Phase 3 ones, which this sweep
+        // still executes in full even though the rejection inventory below is scoped.
         foreach (var definition in MetamorphicFamilyRegistry.All)
             Assert.True(accepted.GetValueOrDefault(definition.Id) > 0, $"family '{definition.Id}' produced no accepted case");
 
         // Every rejection must be one of the reasons the templates document, so a high
-        // rejection rate can never hide behind unexplained coverage loss.
+        // rejection rate can never hide behind unexplained coverage loss. The inventory is scoped
+        // to the REWRITE families this file owns; Phase 3's own reasons are enumerated by
+        // MetamorphicPhase3FamilyTests.EveryPhase3Rejection_IsOneOfTheDocumentedReasons.
         string[] expectedRejections =
         [
             // Callback projections that are provably NOT equivalent (see the template docs).
@@ -975,12 +999,19 @@ public class MetamorphicPhase2FamilyTests
             "dotted-chain/fused-chain-does-not-share-the-cumulative-item-budget",
         ];
 
-        foreach (var key in rejected.Keys)
-            Assert.Contains(key, expectedRejections);
+        var rewriteIds = RewriteFamilies.Select(MetamorphicCase.FamilyIdOf).ToHashSet(StringComparer.Ordinal);
+        var rewriteRejected = rejected
+            .Where(entry => rewriteIds.Contains(entry.Key[..entry.Key.IndexOf('/', StringComparison.Ordinal)]))
+            .ToList();
+
+        foreach (var entry in rewriteRejected)
+            Assert.Contains(entry.Key, expectedRejections);
 
         // Rejection stays a bounded, explainable share rather than silent coverage loss.
-        var total = accepted.Values.Sum() + rejected.Values.Sum();
-        Assert.InRange((double)rejected.Values.Sum() / total, 0.0, 0.35);
+        var rewriteAccepted = accepted.Where(entry => rewriteIds.Contains(entry.Key)).Sum(entry => entry.Value);
+        var rewriteRejectedCount = rewriteRejected.Sum(entry => entry.Value);
+        Assert.InRange(
+            (double)rewriteRejectedCount / (rewriteAccepted + rewriteRejectedCount), 0.0, 0.35);
     }
 
     [Fact]
@@ -1009,7 +1040,7 @@ public class MetamorphicPhase2FamilyTests
         var directional = 0;
         var fusionWitnesses = 0;
 
-        foreach (var parameters in Stratified.Where(p => p.LimitMode == MetamorphicLimitMode.Default))
+        foreach (var parameters in RewritePoints.Where(p => p.LimitMode == MetamorphicLimitMode.Default))
         {
             var testCase = MetamorphicTemplates.Build(parameters);
             var execution = MetamorphicExecutor.Execute(testCase);
@@ -1191,7 +1222,7 @@ public class MetamorphicPhase2FamilyTests
         // failure this test exists to catch: a "generous" budget that silently changes optimizer
         // eligibility shows up on the RIGHT member first.
         var checkedCases = 0;
-        foreach (var parameters in Stratified.Where(p => p.LimitMode == MetamorphicLimitMode.Generous))
+        foreach (var parameters in RewritePoints.Where(p => p.LimitMode == MetamorphicLimitMode.Generous))
         {
             var testCase = MetamorphicTemplates.Build(parameters);
             if (!testCase.Precondition.Satisfied) continue;

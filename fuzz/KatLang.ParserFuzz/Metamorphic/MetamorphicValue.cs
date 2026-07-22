@@ -70,6 +70,26 @@ internal static class MetamorphicValue
         }
     }
 
+    /// <summary>
+    /// Stable text for a HOST-ATOM projection (<c>RunFlat</c>, <c>RunResult.Success.Atoms</c>,
+    /// <c>EvaluateToAtoms</c>): the flattened decimal list, culture-invariant, so two surfaces
+    /// can be compared on it and it fingerprints identically on every machine. Deliberately
+    /// distinct from <see cref="Neutral"/>: this projection has already opened every sequence
+    /// and list boundary, so it cannot represent structure and must never be mistaken for it.
+    /// </summary>
+    internal static string HostAtoms(IReadOnlyList<decimal> atoms)
+    {
+        var text = new StringBuilder(2 + (atoms.Count * 3));
+        text.Append('A').Append('[');
+        for (var i = 0; i < atoms.Count; i++)
+        {
+            if (i > 0) text.Append(", ");
+            text.Append(atoms[i].ToString(CultureInfo.InvariantCulture));
+        }
+
+        return text.Append(']').ToString();
+    }
+
     /// <summary>Unwraps the contextual chain down to the structured error that actually occurred.</summary>
     internal static EvalError Innermost(EvalError error)
     {

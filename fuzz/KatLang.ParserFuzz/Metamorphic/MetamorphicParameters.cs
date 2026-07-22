@@ -25,6 +25,18 @@ internal enum MetamorphicLimitMode
 
     /// <summary>Every budget configured explicitly and comfortably above what the pair needs.</summary>
     Generous,
+
+    /// <summary>
+    /// The FAMILY owns both sides' limits.
+    ///
+    /// <para>Declared by the Phase 3 budget-law family, whose whole subject is placing one
+    /// resource dimension at a derived boundary — a limit the shared
+    /// <see cref="MetamorphicLimitPolicy.Derive"/> policy cannot express, because it varies
+    /// per side and per law. The PRIMARY offset byte keeps a meaning here: it is the signed
+    /// boundary offset applied to the right member. Laws that do not sweep a boundary collapse
+    /// it in their own normalizer, so no two payloads build the same case.</para>
+    /// </summary>
+    FamilyDerived,
 }
 
 /// <summary>
