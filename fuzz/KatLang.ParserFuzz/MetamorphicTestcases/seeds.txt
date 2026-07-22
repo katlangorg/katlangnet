@@ -1,0 +1,37 @@
+# Curated metamorphic seed corpus (KATLANG_FUZZ_MODE=metamorphic).
+#
+# A metamorphic seed is a TEMPLATE PAYLOAD, not a KatLang source file: the two programs a
+# case compares are regenerated deterministically from these bytes by the same decoder and
+# template the fuzzing loop uses, so nothing here duplicates source text.
+#
+# Line format (fields in this order; `desc` is optional and runs to end of line):
+#   family=<relation-family-id> bytes=<hex payload> desc=<human-readable note>
+#
+# Payload layout (one byte per dimension, each byte an index reduced into its table):
+#   0 relation family        [dotted-collection-call]
+#   1 range stop             [1, 0, 2, 3, 5, 8, -1, -3, 16, 33, 64, 100]
+#   2 limit mode             [Default, CumulativeItems, PerCollectionItems, Both]
+#   3 cumulative offset      [-1, 0, +1, +4]   (relative to the expected item total)
+#   4 per-collection offset  [-1, 0, +1, +4]   (relative to the expected item total)
+#   5 optimizer              [on, off]
+# Unused dimensions are normalized to index 1 (offset 0) when the limit mode ignores them.
+#
+# KatLang's range is INCLUSIVE and counts downward when start > stop, so it always yields at
+# least one element: there is no empty range, range(1, 1) is the smallest form, and
+# range(1, 0) is the descending two-item case.
+#
+# Replay:  dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay fuzz\KatLang.ParserFuzz\MetamorphicTestcases
+
+family=dotted-collection-call bytes=00 00 00 01 01 00 desc=smallest valid range: range(1, 1) is one item, default limits
+family=dotted-collection-call bytes=00 01 00 01 01 00 desc=nearest form to N=0: range(1, 0) descends to two items, default limits
+family=dotted-collection-call bytes=00 04 00 01 01 00 desc=several-item range: range(1, 5), default limits
+family=dotted-collection-call bytes=00 04 01 00 01 00 desc=cumulative item budget one BELOW the expected total
+family=dotted-collection-call bytes=00 04 01 01 01 00 desc=cumulative item budget EXACTLY AT the expected total
+family=dotted-collection-call bytes=00 04 01 02 01 00 desc=cumulative item budget one ABOVE the expected total
+family=dotted-collection-call bytes=00 05 00 01 01 00 desc=default limits on a larger range: range(1, 8)
+family=dotted-collection-call bytes=00 04 02 01 01 00 desc=per-collection ceiling at the boundary, optimizations ENABLED
+family=dotted-collection-call bytes=00 04 02 01 01 01 desc=per-collection ceiling at the boundary, optimizations DISABLED
+family=dotted-collection-call bytes=00 04 02 01 00 00 desc=per-collection ceiling one BELOW the boundary
+family=dotted-collection-call bytes=00 05 03 01 03 00 desc=both budgets: cumulative at the boundary, per-collection clear of it
+family=dotted-collection-call bytes=00 07 01 00 01 00 desc=descending range(1, -3) against a cumulative budget one below
+family=dotted-collection-call bytes=00 0b 03 01 01 01 desc=largest Phase 1 range(1, 100) at both boundaries, optimizations off

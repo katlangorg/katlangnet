@@ -31,6 +31,11 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -MaxTotalTime 60 -FreshCorpus
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorphic -MaxTotalTime 300 -MaxLen 4096
+    # operational-metamorphic target; seeds are exported from the curated manifest and the
+    # corpus/crash directories are kept separate from the raw-parser campaign's.
 #>
 [CmdletBinding()]
 param(
@@ -39,6 +44,8 @@ param(
     [int]$Timeout = 5,           # per-input timeout in seconds
     [int]$RssLimitMb = 2048,     # memory limit (~2 GiB)
     [string]$Distro = '',        # optional specific WSL distro (else the WSL default)
+    [string]$Mode = '',          # KATLANG_FUZZ_MODE: '' = raw parser, frontend, evaluator, metamorphic
+    [string]$SeedDir = '',       # override the read-only seed corpus (else the mode's default)
     [switch]$FreshCorpus,        # clear the writable corpus before running
     [switch]$SkipBuild           # reuse an existing publish + instrumentation
 )
@@ -55,12 +62,41 @@ $repoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $fuzzDir    = Join-Path $repoRoot 'fuzz'
 $proj       = Join-Path $fuzzDir 'KatLang.ParserFuzz\KatLang.ParserFuzz.csproj'
 $publishDir = Join-Path $fuzzDir 'artifacts\publish-linux'
-$corpusDir  = Join-Path $fuzzDir 'artifacts\corpus'
-$crashDir   = Join-Path $fuzzDir 'artifacts\crashes'
-$seedDir    = Join-Path $fuzzDir 'KatLang.ParserFuzz\Testcases'
 $dictFile   = Join-Path $fuzzDir 'katlang.dict'
 $runnerSh   = Join-Path $fuzzDir 'run-campaign.sh'
 $targetDll  = Join-Path $publishDir 'KatLang.dll'
+
+# Each target keeps its own writable corpus and crash directory, so switching modes never
+# mixes one target's coverage-increasing inputs into another's. An unset -Mode is the raw
+# parser and keeps the original paths, leaving existing campaigns byte-for-byte unchanged.
+$suffix = ''
+if ($Mode -ne '') { $suffix = "-$Mode" }
+$corpusDir  = Join-Path $fuzzDir "artifacts\corpus$suffix"
+$crashDir   = Join-Path $fuzzDir "artifacts\crashes$suffix"
+
+if ($SeedDir -ne '') {
+    $seedDir = $SeedDir
+}
+elseif ($Mode -eq 'metamorphic') {
+    # Metamorphic seeds are template payloads, not source files, so the read-only seed corpus
+    # is materialized from the tracked manifest — one source of truth for fuzzing and replay.
+    $seedDir  = Join-Path $fuzzDir 'artifacts\metamorphic-seeds'
+    $manifest = Join-Path $fuzzDir 'KatLang.ParserFuzz\MetamorphicTestcases'
+    Write-Section 'Export curated metamorphic seeds'
+    & dotnet run --project $proj -- metamorphic-seeds $seedDir $manifest
+    if ($LASTEXITCODE -ne 0) { throw 'metamorphic-seeds export failed.' }
+}
+else {
+    $seedDir = Join-Path $fuzzDir 'KatLang.ParserFuzz\Testcases'
+}
+
+# The harness reads KATLANG_FUZZ_MODE inside WSL, so forward it explicitly through WSLENV.
+if ($Mode -ne '') {
+    $env:KATLANG_FUZZ_MODE = $Mode
+    $existingWslEnv = [Environment]::GetEnvironmentVariable('WSLENV')
+    if ([string]::IsNullOrEmpty($existingWslEnv)) { $env:WSLENV = 'KATLANG_FUZZ_MODE' }
+    else { $env:WSLENV = "${existingWslEnv}:KATLANG_FUZZ_MODE" }
+}
 
 # WSL invocation prefix (optionally pin a distro).
 $wslPrefix = @()
@@ -110,7 +146,9 @@ Write-Host "corpus (writable): $corpusDir"
 Write-Host "seeds  (readonly): $seedDir"
 Write-Host "crashes:           $crashDir"
 
-Write-Section "Run libFuzzer in WSL ($MaxTotalTime s)"
+$modeLabel = 'raw parser (default)'
+if ($Mode -ne '') { $modeLabel = $Mode }
+Write-Section "Run libFuzzer in WSL ($MaxTotalTime s) - target: $modeLabel"
 $args = @(
     (ConvertTo-WslPath $publishDir),
     (ConvertTo-WslPath $seedDir),

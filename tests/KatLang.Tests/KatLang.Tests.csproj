@@ -22,4 +22,17 @@
     <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
   </ItemGroup>
 
+  <!--
+    The metamorphic fuzzing core is compiled into this test assembly as SHARED SOURCE rather
+    than referenced as a project. fuzz/KatLang.ParserFuzz is deliberately outside KatLang.slnx
+    (and depends on SharpFuzz), while MetamorphicFuzzHarnessTests must exercise exactly the
+    decoder, template, executor, comparator, and replay driver the campaign runs — a second
+    copy would let fuzzing and replay drift apart. Only the self-contained Metamorphic folder
+    is shared; the rest of the harness stays out of normal validation.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs"
+             Link="Metamorphic\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

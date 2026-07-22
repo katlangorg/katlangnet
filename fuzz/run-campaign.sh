@@ -45,6 +45,9 @@ chmod +x "$APPHOST" 2>/dev/null || true
 echo "[run] libFuzzer: max_total_time=${MAXTIME}s max_len=${MAXLEN} timeout=${TIMEOUT}s rss_limit_mb=${RSS}"
 echo "[run] driver=$DRIVER"
 echo "[run] corpus(write)=$CORPUS  seeds(read)=$SEEDS"
+# The harness selects its target from KATLANG_FUZZ_MODE; unset means the raw parser. The
+# Windows launcher forwards it through WSLENV, so it is inherited here — echoed for the log.
+echo "[run] KATLANG_FUZZ_MODE=${KATLANG_FUZZ_MODE:-<unset: raw parser>}"
 
 # The first corpus dir is writable (new coverage-increasing inputs land there); the
 # seed dir is read-only. Crash/timeout artifacts go under CRASHES via artifact_prefix.

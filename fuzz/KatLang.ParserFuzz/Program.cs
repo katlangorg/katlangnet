@@ -47,6 +47,12 @@ internal static class Program
         if (args.Length > 0 && args[0] == "stage-probe")
             return FrontEndStageProbe.Run(args);       // per-stage frontend timing
 
+        // Phase-5 operational-metamorphic subcommands.
+        if (args.Length > 0 && args[0] == "metamorphic-replay")
+            return MetamorphicReplay.RunReplay(args);      // relation-aware seed replay
+        if (args.Length > 0 && args[0] == "metamorphic-seeds")
+            return MetamorphicReplay.RunExportSeeds(args); // export seed payloads as a corpus
+
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)
 
@@ -59,6 +65,14 @@ internal static class Program
         if (string.Equals(mode, "frontend", StringComparison.OrdinalIgnoreCase))
         {
             Fuzzer.LibFuzzer.Run(static bytes => FrontEndInvariants.Check(DecodeSource(bytes)));
+        }
+        else if (string.Equals(mode, "metamorphic", StringComparison.OrdinalIgnoreCase))
+        {
+            // Operational-metamorphic target. The bytes are NOT a KatLang program: they are
+            // parameters for a trusted template that emits a pair of programs whose
+            // equivalence is guaranteed by construction, which the harness then runs with
+            // independent state and compares under an explicitly declared relation.
+            Fuzzer.LibFuzzer.Run(static bytes => MetamorphicInvariants.Check(bytes));
         }
         else if (string.Equals(mode, "evaluator", StringComparison.OrdinalIgnoreCase))
         {

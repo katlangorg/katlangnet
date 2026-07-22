@@ -13204,18 +13204,41 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SequenceSpread_SourceDrivenDeeplyNestedPostfix_IsStackSafe()
+    public void Eval_SequenceSpread_SourceDrivenPostfixChainAtParserLimit_IsStackSafe()
     {
-        // Source-driven coverage (not raw AST construction): `1` followed by many
-        // postfix `...` parses to a deeply-nested unary spread chain
-        // `SequenceSpread(SequenceSpread(... (1)))`. Parsing and evaluating it
-        // from source stays stack-safe; every level spreads the single item 1,
-        // so the flat result is [1]. The depth here is bounded by the recursive
-        // parse/elaboration traversal (a general limit for any deeply-nested
-        // expression, not the spread evaluator); the iterative spread evaluator
-        // itself is exercised to depth 8192 by the raw-AST test above.
-        const int depth = 300;
-        var source = "1" + string.Concat(Enumerable.Repeat("...", depth));
+        // Source-driven coverage (not raw AST construction): `1` followed by postfix `...`
+        // parses to a deeply-nested unary spread chain `SequenceSpread(SequenceSpread(...(1)))`.
+        // Parsing, elaborating, and evaluating it from source stays stack-safe; every level
+        // spreads the single item 1, so the flat result is [1].
+        //
+        // The depth is DERIVED from the parser's own supported ceiling rather than picked:
+        // a base primary contributes no expression-chain level and each postfix `...`
+        // contributes exactly one, so `Parser.MaxExpressionChainDepth` spreads is the deepest
+        // chain the parser accepts. Both sides of that boundary are pinned by
+        // ParserExpressionChainDepthTests.PostfixSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth.
+        //
+        // Evaluator stack safety BEYOND the parser ceiling is a separate guarantee and is
+        // already covered by Eval_SequenceSpread_LongChain_IsStackSafeForFlatAndCountedEvaluation
+        // above, which builds the same nested spread chain directly as an AST at depth 8192.
+        const int spreadCount = Parser.MaxExpressionChainDepth;
+        var source = "1" + string.Concat(Enumerable.Repeat("...", spreadCount));
+
+        var parsed = Parser.Parse(source);
+        Assert.False(parsed.HasErrors);
+        Assert.Empty(parsed.Diagnostics);   // in particular, no "chain is too deep" diagnostic
+
+        // The source really produced the chain under test, one spread level per written `...`.
+        var output = Assert.Single(parsed.Root.Output);
+        var nesting = 0;
+        var operand = output;
+        while (operand is Expr.SequenceSpread(var inner))
+        {
+            nesting++;
+            operand = inner;
+        }
+
+        Assert.Equal(spreadCount, nesting);
+        Assert.IsType<Expr.Num>(operand);
 
         AssertEval(source, 1m);
     }

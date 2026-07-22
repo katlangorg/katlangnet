@@ -29,6 +29,19 @@ public class ParserExpressionChainDepthTests
             Enumerable.Repeat($"{separator}.Member()", operatorCount));
     }
 
+    private const string SpreadOperator = "...";
+
+    /// <summary>
+    /// `1` followed by <paramref name="spreadCount"/> postfix `...`. The base primary
+    /// contributes NO expression-chain level (only guarded operator/postfix nodes are
+    /// recorded), so the chain depth equals the number of written spreads exactly —
+    /// there is no root-node off-by-one to account for. Written both as an explicit
+    /// `Output = ...` body and as a bare root-output row, which reach the same guard.
+    /// </summary>
+    private static string PostfixSpreadChain(int spreadCount, bool explicitOutput = true)
+        => (explicitOutput ? "Output = 1" : "1")
+            + string.Concat(Enumerable.Repeat(SpreadOperator, spreadCount));
+
     private static Diagnostic AssertControlledChainFailure(string source)
     {
         var result = Parser.Parse(source);
@@ -80,6 +93,60 @@ public class ParserExpressionChainDepthTests
     public void MultilineLeadingDotChain_AboveLimit_ReturnsStructuredError()
         => AssertControlledChainFailure(
             DotCallChain(Parser.MaxExpressionChainDepth + 1, leadingNewlines: true));
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PostfixSpreadChain_AtLimit_ParsesWithoutDiagnostics(bool explicitOutput)
+    {
+        var result = Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth, explicitOutput));
+        Assert.False(result.HasErrors);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PostfixSpreadChain_AboveLimit_ReturnsStructuredError(bool explicitOutput)
+        => AssertControlledChainFailure(
+            PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput));
+
+    [Fact]
+    public void PostfixSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth()
+    {
+        // The greatest accepted and smallest rejected chains are ADJACENT, which pins the
+        // depth accounting itself: a base primary costs 0 levels and each postfix `...`
+        // costs exactly 1, so the deepest accepted spread chain is MaxExpressionChainDepth.
+        Assert.False(Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth)).HasErrors);
+        Assert.True(Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1)).HasErrors);
+    }
+
+    [Fact]
+    public void PostfixSpreadChain_JustAboveLimit_ReportsOneDeterministicDiagnosticOnTheOffendingOperator()
+    {
+        // Smallest over-limit chain. The diagnostic must point at the `...` that crossed the
+        // limit — the (MaxExpressionChainDepth + 1)-th — rather than at the whole expression.
+        var source = PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput: false);
+        var offendingColumn = "1".Length + (Parser.MaxExpressionChainDepth * SpreadOperator.Length) + 1;
+
+        var first = AssertControlledChainFailure(source);
+        Assert.Equal(1, first.Span.StartLineNumber);
+        Assert.Equal(offendingColumn, first.Span.StartColumn);
+        Assert.Equal(1, first.Span.EndLineNumber);
+        Assert.Equal(offendingColumn + SpreadOperator.Length - 1, first.Span.EndColumn);
+
+        // Parsing terminates normally and repeats identically: same severity, message, span.
+        for (var repeat = 0; repeat < 3; repeat++)
+        {
+            var again = AssertControlledChainFailure(source);
+            Assert.Equal(first.Severity, again.Severity);
+            Assert.Equal(first.Message, again.Message);
+            Assert.Equal(first.Span.StartLineNumber, again.Span.StartLineNumber);
+            Assert.Equal(first.Span.StartColumn, again.Span.StartColumn);
+            Assert.Equal(first.Span.EndLineNumber, again.Span.EndLineNumber);
+            Assert.Equal(first.Span.EndColumn, again.Span.EndColumn);
+        }
+    }
 
     [Fact]
     public void ThousandsOfIndependentShortExpressions_RemainAccepted()
@@ -162,6 +229,7 @@ public class ParserExpressionChainDepthTests
             MultilineTrailingOperatorChain("+", 5_000),
             DotCallChain(5_000),
             DotCallChain(5_000, leadingNewlines: true),
+            PostfixSpreadChain(5_000),
         };
 
         Assert.All(sources, source => AssertControlledChainFailure(source));
