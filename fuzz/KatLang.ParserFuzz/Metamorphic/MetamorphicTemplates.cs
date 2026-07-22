@@ -123,6 +123,16 @@ internal static class MetamorphicTemplates
     /// Phase 2's dimensions is in the millions and mostly redundant, so the sweep crosses each
     /// family's own dimensions exhaustively under the default policy, then crosses every
     /// execution policy against a few representative points of that family.
+    ///
+    /// <para><b>The offset byte is a family dimension for some families.</b> Under most limit
+    /// modes the primary offset only moves a budget around the template's measured total, so
+    /// stratum 1 fixes it and stratum 2 varies it as part of the execution policy. Under
+    /// <see cref="MetamorphicLimitMode.FamilyDerived"/> it is not a policy knob at all — it is the
+    /// SIGNED BOUNDARY OFFSET, and its sign selects which law the case declares. Fixing it there
+    /// would leave the exact boundary-failure relation unreachable from this sweep no matter how
+    /// many other dimensions were crossed, so stratum 1 crosses it wherever the stratum-1 mode
+    /// reads it. Points whose law ignores the offset are collapsed by the family's own normalizer
+    /// and deduplicated here, so this costs only the cases that genuinely differ.</para>
     /// </summary>
     internal static IEnumerable<MetamorphicParameters> EnumerateStratifiedParameters()
     {
@@ -137,10 +147,18 @@ internal static class MetamorphicTemplates
         {
             var definition = MetamorphicFamilyRegistry.Get(MetamorphicDecoder.FamilyTable[familyIndex]);
 
-            // Stratum 1: the family's own dimensions, exhaustively, under the default policy.
+            // Stratum 1: the family's own dimensions, exhaustively, under the default policy —
+            // including the offset byte where that mode makes it one of them.
+            var offsets = MetamorphicDecoder.UsesPrimaryOffset(definition.SupportedLimitModes[0])
+                ? MetamorphicDecoder.OffsetTable.Length
+                : 1;
+
             foreach (var extras in CrossExtras(definition))
+            for (var primary = 0; primary < offsets; primary++)
             {
-                var parameters = DecodeWith(familyIndex, mode: 0, primary: 1, secondary: 1, optimize: 0, extras);
+                var parameters = DecodeWith(
+                    familyIndex, mode: 0, primary: offsets == 1 ? 1 : primary,
+                    secondary: 1, optimize: 0, extras);
                 if (seen.Add(parameters)) yield return parameters;
             }
 

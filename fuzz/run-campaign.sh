@@ -49,6 +49,15 @@ echo "[run] corpus(write)=$CORPUS  seeds(read)=$SEEDS"
 # Windows launcher forwards it through WSLENV, so it is inherited here — echoed for the log.
 echo "[run] KATLANG_FUZZ_MODE=${KATLANG_FUZZ_MODE:-<unset: raw parser>}"
 
+# An optional FIXED engine seed, forwarded the same way the mode is. Recording it is what
+# makes a campaign reproducible and what makes a confirmation campaign an independent sample
+# rather than a repeat. Unset leaves libFuzzer to choose, exactly as before.
+SEED_ARGS=()
+if [ -n "${KATLANG_FUZZ_SEED:-}" ] && [ "${KATLANG_FUZZ_SEED}" != "0" ]; then
+  SEED_ARGS=(-seed="${KATLANG_FUZZ_SEED}")
+  echo "[run] KATLANG_FUZZ_SEED=${KATLANG_FUZZ_SEED}"
+fi
+
 # The first corpus dir is writable (new coverage-increasing inputs land there); the
 # seed dir is read-only. Crash/timeout artifacts go under CRASHES via artifact_prefix.
 # A non-zero exit here typically means libFuzzer found a crash — that is a FINDING,
@@ -56,7 +65,7 @@ echo "[run] KATLANG_FUZZ_MODE=${KATLANG_FUZZ_MODE:-<unset: raw parser>}"
 set +e
 "$DRIVER" --target_path="$APPHOST" \
   -max_len="$MAXLEN" -timeout="$TIMEOUT" -rss_limit_mb="$RSS" -max_total_time="$MAXTIME" \
-  -dict="$DICT" -artifact_prefix="$CRASHES/" -print_final_stats=1 \
+  -dict="$DICT" -artifact_prefix="$CRASHES/" -print_final_stats=1 "${SEED_ARGS[@]}" \
   "$CORPUS" "$SEEDS"
 code=$?
 set -e

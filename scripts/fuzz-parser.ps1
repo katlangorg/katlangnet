@@ -46,6 +46,7 @@ param(
     [string]$Distro = '',        # optional specific WSL distro (else the WSL default)
     [string]$Mode = '',          # KATLANG_FUZZ_MODE: '' = raw parser, frontend, evaluator, metamorphic
     [string]$SeedDir = '',       # override the read-only seed corpus (else the mode's default)
+    [int]$FuzzerSeed = 0,        # fixed libFuzzer -seed (0 = engine picks its own, as before)
     [switch]$FreshCorpus,        # clear the writable corpus before running
     [switch]$SkipBuild           # reuse an existing publish + instrumentation
 )
@@ -80,9 +81,17 @@ if ($SeedDir -ne '') {
 elseif ($Mode -eq 'metamorphic') {
     # Metamorphic seeds are template payloads, not source files, so the read-only seed corpus
     # is materialized from the tracked manifest — one source of truth for fuzzing and replay.
+    #
+    # The export directory is entirely script-owned and the export is deterministic from the
+    # manifest, so it is CLEARED first. Without that, seeds a manifest no longer contains survive
+    # as files and quietly join every later campaign: the run still only sees valid payloads, but
+    # it is no longer seeded from the tracked corpus, and two people running the same command from
+    # the same commit start from different seed sets. The export tool reports the leftovers rather
+    # than deleting them, because the directory belongs to its caller — which is here.
     $seedDir  = Join-Path $fuzzDir 'artifacts\metamorphic-seeds'
     $manifest = Join-Path $fuzzDir 'KatLang.ParserFuzz\MetamorphicTestcases'
     Write-Section 'Export curated metamorphic seeds'
+    if (Test-Path $seedDir) { Remove-Item -Recurse -Force $seedDir }
     & dotnet run --project $proj -- metamorphic-seeds $seedDir $manifest
     if ($LASTEXITCODE -ne 0) { throw 'metamorphic-seeds export failed.' }
 }
@@ -91,11 +100,24 @@ else {
 }
 
 # The harness reads KATLANG_FUZZ_MODE inside WSL, so forward it explicitly through WSLENV.
+function Add-WslEnv([string]$Name) {
+    $existingWslEnv = [Environment]::GetEnvironmentVariable('WSLENV')
+    if ([string]::IsNullOrEmpty($existingWslEnv)) { $env:WSLENV = $Name }
+    elseif (($existingWslEnv -split ':') -notcontains $Name) { $env:WSLENV = "${existingWslEnv}:$Name" }
+}
+
 if ($Mode -ne '') {
     $env:KATLANG_FUZZ_MODE = $Mode
-    $existingWslEnv = [Environment]::GetEnvironmentVariable('WSLENV')
-    if ([string]::IsNullOrEmpty($existingWslEnv)) { $env:WSLENV = 'KATLANG_FUZZ_MODE' }
-    else { $env:WSLENV = "${existingWslEnv}:KATLANG_FUZZ_MODE" }
+    Add-WslEnv 'KATLANG_FUZZ_MODE'
+}
+
+# A fixed engine seed makes one campaign reproducible and makes two campaigns genuinely
+# INDEPENDENT rather than two samples of the same stream — which is the whole point of running a
+# confirmation campaign after a main one. Zero (the default) leaves libFuzzer to pick its own,
+# exactly as before.
+if ($FuzzerSeed -ne 0) {
+    $env:KATLANG_FUZZ_SEED = $FuzzerSeed
+    Add-WslEnv 'KATLANG_FUZZ_SEED'
 }
 
 # WSL invocation prefix (optionally pin a distro).

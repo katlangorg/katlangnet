@@ -679,6 +679,97 @@ budgets a cached and a rebuilt form cannot share, a per-collection ceiling that 
 can fuse, a malformed source aimed at an evaluator surface, a display limit asked to fail a
 reservation, and an equivalent-form pair asked to share a work boundary it does not have.
 
+### Phase 4: running and triaging a full campaign
+
+The families and relations are what make a finding meaningful; this section is the procedure that
+turns a long run into reviewable evidence.
+
+**Inventory.** Nine families in four groups plus the Phase 1 pair, five semantic relations, six
+operational relations, eight runtime surfaces in eight reviewed pairs, five budget laws, and seven
+resource dimensions. `MetamorphicPhase4ReadinessTests` asserts that a deterministic stratified
+sample reaches every one of them, so "the campaign covered X" is a measured claim rather than an
+assumption. Set `KATLANG_METAMORPHIC_READINESS_REPORT` to a path to have the distribution written
+out.
+
+**Staged campaign.** Each stage must be clean before the next one starts. Preserve the previous
+corpus by RENAMING it first (`fuzz/artifacts/` is gitignored, and `-FreshCorpus` deletes the
+writable corpus), then run fresh:
+
+```powershell
+# Stage A — smoke. Everything reachable, nothing unexplained, throughput and RSS sane.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorphic `
+  -MaxTotalTime 300 -MaxLen 12288 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 40001 -FreshCorpus
+
+# Stage B — main.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorphic `
+  -MaxTotalTime 1800 -MaxLen 65536 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 40002 -FreshCorpus
+
+# Stage C — independent confirmation: a fresh corpus, the same seeds, a DIFFERENT engine seed.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorphic `
+  -MaxTotalTime 1800 -MaxLen 65536 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 40003 -FreshCorpus
+```
+
+`-FuzzerSeed` forwards libFuzzer's `-seed` through `WSLENV` exactly as `-Mode` forwards the target.
+It is what makes Stage C an independent sample rather than a second draw from the same stream, and
+what makes any stage reproducible. Zero (the default) leaves the engine to choose, as before.
+
+**Replay every corpus twice.** A corpus is only evidence if it replays; replaying it twice is what
+catches a case that is stable within a run but not across runs. Replay is not a second
+implementation — it decodes, builds, executes, and compares through the same code the campaign
+ran, and internally runs each case twice as well:
+
+```powershell
+dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw fuzz\artifacts\corpus-metamorphic
+```
+
+**Merging** uses libFuzzer's own workflow — there is no corpus-management layer here. Merge into a
+fresh directory, then replay it before trusting it:
+
+```bash
+"$HOME/katlang-fuzz/libfuzzer-dotnet" --target_path=<publish>/KatLang.ParserFuzz \
+  -merge=1 <merged-dir> <corpus-b> <corpus-c>
+```
+
+**Retained artifacts.** Corpora are working state, not repository content: nothing under
+`fuzz/artifacts/` is tracked. What gets tracked is a *seed* — one line in
+`MetamorphicTestcases/seeds.txt` — and a seed is added only when the payload it pins is worth
+re-running forever: a reproducer for a fixed defect, a newly covered relation or rejection path, or
+a case a reviewer should be able to reproduce by name. Everything else stays in the corpus
+directory, and previous phases' corpora are kept by renaming so a campaign can always be compared
+against the one before it.
+
+**Counters after an abort are diagnostic only.** When either side stops at a structured resource
+limit, its counters are the prefix recorded at the abort point, and two equivalent forms may
+legitimately have done different preparatory work before reaching the same limit. Such a pair is
+still compared on its whole semantic observation — outcome, resource verdict, error kind, and
+structured payload — but not on work. The gate is `MetamorphicComparator.WorkIsComparable`, which
+also refuses the comparison when a surface hands back no budget at all rather than comparing two
+structural zeroes.
+
+**Is a mismatch semantic or operational?** Read the mismatch CLASS, which the report and the
+fingerprint both name:
+
+| Class | Means | First question |
+| --- | --- | --- |
+| `Semantic` | The two members disagree about what the program MEANS. | Is the equivalence argument actually true? Check the family's template, then compare each minimized member against Lean. |
+| `ResourceBoundary` | Host budget policy: one side stopped for a limit the other cleared, or a boundary law's below/at/above shape broke. | Did exactly one dimension vary? Was the boundary derived under the same policy the sweep ran? |
+| `Operational` | Same meaning, different amount of work. | Is the declared relation stronger than the runtime's contract — and is the direction right? |
+| `Rendering` | A display surface returned different text, or more units than its limit allows. | Did both sides render the same PROJECTION? `EvaluateToString` is not `ToDisplayString()` on success. |
+| `StateIsolation` | Two independent executions were distinguishable. | Something outlived a run: a counter, a cache, an optimizer decision, a diagnostic. |
+
+Semantic findings are language findings and belong in Lean's world; the other four are host-policy,
+optimizer-accounting, rendering, or state findings, and Lean models none of them.
+
+**Triage classification.** Every crash, timeout, mismatch, or non-deterministic replay is minimized
+to a payload, replayed, and classified as exactly one of: decoder, normalization, template,
+invalid-equivalence-assumption, precondition, relation-direction, comparator, observation, replay,
+fingerprint-only, instrumentation-artifact, optimizer-evidence, cache-evidence, entry-point-adapter,
+boundary-search, or state-isolation defect on the harness side; production semantic, optimizer,
+cache, entry-point, or resource-policy defect on the runtime side; or an unexpected CLR exception or
+genuine unbounded work. A timeout is not automatically a defect and a rejection is never a finding —
+but broadening a rejection rule to silence a mismatch is only legitimate after the relation has been
+shown invalid independently.
+
 ### Current limitations
 
 *Phase 2:*
