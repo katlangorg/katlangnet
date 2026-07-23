@@ -74,6 +74,20 @@ internal static class EvaluatorProbe
         // ── arithmetic stress ────────────────────────────────────────────────
         new("pow_chain",      "arithmetic", n => $"Output = 2 ^ {n}", 100_000, false),
         new("sum_large",      "arithmetic", n => $"Output = range(1, {n}).sum", 5_000_000, false),
+        // ── wide deconstruction: DEMAND every target ─────────────────────────
+        // One N-target deconstruction whose N targets are all forced through one
+        // compact sum. Historically each demanded target re-bound the shared
+        // N-capture pattern (O(N^2)); the shared run-scoped bind makes it linear.
+        new("eval_all_deconstruct", "deconstruct",
+            n => $"{string.Join(", ", Enumerable.Range(0, n).Select(i => $"x{i}"))} = range(1, {n})\n"
+                + $"Output = sum(({string.Join(", ", Enumerable.Range(0, n).Select(i => $"x{i}"))}))",
+            30_000, false),
+        // ── conditional clause family: CALL it (runtime duplicate-branch scan) ─
+        // A family of N literal clauses, invoked once. The runtime path scans the
+        // branch list for match-equivalent duplicates before dispatch; the indexed
+        // lookup makes that scan linear.
+        new("eval_clause_family", "frontend",
+            n => string.Concat(Enumerable.Range(0, n).Select(i => $"F({i}) = {i}\n")) + "Output = F(0)", 30_000, false),
     ];
 
     private static Family? Find(string id) => Families.FirstOrDefault(f => f.Id == id);

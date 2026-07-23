@@ -27,4 +27,14 @@ public sealed class RunOptions
     /// fresh.</para>
     /// </summary>
     public EvaluationLimits? EvaluationLimits { get; init; }
+
+    /// <summary>
+    /// Optional host-runtime limits on the source text and module graph consumed BEFORE
+    /// evaluation. When null, <see cref="KatLang.SourceProcessingLimits.Default"/> applies:
+    /// always-active per-source length, import depth, aggregate source, and module-count
+    /// ceilings are enforced. These bound parsing and module loading, never evaluation
+    /// (<see cref="EvaluationLimits"/> owns that), and are immutable configuration safe to
+    /// share across concurrent runs — the counters live in run-scoped processing state.
+    /// </summary>
+    public SourceProcessingLimits? SourceProcessingLimits { get; init; }
 }

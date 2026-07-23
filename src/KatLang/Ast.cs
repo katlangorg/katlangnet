@@ -551,6 +551,112 @@ public abstract record Pattern
 
         return Match(this, other);
     }
+
+    /// <summary>
+    /// Equality comparer whose equality is exactly <see cref="IsMatchEquivalent"/> and whose
+    /// hash is a deterministic structural fingerprint consistent with it: match-equivalent
+    /// patterns always hash equally, so a hashed set/dictionary groups an equivalence class
+    /// into one bucket and resolves any unrelated hash collision through the exact comparison.
+    /// This turns clause-family duplicate detection from an all-pairs O(clauses^2) scan into an
+    /// O(clauses) hashed lookup while preserving branch order, diagnostics, and spans, which
+    /// stay owned by the ordered branch list.
+    ///
+    /// <para>The fingerprint ignores exactly what match-equivalence ignores — binder spelling
+    /// (only first-occurrence position matters) and source spans — and includes literal values
+    /// and sequence-value shape. It uses an FNV-1a fold rather than <see cref="HashCode"/> so it
+    /// is process-stable, not a per-run randomized value; the set is still purely in-memory and
+    /// run-local, and no fingerprint is persisted.</para>
+    ///
+    /// <para>This shared instance carries NO observer, so it has no mutable state and is safe to
+    /// share across concurrent parses and the runtime duplicate-branch guard. A test that needs to
+    /// count exact comparisons of ONE indexed operation passes an explicit
+    /// <see cref="PatternComparisonObservations"/> to <see cref="CreateMatchEquivalenceComparer"/>
+    /// instead; that observer belongs to that one operation and is never static.</para>
+    /// </summary>
+    internal static IEqualityComparer<Pattern> MatchEquivalenceComparer { get; } = new MatchEquivalenceComparerImpl(observations: null);
+
+    /// <summary>
+    /// Returns a match-equivalence comparer bound to <paramref name="observations"/>: the shared
+    /// observer-less instance when it is <c>null</c> (production parser and runtime paths), otherwise
+    /// a fresh comparer that records one exact comparison per <see cref="IsMatchEquivalent"/> call it
+    /// performs. The observer is passive — it changes neither equality, hashing, nor bucket layout —
+    /// and belongs to a single parse or measured operation, so counts never cross operations or runs.
+    /// </summary>
+    internal static IEqualityComparer<Pattern> CreateMatchEquivalenceComparer(PatternComparisonObservations? observations)
+        => observations is null ? MatchEquivalenceComparer : new MatchEquivalenceComparerImpl(observations);
+
+    private sealed class MatchEquivalenceComparerImpl(PatternComparisonObservations? observations) : IEqualityComparer<Pattern>
+    {
+        public bool Equals(Pattern? x, Pattern? y)
+        {
+            if (ReferenceEquals(x, y))
+                return true;
+            if (x is null || y is null)
+                return false;
+
+            // Record only when an actual exact comparison is performed (never on the reference or
+            // null short-circuits), so the count is exactly the IsMatchEquivalent calls this
+            // comparer makes for its owning indexed operation.
+            observations?.RecordExactComparison();
+            return x.IsMatchEquivalent(y);
+        }
+
+        public int GetHashCode(Pattern pattern)
+        {
+            const uint fnvOffset = 2166136261;
+            const uint fnvPrime = 16777619;
+            var hash = fnvOffset;
+
+            void Mix(uint value)
+            {
+                hash = (hash ^ (value & 0xFF)) * fnvPrime;
+                hash = (hash ^ ((value >> 8) & 0xFF)) * fnvPrime;
+                hash = (hash ^ ((value >> 16) & 0xFF)) * fnvPrime;
+                hash = (hash ^ ((value >> 24) & 0xFF)) * fnvPrime;
+            }
+
+            // First-occurrence (De Bruijn-style) binder numbering: two match-equivalent
+            // patterns visit binders in the same pre-order and share the same repeat
+            // structure, so they mix the same index sequence regardless of spelling.
+            var firstOccurrence = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            void Visit(Pattern node)
+            {
+                switch (node)
+                {
+                    case Bind bind:
+                        Mix(1);
+                        if (!firstOccurrence.TryGetValue(bind.Name, out var index))
+                        {
+                            index = firstOccurrence.Count;
+                            firstOccurrence[bind.Name] = index;
+                        }
+                        Mix((uint)index);
+                        break;
+                    case LitInt litInt:
+                        Mix(2);
+                        foreach (var component in decimal.GetBits(litInt.Value))
+                            Mix((uint)component);
+                        break;
+                    case LitString litString:
+                        Mix(3);
+                        Mix((uint)litString.Value.Length);
+                        foreach (var ch in litString.Value)
+                            Mix(ch);
+                        break;
+                    case SequenceValue sequence:
+                        Mix(4);
+                        Mix((uint)sequence.Items.Count);
+                        foreach (var item in sequence.Items)
+                            Visit(item);
+                        break;
+                }
+            }
+
+            Visit(pattern);
+            return unchecked((int)hash);
+        }
+    }
 }
 
 /// <summary>
@@ -679,14 +785,20 @@ public abstract record Algorithm
     /// </summary>
     public bool HasDuplicateBranchPatterns()
     {
+        // Single O(branches) pass: a branch duplicates an earlier one exactly when its
+        // pattern fails to enter the match-equivalence set (the ordered branch list is
+        // untouched). This replaces the former O(branches^2) all-pairs scan; the boolean
+        // result is identical because match-equivalence is a genuine equivalence relation,
+        // so one representative per class suffices for membership.
         var branches = Branches;
-        for (int i = 0; i < branches.Count; i++)
+        if (branches.Count < 2)
+            return false;
+
+        var seen = new HashSet<Pattern>(Pattern.MatchEquivalenceComparer);
+        foreach (var branch in branches)
         {
-            for (int j = i + 1; j < branches.Count; j++)
-            {
-                if (branches[i].Pattern.IsMatchEquivalent(branches[j].Pattern))
-                    return true;
-            }
+            if (!seen.Add(branch.Pattern))
+                return true;
         }
         return false;
     }
@@ -870,6 +982,25 @@ public abstract record Algorithm
         /// </summary>
         internal bool IsAssignmentDeconstructionHelper { get; init; }
 
+        /// <summary>
+        /// Stable per-deconstruction identity token shared by all N target helpers of one
+        /// <c>x0, ..., x{N-1} = RHS</c> (a fresh token per deconstruction, assigned at parse).
+        /// The run-scoped deconstruction binding cache groups the N helpers by this token so the
+        /// shared N-capture pattern is bound once per group per binding context instead of once
+        /// per demanded target. It is a plain reference field copied by <c>with</c>, so record
+        /// transformations provably preserve it; only meaningful when
+        /// <see cref="IsAssignmentDeconstructionHelper"/> is true. Not part of the Lean model
+        /// (a run-scoped reuse mechanism, no observable-semantics effect).
+        /// </summary>
+        internal object? AssignmentDeconstructionGroup { get; init; }
+
+        /// <summary>
+        /// Zero-based position of this helper's target within its deconstruction group, i.e. the
+        /// capture index this helper projects out of the shared ordered bind. Only meaningful
+        /// when <see cref="IsAssignmentDeconstructionHelper"/> is true.
+        /// </summary>
+        internal int AssignmentDeconstructionTargetIndex { get; init; }
+
         internal User WithParameterPatternList(IReadOnlyList<ParameterPattern> parameterPatterns)
             => this with
             {
@@ -962,6 +1093,11 @@ internal static class AlgorithmValidation
     {
         public List<ExplicitParameterOutputViolation> Violations { get; } = [];
 
+        // This walker only inspects parameter COUNTS (via Parameters.Count below), never individual
+        // declarations, so skip the per-declaration loop. That keeps validation of a wide assignment
+        // deconstruction linear instead of O(N^2) across its N synthetic N-capture helpers.
+        protected override bool VisitsExplicitParameterDeclarations => false;
+
         public override void VisitAlgorithm(Algorithm algorithm)
         {
             if (stopAfterFirst && Violations.Count > 0)
@@ -1014,7 +1150,11 @@ internal static class AlgorithmValidation
 
         protected override void VisitUserAlgorithm(Algorithm.User algorithm)
         {
-            if (algorithm.Params.Count > 0 && algorithm.Output.Count == 0)
+            // Use Parameters.Count, not Params.Count: Params is a computed property that
+            // materializes a fresh O(N) name list on every access, so touching it once per
+            // algorithm makes walking a wide assignment deconstruction's N synthetic helpers
+            // O(N^2). Params is derived from Parameters, so the counts are always equal.
+            if (algorithm.Parameters.Count > 0 && algorithm.Output.Count == 0)
             {
                 var span = algorithm.ExplicitParameters.FirstOrDefault()?.Span;
                 Violations.Add(new ExplicitParameterOutputViolation(span));

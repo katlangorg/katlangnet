@@ -8,20 +8,68 @@ namespace KatLang;
 internal static class FrontEndPipeline
 {
     internal static FrontEndResult Process(string source)
-        => ProcessWithoutModuleElaboration(Parser.ParseSyntax(source));
+    {
+        var budget = new SourceProcessingBudget(null);
+        if (TryRejectMainSource(source, budget, out var rejected))
+            return rejected;
+
+        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source));
+    }
 
     internal static FrontEndResult Process(
         string source,
         Func<string, string>? downloadCode,
         IEnumerable<string>? allowedHosts = null)
-        => ProcessWithModuleElaboration(Parser.ParseSyntax(source), downloadCode, allowedHosts);
+    {
+        var budget = new SourceProcessingBudget(null);
+        if (TryRejectMainSource(source, budget, out var rejected))
+            return rejected;
+
+        return ProcessWithModuleElaboration(Parser.ParseSyntax(source), downloadCode, allowedHosts, budget);
+    }
 
     internal static FrontEndResult Process(string source, RunOptions? options)
     {
-        if (options?.DownloadCode is not null)
-            return Process(source, options.DownloadCode, options.AllowedHosts);
+        var budget = new SourceProcessingBudget(options?.SourceProcessingLimits);
+        if (TryRejectMainSource(source, budget, out var rejected))
+            return rejected;
 
-        return Process(source);
+        if (options?.DownloadCode is not null)
+            return ProcessWithModuleElaboration(
+                Parser.ParseSyntax(source), options.DownloadCode, options.AllowedHosts, budget);
+
+        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source));
+    }
+
+    /// <summary>
+    /// Enforces the configured per-source length ceiling on the MAIN program before parsing and
+    /// reserves it against the run-wide aggregate. A rejected source produces one structured
+    /// <see cref="SourceProcessingDiagnostics.SourceLengthExceeded"/> diagnostic and no parse.
+    /// </summary>
+    private static bool TryRejectMainSource(string source, SourceProcessingBudget budget, out FrontEndResult rejected)
+    {
+        if (!budget.SourceLengthWithinLimit(source.Length))
+        {
+            rejected = new FrontEndResult(
+                new Algorithm.User(null, [], [], [], []),
+                [SourceProcessingDiagnostics.SourceLengthExceeded(source.Length, budget.MaxSourceLength)]);
+            return true;
+        }
+
+        // Reserve the main program against the run-wide aggregate before any module is loaded, so
+        // modules are charged on top of it. By default the per-source ceiling never exceeds the
+        // aggregate ceiling, so this fits; a caller that configured the aggregate below its own
+        // program source is rejected here rather than silently proceeding.
+        if (!budget.TryReserveAggregate(source.Length))
+        {
+            rejected = new FrontEndResult(
+                new Algorithm.User(null, [], [], [], []),
+                [SourceProcessingDiagnostics.AggregateSourceLengthExceededByProgram(source.Length, budget.MaxAggregateSourceLength)]);
+            return true;
+        }
+
+        rejected = null!;
+        return false;
     }
 
     private static FrontEndResult ProcessWithoutModuleElaboration(SyntaxParseResult syntaxResult)
@@ -41,12 +89,13 @@ internal static class FrontEndPipeline
     private static FrontEndResult ProcessWithModuleElaboration(
         SyntaxParseResult syntaxResult,
         Func<string, string>? downloadCode,
-        IEnumerable<string>? allowedHosts)
+        IEnumerable<string>? allowedHosts,
+        SourceProcessingBudget budget)
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
 
         var loadDiagnosticStart = diagnostics.Count;
-        var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts);
+        var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts, budget);
         var loadElaboratedRoot = loader.Elaborate(syntaxResult.SyntaxRoot);
         var loadDiagnosticsEnd = diagnostics.Count;
 
@@ -61,6 +110,7 @@ internal static class FrontEndPipeline
             diagnostics,
             canEvaluateAfterLoadErrors:
                 !syntaxResult.HasErrors &&
+                !loader.HasSourceProcessingErrors &&
                 diagnostics
                     .Skip(loadDiagnosticStart)
                     .Take(loadDiagnosticsEnd - loadDiagnosticStart)

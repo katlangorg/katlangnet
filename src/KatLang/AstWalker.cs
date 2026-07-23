@@ -28,12 +28,27 @@ public abstract class AstWalker
     }
 
     /// <summary>
+    /// Whether <see cref="VisitUserAlgorithm"/> iterates each algorithm's explicit parameter
+    /// declarations and calls <see cref="VisitExplicitParameterDeclaration"/>. Defaults to
+    /// <c>true</c>. Walkers that never override <see cref="VisitExplicitParameterDeclaration"/>
+    /// may return <c>false</c> to skip that loop (see the note in <see cref="VisitUserAlgorithm"/>).
+    /// </summary>
+    protected virtual bool VisitsExplicitParameterDeclarations => true;
+
+    /// <summary>
     /// Visits a user-defined algorithm and recurses into its contents.
     /// </summary>
     protected virtual void VisitUserAlgorithm(Algorithm.User algorithm)
     {
-        foreach (var parameter in algorithm.ExplicitParameters)
-            VisitExplicitParameterDeclaration(algorithm, parameter);
+        // Walkers that do not override VisitExplicitParameterDeclaration can opt out of this
+        // per-parameter loop. It matters for wide assignment deconstructions: those elaborate to
+        // N synthetic helpers that each carry the full N-capture parameter list, so a walker that
+        // visits every declaration is O(N^2) even when the visit is a no-op.
+        if (VisitsExplicitParameterDeclarations)
+        {
+            foreach (var parameter in algorithm.ExplicitParameters)
+                VisitExplicitParameterDeclaration(algorithm, parameter);
+        }
 
         if (algorithm.ExplicitOutputSpan is { } outputSpan)
             VisitReservedOutputDeclaration(algorithm, outputSpan);

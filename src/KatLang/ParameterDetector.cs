@@ -40,6 +40,17 @@ public static class ParameterDetector
         if (alg is Algorithm.Builtin)
             return alg;
 
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is already a
+        // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
+        // opens, no properties, and an output that is exactly the single bound target name.
+        // Its only required elaboration is rewriting that bound Resolve to a Param. Running
+        // it through the general path builds an O(N) param-name set, param-order list,
+        // captured-name union, and MergeParameterPatterns per helper, so a wide
+        // deconstruction is O(N^2) across its N sibling helpers. This leaf path is O(1) in
+        // the capture count and produces the identical elaborated helper.
+        if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper)
+            return RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper);
+
         var newOpens = ProcessOpenExprs(alg.Opens, diagnostics);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
@@ -141,6 +152,23 @@ public static class ParameterDetector
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+    }
+
+    /// <summary>
+    /// Cheap elaboration of a synthetic assignment-deconstruction helper. The general
+    /// <see cref="ProcessAlgorithm"/> path would rewrite the helper's output <see cref="Expr.Resolve"/>
+    /// to an <see cref="Expr.Param"/> (the target is one of the helper's explicit captures), so this
+    /// does exactly that and nothing else. The helper carries no free identifiers, no opens, and no
+    /// nested algorithms, so no scope, param-name set, or pattern merge is needed — only the output
+    /// rewrite. Every output slot of such a helper is a bare reference to a bound capture by
+    /// construction (see <c>Parser.AddDeconstructionProperties</c>), so the rewrite is unconditional.
+    /// </summary>
+    private static Algorithm RewriteAssignmentDeconstructionHelperOutput(Algorithm.User helper)
+    {
+        var rewrittenOutput = new List<Expr>(helper.Output.Count);
+        foreach (var expr in helper.Output)
+            rewrittenOutput.Add(expr is Expr.Resolve resolve ? new Expr.Param(resolve.Name) { Span = expr.Span } : expr);
+        return helper with { Output = rewrittenOutput };
     }
 
     private static IReadOnlyList<Expr> ProcessOpenExprs(

@@ -209,6 +209,16 @@ internal static class PropertyDependencyGraphBuilder
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames)
     {
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is self-contained: it
+        // binds its own N-capture pattern and outputs one of those bound params, capturing no
+        // ancestor-owned parameter and referencing no visible or sibling property (the shared
+        // `$deconstruct$` source is referenced by the helper's ARGS, not the helper itself). Its
+        // summary is therefore empty. Walking it costs O(N) per helper in its capture count
+        // (the ownedHere union below and the fixed-point setup), so a wide deconstruction is
+        // O(N^2) across its N sibling helpers without this leaf guard.
+        if (algorithm.IsAssignmentDeconstructionHelper)
+            return new SummarySeed();
+
         var ownedHere = CreateNameSet(locallyOwnedNames);
         ownedHere.UnionWith(algorithm.Params);
 
@@ -566,6 +576,12 @@ internal static class PropertyDependencyGraphBuilder
     {
         switch (algorithm)
         {
+            case Algorithm.User { IsAssignmentDeconstructionHelper: true }:
+                // Self-contained synthetic leaf: captures no ancestor-owned parameter. Walking it
+                // is O(N) in its capture count per helper; skipping it keeps a wide deconstruction
+                // linear. See the matching guard in CollectSummarySeed.
+                break;
+
             case Algorithm.User user:
             {
                 var ownedHere = CreateNameSet(locallyOwnedNames);

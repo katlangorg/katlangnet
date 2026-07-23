@@ -327,10 +327,12 @@ public class EvaluatorTests
             [],
             [],
             UncachedZeroArgPropertyResultCache.Instance,
+            UncachedDeconstructionBindingCache.Instance,
             EnableLoopOptimization: true,
             LoopDiagnostics: null,
             EnableSequencePipelineOptimization: true,
             SequenceDiagnostics: null,
+            Observations: null,
             Budget: EvaluationBudget.Create(null));
 
     private static (

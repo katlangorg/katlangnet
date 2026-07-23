@@ -495,7 +495,7 @@ public class ModuleLoaderTests
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
-                 d.Message.Contains("exceeds size limit"));
+                 d.Message.Contains("UTF-16 code units, over the maximum of"));
     }
 
     [Fact]

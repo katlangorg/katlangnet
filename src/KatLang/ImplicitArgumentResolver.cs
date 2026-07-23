@@ -41,6 +41,15 @@ public static class ImplicitArgumentResolver
         if (alg is Algorithm.Builtin)
             return alg;
 
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
+        // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
+        // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
+        // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
+        // O(N^2) across a wide deconstruction's N helpers — only to rewrite an output that has no
+        // implicit calls. Returning it unchanged is O(1) and identical.
+        if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+            return alg;
+
         var newOpens = ProcessOpenExprs(alg.Opens);
 
         // Build local param map
@@ -49,10 +58,22 @@ public static class ImplicitArgumentResolver
             ? PropertyDependencyGraphBuilder.Build(userAlgorithm)
             : PropertyDependencyGraph.Empty;
 
-        // Visible map = parent + local (local overrides)
-        var visibleParamMap = new Dictionary<string, CallableSignature>(parentParamMap);
-        foreach (var (k, v) in localParamMap)
-            visibleParamMap[k] = v;
+        // Visible map = parent + local (local overrides). When there are no local properties —
+        // the common leaf case, e.g. every simple property value `A = expr` — nothing overrides
+        // the parent map and the per-property loop below (the only writer of visibleParamMap) is
+        // empty, so the parent map is shared instead of copied. Cloning this O(P) parent map once
+        // per leaf property is what made this pass O(P^2) in the property count.
+        Dictionary<string, CallableSignature> visibleParamMap;
+        if (localParamMap.Count == 0)
+        {
+            visibleParamMap = parentParamMap;
+        }
+        else
+        {
+            visibleParamMap = new Dictionary<string, CallableSignature>(parentParamMap);
+            foreach (var (k, v) in localParamMap)
+                visibleParamMap[k] = v;
+        }
 
         // Topological sort of properties
         var topoOrder = dependencyGraph.TopologicalOrder;

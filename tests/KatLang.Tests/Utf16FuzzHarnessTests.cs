@@ -552,8 +552,26 @@ public class Utf16FuzzHarnessTests
             var report = Utf16Invariants.Run(Utf16Decoder.Encode(parameters));
             var fingerprint = report.Fingerprint;
 
-            Assert.DoesNotContain(pid, fingerprint, StringComparison.Ordinal);
-            Assert.DoesNotContain(tid, fingerprint, StringComparison.Ordinal);
+            // pid/tid are environmental integers. The fingerprint is built only from bounded
+            // classification counts and power-of-two buckets whose largest numeric token is the
+            // source cap (Utf16Tables.MaxSourceCodeUnits = 2048) or the parser nesting bound
+            // (Parser.MaxNestingDepth = 580) — at most four digits. A bare-substring check against
+            // a SMALL managed thread id (e.g. "8") therefore coincides with legitimate bucket
+            // digits such as "diagBucket=5-8", a false positive rather than a leak. Any real
+            // identity leak of a five-or-more-digit id cannot collide with those bounded tokens,
+            // so the value check is applied at that length; smaller ids are covered structurally
+            // by the determinism, no-"0x", no-raw-source, and printable-ASCII guarantees here and
+            // in FingerprintsDoNotDependOnRunOrder.
+            if (pid.Length >= 5) Assert.DoesNotContain(pid, fingerprint, StringComparison.Ordinal);
+            // Small identity values cannot be rejected as bare decimal substrings without
+            // colliding with legitimate count buckets. Labeled leaks can and must be rejected at
+            // every value, including ordinary one- and two-digit managed thread IDs.
+            foreach (var label in new[] { "pid=", "processId=", "tid=", "threadId=" })
+            {
+                Assert.DoesNotContain(label, fingerprint, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (tid.Length >= 5) Assert.DoesNotContain(tid, fingerprint, StringComparison.Ordinal);
             Assert.DoesNotContain("0x", fingerprint, StringComparison.OrdinalIgnoreCase);
 
             // No source text: every code unit of the source must be absent as a verbatim run.

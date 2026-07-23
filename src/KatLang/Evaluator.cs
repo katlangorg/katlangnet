@@ -53,10 +53,12 @@ public static class Evaluator
         IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
         IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
+        IDeconstructionBindingCache DeconstructionBindingCache,
         bool EnableLoopOptimization,
         LoopOptimizationDiagnostics? LoopDiagnostics,
         bool EnableSequencePipelineOptimization,
         SequencePipelineDiagnostics? SequenceDiagnostics,
+        EvaluationObservations? Observations,
         EvaluationBudget Budget)
     {
         /// <summary>
@@ -65,7 +67,9 @@ public static class Evaluator
         /// mutable evaluation state.
         /// </summary>
         public static EvalCtx Empty => new(
-            [], [], [], UncachedZeroArgPropertyResultCache.Instance, true, null, true, null,
+            [], [], [], UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
+            true, null, true, null,
+            null,
             EvaluationBudget.Create(null));
 
         /// <summary>Lean: EvalCtx.push — prepend an algorithm to the call stack.</summary>
@@ -75,10 +79,12 @@ public static class Evaluator
                 AlgEnv,
                 CountedParamEnv,
                 ZeroArgPropertyResultCache,
+                DeconstructionBindingCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
+                Observations,
                 Budget);
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
@@ -91,10 +97,12 @@ public static class Evaluator
                 algEnv,
                 CountedParamEnv,
                 ZeroArgPropertyResultCache,
+                DeconstructionBindingCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
+                Observations,
                 Budget);
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
@@ -104,10 +112,12 @@ public static class Evaluator
                 AlgEnv,
                 countedParamEnv,
                 ZeroArgPropertyResultCache,
+                DeconstructionBindingCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
+                Observations,
                 Budget);
 
         /// <summary>Replace the zero-argument property cache for a scoped evaluation subtree.</summary>
@@ -117,10 +127,12 @@ public static class Evaluator
                 AlgEnv,
                 CountedParamEnv,
                 zeroArgPropertyResultCache,
+                DeconstructionBindingCache,
                 EnableLoopOptimization,
                 LoopDiagnostics,
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
+                Observations,
                 Budget);
     }
 
@@ -1568,20 +1580,33 @@ public static class Evaluator
         var valueBindings = new List<(string, Result)>();
         var countedBindings = new List<(string, CountedResult)>();
         var algorithmBindings = new List<(string, Algorithm)>();
+        // Running name -> value indexes over the accumulators. The prior implementation rebuilt a
+        // name set and linear-scanned the accumulators on EVERY added binding, which is O(k) per
+        // binding and O(patterns^2) across a whole pattern list — the residual quadratic in one
+        // wide-deconstruction bind. These indexes keep the repeated-bind equality check (same name
+        // must carry an equal value; unequal is an arity error) O(1) amortized without changing it.
+        var valueBindingIndex = new Dictionary<string, Result>(StringComparer.Ordinal);
+        var countedBindingIndex = new Dictionary<string, CountedResult>(StringComparer.Ordinal);
 
         EvalResult<bool> AddBindings(UserCallBindings bindings)
         {
-            var existingValueNames = valueBindings
-                .Select(static binding => binding.Item1)
-                .ToHashSet(StringComparer.Ordinal);
-            var incomingValueNames = bindings.ValueBindings
-                .Select(static binding => binding.Item1)
-                .ToHashSet(StringComparer.Ordinal);
+            // The two name sets are only consulted by the algorithm-binding repeated-bind rule
+            // below. Compute them (over the pre-add accumulator state) only when this binding set
+            // actually carries algorithm bindings, so the common value/counted-only path — every
+            // deconstruction capture — never pays for them.
+            HashSet<string>? existingValueNames = null;
+            HashSet<string>? incomingValueNames = null;
+            if (bindings.AlgorithmBindings.Count > 0)
+            {
+                existingValueNames = valueBindingIndex.Keys.ToHashSet(StringComparer.Ordinal);
+                incomingValueNames = bindings.ValueBindings
+                    .Select(static binding => binding.Item1)
+                    .ToHashSet(StringComparer.Ordinal);
+            }
 
             foreach (var binding in bindings.ValueBindings)
             {
-                var existing = LookupVal(valueBindings, binding.Item1);
-                if (existing is not null)
+                if (valueBindingIndex.TryGetValue(binding.Item1, out var existing))
                 {
                     if (!Result.ValueComparer.Equals(existing, binding.Item2))
                         return new EvalError.BadArity();
@@ -1589,19 +1614,20 @@ public static class Evaluator
                 }
 
                 valueBindings.Add(binding);
+                valueBindingIndex[binding.Item1] = binding.Item2;
             }
 
             foreach (var binding in bindings.CountedBindings)
             {
-                var existing = LookupCountedParam(countedBindings, binding.Item1);
-                if (existing is not null)
+                if (countedBindingIndex.TryGetValue(binding.Item1, out var existing))
                 {
-                    if (!Result.ValueComparer.Equals(existing.Value.Value, binding.Item2.Value))
+                    if (!Result.ValueComparer.Equals(existing.Value, binding.Item2.Value))
                         return new EvalError.BadArity();
                     continue;
                 }
 
                 countedBindings.Add(binding);
+                countedBindingIndex[binding.Item1] = binding.Item2;
             }
 
             foreach (var binding in bindings.AlgorithmBindings)
@@ -1614,7 +1640,7 @@ public static class Evaluator
                     continue;
                 }
 
-                if (!existingValueNames.Contains(binding.Item1) || !incomingValueNames.Contains(binding.Item1))
+                if (!existingValueNames!.Contains(binding.Item1) || !incomingValueNames!.Contains(binding.Item1))
                 {
                     return new EvalError.TypeMismatch(
                         "Repeated bind equality is not supported for algorithm-only arguments");
@@ -1711,6 +1737,13 @@ public static class Evaluator
         string? calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
+        // Passive, run-scoped observation: this is the one path that binds a deconstruction helper's
+        // shared N-capture pattern in both the old per-target and new shared-bind implementations, so
+        // a run's observer counts N binds under the old design and exactly one under the shared bind.
+        // Null for ordinary runs (no material effect); an observed run records through this context.
+        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+            ctx.Observations?.RecordDeconstructionFullBind();
+
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
 
         var inputsR = BuildCallArgumentInputs(
@@ -1752,6 +1785,85 @@ public static class Evaluator
         }
 
         return bindingsR;
+    }
+
+    /// <summary>
+    /// Shared lazy binding of one assignment-deconstruction group. All N target helpers of a
+    /// deconstruction apply the SAME shared N-capture pattern to the SAME hoisted source value,
+    /// so the whole bind is computed once per (group, binding context) and each target projects
+    /// its own slot. The first demanded target pays the full bind (RHS evaluation, one pattern
+    /// bind, one rest-list materialization); every later target of the same group projects in
+    /// O(1). Deferred semantics are unchanged: nothing binds until a target is demanded, and a
+    /// binding failure (wrong arity, phrased against the written pattern by
+    /// <see cref="BindPatternedUserCall"/>) surfaces from the first demanded target with its span
+    /// intact. Returns <c>null</c> only when the helper is not a shareable parser-elaborated group
+    /// (no group token, or an out-of-range projection index on a hand-built AST), so the caller
+    /// falls back to the ordinary per-call binding path.
+    /// </summary>
+    private static EvalResult<Result>? TryProjectSharedDeconstructionTarget(
+        Algorithm.User helper,
+        Algorithm wiredArgs,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv,
+        string? calleeName,
+        IReadOnlyList<bool>? preserveArgBoundaries)
+    {
+        var group = helper.AssignmentDeconstructionGroup;
+        if (group is null)
+            return null;
+
+        var execution = new DeconstructionBindingExecution(
+            group,
+            ValueEnvironmentCacheIdentity(valEnv),
+            ctx.AlgEnv,
+            ctx.CountedParamEnv);
+
+        var sharedR = ctx.DeconstructionBindingCache.GetOrBind(
+            execution,
+            () =>
+            {
+                var bindingsR = BindPatternedUserCall(helper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+                if (bindingsR.IsError)
+                    return bindingsR.Error;
+
+                // Materialize the shared bind as the bound values in TARGET order. Index the bind by
+                // capture name and read the values out in the helper's parameter order (the written
+                // target order): the front/rest/back matcher may emit bindings in a different order
+                // than the written targets (a movable rest binds the fixed prefix and suffix before
+                // the middle). The helper body is `Param(xi)`, which resolves xi from the counted
+                // parameter environment first and the value environment second; deconstruction
+                // captures populate the value bindings (the counted bindings stay empty), so seed the
+                // index from the value bindings and let any counted binding win, matching that lookup
+                // order exactly. The counted result then re-counts the value at the boundary and the
+                // non-counted result is the value itself, so the value alone reproduces both without
+                // the O(N) environment scan.
+                var bindings = bindingsR.Value;
+                var valueByName = new Dictionary<string, Result>(bindings.ValueBindings.Count, StringComparer.Ordinal);
+                foreach (var (name, value) in bindings.ValueBindings)
+                    valueByName[name] = value;
+                foreach (var (name, counted) in bindings.CountedBindings)
+                    valueByName[name] = counted.Value;
+
+                var parameters = helper.Parameters;
+                var projected = new Result[parameters.Count];
+                for (var i = 0; i < parameters.Count; i++)
+                {
+                    if (!valueByName.TryGetValue(parameters[i].Name, out var value))
+                        return new EvalError.UnknownName(parameters[i].Name);
+                    projected[i] = value;
+                }
+                return EvalResult<IReadOnlyList<Result>>.Ok(projected);
+            });
+
+        if (sharedR.IsError)
+            return sharedR.Error;
+
+        var values = sharedR.Value;
+        var index = helper.AssignmentDeconstructionTargetIndex;
+        if ((uint)index >= (uint)values.Count)
+            return null;
+
+        return EvalResult<Result>.Ok(values[index]);
     }
 
     /// <summary>
@@ -6551,6 +6663,15 @@ public static class Evaluator
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
 
+        // Assignment-deconstruction target: project this target's slot from the group's shared
+        // run-scoped bind (computed once for all N targets) instead of rebinding the whole
+        // N-capture pattern per target. The non-counted value is the bound value itself.
+        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+        {
+            return sharedTarget;
+        }
+
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
         var bindingPlan = CallableBindingPlan.FromSignature(signature);
 
@@ -6667,6 +6788,17 @@ public static class Evaluator
 
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
+
+        // Assignment-deconstruction target: project this target's slot from the group's shared
+        // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
+        // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
+        if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+        {
+            return sharedTarget.IsError
+                ? sharedTarget.Error
+                : EvalResult<CountedResult>.Ok(new CountedResult(sharedTarget.Value, sharedTarget.Value.ValueCount()));
+        }
 
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
         var bindingPlan = CallableBindingPlan.FromSignature(signature);
@@ -7292,14 +7424,16 @@ public static class Evaluator
         LoopOptimizationDiagnostics? loopDiagnostics,
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
-        EvaluationLimits? limits)
+        EvaluationLimits? limits,
+        EvaluationObservations? observations = null)
         => CreateRootCtx(
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
             enableSequencePipelineOptimization,
             sequenceDiagnostics,
-            EvaluationBudget.Create(limits));
+            EvaluationBudget.Create(limits),
+            observations);
 
     private static EvalCtx CreateRootCtx(
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -7307,7 +7441,8 @@ public static class Evaluator
         LoopOptimizationDiagnostics? loopDiagnostics,
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
-        EvaluationBudget budget)
+        EvaluationBudget budget,
+        EvaluationObservations? observations = null)
     {
         var loopOptimize = !budget.HasStepLimit;
         var sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit;
@@ -7316,10 +7451,12 @@ public static class Evaluator
             [],
             [],
             zeroArgPropertyResultCache,
+            new RunScopedDeconstructionBindingCache(),
             enableLoopOptimization && loopOptimize,
             loopDiagnostics,
             enableSequencePipelineOptimization && sequenceOptimize,
             sequenceDiagnostics,
+            observations,
             budget);
     }
 
@@ -7400,7 +7537,8 @@ public static class Evaluator
         bool enableOptimizations = true,
         IZeroArgPropertyResultCache? zeroArgPropertyResultCache = null,
         LoopOptimizationDiagnostics? loopDiagnostics = null,
-        SequencePipelineDiagnostics? sequenceDiagnostics = null)
+        SequencePipelineDiagnostics? sequenceDiagnostics = null,
+        EvaluationObservations? observations = null)
     {
         var budget = EvaluationBudget.Create(limits);
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
@@ -7412,7 +7550,8 @@ public static class Evaluator
             loopDiagnostics: loopDiagnostics,
             enableSequencePipelineOptimization: enableOptimizations,
             sequenceDiagnostics: sequenceDiagnostics,
-            budget);
+            budget,
+            observations);
 
         var result = expr is Expr.Block(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)

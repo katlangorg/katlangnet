@@ -59,6 +59,18 @@ internal static class Program
         if (args.Length > 0 && args[0] == "utf16-seeds")
             return Utf16Replay.RunExportSeeds(args);       // export seed payloads as a corpus
 
+        // Phase-6 source/module input-size measurement subcommands (no network; no libFuzzer).
+        if (args.Length > 0 && args[0] == "source-probe")
+            return SourceModuleProbe.RunSource(args);          // deterministic source shapes
+        if (args.Length > 0 && args[0] == "source-probe-child")
+            return SourceModuleProbe.RunSourceChild(args);     // isolated RSS calibration
+        if (args.Length > 0 && args[0] == "module-probe")
+            return SourceModuleProbe.RunModule(args);          // module-graph scenarios (fake downloader)
+        if (args.Length > 0 && args[0] == "module-depth-search")
+            return SourceModuleProbe.RunModuleDepthSearch(args); // isolated deep-chain no-crash validation
+        if (args.Length > 0 && args[0] == "module-depth-child")
+            return SourceModuleProbe.RunModuleDepthChild(args);  // one isolated deep import chain
+
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)
 

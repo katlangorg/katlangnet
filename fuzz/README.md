@@ -205,6 +205,51 @@ The **near-boundary** campaign fuzzes around the recursion limit with generated
 (e.g. 64 KiB); the nesting diagnostic is an ordinary result, not a crash. Seeds live in
 `fuzz/artifacts/nearboundary-seeds/` and are not tracked.
 
+## Source and module input-size probing (`SourceModuleProbe.cs`)
+
+The Phase-6 measurement backbone for the source/module input-size policy
+(`SourceProcessingLimits`). It measures how source text and module graphs become tokens,
+AST nodes, diagnostics, and downloader work BEFORE the evaluator runs. Counts (UTF-16
+source length, tokens, nodes, diagnostics, module count, aggregate source, import depth)
+are deterministic and architecture-independent; elapsed time, GC allocation, and peak
+working set are recorded for **calibration only** and are never proposed as public limit
+units. No network access — the module probe uses a generative in-memory downloader keyed
+by URL.
+
+```powershell
+# deterministic source shapes: per-stage counts + amplification ratios (tok/src, node/src,
+# post/raw, diag/src) for long/flat, wide, deep, many-declaration, and diagnostic-heavy sources
+dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe --out fuzz\artifacts\perf\source.json
+# one big source in an isolated child (peak working set for calibration): SHAPE N
+dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe-child many_funcs 130000
+# module-graph scenarios via a fake downloader: chain, wide, diamond, repeat, cycle,
+# many-tiny, one-large, aggregate, failed; with default ceilings active
+dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- module-probe
+# isolated deep-chain no-crash/resource-error validation under production ceilings
+dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- module-depth-search --max 5000
+```
+
+The full deterministic table records source length, tokens, raw/frontend nodes, diagnostics,
+and timing/allocation calibration across 104 rows. In this run the observed ratios reached
+1.05 tokens, 1.568 nodes, and 1.02 diagnostics per code unit; these are MEASURED samples,
+not universal proof bounds. `frontendNodes = parserNodes` across the included shapes after the
+sibling-map cloning and declaration duplicate-scan fixes. The formerly quadratic per-construct
+paths were subsequently made linear too: the wide-deconstruction elaboration, and then the
+conditional clause-family duplicate check (`many_clauses`: hashed match-equivalence lookup
+replacing the all-pairs scan) plus the evaluate-all deconstruction bind (`eval_all_deconstruct`:
+one shared run-scoped bind per group). The import loader overflowed the host stack at ~562 transitive levels on the
+measured Windows configuration — calibration for the 2 MiB per-source, 64 import-depth, 8 MiB
+aggregate, and 256 module-count ceilings, not a cross-platform stack measurement. With those
+ceilings active the module probe shows each limit firing structurally and
+`module-depth-search` reports "completed through max" (the stack-overflow crash is gone).
+Aggregate and module-count totals cover accepted sources; failed downloads and policy-rejected
+fetches remain uncharged and may be attempted again, so the probe reports downloader work
+separately from accepted-source accounting.
+The resource-error boundaries themselves are reproduced deterministically by
+`SourceProcessingLimitsTests`, not by byte-fuzz seeds: they require inputs (multi-MiB
+source, a fake module graph) outside the byte-fuzz input space, so no new libFuzzer mode
+was added.
+
 ## Operational-metamorphic fuzzing
 
 `KATLANG_FUZZ_MODE=metamorphic` (source: `KatLang.ParserFuzz/Metamorphic/`).

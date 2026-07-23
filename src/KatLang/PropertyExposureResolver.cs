@@ -70,6 +70,14 @@ internal static class PropertyExposureResolver
         HashSet<string> locallyOwnedNames,
         bool insideConditionalAlgorithm)
     {
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
+        // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
+        // captures no ancestor-owned parameter, so its summary is empty and it needs no rewriting.
+        // The general path would build an O(N) owned-name union from its N-capture pattern per
+        // helper — O(N^2) across a wide deconstruction's N helpers — for no observable effect.
+        if (algorithm is Algorithm.User { IsAssignmentDeconstructionHelper: true })
+            return new RewriteResult(algorithm, AnalysisSummary.Empty);
+
         var dependencyGraph = PropertyDependencyGraphBuilder.Build(
             algorithm,
             ancestorOwnedNames,
@@ -466,10 +474,18 @@ internal static class PropertyExposureResolver
         }
     }
 
-    private static Dictionary<string, AnalysisSummary> MergeVisiblePropertySummaries(
+    private static IReadOnlyDictionary<string, AnalysisSummary> MergeVisiblePropertySummaries(
         IReadOnlyDictionary<string, AnalysisSummary> ancestorSummaries,
         IReadOnlyDictionary<string, AnalysisSummary> localSummaries)
     {
+        // A nested algorithm with no local properties — the common leaf case, e.g. every simple
+        // property value `A = expr` — adds nothing, so the ancestor map is shared as-is instead
+        // of being copied. Cloning this O(P) sibling-summary map once per sibling property is what
+        // made the exposure pass O(P^2) in the property count (a 10k-property source spent seconds
+        // and gigabytes here). The merged map is only ever READ downstream, so sharing it is safe.
+        if (localSummaries.Count == 0)
+            return ancestorSummaries;
+
         var merged = new Dictionary<string, AnalysisSummary>(ancestorSummaries, StringComparer.Ordinal);
         foreach (var (name, summary) in localSummaries)
             merged[name] = summary;

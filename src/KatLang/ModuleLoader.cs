@@ -14,14 +14,25 @@ namespace KatLang;
 /// </summary>
 public sealed class ModuleLoader
 {
-    /// <summary>Maximum allowed source size in bytes (2 MB).</summary>
-    private const int MaxSourceSize = 2 * 1024 * 1024;
-
     private readonly Func<string, string> _downloadCode;
     private readonly HashSet<string> _allowedHosts;
     private readonly Dictionary<string, Algorithm> _cache = new();
     private readonly HashSet<string> _inProgress = new();
     private readonly List<Diagnostic> _diagnostics;
+
+    // Run-scoped host-runtime budget: import depth, distinct-module count, per-module and aggregate
+    // source length. Its immutable SourceProcessingLimits carry the effective ceilings; the mutable
+    // counters are private to this run. The per-module source ceiling here (EffectiveMaxSourceLength)
+    // replaces the former fixed 2 MiB "bytes" constant and is now measured in UTF-16 code units,
+    // consistent with the main-program ceiling.
+    private readonly SourceProcessingBudget _budget;
+
+    /// <summary>
+    /// True when this elaboration emitted a source/module resource-policy diagnostic. Engine runs
+    /// use this to avoid evaluating placeholder AST nodes merely to append unrelated evaluator
+    /// context to a pre-evaluation resource rejection.
+    /// </summary>
+    internal bool HasSourceProcessingErrors { get; private set; }
 
     /// <summary>
     /// Creates a new ModuleLoader.
@@ -35,16 +46,39 @@ public sealed class ModuleLoader
     /// <param name="allowedHosts">
     /// Set of allowed hostnames. Defaults to katlang.org only.
     /// </param>
+    /// <remarks>
+    /// One loader instance is one module-elaboration scope: its cache and default budget are shared
+    /// by every <see cref="Elaborate"/> call on that instance. Because this AST-based constructor
+    /// does not receive the original main-source text, its aggregate budget covers imported module
+    /// source only. Normal parse/run entry points create an internal loader with the main source
+    /// already charged.
+    /// </remarks>
     public ModuleLoader(
         List<Diagnostic> diagnostics,
         Func<string, string>? downloadCode = null,
         IEnumerable<string>? allowedHosts = null)
+        : this(diagnostics, downloadCode, allowedHosts, budget: null)
+    {
+    }
+
+    /// <summary>
+    /// Front-end entry point that threads the run-scoped <see cref="SourceProcessingBudget"/> so
+    /// import depth, distinct-module count, and aggregate source are accounted across the whole run.
+    /// The public constructor delegates here with a fresh default budget, so a directly-constructed
+    /// loader still enforces the always-active ceilings.
+    /// </summary>
+    internal ModuleLoader(
+        List<Diagnostic> diagnostics,
+        Func<string, string>? downloadCode,
+        IEnumerable<string>? allowedHosts,
+        SourceProcessingBudget? budget)
     {
         _diagnostics = diagnostics;
         _downloadCode = downloadCode ?? DefaultDownloadCode;
         _allowedHosts = allowedHosts is not null
             ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "katlang.org" };
+        _budget = budget ?? new SourceProcessingBudget(null);
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -303,9 +337,30 @@ public sealed class ModuleLoader
     /// </summary>
     private Expr FetchAndSplice(string normalizedUrl, SourceSpan? span)
     {
+        // Import-depth ceiling: descend one level, or turn a would-be host stack overflow into a
+        // structured diagnostic. Only reached on a cache MISS, so it bounds the true chain depth.
+        // Paired with ExitModule in the finally below.
+        if (!_budget.TryEnterModule())
+        {
+            ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleImportDepthExceeded(
+                normalizedUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, span));
+            return new Expr.Num(0) { Span = span };
+        }
+
         _inProgress.Add(normalizedUrl);
         try
         {
+            // Distinct-module ceiling, checked BEFORE downloading a new module (this is a cache
+            // miss). Checking capacity before the fetch means a run past the module-count ceiling
+            // never pays for extra downloads. The reservation is committed below only once the
+            // aggregate also fits, so a later-rejected load leaves the count unchanged.
+            if (!_budget.CanReserveModule())
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleCountExceeded(
+                    normalizedUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, span));
+                return new Expr.Num(0) { Span = span };
+            }
+
             // Fetch
             string source;
             try
@@ -318,12 +373,33 @@ public sealed class ModuleLoader
                 return new Expr.Num(0) { Span = span };
             }
 
-            // Size check
-            if (source.Length > MaxSourceSize)
+            if (source is null)
             {
-                ReportError(
-                    $"load: source from '{normalizedUrl}' exceeds size limit ({source.Length} > {MaxSourceSize} bytes).",
-                    span);
+                ReportError($"load: fetch for '{normalizedUrl}' returned no source text.", span);
+                return new Expr.Num(0) { Span = span };
+            }
+
+            // Per-module source-length ceiling, checked after download and before parsing, so an
+            // oversized module never allocates tokens or nodes.
+            if (!_budget.SourceLengthWithinLimit(source.Length))
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleSourceLengthExceeded(
+                    normalizedUrl, source.Length, _budget.MaxSourceLength, span));
+                return new Expr.Num(0) { Span = span };
+            }
+
+            // Aggregate-source ceiling. The aggregate and distinct-module reservations are both
+            // PERMANENT, so commit them together only once both fit — a rejected load leaves both
+            // counters unchanged.
+            var requestedTotal = checked(_budget.AggregateSource + source.Length);
+            if (!_budget.TryReserveModuleSource(source.Length))
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.AggregateSourceLengthExceeded(
+                    normalizedUrl,
+                    source.Length,
+                    requestedTotal,
+                    _budget.MaxAggregateSourceLength,
+                    span));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -356,6 +432,7 @@ public sealed class ModuleLoader
         finally
         {
             _inProgress.Remove(normalizedUrl);
+            _budget.ExitModule();
         }
     }
 
@@ -398,5 +475,11 @@ public sealed class ModuleLoader
             message,
             DiagnosticSeverity.Error,
             span ?? new SourceSpan(1, 1, 1, 1)));
+    }
+
+    private void ReportSourceProcessingDiagnostic(Diagnostic diagnostic)
+    {
+        HasSourceProcessingErrors = true;
+        _diagnostics.Add(diagnostic);
     }
 }
