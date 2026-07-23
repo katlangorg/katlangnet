@@ -107,6 +107,17 @@ elseif ($Mode -eq 'utf16') {
     & dotnet run --project $proj -- utf16-seeds $seedDir $manifest
     if ($LASTEXITCODE -ne 0) { throw 'utf16-seeds export failed.' }
 }
+elseif ($Mode -eq 'editor') {
+    # Editor seeds are template payloads for the same reasons the UTF-16 ones are: they select a
+    # template plus difficult UTF-16 code units, and an isolated surrogate has no UTF-8 form, so
+    # storing built source would rewrite it. Same script-owned, cleared-then-regenerated directory.
+    $seedDir  = Join-Path $fuzzDir 'artifacts\editor-seeds'
+    $manifest = Join-Path $fuzzDir 'KatLang.ParserFuzz\EditorTestcases'
+    Write-Section 'Export curated editor seeds'
+    if (Test-Path $seedDir) { Remove-Item -Recurse -Force $seedDir }
+    & dotnet run --project $proj -- editor-seeds $seedDir $manifest
+    if ($LASTEXITCODE -ne 0) { throw 'editor-seeds export failed.' }
+}
 else {
     $seedDir = Join-Path $fuzzDir 'KatLang.ParserFuzz\Testcases'
 }

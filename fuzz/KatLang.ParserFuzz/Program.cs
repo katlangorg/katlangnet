@@ -59,6 +59,12 @@ internal static class Program
         if (args.Length > 0 && args[0] == "utf16-seeds")
             return Utf16Replay.RunExportSeeds(args);       // export seed payloads as a corpus
 
+        // Phase-7 editor-tooling semantic subcommands.
+        if (args.Length > 0 && args[0] == "editor-replay")
+            return EditorReplay.RunReplay(args);           // exact editor-request replay
+        if (args.Length > 0 && args[0] == "editor-seeds")
+            return EditorReplay.RunExportSeeds(args);       // export seed payloads as a corpus
+
         // Phase-6 source/module input-size measurement subcommands (no network; no libFuzzer).
         if (args.Length > 0 && args[0] == "source-probe")
             return SourceModuleProbe.RunSource(args);          // deterministic source shapes
@@ -105,6 +111,15 @@ internal static class Program
             // that may not terminate or may allocate without a practical bound; those are
             // characterized separately by the process-isolated resource probes.
             Fuzzer.LibFuzzer.Run(static bytes => EvaluatorInvariants.Check(DecodeSource(bytes)));
+        }
+        else if (string.Equals(mode, "editor", StringComparison.OrdinalIgnoreCase))
+        {
+            // Editor-tooling semantic target. The bytes are NOT source text: they select a trusted
+            // editor template, difficult UTF-16 code units to inject, a cursor placement and a bounded
+            // edit, then build the KatLang semantic model (KatLang.Semantics) and exercise every query
+            // surface it exposes. Structured "no result" is fine; a crash, an invalid span, an invented
+            // or leaked symbol, or a non-deterministic result is not.
+            Fuzzer.LibFuzzer.Run(static bytes => EditorInvariants.Check(bytes));
         }
         else
         {

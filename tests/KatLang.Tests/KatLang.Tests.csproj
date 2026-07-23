@@ -51,4 +51,15 @@
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndFingerprint.cs" Link="Utf16\FrontEndFingerprint.cs" />
   </ItemGroup>
 
+  <!--
+    The Phase 7 editor-tooling target is shared the same way and for the same reason: its tests must
+    exercise the exact decoder, builder, cursor/edit model, oracle, executor, relations and replay
+    driver the campaign runs. It reuses the UTF-16 code-unit tables and the shared span validator
+    already included above, so nothing here is re-included.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs"
+             Link="Editor\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

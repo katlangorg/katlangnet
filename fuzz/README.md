@@ -18,10 +18,11 @@ drives; every target has a matching deterministic replay subcommand.
 | `evaluator` | the terminating evaluator subset | `evaluator-replay` |
 | `metamorphic` | trusted program **pairs** under a declared relation | `metamorphic-replay` |
 | `utf16` | difficult **UTF-16 source text**: lexer, parser, spans, line/column | `utf16-replay` |
+| `editor` | **editor-tooling semantic model** (`KatLang.Semantics`): classification, hover, symbol lookup, navigation, outline, signatures | `editor-replay` |
 
-The first three feed arbitrary bytes to the language as source text. The last two do not —
-see [Operational-metamorphic fuzzing](#operational-metamorphic-fuzzing) and
-[UTF-16 fuzzing](#utf-16-fuzzing).
+The first three feed arbitrary bytes to the language as source text. The last three do not —
+see [Operational-metamorphic fuzzing](#operational-metamorphic-fuzzing),
+[UTF-16 fuzzing](#utf-16-fuzzing) and [Editor-tooling fuzzing](#editor-tooling-fuzzing).
 
 `ParseSyntax` is the target because it is the pure parser: it does **not** run load
 elaboration, parameter detection, implicit-argument resolution, evaluation, or any
@@ -1146,8 +1147,156 @@ passing — and normalizing source text is never a blanket fix.
   units but not arbitrary *structure*, so deeply nested or very long shapes arrive only by mutation.
 * Evaluation is limited to the string bridge. This is not evaluator fuzzing.
 * No module loading, no downloader, no network path, in any mode.
-* Editor-tooling surfaces (`src/KatLang/Semantics/`) are not covered here.
+* Editor-tooling surfaces (`src/KatLang/Semantics/`) are covered by their own target — see
+  [Editor-tooling fuzzing](#editor-tooling-fuzzing).
 * The `Unexpected character` diagnostic embeds the offending code unit verbatim, so for an isolated
   surrogate the message string is itself ill-formed UTF-16. Faithful in memory, and U+FFFD at any
   UTF-8 boundary downstream. Pinned by a contract test; changing it is a diagnostic-surface decision,
   not a fuzzing one.
+
+## Editor-tooling fuzzing
+
+`KATLANG_FUZZ_MODE=editor` (source: `KatLang.ParserFuzz/Editor/`).
+
+### What it is
+
+The editor target fuzzes the **semantic model** editor tooling in `src/KatLang/Semantics/`
+(`SemanticModelBuilder` / `SemanticModel`) — the layer KatLangWeb builds classification, hover,
+symbol lookup, go-to-definition, document-symbol and signature data from. It proves that editor
+tooling, over arbitrary and malformed source: never crashes; stays deterministic; returns only valid
+UTF-16 source ranges; agrees with the real lexer/parser/front end; never invents a symbol; never
+leaks a synthetic helper; keeps comments and strings out of identifier classification; resolves
+dotted and ordinary calls to the same callable; and remains isolated across requests and small edits.
+A structured "no result", an ordinary diagnostic, or a declined unresolved-`load` request is a good
+outcome; an unexpected exception, an out-of-range or self-inconsistent span, a resolution to a
+differently named or non-existent symbol, or a non-deterministic result is a defect.
+
+### Registered surfaces (only what exists)
+
+The whole model is built and every core invariant is checked for every case; the surface dimension
+selects which query is driven and which observation the fingerprint records. Only surfaces that
+actually exist are registered:
+
+| Surface | Driven query |
+|---|---|
+| classification | `IdentifierResolutions` — classification + occurrence kind per identifier |
+| position resolution (hover) | `FindResolutionAt(line, column)` |
+| property/signature at position | `FindPropertyAt(line, column)` + `PropertyInfo.Signatures` |
+| symbol lookup | `FindResolutions` / `FindDeclarations` / `FindProperties` |
+| navigation (go-to-definition) | `IdentifierResolution.ResolvedDeclaration` |
+| document symbols / outline | `Declarations` + `PropertyInfos` |
+| signature metadata | `PropertyInfo.Signatures` / `GetParameters` |
+
+**Unsupported and therefore not modelled:** there is no completion provider, no active-parameter
+signature-help service, and no incremental parser in the repository. Cases that would exercise those
+use the nearest real surface instead; the harness invents no product feature to raise coverage.
+
+### Case model, UTF-16 and cursor/edit coordinates
+
+The payload is **not** source text: a frozen 13-byte payload selects a template, a UTF-16 code-unit
+group and member to inject into its hole (reusing the Phase 5 UTF-16 tables so isolated surrogates
+stay representable), a placement, a line-ending encoding, an execution mode, a cursor placement, and
+a bounded edit. Nothing grows with an encoded integer; bytes past the prefix are ignored.
+
+* **Source** is exact UTF-16 code units (`ImmutableArray<ushort>`), built once to a `string`.
+* **Coordinates.** `SourceSpan` is 1-based, end-inclusive, columns in UTF-16 code units, `\n`-only
+  line breaks with `\r` transparent — the same model the shared `SourceSpanValidator` enforces. The
+  cursor is stored as an exact UTF-16 offset for replay and converted to (line, column) for the query
+  through that one model; an out-of-range `PastEndOfFile` cursor deliberately queries past the last
+  line, whose documented contract is a `null` resolution.
+* **Edits** transform the exact code units (insert/delete/replace, add/remove dot/comma/delimiter,
+  LF↔CRLF, complete/break string, token-based rename), and the tooling is re-run from a **fresh
+  request** on the edited source. There is no incremental editor API in the repository, so the target
+  exercises full rebuild after each edit; a fresh request on the *original* source after the edited
+  one is processed must reproduce the original result exactly (no stale-source leak).
+
+### Oracles
+
+Layered, and Lean is deliberately not among them:
+
+* **Lexer** — token spans and (line, column), and comment/string token regions the classifier must
+  not overlap.
+* **Parser / front end** — the AST the model is built from; the model must not invent an occurrence,
+  and every occurrence's source slice must equal its reported name.
+* **Runtime metadata** — `BuiltinRegistry` supplies the allowed builtin names and fixed-arity plain
+  parameter counts; the harness re-declares no arity.
+* **Lean** — **not used.** Editor tooling makes no claim about representable KatLang *value*
+  semantics; completion, hover, cursors, spans, recovery, and ordering are not modelled in Lean.
+
+### Metamorphic relations and their preconditions
+
+Compared on a span-free **shape signature** (the sorted set of
+`(occurrence kind, classification, name, resolved-declaration name)` tuples), so a transform that
+legitimately shifts offsets is compared on structure:
+
+* **whitespace-neutral** — duplicating a space that sits strictly between two tokens cannot change
+  resolution structure. Skipped when there is no such inter-token space.
+* **line-ending-neutral** — LF and CRLF encodings of one assembled source resolve identically.
+  Skipped when the source supplies its own `\r` or has no line break.
+* **rename** — renaming every occurrence of a uniquely-scoped user symbol to a fresh name reproduces
+  the structure with the name mapped, and the old name vanishes. Skipped without a clean model or a
+  suitable symbol.
+* **unrelated-declaration** — appending a fresh non-shadowing declaration leaves every existing
+  symbol's resolution unchanged. Skipped without a clean model.
+* **dotted-ordinary** — `F(A, …)` and `A.F(…)` resolve to the same callable declaration (`A.F(B)`
+  means `F(A, B)`, receiver as one leading argument boundary). Only on the dotted/ordinary template.
+
+### Synthetic-symbol, list/sequence/rest and dotted-call policy
+
+Synthetic implementation names (deconstruction `$deconstruct$N` helpers and anything with `$`, all
+declaration-span-free) must never surface as an occurrence, declaration, property, hover, or outline
+symbol. The list/sequence/rest and spread distinctions are inherited from the elaborated AST the
+model projects and are recorded as a fingerprint dimension; the model reports the receiver of a
+dotted call as one leading argument boundary, never a spread.
+
+### Replay and seeds
+
+```powershell
+# replay every curated seed; each case runs twice, so non-determinism is itself a failure
+dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay fuzz\KatLang.ParserFuzz\EditorTestcases
+
+# replay one payload straight from a mismatch report
+dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay --payload 0E010000000000060000000000
+
+# replay recorded crash/corpus artifacts, whose CONTENT is the raw payload
+dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay --raw fuzz\artifacts\crashes-editor
+```
+
+`EditorTestcases/seeds.txt` is the tracked corpus. Like the metamorphic and UTF-16 seeds it stores a
+**template payload**, not source text — `template=<id> bytes=<hex> desc=<note>` — and the declared
+template is checked against the one the payload decodes to. `editor-seeds OUTDIR MANIFEST`
+materializes the raw payloads as a libFuzzer seed corpus.
+
+### Running a campaign
+
+```powershell
+# Stage A - smoke. MaxLen is a small multiple of the 13-byte decoder prefix, not a round number.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode editor -MaxTotalTime 300 -MaxLen 64 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 70001 -FreshCorpus
+
+# Stage B - focused, with a recorded engine seed so the run is reproducible.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode editor -MaxTotalTime 1800 -MaxLen 64 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 70002 -FreshCorpus
+
+# Stage C - independent confirmation: fresh corpus, same seeds, a DIFFERENT engine seed.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode editor -MaxTotalTime 300 -MaxLen 64 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 70003 -FreshCorpus
+```
+
+Retain a finished corpus by renaming it (`artifacts/corpus-editor-stageB`) before the next
+`-FreshCorpus` run; `artifacts/` is gitignored. Replay the whole corpus **twice** and compare, as for
+the other targets. As always, `cov:` in the libFuzzer log counts the C++ driver's edges, **not**
+`KatLang.dll`; the .NET signal is `ft:`, and new-unit **events** are not the same as **net** corpus
+growth.
+
+### Triage
+
+For every crash, invariant failure or non-deterministic replay: keep the raw payload, replay it
+deterministically, record the reconstructed code units as hex, identify the template, surface, cursor
+and edit, minimize, and classify as exactly one of — decoder / edit-application / replay defect;
+invalid relation; semantic-oracle defect; fingerprint defect; span-validation defect; stale-source
+leak; scope leak; synthetic-symbol leak; classification / hover / navigation / document-symbol /
+diagnostic-conversion defect; dotted-call disagreement; builtin-metadata drift; list/sequence/rest
+documentation drift; UTF-16 coordinate defect; parser-recovery interaction; unexpected CLR exception.
+A structured "no result" is never a finding, and broadening a "no result" to silence a mismatch is
+never a legitimate fix.

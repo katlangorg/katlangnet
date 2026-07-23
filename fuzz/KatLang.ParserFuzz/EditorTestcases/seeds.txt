@@ -1,0 +1,82 @@
+# Tracked editor-tooling fuzz seeds (Phase 7).
+#
+# An editor seed is a TEMPLATE PAYLOAD, not a source file: the payload selects a trusted editor
+# template plus difficult UTF-16 code units, a cursor placement and a bounded edit, and the harness
+# regenerates the exact source deterministically. Storing source text would rewrite an isolated
+# surrogate to U+FFFD, so the manifest is pure ASCII and carries the 13-byte payload in hex.
+#
+# The declared template is redundant on purpose: replay checks it against the template the payload
+# decodes to, so a stale seed is reported instead of quietly replaying a different case.
+#
+# Payload layout (one byte each): template, surface, injGroup, injMember, placement, lineEndings,
+# execution, cursor, cursorBias, edit, editGroup, editMember, editBias.
+#
+# There is deliberately NO completion or active-parameter signature-help seed: neither surface exists
+# in KatLang.Semantics, so cases that would target them use the nearest real surface (position
+# resolution, property/signature metadata) instead.
+
+# ── Empty, whitespace, comment ───────────────────────────────────────────────
+template=empty bytes=00 00 00 00 00 00 00 00 00 00 00 00 00 desc=empty source, cursor at offset 0
+template=whitespace-only bytes=01 01 00 00 00 00 00 0C 00 00 00 00 00 desc=whitespace-only, cursor inside whitespace
+template=comment-only bytes=02 01 00 00 00 00 00 0B 00 00 00 00 00 desc=comment, cursor inside the comment
+
+# ── Declarations, references, hover, definition ──────────────────────────────
+template=property-reference bytes=03 02 00 00 00 00 00 03 00 00 00 00 00 desc=property hover inside the identifier
+template=property-reference bytes=03 05 00 00 00 00 00 00 00 00 00 00 00 desc=document symbols / outline at root
+template=zero-arg-property bytes=0B 04 00 00 00 00 00 03 00 00 00 00 00 desc=go-to-definition on a zero-arg property alias
+template=name-shadowing bytes=22 04 00 00 00 00 00 03 00 00 00 00 00 desc=shadowed parameter over property, definition
+template=nested-scope bytes=21 04 00 00 00 00 00 03 00 00 00 00 00 desc=nested block scope, inner definition
+template=open-declaration bytes=27 04 00 00 00 00 00 00 00 00 00 00 00 desc=open target and exposed member
+template=duplicate-declaration bytes=23 05 00 00 00 00 00 00 00 00 00 00 00 desc=duplicate declaration recovery, outline
+
+# ── Calls, dotted calls, signatures ──────────────────────────────────────────
+template=function-call bytes=0C 06 00 00 00 00 00 03 00 00 00 00 00 desc=function signature metadata
+template=function-call bytes=0C 01 00 00 00 00 00 08 00 00 00 00 00 desc=cursor inside a call argument list
+template=incomplete-call bytes=0D 01 00 00 00 00 00 08 00 00 00 00 00 desc=incomplete call, cursor in arg list
+template=dotted-call bytes=0E 01 00 00 00 00 00 06 00 00 00 00 00 desc=position resolution after the dot
+template=incomplete-dotted-call bytes=0F 01 00 00 00 00 00 06 00 00 00 00 00 desc=incomplete dotted call after the dot
+template=dotted-after-list bytes=11 01 00 00 00 00 00 06 00 00 00 00 00 desc=dotted call after a list literal
+template=dotted-ordinary-pair bytes=26 00 00 00 00 00 00 00 00 00 00 00 00 desc=ordinary vs dotted call resolve equally
+template=builtin-call bytes=24 06 00 00 00 00 00 00 00 00 00 00 00 desc=builtin signature metadata
+template=extension-builtin-call bytes=25 01 00 00 00 00 00 06 00 00 00 00 00 desc=extension-style builtin dotted call
+
+# ── Lists, sequences, spread, deconstruction, rest ───────────────────────────
+template=list-literal bytes=14 00 00 00 00 00 00 00 00 00 00 00 00 desc=exact list literal
+template=sequence-literal bytes=15 00 00 00 00 00 00 00 00 00 00 00 00 desc=sequence literal
+template=spread bytes=12 01 00 00 00 00 00 07 00 00 00 00 00 desc=cursor inside a spread operator
+template=partial-spread bytes=13 01 00 00 00 00 00 07 00 00 00 00 00 desc=partial spread operator
+template=deconstruction bytes=19 00 00 00 00 00 00 00 00 00 00 00 00 desc=deconstruction targets, synthetic helper hidden
+template=rest-binding bytes=1A 06 00 00 00 00 00 00 00 00 00 00 00 desc=rest binding signature
+template=incomplete-rest bytes=1B 00 00 00 00 00 00 00 00 00 00 00 00 desc=malformed lone rest binding
+
+# ── Callbacks, clauses ───────────────────────────────────────────────────────
+template=callback bytes=1C 01 00 00 00 00 00 04 00 00 00 00 00 desc=callback body scope
+template=incomplete-callback bytes=1D 01 00 00 00 00 00 08 00 00 00 00 00 desc=incomplete callback call
+template=conditional-clause bytes=1E 00 00 00 00 00 00 00 00 00 00 00 00 desc=conditional clause head pattern
+template=malformed-clause-family bytes=20 00 00 00 00 00 00 00 00 00 00 00 00 desc=malformed clause family, duplicate head
+
+# ── Strings, numbers, malformed tokens ───────────────────────────────────────
+template=unterminated-string bytes=08 01 00 00 00 00 00 0A 00 00 00 00 00 desc=cursor inside an unterminated string
+template=error-before-cursor bytes=28 01 00 00 00 00 00 13 00 00 00 00 00 desc=cursor inside a malformed token
+
+# ── Line endings and cursor boundaries ───────────────────────────────────────
+template=property-reference bytes=03 01 00 00 00 01 00 0E 00 00 00 00 00 desc=cursor between CR and LF (CRLF)
+template=property-reference bytes=03 01 00 00 00 02 00 0D 00 00 00 00 00 desc=lone CR source, cursor at the CR
+template=property-reference bytes=03 00 00 00 00 04 00 00 00 00 00 00 00 desc=no trailing newline
+
+# ── Surrogates and combining marks near the cursor ───────────────────────────
+template=property-reference bytes=03 01 04 00 01 00 00 10 00 00 00 00 00 desc=valid surrogate pair near cursor
+template=property-reference bytes=03 01 04 05 00 00 00 11 00 00 00 00 00 desc=isolated high surrogate near cursor
+template=property-reference bytes=03 01 04 06 00 00 00 12 00 00 00 00 00 desc=isolated low surrogate near cursor
+template=identifier-split bytes=05 01 03 02 00 00 00 03 00 00 00 00 00 desc=combining mark inside an identifier
+
+# ── Edits ────────────────────────────────────────────────────────────────────
+template=unterminated-string bytes=08 00 00 00 00 00 00 00 00 13 00 00 00 desc=edit completing an unterminated string
+template=property-reference bytes=03 00 00 00 00 00 00 04 00 08 00 00 00 desc=edit adding a dot after an identifier
+template=property-reference bytes=03 00 00 00 00 00 00 00 00 15 00 00 00 desc=edit renaming a local symbol
+template=property-reference bytes=03 00 00 00 00 00 00 00 00 16 00 00 00 desc=edit renaming a symbol to a duplicate
+template=raw-standalone bytes=2B 00 00 00 00 00 00 00 00 0E 00 00 00 00 desc=edit adding a newline
+
+# ── Execution mode and modules ───────────────────────────────────────────────
+template=conditional-clause bytes=1E 00 00 00 00 00 01 00 00 00 00 00 00 desc=raw syntax boundary execution mode
+template=load-import bytes=2A 00 00 00 00 00 00 00 00 00 00 00 00 00 desc=module import, unresolved-load decline path
