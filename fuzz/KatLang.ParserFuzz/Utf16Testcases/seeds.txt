@@ -1,0 +1,83 @@
+# Curated UTF-16 seed corpus (KATLANG_FUZZ_MODE=utf16).
+#
+# A UTF-16 seed is a TEMPLATE PAYLOAD, not a KatLang source file. That is not a stylistic
+# preference: an isolated surrogate has NO UTF-8 form, so a seed stored as source text would be
+# rewritten to U+FFFD by git, by an editor, or by File.ReadAllText, and would silently stop testing
+# the thing it names. This manifest is therefore pure ASCII and carries the payload in hex; replay
+# feeds it to the same decoder, builder and executor the fuzzing loop uses.
+#
+# Line format (fields in this order; `units` and `desc` are optional, `desc` runs to end of line):
+#   template=<template-id> bytes=<hex payload> units=<hex code units> desc=<note>
+#
+# `template` is redundant on purpose: it is checked against the template the payload decodes to.
+# `units` pins the EXACT code-unit sequence the payload must build, in four-digit hex — the
+# round-trip guard for the seeds whose whole point is one difficult code unit.
+#
+# PAYLOAD LAYOUT (frozen; see Utf16Decoder):
+#   0 template   1 placement   2 line-ending mode   3 execution mode
+#   4 group      5 member      6 repeat             7 filler
+#   8+ raw tail  (only the two raw templates read it)
+
+# ── 1-4: valid text, ASCII and Latvian ───────────────────────────────────────
+template=string-literal   bytes=06 00 00 01 00 00 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 0041 0027  desc=ASCII valid program
+template=string-literal   bytes=06 00 00 03 01 0E 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 0100 0101 0161 016B 0027  desc=Latvian text in a valid string
+template=property-name    bytes=02 00 00 01 01 0F 00 00  desc=Latvian identifier (macron vowels)
+template=identifier-start bytes=00 00 00 01 01 0B 00 00  desc=Latvian uppercase run in an identifier position
+
+# ── 5-8: combining marks, precomposed versus decomposed ──────────────────────
+template=string-literal   bytes=06 00 00 03 03 01 00 00  desc=base letter plus three combining marks
+template=string-literal   bytes=06 00 00 03 03 04 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 00E9 0027  desc=precomposed e-acute (one code unit)
+template=string-literal   bytes=06 00 00 03 03 05 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 0065 0301 0027  desc=decomposed e-acute (two code units)
+template=identifier-start bytes=00 00 00 01 03 02 00 00  desc=combining mark with no base, in an identifier position
+
+# ── 9-14: surrogates ─────────────────────────────────────────────────────────
+template=string-literal   bytes=06 00 00 03 04 00 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 D83D DE00 0027  desc=valid surrogate pair in a string
+template=string-literal   bytes=06 00 00 03 04 05 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 D83D 0027  desc=isolated HIGH surrogate in a string
+template=string-literal   bytes=06 00 00 03 04 06 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 DE00 0027  desc=isolated LOW surrogate in a string
+template=string-literal   bytes=06 00 00 03 04 0B 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0027 DE00 D83D 0027  desc=reversed surrogate pair (low then high)
+template=eof-boundary     bytes=16 0A 00 01 04 05 00 00  units=004F 0075 0074 0070 0075 0074 0020 003D 0020 0031 000A D83D  desc=isolated surrogate at end of source
+template=delimiter-adjacent bytes=0B 00 00 01 04 05 00 00  desc=surrogate immediately before a delimiter
+
+# ── 15-20: line endings ──────────────────────────────────────────────────────
+template=identifier-start bytes=00 00 00 01 00 00 00 00  units=0041 0020 003D 0020 0031 000A 004F 0075 0074 0070 0075 0074 0020 003D 0020 0041 0041  desc=LF program
+template=identifier-start bytes=00 00 01 01 00 00 00 00  units=0041 0020 003D 0020 0031 000D 000A 004F 0075 0074 0070 0075 0074 0020 003D 0020 0041 0041  desc=CRLF program
+template=identifier-start bytes=00 00 02 01 00 00 00 00  units=0041 0020 003D 0020 0031 000D 004F 0075 0074 0070 0075 0074 0020 003D 0020 0041 0041  desc=lone-CR program (CR is NOT a line break)
+template=multiline-body   bytes=14 00 03 01 00 00 00 00  desc=mixed line endings across a multiline body
+template=string-literal   bytes=06 00 06 01 00 00 00 00  desc=trailing newline after a closed program
+template=string-literal   bytes=06 00 07 01 00 00 00 00  desc=no trailing newline
+
+# ── 21-24: Unicode separators and control characters ─────────────────────────
+template=identifier-start bytes=00 00 00 01 05 0C 00 00  desc=Unicode LINE SEPARATOR U+2028 (whitespace, not a KatLang newline)
+template=identifier-start bytes=00 00 00 01 05 0D 00 00  desc=Unicode PARAGRAPH SEPARATOR U+2029 (whitespace, not a KatLang newline)
+template=delimiter-adjacent bytes=0B 00 00 01 00 09 00 00  desc=NUL in the source
+template=identifier-continue bytes=01 00 00 01 02 0C 00 00  desc=byte-order-mark code unit inside an identifier
+
+# ── 25-30: malformed constructs and recovery points ──────────────────────────
+template=string-unterminated bytes=08 00 00 01 04 05 00 00  desc=unterminated string containing an isolated surrogate
+template=line-comment     bytes=09 00 00 01 04 06 00 00  desc=line comment containing an isolated LOW surrogate
+template=dotted-call      bytes=0C 08 00 01 04 05 00 00  desc=malformed dotted call beside a surrogate
+template=spread-operator  bytes=0D 09 00 01 04 05 00 00  desc=malformed spread beside a surrogate
+template=recovery-point   bytes=15 00 03 01 04 05 00 00  desc=unmatched delimiter with mixed line endings
+template=comment-at-eof   bytes=0A 00 07 01 04 05 00 00  desc=comment running to end of file with a surrogate and no trailing newline
+
+# ── 31-36: raw modes and degenerate sources ──────────────────────────────────
+template=raw-alphabet     bytes=17 00 00 00 00 00 00 00  units=  desc=empty source
+template=raw-literal-units bytes=18 00 00 00 00 00 00 00 2F 00 2F 00 78 00  units=002F 002F 0078  desc=comment-only source
+template=raw-alphabet     bytes=17 00 00 01 00 00 00 00 20 21 22 23 24 25 26 27  desc=raw alphabet walk through the surrogate entries
+template=raw-literal-units bytes=18 00 00 01 00 00 00 00 3D D8 00 DC 0A 00 00 DC  desc=raw literal units: pair, line feed, isolated low surrogate
+template=number-boundary  bytes=05 00 00 01 02 0E 00 00  desc=FULLWIDTH DIGIT ZERO at a number-token boundary
+template=number-boundary  bytes=05 00 00 01 02 0F 00 00  desc=ARABIC-INDIC DIGIT ZERO at a number-token boundary
+
+# ── 37-40: placement stress around difficult units ───────────────────────────
+template=string-literal   bytes=06 06 00 01 04 00 00 00  desc=valid surrogate pair split by a newline
+template=string-literal   bytes=06 07 00 01 04 00 00 00  desc=valid surrogate pair split by punctuation
+template=identifier-continue bytes=01 00 05 01 00 0A 00 00  desc=NUL run with repeated blank lines
+template=parameter-name   bytes=04 03 00 01 02 0A 00 00  desc=zero-width space surrounded by ASCII letters in a parameter name
+
+# ── 41: campaign regression ──────────────────────────────────────────────────
+# Stage A found this in 14,090 executions. It is a HARNESS finding, not a production one: the
+# source is 18 unclosed '[' delimiters, each of which reports "expected ']'" at end of file, so 19
+# diagnostics land on one position while every code unit is still consumed. The invariant that
+# rejected it claimed a stalled recovery loop and was measuring nesting instead; its bound is now
+# the parser's own MaxNestingDepth. Kept as a seed so the shape stays covered.
+template=raw-alphabet     bytes=7B 47 FF FF FF FF 3E 00 00 F5 00 00 F5 0B 0B 01  desc=18 unclosed brackets stack one diagnostic per open level at end of file

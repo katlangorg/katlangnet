@@ -53,6 +53,12 @@ internal static class Program
         if (args.Length > 0 && args[0] == "metamorphic-seeds")
             return MetamorphicReplay.RunExportSeeds(args); // export seed payloads as a corpus
 
+        // Phase-6 UTF-16 lexer/parser/span subcommands.
+        if (args.Length > 0 && args[0] == "utf16-replay")
+            return Utf16Replay.RunReplay(args);            // exact code-unit replay
+        if (args.Length > 0 && args[0] == "utf16-seeds")
+            return Utf16Replay.RunExportSeeds(args);       // export seed payloads as a corpus
+
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)
 
@@ -73,6 +79,13 @@ internal static class Program
             // equivalence is guaranteed by construction, which the harness then runs with
             // independent state and compares under an explicitly declared relation.
             Fuzzer.LibFuzzer.Run(static bytes => MetamorphicInvariants.Check(bytes));
+        }
+        else if (string.Equals(mode, "utf16", StringComparison.OrdinalIgnoreCase))
+        {
+            // UTF-16 lexer/parser/span target. The bytes are NOT source text: they select a trusted
+            // template and a named run of UTF-16 code units, so ill-formed UTF-16 — isolated
+            // surrogates above all — stays representable, which UTF-8 decoding could never do.
+            Fuzzer.LibFuzzer.Run(static bytes => Utf16Invariants.Check(bytes));
         }
         else if (string.Equals(mode, "evaluator", StringComparison.OrdinalIgnoreCase))
         {

@@ -27,6 +27,34 @@ internal static class SourceSpanValidator
         return [.. widths];
     }
 
+    /// <summary>
+    /// The 1-based (line, column) of a UTF-16 code-unit OFFSET, under the same model as
+    /// <see cref="LineWidths"/>: <c>'\n'</c> starts a line, <c>'\r'</c> is transparent, and every
+    /// other code unit — including one half of a surrogate pair — advances the column by one.
+    ///
+    /// <para>This is the offset-side projection of the one model the whole harness shares, and it
+    /// is what cross-checks the lexer: the lexer tracks line/column incrementally while scanning,
+    /// this recomputes them from the token's recorded offset, and the two must agree for every
+    /// token. An offset equal to the source length is legal and yields the end-of-file position.</para>
+    /// </summary>
+    public static (int Line, int Column) LineColumnAt(string source, int offset)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(offset, source.Length);
+
+        int line = 1;
+        int column = 1;
+        for (int i = 0; i < offset; i++)
+        {
+            char c = source[i];
+            if (c == '\n') { line++; column = 1; }
+            else if (c != '\r') { column++; }
+        }
+
+        return (line, column);
+    }
+
     /// <summary>Returns null when the span is valid for the source, otherwise a short
     /// reason describing the violation.</summary>
     public static string? Validate(SourceSpan s, int[] lineWidths)

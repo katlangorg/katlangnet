@@ -44,7 +44,7 @@ param(
     [int]$Timeout = 5,           # per-input timeout in seconds
     [int]$RssLimitMb = 2048,     # memory limit (~2 GiB)
     [string]$Distro = '',        # optional specific WSL distro (else the WSL default)
-    [string]$Mode = '',          # KATLANG_FUZZ_MODE: '' = raw parser, frontend, evaluator, metamorphic
+    [string]$Mode = '',          # KATLANG_FUZZ_MODE: '' = raw parser, frontend, evaluator, metamorphic, utf16
     [string]$SeedDir = '',       # override the read-only seed corpus (else the mode's default)
     [int]$FuzzerSeed = 0,        # fixed libFuzzer -seed (0 = engine picks its own, as before)
     [switch]$FreshCorpus,        # clear the writable corpus before running
@@ -94,6 +94,18 @@ elseif ($Mode -eq 'metamorphic') {
     if (Test-Path $seedDir) { Remove-Item -Recurse -Force $seedDir }
     & dotnet run --project $proj -- metamorphic-seeds $seedDir $manifest
     if ($LASTEXITCODE -ne 0) { throw 'metamorphic-seeds export failed.' }
+}
+elseif ($Mode -eq 'utf16') {
+    # UTF-16 seeds are template payloads for the same reason metamorphic ones are, plus a stronger
+    # one: a seed containing an isolated surrogate has NO UTF-8 form, so storing it as source text
+    # would let git or an editor rewrite it to U+FFFD and the seed would silently stop testing the
+    # thing it names. Same script-owned, cleared-then-regenerated export directory.
+    $seedDir  = Join-Path $fuzzDir 'artifacts\utf16-seeds'
+    $manifest = Join-Path $fuzzDir 'KatLang.ParserFuzz\Utf16Testcases'
+    Write-Section 'Export curated UTF-16 seeds'
+    if (Test-Path $seedDir) { Remove-Item -Recurse -Force $seedDir }
+    & dotnet run --project $proj -- utf16-seeds $seedDir $manifest
+    if ($LASTEXITCODE -ne 0) { throw 'utf16-seeds export failed.' }
 }
 else {
     $seedDir = Join-Path $fuzzDir 'KatLang.ParserFuzz\Testcases'

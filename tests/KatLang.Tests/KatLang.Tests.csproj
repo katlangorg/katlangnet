@@ -35,4 +35,20 @@
              Link="Metamorphic\%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!--
+    The UTF-16 target is shared the same way and for the same reason: its tests must exercise the
+    exact decoder, builder, executor, relations and replay driver the campaign runs. It also needs
+    the four harness files it reuses instead of reimplementing — the shared span validator (whose
+    line/column model is the one contract every layer checks against), the raw-parser invariants,
+    the frontend invariants, and the structural fingerprint. All of them are SharpFuzz-free.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Utf16\*.cs"
+             Link="Utf16\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\SourceSpanValidator.cs" Link="Utf16\SourceSpanValidator.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FuzzInvariants.cs" Link="Utf16\FuzzInvariants.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndInvariants.cs" Link="Utf16\FrontEndInvariants.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndFingerprint.cs" Link="Utf16\FrontEndFingerprint.cs" />
+  </ItemGroup>
+
 </Project>

@@ -17,9 +17,11 @@ drives; every target has a matching deterministic replay subcommand.
 | `frontend` | `FrontEndPipeline.Process` — the elaborated front end | `frontend-replay` |
 | `evaluator` | the terminating evaluator subset | `evaluator-replay` |
 | `metamorphic` | trusted program **pairs** under a declared relation | `metamorphic-replay` |
+| `utf16` | difficult **UTF-16 source text**: lexer, parser, spans, line/column | `utf16-replay` |
 
-The first three feed arbitrary bytes to the language as source text. The fourth does not —
-see [Operational-metamorphic fuzzing](#operational-metamorphic-fuzzing).
+The first three feed arbitrary bytes to the language as source text. The last two do not —
+see [Operational-metamorphic fuzzing](#operational-metamorphic-fuzzing) and
+[UTF-16 fuzzing](#utf-16-fuzzing).
 
 `ParseSyntax` is the target because it is the pure parser: it does **not** run load
 elaboration, parameter detection, implicit-argument resolution, evaluation, or any
@@ -42,6 +44,9 @@ fuzz/
     Metamorphic/                # operational-metamorphic target (case model, relations,
                                 #   decoder, templates, executor, comparator, replay)
     MetamorphicTestcases/       # tracked metamorphic seeds (template payloads, not sources)
+    Utf16/                      # UTF-16 target (tables, decoder, source builder, executor,
+                                #   relations, fingerprint, replay)
+    Utf16Testcases/             # tracked UTF-16 seeds (payloads in hex, never source text)
   katlang.dict                  # libFuzzer dictionary of KatLang fragments
   run-campaign.sh               # WSL-side: build driver + run libFuzzer
   README.md                     # this file
@@ -50,12 +55,13 @@ scripts/
   fuzz-parser.ps1               # Windows-side orchestration (publish + instrument + run)
 ```
 
-The harness project stays outside `KatLang.slnx`, with one deliberate exception: the
-self-contained `Metamorphic/` folder is compiled into `tests/KatLang.Tests` as shared source
-(`<Compile Include="..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs" />`), so
-`MetamorphicFuzzHarnessTests` exercises exactly the decoder, template, executor, comparator,
-and replay driver the campaign runs instead of a second copy. Nothing else in `fuzz/` is part
-of normal validation.
+The harness project stays outside `KatLang.slnx`, with two deliberate exceptions: the
+self-contained `Metamorphic/` and `Utf16/` folders are compiled into `tests/KatLang.Tests` as
+shared source, so `MetamorphicFuzzHarnessTests` and `Utf16FuzzHarnessTests` exercise exactly the
+decoder, template, executor and replay driver the campaign runs instead of a second copy. `Utf16/`
+also pulls in the four harness files it reuses rather than reimplements — `SourceSpanValidator.cs`,
+`FuzzInvariants.cs`, `FrontEndInvariants.cs`, `FrontEndFingerprint.cs`. Nothing else in `fuzz/` is
+part of normal validation, and none of the shared files may reference SharpFuzz.
 
 ## Invariants
 
@@ -877,3 +883,226 @@ rounds, mixed succeeding/failing runs, and cache/budget/diagnostic contamination
 6. Add curated seeds and extend `MetamorphicPhase2FamilyTests` — its stratified sweep crosses
    each family's own dimensions exhaustively, so a new dimension is covered once the tables list
    it.
+
+## UTF-16 fuzzing
+
+`KATLANG_FUZZ_MODE=utf16` fuzzes **source text**, not programs: the lexer, the parser, parser
+recovery, the front end, diagnostics, source spans, and line/column reporting, over UTF-16 that is
+hard on purpose — isolated surrogates, combining marks, mixed line endings, zero-width format
+characters, NUL, and Unicode separators that look like newlines and are not.
+
+The goal is **not** to make difficult UTF-16 parse. Structured, deterministic rejection is a
+perfectly good outcome — most of the space produces diagnostics, and that is the point. What must
+never happen is an unexpected exception, an out-of-range or self-inconsistent span, a token that
+disagrees with the source it came from, unbounded or position-stuck diagnostics, a non-deterministic
+result, or a silently normalized code unit.
+
+### Why the payload is not source bytes
+
+The other three source-text targets decode fuzzer bytes as UTF-8. That cannot work here: **an
+isolated surrogate has no UTF-8 form.** Any byte string handed to `Encoding.UTF8.GetString` comes
+back as well-formed UTF-16, so the single most interesting input class in this phase would be
+unreachable — and a seed stored as a source *file* would be rewritten to U+FFFD by git, an editor,
+or `File.ReadAllText`, silently, with the seed still sitting there looking like it tested something.
+
+So the payload selects code units explicitly. It picks a trusted source template, a named run of
+code units, a placement, a line-ending encoding and an execution mode; two raw modes build the units
+from the payload tail instead — one through a fixed alphabet of difficult units, one from literal
+little-endian `ushort` pairs — so an arbitrary or unassigned code unit is still reachable.
+
+```
+byte 0  template          25 entries: identifier start/continue, property name, function name,
+                          parameter name, number boundary, string literal, backslash in string,
+                          unterminated string, line comment, comment at EOF, delimiter adjacency,
+                          dotted call, spread, list literal, sequence literal, deconstruction,
+                          rest binding, callback body, conditional clause, multiline body,
+                          recovery point, EOF boundary, plus the two raw modes
+byte 1  placement         alone, after/before/around an ASCII letter, doubled, tripled, split by a
+                          newline, split by punctuation, after a dot, before a spread, at end of source
+byte 2  line endings      Lf, Crlf, LoneCr, Mixed, NoNewline, RepeatedBlankLines,
+                          TrailingNewline, NoTrailingNewline
+byte 3  execution         ParseSyntax, FrontEnd, EngineParse, StringBridge
+byte 4  code-unit group   Basic, Latvian, BmpSymbols, Combining, Surrogates, Whitespace
+byte 5  member            which entry of that group
+byte 6  repeat            1..4 copies
+byte 7  filler            which ASCII letter the adjacency placements use
+byte 8+ raw tail          48 bytes, read ONLY by the two raw templates
+```
+
+Every field is taken modulo its table size, so **every** byte string decodes, including the empty
+one. The bounded prefix is **56 bytes** — which is why campaigns run with `-MaxLen 56` rather than a
+large round number: nothing past byte 55 can change a case, so a bigger limit only spends the
+engine's effort on tails that cannot matter.
+
+### The code-unit model
+
+Source text is a sequence of UTF-16 **code units**, because that is what `string` indexing exposes
+and what the lexer classifies. Nothing is normalized to NFC/NFD/NFKC/NFKD, nothing is converted to
+scalar values or runes, and no ill-formed surrogate is replaced before the lexer sees it. The builder
+assembles a `List<ushort>` and converts to a `string` exactly once, at the end.
+
+The contract this target rests on — written down in `Utf16LexerContractTests`, and nowhere else:
+
+| Question | Answer |
+|---|---|
+| What indexes a source position? | UTF-16 code units. Token `Position`/`Length` are code-unit offsets. |
+| Line and column base | 1-based; `SourceSpan` end positions are **inclusive**. |
+| What do columns count? | UTF-16 code units — not scalars, not graphemes, not tab-expanded columns. |
+| Surrogate pair | **Two** columns. Neither half is ever an identifier character (`char.IsLetter` is per code unit), so an astral letter lexes as two bad tokens. |
+| Combining mark | Its own column, and not an identifier character. Precomposed and decomposed forms are different sources and stay different values. |
+| Line break | `'\n'` **only**. |
+| `'\r'` | Transparent: advances neither line nor column. A lone CR is *not* a line break — though it does end a string literal and a comment. |
+| U+2028, U+2029, U+0085, VT, FF, NBSP | `char.IsWhiteSpace` is true, so they separate tokens and cost one column — but none starts a line. |
+| U+200B, U+200D, U+FEFF | Category `Cf`, **not** whitespace: they become bad tokens. A BOM mid-file is a diagnostic, not trivia. |
+| Non-ASCII letters | Identifier characters (Latvian, Greek, Cyrillic, ideographic, and letter-like symbols). |
+| Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `decimal.TryParse` then rejects under the invariant culture. |
+| String literals | Single quotes, **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. |
+| Comments | `//` to `'\n'` or `'\r'`. There is no block-comment form. |
+
+### Invariants
+
+Everything the raw-parser and frontend layers already guarantee is checked by **calling** those
+layers (`FuzzInvariants`, `FrontEndInvariants`) rather than restating their rules. What this target
+adds is all about the code-unit model:
+
+1. **Forward progress.** The token stream covers the source with strictly increasing offsets, every
+   non-EOF token consumes at least one code unit, and the EOF token sits at exactly `source.Length`.
+   A lexer that stalled on an isolated surrogate fails here rather than hanging.
+2. **No token spans a line break.** Every scan terminates at `'\n'`/`'\r'`, which is precisely what
+   makes `Column + Length` a sound end column.
+3. **Location cross-check.** Each token's recorded `(Line, Column)` must equal the one recomputed
+   from its offset by `SourceSpanValidator.LineColumnAt` — the lexer tracks them incrementally while
+   scanning, this derives them from the source, and they must agree. One shared helper, one model,
+   used by the raw, frontend and UTF-16 layers alike.
+4. **Exact source slices.** Identifier, comment and string-literal token text must be the exact
+   source slice (minus `//` or the quotes). This is what catches a normalization or a replacement
+   character introduced anywhere on the path.
+5. **Bounded diagnostics.** Total diagnostics are bounded linearly in source length, and the number
+   sharing one `(line, column)` is bounded by `Parser.MaxNestingDepth`.
+6. **Determinism and isolation.** A/A and A/B/A on every input, plus a reversed-order sweep in the
+   deterministic tests.
+
+Invariant violations and unexpected CLR exceptions both escape to the fuzzing engine with their
+original type and stack. Nothing converts one into an ordinary diagnostic.
+
+A note on that fifth bound, because it is the one that is easy to get wrong. Diagnostics stack at
+one position when nested constructs are left open: `[[[[` reports "expected `]`" once per bracket,
+all at end of file. Every code unit is consumed the whole time, so this is *not* a stalled recovery
+loop, and a bound justified as "the parser must make progress" would be measuring the wrong thing.
+An early version of this harness did exactly that, with a ceiling of 16 taken from templates that
+never nest; a five-minute campaign refuted it in 14,090 executions. The bound is now one diagnostic
+per open construct, and open constructs are capped by the parser's own nesting guard. Forward
+progress is established separately and structurally, by the token invariants above.
+
+### Relations
+
+Four trusted relations, each with a named precondition. Where the contract deliberately differs
+between two encodings, the relation pins the **divergence** — asserting equality there would be a
+false relation, not a stronger test.
+
+| Relation | Claim | Precondition |
+|---|---|---|
+| `cr-transparency` | LF and CRLF give identical tokens (kind, line, column, length, text), identical diagnostics, and an identical syntax tree. Offsets shift and are deliberately not compared. | The LF encoding contains no CR of the case's own. |
+| `lone-cr-not-a-line-break` | Re-encoding every break as a lone CR collapses the source to one line: every token and every span stays on line 1. | Same, plus the source has a line break to re-encode. |
+| `trailing-newline-neutral` | Appending a newline to a closed, diagnostic-free program leaves the syntax tree — spans included — unchanged. | The template is a closed program and the case parses cleanly. Never applied to unterminated constructs or a comment running to EOF. |
+| `exact-string-preservation` | A valid string literal reaches the evaluator as exactly the code units between the quotes, with `Length` counting code units. | A closed, diagnostic-free single-literal program whose content cannot end the literal. |
+
+`cr-transparency` is a strong claim rather than a structural one *because* `'\r'` advances neither
+line nor column and every token scan already stops at `'\n'`: inserting a CR immediately before each
+LF cannot change any token's text, length, line or column. That is exactly why the relation compares
+spans directly instead of neutralizing them first.
+
+The string bridge is the only path in this target that evaluates anything, and it runs only for a
+closed single-literal program. This is not general evaluator fuzzing.
+
+### Seeds and replay
+
+Seeds live in `fuzz/KatLang.ParserFuzz/Utf16Testcases/seeds.txt` — pure ASCII, one reviewable line
+per case:
+
+```
+template=string-literal bytes=06 00 00 03 04 05 00 00 units=004F ... D83D 0027 desc=isolated HIGH surrogate
+```
+
+`template` is redundant on purpose and is checked against the template the payload decodes to.
+`units` is optional and, where present, pins the **exact** code-unit sequence in four-digit hex — the
+round-trip guard for the seeds whose whole point is one difficult code unit. Malformed metadata is
+reported, never silently accepted.
+
+```bash
+# replay every tracked seed; each case runs TWICE, so non-determinism is itself a failure
+dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay fuzz/KatLang.ParserFuzz/Utf16Testcases
+
+# replay one payload straight from a report
+dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay --payload "06 00 00 03 04 05 00 00"
+
+# replay recorded crash/corpus artifacts, whose CONTENT is the raw payload
+dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay --raw fuzz/artifacts/crashes-utf16
+```
+
+Replay uses the same decoder, builder, executor and relations as the fuzzing loop, prints every
+case's exact code units in hex, and treats "the given paths contain no seeds" as a failure rather
+than a clean run.
+
+### Running a campaign
+
+```powershell
+# Stage A - smoke. MaxLen is the decoder's bounded prefix, not a round number.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode utf16 -MaxTotalTime 300 -MaxLen 56 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 50001 -FreshCorpus
+
+# Stage B - focused, with a recorded engine seed so the run is reproducible.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode utf16 -MaxTotalTime 1800 -MaxLen 56 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 50002 -FreshCorpus
+
+# Stage C - independent confirmation: fresh corpus, same seeds, a DIFFERENT engine seed.
+powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 `
+  -Mode utf16 -MaxTotalTime 300 -MaxLen 56 -Timeout 5 -RssLimitMb 2048 -FuzzerSeed 50003 -FreshCorpus
+```
+
+Then replay the whole corpus **twice** and compare, exactly as for the metamorphic target. Retain a
+finished corpus by renaming it (`artifacts/corpus-utf16-stageB`) before the next `-FreshCorpus` run;
+`artifacts/` is gitignored and the script has no corpus-directory override.
+
+Report `new_units_added` (new-unit **events**) separately from the final corpus size (**net**
+growth): `REDUCE` replaces a unit in place, so the two never match and quoting one as the other
+overstates coverage. And `cov:` in the libFuzzer log counts edges in the C++ driver shim, **not** in
+`KatLang.dll` — the .NET signal is `ft:`.
+
+### Triage
+
+For every crash, invariant failure or non-deterministic replay: keep the raw payload, replay it
+deterministically, record the reconstructed code units as four-digit hex, identify the template and
+placement, minimize, and classify. Never substitute a printable character for a malformed code unit
+to make a reproducer readable — report the code units.
+
+| Class | First question |
+|---|---|
+| decoder / replay-encoding / template defect | Does the payload still rebuild the same code units? |
+| invalid relation or invariant assumption | Does the precondition actually hold, and does the bound measure what it claims? |
+| fingerprint defect | Do two genuinely different outcomes share a fingerprint? |
+| parser forward-progress defect | Which token offset repeats, and what should have consumed it? |
+| lexer / parser / frontend exception | Which code unit reaches which unguarded path? |
+| out-of-range span / invalid line-column | Which coordinate convention was assumed, and which one holds? |
+| CRLF accounting / lone-CR policy | Is a `'\r'` being counted as a column or as a line? |
+| surrogate handling inconsistency | Is one path per-code-unit and another per-scalar? |
+| unintended normalization | Where did the code units stop being the source's? |
+| string-literal preservation defect | Do the literal's units survive to the evaluated value? |
+| diagnostic non-determinism / state isolation | Does A/B/A reproduce it? |
+
+A production fix must preserve or explicitly document the index base, endpoint convention, code-unit
+indexing, line/column convention, CRLF treatment, EOF span behaviour and recovery-node span
+behaviour. A coordinate-policy change is a design decision to report, not something to apply in
+passing — and normalizing source text is never a blanket fix.
+
+### Current limitations
+
+* Only the templates and code-unit tables above are generated. The raw modes reach arbitrary code
+  units but not arbitrary *structure*, so deeply nested or very long shapes arrive only by mutation.
+* Evaluation is limited to the string bridge. This is not evaluator fuzzing.
+* No module loading, no downloader, no network path, in any mode.
+* Editor-tooling surfaces (`src/KatLang/Semantics/`) are not covered here.
+* The `Unexpected character` diagnostic embeds the offending code unit verbatim, so for an isolated
+  surrogate the message string is itself ill-formed UTF-16. Faithful in memory, and U+FFFD at any
+  UTF-8 boundary downstream. Pinned by a contract test; changing it is a diagnostic-surface decision,
+  not a fuzzing one.
