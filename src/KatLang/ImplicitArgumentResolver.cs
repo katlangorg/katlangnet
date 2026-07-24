@@ -41,7 +41,7 @@ public static class ImplicitArgumentResolver
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
+        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is a fully-elaborated
         // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
         // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
         // would still build an O(N) existing-parameter set and source-binding-kind map per helper —

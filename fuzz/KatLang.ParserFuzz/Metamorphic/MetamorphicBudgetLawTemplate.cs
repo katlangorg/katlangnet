@@ -113,7 +113,7 @@ internal static class MetamorphicBudgetLawTemplate
         new("filter-count-pipeline", $"{Big}(x) = x > 2\nOutput = range(1, 9).filter({Big}).count"),
         new("nested-structures", "Output = [[1, 2], [3, 4]], (5, 6)"),
         new("mixed-collection", $"{V} = [1, 'ab', [2, 3]]\nOutput = {V}.count, {V}"),
-        new("exact-rest-list", $"{F}(items...) = items\nOutput = {F}(1, 2, 3, 4)"),
+        new("exact-rest-list", $"{F}(...items) = items\nOutput = {F}(1, 2, 3, 4)"),
     ];
 
     internal static int SourceCount => Sources.Length;

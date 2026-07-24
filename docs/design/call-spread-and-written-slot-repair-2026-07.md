@@ -97,7 +97,7 @@ The flat-variadic loop-state minimum is now the FIXED parameter count, the
 same rule as every other rest receiver (`bindParameterPatternList`,
 deconstruction, calls, callbacks, and the patterned loop path): the rest may
 collect ZERO slots as the exact empty list `[]`. Before:
-`Step(acc, x...) = ...` + `repeat(Step, 3, 10)` failed with
+`Step(acc, ...x) = ...` + `repeat(Step, 3, 10)` failed with
 "expects at least 2 state values". After: binds `acc = 10`, `x = []`.
 The old loop-only "rest collects at least one slot" restriction had no
 independent semantic justification and was bypassed by patterned steps.
@@ -106,7 +106,7 @@ Pinned by `bindCallableArguments_mixed_fixed_only_empty_rest` /
 and twin C#/Lean tests. Deliberate corollary: a REST-ONLY step has zero
 fixed parameters, so its state vector may now shrink to ZERO slots, and the
 loop then returns the visible empty sequence value `()` where the old
-minimum errored (`Step(x...) = x.skip(1)...` + `repeat(Step, 3, 7, 8)` is
+minimum errored (`Step(...x) = x.skip(1)...` + `repeat(Step, 3, 7, 8)` is
 `()`); pinned by `Eval_RestOnlyLoopStep_MayShrinkStateToZeroSlots`.
 
 ## 6. Culture-invariant canonical display (F10)
@@ -137,7 +137,7 @@ colliding with the element separator. Display-only; no Lean impact.
 - A FUNCTION-shaped argument (a builtin, a clause family, or a parameterized
   algorithm — `Algorithm.isFunctionShaped` / `IsFunctionShapedAlgorithm`)
   reaching a TOP-LEVEL rest binding now reports a targeted `TypeMismatch`
-  ("Rest parameter `fs...` collects values, but a supplied argument is a
+  ("Rest parameter `...fs` collects values, but a supplied argument is a
   function...") in both C# and Lean, instead of the self-contradictory
   "Expected 0 parameters, but was called with 0 arguments" surfaced from
   evaluating the bare function as a value. A zero-parameter VALUE property

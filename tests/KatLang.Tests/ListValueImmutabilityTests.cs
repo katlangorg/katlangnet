@@ -335,5 +335,5 @@ public class ListValueImmutabilityTests
         // immutable list value.
         => Assert.Equal(
             string.Join(Environment.NewLine, "1", "[2, 3]"),
-            Display("A = [1, 2, 3]\nx, rest... = A\nx, rest"));
+            Display("A = [1, 2, 3]\nx, ...rest = A\nx, rest"));
 }

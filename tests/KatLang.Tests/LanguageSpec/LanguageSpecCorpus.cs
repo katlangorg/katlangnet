@@ -328,7 +328,7 @@ public static class LanguageSpecCorpus
         {
             Id = "call-value-boundary",
             Category = "item-supply-vs-value",
-            Source = "F(a...) = a\nF(5, 9)\nF(5, 9)...",
+            Source = "F(...a) = a\nF(5, 9)\nF(5, 9)...",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[5, 9]\n5\n9",
             ExpectedRaw = "S[L[5, 9], 5, 9]",
@@ -448,7 +448,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-empty-arg-vs-spread",
             Category = "empty-visible-vs-spread",
-            Source = "F(a...) = a.count\nF(())",
+            Source = "F(...a) = a.count\nF(())",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1",
             ExpectedRaw = "1",
@@ -458,9 +458,9 @@ public static class LanguageSpecCorpus
                 [LCall("F", LEmpty)]),
             Probes =
             [
-                new SpecProbe("F(a...) = a.count\nF((), ())", "ok raw=2 n=1"),
-                new SpecProbe("F(a...) = a.count\nF()", "ok raw=0 n=1"),
-                new SpecProbe("F(a...) = a.count\nF(()...)", "ok raw=0 n=1"),
+                new SpecProbe("F(...a) = a.count\nF((), ())", "ok raw=2 n=1"),
+                new SpecProbe("F(...a) = a.count\nF()", "ok raw=0 n=1"),
+                new SpecProbe("F(...a) = a.count\nF(()...)", "ok raw=0 n=1"),
             ],
             Explanation = "A non-spread `()` is one visible argument slot, so the rest collects `[()]` (count 1); the empty call collects `[]` (count 0), and only spreading `()` contributes zero slots.",
         },
@@ -522,7 +522,7 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-rest-tail",
             Category = "deconstruction",
-            Source = "x, rest... = 1, 2, 3\nrest",
+            Source = "x, ...rest = 1, 2, 3\nrest",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[2, 3]",
             ExpectedRaw = "L[2, 3]",
@@ -536,7 +536,7 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-rest-head",
             Category = "deconstruction",
-            Source = "head..., last = 1, 2, 3\nhead\nlast",
+            Source = "...head, last = 1, 2, 3\nhead\nlast",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 2]\n3",
             ExpectedRaw = "S[L[1, 2], 3]",
@@ -552,7 +552,7 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-rest-middle",
             Category = "deconstruction",
-            Source = "x, middle..., z = 1, 2, 3, 4\nmiddle",
+            Source = "x, ...middle, z = 1, 2, 3, 4\nmiddle",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[2, 3]",
             ExpectedRaw = "L[2, 3]",
@@ -567,7 +567,7 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-empty-rest",
             Category = "deconstruction",
-            Source = "x, rest... = 1\nrest\nx",
+            Source = "x, ...rest = 1\nrest\nx",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[]\n1",
             ExpectedRaw = "S[L[], 1]",
@@ -579,9 +579,9 @@ public static class LanguageSpecCorpus
                 [".resolve \"rest\"", ".resolve \"x\""]),
             Probes =
             [
-                new SpecProbe("x, rest... = 1\nrest.count", "ok raw=0 n=1"),
-                new SpecProbe("x, rest... = 1\nrest...\nx", "ok raw=1 n=1"),
-                new SpecProbe("x, rest... = 1\nrest == []", "ok raw=1 n=1"),
+                new SpecProbe("x, ...rest = 1\nrest.count", "ok raw=0 n=1"),
+                new SpecProbe("x, ...rest = 1\nrest...\nx", "ok raw=1 n=1"),
+                new SpecProbe("x, ...rest = 1\nrest == []", "ok raw=1 n=1"),
             ],
             Explanation = "A rest that collects zero items binds the exact empty list `[]`, one visible output slot; spreading it contributes zero items.",
         },
@@ -634,7 +634,7 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-tutorial-full",
             Category = "deconstruction",
-            Source = "A = 1, 2, 3, 4, 5\n\nx, y..., z = A\nx\ny\nz",
+            Source = "A = 1, 2, 3, 4, 5\n\nx, ...y, z = A\nx\ny\nz",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n[2, 3, 4]\n5",
             ExpectedRaw = "S[1, L[2, 3, 4], 5]",
@@ -652,18 +652,29 @@ public static class LanguageSpecCorpus
         {
             Id = "decon-two-rests-rejected",
             Category = "deconstruction",
-            Source = "a..., b... = 1, 2, 3\na",
+            Source = "...a, ...b = 1, 2, 3\na",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "at most one rest binding",
             Explanation = "A deconstruction pattern allows at most one rest binding.",
         },
         new()
         {
-            Id = "decon-lone-rest-rejected",
+            Id = "decon-lone-rest",
             Category = "deconstruction",
-            Source = "all... = 1, 2, 3\nall",
-            Outcome = SpecOutcome.ParseError,
-            Explanation = "A deconstruction pattern needs at least two targets; rest-only item-supply binding belongs to function parameters, not assignment.",
+            Source = "...all = 1, 2, 3\nall",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]",
+            ExpectedRaw = "L[1, 2, 3]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("d", LNums(1, 2, 3)), LDecon("d", [], ["all"], 0, "all")],
+                [".resolve \"all\""]),
+            Probes =
+            [
+                new SpecProbe("...all = ()\nall", "ok raw=L[] n=1"),
+                new SpecProbe("...all = 7\nall", "ok raw=L[7] n=1"),
+            ],
+            Explanation = "A lone rest deconstruction is valid and collects the whole supplied item stream as one exact list, including exact empty and singleton lists.",
         },
 
         // ==================== variadic-calls ====================
@@ -671,7 +682,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-grouped-and-spread",
             Category = "variadic-calls",
-            Source = "A = 1, 2, 3, 4, 5\n\nG(x...) = x.sum\n\nG(A...)\nG(1, 2, 3, 4, 5)",
+            Source = "A = 1, 2, 3, 4, 5\n\nG(...x) = x.sum\n\nG(A...)\nG(1, 2, 3, 4, 5)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "15\n15",
             ExpectedRaw = "S[15, 15]",
@@ -683,9 +694,9 @@ public static class LanguageSpecCorpus
                  LCall("G", LNums(1, 2, 3, 4, 5))]),
             Probes =
             [
-                new SpecProbe("A = 1, 2, 3, 4, 5\nG(x...) = x.sum\nG(A)", "err arity"),
-                new SpecProbe("G(x...) = x.sum\nG((1, 2, 3, 4, 5))", "err arity"),
-                new SpecProbe("A = 1, 2, 3, 4, 5\nG(x...) = x.count\nG(A)", "ok raw=1 n=1"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(...x) = x.sum\nG(A)", "err arity"),
+                new SpecProbe("G(...x) = x.sum\nG((1, 2, 3, 4, 5))", "err arity"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(...x) = x.count\nG(A)", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A rest parameter collects the supplied argument slots as one exact list. `G(A...)` and `G(1, 2, 3, 4, 5)` supply five numeric slots (sum 15), while the grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued slot — `x = [A]` — so the numeric `sum` element constraint rejects it. Supplying items is always explicit spread.",
@@ -694,7 +705,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-siblings-preserved",
             Category = "variadic-calls",
-            Source = "A = 1, 2\nB = 3, 4\n\nG(x...) = x.count\n\nG(A, B)\nG(A..., B...)",
+            Source = "A = 1, 2\nB = 3, 4\n\nG(...x) = x.count\n\nG(A, B)\nG(A..., B...)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2\n4",
             ExpectedRaw = "S[2, 4]",
@@ -711,7 +722,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-capture-collects-list",
             Category = "variadic-calls",
-            Source = "F(x...) = x\nF(1, 2, 3)",
+            Source = "F(...x) = x\nF(1, 2, 3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 2, 3]",
             ExpectedRaw = "L[1, 2, 3]",
@@ -721,12 +732,12 @@ public static class LanguageSpecCorpus
                 [LCall("F", LNums(1, 2, 3))]),
             Probes =
             [
-                new SpecProbe("F(x...) = x\ncount(F(1, 2, 3))", "ok raw=3 n=1"),
-                new SpecProbe("F(x...) = x\nF(1, 2, 3) == [1, 2, 3]", "ok raw=1 n=1"),
-                new SpecProbe("F(x...) = x\nF(1, 2, 3) == (1, 2, 3)", "ok raw=0 n=1"),
-                new SpecProbe("F(x...) = x\nF()", "ok raw=L[] n=1"),
-                new SpecProbe("F(x...) = x\nF(7)", "ok raw=L[7] n=1"),
-                new SpecProbe("F(x...) = x\nF(F(1, 2))", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("F(...x) = x\ncount(F(1, 2, 3))", "ok raw=3 n=1"),
+                new SpecProbe("F(...x) = x\nF(1, 2, 3) == [1, 2, 3]", "ok raw=1 n=1"),
+                new SpecProbe("F(...x) = x\nF(1, 2, 3) == (1, 2, 3)", "ok raw=0 n=1"),
+                new SpecProbe("F(...x) = x\nF()", "ok raw=L[] n=1"),
+                new SpecProbe("F(...x) = x\nF(7)", "ok raw=L[7] n=1"),
+                new SpecProbe("F(...x) = x\nF(F(1, 2))", "ok raw=L[L[1, 2]] n=1"),
             ],
             Explanation = "Rest binding COLLECTS the supplied argument slots into one exact immutable list: zero slots form `[]`, one slot forms `[item]` (never erased), many form `[a, b, ...]`. The collected list never equals the sequence value with the same items.",
         },
@@ -734,7 +745,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-forwarding-list-spread",
             Category = "variadic-calls",
-            Source = "Target(items...) = items\nForward(items...) = Target(items...)\n\nForward(1, 2)\nForward([1, 2])",
+            Source = "Target(...items) = items\nForward(...items) = Target(items...)\n\nForward(1, 2)\nForward([1, 2])",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 2]\n[[1, 2]]",
             ExpectedRaw = "S[L[1, 2], L[L[1, 2]]]",
@@ -747,10 +758,10 @@ public static class LanguageSpecCorpus
                  LCall("Forward", "(.listLiteral [.num 1, .num 2])")]),
             Probes =
             [
-                new SpecProbe("Target(items...) = items\nForward(items...) = Target(items...)\nForward()", "ok raw=L[] n=1"),
-                new SpecProbe("Target(items...) = items\nForward(items...) = Target(items...)\nForward(7)", "ok raw=L[7] n=1"),
-                new SpecProbe("Target(items...) = items\nForward(items...) = Target(items...)\nForward([1, 2]...)", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("TargetOne(item) = item\nForwardAsOne(items...) = TargetOne(items)\nForwardAsOne(1, 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Target(...items) = items\nForward(...items) = Target(items...)\nForward()", "ok raw=L[] n=1"),
+                new SpecProbe("Target(...items) = items\nForward(...items) = Target(items...)\nForward(7)", "ok raw=L[7] n=1"),
+                new SpecProbe("Target(...items) = items\nForward(...items) = Target(items...)\nForward([1, 2]...)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("TargetOne(item) = item\nForwardAsOne(...items) = TargetOne(items)\nForwardAsOne(1, 2)", "ok raw=L[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Variadic forwarding is ordinary list spread: spreading a collected rest re-supplies exactly its items (`Target(items...)` re-collects the caller's slots, including the empty and singleton cases), while passing the rest without spread passes ONE list argument (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply forwarding.",
@@ -759,7 +770,7 @@ public static class LanguageSpecCorpus
         {
             Id = "implicit-forwarding-source-kind",
             Category = "variadic-calls",
-            Source = "Target(items...) = items\nUse(items) = Target\nUseRest(items...) = Target\n\nUse([1, 2])\nUse((1, 2))\nUseRest(1, 2)",
+            Source = "Target(...items) = items\nUse(items) = Target\nUseRest(...items) = Target\n\nUse([1, 2])\nUse((1, 2))\nUseRest(1, 2)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[[1, 2]]\n[(1, 2)]\n[1, 2]",
             ExpectedRaw = "S[L[L[1, 2]], L[S[1, 2]], L[1, 2]]",
@@ -774,20 +785,20 @@ public static class LanguageSpecCorpus
                  LCall("UseRest", ".num 1", ".num 2")]),
             Probes =
             [
-                new SpecProbe("Target(items...) = items\nUse(items) = Target\nUse(7)", "ok raw=L[7] n=1"),
-                new SpecProbe("Target(items...) = items\nUse(items) = Target(items)\nUse([1, 2])", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("Target(items...) = items\nUseRest(items...) = Target\nUseRest([1, 2])", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("Target(first, middle..., last) = middle\nUse(first, middle..., last) = Target\nUse(1, 2, 3, 4)", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("Target(a...) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(...items) = items\nUse(items) = Target\nUse(7)", "ok raw=L[7] n=1"),
+                new SpecProbe("Target(...items) = items\nUse(items) = Target(items)\nUse([1, 2])", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(...items) = items\nUseRest(...items) = Target\nUseRest([1, 2])", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(first, ...middle, last) = middle\nUse(first, ...middle, last) = Target\nUse(1, 2, 3, 4)", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("Target(...a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a variadic destination (`Use(items) = Target` elaborates to `Target(items)`, so the list stays one collected slot), while a caller rest legitimately forwards as spread (`UseRest(items...) = Target` elaborates to `Target(items...)`).",
+            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a variadic destination (`Use(items) = Target` elaborates to `Target(items)`, so the list stays one collected slot), while a caller rest legitimately forwards as spread (`UseRest(...items) = Target` elaborates to `Target(items...)`).",
         },
         new()
         {
             Id = "variadic-receiver-distinction",
             Category = "variadic-calls",
-            Source = "Inspect(items...) = items\nA = [1, 2, 3]\n\nInspect(A)\nInspect(A...)",
+            Source = "Inspect(...items) = items\nA = [1, 2, 3]\n\nInspect(A)\nInspect(A...)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[[1, 2, 3]]\n[1, 2, 3]",
             ExpectedRaw = "S[L[L[1, 2, 3]], L[1, 2, 3]]",
@@ -799,13 +810,13 @@ public static class LanguageSpecCorpus
                  LCall("Inspect", ".sequenceSpread (.resolve \"A\")")]),
             Probes =
             [
-                new SpecProbe("Inspect(items...) = items\nB = (1, 2, 3)\nInspect(B)", "ok raw=L[S[1, 2, 3]] n=1"),
-                new SpecProbe("Inspect(items...) = items\nB = (1, 2, 3)\nInspect(B...)", "ok raw=L[1, 2, 3] n=1"),
-                new SpecProbe("Inspect(items...) = items\nA = [1, 2]\nA.Inspect", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("CountArgs(items...) = items.count\nCountArgs([10, 20])", "ok raw=1 n=1"),
-                new SpecProbe("CountArgs(items...) = items.count\nCountArgs([10, 20]...)", "ok raw=2 n=1"),
-                new SpecProbe("CountArgs(items...) = items.count\nCountArgs((10, 20))", "ok raw=1 n=1"),
-                new SpecProbe("CountArgs(items...) = items.count\nCountArgs((10, 20)...)", "ok raw=2 n=1"),
+                new SpecProbe("Inspect(...items) = items\nB = (1, 2, 3)\nInspect(B)", "ok raw=L[S[1, 2, 3]] n=1"),
+                new SpecProbe("Inspect(...items) = items\nB = (1, 2, 3)\nInspect(B...)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("Inspect(...items) = items\nA = [1, 2]\nA.Inspect", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("CountArgs(...items) = items.count\nCountArgs([10, 20])", "ok raw=1 n=1"),
+                new SpecProbe("CountArgs(...items) = items.count\nCountArgs([10, 20]...)", "ok raw=2 n=1"),
+                new SpecProbe("CountArgs(...items) = items.count\nCountArgs((10, 20))", "ok raw=1 n=1"),
+                new SpecProbe("CountArgs(...items) = items.count\nCountArgs((10, 20)...)", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver in `A.Inspect` is the same one slot — while explicit spread supplies the immediate items (`Inspect(A...)` collects `[1, 2, 3]`, count 3). The old grouped/spread coincidence is intentionally gone.",
@@ -814,7 +825,7 @@ public static class LanguageSpecCorpus
         {
             Id = "mixed-rest-binding",
             Category = "variadic-calls",
-            Source = "F(x, y..., z) = x + y.sum + z\nF(1, 2, 3, 4, 5)",
+            Source = "F(x, ...y, z) = x + y.sum + z\nF(1, 2, 3, 4, 5)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "15",
             ExpectedRaw = "15",
@@ -825,10 +836,10 @@ public static class LanguageSpecCorpus
                 [LCall("F", LNums(1, 2, 3, 4, 5))]),
             Probes =
             [
-                new SpecProbe("F(x, y..., z) = x + y.sum + z\nF(1, 2)", "ok raw=3 n=1"),
-                new SpecProbe("F(x, y..., z) = x + y.sum + z\nA = 1, 2, 3, 4, 5\nF(A)", "err arity"),
-                new SpecProbe("F(x, y..., z) = y\nF(1, 2, 3, 4, 5)", "ok raw=L[2, 3, 4] n=1"),
-                new SpecProbe("F(x, y..., z) = y\nF(1, 2)", "ok raw=L[] n=1"),
+                new SpecProbe("F(x, ...y, z) = x + y.sum + z\nF(1, 2)", "ok raw=3 n=1"),
+                new SpecProbe("F(x, ...y, z) = x + y.sum + z\nA = 1, 2, 3, 4, 5\nF(A)", "err arity"),
+                new SpecProbe("F(x, ...y, z) = y\nF(1, 2, 3, 4, 5)", "ok raw=L[2, 3, 4] n=1"),
+                new SpecProbe("F(x, ...y, z) = y\nF(1, 2)", "ok raw=L[] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Mixed fixed/rest parameter lists bind the call's argument stream: fixed captures take the front and back, and the rest collects the middle as one exact immutable list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.",
@@ -837,7 +848,7 @@ public static class LanguageSpecCorpus
         {
             Id = "mixed-front-back-family",
             Category = "variadic-calls",
-            Source = "Arg = 1, 2, 3\n\nHead(first, rest...) = first\nTail(first, rest...) = rest\nInit(init..., last) = init\nLast(init..., last) = last\n\nHead(1, (2, 3))\nTail(1, (2, 3))\nInit((1, 2), 3)\nLast(Arg, 3)",
+            Source = "Arg = 1, 2, 3\n\nHead(first, ...rest) = first\nTail(first, ...rest) = rest\nInit(...init, last) = init\nLast(...init, last) = last\n\nHead(1, (2, 3))\nTail(1, (2, 3))\nInit((1, 2), 3)\nLast(Arg, 3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n[(2, 3)]\n[(1, 2)]\n3",
             ExpectedRaw = "S[1, L[S[2, 3]], L[S[1, 2]], 3]",
@@ -858,7 +869,7 @@ public static class LanguageSpecCorpus
         {
             Id = "rest-grouped-vs-opened",
             Category = "variadic-calls",
-            Source = "H(h, t...) = t\nH((1, 2))",
+            Source = "H(h, ...t) = t\nH((1, 2))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[]",
             ExpectedRaw = "L[]",
@@ -868,7 +879,7 @@ public static class LanguageSpecCorpus
                 [LCall("H", LBlock(LNums(1, 2)))]),
             Probes =
             [
-                new SpecProbe("H(h, t...) = t\nH((1, 2)...)", "ok raw=L[2] n=1"),
+                new SpecProbe("H(h, ...t) = t\nH((1, 2)...)", "ok raw=L[2] n=1"),
             ],
             Explanation = "Mixed shapes make the supply boundary observable: `H((1, 2))` binds `h` to the whole pair leaving the empty rest `[]`, while `H((1, 2)...)` opens the pair first so `h = 1` and `t` collects `[2]`.",
         },
@@ -876,7 +887,7 @@ public static class LanguageSpecCorpus
         {
             Id = "variadic-nested-not-flattened",
             Category = "variadic-calls",
-            Source = "Arg = (1, 2), (3, 4)\n\nMany(values...) = values.count\nFlattened = atoms(Arg).count\n\nMany(Arg...)\nFlattened",
+            Source = "Arg = (1, 2), (3, 4)\n\nMany(...values) = values.count\nFlattened = atoms(Arg).count\n\nMany(Arg...)\nFlattened",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2\n4",
             ExpectedRaw = "S[2, 4]",
@@ -888,7 +899,7 @@ public static class LanguageSpecCorpus
                 [LCall("Many", ".sequenceSpread (.resolve \"Arg\")"), ".resolve \"Flattened\""]),
             Probes =
             [
-                new SpecProbe("Arg = (1, 2), (3, 4)\nMany(values...) = values.count\nMany(Arg)", "ok raw=1 n=1"),
+                new SpecProbe("Arg = (1, 2), (3, 4)\nMany(...values) = values.count\nMany(Arg)", "ok raw=1 n=1"),
             ],
             Explanation = "Rest collection is not recursive flattening: `Many(Arg...)` supplies the two nested pairs as two collected elements, the unspread `Many(Arg)` is one collected element, and `atoms` is the explicit recursive projection.",
         },
@@ -896,7 +907,7 @@ public static class LanguageSpecCorpus
         {
             Id = "supply-vs-value-patterns",
             Category = "variadic-calls",
-            Source = "CountValues(values...) = values.count\nCountSequenceValue((values...)) = values.count\n\nCountValues()\nCountValues(1, 2, 3)\nCountValues((1, 2, 3))\nCountSequenceValue((1, 2, 3))",
+            Source = "CountValues(...values) = values.count\nCountSequenceValue((...values)) = values.count\n\nCountValues()\nCountValues(1, 2, 3)\nCountValues((1, 2, 3))\nCountSequenceValue((1, 2, 3))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "0\n3\n1\n3",
             ExpectedRaw = "S[0, 3, 1, 3]",
@@ -909,13 +920,13 @@ public static class LanguageSpecCorpus
                  LCall("CountValues", LNums(1, 2, 3)),
                  LCall("CountValues", LBlock(LNums(1, 2, 3))),
                  LCall("CountSequenceValue", LBlock(LNums(1, 2, 3)))]),
-            Explanation = "Top-level `values...` collects the call's argument slots — a grouped `(1, 2, 3)` is ONE collected element — while the sequence-value pattern `(values...)` consumes exactly one grouped argument and opens it during binding, collecting its three items.",
+            Explanation = "Top-level `...values` collects the call's argument slots — a grouped `(1, 2, 3)` is ONE collected element — while the sequence-value pattern `(...values)` consumes exactly one grouped argument and opens it during binding, collecting its three items.",
         },
         new()
         {
             Id = "redundant-call-parens-canonical",
             Category = "variadic-calls",
-            Source = "Inner = (1, 2, 3)\nCountSequenceValue((values...)) = values.count\nNestedCount(((values...))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount(((1, 2, 3)))\nNestedCount((((1, 2, 3))))",
+            Source = "Inner = (1, 2, 3)\nCountSequenceValue((...values)) = values.count\nNestedCount(((...values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount(((1, 2, 3)))\nNestedCount((((1, 2, 3))))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3\n1\n1\n3\n3",
             ExpectedRaw = "S[3, 1, 1, 3, 3]",
@@ -933,8 +944,8 @@ public static class LanguageSpecCorpus
                  LCall("NestedCount", LBlock(LBlock(LBlock(LNums(1, 2, 3)))))]),
             Probes =
             [
-                new SpecProbe("NestedCount(((values...))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
-                new SpecProbe("CountSequenceValue((values...)) = values.count\nCountSequenceValue(((1, 2), 3))", "ok raw=2 n=1"),
+                new SpecProbe("NestedCount(((...values))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
+                new SpecProbe("CountSequenceValue((...values)) = values.count\nCountSequenceValue(((1, 2), 3))", "ok raw=2 n=1"),
             ],
             Explanation = "A pattern-shaped callee consumes written grouping levels: a bare reference opens to its three items, while ONE extra written level around the argument leaves a single grouped item, which the rest collects exactly (`[Inner]`, count 1). Levels beyond the first stay redundant (unary sequence structure canonicalizes during value construction), and the declared nested pattern depth consumes matching written depth.",
         },
@@ -1182,8 +1193,8 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("I(a) = a\nI(take((1, 2, 3), 2))", "ok raw=L[1, 2] n=1"),
-                new SpecProbe("G(a...) = a\nG(take((1, 2, 3), 2))", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("G(a...) = a\nG(take((1, 2, 3), 2)...)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("G(...a) = a\nG(take((1, 2, 3), 2))", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("G(...a) = a\nG(take((1, 2, 3), 2)...)", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("take((1, 2, 3), 2) == (1, 2)", "ok raw=0 n=1"),
                 new SpecProbe("take((1, 2, 3), 2) == [1, 2]", "ok raw=1 n=1"),
                 new SpecProbe("count(take((1, 2, 3), 2))", "ok raw=2 n=1"),
@@ -1357,7 +1368,7 @@ public static class LanguageSpecCorpus
         {
             Id = "callback-rest-collects",
             Category = "collection-builtins",
-            Source = "Collect(items...) = items\n\n[7].map(Collect)\n[(1, 2)].map(Collect)\n[[1, 2]].map(Collect)",
+            Source = "Collect(...items) = items\n\n[7].map(Collect)\n[(1, 2)].map(Collect)\n[[1, 2]].map(Collect)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[[7]]\n[[(1, 2)]]\n[[[1, 2]]]",
             ExpectedRaw = "S[L[L[7]], L[L[S[1, 2]]], L[L[L[1, 2]]]]",
@@ -1369,12 +1380,12 @@ public static class LanguageSpecCorpus
                  ".dotCall (.listLiteral [.listLiteral [.num 1, .num 2]]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"]),
             Probes =
             [
-                new SpecProbe("Collect(items...) = items\n[[]].map(Collect)", "ok raw=L[L[L[]]] n=1"),
-                new SpecProbe("Collect(items...) = items\n[()].map(Collect)", "ok raw=L[L[S[]]] n=1"),
-                new SpecProbe("Collect(items...) = items\nmap((7, 8), Collect)", "ok raw=L[L[7], L[8]] n=1"),
-                new SpecProbe("IsSingleSeven(items...) = items == [7]\n[7, 8].filter(IsSingleSeven)", "ok raw=L[7] n=1"),
-                new SpecProbe("R(items..., acc) = items == [10]\nreduce([10], R, 99)", "ok raw=1 n=1"),
-                new SpecProbe("R(items...) = items\nreduce([10], R, 99)", "ok raw=L[10, 99] n=1"),
+                new SpecProbe("Collect(...items) = items\n[[]].map(Collect)", "ok raw=L[L[L[]]] n=1"),
+                new SpecProbe("Collect(...items) = items\n[()].map(Collect)", "ok raw=L[L[S[]]] n=1"),
+                new SpecProbe("Collect(...items) = items\nmap((7, 8), Collect)", "ok raw=L[L[7], L[8]] n=1"),
+                new SpecProbe("IsSingleSeven(...items) = items == [7]\n[7, 8].filter(IsSingleSeven)", "ok raw=L[7] n=1"),
+                new SpecProbe("R(...items, acc) = items == [10]\nreduce([10], R, 99)", "ok raw=1 n=1"),
+                new SpecProbe("R(...items) = items\nreduce([10], R, 99)", "ok raw=L[10, 99] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A rest-only map/filter callback receives each iterated element as ONE collected slot: `items` is the exact list `[element]`, preserving the element's kind (scalar, sequence value, or nested list). Reducers supply element and accumulator slots, so a genuine rest-only reducer collects both as `[element, accumulator]`; an element-side rest before a fixed accumulator still observes `[element]`.",
@@ -1383,7 +1394,7 @@ public static class LanguageSpecCorpus
         {
             Id = "callback-mixed-rest-rows",
             Category = "collection-builtins",
-            Source = "F(first, middle..., last) = middle\nRows = [(1, 2, 3, 4)]\n\nRows.map(F)",
+            Source = "F(first, ...middle, last) = middle\nRows = [(1, 2, 3, 4)]\n\nRows.map(F)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[[2, 3]]",
             ExpectedRaw = "L[L[2, 3]]",
@@ -1394,12 +1405,12 @@ public static class LanguageSpecCorpus
                 [".dotCall (.resolve \"Rows\") \"map\" (some (alg [] [] [] [.resolve \"F\"]))"]),
             Probes =
             [
-                new SpecProbe("F((first, middle..., last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)", "ok raw=L[L[2, 3]] n=1"),
-                new SpecProbe("F(first, rest...) = rest\n[(1, 2, 3)].map(F)", "ok raw=L[L[2, 3]] n=1"),
-                new SpecProbe("F(first, rest...) = rest\n[7].map(F)", "ok raw=L[L[]] n=1"),
-                new SpecProbe("F(init..., last) = init\n[(1, 2, 3)].map(F)", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("F((first, ...middle, last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)", "ok raw=L[L[2, 3]] n=1"),
+                new SpecProbe("F(first, ...rest) = rest\n[(1, 2, 3)].map(F)", "ok raw=L[L[2, 3]] n=1"),
+                new SpecProbe("F(first, ...rest) = rest\n[7].map(F)", "ok raw=L[L[]] n=1"),
+                new SpecProbe("F(...init, last) = init\n[(1, 2, 3)].map(F)", "ok raw=L[L[1, 2]] n=1"),
             ],
-            Explanation = "A multi-parameter flat callback opens the lone sequence element into row slots (the established flat-callback row convention), then the shared prefix/rest/suffix binder allocates fixed front/back slots and COLLECTS the middle as an exact list — agreeing with the nested sequence-value pattern form `F((first, middle..., last))`.",
+            Explanation = "A multi-parameter flat callback opens the lone sequence element into row slots (the established flat-callback row convention), then the shared prefix/rest/suffix binder allocates fixed front/back slots and COLLECTS the middle as an exact list — agreeing with the nested sequence-value pattern form `F((first, ...middle, last))`.",
         },
         new()
         {
@@ -1760,7 +1771,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("take((1, 2, 3))", "err arity"),
                 new SpecProbe("take([1, 2, 3])", "err arity"),
                 new SpecProbe("take([1, 2, 3]..., 2)", "err arity"),
-                new SpecProbe("Inspect(items...) = items\nInspect(1, 2, 3)", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("Inspect(...items) = items\nInspect(1, 2, 3)", "ok raw=L[1, 2, 3] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread-opened items (`take([1, 2, 3]..., 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic functions remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.",
@@ -1769,7 +1780,7 @@ public static class LanguageSpecCorpus
         {
             Id = "reduce-accumulates-value",
             Category = "collection-builtins",
-            Source = "Append(item, history...) = (history..., item)\nreduce((2, 3, 4), Append, 1)",
+            Source = "Append(item, ...history) = (history..., item)\nreduce((2, 3, 4), Append, 1)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(1, 2, 3, 4)",
             ExpectedRaw = "S[1, 2, 3, 4]",
@@ -1780,7 +1791,7 @@ public static class LanguageSpecCorpus
                 [LCall("reduce", LBlock(LNums(2, 3, 4)), ".resolve \"Append\"", ".num 1")]),
             Probes =
             [
-                new SpecProbe("Append(item, history...) = (history..., item)\nreduce(2, 3, 4, Append, 1)", "err arity"),
+                new SpecProbe("Append(item, ...history) = (history..., item)\nreduce(2, 3, 4, Append, 1)", "err arity"),
                 new SpecProbe("Add(a, b) = a + b\nreduce((1, 2, 3, 4), Add, 0)", "ok raw=10 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
@@ -2025,7 +2036,7 @@ public static class LanguageSpecCorpus
         {
             Id = "spread-binds-before-list",
             Category = "parser-layout",
-            Source = "X(vals...) = vals.count\nb = (1, 2)\nX(7 b...)",
+            Source = "X(...vals) = vals.count\nb = (1, 2)\nX(7 b...)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
@@ -2509,7 +2520,7 @@ public static class LanguageSpecCorpus
         {
             Id = "rest-collects-exact-list",
             Category = "lists",
-            Source = "x, rest... = [1, 2, 3]\n\nx\nrest",
+            Source = "x, ...rest = [1, 2, 3]\n\nx\nrest",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n[2, 3]",
             ExpectedRaw = "S[1, L[2, 3]]",
@@ -2521,27 +2532,39 @@ public static class LanguageSpecCorpus
                 [".resolve \"x\"", ".resolve \"rest\""]),
             Probes =
             [
-                new SpecProbe("x, rest... = [1]\nrest == []", "ok raw=1 n=1"),
-                new SpecProbe("x, rest... = [1]\nrest == ()", "ok raw=0 n=1"),
-                new SpecProbe("x, rest... = [1, 2]\nrest", "ok raw=L[2] n=1"),
-                new SpecProbe("x, rest... = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
-                new SpecProbe("x, rest... = 1, [2, 3], 4\nrest", "ok raw=L[L[2, 3], 4] n=1"),
-                new SpecProbe("x, rest... = 1, [2, 3]..., (4, 5)...\nrest", "ok raw=L[2, 3, 4, 5] n=1"),
-                new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, rest... = Rows\nrest", "ok raw=L[L[3, 4]] n=1"),
-                new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, rest... = Rows\nrest.count", "ok raw=1 n=1"),
+                new SpecProbe("x, ...rest = [1]\nrest == []", "ok raw=1 n=1"),
+                new SpecProbe("x, ...rest = [1]\nrest == ()", "ok raw=0 n=1"),
+                new SpecProbe("x, ...rest = [1, 2]\nrest", "ok raw=L[2] n=1"),
+                new SpecProbe("x, ...rest = [[1, 2, 3]]\nx", "ok raw=L[1, 2, 3] n=1"),
+                new SpecProbe("x, ...rest = 1, [2, 3], 4\nrest", "ok raw=L[L[2, 3], 4] n=1"),
+                new SpecProbe("x, ...rest = 1, [2, 3]..., (4, 5)...\nrest", "ok raw=L[2, 3, 4, 5] n=1"),
+                new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, ...rest = Rows\nrest", "ok raw=L[L[3, 4]] n=1"),
+                new SpecProbe("Rows = [[1, 2], [3, 4]]\nfirst, ...rest = Rows\nrest.count", "ok raw=1 n=1"),
                 new SpecProbe("skip([1, 2, 3], 1)", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("x, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=1 n=1"),
+                new SpecProbe("x, ...rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A rest binding COLLECTS the item slots assigned to it into one exact immutable list: `rest` from `x, rest... = [1, 2, 3]` is `[2, 3]`, the empty rest is `[]`, a singleton rest is `[item]` (a one-row rest of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
+            Explanation = "A rest binding COLLECTS the item slots assigned to it into one exact immutable list: `rest` from `x, ...rest = [1, 2, 3]` is `[2, 3]`, the empty rest is `[]`, a singleton rest is `[item]` (a one-row rest of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.",
         },
         new()
         {
-            Id = "list-lone-rest-assignment-rejected",
+            Id = "list-lone-rest-assignment",
             Category = "lists",
-            Source = "items... = [1, 2, 3]\nitems",
-            Outcome = SpecOutcome.ParseError,
-            Explanation = "Rest-only assignment stays forbidden for lists exactly as for sequences; the explicit opening form is producer-side spread `items = value...`.",
+            Source = "...items = [1, 2, 3]\nitems",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2, 3]",
+            ExpectedRaw = "L[1, 2, 3]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("d", "(.listLiteral [.num 1, .num 2, .num 3])"),
+                 LDecon("d", [], ["items"], 0, "items")],
+                [".resolve \"items\""]),
+            Probes =
+            [
+                new SpecProbe("...items = []\nitems", "ok raw=L[] n=1"),
+                new SpecProbe("...items = [7]\nitems", "ok raw=L[7] n=1"),
+            ],
+            Explanation = "A lone rest assignment opens one right-hand-side structure boundary and collects its items as one exact immutable list; empty and singleton lists remain exact.",
         },
         new()
         {

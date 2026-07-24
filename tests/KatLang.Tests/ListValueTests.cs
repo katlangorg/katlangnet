@@ -298,7 +298,7 @@ public class ListValueTests
         // Zero arguments reach the callee: a fixed one-parameter callee
         // rejects the call, and a rest-only callee collects the empty list.
         Assert.True(Fails("F(a) = a\nF([]...)"));
-        AssertEvalCounted("Inspect(items...) = items\nInspect([]...)", 1, ListValue());
+        AssertEvalCounted("Inspect(...items) = items\nInspect([]...)", 1, ListValue());
     }
 
     [Fact]
@@ -309,16 +309,16 @@ public class ListValueTests
     public void Call_RestParameter_KeepsListAsOneSuppliedItem()
         // The unspread list is one supplied argument, so the rest collects the
         // nested one-element list [[1, 2]].
-        => AssertEvalCounted("F(items...) = items\nA = [1, 2]\nF(A)", 1, ListValue(ListValue(Atom(1), Atom(2))));
+        => AssertEvalCounted("F(...items) = items\nA = [1, 2]\nF(A)", 1, ListValue(ListValue(Atom(1), Atom(2))));
 
     [Fact]
     public void Call_RestParameter_SpreadSuppliesElements()
-        => AssertEvalCounted("F(items...) = items\nA = [1, 2]\nF(A...)", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("F(...items) = items\nA = [1, 2]\nF(A...)", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void Call_MixedFixedRest_LoneListStaysWhole()
         => AssertEvalCounted(
-            "F(first, rest...) = (first, rest)\nA = [1, 2, 3]\nF(A)",
+            "F(first, ...rest) = (first, rest)\nA = [1, 2, 3]\nF(A)",
             1,
             SequenceValue(ListValue(Atom(1), Atom(2), Atom(3)), ListValue()));
 
@@ -385,47 +385,48 @@ public class ListValueTests
 
     [Fact]
     public void RestBinding_CollectsExactList()
-        => AssertEvalCounted("x, rest... = [1, 2, 3]\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = [1, 2, 3]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2), Atom(3))));
 
     [Fact]
     public void RestBinding_EmptyRemainder_IsEmptyList()
-        => AssertEvalCounted("x, rest... = [1]\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = [1]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue()));
 
     [Fact]
     public void RestBinding_SingletonRemainder_StaysSingletonList()
         // `[2]` is never collapsed to `2` — list structure is exact.
-        => AssertEvalCounted("x, rest... = [1, 2]\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = [1, 2]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2))));
 
     [Fact]
     public void RestBinding_NestedLoneList_OpensOuterOnly()
-        => AssertEvalCounted("x, rest... = [[1, 2, 3]]\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = [[1, 2, 3]]\n(x, rest)", 1,
             SequenceValue(ListValue(Atom(1), Atom(2), Atom(3)), ListValue()));
 
     [Fact]
     public void RestBinding_SpreadProvenance_DoesNotAffectResultKind()
-        => AssertEvalCounted("x, rest... = [1, 2]..., [3, 4]...\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = [1, 2]..., [3, 4]...\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2), Atom(3), Atom(4))));
 
     [Fact]
     public void RestBinding_NonSpreadListItem_StaysOneListValue()
-        => AssertEvalCounted("x, rest... = 1, [2, 3], 4\n(x, rest)", 1,
+        => AssertEvalCounted("x, ...rest = 1, [2, 3], 4\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(ListValue(Atom(2), Atom(3)), Atom(4))));
 
-    // ── Lone-rest assignment stays forbidden ─────────────────────────────────
+    // ── Canonical lone-rest assignment ────────────────────────────────────────
 
     [Fact]
-    public void LoneRestAssignment_OfList_IsRejected()
-    {
-        var result = KatLangEngine.Run("items... = [1, 2, 3]");
-        Assert.True(result.IsFailure);
-    }
+    public void LoneRestAssignment_OfList_CollectsExactList()
+        => AssertDisplay("...items = [1, 2, 3]\nitems", "[1, 2, 3]");
+
+    [Fact]
+    public void LoneRestAssignment_EmptySupply_CollectsEmptyExactList()
+        => AssertDisplay("...items = ()...\nitems", "[]");
 
     [Fact]
     public void RestOnlyFunctionParameters_StillWork()
-        => AssertEvalCounted("Inspect(items...) = items\nInspect(1, 2)", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("Inspect(...items) = items\nInspect(1, 2)", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void ExplicitOpeningForm_IsProducerSideSpread()
@@ -570,14 +571,14 @@ public class ListValueTests
         // opens it into the stream. The rest binding always collects the
         // supplied slots as one exact list — zero slots form [], one slot
         // forms [item], never collapsed.
-        => AssertDisplay($"Inspect(items...) = items\n{call}", expected);
+        => AssertDisplay($"Inspect(...items) = items\n{call}", expected);
 
     [Theory]
-    [InlineData("head, rest... = [1, 2, 3]\nrest", "[2, 3]")]
-    [InlineData("head, rest... = [1]\nrest", "[]")]
-    [InlineData("head, rest... = [1, 2]\nrest", "[2]")]
-    [InlineData("first, rest... = 1, [2, 3]..., (4, 5)...\nfirst", "1")]
-    [InlineData("first, rest... = 1, [2, 3]..., (4, 5)...\nrest", "[2, 3, 4, 5]")]
+    [InlineData("head, ...rest = [1, 2, 3]\nrest", "[2, 3]")]
+    [InlineData("head, ...rest = [1]\nrest", "[]")]
+    [InlineData("head, ...rest = [1, 2]\nrest", "[2]")]
+    [InlineData("first, ...rest = 1, [2, 3]..., (4, 5)...\nfirst", "1")]
+    [InlineData("first, ...rest = 1, [2, 3]..., (4, 5)...\nrest", "[2, 3, 4, 5]")]
     public void RestCapture_CollectsExactList_AcrossListSources(string source, string expected)
         => AssertDisplay(source, expected);
 
@@ -586,9 +587,9 @@ public class ListValueTests
     {
         // Rest capture and the collection builtin now both produce an exact
         // list of the same items, so they compare equal.
-        AssertDisplay("head, rest... = [1, 2, 3]\nrest", "[2, 3]");
+        AssertDisplay("head, ...rest = [1, 2, 3]\nrest", "[2, 3]");
         AssertDisplay("skip([1, 2, 3], 1)", "[2, 3]");
-        AssertAtoms("head, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 1);
+        AssertAtoms("head, ...rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 1);
     }
 
     // ── Collection-producing builtins return one exact list value ────────────
@@ -845,9 +846,9 @@ public class ListValueTests
     {
         // The projected element is one supplied argument, collected as the one
         // element of the rest binding's exact list.
-        AssertEvalCounted("Inspect(items...) = items\nA = [1, 2, 3]\nInspect(A:1)", 1, ListValue(Atom(2)));
+        AssertEvalCounted("Inspect(...items) = items\nA = [1, 2, 3]\nInspect(A:1)", 1, ListValue(Atom(2)));
         AssertEvalCounted(
-            "Inspect(items...) = items\nA = [[1, 2]]\nInspect(A:0)",
+            "Inspect(...items) = items\nA = [[1, 2]]\nInspect(A:0)",
             1,
             ListValue(ListValue(Atom(1), Atom(2))));
     }

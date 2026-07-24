@@ -115,6 +115,28 @@ public class LexerTests
         Assert.Equal(TokenKind.Identifier, tokens[2].Kind);
     }
 
+    [Theory]
+    [InlineData("...items", 0, 3, 3, 5)]
+    [InlineData("... items", 0, 3, 4, 5)]
+    [InlineData("...\nitems", 0, 3, 4, 5)]
+    public void Tokenize_PrefixEllipsisAndIdentifier_RemainDistinctTokens(
+        string source,
+        int markerPosition,
+        int markerLength,
+        int namePosition,
+        int nameLength)
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize(source);
+
+        Assert.Empty(diagnostics);
+        Assert.Equal(TokenKind.Ellipsis, tokens[0].Kind);
+        Assert.Equal(markerPosition, tokens[0].Position);
+        Assert.Equal(markerLength, tokens[0].Length);
+        Assert.Equal(TokenKind.Identifier, tokens[1].Kind);
+        Assert.Equal(namePosition, tokens[1].Position);
+        Assert.Equal(nameLength, tokens[1].Length);
+    }
+
     [Fact]
     public void Tokenize_SpecialTokens_ReturnsCorrectTokens()
     {

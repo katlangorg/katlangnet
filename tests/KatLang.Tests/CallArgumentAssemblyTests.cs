@@ -229,18 +229,18 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void FunctionValuedArgument_InRestBinding_ReportsTargetedDiagnostic()
     {
-        var error = AssertFails("F(fs...) = fs\nF(sum)");
+        var error = AssertFails("F(...fs) = fs\nF(sum)");
         var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
-        Assert.Contains("Rest parameter `fs...` collects values", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("Rest parameter `...fs` collects values", mismatch.Message, StringComparison.Ordinal);
         Assert.Contains("a supplied argument is a function", mismatch.Message, StringComparison.Ordinal);
 
         // A parameterized user function is function-shaped too.
-        var userError = AssertFails("H(x) = x\nF(fs...) = fs\nF(H)");
+        var userError = AssertFails("H(x) = x\nF(...fs) = fs\nF(H)");
         Assert.IsType<EvalError.TypeMismatch>(Innermost(userError));
 
         // Fixed parameters keep the dual algorithm channel: the same argument
         // is legal where a fixed parameter receives it.
-        AssertEvaluates("Apply(f, xs...) = f(xs)\nApply(sum, 1, 2)", Atom(3));
+        AssertEvaluates("Apply(f, ...xs) = f(xs)\nApply(sum, 1, 2)", Atom(3));
     }
 
     [Fact]
@@ -249,10 +249,10 @@ public class CallArgumentAssemblyTests
         // A zero-parameter VALUE property is NOT function-shaped: when its
         // body fails, the rest binding surfaces the genuine evaluation error
         // instead of misdescribing the argument as "a function".
-        var divisionError = AssertFails("Bad = 1 / 0\nG(items...) = items.count\nG(Bad)");
+        var divisionError = AssertFails("Bad = 1 / 0\nG(...items) = items.count\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));
 
-        var emptyError = AssertFails("Data = first([])\nG(items...) = items\nG(Data)");
+        var emptyError = AssertFails("Data = first([])\nG(...items) = items\nG(Data)");
         Assert.IsType<EvalError.BadArity>(Innermost(emptyError));
     }
 }

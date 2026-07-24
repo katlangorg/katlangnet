@@ -43,7 +43,7 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
 
     public string DisplayName => DisplayNameOverride
         ?? (IsVariadic
-            ? $"{Name}..."
+            ? $"...{Name}"
             : Name);
 }
 
@@ -136,7 +136,9 @@ internal static class ConditionalBranchHeadFormatter
     private static string FormatPattern(Pattern pattern, bool nested)
         => pattern switch
         {
-            Pattern.Bind bind => bind.Name,
+            Pattern.Bind bind => bind.ParameterKind == ParameterKind.Variadic
+                ? $"...{bind.Name}"
+                : bind.Name,
             Pattern.LitInt litInt => litInt.Value.ToString(CultureInfo.InvariantCulture),
             Pattern.LitString litString => $"'{litString.Value}'",
             Pattern.SequenceValue sequenceValue => FormatSequenceValue(sequenceValue, nested),

@@ -255,7 +255,7 @@ public class SequenceValueImmutabilityTests
     {
         // Rest bindings collect their assigned slots as one exact immutable
         // list value, probed like ListValueImmutabilityTests probes lists.
-        var run = Run("head, rest... = 1, 2, 3\nrest");
+        var run = Run("head, ...rest = 1, 2, 3\nrest");
         var value = Assert.IsType<Result.ListValue>(run.Value);
 
         ProbeAllViews(value);
@@ -267,7 +267,7 @@ public class SequenceValueImmutabilityTests
     [Fact]
     public void VariadicCapturedList_IsExactList_AndImmutable()
     {
-        var run = Run("Inspect(items...) = items\nInspect(1, 2, 3)");
+        var run = Run("Inspect(...items) = items\nInspect(1, 2, 3)");
         var value = Assert.IsType<Result.ListValue>(run.Value);
 
         ProbeAllViews(value);
@@ -417,7 +417,7 @@ public class SequenceValueImmutabilityTests
     [InlineData("A = 1, 2, 3\nx = A\nx", "(1, 2, 3)")]
     [InlineData("F(x) = x\nA = 1, 2, 3\nF(A)", "(1, 2, 3)")]
     [InlineData("F(a, b, c) = a + b + c\nA = 1, 2, 3\nF(A...)", "6")]
-    [InlineData("Sum(items...) = items.sum\nA = 1, 2, 3\nSum(A...)", "6")]
+    [InlineData("Sum(...items) = items.sum\nA = 1, 2, 3\nSum(A...)", "6")]
     public void RepresentativeSequenceSemantics_Unchanged(string source, string expected)
         // (The grouped rest call `Sum(A)` is intentionally absent: the rest
         // binding collects [A] whose element is non-numeric, so it errors.)

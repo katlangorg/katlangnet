@@ -399,13 +399,13 @@ public class EvaluatorTests
           GcdStep = b~, a mod b, a mod b != 0
           Gcd = GcdStep.while(a, b):1
 
-          FindNext(history..., pre1, pre2) = {
+          FindNext(...history, pre1, pre2) = {
               IsYSCandidate = not history.contains(candidate) and
                   Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
               FindStep = candidate + 1, not IsYSCandidate
               FindStep.while(1):0
           }
-          YSStep((history...), pre2, pre1) = {
+          YSStep((...history), pre2, pre1) = {
               Next = FindNext(history..., pre1, pre2)
               (history..., Next), pre1, Next
           }
@@ -1282,16 +1282,16 @@ public class EvaluatorTests
         => AssertEvalCounted(source, 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Theory]
-    [InlineData("X(values...) = values.count\nX(1 2)")]
-    [InlineData("X(values...) = values.count\nX (1 2)")]
+    [InlineData("X(...values) = values.count\nX(1 2)")]
+    [InlineData("X(...values) = values.count\nX (1 2)")]
     public void Eval_CallArgumentAdjacency_BindsAsItemSupply(string source)
         // X(values...) consumes an item supply. The adjacency form `1 2` supplies
         // two slots, so the rest parameter captures two supplied arguments.
         => AssertEval(source, 2);
 
     [Theory]
-    [InlineData("X(values...) = values.count\nX((1, 2))")]
-    [InlineData("X(values...) = values.count\nX ((1, 2))")]
+    [InlineData("X(...values) = values.count\nX((1, 2))")]
+    [InlineData("X(...values) = values.count\nX ((1, 2))")]
     public void Eval_CallArgumentGroupedSequence_RestOnlyCollectsOneArgument(string source)
         // The call supplies one sequence-valued argument, and the rest capture
         // collects the supplied slots as one exact list: [(1, 2)], count 1.
@@ -1306,13 +1306,13 @@ public class EvaluatorTests
         // call boundary: F((1, 2)...) supplies two arguments and sums to 3.
         AssertEvalFails(
             """
-            F(x...) = x.sum
+            F(...x) = x.sum
             F((1, 2))
             """);
 
         AssertEval(
             """
-            F(x...) = x.sum
+            F(...x) = x.sum
             F((1, 2)...)
             """,
             3);
@@ -1343,14 +1343,14 @@ public class EvaluatorTests
         AssertEval(
             """
             A = 1, 2
-            G(first, rest...) = first.count, rest.count
+            G(first, ...rest) = first.count, rest.count
             G(A)
             """,
             2, 0);
 
         AssertEval(
             """
-            G(first, rest...) = first.count, rest.count
+            G(first, ...rest) = first.count, rest.count
             G((1, 2))
             """,
             2, 0);
@@ -1362,14 +1362,14 @@ public class EvaluatorTests
         AssertEval(
             """
             A = 1, 2
-            G(first, rest...) = first.count, rest.count
+            G(first, ...rest) = first.count, rest.count
             G(A...)
             """,
             1, 1);
 
         AssertEval(
             """
-            G(first, rest...) = first.count, rest.count
+            G(first, ...rest) = first.count, rest.count
             G((1, 2)...)
             """,
             1, 1);
@@ -1484,8 +1484,8 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("X(values...) = values.count\nX(1, 2 3)")]
-    [InlineData("X(values...) = values.count\nX(1, (2, 3))")]
+    [InlineData("X(...values) = values.count\nX(1, 2 3)")]
+    [InlineData("X(...values) = values.count\nX(1, (2, 3))")]
     public void Eval_CallArgumentMixedCommaAndAdjacency_BindsItemSupply(string source)
     {
         // X(values...) consumes the item supply. `1, 2 3` is three slots
@@ -1512,7 +1512,7 @@ public class EvaluatorTests
     public void Eval_CallArgumentAdjacencyBeforePostfixSequenceSpread_BindsItemSupply(string source)
     {
         // `a b...` is three slots (1, 2, 3); X(values...) binds them as one item supply.
-        var program = "a = 1\nb = 2, 3\nX(values...) = values.count\n" + source;
+        var program = "a = 1\nb = 2, 3\nX(...values) = values.count\n" + source;
         AssertEval(program, 3);
     }
 
@@ -1523,7 +1523,7 @@ public class EvaluatorTests
     {
         // Explicit parentheses materialize the spread items into one argument,
         // which the rest capture collects as the one-element list [(1, 2, 3)].
-        var program = "a = 1\nb = 2, 3\nX(values...) = values.count\n" + source;
+        var program = "a = 1\nb = 2, 3\nX(...values) = values.count\n" + source;
         AssertEval(program, 1);
     }
 
@@ -2247,17 +2247,17 @@ public class EvaluatorTests
     // slots as one exact immutable list value.
     [Fact]
     public void Eval_UserCall_VariadicReturn_IsOneListValue()
-        => AssertEvalCounted("F(a...) = a\nF(5, 9)", 1, ListValue(Atom(5), Atom(9)));
+        => AssertEvalCounted("F(...a) = a\nF(5, 9)", 1, ListValue(Atom(5), Atom(9)));
 
     [Fact]
     public void Eval_UserCall_VariadicReturnWithBodySpread_IsOneSequenceValue()
-        => AssertEvalCounted("F(a...) = a...\nF(5, 9)", 1, ResultFromAtoms(5, 9));
+        => AssertEvalCounted("F(...a) = a...\nF(5, 9)", 1, ResultFromAtoms(5, 9));
 
     // Body `a, 0`: the variadic capture stays grouped as a nested list value.
     [Fact]
     public void Eval_UserCall_VariadicCommaSlot_GroupsCaptureAsNestedValue()
         => AssertEvalCounted(
-            "F(a...) = a, 0\nF(5, 9)",
+            "F(...a) = a, 0\nF(5, 9)",
             1,
             Result.FromItems([ListValue(Atom(5), Atom(9)), Atom(0)]));
 
@@ -2265,12 +2265,12 @@ public class EvaluatorTests
     // the boundary still returns the whole flat item supply as one value.
     [Fact]
     public void Eval_UserCall_VariadicBodySpreadThenSlot_IsOneFlatSequenceValue()
-        => AssertEvalCounted("F(a...) = a..., 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
+        => AssertEvalCounted("F(...a) = a..., 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
 
     // Caller-site spread re-opens the returned value into an item supply.
     [Fact]
     public void Eval_UserCall_CallerSpread_OpensReturnedValue()
-        => AssertEvalCounted("F(a...) = a\nF(5, 9)...", 2, ResultFromAtoms(5, 9));
+        => AssertEvalCounted("F(...a) = a\nF(5, 9)...", 2, ResultFromAtoms(5, 9));
 
     // Explicit zero-arg call `X()` is a call boundary (unlike property access `X`)
     // and now also returns one value.
@@ -2292,10 +2292,10 @@ public class EvaluatorTests
     // exact list, so collection builtins open it after binding and explicit
     // spread-forwarding reopens it at the caller-selected boundary.
     [Theory]
-    [InlineData("F(a...) = sum(a)\nF(5, 9)", 14)]
-    [InlineData("F(a...) = count(a)\nF(5, 9)", 2)]
-    [InlineData("G(a...) = a...\nsum(G(5, 9))", 14)]
-    [InlineData("F(a...) = a\nsum(F(5, 9))", 14)]
+    [InlineData("F(...a) = sum(a)\nF(5, 9)", 14)]
+    [InlineData("F(...a) = count(a)\nF(5, 9)", 2)]
+    [InlineData("G(...a) = a...\nsum(G(5, 9))", 14)]
+    [InlineData("F(...a) = a\nsum(F(5, 9))", 14)]
     public void Eval_VariadicForwarding_UsesCollectedListViews(string source, int expected)
         => AssertEval(source, expected);
 
@@ -2563,7 +2563,7 @@ public class EvaluatorTests
     public void Eval_OptimizedLoop_VariadicStep_RejectedAtEligibilityGate()
     {
         var source = """
-            Step(values...) = values, 0
+            Step(...values) = values, 0
             Step.while(1, 2, 3)
             """;
 
@@ -4425,7 +4425,7 @@ public class EvaluatorTests
     public void Eval_SequencePipelineS1_FilterCount_RespectsBuiltinShadowing()
     {
         var filterShadow = """
-            filter(source..., predicate) = 123
+            filter(...source, predicate) = 123
             IsEven = x mod 2 == 0
             range(1, 10).filter(IsEven).count
             """;
@@ -4470,7 +4470,7 @@ public class EvaluatorTests
         Assert.Equal(1, countStats.FallbackReasons["count does not resolve to builtin"]);
 
         var plainFilterShadow = """
-            filter(source..., predicate) = 123
+            filter(...source, predicate) = 123
             IsEven = x mod 2 == 0
             count(filter(range(1, 10), IsEven))
             """;
@@ -5565,7 +5565,7 @@ public class EvaluatorTests
         var source = """
             A = 1, 2
             B = 3, 4
-            F(values...) = values.count
+            F(...values) = values.count
             F((A...B))
             """;
 
@@ -5575,12 +5575,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_BareSequenceSpread_AdjacentExpressionBindsItemSupply()
     {
-        // A...B is three slots (1, 2, (3, 4)); F(values...) binds them as one
+        // A...B is three slots (1, 2, (3, 4)); F(...values) binds them as one
         // sequence value of count 3.
         var source = """
             A = 1, 2
             B = 3, 4
-            F(values...) = values.count
+            F(...values) = values.count
             F(A...B)
             """;
 
@@ -5593,7 +5593,7 @@ public class EvaluatorTests
         // The receiver is one leading argument, so the rest capture collects the
         // one-element list [(1, 2)]. Lean twin: `(1, 2).CountItems` is 1.
         var source = """
-            CountItems(items...) = items.count
+            CountItems(...items) = items.count
             Output = (1, 2).CountItems
             """;
 
@@ -5606,7 +5606,7 @@ public class EvaluatorTests
         // The parenthesized-spread receiver pre-expands the sequence's items,
         // so the rest capture collects [1, 2] and the numeric body works.
         var source = """
-            Mean(vector...) = vector.sum
+            Mean(...vector) = vector.sum
             Output = ((1, 2)...).Mean
             """;
 
@@ -5616,11 +5616,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_PreservesSingleGroupedValueBeforeSuffixAllocation()
     {
-        // Sum(values..., last) receives Values as one argument. `last` receives
+        // Sum(...values, last) receives Values as one argument. `last` receives
         // the sequence value, so the numeric body fails unless Values... is used.
         var source = """
             Values = 10, 20
-            Sum(values..., last) = values.sum + last
+            Sum(...values, last) = values.sum + last
             Values.Sum
             """;
 
@@ -5644,7 +5644,7 @@ public class EvaluatorTests
         // The ordinary receiver is one leading argument even for a rest-only
         // callee, so the capture is the one-element list [(10, 20)].
         var source = """
-            NItems(values...) = values.count
+            NItems(...values) = values.count
             Pair = (10, 20)
             Pair.NItems
             """;
@@ -5655,10 +5655,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemSupply()
     {
-        // NItems(values...) consumes an item supply: (Pair...) spreads into two
+        // NItems(...values) consumes an item supply: (Pair...) spreads into two
         // slots [10, 20], bound as a sequence value of count 2.
         var source = """
-            NItems(values...) = values.count
+            NItems(...values) = values.count
             Pair = (10, 20)
             (Pair...).NItems
             """;
@@ -5672,7 +5672,7 @@ public class EvaluatorTests
         // Two supplied arguments: the receiver and 99. The suffix binds 99 from
         // the back and the rest collects the one-element list [(10, 20)].
         var source = """
-            BeforeLastCount(values..., last) = values.count
+            BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
             Pair.BeforeLastCount(99)
             """;
@@ -5683,11 +5683,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpreadWithSuffix_OverSuppliesVariadicByDeconstruction()
     {
-        // BeforeLastCount(values..., last) is a comma deconstruction parameter
+        // BeforeLastCount(...values, last) is a comma deconstruction parameter
         // list, so the spread receiver's two items plus the suffix 99 give three
         // items: the variadic captures [10, 20] (count 2) and last binds 99.
         var source = """
-            BeforeLastCount(values..., last) = values.count
+            BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
             (Pair...).BeforeLastCount(99)
             """;
@@ -5701,7 +5701,7 @@ public class EvaluatorTests
         // Canonical-call twin of the dot-call above: Pair is one argument, so
         // the rest collects [(10, 20)] — count 1, matching Pair.BeforeLastCount(99).
         var source = """
-            BeforeLastCount(values..., last) = values.count
+            BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
             BeforeLastCount(Pair, 99)
             """;
@@ -5715,7 +5715,7 @@ public class EvaluatorTests
         // Canonical-call twin: Pair... spreads into [10, 20] and 99 fills the
         // suffix, so the deconstruction matcher captures [10, 20] (count 2).
         var source = """
-            BeforeLastCount(values..., last) = values.count
+            BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
             BeforeLastCount(Pair..., 99)
             """;
@@ -5730,7 +5730,7 @@ public class EvaluatorTests
         // pass one sequence-valued slot (rest collects [(10, 20)], count 1); the
         // spread forms pass two separate slots (rest collects [10, 20], count 2).
         var define = """
-            NItems(values...) = values.count
+            NItems(...values) = values.count
             Values = 10, 20
 
             """;
@@ -5744,7 +5744,7 @@ public class EvaluatorTests
     public void Eval_MultiOutputReceiverWithSuffix_DotCallMatchesCanonicalCalls()
     {
         var define = """
-            BeforeLastCount(values..., last) = values.count
+            BeforeLastCount(...values, last) = values.count
             Values = 10, 20
 
             """;
@@ -5761,10 +5761,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_OrdinaryMultiOutputArgument_PreservesSingleGroupedValueAtSuffixAllocation()
     {
-        // Sum(values..., last) receives Values as one argument. `last` receives
+        // Sum(...values, last) receives Values as one argument. `last` receives
         // the sequence value, so the numeric body fails unless Values... is used.
         var source = """
-            Sum(values..., last) = values.sum + last
+            Sum(...values, last) = values.sum + last
             Values = 10, 20
             Sum(Values)
             """;
@@ -5778,7 +5778,7 @@ public class EvaluatorTests
         // Explicit spread spreads 10 and 20 as separate items before slot
         // allocation, so `last` binds 20 and the variadic captures [10].
         var define = """
-            Sum(values..., last) = values.sum + last
+            Sum(...values, last) = values.sum + last
             Values = 10, 20
 
             """;
@@ -6176,7 +6176,7 @@ public class EvaluatorTests
     public void Eval_Take_DotCall_VariadicRepeatReceiverUsesExpandedFinalStateSlots()
         => AssertEvalLoopModes(
             """
-            Grow(history..., tail) = (history..., tail + 1), tail + 1
+            Grow(...history, tail) = (history..., tail + 1), tail + 1
             Grow.repeat(3, 1, 2).take(4)
             """,
             1,
@@ -7045,7 +7045,7 @@ public class EvaluatorTests
     public void Eval_Reduce_VariadicAccumulatorState_FlattensNaturally()
     {
         var source = """
-            Append(item, history...) = (history...item)
+            Append(item, ...history) = (history...item)
             reduce((2, 3, 4), Append, 1)
             """;
 
@@ -7216,7 +7216,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicMap_CollectsOneElementSlotPerInvocation()
     {
         var source = """
-            Count(values...) = values.count
+            Count(...values) = values.count
             map((1, 2, 3), Count)
             """;
 
@@ -7229,7 +7229,7 @@ public class EvaluatorTests
         // pin the collected list kind exactly.
         var identity = EvalFull(
             """
-            Collect(values...) = values
+            Collect(...values) = values
             map((7, 8), Collect)
             """);
         Assert.True(identity.IsOk, $"expected success: {(identity.IsError ? identity.Error.ToString() : "")}");
@@ -7249,7 +7249,7 @@ public class EvaluatorTests
 
         AssertEvalSequenceModes(
             """
-            IsSingleSeven(values...) = values == [7]
+            IsSingleSeven(...values) = values == [7]
             map((7, 8), IsSingleSeven)
             """,
             1, 0);
@@ -7259,7 +7259,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicFilter_CollectsOneElementSlotPerInvocation()
     {
         var source = """
-            One(values...) = values.count == 1
+            One(...values) = values.count == 1
             filter((1, 2, 3), One)
             """;
 
@@ -7271,7 +7271,7 @@ public class EvaluatorTests
         // [element], not the bare scalar (7 == [7] is false, [7] == [7] true).
         AssertEvalSequenceModes(
             """
-            IsSingleSeven(values...) = values == [7]
+            IsSingleSeven(...values) = values == [7]
             filter((7, 8), IsSingleSeven)
             """,
             7);
@@ -7281,7 +7281,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicReduce_CollectsElementSlotBeforeAccumulator()
     {
         var source = """
-            Step(values..., acc) = values.count * 10 + acc
+            Step(...values, acc) = values.count * 10 + acc
             reduce((1, 2, 3), Step, 0)
             """;
 
@@ -7292,7 +7292,7 @@ public class EvaluatorTests
         // Kind-sensitive form: the step observes the collected list [element].
         AssertEvalSequenceModes(
             """
-            Step(values..., acc) = acc + (values == [3])
+            Step(...values, acc) = acc + (values == [3])
             reduce((1, 2, 3), Step, 0)
             """,
             1);
@@ -10220,7 +10220,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Collect(list...) = list
+            Collect(...list) = list
             Output = Arg.Collect.count
             """,
             1);
@@ -10232,7 +10232,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Collect(list...) = list
+            Collect(...list) = list
             Output = (Arg...).Collect.count
             """,
             3);
@@ -10258,7 +10258,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = (1, 2), (3, 4)
-            Collect(list...) = list
+            Collect(...list) = list
             Output = (Arg...).Collect.count
             """,
             2);
@@ -10270,7 +10270,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = (1, 2), (3, 4)
-            Collect(list...) = list
+            Collect(...list) = list
             atoms(Arg.Collect).count
             """,
             4);
@@ -10282,7 +10282,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Head(first, rest...) = first
+            Head(first, ...rest) = first
             Head(1, (2, 3))
             """,
             1);
@@ -10296,7 +10296,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Tail(first, rest...) = rest
+            Tail(first, ...rest) = rest
             Tail(1, (2, 3)...).count
             """,
             2);
@@ -10308,7 +10308,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Init(init..., last) = init
+            Init(...init, last) = init
             Init((1, 2)..., 3).count
             """,
             2);
@@ -10320,7 +10320,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Last(init..., last) = last
+            Last(...init, last) = last
             Last(Arg, 3)
             """,
             3);
@@ -10333,7 +10333,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Scale(values..., factor) = values.map{n * factor}
+            Scale(...values, factor) = values.map{n * factor}
             Output = (Arg...).Scale(10)
             """,
             10, 20, 30);
@@ -10344,7 +10344,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(values..., fee) = values.sum + fee
+            TotalWithFee(...values, fee) = values.sum + fee
             Output = ((10, 20, 30)...).TotalWithFee(5)
             """,
             65);
@@ -10355,7 +10355,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(values..., fee) = values.sum + fee
+            TotalWithFee(...values, fee) = values.sum + fee
             Data = 10, 20, 30
             (Data...).TotalWithFee(5)
             """,
@@ -10367,7 +10367,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(values..., fee) = values.sum + fee
+            TotalWithFee(...values, fee) = values.sum + fee
             Data = 10, 20, 30
             (Data...).TotalWithFee(5), ((10, 20, 30)...).TotalWithFee(5)
             """,
@@ -10381,7 +10381,7 @@ public class EvaluatorTests
         // rest collects [(10, 20, 30)] and the numeric `values.sum` fails on the
         // sequence-valued element. The spread forms above supply the items.
         var source = """
-            TotalWithFee(values..., fee) = values.sum + fee
+            TotalWithFee(...values, fee) = values.sum + fee
             Output = ((10, 20, 30)).TotalWithFee(5)
             """;
 
@@ -10406,7 +10406,7 @@ public class EvaluatorTests
         // items to a leading flat variadic; the rest collects [10, 20, 30].
         AssertEvalSequenceModes(
             """
-            Collect(list...) = list.count
+            Collect(...list) = list.count
             Output = ((10, 20, 30)...).Collect
             """,
             3);
@@ -10426,7 +10426,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3, 4, 5
-            Between(values..., min, max) = values.filter{n >= min and n <= max}
+            Between(...values, min, max) = values.filter{n >= min and n <= max}
             Output = (Arg...).Between(2, 4)
             """,
             2, 3, 4);
@@ -10441,7 +10441,7 @@ public class EvaluatorTests
         var result = EvalFull(
             """
             Arg = range(1, 3)
-            Qmean(values...) = values.sum / values.count
+            Qmean(...values) = values.sum / values.count
             Qmean(Arg)
             """);
 
@@ -10458,7 +10458,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = range(1, 3)
-            Qmean(values...) = values.sum / values.count
+            Qmean(...values) = values.sum / values.count
             Qmean(Arg...)
             """,
             2);
@@ -10472,7 +10472,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = range(1, 3)
-            Qmean(values...) = values.sum / values.count
+            Qmean(...values) = values.sum / values.count
             Output = (Arg...).Qmean
             """,
             2);
@@ -10497,12 +10497,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicParameter_ReportsBindingErrorWhenNormalParametersCannotBind()
     {
-        // F(first, rest..., last) is a comma deconstruction parameter list. F(1)
+        // F(first, ...rest, last) is a comma deconstruction parameter list. F(1)
         // supplies one scalar item (not implicitly opened), but the two fixed
         // bindings first and last need at least two items.
         var result = EvalFull(
             """
-            F(first, rest..., last) = first, rest, last
+            F(first, ...rest, last) = first, rest, last
             F(1)
             """);
 
@@ -10518,7 +10518,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((xs...)) = xs.count
+            F((...xs)) = xs.count
             F((1, 2, 3))
             """,
             3);
@@ -10529,7 +10529,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((xs...)) = xs.count
+            F((...xs)) = xs.count
             F(((1, 2), 3))
             """,
             2);
@@ -10540,7 +10540,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((xs...)) = xs:0
+            F((...xs)) = xs:0
             F(((1, 2), 3))
             """);
 
@@ -10562,9 +10562,9 @@ public class EvaluatorTests
         // written level around a depth-1 pattern leaves one nested item.
         AssertEval(
             """
-            CountSequenceValue1(values...) = values.count
-            CountSequenceValue2((values...)) = values.count
-            CountSequenceValue3(((values...))) = values.count
+            CountSequenceValue1(...values) = values.count
+            CountSequenceValue2((...values)) = values.count
+            CountSequenceValue3(((...values))) = values.count
 
             CountSequenceValue1((1, 2, 3))
             CountSequenceValue1(((1, 2, 3)))
@@ -10584,7 +10584,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            CountSequenceValue3(((values...))) = values.count
+            CountSequenceValue3(((...values))) = values.count
             CountSequenceValue3((1, 2, 3))
             """);
 
@@ -10604,7 +10604,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Inner = (1, 2, 3)
-            CountSequenceValue2((values...)) = values.count
+            CountSequenceValue2((...values)) = values.count
 
             CountSequenceValue2(Inner)
             CountSequenceValue2((Inner))
@@ -10715,7 +10715,7 @@ public class EvaluatorTests
         AssertEval(
             """
             E = ()
-            F((xs...)) = xs.count
+            F((...xs)) = xs.count
             F((E..., 6))
             """,
             1);
@@ -10861,7 +10861,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((xs...)) = xs.count
+            F((...xs)) = xs.count
             F(1, 2, 3)
             """);
 
@@ -10904,15 +10904,15 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            CountSequenceValue((values...)) = values.count
+            CountSequenceValue((...values)) = values.count
             CountSequenceValue(1, 2, 3)
             """);
 
         Assert.True(result.IsError);
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("CountSequenceValue((values...))", formatted, StringComparison.Ordinal);
-        Assert.DoesNotContain("CountSequenceValue(values...)", formatted, StringComparison.Ordinal);
-        Assert.Equal("Callable `CountSequenceValue((values...))` expects 1 argument, but was called with 3 arguments.", formatted);
+        Assert.Contains("CountSequenceValue((...values))", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("CountSequenceValue(...values)", formatted, StringComparison.Ordinal);
+        Assert.Equal("Callable `CountSequenceValue((...values))` expects 1 argument, but was called with 3 arguments.", formatted);
     }
 
     [Fact]
@@ -10981,7 +10981,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            Signature((values...)) = values.count * 10 + values.sum
+            Signature((...values)) = values.count * 10 + values.sum
             map(((1, 2, 3), (4, 5)), Signature)
             """,
             36, 29);
@@ -10992,7 +10992,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            CountSequenceValue((values...)) = values.count
+            CountSequenceValue((...values)) = values.count
             map(((1, 2), (3, 4)), CountSequenceValue)
             """,
             2, 2);
@@ -11003,7 +11003,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((xs...), a, b) = xs.count, a, b
+            F((...xs), a, b) = xs.count, a, b
             F((1, 2, 3), 4, 5)
             """,
             3, 4, 5);
@@ -11014,7 +11014,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((inner...), outer...) = inner.count, outer.count
+            F((...inner), ...outer) = inner.count, outer.count
             F((1, 2), 3, 4)
             """,
             2, 2);
@@ -11313,7 +11313,7 @@ public class EvaluatorTests
         // The grouped call collects one item, so the returned list is [(1, 2, 3)].
         AssertEval(
             """
-            F(xs...) = xs
+            F(...xs) = xs
             F((1, 2, 3)).count
             """,
             1);
@@ -11325,7 +11325,7 @@ public class EvaluatorTests
         // The spread supplies three argument slots; the rest collects [1, 2, 3].
         AssertEval(
             """
-            CountValues(values...) = values.count
+            CountValues(...values) = values.count
             CountValues((1, 2, 3)...)
             """,
             3);
@@ -11336,7 +11336,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            Scale(items..., factor) = items.map{n * factor}
+            Scale(...items, factor) = items.map{n * factor}
             Scale((1, 2, 3)..., 10)
             """,
             10, 20, 30);
@@ -11347,7 +11347,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            Apply(values..., f) = f(values:0)
+            Apply(...values, f) = f(values:0)
             Inc = a + 1
             Apply((10, 20)..., Inc)
             """,
@@ -11359,7 +11359,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F(prefix, values..., suffix) = prefix, values.count, suffix
+            F(prefix, ...values, suffix) = prefix, values.count, suffix
             F(1, (2, 3)..., 4)
             """,
             1, 2, 4);
@@ -11370,7 +11370,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            Scale(items..., factor) = items.map{n * factor}
+            Scale(...items, factor) = items.map{n * factor}
             Scale()
             """);
 
@@ -11381,11 +11381,11 @@ public class EvaluatorTests
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.Contains(
-            "Callable `Scale(items..., factor)` expects at least 1 item, but received 0 items.",
+            "Callable `Scale(...items, factor)` expects at least 1 item, but received 0 items.",
             formatted,
             StringComparison.Ordinal);
         Assert.NotNull(arity.Signature);
-        Assert.Equal("Scale(items..., factor)", arity.Signature.DisplayText);
+        Assert.Equal("Scale(...items, factor)", arity.Signature.DisplayText);
     }
 
     [Fact]
@@ -11393,7 +11393,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F(prefix, values..., suffix) = prefix...values...suffix
+            F(prefix, ...values, suffix) = prefix...values...suffix
             F()
             """);
 
@@ -11403,19 +11403,19 @@ public class EvaluatorTests
         Assert.Equal(0, arity.Actual);
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("F(prefix, values..., suffix)", formatted, StringComparison.Ordinal);
+        Assert.Contains("F(prefix, ...values, suffix)", formatted, StringComparison.Ordinal);
         Assert.Contains("expects at least 2 items", formatted, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Eval_Count_UserCallDeconstructionRouteReportsSignatureInMinimumArityFailure()
     {
-        // F(xs..., last) is a comma deconstruction parameter list. F() supplies no
+        // F(...xs, last) is a comma deconstruction parameter list. F() supplies no
         // items, so the matcher cannot bind the single fixed parameter `last`: it
         // needs at least 1 item, reported against the callable signature.
         var result = EvalFull(
             """
-            F(xs..., last) = xs...last
+            F(...xs, last) = xs...last
             F().count
             """);
 
@@ -11425,9 +11425,9 @@ public class EvaluatorTests
         Assert.Equal(0, arity.Actual);
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("F(xs..., last)", formatted, StringComparison.Ordinal);
+        Assert.Contains("F(...xs, last)", formatted, StringComparison.Ordinal);
         Assert.Contains(
-            "Callable `F(xs..., last)` expects at least 1 item, but received 0 items.",
+            "Callable `F(...xs, last)` expects at least 1 item, but received 0 items.",
             formatted,
             StringComparison.Ordinal);
     }
@@ -11437,7 +11437,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((inner...), outer...) = inner...outer
+            F((...inner), ...outer) = inner...outer
             F((1, 2), ((3, 4))).count
             """,
             3);
@@ -11448,7 +11448,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((head, tail...)) = head, tail.count
+            F((head, ...tail)) = head, tail.count
             F((1, 2, 3, 4))
             """,
             1, 3);
@@ -11459,7 +11459,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((first, middle..., last)) = first, middle.count, last
+            F((first, ...middle, last)) = first, middle.count, last
             F((1, 2, 3, 4, 5))
             """,
             1, 3, 5);
@@ -11470,7 +11470,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((history..., pre2), pre1) = history.count, pre2, pre1
+            F((...history, pre2), pre1) = history.count, pre2, pre1
             F((1, 2, 3), 4)
             """,
             2, 3, 4);
@@ -11481,7 +11481,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((history..., pre2), pre1) = history.count, pre2, pre1
+            F((...history, pre2), pre1) = history.count, pre2, pre1
             F((), 4)
             """);
 
@@ -11493,10 +11493,10 @@ public class EvaluatorTests
     {
         // Contrast with the sequence-value pattern below: the top-level rest
         // collects the grouped argument as one list element ([(1, 2)], count 1),
-        // while F((xs...), y) opens the same argument to count 2.
+        // while F((...xs), y) opens the same argument to count 2.
         AssertEval(
             """
-            F(xs..., y) = xs.count, y
+            F(...xs, y) = xs.count, y
             F((1, 2), 3)
             """,
             1, 3);
@@ -11507,14 +11507,14 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((xs...), y) = xs.count, y
+            F((...xs), y) = xs.count, y
             F((1, 2), 3)
             """,
             2, 3);
 
         var result = EvalFull(
             """
-            F((xs...), y) = xs.count, y
+            F((...xs), y) = xs.count, y
             F(1, 2, 3)
             """);
 
@@ -11574,7 +11574,7 @@ public class EvaluatorTests
             GcdStep = b, ~a mod b, a mod b != 0
             Gcd = GcdStep.while(a, b):1
 
-            FindNext(history..., pre1, pre2) = {
+            FindNext(...history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not history.contains(candidate) and
                     Gcd(candidate, pre1) == 1 and
                     Gcd(candidate, pre2) != 1
@@ -11583,7 +11583,7 @@ public class EvaluatorTests
                 FindStep.while(1):0
             }
 
-            YSStep((history...), pre2, pre1) = {
+            YSStep((...history), pre2, pre1) = {
                 Next = FindNext(history..., pre1, pre2)
                 (history..., Next), pre1, Next
             }
@@ -11600,7 +11600,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendNext(history...) = history...history.atoms.last + 1
+            AppendNext(...history) = history...history.atoms.last + 1
             AppendNext.repeat(1, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5));
@@ -11611,7 +11611,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendNext(history...) = history...history.atoms.last + 1
+            AppendNext(...history) = history...history.atoms.last + 1
             AppendNext.repeat(2, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
@@ -11622,7 +11622,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            AppendNext(history...) = history...history.atoms.last + 1
+            AppendNext(...history) = history...history.atoms.last + 1
             AppendNext((1, 2, 4))...AppendNext((1, 2, 4, 5))
             """,
             1, 2, 4, 5, 1, 2, 4, 5, 6);
@@ -11652,7 +11652,7 @@ public class EvaluatorTests
         // [2, 3] stays one state slot beside the spread first item.
         AssertEvalResultLoopModes(
             """
-            Step(first, rest...) = first...rest
+            Step(first, ...rest) = first...rest
             Step.repeat(1, 1, 2, 3)
             """,
             Result.FromItems([Atom(1), ListValue(Atom(2), Atom(3))]));
@@ -11663,7 +11663,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            Step(values..., last) = values...last
+            Step(...values, last) = values...last
             Step.repeat(1, 1, 2, 3)
             """,
             ResultFromAtoms(1, 2, 3));
@@ -11674,7 +11674,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            Step(first, middle..., last) = first...middle...last
+            Step(first, ...middle, last) = first...middle...last
             Step.repeat(1, 1, 2, 3, 4)
             """,
             ResultFromAtoms(1, 2, 3, 4));
@@ -11689,7 +11689,7 @@ public class EvaluatorTests
         // variadicLoopStepExtraMiddleRepeatsTwice.
         AssertEvalLoopModes(
             """
-            Step(first, middle..., last) = first + 1, middle..., last + 1
+            Step(first, ...middle, last) = first + 1, middle..., last + 1
             Step.repeat(2, 0, 5, 5, 10)
             """,
             2, 5, 5, 12);
@@ -11700,7 +11700,7 @@ public class EvaluatorTests
     {
         AssertEvalLoopModes(
             """
-            Step(first, middle..., last) = first, middle.count, last
+            Step(first, ...middle, last) = first, middle.count, last
             Step.repeat(1, 10, 20, 30, 40)
             """,
             10, 2, 40);
@@ -11709,12 +11709,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicLoopStep_ReportsMinimumStateArityWhenFixedParametersCannotBind()
     {
-        // The minimum for Step(first, rest..., last) is the FIXED parameter
+        // The minimum for Step(first, ...rest, last) is the FIXED parameter
         // count (2), so a single state slot cannot bind first + last. The rest
         // itself may collect zero slots (see Eval_VariadicLoopStep_TwoStateSlots_*).
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
-            Step(first, rest..., last) = first...rest...last
+            Step(first, ...rest, last) = first...rest...last
             Step.repeat(1, 1)
             """);
 
@@ -11728,7 +11728,7 @@ public class EvaluatorTests
             Assert.Contains("`repeat` variadic step expects at least 2 state values", formatted, StringComparison.Ordinal);
             Assert.Contains("for fixed parameter(s) 'first' and 'last'", formatted, StringComparison.Ordinal);
             Assert.Contains("current loop state has 1 state value", formatted, StringComparison.Ordinal);
-            Assert.DoesNotContain("Callable `Step(first, rest..., last)`", formatted, StringComparison.Ordinal);
+            Assert.DoesNotContain("Callable `Step(first, ...rest, last)`", formatted, StringComparison.Ordinal);
         }
     }
 
@@ -11736,7 +11736,7 @@ public class EvaluatorTests
     public void Eval_VariadicLoopStep_TwoStateSlots_BindEmptyRestList()
     {
         // Empty loop-state rest follows the SAME rule as every other rest
-        // receiver: Step(first, middle..., last) with exactly two state slots
+        // receiver: Step(first, ...middle, last) with exactly two state slots
         // binds first/last from the ends and middle collects ZERO slots as the
         // exact empty list `[]` (count 0). Pins the parity boundary: 1 slot
         // fails (Eval_VariadicLoopStep_ReportsMinimumStateArity*), 2 bind an
@@ -11744,7 +11744,7 @@ public class EvaluatorTests
         // guard variadicLoopStepEmptyMiddleBindsEmptyList.
         AssertEvalLoopModes(
             """
-            Step(first, middle..., last) = first, (middle == []), middle.count, last
+            Step(first, ...middle, last) = first, (middle == []), middle.count, last
             Step.repeat(1, 10, 20)
             """,
             10, 1, 0, 20);
@@ -11867,7 +11867,7 @@ public class EvaluatorTests
 
         AssertEvalResultLoopModes(
             """
-            Step(acc, x...) = acc + x.count, 0
+            Step(acc, ...x) = acc + x.count, 0
             repeat(Step, 1, 5)
             """,
             SequenceValue(ResultFromAtoms(5), ResultFromAtoms(0)));
@@ -11881,7 +11881,7 @@ public class EvaluatorTests
         // the same rule as every other rest receiver.
         AssertEvalResultLoopModes(
             """
-            Step(a, rest..., a) = rest, 0
+            Step(a, ...rest, a) = rest, 0
             repeat(Step, 1, 7, 7)
             """,
             SequenceValue(ListValue(), ResultFromAtoms(0)));
@@ -11896,14 +11896,14 @@ public class EvaluatorTests
         // empty sequence value `()`.
         AssertEvalResultLoopModes(
             """
-            Step(x...) = x.skip(1)...
+            Step(...x) = x.skip(1)...
             repeat(Step, 3, 7, 8)
             """,
             SequenceValue());
 
         AssertEvalResultLoopModes(
             """
-            Step(x...) = x.skip(1)...
+            Step(...x) = x.skip(1)...
             repeat(Step, 1, 7, 8)
             """,
             ResultFromAtoms(8));
@@ -11914,7 +11914,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendWhile(history...) = (history..., history.atoms.last + 1), if(history.atoms.last + 1 < 6, 1, 0)
+            AppendWhile(...history) = (history..., history.atoms.last + 1), if(history.atoms.last + 1 < 6, 1, 0)
             AppendWhile.while(1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5));
@@ -12002,7 +12002,7 @@ public class EvaluatorTests
         // a bare `FindNext(history)` would pass the whole sequence as one
         // collected element.
         var definitions = """
-            FindNext(history...) = {
+            FindNext(...history) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
@@ -12021,7 +12021,7 @@ public class EvaluatorTests
     public void Eval_LoopStep_SequenceValueSequenceSpreadCarriesOneSequenceStateSlot()
         => AssertEvalResultLoopModes(
             """
-            FindNext(history...) = {
+            FindNext(...history) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
@@ -12038,13 +12038,13 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            FindNext(history...) = {
+            FindNext(...history) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
                 FindStep.while(Tail+1):0
             }
-            TestStep(history...) = history...FindNext(history...)
+            TestStep(...history) = history...FindNext(history...)
             TestStep.repeat(2, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
@@ -12054,7 +12054,7 @@ public class EvaluatorTests
     public void Eval_LoopStep_SequenceValueCommaHistorySlotUsesExplicitSpreadAcrossRepeat()
     {
         const string source = """
-            Step((history...), previous) = (history..., previous + 1), previous + 1
+            Step((...history), previous) = (history..., previous + 1), previous + 1
             Step.repeat(2, (1, 2), 2):0
             """;
 
@@ -12098,7 +12098,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Mean(values...) = values.sum / values.count
+            Mean(...values) = values.sum / values.count
             Mean(Arg...), (Arg...).Mean
             """,
             2, 2);
@@ -12110,7 +12110,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Mean(values...) = values.sum / values.count
+            Mean(...values) = values.sum / values.count
             Direct = Arg.sum / Arg.count
             Mean(Arg...), Direct
             """,
@@ -12123,7 +12123,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = (1, 2), (3, 4)
-            CountViaVariadic(values...) = values.count
+            CountViaVariadic(...values) = values.count
             CountViaVariadic(Arg...), (Arg...).CountViaVariadic, Arg.count
             """,
             2, 2, 2);
@@ -12135,8 +12135,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = (1, 2), (3, 4)
-            CountViaVariadic(values...) = values.count
-            CountAtoms(values...) = atoms(values).count
+            CountViaVariadic(...values) = values.count
+            CountAtoms(...values) = atoms(values).count
             CountViaVariadic(Arg...), CountAtoms(Arg...)
             """,
             2, 4);
@@ -12148,7 +12148,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Scale(values..., factor) = values.map{n * factor}
+            Scale(...values, factor) = values.map{n * factor}
             Output = (Arg...).Scale(10), Arg.map{n * 10}
             """,
             10, 20, 30, 10, 20, 30);
@@ -12160,7 +12160,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4, 5
-            KeepBetween(values..., minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
+            KeepBetween(...values, minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
             Output = (Arg...).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
             """,
             2, 3, 4, 2, 3, 4);
@@ -12172,7 +12172,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4
-            TakeFirst(values..., itemCount) = values.take(itemCount)
+            TakeFirst(...values, itemCount) = values.take(itemCount)
             Output = (Arg...).TakeFirst(2), Arg.take(2)
             """,
             1, 2, 1, 2);
@@ -12184,7 +12184,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4
-            SkipFirst(values..., itemCount) = values.skip(itemCount)
+            SkipFirst(...values, itemCount) = values.skip(itemCount)
             Output = (Arg...).SkipFirst(2), Arg.skip(2)
             """,
             3, 4, 3, 4);
@@ -12200,7 +12200,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Ordinary(list) = list.count
-            Variadic(list...) = list.count
+            Variadic(...list) = list.count
             Arg.Ordinary, Arg.Variadic
             """,
             3, 1);
@@ -13098,7 +13098,7 @@ public class EvaluatorTests
         // call would supply two arguments and collect [1, 2] instead.)
         var concise = EvalFull(
             """
-            X(values...) = values
+            X(...values) = values
             a = 1
             b = 2
             X((a, b...))
@@ -13108,7 +13108,7 @@ public class EvaluatorTests
 
         var sequenceValueResult = EvalFull(
             """
-            X(values...) = values
+            X(...values) = values
             a = 1
             b = 2
             X((a, (b...)))
@@ -13607,7 +13607,7 @@ public class EvaluatorTests
         // old grouped/opened display coincidence is intentionally gone.
         => AssertEval(
             $$"""
-            Sum(values...) = values.count
+            Sum(...values) = values.count
             {{call}}
             """,
             1m);
@@ -13621,7 +13621,7 @@ public class EvaluatorTests
         // grouped form `Sum((1, 2, 3))`.
         => AssertEval(
             $$"""
-            Sum(values...) = values.count
+            Sum(...values) = values.count
             {{call}}
             """,
             3m);
@@ -13657,7 +13657,7 @@ public class EvaluatorTests
         // calls never implicitly open sequence arguments.
         => AssertEval(
             $$"""
-            F(values..., last) = values.count, last
+            F(...values, last) = values.count, last
             {{call}}
             """,
             1m,
@@ -13667,12 +13667,12 @@ public class EvaluatorTests
     [InlineData("F(1, 2, 3, 99)")]
     [InlineData("Seq = (1, 2, 3)\nF(Seq..., 99)")]
     public void Eval_VariadicWithSuffix_DeconstructsInlineCommaOrSpreadSlots(string call)
-        // F(values..., last) is a comma deconstruction parameter list: the inline
+        // F(...values, last) is a comma deconstruction parameter list: the inline
         // comma slots and the spread both supply four items, so the variadic
         // captures [1, 2, 3] (count 3) and last binds 99.
         => AssertEval(
             $$"""
-            F(values..., last) = values.count, last
+            F(...values, last) = values.count, last
             {{call}}
             """,
             3m,
@@ -13738,7 +13738,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Seq = (1, 2, 3)
-            Sum(values...) = values.count
+            Sum(...values) = values.count
             Seq.Sum()
             """,
             1m);

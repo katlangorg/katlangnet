@@ -243,7 +243,7 @@ public class SemanticExplorerTests
 
         // Rest binding COLLECTS: a rest-only callee binds its ONE grouped
         // argument as the one-element exact list holding the value
-        // (`F(x...) = x` with `F(V)` observes `[V]`), never the value itself —
+        // (`F(...x) = x` with `F(V)` observes `[V]`), never the value itself —
         // the old grouped/singleton coincidence is gone for every value kind.
         var expectedCollectedOne = new Result.ListValue([capturedValue]);
         foreach (var template in new[] { "variadic", "variadicViaProp" })
@@ -667,7 +667,7 @@ public class SemanticExplorerTests
         { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
-        { "F(a...) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
+        { "F(...a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         { "() > 1", "ok raw=1 n=1" },
         { "() == (())", "ok raw=1 n=1" },
         { "x = (1, 2)\n(x..., 99)", "ok raw=S[1, 2, 99] n=1" },

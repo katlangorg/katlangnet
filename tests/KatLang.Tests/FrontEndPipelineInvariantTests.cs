@@ -71,7 +71,7 @@ public class FrontEndPipelineInvariantTests
     [InlineData("Area = w * h\nOutput = Area")]
     [InlineData("x, y, z = (1, 2, 3)\nOutput = x + y + z")]
     [InlineData("fib(0) = 0\nfib(1) = 1\nfib(n) = n")]
-    [InlineData("a, mid..., z = (1, 2, 3, 4)")]
+    [InlineData("a, ...mid, z = (1, 2, 3, 4)")]
     public void Frontend_Process_IsDeterministic(string source)
     {
         var first = FrontEndPipeline.Process(source);
@@ -87,7 +87,7 @@ public class FrontEndPipelineInvariantTests
     [Fact]
     public void Deconstruction_SyntheticNames_AreInputIndependent()
     {
-        const string a = "x, y..., z = (1, 2, 3, 4)\nOutput = x + z";
+        const string a = "x, ...y, z = (1, 2, 3, 4)\nOutput = x + z";
         const string b = "p, q = (9, 8)\nHelper(k) = k + p\nOutput = Helper(q)";
 
         var a1 = PropertyNames(FrontEndPipeline.Process(a).ElaboratedRoot);

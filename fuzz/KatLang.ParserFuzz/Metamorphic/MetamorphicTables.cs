@@ -60,7 +60,7 @@ internal enum MetamorphicWrapperProjection
     /// <summary>`MmWrap(a, ...) = a.builtin(...)` — the same binding written as a dotted call.</summary>
     DottedFixed,
 
-    /// <summary>`MmWrap(xs...) = ...` — a REST parameter. Never equivalent; always rejected.</summary>
+    /// <summary>`MmWrap(...xs) = ...` — a REST parameter. Never equivalent; always rejected.</summary>
     Rest,
 
     /// <summary>Fixed parameters at the WRONG arity for the consumer. Never equivalent; always rejected.</summary>

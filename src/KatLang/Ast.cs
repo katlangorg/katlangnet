@@ -108,15 +108,35 @@ public enum ParameterKind
     Variadic,
 }
 
+/// <summary>
+/// Source spelling used for a rest binding. Prefix is canonical; postfix is
+/// retained only so migration tooling can identify legacy source precisely.
+/// </summary>
+public enum RestBindingSyntax
+{
+    Prefix,
+    LegacyPostfix,
+}
+
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
+    /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+    public SourceSpan? RestMarkerSpan { get; init; }
+
+    /// <summary>Rest-marker orientation in source, when source-backed.</summary>
+    public RestBindingSyntax? RestSyntax { get; init; }
+
     public string DisplayName => Kind switch
     {
-        ParameterKind.Variadic => $"{Name}...",
+        ParameterKind.Variadic => $"...{Name}",
         _ => Name,
     };
 
-    public CaptureParameterPattern ToPattern() => new(Name, Span, Kind);
+    public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
+    {
+        RestMarkerSpan = RestMarkerSpan,
+        RestSyntax = RestSyntax,
+    };
 }
 
 /// <summary>
@@ -169,9 +189,22 @@ public abstract record ParameterPattern
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
-    public override string DisplayName => Kind == ParameterKind.Variadic ? $"{Name}..." : Name;
+    /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+    public SourceSpan? RestMarkerSpan { get; init; }
 
-    public override IReadOnlyList<ParameterDeclaration> Captures => [new(Name, Span, Kind)];
+    /// <summary>Rest-marker orientation in source, when source-backed.</summary>
+    public RestBindingSyntax? RestSyntax { get; init; }
+
+    public override string DisplayName => Kind == ParameterKind.Variadic ? $"...{Name}" : Name;
+
+    public override IReadOnlyList<ParameterDeclaration> Captures =>
+    [
+        new(Name, Span, Kind)
+        {
+            RestMarkerSpan = RestMarkerSpan,
+            RestSyntax = RestSyntax,
+        }
+    ];
 }
 
 public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
@@ -329,6 +362,12 @@ public abstract record Pattern
 
         /// <summary>Parameter binding kind when this binder elaborates to an ordinary explicit parameter.</summary>
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
+
+        /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+        public SourceSpan? RestMarkerSpan { get; init; }
+
+        /// <summary>Rest-marker orientation in source, when source-backed.</summary>
+        public RestBindingSyntax? RestSyntax { get; init; }
     }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
@@ -413,7 +452,7 @@ public abstract record Pattern
     /// <list type="bullet">
     ///   <item><c>Bind(x)</c>, corresponding to <c>F(x) = ...</c></item>
     ///   <item><c>SequenceValue [Bind(x), Bind(y), ...]</c></item>
-    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, tail...))</c></item>
+    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, ...tail))</c></item>
     /// </list>
     ///
     /// Rejected on purpose:
@@ -437,7 +476,11 @@ public abstract record Pattern
     {
         if (pattern is Bind binder)
         {
-            parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind);
+            parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
+            {
+                RestMarkerSpan = binder.RestMarkerSpan,
+                RestSyntax = binder.RestSyntax,
+            };
             return true;
         }
 
@@ -470,7 +513,14 @@ public abstract record Pattern
     internal IReadOnlyList<ParameterPattern>? TryGetOrdinaryClauseParameterPatterns()
     {
         if (this is Bind binder)
-            return [new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)];
+            return
+            [
+                new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
+                {
+                    RestMarkerSpan = binder.RestMarkerSpan,
+                    RestSyntax = binder.RestSyntax,
+                }
+            ];
 
         if (this is not SequenceValue(var items))
             return null;
@@ -944,7 +994,7 @@ public abstract record Algorithm
     /// Parser elaboration may also predeclare parameters here for recursive
     /// capture/sequence-value clause syntax such as <c>Apply(f) = f(4)</c>,
     /// <c>PairSum((x, y)) = x + y</c>, or
-    /// <c>CountSequenceValue((values...)) = values.count</c>.
+    /// <c>CountSequenceValue((...values)) = values.count</c>.
     /// </summary>
     public sealed record User : Algorithm
     {
@@ -974,7 +1024,7 @@ public abstract record Algorithm
 
         /// <summary>
         /// True for the synthetic inline helper the parser elaborates an
-        /// assignment deconstruction (<c>x, y..., z = RHS</c>) into.
+        /// assignment deconstruction (<c>x, ...y, z = RHS</c>) into.
         /// Diagnostics-only metadata: binding failures are phrased against the
         /// written assignment pattern instead of the anonymous helper call.
         /// Never encoded to the Lean model (wording-only, the structured error

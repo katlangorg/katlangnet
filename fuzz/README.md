@@ -535,7 +535,7 @@ argument binding. A consumer supplies a fixed number of values per invocation, a
 that binds exactly those values positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:
 
-* **Rest** (`MmWrap(xs...)`) — a rest parameter *collects* the supplied slots into an exact list,
+* **Rest** (`MmWrap(...xs)`) — a rest parameter *collects* the supplied slots into an exact list,
   so the wrapper receives `[element]` where the builtin receives `element`. Measured:
   `[[1, 2], [3]].map(count)` is `[2, 1]` while the rest wrapper gives `[1, 1]`. That is correct
   language behaviour and a false equivalence, not a defect.

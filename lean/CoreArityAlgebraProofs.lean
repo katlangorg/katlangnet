@@ -209,7 +209,7 @@ theorem capture_zero_item_open_neutral {v : Val} (h : items v = [])
 
 /-- Generic neutral open at the rest-collection boundary: any zero-item
 spread leaves the collected list unchanged wherever it is inserted
-(`first, rest... = 1, 2, ()...` collects `rest = [2]`). -/
+(`first, ...rest = 1, 2, ()...` collects `rest = [2]`). -/
 theorem collect_zero_item_open_neutral {v : Val} (h : items v = [])
     (before after : Supply) :
     collect (before ++ items v ++ after) = collect (before ++ after) :=
@@ -389,12 +389,12 @@ list `[v]`, for every value kind. -/
 theorem collect_singleton (v : Val) : collect [v] = Val.list [v] := rfl
 
 /-- Singleton preservation for a grouped sequence value of ANY payload:
-`first, rest... = 1, (…)` collects `rest = [(…)]`. -/
+`first, ...rest = 1, (…)` collects `rest = [(…)]`. -/
 theorem collect_singleton_seq (ys : Supply) :
     collect [Val.seq ys] = Val.list [Val.seq ys] := rfl
 
 /-- Singleton preservation for an exact list value of ANY payload:
-`first, rest... = 1, […]` collects `rest = [[…]]`. -/
+`first, ...rest = 1, […]` collects `rest = [[…]]`. -/
 theorem collect_singleton_list (ys : Supply) :
     collect [Val.list ys] = Val.list [Val.list ys] := rfl
 
@@ -453,7 +453,7 @@ its own domain:
 
 /-- Open/collect round trip: surface spread (`items`, the `open` operation)
 re-supplies EXACTLY the collected items, so variadic forwarding
-(`Forward(items...) = Target(items...)`) is ordinary list spread. -/
+(`Forward(...items) = Target(items...)`) is ordinary list spread. -/
 theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
 
 /-- Collect/open round trip on the list side: re-collecting a spread list's
@@ -466,7 +466,7 @@ theorem collect_items_list (xs : Supply) :
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it. Collecting the
 concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, rest... = 1, [2, 3]..., (4, 5)...` gives
+whatever `a` and `b` were (`first, ...rest = 1, [2, 3]..., (4, 5)...` gives
 `rest = [2, 3, 4, 5]`). -/
 theorem collect_spread_concat_exact (a b : Val) :
     collect (items a ++ items b) = Val.list (items a ++ items b) := rfl
@@ -597,7 +597,7 @@ theorem deconstruct_fixed_explicit_spread_succeeds :
       = some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
-/-- `first, rest... = A`: deconstruction opens `A`, so `first = 1` and the rest
+/-- `first, ...rest = A`: deconstruction opens `A`, so `first = 1` and the rest
 COLLECTS the remaining items as the exact list `[2, 3]`. -/
 theorem deconstruct_rest_single_sequence_opens :
     bindDeconstruct [Pat.name "first", Pat.rest "rest"]
@@ -606,7 +606,7 @@ theorem deconstruct_rest_single_sequence_opens :
               ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
-/-- `first, rest... = [1, 2, 3]`: the lone-list right-hand side opens the same
+/-- `first, ...rest = [1, 2, 3]`: the lone-list right-hand side opens the same
 way, and the rest collects `[2, 3]`. -/
 theorem deconstruct_rest_single_list_opens :
     bindDeconstruct [Pat.name "first", Pat.rest "rest"]
@@ -615,7 +615,7 @@ theorem deconstruct_rest_single_list_opens :
               ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
-/-- `first, rest... = A...`: the explicit spread supplies the same opened items as
+/-- `first, ...rest = A...`: the explicit spread supplies the same opened items as
 the bare unpack above. -/
 theorem deconstruct_rest_explicit_spread :
     bindDeconstruct [Pat.name "first", Pat.rest "rest"]
@@ -765,7 +765,7 @@ theorem bindPats_rest_exact (front back : List Pat) (r : String)
   rw [bindPats_rest_split front back r _ hf hb hlen, htake, hdropf, hmidlen,
     take_length_append, hbacklen, drop_length_append]
 
-/-- Trailing rest (`Tail(first, rest...)`), for every middle supply. -/
+/-- Trailing rest (`Tail(first, ...rest)`), for every middle supply. -/
 theorem bindPats_trailing_rest (a : String) (x : Val) (r : String) (mid : Supply) :
     bindPats [Pat.name a, Pat.rest r] (x :: mid)
       = some [(a, x), (r, collect mid)] := by
@@ -775,7 +775,7 @@ theorem bindPats_trailing_rest (a : String) (x : Val) (r : String) (mid : Supply
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Leading rest (`Init(init..., last)`), for every middle supply. -/
+/-- Leading rest (`Init(...init, last)`), for every middle supply. -/
 theorem bindPats_leading_rest (r : String) (mid : Supply) (z : String) (y : Val) :
     bindPats [Pat.rest r, Pat.name z] (mid ++ [y])
       = some [(r, collect mid), (z, y)] := by
@@ -785,7 +785,7 @@ theorem bindPats_leading_rest (r : String) (mid : Supply) (z : String) (y : Val)
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Middle rest (`F(x, y..., z)`), for every middle supply. -/
+/-- Middle rest (`F(x, ...y, z)`), for every middle supply. -/
 theorem bindPats_middle_rest (a : String) (x : Val) (r : String) (mid : Supply)
     (z : String) (y : Val) :
     bindPats [Pat.name a, Pat.rest r, Pat.name z] (x :: (mid ++ [y]))
@@ -796,7 +796,7 @@ theorem bindPats_middle_rest (a : String) (x : Val) (r : String) (mid : Supply)
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Rest-only (`F(items...)`), re-derived as the degenerate split instance —
+/-- Rest-only (`F(...items)`), re-derived as the degenerate split instance —
 agrees with the directly proved `variadic_is_single_rest`/`bindArgs_lone_rest`. -/
 theorem bindPats_rest_only (r : String) (xs : Supply) :
     bindPats [Pat.rest r] xs = some [(r, collect xs)] := by

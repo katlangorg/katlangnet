@@ -112,7 +112,7 @@ public class CollectionBuiltinBindingTests
         // list value, so forwarding it (`values.sum`) binds the single
         // `collection` parameter. The builtin itself has no variadic shape:
         // the equivalent inline call is an arity error.
-        AssertAtoms("G(values...) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);
+        AssertAtoms("G(...values) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);
         AssertArityError("sum(3, 4, 2, 1, 3, 3)", "sum(collection)");
     }
 

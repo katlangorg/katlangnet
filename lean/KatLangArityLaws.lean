@@ -206,7 +206,7 @@ theorem collectRest_singleton_ne_item (v : Result) :
 
 /-- Open/collect round trip: postfix spread (`open`, `Result.spreadItems`)
 re-supplies EXACTLY the collected items, so variadic forwarding
-(`Forward(items...) = Target(items...)`) is ordinary list spread with no
+(`Forward(...items) = Target(items...)`) is ordinary list spread with no
 hidden raw-supply metadata. -/
 theorem spreadItems_collectRest (xs : List Result) :
     (collectRest xs).spreadItems = xs := rfl
@@ -219,7 +219,7 @@ theorem valueCount_collectRest (xs : List Result) :
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it — collecting the
 concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, rest... = 1, [2, 3]..., (4, 5)...` gives
+whatever `a` and `b` were (`first, ...rest = 1, [2, 3]..., (4, 5)...` gives
 `rest = [2, 3, 4, 5]`). -/
 theorem collectRest_spread_concat_exact (a b : Result) :
     collectRest (a.spreadItems ++ b.spreadItems)
@@ -369,8 +369,8 @@ theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
 /-
 ## Generic mixed-pattern bridge theorems
 
-For every supported flat rest shape — leading rest (`Init(init..., last)`),
-middle rest (`F(x, y..., z)`), trailing rest (`Tail(first, rest...)`); the
+For every supported flat rest shape — leading rest (`Init(...init, last)`),
+middle rest (`F(x, ...y, z)`), trailing rest (`Tail(first, ...rest)`); the
 rest-only shape is `bindParameterPatternList_single_rest_binds_collect` above —
 a successful bind through the REAL shared binder records the rest name as
 `collectRest` of exactly the allocated middle supply. The middle supply `mid`
@@ -386,7 +386,7 @@ wider-arity content is carried by the executable matrices in `CoreTests.lean`
 and the generated differential corpora.
 -/
 
-/-- Trailing rest (`Tail(first, rest...)`): for EVERY middle supply — empty,
+/-- Trailing rest (`Tail(first, ...rest)`): for EVERY middle supply — empty,
 singleton, or multiple — the rest name binds `collectRest mid` and the leading
 fixed capture keeps the front argument boundary. -/
 theorem bindParameterPatternList_trailing_rest_binds_collect
@@ -408,7 +408,7 @@ theorem bindParameterPatternList_trailing_rest_binds_collect
     collectRest]
   rfl
 
-/-- Leading rest (`Init(init..., last)`): for EVERY middle supply the rest
+/-- Leading rest (`Init(...init, last)`): for EVERY middle supply the rest
 name binds `collectRest mid` and the trailing fixed capture keeps the back
 argument boundary. -/
 theorem bindParameterPatternList_leading_rest_binds_collect
@@ -429,7 +429,7 @@ theorem bindParameterPatternList_leading_rest_binds_collect
     collectRest]
   rfl
 
-/-- Middle rest (`F(x, y..., z)`): for EVERY middle supply the rest name binds
+/-- Middle rest (`F(x, ...y, z)`): for EVERY middle supply the rest name binds
 `collectRest mid` between the preserved front and back fixed boundaries. -/
 theorem bindParameterPatternList_middle_rest_binds_collect
     (x y : Result) (mid : List Result) :
@@ -454,7 +454,7 @@ theorem bindParameterPatternList_middle_rest_binds_collect
 /-
 ## Deconstruction bridge laws (unpacking receiver)
 
-Assignment deconstruction (`x, y..., z = RHS`) is parser-elaborated into a helper
+Assignment deconstruction (`x, ...y, z = RHS`) is parser-elaborated into a helper
 whose single parameter is a sequence-value pattern (`.sequenceValue [captures]`)
 applied to the right-hand side value as one argument. Binding through the real
 `bindParameterPatternList`, that pattern OPENS its single received value into items
@@ -520,7 +520,7 @@ theorem deconstruct_fixed_single_sequence_opens :
     mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
   rfl
 
-/-- `first, rest... = A`: the deconstruction sequence-value pattern opens `A`, so
+/-- `first, ...rest = A`: the deconstruction sequence-value pattern opens `A`, so
 `first = 1` and `rest` COLLECTS the remaining items as one exact immutable
 list `[2, 3]`. -/
 theorem deconstruct_rest_single_sequence_opens :
@@ -699,7 +699,7 @@ theorem normalize_singleton_sequence_of_list (xs : List Result) :
 /-- Ordinary capture and rest collection stay distinct operations on the same
 supply: `capture` canonicalizes to a sequence value while `collect` preserves
 the exact list — `x = A...` re-groups list items as `(…)`, while
-`x, rest... = A` collects them as `[…]`. -/
+`x, ...rest = A` collects them as `[…]`. -/
 theorem capture_and_collect_differ_on_pairs (a b : Result) :
     captureForArityLaw [a, b] =
         Result.sequenceValue [Result.normalize a, Result.normalize b]
@@ -757,7 +757,7 @@ theorem deconstruct_fixed_single_list_opens :
     mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
   rfl
 
-/-- `first, rest... = [1, 2, 3]`: the deconstruction pattern opens the lone
+/-- `first, ...rest = [1, 2, 3]`: the deconstruction pattern opens the lone
 list; `first = 1` and `rest` COLLECTS the remaining items as the exact list
 `[2, 3]`. -/
 theorem deconstruct_rest_single_list_opens :

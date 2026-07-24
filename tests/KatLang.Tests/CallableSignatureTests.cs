@@ -49,7 +49,7 @@ public class CallableSignatureTests
     [Fact]
     public void RequiredNormalParameterCount_CompatibilityShim_PreservesStructuralCount()
     {
-        var signature = SignatureFor("F(head, middle..., tail) = head", "F");
+        var signature = SignatureFor("F(head, ...middle, tail) = head", "F");
 
 #pragma warning disable CS0618 // Compatibility member is the subject of this test.
         Assert.Equal(3, signature.RequiredNormalParameterCount);
@@ -155,10 +155,10 @@ public class CallableSignatureTests
     [Fact]
     public void FromAlgorithm_TopLevelVariadicSignature_PreservesTopLevelVariadicDisplay()
     {
-        var signature = SignatureFor("CountValues(values...) = values.count", "CountValues");
+        var signature = SignatureFor("CountValues(...values) = values.count", "CountValues");
         var facts = signature.ArityFacts;
 
-        Assert.Equal("CountValues(values...)", signature.DisplayText);
+        Assert.Equal("CountValues(...values)", signature.DisplayText);
         Assert.False(signature.HasSequenceValueParameterPattern);
         Assert.Equal(1, signature.TopLevelParameterCount);
         Assert.Equal(1, signature.VariadicParameterCount);
@@ -168,18 +168,18 @@ public class CallableSignatureTests
         Assert.True(facts.HasTopLevelVariadic);
         var parameter = Assert.Single(signature.Parameters);
         Assert.Equal("values", parameter.Name);
-        Assert.Equal("values...", parameter.DisplayName);
+        Assert.Equal("...values", parameter.DisplayName);
     }
 
     [Fact]
     public void ArityFacts_TopLevelVariadicWithSuffix_IsDeconstructionWithUnboundedMax()
     {
-        var signature = SignatureFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
+        var signature = SignatureFor("Scale(...items, factor) = items.map{n * factor}", "Scale");
         var facts = signature.ArityFacts;
 
-        // Deconstruction-shaped: `factor` is the one fixed binding and `items...`
+        // Deconstruction-shaped: `factor` is the one fixed binding and `...items`
         // captures zero or more prefix items, so the arity is min 1, max unbounded.
-        Assert.Equal("Scale(items..., factor)", signature.DisplayText);
+        Assert.Equal("Scale(...items, factor)", signature.DisplayText);
         Assert.Equal(1, facts.MinTopLevelArgumentCount);
         Assert.Null(facts.MaxTopLevelArgumentCount);
         Assert.True(facts.HasTopLevelVariadic);
@@ -189,16 +189,16 @@ public class CallableSignatureTests
     [Fact]
     public void ArityFacts_DeconstructionShapes_ReportFixedMinimumAndUnboundedMax()
     {
-        var middleRest = SignatureFor("F(x, y..., z) = x + y.sum + z", "F").ArityFacts;
+        var middleRest = SignatureFor("F(x, ...y, z) = x + y.sum + z", "F").ArityFacts;
         Assert.Equal(2, middleRest.MinTopLevelArgumentCount);
         Assert.Null(middleRest.MaxTopLevelArgumentCount);
         Assert.True(middleRest.HasTopLevelVariadic);
 
-        var trailingRest = SignatureFor("F(first, tail...) = first", "F").ArityFacts;
+        var trailingRest = SignatureFor("F(first, ...tail) = first", "F").ArityFacts;
         Assert.Equal(1, trailingRest.MinTopLevelArgumentCount);
         Assert.Null(trailingRest.MaxTopLevelArgumentCount);
 
-        var leadingRest = SignatureFor("F(head..., last) = last", "F").ArityFacts;
+        var leadingRest = SignatureFor("F(...head, last) = last", "F").ArityFacts;
         Assert.Equal(1, leadingRest.MinTopLevelArgumentCount);
         Assert.Null(leadingRest.MaxTopLevelArgumentCount);
 
@@ -210,7 +210,7 @@ public class CallableSignatureTests
 
         // A lone rest-only parameter is the degenerate item-supply case: min 0,
         // unbounded max (empty calls are accepted).
-        var restOnly = SignatureFor("Sum(values...) = values.sum", "Sum").ArityFacts;
+        var restOnly = SignatureFor("Sum(...values) = values.sum", "Sum").ArityFacts;
         Assert.Equal(0, restOnly.MinTopLevelArgumentCount);
         Assert.Null(restOnly.MaxTopLevelArgumentCount);
         Assert.True(restOnly.HasTopLevelVariadic);
@@ -219,33 +219,33 @@ public class CallableSignatureTests
     [Fact]
     public void FromAlgorithm_SequenceValueVariadicSignature_DoesNotBecomeTopLevelVariadic()
     {
-        var signature = SignatureFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
+        var signature = SignatureFor("CountSequenceValue((...values)) = values.count", "CountSequenceValue");
         var facts = signature.ArityFacts;
 
-        Assert.Equal("CountSequenceValue((values...))", signature.DisplayText);
-        Assert.NotEqual("CountSequenceValue(values...)", signature.DisplayText);
+        Assert.Equal("CountSequenceValue((...values))", signature.DisplayText);
+        Assert.NotEqual("CountSequenceValue(...values)", signature.DisplayText);
         Assert.True(signature.HasSequenceValueParameterPattern);
         Assert.Equal(1, facts.MinTopLevelArgumentCount);
         Assert.Equal(1, facts.MaxTopLevelArgumentCount);
         Assert.False(facts.HasTopLevelVariadic);
         Assert.Equal(0, facts.TopLevelVariadicCount);
-        Assert.Equal(["(values...)"], signature.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList());
-        Assert.Equal(["values..."], signature.Parameters.Select(static parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["(...values)"], signature.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList());
+        Assert.Equal(["...values"], signature.Parameters.Select(static parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]
     public void FromAlgorithm_NestedRecursivePatternSignature_PreservesNestedShape()
     {
-        var signature = SignatureFor("G(((history...), previous)) = history.count + previous", "G");
+        var signature = SignatureFor("G(((...history), previous)) = history.count + previous", "G");
         var facts = signature.ArityFacts;
 
-        Assert.Equal("G(((history...), previous))", signature.DisplayText);
+        Assert.Equal("G(((...history), previous))", signature.DisplayText);
         Assert.True(signature.HasSequenceValueParameterPattern);
         Assert.Equal(1, facts.MinTopLevelArgumentCount);
         Assert.Equal(1, facts.MaxTopLevelArgumentCount);
         Assert.False(facts.HasTopLevelVariadic);
-        Assert.Equal(["((history...), previous)"], signature.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList());
-        Assert.Equal(["history...", "previous"], signature.Parameters.Select(static parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["((...history), previous)"], signature.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList());
+        Assert.Equal(["...history", "previous"], signature.Parameters.Select(static parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]
@@ -302,16 +302,16 @@ public class CallableSignatureTests
         // callee — for the top-level variadic and the pattern callee alike.
         AssertEval(
             """
-            CountItems(items...) = items.count
-            Use(values...) = CountItems
+            CountItems(...items) = items.count
+            Use(...values) = CountItems
             Use((1, 2, 3)...)
             """,
             3);
 
         AssertEval(
             """
-            CountSequenceValue((items...)) = items.count
-            Use(values...) = CountSequenceValue
+            CountSequenceValue((...items)) = items.count
+            Use(...values) = CountSequenceValue
             Use((1, 2, 3)...)
             """,
             3);

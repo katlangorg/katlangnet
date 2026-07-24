@@ -178,6 +178,7 @@ internal static class FrontEndInvariants
         protected override void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration declaration) => Check(declaration.Span, "parameter-declaration");
         protected override void VisitReservedOutputDeclaration(Algorithm algorithm, SourceSpan span) => Check(span, "output-declaration");
         protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span) => Check(span, "conditional-binder");
+        protected override void VisitRestBindingMarker(SourceSpan span, RestBindingSyntax syntax) => Check(span, $"rest-marker-{syntax}");
         protected override void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span) => Check(span, "dot-member");
 
         private void Check(SourceSpan? span, string kind)

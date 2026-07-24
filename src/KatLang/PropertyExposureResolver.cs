@@ -70,7 +70,7 @@ internal static class PropertyExposureResolver
         HashSet<string> locallyOwnedNames,
         bool insideConditionalAlgorithm)
     {
-        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
+        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
         // captures no ancestor-owned parameter, so its summary is empty and it needs no rewriting.
         // The general path would build an O(N) owned-name union from its N-capture pattern per

@@ -154,7 +154,7 @@ The `capture` restriction is real: spreading a list and re-CAPTURING converts
 it to the sequence world (`capture_items_of_list` — `x = A...` with
 `A = [1, 2, 3]` gives `(1, 2, 3)`), so the unrestricted claim would be false.
 The first law is what makes variadic forwarding ordinary list spread:
-`Forward(items...) = Target(items...)` re-supplies exactly the collected
+`Forward(...items) = Target(items...)` re-supplies exactly the collected
 items with no hidden raw-supply metadata.
 
 ## Rest binding collects an exact list
@@ -162,8 +162,8 @@ items with no hidden raw-supply metadata.
 Python's `*rest` binds to a fresh `list`, a container type distinct from the
 tuples / iterables it unpacks. KatLang makes the same receiver-purpose
 distinction, with its own exact collection kind: every rest binding —
-deconstruction rest (`first, mid..., last = …`) and variadic parameters
-(`F(x...) = …`) — materializes the assigned item supply through `collect`:
+deconstruction rest (`first, ...mid, last = …`) and variadic parameters
+(`F(...x) = …`) — materializes the assigned item supply through `collect`:
 
 ```lean
 def collect (xs : Supply) : Val := Val.list xs
@@ -185,7 +185,7 @@ The headline exactness laws in `CoreArityAlgebraProofs.lean`:
 * `collect_singleton` / `collect_singleton_seq` / `collect_singleton_list`
   with `collect_singleton_ne_item` — singleton preservation for EVERY value
   kind (`collect [v] = [v] ≠ v`), which keeps one remaining structured row
-  distinct from the row's own elements (`first, rest... = 1, (2, 3)` binds
+  distinct from the row's own elements (`first, ...rest = 1, (2, 3)` binds
   `rest = [(2, 3)]`; `1, [2, 3]` binds `[[2, 3]]`; `1, ()` binds `[()]`;
   `1, []` binds `[[]]`);
 * `items_collect` — the open/collect round trip;
@@ -216,7 +216,7 @@ equality check that the extraction omits.
 The Lean algebra permits a lone rest binding as the abstract variadic case:
 `bindArgs [Pat.rest "x"] xs` corresponds to variadic capture. KatLang surface
 assignment separately rejects rest-only assignment targets such as
-`all... = 1, 2, 3`, so this abstract binder is reached through variadic parameter
+`...all = 1, 2, 3`, so this abstract binder is reached through variadic parameter
 binding rather than through rest-only assignment syntax.
 
 ## Canonical values and the canonical-supply invariant
@@ -278,7 +278,7 @@ Every behaviour encoded as a theorem was cross-checked against the real evaluato
 in `KatLang.lean`, including the subtle points:
 
 * `collect` is exact: a rest/variadic that captures exactly one item binds the
-  one-element list (`H(x, rest...) = rest` on `H(1, 2)` gives `rest = [2]`),
+  one-element list (`H(x, ...rest) = rest` on `H(1, 2)` gives `rest = [2]`),
   the empty capture is the empty list (`H(1)` gives `rest = []`), and
   two-or-more items stay `[…]`. In `KatLang.lean` the shared helper is
   `collectRest`; in the C# runtime it is `CollectRest` inside

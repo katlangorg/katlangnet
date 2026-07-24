@@ -276,7 +276,7 @@ public sealed record CallableBindingCapture(
     ParameterKind Kind,
     CallableParameterSource Source)
 {
-    public string DisplayName => Kind == ParameterKind.Variadic ? $"{Name}..." : Name;
+    public string DisplayName => Kind == ParameterKind.Variadic ? $"...{Name}" : Name;
 }
 
 public abstract record CallableBindingNode

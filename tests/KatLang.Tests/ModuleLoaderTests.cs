@@ -247,7 +247,7 @@ public class ModuleLoaderTests
                 GetX = v:_x
                 GetY = v:_y
                 public Vector = (x, y)
-                public Add(vectors...) = Vector(vectors.map(GetX).sum, vectors.map(GetY).sum)
+                public Add(...vectors) = Vector(vectors.map(GetX).sum, vectors.map(GetY).sum)
                 """
         };
 

@@ -238,20 +238,20 @@ public class SequenceSpreadTests
         => AssertEval(
             $$"""
             Values = 10, 20
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             {{call}}
             """,
             37m);
 
     [Fact]
     public void VariadicSuffixBinding_CommaSeparatedSpreadSegmentBindsByDeconstruction()
-        // Sum(values..., val) is a comma deconstruction parameter list. Values...
+        // Sum(...values, val) is a comma deconstruction parameter list. Values...
         // spreads into [10, 20] and 7 fills the suffix, so the variadic captures
         // [10, 20] (sum 30) and val binds 7: 30 + 7 = 37.
         => AssertEval(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Sum(Values..., 7)
             """,
             37m);
@@ -265,7 +265,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Sum(Values, 7)
             """);
 
@@ -277,7 +277,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Sum(Values)
             """);
 
@@ -286,7 +286,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Values.Sum
             """);
 
@@ -298,7 +298,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Values.Sum(7)
             """);
 
@@ -307,7 +307,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Sum(values..., val) = values.sum + val
+            Sum(...values, val) = values.sum + val
             Sum(Values...)
             """,
             30m);
@@ -321,14 +321,14 @@ public class SequenceSpreadTests
         AssertEvaluationFailure(
             """
             Vector = range(1, 10)
-            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
             Qmean(Vector)
             """);
 
         AssertEval(
             """
             Vector = range(1, 10)
-            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
             Qmean(Vector...) == Math.Sqrt(385 / 10)
             """,
             1m);
@@ -339,7 +339,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Vector = range(1, 10)
-            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
             (Vector...).Qmean() == Qmean(Vector...)
             """,
             1m);
@@ -349,7 +349,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Count(args...) = args.count
+            Count(...args) = args.count
             Count(Values)
             """,
             1m);
@@ -359,7 +359,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Pair = (10, 20)
-            Count(args...) = args.count
+            Count(...args) = args.count
             Count(Pair)
             """,
             1m);
@@ -369,7 +369,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Pair = (10, 20)
-            Count(args...) = args.count
+            Count(...args) = args.count
             Pair.Count()
             """,
             1m);
@@ -391,8 +391,8 @@ public class SequenceSpreadTests
         // argument.
         => AssertEval(
             """
-            CountItem(values..., item) = values.filter{value == item}.count
-            Use(values...) = CountItem(values..., 1)
+            CountItem(...values, item) = values.filter{value == item}.count
+            Use(...values) = CountItem(values..., 1)
             Use((1, 1, 2, 4, 4)...)
             """,
             2m);
@@ -401,9 +401,9 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_CallbackBodyForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItem(values..., item) = values.filter{value == item}.count
+            CountItem(...values, item) = values.filter{value == item}.count
 
-            Mode(values...) = {
+            Mode(...values) = {
                 Freqs = values.distinct.map{CountItem(values..., candidate)}
                 Freqs
             }
@@ -416,9 +416,9 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_FullModeExampleForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItem(values..., item) = values.filter{value == item}.count
+            CountItem(...values, item) = values.filter{value == item}.count
 
-            Mode(values...) = {
+            Mode(...values) = {
                 Freqs = values.distinct.map{CountItem(values..., candidate)}
                 MaxFreq = Freqs.max
 
@@ -437,7 +437,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Collect(list) = list.count
-            Use(values...) = Collect(values)
+            Use(...values) = Collect(values)
             Use((10, 20, 30)...)
             """,
             3m);
@@ -446,8 +446,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_TopLevelVariadicCalleeReceivesStreamViaSpread()
         => AssertEval(
             """
-            Collect(list...) = list.count
-            Use(values...) = Collect(values...)
+            Collect(...list) = list.count
+            Use(...values) = Collect(values...)
             Use((10, 20, 30)...)
             """,
             3m);
@@ -457,8 +457,8 @@ public class SequenceSpreadTests
         // Round trip: the callee's rest re-collects exactly the caller's items.
         => AssertEval(
             """
-            CountItems(items...) = items.count
-            Use(values...) = CountItems(values...)
+            CountItems(...items) = items.count
+            Use(...values) = CountItems(values...)
             Use((1, 2, 3)...)
             """,
             3m);
@@ -469,8 +469,8 @@ public class SequenceSpreadTests
         // passed bare and the sequence-value pattern opens its one boundary.
         => AssertEval(
             """
-            CountSequenceValue((values...)) = values.count
-            Use(values...) = CountSequenceValue(values)
+            CountSequenceValue((...values)) = values.count
+            Use(...values) = CountSequenceValue(values)
             Use((10, 20, 30)...)
             """,
             3m);
@@ -479,8 +479,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
-            YSStep((history...), pre2, pre1) = FindNext(history..., pre1, pre2)
+            FindNext(...history, pre1, pre2) = history.count + pre1 + pre2
+            YSStep((...history), pre2, pre1) = FindNext(history..., pre1, pre2)
             YSStep((1, 2, 3), 2, 3)
             """,
             8m);
@@ -489,8 +489,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItems(items...) = items.count
-            Use((history...)) = CountItems(history...)
+            CountItems(...items) = items.count
+            Use((...history)) = CountItems(history...)
             Use((1, 2, 3))
             """,
             3m);
@@ -499,7 +499,7 @@ public class SequenceSpreadTests
     public void SequenceValueVariadicCalleeBoundary_DoesNotUseFlatSlotSpread()
         => AssertEval(
             """
-            CountSequenceValue((items...)) = items.count
+            CountSequenceValue((...items)) = items.count
             Pair = 10, 20
             CountSequenceValue(Pair)
             """,
@@ -511,8 +511,8 @@ public class SequenceSpreadTests
         // parameter is called — no name matching is involved.
         => AssertEval(
             """
-            CountItems(items..., last) = items.count + last
-            Use((history...), last) = CountItems(history..., last)
+            CountItems(...items, last) = items.count + last
+            Use((...history), last) = CountItems(history..., last)
             Use((10, 20, 30), 7)
             """,
             10m);
@@ -522,7 +522,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Collect(list) = list.count
-            Use((history...), marker) = Collect(history)
+            Use((...history), marker) = Collect(history)
             Use((10, 20, 30), 99)
             """,
             3m);
@@ -531,8 +531,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueVariadicCaptureOnlyExpandsInTargetVariadicSlot()
         => AssertEval(
             """
-            TakeLast(first..., last) = first.count
-            Use((history...), marker) = TakeLast(0, history)
+            TakeLast(...first, last) = first.count
+            Use((...history), marker) = TakeLast(0, history)
             Use((10, 20, 30), 99)
             """,
             1m);
@@ -541,8 +541,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_LoopStepSequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
-            YSStep((history...), pre2, pre1) = FindNext(history..., pre1, pre2), pre1, pre2
+            FindNext(...history, pre1, pre2) = history.count + pre1 + pre2
+            YSStep((...history), pre2, pre1) = FindNext(history..., pre1, pre2), pre1, pre2
             YSStep.repeat(1, (1, 2, 3), 2, 3):0
             """,
             8m);
@@ -649,7 +649,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = (Values...).Sum
             """,
             30m);
@@ -665,7 +665,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             $$"""
             Values = 10, 20
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = {{call}}
             """);
 
@@ -674,7 +674,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = ((Values...7)...).Sum
             """,
             37m);
@@ -686,7 +686,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Pair = (10, 20)
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = (Pair...).Sum
             """,
             30m);
@@ -700,14 +700,14 @@ public class SequenceSpreadTests
         AssertEvaluationFailure(
             """
             Pair = (10, 20)
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = (Pair...7).Sum
             """);
 
         AssertEval(
             """
             Pair = (10, 20)
-            Sum(values...) = values.sum
+            Sum(...values) = values.sum
             Output = ((Pair...7)...).Sum
             """,
             37m);
@@ -741,7 +741,7 @@ public class SequenceSpreadTests
             """
             a = 1
             b = 2, 3
-            X(values...) = values.count
+            X(...values) = values.count
 
             X((a, b...)...)
             """,
@@ -751,7 +751,7 @@ public class SequenceSpreadTests
             """
             a = 1
             b = 2, 3
-            X(values...) = values.count
+            X(...values) = values.count
 
             X((a, (b...))...)
             """,
@@ -775,12 +775,12 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceSpread_VersusVariadicCapture_AreDistinct()
     {
-        // Definition side: `values...` is a VARIADIC (rest) CAPTURE — NOT a spread.
+        // Definition side: `...values` is a VARIADIC (rest) CAPTURE — NOT a spread.
         // The call-site spread supplies Vals's items as the collected list
         // [1, 2, 3]; a bare `Sum(Vals)` would collect [(1, 2, 3)] whose element
         // is non-numeric.
         const string variadicDef = """
-            Sum(values...) = sum(values)
+            Sum(...values) = sum(values)
             Vals = (1, 2, 3)
             Sum(Vals...)
             """;

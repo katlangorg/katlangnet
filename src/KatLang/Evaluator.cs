@@ -1533,7 +1533,7 @@ public static class Evaluator
                 // prefix/rest/suffix matcher (the same normalization the function
                 // deconstruction path applies via rule 4). This lets a scalar
                 // right-hand side bind a rest pattern that captures zero items,
-                // e.g. `first, tail... = 1` (first = 1, tail = []), instead of being
+                // e.g. `first, ...tail = 1` (first = 1, tail = []), instead of being
                 // rejected before the matcher runs.
                 if (itemsR.IsError && input.Value is not null)
                 {
@@ -1707,7 +1707,7 @@ public static class Evaluator
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {
                     return new EvalError.TypeMismatch(
-                        $"Rest parameter `{variadicCapture.Name}...` collects values, but a supplied argument is a function. " +
+                        $"Rest parameter `...{variadicCapture.Name}` collects values, but a supplied argument is a function. " +
                         "Pass a value, or call the function so its result is collected.");
                 }
 
@@ -1985,7 +1985,7 @@ public static class Evaluator
     /// <summary>
     /// True when a callable's top-level parameter list captures the supplied call
     /// argument stream: any top-level variadic capture, including rest-only
-    /// <c>name...</c> and mixed fixed/rest shapes such as <c>x, y..., z</c>.
+    /// <c>...name</c> and mixed fixed/rest shapes such as <c>x, ...y, z</c>.
     /// Checked only after patterned (sequence-value / repeated-name) binding has
     /// been ruled out.
     /// Lean: <c>Algorithm.usesItemSupplyBinding</c>.
@@ -2934,7 +2934,7 @@ public static class Evaluator
                 }
 
                 // A flat callee with a top-level rest parameter (`Rows.map(F)`
-                // with `F(x, y..., z)` or a rest-only `Collect(items...)`)
+                // with `F(x, ...y, z)` or a rest-only `Collect(...items)`)
                 // binds through the shared prefix/rest/suffix binder so the
                 // rest parameter COLLECTS an exact immutable list, after the
                 // same final-argument row expansion the fixed-only flat path
@@ -5566,7 +5566,7 @@ public static class Evaluator
                     : EvalResolvedArgument(args[2], ctx, valEnv);
             }
 
-            // while(step, init...)
+            // while(step, ...init)
             case (BuiltinId.@while, _) when args.Count >= 2:
             {
                 var stepR = ResolveArgumentAlgorithm(args[0]);
@@ -5576,7 +5576,7 @@ public static class Evaluator
                 return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
             }
 
-            // repeat(step, count, init...)
+            // repeat(step, count, ...init)
             case (BuiltinId.@repeat, _) when args.Count >= 3:
             {
                 var stepR = ResolveArgumentAlgorithm(args[0]);

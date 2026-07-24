@@ -93,7 +93,6 @@ public class SemanticExplorerLeanArtifactTests
                 "special__trailingComma",
                 "special__listUnterminated",
                 "special__listDefinitionInside",
-                "special__listLoneRestAssignment",
             ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();
@@ -119,13 +118,14 @@ public class SemanticExplorerLeanArtifactTests
 
         Assert.Contains($"all {Count(surface)} surface cases", document, StringComparison.Ordinal);
         Assert.Contains($"(**{Count(leanRepresentable)} surface cases**", document, StringComparison.Ordinal);
-        Assert.Contains(
+        var expectedSurfaceRow =
             $"| Surface corpus (= C# semantic report surface section) | {Count(surface)} | " +
             $"{Count(templates)} template cases (51 receiver templates x 26 values) + {specials} specials; " +
             $"outcomes {Count(outcomes["ok"])} ok / {Count(outcomes["err"])} err / " +
-            $"{Count(outcomes["parseError"])} parse-error |",
-            document,
-            StringComparison.Ordinal);
+            $"{Count(outcomes["parseError"])} parse-error |";
+        Assert.True(
+            document.Contains(expectedSurfaceRow, StringComparison.Ordinal),
+            $"Sequence-boundary audit is missing expected row:{Environment.NewLine}{expectedSurfaceRow}");
         Assert.Contains(
             $"| Generated Lean case guards | {Count(leanRepresentable + internalNodes)} | " +
             $"{Count(leanRepresentable)} surface + {internalNodes} internal-node",

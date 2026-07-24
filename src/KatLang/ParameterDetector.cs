@@ -40,7 +40,7 @@ public static class ParameterDetector
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is already a
+        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
         // opens, no properties, and an output that is exactly the single bound target name.
         // Its only required elaboration is rewriting that bound Resolve to a Param. Running

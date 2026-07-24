@@ -39,7 +39,7 @@ public class SequenceCallbackArgumentTests
             Vector(x, y) = (x, y)
             X((x, y)) = x
             Y((x, y)) = y
-            Sum(vectors...) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
+            Sum(...vectors) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
             Sum(Vector(1, 2)...)
             """;
 
@@ -81,7 +81,7 @@ public class SequenceCallbackArgumentTests
             Vector(x, y) = (x, y)
             X((x, y)) = x
             Y((x, y)) = y
-            Sum(vectors...) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
+            Sum(...vectors) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
             Sum((Vector(1, 2), Vector(3, 4), Vector(5, 6))...)
             """;
         Assert.Equal(new decimal[] { 9, 12 }, Atoms(source));

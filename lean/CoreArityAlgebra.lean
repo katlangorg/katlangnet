@@ -291,7 +291,7 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
 
 A lone rest pattern is valid here because it models variadic capture:
 `bindArgs [Pat.rest x] xs`. This is an abstract binding shape, not a claim that
-KatLang surface assignment accepts rest-only targets such as `x... = 1, 2, 3`.
+KatLang surface assignment accepts rest-only targets such as `...x = 1, 2, 3`.
 -/
 def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps xs

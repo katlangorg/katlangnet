@@ -111,10 +111,10 @@ public class KatLangEngineTests
     public void Run_EmptyRestOutputSlot_StaysVisibleUnlessSpread()
     {
         // The empty rest is the exact empty list [] and stays a visible slot.
-        AssertDisplay("x, rest... = 1\nrest", "[]");
-        AssertDisplay("x, rest... = 1\nrest\nx", "[]\n1");
+        AssertDisplay("x, ...rest = 1\nrest", "[]");
+        AssertDisplay("x, ...rest = 1\nrest\nx", "[]\n1");
         // Spreading the empty list opens it and contributes zero items.
-        AssertDisplay("x, rest... = 1\nrest...\nx", "1");
+        AssertDisplay("x, ...rest = 1\nrest...\nx", "1");
     }
 
     [Fact]
@@ -856,7 +856,7 @@ public class KatLangEngineTests
         // [(10, 20, 30)], displayed as a single row.
         var result = KatLangEngine.Run(
             """
-            Collect(list...) = list
+            Collect(...list) = list
             Output = (10, 20, 30).Collect
             """);
 
@@ -871,7 +871,7 @@ public class KatLangEngineTests
         // list into the surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """
-            Collect(list...) = list
+            Collect(...list) = list
             Output = ((10, 20, 30)...).Collect...
             """);
 

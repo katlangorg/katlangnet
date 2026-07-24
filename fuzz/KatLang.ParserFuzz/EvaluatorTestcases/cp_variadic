@@ -1,2 +1,2 @@
-g(vals...) = vals.count
+g(...vals) = vals.count
 Output = g(1, 2, 3)

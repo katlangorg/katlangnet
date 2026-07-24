@@ -173,7 +173,7 @@ public class WrittenSlotReificationTests
         // Consistency between the empty and non-empty paths: the same initial
         // accumulator value enters the reducer as one value.
         AssertEvaluates(
-            "Append(item, history...) = (history..., item)\nInit = 1, 2\nreduce((9), Append, Init)",
+            "Append(item, ...history) = (history..., item)\nInit = 1, 2\nreduce((9), Append, Init)",
             Seq(Atom(1), Atom(2), Atom(9)));
 
         // Dotted and ordinary forms agree.

@@ -787,7 +787,7 @@ public class MetamorphicPhase2FamilyTests
         // Evidence for the precondition: a rest parameter COLLECTS the supplied slot into a
         // list, so the wrapper sees [element] where the direct builtin sees element.
         const string direct = "MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)";
-        const string rest = "MmWrap(xs...) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
+        const string rest = "MmWrap(...xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
         Assert.True(MetamorphicExecutor.TryObserve(rest, null, true, out var b, out _));
@@ -892,7 +892,7 @@ public class MetamorphicPhase2FamilyTests
             // The wrapper really is written in the shape its rejection reason names.
             var wrapperLine = testCase.RightSource.Split('\n')[0];
             var expectedWrapper = kind == MetamorphicWrapperProjection.Rest
-                ? $"{MetamorphicTables.WrapperFunction}(xs...) = "
+                ? $"{MetamorphicTables.WrapperFunction}(...xs) = "
                 : $"{MetamorphicTables.WrapperFunction}({(arity == 1 ? "a, b" : "a")}) = ";
             Assert.StartsWith(expectedWrapper, wrapperLine, StringComparison.Ordinal);
 

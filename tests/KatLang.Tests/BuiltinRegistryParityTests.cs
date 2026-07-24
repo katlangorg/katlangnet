@@ -158,7 +158,7 @@ public class BuiltinRegistryParityTests
         Assert.False(multipleVariadic.HasAtMostOneVariadic);
         AssertValidationReason(
             multipleVariadic,
-            "Callable signature `Bad(a..., b...)` cannot contain more than one variadic parameter.");
+            "Callable signature `Bad(...a, ...b)` cannot contain more than one variadic parameter.");
 
         AssertValidationReason(
             new CallableSignature("Bad", [new CallableParameter("")]),

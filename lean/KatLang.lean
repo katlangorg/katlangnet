@@ -45,7 +45,7 @@
 --       when the group contains exactly one clause and that sole head is a
 --       recursive parameter pattern made only of captures and structural sequence-value patterns
 --       (for example `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
---       `CountSequenceValue((values...)) = values.count`)
+--       `CountSequenceValue((...values)) = values.count`)
 --     - multi-clause families and clause heads that require literal or
 --       whole-argument conditional matching elaborate to `Algorithm.conditional`
 --
@@ -873,7 +873,7 @@ mutual
         elaborates to `Algorithm.mk` only when it contains exactly one clause
         and that sole head is a recursive capture/sequence-value parameter pattern such
         as `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
-        `CountSequenceValue((values...)) = values.count`. Multi-clause families and
+        `CountSequenceValue((...values)) = values.count`. Multi-clause families and
         literal/mixed heads such as
 
           F(0) = 0
@@ -1407,7 +1407,7 @@ namespace Algorithm
 
   /-- A callable whose top-level parameter list consumes the supplied call
       argument stream: any top-level variadic capture, whether rest-only
-      `name...` or a comma shape such as `x, y..., z`. A plain sequence-valued
+      `...name` or a comma shape such as `x, ...y, z`. A plain sequence-valued
       argument stays one supplied argument; only explicit spread opens it first. -/
   def usesItemSupplyBinding (a : Algorithm) : Bool :=
     (variadicParam? a).isSome
@@ -2126,7 +2126,7 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     preparation (call binding preserves argument slots; deconstruction may
     open one lone sequence or list). The round trip
     `Result.spreadItems (collectRest xs) = xs` makes variadic forwarding
-    ordinary list spread: `Forward(items...) = Target(items...)` re-supplies
+    ordinary list spread: `Forward(...items) = Target(items...)` re-supplies
     exactly the collected items with no hidden raw-supply metadata. A rest
     value is one visible value, so its emitted count is always 1 (including
     `[]`). C#: `CollectRest` (inside `CreateVariadicCapture`). -/
@@ -3256,7 +3256,7 @@ def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
   | _ => none
 
 /-- True when the callee's parameter list is flat (no sequence-value patterns)
-    and starts with a variadic parameter, e.g. `F(values..., last)`.
+    and starts with a variadic parameter, e.g. `F(...values, last)`.
     Flat-binder core conditionals are classified through their ordinary
     user-call equivalent. -/
 def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
@@ -3936,7 +3936,7 @@ mutual
       combined with `combineOutputSlots`, which preserves singleton slot
       structure and deliberately does NOT apply the general `Result.normalize`,
       which would recursively erase useful one-item sequence structure.
-      (Loop-step state, which must keep a variadic `history...` structured, goes
+      (Loop-step state, which must keep a variadic `...history` structured, goes
       through `evalAlgOutputSlots` with its explicit preserve flag, not here.)
 
       A user-defined algorithm value may exist structurally without output, but
@@ -4157,7 +4157,7 @@ mutual
               (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
           -- A flat callee with a top-level rest parameter (`Rows.map(F)` with
-          -- `F(x, y..., z)` or a rest-only `Collect(items...)`) binds through
+          -- `F(x, ...y, z)` or a rest-only `Collect(...items)`) binds through
           -- the shared prefix/rest/suffix binder so the rest parameter
           -- COLLECTS an exact immutable list, after the same final-argument
           -- row expansion the fixed-only flat path uses below. Rest-only
@@ -5600,7 +5600,7 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
 
    Recursive parameter patterns are preserved by this surface pass: lifting
-   `items...`, `(items...)`, or `((history...), previous)` keeps that shape
+   `...items`, `(...items)`, or `((...history), previous)` keeps that shape
    instead of reconstructing ordinary capture parameters from flattened names.
    A narrow forwarding rule also permits a bare helper reference with one
    forwardable variadic supply to use a containing algorithm's single

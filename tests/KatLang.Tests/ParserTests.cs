@@ -1906,7 +1906,7 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Unexpected token"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Expected a binding name after prefix `...`"));
     }
 
     [Theory]
@@ -3702,115 +3702,258 @@ public class ParserTests
     [Fact]
     public void Parse_VariadicExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Collect(list...) = list",
+            "Collect(...list) = list",
             ["list"],
             [ParameterKind.Variadic]);
 
     [Fact]
     public void Parse_NormalThenVariadicExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Collect(a, rest...) = rest",
+            "Collect(a, ...rest) = rest",
             ["a", "rest"],
             [ParameterKind.Normal, ParameterKind.Variadic]);
 
     [Fact]
     public void Parse_VariadicThenSuffixExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Scale(values..., factor) = values",
+            "Scale(...values, factor) = values",
             ["values", "factor"],
             [ParameterKind.Variadic, ParameterKind.Normal]);
 
     [Fact]
     public void Parse_SequenceValueVariadicExplicitParameter_ParsesFixedSlotKind()
         => AssertVariadicParameters(
-            "Collect((list...)) = list",
+            "Collect((...list)) = list",
             ["list"],
             [ParameterKind.Variadic],
-            ["(list...)"]);
+            ["(...list)"]);
 
     [Fact]
     public void Parse_SequenceValueVariadicWithSuffixExplicitParameters_ParsesFixedSlotKind()
         => AssertVariadicParameters(
-            "Collect((history...), previous, next) = history",
+            "Collect((...history), previous, next) = history",
             ["history", "previous", "next"],
             [ParameterKind.Variadic, ParameterKind.Normal, ParameterKind.Normal],
-            ["(history...)", "previous", "next"]);
+            ["(...history)", "previous", "next"]);
 
     [Fact]
     public void Parse_HeadTailSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect((head, tail...)) = head, tail",
+            "Collect((head, ...tail)) = head, tail",
             ["head", "tail"],
             [ParameterKind.Normal, ParameterKind.Variadic],
-            ["(head, tail...)"]);
+            ["(head, ...tail)"]);
 
     [Fact]
     public void Parse_FirstMiddleLastSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect((first, middle..., last)) = first, middle, last",
+            "Collect((first, ...middle, last)) = first, middle, last",
             ["first", "middle", "last"],
             [ParameterKind.Normal, ParameterKind.Variadic, ParameterKind.Normal],
-            ["(first, middle..., last)"]);
+            ["(first, ...middle, last)"]);
 
     [Fact]
     public void Parse_NestedSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect(((history..., pre2), pre1)) = history, pre2, pre1",
+            "Collect(((...history, pre2), pre1)) = history, pre2, pre1",
             ["history", "pre2", "pre1"],
             [ParameterKind.Variadic, ParameterKind.Normal, ParameterKind.Normal],
-            ["((history..., pre2), pre1)"]);
+            ["((...history, pre2), pre1)"]);
 
     [Fact]
     public void Parse_PrefixVariadicSuffixExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Surround(prefix, values..., suffix) = values",
+            "Surround(prefix, ...values, suffix) = values",
             ["prefix", "values", "suffix"],
             [ParameterKind.Normal, ParameterKind.Variadic, ParameterKind.Normal]);
 
     [Fact]
     public void Parse_SeparateVariadicCapturesAtDifferentPatternLevels_Parses()
         => AssertVariadicParameters(
-            "Nested((inner...), outer...) = inner.count, outer.count",
+            "Nested((...inner), ...outer) = inner.count, outer.count",
             ["inner", "outer"],
             [ParameterKind.Variadic, ParameterKind.Variadic],
-            ["(inner...)", "outer..."]);
+            ["(...inner)", "...outer"]);
 
     [Fact]
     public void Parse_MultipleVariadicExplicitParameters_ReportsError()
     {
-        var result = Parser.ParseSyntax("Bad(a..., b...) = b");
+        var result = Parser.ParseSyntax("Bad(...a, ...b) = b");
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Only one variadic parameter is allowed per pattern level."));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Only one rest binding is allowed per pattern level."));
     }
 
     [Fact]
     public void Parse_RepeatedVariadicAndNormalName_ReportsUnsupportedError()
     {
-        var result = Parser.ParseSyntax("Bad(xs..., xs) = xs");
+        var result = Parser.ParseSyntax("Bad(...xs, xs) = xs");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Repeated parameter names cannot include variadic captures."));
+            diagnostic.Message.Contains("Repeated parameter names cannot include rest bindings."));
     }
 
     [Fact]
     public void Parse_RepeatedVariadicNameAtSameLevel_RemainsRejected()
     {
-        var result = Parser.ParseSyntax("Bad(xs..., xs...) = xs");
+        var result = Parser.ParseSyntax("Bad(...xs, ...xs) = xs");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Only one variadic parameter is allowed per pattern level."));
+            diagnostic.Message.Contains("Only one rest binding is allowed per pattern level."));
     }
 
     [Fact]
     public void Parse_VariadicExplicitParameterWithGrace_ReportsError()
     {
-        var result = Parser.ParseSyntax("Bad(a~...) = a");
+        var result = Parser.ParseSyntax("Bad(...a~) = a");
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Variadic parameters cannot use `~` reordering."));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Rest bindings cannot use `~` reordering."));
+    }
+
+    [Fact]
+    public void Parse_LegacyPostfixRestBinding_ParsesWithDeprecationWarningAndSourceOrientation()
+    {
+        var result = Parser.ParseSyntax("Collect(items...) = items");
+
+        Assert.False(result.HasErrors);
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        Assert.Equal(
+            "Postfix rest binding `items...` is deprecated; write `...items`. Postfix `...` is reserved for value spreading.",
+            warning.Message);
+        Assert.Equal(new SourceSpan(1, 9, 1, 16), warning.Span);
+
+        var property = Assert.Single(result.Root.Properties);
+        var user = Assert.IsType<Algorithm.User>(property.Value);
+        var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
+        Assert.Equal("...items", capture.DisplayName);
+        Assert.Equal(new SourceSpan(1, 9, 1, 13), capture.Span);
+        Assert.Equal(new SourceSpan(1, 14, 1, 16), capture.RestMarkerSpan);
+        Assert.Equal(RestBindingSyntax.LegacyPostfix, capture.RestSyntax);
+    }
+
+    [Theory]
+    [InlineData("Collect(...items) = items")]
+    [InlineData("Collect(... items) = items")]
+    public void Parse_PrefixRestBinding_ParsesCanonicalOrientationAndExactSpans(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+
+        Assert.Empty(result.Diagnostics);
+        var property = Assert.Single(result.Root.Properties);
+        var user = Assert.IsType<Algorithm.User>(property.Value);
+        var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
+        Assert.Equal(ParameterKind.Variadic, capture.Kind);
+        Assert.Equal("...items", capture.DisplayName);
+        Assert.Equal(RestBindingSyntax.Prefix, capture.RestSyntax);
+        Assert.Equal(new SourceSpan(1, 9, 1, 11), capture.RestMarkerSpan);
+        Assert.Equal(
+            source.Contains("... ", StringComparison.Ordinal)
+                ? new SourceSpan(1, 13, 1, 17)
+                : new SourceSpan(1, 12, 1, 16),
+            capture.Span);
+    }
+
+    [Fact]
+    public void Parse_PrefixRestBinding_MarkerCannotBeSeparatedFromNameByNewline()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Collect(...
+              items) = items
+            """);
+
+        Assert.True(result.HasErrors);
+        var diagnostic = Assert.Single(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Expected a binding name after prefix `...`", StringComparison.Ordinal));
+        Assert.Equal(new SourceSpan(1, 9, 1, 11), diagnostic.Span);
+    }
+
+    [Fact]
+    public void Parse_PrefixRestDeconstruction_PreservesNameAndMarkerSpans()
+    {
+        var result = Parser.ParseSyntax("first, ...middle, last = values");
+
+        Assert.Empty(result.Diagnostics);
+        var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
+        var body = Assert.IsType<Algorithm.User>(middle.Value);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
+        var helperBlock = Assert.IsType<Expr.Block>(call.Function);
+        var sequence = Assert.IsType<SequenceValueParameterPattern>(
+            Assert.Single(helperBlock.Algorithm.ParameterPatterns));
+        var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
+        Assert.Equal("middle", capture.Name);
+        Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), capture.RestMarkerSpan);
+        Assert.Equal(RestBindingSyntax.Prefix, capture.RestSyntax);
+        Assert.Equal(new SourceSpan(1, 11, 1, 16), Assert.Single(middle.DeclarationSpans));
+    }
+
+    [Fact]
+    public void Parse_LegacyPostfixRestDeconstruction_WarnsAndRetainsLegacyOrientation()
+    {
+        var result = Parser.ParseSyntax("first, middle..., last = values");
+
+        Assert.False(result.HasErrors);
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        Assert.Equal(
+            "Postfix rest binding `middle...` is deprecated; write `...middle`. Postfix `...` is reserved for value spreading.",
+            warning.Message);
+        Assert.Equal(new SourceSpan(1, 8, 1, 16), warning.Span);
+
+        var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
+        var body = Assert.IsType<Algorithm.User>(middle.Value);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
+        var helperBlock = Assert.IsType<Expr.Block>(call.Function);
+        var sequence = Assert.IsType<SequenceValueParameterPattern>(
+            Assert.Single(helperBlock.Algorithm.ParameterPatterns));
+        var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
+        Assert.Equal(new SourceSpan(1, 14, 1, 16), capture.RestMarkerSpan);
+        Assert.Equal(RestBindingSyntax.LegacyPostfix, capture.RestSyntax);
+    }
+
+    [Theory]
+    [InlineData("Bad(...) = 0", "Expected a binding name")]
+    [InlineData("Bad(...1) = 0", "must be an identifier")]
+    [InlineData("Bad(...(item)) = 0", "must be an identifier")]
+    [InlineData("Bad(...items...) = 0", "Malformed rest binding")]
+    [InlineData("Use(...items)", "Prefix `...` is only valid for rest bindings")]
+    public void Parse_InvalidPrefixEllipsis_ReportsTargetedDiagnosticAndRecovers(
+        string source,
+        string expectedMessage)
+    {
+        var result = Parser.ParseSyntax(source);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains(expectedMessage, StringComparison.Ordinal));
+        Assert.NotNull(result.Root);
+    }
+
+    [Fact]
+    public void Parse_MalformedPrefixRest_RecoversToFollowingDeclarationAndOutput()
+    {
+        var result = Parser.ParseSyntax(
+            """
+            Bad(..., item) = item
+            Good = 7
+            Good
+            """);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Expected a binding name", StringComparison.Ordinal));
+        Assert.Contains(result.Root.Properties, static property => property.Name == "Good");
+        Assert.Equal(
+            "Good",
+            Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
     }
 
     [Fact]
@@ -4361,13 +4504,13 @@ public class ParserTests
     {
         var source = """
             F(0) = 0
-            F(values...) = values.count
+            F(...values) = values.count
             """;
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d =>
-            d.Message.Contains("Variadic parameters are only supported in ordinary explicit parameter lists") &&
+            d.Message.Contains("Rest bindings are only supported in ordinary explicit parameter lists") &&
             d.Message.Contains("F"));
         Assert.Equal(2, diag.Span.StartLineNumber);
     }

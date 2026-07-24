@@ -72,7 +72,7 @@ public class SequenceConstructContainmentTests
         "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",
         "x, y = (1, 2)...\nx",
-        "F(a...) = a\nF((1, 2)..., 3)",
+        "F(...a) = a\nF((1, 2)..., 3)",
         "(1..., (), 2...)",
         // Exact list literals are a genuine surface node (Expr.ListLiteral),
         // never a route into the internal join node.
@@ -84,7 +84,7 @@ public class SequenceConstructContainmentTests
         "A = (1, 2)\n[A..., 99]",
         "A = [1, 2]\n(A..., 99)",
         "x, y = [1, 2]\nx",
-        "F(a...) = a\nF([1, 2]..., 3)",
+        "F(...a) = a\nF([1, 2]..., 3)",
     };
 
     [Theory]

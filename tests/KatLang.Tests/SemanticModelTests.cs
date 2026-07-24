@@ -177,12 +177,54 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_PrefixRestAndPostfixSpread_KeepDistinctSourceBackedIdentifierSites()
+    {
+        const string source =
+            """
+            Pack(...items) = items
+            Values = (1, 2)
+            Pack(Values...)
+            """;
+
+        var parseResult = Parser.Parse(source);
+        Assert.False(
+            parseResult.HasErrors,
+            string.Join(Environment.NewLine, parseResult.Diagnostics.Select(d => d.Message)));
+        var model = SemanticModelBuilder.Build(parseResult);
+
+        var itemsDeclaration = Assert.Single(model.FindDeclarations("items"));
+        Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, itemsDeclaration.Kind);
+        AssertSpan(itemsDeclaration.Span, 1, 9, 1, 13);
+        Assert.Equal(itemsDeclaration, ResolutionAt(model, 1, 18).ResolvedDeclaration);
+
+        var pack = SingleProperty(model, "Pack");
+        AssertPropertySignature(pack, "Pack(...items)", "...items");
+
+        var valuesDeclaration = Assert.Single(model.FindDeclarations("Values"));
+        var spreadOperand = ResolutionAt(model, 3, 6);
+        Assert.Equal(IdentifierClassification.PropertyReference, spreadOperand.Classification);
+        Assert.Equal(valuesDeclaration, spreadOperand.ResolvedDeclaration);
+
+        var packAlgorithm = Assert.Single(
+            parseResult.Root.Properties,
+            static property => property.Name == "Pack").Value;
+        var parameter = Assert.Single(packAlgorithm.Parameters);
+        Assert.Equal(RestBindingSyntax.Prefix, parameter.RestSyntax);
+        AssertSpan(Assert.IsType<SourceSpan>(parameter.RestMarkerSpan), 1, 6, 1, 8);
+        AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.RestMarkerSpan));
+
+        var call = Assert.IsType<Expr.Call>(Assert.Single(parseResult.Root.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        Assert.IsType<Expr.Resolve>(spread.Operand);
+    }
+
+    [Fact]
     public void Build_DeconstructionAssignment_TracksSourceBackedTargetDeclarations()
     {
         var model = BuildModel(
             """
             A = 1, 2, 3, 4, 5
-            x, y..., z = A
+            x, ...y, z = A
             x + y.sum + z
             """);
 
@@ -192,7 +234,7 @@ public class SemanticModelTests
 
         var yDeclaration = Assert.Single(model.FindDeclarations("y"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, yDeclaration.Kind);
-        AssertSpan(yDeclaration.Span, 2, 4, 2, 4);
+        AssertSpan(yDeclaration.Span, 2, 7, 2, 7);
 
         var zDeclaration = Assert.Single(model.FindDeclarations("z"));
         Assert.Equal(OccurrenceKind.PropertyDefinition, zDeclaration.Kind);
@@ -471,7 +513,7 @@ public class SemanticModelTests
             public Vector = x, y
             public Neg = Vector(-v:_x, -v:_y)
             public Scale = Vector(q~*v:_x, q*v:_y)
-            public Add(vectors...) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
+            public Add(...vectors) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
             public Subtract = a.Add(b.Neg)
             """);
 
@@ -1119,13 +1161,13 @@ public class SemanticModelTests
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysVariadicExplicitParameter()
     {
-        var model = BuildModel("Collect(list...) = list");
+        var model = BuildModel("Collect(...list) = list");
 
         var property = SingleProperty(model, "Collect");
-        Assert.Equal("Collect(list...)", property.DisplaySignature);
+        Assert.Equal("Collect(...list)", property.DisplaySignature);
         var parameter = Assert.Single(property.Parameters);
         Assert.Equal("list", parameter.Name);
-        Assert.Equal("list...", parameter.DisplayName);
+        Assert.Equal("...list", parameter.DisplayName);
         Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind);
         Assert.True(parameter.IsVariadic);
     }
@@ -1133,13 +1175,13 @@ public class SemanticModelTests
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysVariadicParameterBeforeSuffix()
     {
-        var model = BuildModel("Scale(values..., factor) = values.map{n * factor}");
+        var model = BuildModel("Scale(...values, factor) = values.map{n * factor}");
 
         var property = SingleProperty(model, "Scale");
-        Assert.Equal("Scale(values..., factor)", property.DisplaySignature);
+        Assert.Equal("Scale(...values, factor)", property.DisplaySignature);
         Assert.Equal(["values", "factor"], property.Parameters.Select(parameter => parameter.Name).ToList());
-        Assert.Equal(["values...", "factor"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
-        Assert.Equal(["values...", "factor"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["...values", "factor"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["...values", "factor"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
         Assert.Equal([PropertyParameterKind.Explicit, PropertyParameterKind.Explicit], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.Kind).ToList());
         Assert.Equal([true, false], property.Parameters.Select(parameter => parameter.IsVariadic).ToList());
     }
@@ -1147,13 +1189,13 @@ public class SemanticModelTests
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysSequenceValueParameterPatternSignature()
     {
-        var model = BuildModel("Step((history..., pre2), pre1) = history.count, pre2, pre1");
+        var model = BuildModel("Step((...history, pre2), pre1) = history.count, pre2, pre1");
 
         var property = SingleProperty(model, "Step");
-        Assert.Equal("Step((history..., pre2), pre1)", property.DisplaySignature);
+        Assert.Equal("Step((...history, pre2), pre1)", property.DisplaySignature);
         Assert.Equal(["history", "pre2", "pre1"], property.Parameters.Select(parameter => parameter.Name).ToList());
-        Assert.Equal(["history...", "pre2", "pre1"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
-        Assert.Equal(["(history..., pre2)", "pre1"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["...history", "pre2", "pre1"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["(...history, pre2)", "pre1"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]
@@ -1171,25 +1213,25 @@ public class SemanticModelTests
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysSequenceValueVariadicExplicitParameterPatternSignature()
     {
-        var model = BuildModel("CountSequenceValue((values...)) = values.count");
+        var model = BuildModel("CountSequenceValue((...values)) = values.count");
 
         var property = SingleProperty(model, "CountSequenceValue");
-        Assert.Equal("CountSequenceValue((values...))", property.DisplaySignature);
-        Assert.Equal(["values..."], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
-        Assert.Equal(["(values...)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
-        Assert.NotEqual(["values..."], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal("CountSequenceValue((...values))", property.DisplaySignature);
+        Assert.Equal(["...values"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["(...values)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.NotEqual(["...values"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysNestedSequenceValueRecursiveExplicitParameterPatternSignature()
     {
-        var model = BuildModel("G(((history...), previous)) = history.count + previous");
+        var model = BuildModel("G(((...history), previous)) = history.count + previous");
 
         var property = SingleProperty(model, "G");
-        Assert.Equal("G(((history...), previous))", property.DisplaySignature);
-        Assert.Equal(["history...", "previous"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
-        Assert.Equal(["((history...), previous)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
-        Assert.NotEqual(["history...", "previous"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal("G(((...history), previous))", property.DisplaySignature);
+        Assert.Equal(["...history", "previous"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["((...history), previous)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.NotEqual(["...history", "previous"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]
@@ -1197,15 +1239,15 @@ public class SemanticModelTests
     {
         var model = BuildModel(
             """
-            CountSequenceValue((items...)) = items.count
+            CountSequenceValue((...items)) = items.count
             Use = CountSequenceValue
             """);
 
         var property = SingleProperty(model, "Use");
-        Assert.Equal("Use((items...))", property.DisplaySignature);
-        Assert.Equal(["items..."], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal("Use((...items))", property.DisplaySignature);
+        Assert.Equal(["...items"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
         Assert.Equal([PropertyParameterKind.Implicit], property.Parameters.Select(parameter => parameter.Kind).ToList());
-        Assert.Equal(["(items...)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["(...items)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
     }
 
     [Fact]

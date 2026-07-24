@@ -34,32 +34,38 @@ DottedOpenPath  = Identifier { "." Identifier } ;
 PropertyDefinition = [ "public" ] NonOutputIdentifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
 
-DeconstructionDefinition = BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
-BindingTarget            = NonOutputIdentifier [ "..." ] ;
+DeconstructionDefinition = RestBinding "=" OutputBundle
+                         | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
+BindingTarget            = NonOutputIdentifier | RestBinding | LegacyRestBinding ;
+RestBinding              = "..." NonOutputIdentifier ;
+LegacyRestBinding        = NonOutputIdentifier "..." ;
                      (* Comma binding pattern shared by assignment binding and
                         function parameter binding. The right-hand side is matched
                         against the targets prefix/rest/suffix: fixed targets bind
                         from the start and end, and at most one rest target
-                        `name...` collects the remaining middle items as one exact
+                        `...name` collects the remaining middle items as one exact
                         immutable list value (possibly zero items). The rest target may
-                        appear at the start, middle, or end. Recognized in
-                        definition position only when the left-hand side has a comma
-                        (two or more targets); a plain `name = ...` stays an ordinary
-                        PropertyDefinition, and a single rest target `all... = ...` is
-                        not a binding pattern (rest-only item-supply binding belongs
-                        to function parameters, not assignment). Assignment
+                        appear at the start, middle, or end. A plain `name = ...`
+                        stays an ordinary PropertyDefinition; canonical `...all = ...`
+                        is the unambiguous single-rest assignment form. The `...`
+                        marker and its identifier must be on the same physical line;
+                        same-line whitespace between them is allowed.
+                        LegacyRestBinding is migration-only: postfix `name...` still
+                        parses in binding position with a deprecation warning and
+                        canonical replacement `...name`; postfix `...` remains the
+                        value-spread operator in expression position. Assignment
                         deconstruction is an unpacking receiver (Python-style): a
                         single sequence-valued OR exact-list-valued right-hand side
                         is unpacked into its items (Result.structureItems?). So
-                        `x, y..., z = A` (A a stored sequence value or exact list)
-                        unpacks A, and `x, y..., z = A...` and
-                        `x, y..., z = 1, 2, 3, 4, 5` supply the same items. This unpacking is assignment-specific
+                        `x, ...y, z = A` (A a stored sequence value or exact list)
+                        unpacks A, and `x, ...y, z = A...` and
+                        `x, ...y, z = 1, 2, 3, 4, 5` supply the same items. This unpacking is assignment-specific
                         and does NOT change function calls, which still pass A as one
                         argument unless `...` is written. More than one rest target is
                         a parse error. A function parameter list with a top-level rest,
-                        e.g. F(x, y..., z), uses the item-supply matcher over the
+                        e.g. F(x, ...y, z), uses the item-supply matcher over the
                         supplied arguments (no implicit opening); a lone rest-only
-                        F(values...) is the degenerate single-rest case. *)
+                        F(...values) is the degenerate single-rest case. *)
 
 ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
@@ -72,9 +78,9 @@ ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBu
                         same-name group with exactly one clause whose head consists
                         only of captures and structural sequence-value patterns elaborates as an
                         ordinary explicit parameter list, e.g. PairSum((x, y)) or
-                        CountSequenceValue((values...)). A sequence-value parameter pattern
+                        CountSequenceValue((...values)). A sequence-value parameter pattern
                         consumes one parent-level argument slot, so F((head,
-                        tail...), suffix) takes one sequence-value first argument and
+                        ...tail), suffix) takes one sequence-value first argument and
                         binds its immediate contents. Variadic captures consume
                         sibling values at their own pattern-list level and collect
                         the assigned slots as one exact immutable list.
@@ -92,10 +98,12 @@ ExplicitOutputDefinition = "Output" "=" OutputBundle ;
                         separate explicit output slots. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
-PatternAtom        = Identifier [ "..." ]          (* bind;
-                                                       "..." is valid only for ordinary recursive
+PatternAtom        = Identifier                    (* fixed bind *)
+                   | RestBinding                  (* canonical rest/collect bind;
+                                                       valid only for ordinary recursive
                                                        explicit parameter patterns, at most once per
                                                        sibling pattern level, and not with "~" *)
+                   | LegacyRestBinding            (* deprecated postfix compatibility in binding position *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
                    | StringLiteral                 (* litString *)
                    | "(" Pattern ")" ;             (* sequence-value pattern; always structural, even for singletons *)

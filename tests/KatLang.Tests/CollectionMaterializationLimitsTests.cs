@@ -214,7 +214,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void OrdinaryFlatRest_IsCheckedBeforeItsExactListIsCreated()
     {
-        const string source = "F(items...) = items.count\nOutput = F(1, 2, 3, 4)";
+        const string source = "F(...items) = items.count\nOutput = F(1, 2, 3, 4)";
         var failed = Observe(source, Items(3));
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(failed.Result.Error);
         Assert.Equal(4, error.Requested);
@@ -230,7 +230,7 @@ public class CollectionMaterializationLimitsTests
     {
         const string source =
             "A = range(1, 100000)\n" +
-            "F(items...) = items.count\n" +
+            "F(...items) = items.count\n" +
             "Output = F(A..., A...)";
 
         var observed = Observe(source);
@@ -244,10 +244,10 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Theory]
-    [InlineData("F((head, tail...)) = tail.count\nOutput = F((1, 2, 3))", 5)]
-    [InlineData("x, tail... = [1, 2, 3, 4]\nOutput = tail.count", 7)]
-    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
-    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
+    [InlineData("F((head, ...tail)) = tail.count\nOutput = F((1, 2, 3))", 5)]
+    [InlineData("x, ...tail = [1, 2, 3, 4]\nOutput = tail.count", 7)]
+    [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
+    [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
     public void EveryRestBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
     {
         var observed = Observe(source, Total(expectedItems));
