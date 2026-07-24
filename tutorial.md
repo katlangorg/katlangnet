@@ -1300,13 +1300,13 @@ G(1, 2, 3, 4, 5)
 
 Both forms supply five numeric argument slots, collected as `x = [1, 2, 3, 4, 5]`; `x.sum` opens the bound list and adds its elements. An UNSPREAD structure is one argument slot: `G(A)` and `G((1, 2, 3, 4, 5))` each supply one sequence-valued slot, so `x = [A]` — a one-element list holding the whole sequence — and the numeric `sum` element constraint rejects it. Supplying a value's items is always the explicit spread `A...`; there is no implicit opening at calls. An empty call `G()` collects `x = []`, and `G(...x) = x.count` reports `1` for `G(A)` and `5` for `G(A...)`.
 
-Prefix `...name` is the canonical rest-binding spelling. During the migration period, a legacy postfix rest in a binding position, such as `G(name...) = body`, still has the same collection semantics but produces this warning:
+The two ellipsis forms have opposite meanings and are never interchangeable: prefix `...name` is the rest binding that COLLECTS, and postfix `value...` is the spread expression that OPENS. Writing the operator on the wrong side of a binding is a parse error, not an alternative spelling — `G(name...) = body`, `name... = value`, and `first, middle..., last = value` all report:
 
 ```text
-Postfix rest binding `name...` is deprecated; write `...name`. Postfix `...` is reserved for value spreading.
+Postfix `...` is the spread operator and cannot declare a rest binding. Write `...name` instead of `name...`.
 ```
 
-Call-site `G(value...)` remains valid postfix spread and never receives this warning.
+Call-site `G(value...)` is ordinary postfix spread and is unaffected.
 
 Multiple sibling sequence values are **not** auto-flattened — they are preserved unless you open them explicitly with `...`. With `A = 1, 2` and `B = 3, 4`, `G(A, B)` collects `x = [(1, 2), (3, 4)]` (count 2), while `G(A..., B...)` collects `x = [1, 2, 3, 4]` (count 4):
 

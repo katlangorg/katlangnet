@@ -3814,25 +3814,26 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_LegacyPostfixRestBinding_ParsesWithDeprecationWarningAndSourceOrientation()
+    public void Parse_PostfixRestBinding_IsRejectedWithCanonicalReplacement()
     {
         var result = Parser.ParseSyntax("Collect(items...) = items");
 
-        Assert.False(result.HasErrors);
-        var warning = Assert.Single(result.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        Assert.True(result.HasErrors);
+        var error = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Postfix rest binding `items...` is deprecated; write `...items`. Postfix `...` is reserved for value spreading.",
-            warning.Message);
-        Assert.Equal(new SourceSpan(1, 9, 1, 16), warning.Span);
+            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+                + "Write `...items` instead of `items...`.",
+            error.Message);
+        Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `items...`
 
+        // The rejected spelling never becomes a rest binding.
         var property = Assert.Single(result.Root.Properties);
         var user = Assert.IsType<Algorithm.User>(property.Value);
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
-        Assert.Equal("...items", capture.DisplayName);
-        Assert.Equal(new SourceSpan(1, 9, 1, 13), capture.Span);
-        Assert.Equal(new SourceSpan(1, 14, 1, 16), capture.RestMarkerSpan);
-        Assert.Equal(RestBindingSyntax.LegacyPostfix, capture.RestSyntax);
+        Assert.Equal(ParameterKind.Normal, capture.Kind);
+        Assert.Equal("items", capture.DisplayName);
+        Assert.Null(capture.RestMarkerSpan);
     }
 
     [Theory]
@@ -3848,7 +3849,6 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
         Assert.Equal(ParameterKind.Variadic, capture.Kind);
         Assert.Equal("...items", capture.DisplayName);
-        Assert.Equal(RestBindingSyntax.Prefix, capture.RestSyntax);
         Assert.Equal(new SourceSpan(1, 9, 1, 11), capture.RestMarkerSpan);
         Assert.Equal(
             source.Contains("... ", StringComparison.Ordinal)
@@ -3889,22 +3889,36 @@ public class ParserTests
         Assert.Equal("middle", capture.Name);
         Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
         Assert.Equal(new SourceSpan(1, 8, 1, 10), capture.RestMarkerSpan);
-        Assert.Equal(RestBindingSyntax.Prefix, capture.RestSyntax);
         Assert.Equal(new SourceSpan(1, 11, 1, 16), Assert.Single(middle.DeclarationSpans));
     }
 
+    [Theory]
+    [InlineData("first, middle..., last = values", "middle", 1, 8, 1, 16)]
+    [InlineData("items... = values", "items", 1, 1, 1, 8)]
+    public void Parse_PostfixRestDeconstruction_IsRejectedWithCanonicalReplacement(
+        string source,
+        string name,
+        int startLine,
+        int startColumn,
+        int endLine,
+        int endColumn)
+    {
+        var result = Parser.ParseSyntax(source);
+
+        Assert.True(result.HasErrors);
+        var error = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Equal(
+            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+                + $"Write `...{name}` instead of `{name}...`.",
+            error.Message);
+        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
+    }
+
     [Fact]
-    public void Parse_LegacyPostfixRestDeconstruction_WarnsAndRetainsLegacyOrientation()
+    public void Parse_PostfixRestDeconstruction_NeverProducesARestBinding()
     {
         var result = Parser.ParseSyntax("first, middle..., last = values");
-
-        Assert.False(result.HasErrors);
-        var warning = Assert.Single(result.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
-        Assert.Equal(
-            "Postfix rest binding `middle...` is deprecated; write `...middle`. Postfix `...` is reserved for value spreading.",
-            warning.Message);
-        Assert.Equal(new SourceSpan(1, 8, 1, 16), warning.Span);
 
         var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
         var body = Assert.IsType<Algorithm.User>(middle.Value);
@@ -3913,8 +3927,8 @@ public class ParserTests
         var sequence = Assert.IsType<SequenceValueParameterPattern>(
             Assert.Single(helperBlock.Algorithm.ParameterPatterns));
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
-        Assert.Equal(new SourceSpan(1, 14, 1, 16), capture.RestMarkerSpan);
-        Assert.Equal(RestBindingSyntax.LegacyPostfix, capture.RestSyntax);
+        Assert.Equal(ParameterKind.Normal, capture.Kind);
+        Assert.Null(capture.RestMarkerSpan);
     }
 
     [Theory]

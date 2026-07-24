@@ -66,6 +66,24 @@ public class LanguageSpecArtifactsGeneratorPromptTests
             $"Set {LanguageSpecArtifactsTests.RegenerateVariable}=1, rerun this test, and review the diff.");
     }
 
+    [Theory]
+    [MemberData(nameof(PromptFilePaths))]
+    public void PromptFile_UsesOnlyCanonicalPrefixRestGuidance(string relativePath)
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+
+        Assert.Contains(
+            "Prefix `...name` is the ONLY rest-binding syntax",
+            content,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Use postfix ellipsis on an explicit parameter",
+            content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("accepted only for migration", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("deprecation warning", content, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string ReplaceOrAppendBlock(string content, string block)
     {
         var begin = content.IndexOf(BeginMarker, StringComparison.Ordinal);

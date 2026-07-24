@@ -69,47 +69,149 @@ public class RestBindingSyntaxTests
         string expected)
         => Assert.Equal(expected, Display($"F(...items) = items\n{call}"));
 
+    /// <summary>
+    /// The central orientation test: ONE source containing both ellipsis forms, proving
+    /// the left occurrence elaborates to a rest binding and the right to a spread
+    /// expression, and that neither is mistaken for the other.
+    /// </summary>
     [Fact]
-    public void LegacyPostfixRestBinding_KeepsRuntimeSemanticsAndWarnsOnlyAtBindingSite()
+    public void PrefixIsARestBindingAndPostfixIsASpread_InTheSameDeclaration()
     {
         const string source =
             """
-            Target(items...) = items
-            Forward(items...) = Target(items...)
+            Target(...items) = items
+            Forward(...items) = Target(items...)
             Forward(1, 2, 3)
             """;
 
         var parse = Parser.Parse(source);
-        Assert.False(parse.HasErrors);
-        Assert.Equal(2, parse.Diagnostics.Count);
-        Assert.All(parse.Diagnostics, diagnostic =>
-        {
-            Assert.Equal(DiagnosticSeverity.Warning, diagnostic.Severity);
-            Assert.Contains("Postfix rest binding", diagnostic.Message, StringComparison.Ordinal);
-        });
+        Assert.Empty(parse.Diagnostics);
 
-        var evaluated = Evaluator.Run(new Expr.Block(parse.Root));
-        Assert.True(evaluated.IsOk, evaluated.IsError ? evaluated.Error.ToString() : string.Empty);
-        var list = Assert.IsType<Result.ListValue>(evaluated.Value);
-        Assert.Equal([1m, 2m, 3m], list.Items.Cast<Result.Atom>().Select(static item => item.Value));
+        var forward = Assert.Single(parse.Root.Properties, property => property.Name == "Forward").Value;
+
+        // Left `...items`: a rest binding carrying the source-backed marker span.
+        var parameter = Assert.Single(forward.Parameters);
+        Assert.Equal(ParameterKind.Variadic, parameter.Kind);
+        Assert.Equal("...items", parameter.DisplayName);
+        Assert.Equal(new SourceSpan(2, 9, 2, 11), parameter.RestMarkerSpan);
+
+        // Right `items...`: a spread expression over the bound rest parameter, not a binding.
+        var call = Assert.IsType<Expr.Call>(Assert.Single(forward.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
+
+        Assert.Equal("[1, 2, 3]", Display(source));
+    }
+
+    [Theory]
+    [InlineData("F(items...) = items", "items", 3, 10)]
+    [InlineData("F(first, middle..., last) = middle", "middle", 10, 18)]
+    [InlineData("F(items..., last) = items", "items", 3, 10)]
+    [InlineData("F(first, items...) = items", "items", 10, 17)]
+    [InlineData("items... = values", "items", 1, 8)]
+    [InlineData("first, middle..., last = values", "middle", 8, 16)]
+    [InlineData("items..., last = values", "items", 1, 8)]
+    [InlineData("first, items... = values", "items", 8, 15)]
+    public void PostfixRestBinding_IsRejectedEverywhere(
+        string source,
+        string name,
+        int startColumn,
+        int endColumn)
+    {
+        var syntax = Parser.ParseSyntax(source);
+        var parse = Parser.Parse(source);
+
+        Assert.True(syntax.HasErrors);
+        Assert.True(parse.HasErrors);
+        var error = Assert.Single(parse.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Equal(
+            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+                + $"Write `...{name}` instead of `{name}...`.",
+            error.Message);
+        Assert.Equal(new SourceSpan(1, startColumn, 1, endColumn), error.Span);
+
+        // A clean break: nothing is accepted with a warning.
+        Assert.DoesNotContain(parse.Diagnostics, static diagnostic =>
+            diagnostic.Severity == DiagnosticSeverity.Warning);
+
+        AssertNoVariadicBindings(syntax.Root);
+        AssertNoVariadicBindings(parse.Root);
+    }
+
+    [Theory]
+    [InlineData("F(...items) = items\nA = 1, 2\nF(A...)")]
+    [InlineData("F(...items) = items\nF([1, 2]...)")]
+    [InlineData("F(...items) = items\nF((1, 2)...)")]
+    [InlineData("Values = 1, 2, 3\nfirst, ...middle, last = Values...\nmiddle")]
+    public void PostfixSpread_RemainsValidAndUnaffected(string source)
+        => Assert.Empty(Parser.Parse(source).Diagnostics);
+
+    [Theory]
+    [InlineData("F(...a, ...b) = a", "Only one rest binding")]
+    [InlineData("...a, ...b = 1, 2", "at most one rest binding")]
+    [InlineData("F(...items...) = items", "Malformed rest binding")]
+    [InlineData("first, ...middle..., last = 1, 2, 3", "Malformed rest binding")]
+    [InlineData("F(...a, b...) = a", "cannot declare a rest binding")]
+    [InlineData("F(a..., ...b) = b", "cannot declare a rest binding")]
+    public void MalformedRestForms_FailSafelyWithATargetedDiagnostic(
+        string source,
+        string expectedFragment)
+    {
+        var parse = Parser.Parse(source);
+
+        Assert.True(parse.HasErrors);
+        Assert.Contains(
+            parse.Diagnostics,
+            diagnostic => diagnostic.Message.Contains(expectedFragment, StringComparison.Ordinal));
+        Assert.DoesNotContain(parse.Diagnostics, static diagnostic =>
+            diagnostic.Severity == DiagnosticSeverity.Warning);
+    }
+
+    [Theory]
+    [InlineData("F(...) = 0")]
+    [InlineData("F(...1) = 0")]
+    [InlineData("F(...items...) = items")]
+    [InlineData("first, ...middle..., last = 1, 2, 3")]
+    public void MalformedRestForms_DoNotCreateRecoveredRestBindings(string source)
+    {
+        var syntax = Parser.ParseSyntax(source);
+        var parse = Parser.Parse(source);
+
+        Assert.True(syntax.HasErrors);
+        Assert.True(parse.HasErrors);
+        AssertNoVariadicBindings(syntax.Root);
+        AssertNoVariadicBindings(parse.Root);
     }
 
     [Fact]
-    public void LegacyPostfixRestDeconstruction_KeepsRuntimeSemanticsAndWarns()
+    public void CombinedPrefixAndPostfixRest_ReportsOneTargetedError()
     {
-        const string source =
-            """
-            first, middle..., last = 1, 2, 3, 4
-            (first, middle, last)
-            """;
+        var parse = Parser.Parse("first, ...middle..., last = values");
 
+        var error = Assert.Single(parse.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Equal(
+            "Malformed rest binding `...middle...`; write `...middle`. "
+                + "Postfix `...` is reserved for value spreading.",
+            error.Message);
+        Assert.Equal(new SourceSpan(1, 8, 1, 19), error.Span);
+    }
+
+    [Theory]
+    [InlineData(
+        "Broken(items...) = items\nGood(...values) = values\nGood(1, 2)")]
+    [InlineData(
+        "first, middle..., last = values\nGood(...values) = values\nGood(1, 2)")]
+    public void PostfixRestBinding_RecoversSoFollowingDeclarationsStillParse(string source)
+    {
         var parse = Parser.Parse(source);
-        Assert.False(parse.HasErrors);
-        var warning = Assert.Single(parse.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
-        Assert.Contains("write `...middle`", warning.Message, StringComparison.Ordinal);
 
-        Assert.Equal("(1, [2, 3], 4)", Display(source));
+        Assert.True(parse.HasErrors);
+        var good = Assert.Single(parse.Root.Properties, property => property.Name == "Good").Value;
+        var parameter = Assert.Single(good.Parameters);
+        Assert.Equal(ParameterKind.Variadic, parameter.Kind);
+        Assert.Equal("...values", parameter.DisplayName);
     }
 
     [Fact]
@@ -117,5 +219,31 @@ public class RestBindingSyntaxTests
     {
         Assert.Equal("[[1, 2]]", Display("F(...items) = items\nA = [1, 2]\nA.F"));
         Assert.Equal("[1, 2]", Display("F(...items) = items\nA = [1, 2]\n(A...).F"));
+    }
+
+    private sealed class RestBindingFinder : AstWalker
+    {
+        public List<string> VariadicBindings { get; } = [];
+
+        protected override void VisitExplicitParameterDeclaration(
+            Algorithm algorithm,
+            ParameterDeclaration declaration)
+        {
+            if (declaration.Kind == ParameterKind.Variadic)
+                VariadicBindings.Add(declaration.Name);
+        }
+
+        protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span)
+        {
+            if (pattern.ParameterKind == ParameterKind.Variadic)
+                VariadicBindings.Add(pattern.Name);
+        }
+    }
+
+    private static void AssertNoVariadicBindings(Algorithm root)
+    {
+        var restFinder = new RestBindingFinder();
+        restFinder.VisitAlgorithm(root);
+        Assert.Empty(restFinder.VariadicBindings);
     }
 }

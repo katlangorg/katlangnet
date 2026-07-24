@@ -36,9 +36,8 @@ PropertyBody       = Algorithm ;
 
 DeconstructionDefinition = RestBinding "=" OutputBundle
                          | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
-BindingTarget            = NonOutputIdentifier | RestBinding | LegacyRestBinding ;
+BindingTarget            = NonOutputIdentifier | RestBinding ;
 RestBinding              = "..." NonOutputIdentifier ;
-LegacyRestBinding        = NonOutputIdentifier "..." ;
                      (* Comma binding pattern shared by assignment binding and
                         function parameter binding. The right-hand side is matched
                         against the targets prefix/rest/suffix: fixed targets bind
@@ -50,10 +49,10 @@ LegacyRestBinding        = NonOutputIdentifier "..." ;
                         is the unambiguous single-rest assignment form. The `...`
                         marker and its identifier must be on the same physical line;
                         same-line whitespace between them is allowed.
-                        LegacyRestBinding is migration-only: postfix `name...` still
-                        parses in binding position with a deprecation warning and
-                        canonical replacement `...name`; postfix `...` remains the
-                        value-spread operator in expression position. Assignment
+                        Prefix `...name` is the ONLY rest-binding syntax. Postfix
+                        `name...` is the SequenceAtom spread operator and is never a
+                        binding: writing it in binding position is a parse error
+                        naming the `...name` replacement. Assignment
                         deconstruction is an unpacking receiver (Python-style): a
                         single sequence-valued OR exact-list-valued right-hand side
                         is unpacked into its items (Result.structureItems?). So
@@ -99,11 +98,12 @@ ExplicitOutputDefinition = "Output" "=" OutputBundle ;
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = Identifier                    (* fixed bind *)
-                   | RestBinding                  (* canonical rest/collect bind;
-                                                       valid only for ordinary recursive
+                   | RestBinding                  (* rest/collect bind; the ONLY rest syntax.
+                                                       Valid only for ordinary recursive
                                                        explicit parameter patterns, at most once per
-                                                       sibling pattern level, and not with "~" *)
-                   | LegacyRestBinding            (* deprecated postfix compatibility in binding position *)
+                                                       sibling pattern level, and not with "~".
+                                                       Postfix "name..." is SequenceAtom spread
+                                                       syntax and is a parse error here. *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
                    | StringLiteral                 (* litString *)
                    | "(" Pattern ")" ;             (* sequence-value pattern; always structural, even for singletons *)

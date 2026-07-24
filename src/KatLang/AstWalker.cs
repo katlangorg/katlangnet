@@ -49,11 +49,8 @@ public abstract class AstWalker
             foreach (var parameter in algorithm.ExplicitParameters)
             {
                 VisitExplicitParameterDeclaration(algorithm, parameter);
-                if (parameter.RestMarkerSpan is { } restMarkerSpan
-                    && parameter.RestSyntax is { } restSyntax)
-                {
-                    VisitRestBindingMarker(restMarkerSpan, restSyntax);
-                }
+                if (parameter.RestMarkerSpan is { } restMarkerSpan)
+                    VisitRestBindingMarker(restMarkerSpan);
             }
         }
 
@@ -221,11 +218,8 @@ public abstract class AstWalker
     {
         if (pattern.NameSpan is { } span)
             VisitConditionalBinderDeclaration(pattern, span);
-        if (pattern.RestMarkerSpan is { } restMarkerSpan
-            && pattern.RestSyntax is { } restSyntax)
-        {
-            VisitRestBindingMarker(restMarkerSpan, restSyntax);
-        }
+        if (pattern.RestMarkerSpan is { } restMarkerSpan)
+            VisitRestBindingMarker(restMarkerSpan);
     }
 
     /// <summary>
@@ -236,9 +230,9 @@ public abstract class AstWalker
     }
 
     /// <summary>
-    /// Visits a source-backed rest-binding <c>...</c> marker.
+    /// Visits a source-backed rest-binding prefix <c>...</c> marker.
     /// </summary>
-    protected virtual void VisitRestBindingMarker(SourceSpan span, RestBindingSyntax syntax)
+    protected virtual void VisitRestBindingMarker(SourceSpan span)
     {
     }
 

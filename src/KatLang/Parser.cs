@@ -281,14 +281,6 @@ public sealed class Parser
             span));
     }
 
-    private void ReportWarning(string message, SourceSpan span)
-    {
-        _diagnostics.Add(new Diagnostic(
-            message,
-            DiagnosticSeverity.Warning,
-            span));
-    }
-
     private void ReportOutputPropertyAccess(SourceSpan span)
         => ReportError(OutputPropertyAccessDiagnostic, span);
 
@@ -999,34 +991,38 @@ public sealed class Parser
     private const string PrefixSpreadExpressionDiagnostic =
         "Prefix `...` is only valid for rest bindings such as `...items`. Postfix `...` is reserved for value spreading.";
 
-    private static string LegacyPostfixRestDiagnostic(string name) =>
-        $"Postfix rest binding `{name}...` is deprecated; write `...{name}`. Postfix `...` is reserved for value spreading.";
+    private static string PostfixRestBindingDiagnostic(string name) =>
+        $"Postfix `...` is the spread operator and cannot declare a rest binding. Write `...{name}` instead of `{name}...`.";
+
+    private static string MalformedPrefixAndPostfixRestDiagnostic(string name) =>
+        $"Malformed rest binding `...{name}...`; write `...{name}`. Postfix `...` is reserved for value spreading.";
 
     private readonly record struct BindingTarget(
         string Name,
         ParameterKind Kind,
         SourceSpan NameSpan,
-        SourceSpan? RestMarkerSpan,
-        RestBindingSyntax? RestSyntax);
+        SourceSpan? RestMarkerSpan);
 
     /// <summary>
-    /// Checks whether the tokens at the current position form a comma deconstruction
-    /// assignment with identifier targets and at most one prefix or legacy postfix
-    /// rest marker. A plain single <c>name =</c> is left to the ordinary property
-    /// path. Canonical <c>...name =</c> is unambiguous and is accepted as a one-target
-    /// rest deconstruction; legacy <c>name... =</c> remains outside the assignment
-    /// grammar because it was not previously a valid single-target form.
+    /// Checks whether the tokens at the current position form a deconstruction
+    /// assignment with identifier targets. A plain single <c>name =</c> is left to the
+    /// ordinary property path; canonical <c>...name =</c> is the unambiguous
+    /// single-rest form.
+    ///
+    /// A POSTFIX <c>name...</c> marker is scanned here only so the rejected form still
+    /// reaches <see cref="ParseBindingPatternAssignment"/> and reports the targeted
+    /// "postfix `...` is the spread operator" error instead of a generic expression
+    /// diagnostic. Postfix never denotes a rest binding, and such a parse always fails.
     /// </summary>
     private bool LookaheadIsBindingPatternAssignment()
     {
         var index = NextSignificantIndex(_pos);
         var sawComma = false;
-        var sawPrefixRest = false;
+        var sawRestMarker = false;
 
         while (true)
         {
-            var hasPrefixRest = _tokens[index].Kind == TokenKind.Ellipsis;
-            if (hasPrefixRest)
+            if (_tokens[index].Kind == TokenKind.Ellipsis)
             {
                 var marker = _tokens[index];
                 index = NextSignificantIndex(index + 1);
@@ -1035,16 +1031,18 @@ public sealed class Parser
                 {
                     return false;
                 }
-                sawPrefixRest = true;
+                sawRestMarker = true;
             }
 
             if (_tokens[index].Kind != TokenKind.Identifier)
                 return false;
             index = NextSignificantIndex(index + 1);
 
-            // Skip an optional legacy postfix rest marker on this target.
-            if (!hasPrefixRest && _tokens[index].Kind == TokenKind.Ellipsis)
+            if (_tokens[index].Kind == TokenKind.Ellipsis)
+            {
                 index = NextSignificantIndex(index + 1);
+                sawRestMarker = true;
+            }
 
             switch (_tokens[index].Kind)
             {
@@ -1053,7 +1051,7 @@ public sealed class Parser
                     index = NextSignificantIndex(index + 1);
                     continue;
                 case TokenKind.Equals:
-                    return sawComma || sawPrefixRest;
+                    return sawComma || sawRestMarker;
                 default:
                     return false;
             }
@@ -1076,33 +1074,39 @@ public sealed class Parser
         while (true)
         {
             Token? restMarkerToken = null;
-            RestBindingSyntax? restSyntax = null;
             if (Current.Kind == TokenKind.Ellipsis)
-            {
                 restMarkerToken = Advance();
-                restSyntax = RestBindingSyntax.Prefix;
-            }
+            var hasPostfixMarker = false;
 
             var nameToken = Current; // Identifier, guaranteed by the lookahead
             var name = nameToken.StringValue!;
             Advance(); // consume identifier
 
-            if (restMarkerToken is null && Current.Kind == TokenKind.Ellipsis)
+            // Postfix `...` is the spread operator and never declares a rest binding.
+            // The lookahead admits this shape only so the rejection is reported here
+            // with an exact span and replacement; the target stays a fixed binding.
+            if (Current.Kind == TokenKind.Ellipsis)
             {
-                restMarkerToken = Advance();
-                restSyntax = RestBindingSyntax.LegacyPostfix;
-                ReportWarning(
-                    LegacyPostfixRestDiagnostic(name),
-                    CombineSpans(TokenSpan(nameToken), TokenSpan(restMarkerToken))!);
+                hasPostfixMarker = true;
+                var postfixMarker = Advance();
+                var (message, startSpan) = restMarkerToken is { } prefixMarker
+                    ? (MalformedPrefixAndPostfixRestDiagnostic(name), TokenSpan(prefixMarker))
+                    : (PostfixRestBindingDiagnostic(name), TokenSpan(nameToken));
+                ReportError(message, CombineSpans(startSpan, TokenSpan(postfixMarker))!);
             }
 
-            var kind = restMarkerToken is null ? ParameterKind.Normal : ParameterKind.Variadic;
+            // A malformed combined `...name...` target is not retained as a rest
+            // binding in the recovered AST. Only a clean prefix marker activates
+            // variadic semantics.
+            var isRestBinding = restMarkerToken is not null && !hasPostfixMarker;
+            var kind = isRestBinding ? ParameterKind.Variadic : ParameterKind.Normal;
             targets.Add(new BindingTarget(
                 name,
                 kind,
                 TokenSpan(nameToken),
-                restMarkerToken is null ? null : TokenSpan(restMarkerToken),
-                restSyntax));
+                isRestBinding && restMarkerToken is { } prefixMarkerForSpan
+                    ? TokenSpan(prefixMarkerForSpan)
+                    : null));
 
             if (Current.Kind == TokenKind.Comma)
             {
@@ -1166,7 +1170,6 @@ public sealed class Parser
             .Select(static target => (ParameterPattern)new CaptureParameterPattern(target.Name, Span: null, target.Kind)
             {
                 RestMarkerSpan = target.RestMarkerSpan,
-                RestSyntax = target.RestSyntax,
             })
             .ToList();
         var seqPattern = new SequenceValueParameterPattern(captures);
@@ -1462,12 +1465,9 @@ public sealed class Parser
             if (!isMissing)
                 _ = ParsePatternAtom();
 
-            return new Pattern.Bind("_error_")
-            {
-                ParameterKind = ParameterKind.Variadic,
-                RestMarkerSpan = markerSpan,
-                RestSyntax = RestBindingSyntax.Prefix,
-            };
+            // Malformed syntax gets an ordinary recovery placeholder. It must not
+            // introduce rest semantics into the recovered tree.
+            return new Pattern.Bind("_error_");
         }
 
         var nameToken = Advance();
@@ -1486,8 +1486,12 @@ public sealed class Parser
         {
             var postfixMarker = Advance();
             ReportError(
-                $"Malformed rest binding `...{name}...`; write `...{name}`. Postfix `...` is reserved for value spreading.",
+                MalformedPrefixAndPostfixRestDiagnostic(name),
                 CombineSpans(markerSpan, TokenSpan(postfixMarker))!);
+            return new Pattern.Bind(name)
+            {
+                NameSpan = TokenSpan(nameToken),
+            };
         }
 
         return new Pattern.Bind(name)
@@ -1495,7 +1499,6 @@ public sealed class Parser
             NameSpan = TokenSpan(nameToken),
             ParameterKind = ParameterKind.Variadic,
             RestMarkerSpan = markerSpan,
-            RestSyntax = RestBindingSyntax.Prefix,
         };
     }
 
@@ -1513,32 +1516,22 @@ public sealed class Parser
                 {
                     var token = Advance();
                     while (Current.Kind == TokenKind.Tilde) Advance(); // skip postfix tildes
-                    var kind = ParameterKind.Normal;
-                    SourceSpan? restMarkerSpan = null;
-                    RestBindingSyntax? restSyntax = null;
+                    ReportError("Grace is not allowed in clause-head patterns.");
+
+                    // Postfix `...` is the spread operator, so `~name...` is a grace
+                    // error plus a rejected rest-binding spelling, never a rest binding.
                     if (Current.Kind == TokenKind.Ellipsis)
                     {
-                        ReportError("Rest bindings cannot use `~` reordering.");
                         var markerToken = Advance();
-                        restMarkerSpan = TokenSpan(markerToken);
-                        restSyntax = RestBindingSyntax.LegacyPostfix;
-                        kind = ParameterKind.Variadic;
-                        ReportWarning(
-                            LegacyPostfixRestDiagnostic(token.StringValue!),
-                            CombineSpans(TokenSpan(token), restMarkerSpan)!);
-                    }
-                    else
-                    {
-                        ReportError("Grace is not allowed in clause-head patterns.");
+                        ReportError(
+                            PostfixRestBindingDiagnostic(token.StringValue!),
+                            CombineSpans(TokenSpan(token), TokenSpan(markerToken))!);
                     }
 
                     var name = token.StringValue!;
                     return new Pattern.Bind(name)
                     {
                         NameSpan = TokenSpan(token),
-                        ParameterKind = kind,
-                        RestMarkerSpan = restMarkerSpan,
-                        RestSyntax = restSyntax,
                     };
                 }
 
@@ -1581,33 +1574,24 @@ public sealed class Parser
                     Advance();
                 }
 
-                var kind = ParameterKind.Normal;
-                SourceSpan? restMarkerSpan = null;
-                RestBindingSyntax? restSyntax = null;
+                if (hadPostfixGrace)
+                    ReportError("Grace is not allowed in clause-head patterns.");
+
+                // Postfix `...` is the spread operator and never declares a rest
+                // binding; a rest binding is written `...name`. Reject the spelling
+                // with an exact span over `name...` and the canonical replacement.
                 if (Current.Kind == TokenKind.Ellipsis)
                 {
-                    if (hadPostfixGrace)
-                        ReportError("Rest bindings cannot use `~` reordering.");
                     var markerToken = Advance();
-                    restMarkerSpan = TokenSpan(markerToken);
-                    restSyntax = RestBindingSyntax.LegacyPostfix;
-                    kind = ParameterKind.Variadic;
-                    ReportWarning(
-                        LegacyPostfixRestDiagnostic(token.StringValue!),
-                        CombineSpans(TokenSpan(token), restMarkerSpan)!);
-                }
-                else if (hadPostfixGrace)
-                {
-                    ReportError("Grace is not allowed in clause-head patterns.");
+                    ReportError(
+                        PostfixRestBindingDiagnostic(token.StringValue!),
+                        CombineSpans(TokenSpan(token), TokenSpan(markerToken))!);
                 }
 
                 var name = token.StringValue!;
                 return new Pattern.Bind(name)
                 {
                     NameSpan = TokenSpan(token),
-                    ParameterKind = kind,
-                    RestMarkerSpan = restMarkerSpan,
-                    RestSyntax = restSyntax,
                 };
             }
 

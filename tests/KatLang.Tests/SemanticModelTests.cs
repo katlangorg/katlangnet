@@ -209,7 +209,7 @@ public class SemanticModelTests
             parseResult.Root.Properties,
             static property => property.Name == "Pack").Value;
         var parameter = Assert.Single(packAlgorithm.Parameters);
-        Assert.Equal(RestBindingSyntax.Prefix, parameter.RestSyntax);
+        Assert.Equal(ParameterKind.Variadic, parameter.Kind);
         AssertSpan(Assert.IsType<SourceSpan>(parameter.RestMarkerSpan), 1, 6, 1, 8);
         AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.RestMarkerSpan));
 

@@ -89,6 +89,34 @@ public class Utf16FuzzHarnessTests
     }
 
     [Fact]
+    public void RestBindingTemplate_GeneratesCanonicalPrefixRest()
+    {
+        var parameters = new Utf16Parameters(
+            Utf16TemplateKind.RestBinding,
+            Utf16PlacementKind.Alone,
+            Utf16LineEndingMode.Lf,
+            Utf16ExecutionMode.ParseSyntax,
+            Utf16CodeUnitGroup.Basic,
+            IndexOfMember(Utf16CodeUnitGroup.Basic, "ascii-lower"),
+            Repeat: 1,
+            Filler: 0,
+            RawUnits: []);
+
+        var source = Utf16SourceBuilder.Build(parameters).Source;
+        Assert.Contains("F(a, ...z)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("z...", source, StringComparison.Ordinal);
+
+        var parsed = Parser.ParseSyntax(source);
+        Assert.False(
+            parsed.HasErrors,
+            string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+        var function = Assert.Single(parsed.Root.Properties, static property => property.Name == "F").Value;
+        var rest = Assert.IsType<CaptureParameterPattern>(function.ParameterPatterns[1]);
+        Assert.Equal(ParameterKind.Variadic, rest.Kind);
+        Assert.Equal("z", rest.Name);
+    }
+
+    [Fact]
     public void EveryPointRoundTripsThroughItsCanonicalPayload()
     {
         foreach (var parameters in Stratified)

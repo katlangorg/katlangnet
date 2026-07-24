@@ -96,8 +96,7 @@ internal static class FrontEndFingerprint
 
     private static void ParamDecl(StringBuilder sb, ParameterDeclaration p)
         => sb.Append(p.Name).Append(':').Append(p.Kind).Append('@').Append(Span(p.Span))
-            .Append("#rest=").Append(p.RestSyntax?.ToString() ?? "-")
-            .Append('@').Append(Span(p.RestMarkerSpan)).Append(';');
+            .Append("#rest@").Append(Span(p.RestMarkerSpan)).Append(';');
 
     private static void Prop(StringBuilder sb, Property p)
     {
@@ -115,8 +114,7 @@ internal static class FrontEndFingerprint
         {
             case Pattern.Bind b:
                 sb.Append("Bind{").Append(b.Name).Append(':').Append(b.ParameterKind).Append('@').Append(Span(b.NameSpan))
-                    .Append("#rest=").Append(b.RestSyntax?.ToString() ?? "-")
-                    .Append('@').Append(Span(b.RestMarkerSpan)).Append('}');
+                    .Append("#rest@").Append(Span(b.RestMarkerSpan)).Append('}');
                 break;
             case Pattern.LitInt i:
                 sb.Append("LInt{").Append(i.Value.ToString(CultureInfo.InvariantCulture)).Append('}');

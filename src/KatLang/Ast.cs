@@ -108,23 +108,10 @@ public enum ParameterKind
     Variadic,
 }
 
-/// <summary>
-/// Source spelling used for a rest binding. Prefix is canonical; postfix is
-/// retained only so migration tooling can identify legacy source precisely.
-/// </summary>
-public enum RestBindingSyntax
-{
-    Prefix,
-    LegacyPostfix,
-}
-
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
-    /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+    /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
     public SourceSpan? RestMarkerSpan { get; init; }
-
-    /// <summary>Rest-marker orientation in source, when source-backed.</summary>
-    public RestBindingSyntax? RestSyntax { get; init; }
 
     public string DisplayName => Kind switch
     {
@@ -135,7 +122,6 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
     public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
     {
         RestMarkerSpan = RestMarkerSpan,
-        RestSyntax = RestSyntax,
     };
 }
 
@@ -189,11 +175,8 @@ public abstract record ParameterPattern
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
-    /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+    /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
     public SourceSpan? RestMarkerSpan { get; init; }
-
-    /// <summary>Rest-marker orientation in source, when source-backed.</summary>
-    public RestBindingSyntax? RestSyntax { get; init; }
 
     public override string DisplayName => Kind == ParameterKind.Variadic ? $"...{Name}" : Name;
 
@@ -202,7 +185,6 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
         new(Name, Span, Kind)
         {
             RestMarkerSpan = RestMarkerSpan,
-            RestSyntax = RestSyntax,
         }
     ];
 }
@@ -363,11 +345,8 @@ public abstract record Pattern
         /// <summary>Parameter binding kind when this binder elaborates to an ordinary explicit parameter.</summary>
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
 
-        /// <summary>Exact span of the source <c>...</c> marker, when source-backed.</summary>
+        /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
         public SourceSpan? RestMarkerSpan { get; init; }
-
-        /// <summary>Rest-marker orientation in source, when source-backed.</summary>
-        public RestBindingSyntax? RestSyntax { get; init; }
     }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
@@ -479,7 +458,6 @@ public abstract record Pattern
             parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
             {
                 RestMarkerSpan = binder.RestMarkerSpan,
-                RestSyntax = binder.RestSyntax,
             };
             return true;
         }
@@ -518,7 +496,6 @@ public abstract record Pattern
                 new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
                 {
                     RestMarkerSpan = binder.RestMarkerSpan,
-                    RestSyntax = binder.RestSyntax,
                 }
             ];
 
