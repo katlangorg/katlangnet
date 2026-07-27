@@ -98,7 +98,7 @@ public class CallableBindingPlanTests
         Assert.Same(values, topLevel.VariadicCapture);
         Assert.Empty(topLevel.Prefix);
         Assert.Empty(topLevel.Suffix);
-        // Rest-only item supply: no fixed bindings, so min 0 and unbounded max.
+        // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
         Assert.Equal(0, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
         Assert.True(topLevel.HasVariadicAtThisLevel);
@@ -118,7 +118,7 @@ public class CallableBindingPlanTests
         var suffix = Assert.Single(topLevel.Suffix);
         AssertCapture(suffix, "factor", CallableParameterSource.Explicit);
         // Deconstruction-shaped: the fixed suffix `factor` is the only required
-        // slot, and the rest `...items` may capture any number of prefix items.
+        // slot, and the variadic parameter `...items` may collect any number of prefix items.
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
         Assert.True(topLevel.HasVariadicAtThisLevel);

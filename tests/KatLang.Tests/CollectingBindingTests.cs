@@ -3,19 +3,19 @@ using KatLang.Evaluation.Caching;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Focused coverage for the rest-collection model: every rest binding —
-/// deconstruction rest, rest-only variadic parameters, and mixed
-/// prefix/rest/suffix parameter lists — COLLECTS the item slots assigned to it
-/// into ONE exact immutable list (<c>CollectRest</c>; Lean <c>collectRest</c>).
+/// Focused coverage for the collecting-binding model: every collecting binding —
+/// deconstruction collecting bindings, single variadic parameters, and mixed
+/// prefix/collecting/suffix parameter lists — COLLECTS the item slots assigned to it
+/// into ONE exact immutable list (<c>CollectSegment</c>; Lean <c>collectSegment</c>).
 /// The three item-supply operations stay distinct: <c>capture</c> (ordinary
-/// canonicalizing value capture), <c>collect</c> (rest binding), and
+/// canonicalizing value capture), <c>collect</c> (collecting binding), and
 /// <c>open</c> (postfix spread), with the round trip
-/// <c>open(collect(xs)) = xs</c> making variadic forwarding ordinary spread.
-/// Lean twins: the "Rest bindings collect exact immutable lists" section of
+/// <c>spread(collect(xs)) = xs</c> making variadic forwarding ordinary spread.
+/// Lean twins: the "Collecting bindings collect exact immutable lists" section of
 /// <c>lean/CoreTests.lean</c> and the collect laws in
 /// <c>lean/KatLangArityLaws.lean</c>.
 /// </summary>
-public class RestCollectionTests
+public class CollectingBindingTests
 {
     private static Result Atom(decimal value) => new Result.Atom(value);
 
@@ -32,7 +32,7 @@ public class RestCollectionTests
     /// Run one source through the public engine and both evaluator entry
     /// points with the optimizers on and off; assert every mode agrees on the
     /// same single result value, then return it. This is the parity matrix the
-    /// rest-collection change must hold across: ordinary evaluation, counted
+    /// collecting-binding change must hold across: ordinary evaluation, counted
     /// evaluation, optimizer enabled, and optimizer disabled.
     /// </summary>
     private static Result EvaluateAllModes(string source)
@@ -65,7 +65,7 @@ public class RestCollectionTests
     private static void AssertCollects(string source, Result expected)
         => AssertSemanticallyEqual(expected, EvaluateAllModes(source));
 
-    // ── Deconstruction rest: empty, singleton, multiple ─────────────────────
+    // ── Deconstruction collecting binding: empty, singleton, multiple ─────────────────────
 
     [Theory]
     [InlineData("head, ...rest = [1]\nrest", "[]")]
@@ -76,7 +76,7 @@ public class RestCollectionTests
     [InlineData("first, ...middle, last = [1, 2]\nmiddle", "[]")]
     [InlineData("first, ...middle, last = [1, 2, 3, 4, 5]\nmiddle", "[2, 3, 4]")]
     [InlineData("first, ...rest = 1\nrest", "[]")]
-    public void DeconstructionRest_CollectsExactList(string source, string expectedDisplay)
+    public void DeconstructionCollectingBinding_CollectsExactList(string source, string expectedDisplay)
     {
         var value = EvaluateAllModes(source);
         Assert.IsType<Result.ListValue>(value);
@@ -87,7 +87,7 @@ public class RestCollectionTests
     // ── Structured singleton items are preserved exactly ────────────────────
 
     [Fact]
-    public void DeconstructionRest_PreservesStructuredSingletonRow()
+    public void DeconstructionCollectingBinding_PreservesStructuredSingletonRow()
     {
         AssertCollects(
             "Rows = [[1, 2], [3, 4]]\nfirst, ...rest = Rows\nrest",
@@ -98,7 +98,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void DeconstructionRest_SingletonStructurePreservesExactKind()
+    public void DeconstructionCollectingBinding_SingletonStructurePreservesExactKind()
     {
         AssertCollects("first, ...rest = 1, [2, 3]\nrest", List(List(Atom(2), Atom(3))));
         AssertCollects("first, ...rest = 1, (2, 3)\nrest", List(Seq(Atom(2), Atom(3))));
@@ -107,7 +107,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void DeconstructionRest_EmptyRestStaysDistinctFromEmptyStructureElement()
+    public void DeconstructionCollectingBinding_EmptySegmentStaysDistinctFromEmptyStructureElement()
     {
         AssertCollects("first, ...rest = 1, []\nrest == []", Atom(0));
         AssertCollects("first, ...rest = 1, ()\nrest == []", Atom(0));
@@ -117,7 +117,7 @@ public class RestCollectionTests
     // ── Deconstruction implicit opening matches explicit spread ─────────────
 
     [Fact]
-    public void DeconstructionRest_ImplicitOpeningMatchesSpread()
+    public void DeconstructionCollectingBinding_ImplicitOpeningMatchesSpread()
     {
         AssertCollects("first, ...rest = [1, 2, 3]\nrest", List(Atom(2), Atom(3)));
         AssertCollects("first, ...rest = [1, 2, 3]...\nrest", List(Atom(2), Atom(3)));
@@ -141,7 +141,7 @@ public class RestCollectionTests
     // ── Provenance independence ─────────────────────────────────────────────
 
     [Fact]
-    public void DeconstructionRest_CollectsAssembledSupplyRegardlessOfSpreadSources()
+    public void DeconstructionCollectingBinding_CollectsAssembledSupplyRegardlessOfSpreadSources()
     {
         AssertCollects(
             "first, ...rest = 1, [2, 3]..., (4, 5)...\nfirst",
@@ -192,7 +192,7 @@ public class RestCollectionTests
     // ── Mixed parameter patterns ────────────────────────────────────────────
 
     [Fact]
-    public void MixedPatterns_RestCollectsMiddleSupply()
+    public void MixedPatterns_CollectingBindingCollectsMiddleSupply()
     {
         AssertCollects("F(first, ...middle, last) = middle\nF(1, 2, 3, 4)", List(Atom(2), Atom(3)));
         AssertCollects("F(first, ...middle, last) = middle\nF(1, 2)", List());
@@ -204,7 +204,7 @@ public class RestCollectionTests
     public void MixedPatterns_GroupedMiddleStaysOneCollectedSlotUntilSpread()
     {
         // Direct user call: the grouped middle argument is ONE collected slot
-        // preserving its boundary; explicit spread supplies the opened items.
+        // preserving its boundary; explicit spread supplies the operand's items.
         AssertCollects(
             "Middle(first, ...middle, last) = middle\nMiddle(10, (20, 30), 40)",
             List(Seq(Atom(20), Atom(30))));
@@ -235,7 +235,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void VariadicForwarding_UnspreadRestIsOneListArgument()
+    public void VariadicForwarding_UnspreadCollectedListIsOneArgument()
     {
         AssertCollects(
             "TargetOne(item) = item\nForwardAsOne(...items) = TargetOne(items)\nForwardAsOne(1, 2)",
@@ -243,8 +243,8 @@ public class RestCollectionTests
     }
 
     // ── Implicit forwarding: spread decided by the SOURCE binding kind ──────
-    // The implicit-argument resolver re-opens a forwarded value only when the
-    // caller-side binding is itself a rest-collected list. An ordinary source
+    // The implicit-argument resolver re-spreads a forwarded value only when the
+    // caller-side binding is itself a collecting binding's exact list. An ordinary source
     // parameter always forwards as ONE argument, even into a variadic
     // destination.
 
@@ -271,7 +271,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ImplicitForwarding_RestSourceSpreadsAndAgreesWithExplicitForm()
+    public void ImplicitForwarding_VariadicSourceSpreadsAndAgreesWithExplicitForm()
     {
         const string implicitForm = "Target(...items) = items\nUse(...items) = Target\n";
         const string explicitForm = "Target(...items) = items\nUse(...items) = Target(items...)\n";
@@ -290,17 +290,17 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ImplicitForwarding_LiftedVariadicIsRestSource()
+    public void ImplicitForwarding_LiftedVariadicForwardsAsSpread()
     {
-        // With no explicit caller parameters, the callee's rest is lifted as a
-        // caller rest, so the lifted source legitimately forwards as spread.
+        // With no explicit caller parameters, the callee's variadic parameter is lifted as a
+        // caller variadic parameter, so the lifted source legitimately forwards as spread.
         const string defs = "Target(...items) = items\nUse = Target\n";
         AssertCollects(defs + "Use(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
     }
 
     [Fact]
-    public void ImplicitForwarding_MixedSignatureSpreadsOnlyTheRestSource()
+    public void ImplicitForwarding_MixedSignatureSpreadsOnlyTheVariadicSource()
     {
         AssertCollects(
             "Target(first, ...middle, last) = middle\n"
@@ -310,7 +310,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ImplicitForwarding_NestedFixedNameMatchingRestDestinationStaysOneValue()
+    public void ImplicitForwarding_NestedFixedNameMatchingVariadicDestinationStaysOneValue()
     {
         // Caller `a` is a nested FIXED pattern name; destination `...a` is a
         // rest. The list-valued source must remain one argument.
@@ -320,7 +320,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ImplicitForwarding_NestedRestSourceForwardsItsCollectedItems()
+    public void ImplicitForwarding_NestedVariadicSourceForwardsItsCollectedItems()
     {
         AssertCollects(
             "Target(...r) = r\nUse((first, ...r)) = Target\nUse((1, 2, 3))",
@@ -330,9 +330,9 @@ public class RestCollectionTests
     [Fact]
     public void ImplicitForwarding_CrossedNamesFollowEachSourceKind()
     {
-        // Caller: a is fixed, b is rest. Callee: b is fixed, a is rest.
+        // Caller: a is fixed, b is variadic. Callee: b is fixed, a is variadic.
         // The fixed destination b receives the caller's collected list as one
-        // value; the rest destination a receives the ordinary source a as one
+        // value; the variadic destination a receives the ordinary source a as one
         // collected slot (never spread).
         AssertCollects(
             "T2(b, ...a) = (b, a)\nUse(a, ...b) = T2\nUse([5, 6], 2, 3)",
@@ -340,7 +340,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ImplicitForwarding_RestSourceIntoFixedDestinationIsOneListArgument()
+    public void ImplicitForwarding_VariadicSourceIntoFixedDestinationIsOneListArgument()
     {
         AssertCollects(
             "TargetOne(items) = items\nUse(...items) = TargetOne\nUse(1, 2)",
@@ -354,24 +354,24 @@ public class RestCollectionTests
         // Every later dependency forwards from that source kind; destination
         // kinds never overwrite it or make dictionary order observable.
         AssertCollects(
-            "Fixed(items) = items\nRest(...items) = items\nUse = Fixed, Rest\nUse([1, 2])",
+            "Fixed(items) = items\nVariadic(...items) = items\nUse = Fixed, Variadic\nUse([1, 2])",
             Seq(List(Atom(1), Atom(2)), List(List(Atom(1), Atom(2)))));
         AssertCollects(
-            "Rest(...items) = items\nFixed(items) = items\nUse = Rest, Fixed\nUse([1, 2])",
+            "Variadic(...items) = items\nFixed(items) = items\nUse = Variadic, Fixed\nUse([1, 2])",
             Seq(
                 List(List(Atom(1), Atom(2))),
                 List(List(Atom(1), Atom(2)))));
     }
 
-    // ── Callback rest binding: flat callees route through the shared binder ─
-    // map/filter/reduce callbacks with a top-level rest parameter collect
-    // exactly like ordinary calls: a rest-only callee keeps the iterated
+    // ── Callback collecting binding: flat callees route through the shared binder ─
+    // map/filter/reduce callbacks with a top-level variadic parameter collect
+    // exactly like ordinary calls: a single-variadic callee keeps the iterated
     // element as ONE collected slot, and a multi-parameter flat callee opens
     // the lone element into row slots first (the established flat-callback
-    // row convention) before prefix/rest/suffix allocation.
+    // row convention) before prefix/collecting/suffix allocation.
 
     [Fact]
-    public void RestOnlyMapCallback_CollectsOneElementSlot()
+    public void SingleVariadicMapCallback_CollectsOneElementSlot()
     {
         const string defs = "Collect(...items) = items\n";
         AssertCollects(defs + "[7].map(Collect)", List(List(Atom(7))));
@@ -380,7 +380,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void RestOnlyMapCallback_PreservesElementKindExactly()
+    public void SingleVariadicMapCallback_PreservesElementKindExactly()
     {
         const string defs = "Collect(...items) = items\n";
         AssertCollects(defs + "[[1, 2]].map(Collect)", List(List(List(Atom(1), Atom(2)))));
@@ -390,7 +390,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void MixedRestMapCallback_OpensRowSlotsThenCollects()
+    public void MixedVariadicMapCallback_OpensRowSlotsThenCollects()
     {
         AssertCollects(
             "F(first, ...middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
@@ -410,7 +410,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void RestOnlyFilterCallback_ObservesCollectedListKind()
+    public void SingleVariadicFilterCallback_ObservesCollectedListKind()
     {
         // `items == [7]` distinguishes the collected list [7] from scalar 7;
         // a `.count == 1` style predicate could not.
@@ -423,9 +423,9 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ReducerElementSideRest_CollectsProjectedElement()
+    public void ReducerElementSideVariadic_CollectsProjectedElement()
     {
-        // The rest sits BEFORE the accumulator boundary: each step observes
+        // The variadic parameter sits BEFORE the accumulator boundary: each step observes
         // items = [element], never the bare scalar element.
         AssertCollects(
             "R(...items, acc) = items == [10]\nreduce([10], R, 99)",
@@ -436,7 +436,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void RestOnlyReducer_CollectsElementAndAccumulatorSlotsExactly()
+    public void SingleVariadicReducer_CollectsElementAndAccumulatorSlotsExactly()
     {
         const string reducer = "R(...items) = items\n";
         AssertCollects(reducer + "reduce([10], R, 99)", List(Atom(10), Atom(99)));
@@ -451,7 +451,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void ReducerAccumulatorSideRest_KeepsSharedPatternBinding()
+    public void ReducerAccumulatorSideVariadic_KeepsSharedPatternBinding()
     {
         AssertCollects(
             "Append(item, ...history) = (history..., item)\nreduce((2, 3, 4), Append, 1)",
@@ -504,10 +504,10 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void WhileLoopStep_RestCollectsExactList_EmptySingletonAndMulti()
+    public void WhileLoopStep_VariadicCollectsExactList_EmptySingletonAndMulti()
     {
         // While twin of LoopStep_GroupedMiddleRemainsOneCollectedSequenceSlot:
-        // the while state-binding path collects its rest through the same
+        // the while state-binding path collects its middle segment through the same
         // exact-list collector as repeat, deconstruction, and calls. The
         // `middle == [...]` comparison pins the collected KIND (an exact
         // immutable list), not just the flattened atoms.
@@ -515,12 +515,12 @@ public class RestCollectionTests
             "Step(n, ...middle, last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
 
-        // Empty rest: `[]`, never `()` and never an arity error.
+        // Empty collected segment: `[]`, never `()` and never an arity error.
         AssertCollects(
             "Step(n, ...middle, last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
 
-        // Multi-item rest.
+        // Multi-item collected segment.
         AssertCollects(
             "Step(n, ...middle, last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
@@ -535,13 +535,13 @@ public class RestCollectionTests
     [InlineData("Inspect([1, 2]) == [[1, 2]]", 1)]
     [InlineData("Inspect([1, 2]) == [1, 2]", 0)]
     [InlineData("Inspect(1, 2) == (1, 2)", 0)]
-    public void CollectedRest_EqualityIsKindExact(string comparison, decimal expected)
+    public void CollectedSegment_EqualityIsKindExact(string comparison, decimal expected)
         => AssertCollects("Inspect(...items) = items\n" + comparison, Atom(expected));
 
     // ── Collection composition ──────────────────────────────────────────────
 
     [Fact]
-    public void CollectedRest_ComposesWithCollectionBuiltins()
+    public void CollectedSegment_ComposesWithCollectionBuiltins()
     {
         const string tail = "Tail(source) = {\n    first, ...rest = source\n    rest\n}\n";
         AssertCollects(tail + "Tail([[1, 2], [3, 4]])", List(List(Atom(3), Atom(4))));
@@ -562,7 +562,7 @@ public class RestCollectionTests
         AssertCollects("x = [1, 2, 3]...\nx", Seq(Atom(1), Atom(2), Atom(3)));
     }
 
-    // ── Immutability of rest-produced lists ─────────────────────────────────
+    // ── Immutability of collected lists ─────────────────────────────────
 
     /// <summary>
     /// Attempt every plausible host-side mutation path through a public item
@@ -594,9 +594,9 @@ public class RestCollectionTests
         }
     }
 
-    public static TheoryData<string, string> ImmutableRestResults => new()
+    public static TheoryData<string, string> ImmutableCollectedResults => new()
     {
-        // source producing a rest list                             expected display
+        // source producing a collected list                             expected display
         { "Inspect(...items) = items\nInspect()", "[]" },
         { "Inspect(...items) = items\nInspect(7)", "[7]" },
         { "Inspect(...items) = items\nInspect([1, 2])", "[[1, 2]]" },
@@ -607,8 +607,8 @@ public class RestCollectionTests
     };
 
     [Theory]
-    [MemberData(nameof(ImmutableRestResults))]
-    public void RestProducedList_IsObservablyImmutable(string source, string expectedDisplay)
+    [MemberData(nameof(ImmutableCollectedResults))]
+    public void CollectedList_IsObservablyImmutable(string source, string expectedDisplay)
     {
         var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
         var value = Assert.IsType<Result.ListValue>(run.Value);
@@ -646,7 +646,7 @@ public class RestCollectionTests
     }
 
     [Fact]
-    public void RestProducedList_IsStableAsDictionaryAndHashSetKey()
+    public void CollectedList_IsStableAsDictionaryAndHashSetKey()
     {
         var run = Assert.IsType<RunResult.Success>(
             KatLangEngine.Run("Inspect(...items) = items\nInspect(1, [2, 3])"));

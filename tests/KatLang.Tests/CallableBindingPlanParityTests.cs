@@ -207,7 +207,7 @@ public class CallableBindingPlanParityTests
         AssertPlanDisplay(plan, "CountValues(...values)");
         AssertTopLevelNodes(plan, "Variadic(values:Explicit:top)");
         AssertCaptures(plan, "...values:Explicit");
-        // Rest-only item supply: no fixed bindings, so min 0 and unbounded max.
+        // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
         AssertArity(plan, min: 0, max: null, hasTopLevelVariadic: true);
         Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
         Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
@@ -235,7 +235,7 @@ public class CallableBindingPlanParityTests
         Assert.Equal(["Capture(factor:Explicit)"], plan.TopLevelPatternList.Suffix.Select(DescribeNode).ToArray());
         AssertCaptures(plan, "...items:Explicit", "factor:Explicit");
         // Deconstruction-shaped: the fixed `factor` is the only required slot and
-        // the rest collects any number of prefix items as one exact list.
+        // the variadic parameter collects any number of prefix items as one exact list.
         AssertArity(plan, min: 1, max: null, hasTopLevelVariadic: true);
 
         AssertEval(
@@ -424,7 +424,7 @@ public class CallableBindingPlanParityTests
             """,
             enableLoopOptimization: true);
 
-        // The step returns the rest unspread, so the final state is the one
+        // The step returns the collected list unspread, so the final state is the one
         // collected list slot [1, 2, 3].
         AssertResult(new Result.ListValue([new Result.Atom(1), new Result.Atom(2), new Result.Atom(3)]), result);
         Assert.Contains(

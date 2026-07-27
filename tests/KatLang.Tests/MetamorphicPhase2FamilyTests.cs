@@ -427,8 +427,8 @@ public class MetamorphicPhase2FamilyTests
 
             // The rewrite lives in the CALL, so that is where the spread rule applies:
             // `A.F(B, C)` is `F(A, B, C)`, never `F(A..., B, C)`, so the dotted call may not add
-            // or drop a spread relative to the ordinary call. (A rejected rest-projection
-            // wrapper legitimately writes a rest parameter in its DEFINITION; that is the very
+            // or drop a spread relative to the ordinary call. (A rejected variadic-projection
+            // wrapper legitimately writes a variadic parameter in its DEFINITION; that is the very
             // thing its precondition rejects, and it is never compared.)
             if (testCase.Family is MetamorphicFamily.DottedCollectionBuiltin
                 or MetamorphicFamily.UserExtensionCall
@@ -770,27 +770,27 @@ public class MetamorphicPhase2FamilyTests
 
         Assert.Contains(MetamorphicWrapperProjection.DottedFixed, acceptedProjections);
         Assert.Contains(MetamorphicWrapperProjection.OrdinaryFixed, acceptedProjections);
-        Assert.DoesNotContain(MetamorphicWrapperProjection.Rest, acceptedProjections);
+        Assert.DoesNotContain(MetamorphicWrapperProjection.Variadic, acceptedProjections);
         Assert.DoesNotContain(MetamorphicWrapperProjection.ArityMismatched, acceptedProjections);
 
         Assert.Equal(
-            "rest-projection-collects-a-list-not-the-supplied-value",
-            rejectedReasons[MetamorphicWrapperProjection.Rest]);
+            "variadic-projection-collects-a-list-not-the-supplied-value",
+            rejectedReasons[MetamorphicWrapperProjection.Variadic]);
         Assert.Equal(
             "wrapper-arity-does-not-match-callback-projection",
             rejectedReasons[MetamorphicWrapperProjection.ArityMismatched]);
     }
 
     [Fact]
-    public void RestProjection_IsGenuinelyNotEquivalent_WhichIsWhyItIsRejected()
+    public void VariadicProjection_IsGenuinelyNotEquivalent_WhichIsWhyItIsRejected()
     {
-        // Evidence for the precondition: a rest parameter COLLECTS the supplied slot into a
+        // Evidence for the precondition: a variadic parameter COLLECTS the supplied slot into a
         // list, so the wrapper sees [element] where the direct builtin sees element.
         const string direct = "MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)";
-        const string rest = "MmWrap(...xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
+        const string variadicWrapper = "MmWrap(...xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
-        Assert.True(MetamorphicExecutor.TryObserve(rest, null, true, out var b, out _));
+        Assert.True(MetamorphicExecutor.TryObserve(variadicWrapper, null, true, out var b, out _));
         Assert.Equal("L[2, 1]", a.Semantic.Structure);
         Assert.Equal("L[1, 1]", b.Semantic.Structure);
         Assert.NotEqual(a.Semantic, b.Semantic);
@@ -822,7 +822,7 @@ public class MetamorphicPhase2FamilyTests
     ///
     /// <para>The semantic reason is then discharged per (projection x callback arity), by RUNNING
     /// the direct form against the wrapper form. Note what the sweep shows and a single example
-    /// would hide: these projections are not observably different at EVERY point. A rest wrapper
+    /// would hide: these projections are not observably different at EVERY point. A variadic wrapper
     /// binds <c>[element]</c> where the builtin binds <c>element</c>, and for several
     /// builtin/element combinations the two are indistinguishable (<c>count</c> of a scalar and
     /// of a one-element list are both 1); an empty input never invokes the callback at all, so
@@ -835,7 +835,7 @@ public class MetamorphicPhase2FamilyTests
     {
         var expected = new Dictionary<MetamorphicWrapperProjection, string>
         {
-            [MetamorphicWrapperProjection.Rest] = "rest-projection-collects-a-list-not-the-supplied-value",
+            [MetamorphicWrapperProjection.Variadic] = "variadic-projection-collects-a-list-not-the-supplied-value",
             [MetamorphicWrapperProjection.ArityMismatched] = "wrapper-arity-does-not-match-callback-projection",
         };
 
@@ -891,7 +891,7 @@ public class MetamorphicPhase2FamilyTests
 
             // The wrapper really is written in the shape its rejection reason names.
             var wrapperLine = testCase.RightSource.Split('\n')[0];
-            var expectedWrapper = kind == MetamorphicWrapperProjection.Rest
+            var expectedWrapper = kind == MetamorphicWrapperProjection.Variadic
                 ? $"{MetamorphicTables.WrapperFunction}(...xs) = "
                 : $"{MetamorphicTables.WrapperFunction}({(arity == 1 ? "a, b" : "a")}) = ";
             Assert.StartsWith(expectedWrapper, wrapperLine, StringComparison.Ordinal);
@@ -993,7 +993,7 @@ public class MetamorphicPhase2FamilyTests
         string[] expectedRejections =
         [
             // Callback projections that are provably NOT equivalent (see the template docs).
-            "builtin-callback-wrapper/rest-projection-collects-a-list-not-the-supplied-value",
+            "builtin-callback-wrapper/variadic-projection-collects-a-list-not-the-supplied-value",
             "builtin-callback-wrapper/wrapper-arity-does-not-match-callback-projection",
             // A fused dotted chain is documented not to consume the cumulative item budget.
             "dotted-chain/fused-chain-does-not-share-the-cumulative-item-budget",

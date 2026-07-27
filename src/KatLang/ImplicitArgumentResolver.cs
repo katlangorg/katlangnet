@@ -383,7 +383,7 @@ public static class ImplicitArgumentResolver
     /// <summary>
     /// Maps every caller-side capture name (top-level and nested) to its
     /// binding kind. Implicit forwarding consults this map so the decision to
-    /// re-open a forwarded value is made from the SOURCE binding, never from
+    /// re-spread a forwarded value is made from the SOURCE binding, never from
     /// the destination parameter kind alone.
     /// </summary>
     private static Dictionary<string, ParameterKind> BuildSourceBindingKinds(
@@ -412,10 +412,10 @@ public static class ImplicitArgumentResolver
                 ? forwardedCallerName!
                 : capture.Name;
 
-        // A rest DESTINATION re-opens the forwarded value only when the
-        // SOURCE binding is itself a rest-collected list: then
+        // A variadic DESTINATION re-spreads the forwarded value only when the
+        // SOURCE binding is itself a collecting binding's exact list: then
         // `callee(rest...)` re-supplies exactly the collected items
-        // (open(collect(xs)) = xs). An ordinary source binding always
+        // (spread(collect(xs)) = xs). An ordinary source binding always
         // forwards as ONE argument, even into a variadic destination. A name
         // absent from the caller's bindings is about to be lifted as a copy
         // of the callee's own pattern, so its source kind IS the callee kind.
@@ -436,9 +436,9 @@ public static class ImplicitArgumentResolver
     {
         return pattern switch
         {
-            // A rest destination whose source binding is a rest-collected
-            // list forwards through explicit spread so the callee's rest
-            // binding re-collects exactly the caller's items; every other
+            // A variadic destination whose source binding is a collecting binding's
+            // exact list forwards through explicit spread so the callee's variadic
+            // parameter re-collects exactly the caller's items; every other
             // capture forwards as one argument slot.
             CaptureParameterPattern { Kind: ParameterKind.Variadic } variadic
                 when forwardAsSpread(variadic) =>

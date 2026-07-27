@@ -10,10 +10,10 @@ everything that is not about arity (parser, evaluator, arithmetic, properties,
 implicit parameters, loops, builtins, strings, and unrelated error modes).
 
 > **History.** The original extraction (git tag `arity-algebra-2026-07-13`, the
-> version pinned by the paper) was sequence-only: rest/variadic binding was
-> `captureVariadic := capture`, so a rest canonicalized to a sequence value and
-> a singleton rest collapsed to its item. The language has since made **all
-> rest bindings collect exact immutable lists**, and this artifact tracks the
+> version pinned by the paper) was sequence-only: collecting bindings went through
+> `captureVariadic := capture`, so a collected segment canonicalized to a sequence value and
+> a singleton collected segment collapsed to its item. The language has since made **all
+> collecting bindings collect exact immutable lists**, and this artifact tracks the
 > stabilized current model described below. Consult the pinned tag for the
 > historical model the current paper text describes.
 
@@ -21,18 +21,18 @@ implicit parameters, loops, builtins, strings, and unrelated error modes).
 
 KatLang arity uses **one temporary item-supply discipline and two
 receiver-purpose materializations**. `capture` reifies a supply as a canonical
-stored value, `collect` preserves it as an exact immutable list for rest
-binding, and `open` exposes one stored boundary as a supply:
+stored value, `collect` preserves it as an exact immutable list for collecting
+bindings, and `spread` exposes one stored boundary as a supply:
 
 ```text
 capture : Supply → Value      -- ordinary value/output capture (canonicalizing)
-collect : Supply → ListValue  -- rest/variadic binding (exact)
-open    : Value → Supply      -- postfix spread `...` (one boundary)
+collect : Supply → ListValue  -- collecting binding (exact)
+spread  : Value → Supply      -- postfix spread `...` (one boundary)
 ```
 
 The responsibilities never mix: ordinary value/output boundaries go through
-`capture`, rest bindings go through `collect`, and postfix spread is `open`.
-Grouping preserves one value boundary, spread opens one boundary, and rest
+`capture`, collecting bindings go through `collect`, and postfix spread is `spread`.
+Grouping preserves one value boundary, spread opens one boundary, and a collecting binding
 collects the resulting slots into an exact immutable list.
 
 `collect : Supply → ListValue` is the *conceptual* typed signature; executable
@@ -62,14 +62,14 @@ abbrev Supply := List Val      -- many slots (the ungrouped, multi-output contex
 | partial projection of a sequence value's stored items | `sequenceItems? : Val → Option Supply` |
 | partial projection of a list value's stored elements | `listItems? : Val → Option Supply` |
 | shared openable-structure projection    | `structureItems? : Val → Option Supply` |
-| the total `...` view (`open`)           | `items  : Val → Supply`          |
+| the total `...` view (`spread`)           | `items  : Val → Supply`          |
 | recursively collapse singleton sequence groups | `normalize : Val → Val`   |
 | ordinary value capture                  | `capture : Supply → Val`         |
 | the canonical-supply invariant          | `canonicalSupply : Supply → Prop` |
-| rest / variadic collection              | `collect : Supply → Val` (always `Val.list`) |
+| collecting-binding collection              | `collect : Supply → Val` (always `Val.list`) |
 | deconstruction-specific lone-structure opening of a supply | `openLoneStructure : Supply → Supply` |
 | the one supply shape that opening rewrites | `loneStructure : Supply → Bool` |
-| front / rest / back binding kernel      | `bindPats : List Pat → Supply → Option Env` |
+| front / collecting / back binding kernel      | `bindPats : List Pat → Supply → Option Env` |
 | function-call parameter binding         | `bindArgs : List Pat → Supply → Option Env` |
 | assignment deconstruction binding (opens a lone structure) | `bindDeconstruct : List Pat → Supply → Option Env` |
 
@@ -82,12 +82,12 @@ distinct, and the paper's terminology keeps them apart:
 | `items`             | value → supply  | total item view underlying surface spread (`structureItems?` with a one-item scalar fallback — `structureItems?_getD_eq_items`) |
 | `normalize`         | value → value   | persistent-value canonicalization (sequence singletons erase; list boundaries never do) |
 | `capture`           | supply → value  | ordinary value capture, `normalize ∘ Val.seq` |
-| `collect`           | supply → value  | exact rest collection, always a `Val.list` |
+| `collect`           | supply → value  | exact segment collection, always a `Val.list` |
 | `openLoneStructure` | supply → supply | deconstruction-specific supply preparation |
 
 ## The receiver split
 
-The two binding receivers are the same front/rest/back kernel (`bindPats`)
+The two binding receivers are the same front/collecting/back kernel (`bindPats`)
 with different supply preparation:
 
 ```lean
@@ -113,10 +113,10 @@ that predicate:
   Shared *success* is the strongest correct claim — both receivers can fail
   identically (two fixed names vs a one-item payload), so plain Option
   inequality would be false. The pre-list characterization
-  `agree_on_lone_seq_iff_lone_rest` (rest-only agreement via the
+  `agree_on_lone_seq_iff_lone_rest` (lone-collecting agreement via the
   canonical-capture coincidence) is obsolete: exact collection distinguishes
-  the grouped argument (`rest = [A]`) from the opened items;
-* `lone_rest_disagrees_on_lone_list` — a concrete lone-rest disagreement
+  the grouped argument (`rest = [A]`) from the spread items;
+* `lone_collecting_disagrees_on_lone_list` — a concrete lone-collecting disagreement
   where both modes DO succeed, so even the Option values differ.
 
 The item-view equation is deliberately receiver-level. It is not an
@@ -128,7 +128,7 @@ it fails arity; `x, y = A...` spreads that row into the capture boundary,
 whose singleton normalization returns `(1, 2)`, and the receiver then opens
 the row and succeeds. `deconstruct_spread_capture_can_open_further` pins this
 counterexample in the extraction, while `CoreTests.lean` and
-`RestCollectionTests.cs` pin the authoritative Lean/C# surface behavior.
+`CollectingBindingTests.cs` pin the authoritative Lean/C# surface behavior.
 
 `openLoneStructure` models a common one-boundary transformation applied after
 a receiver has selected one structured value: in the full model it appears as
@@ -145,9 +145,9 @@ The three operations compose as partial inverses, each on its own documented
 domain:
 
 ```text
-open ∘ collect  = id  on supplies                    (items_collect)
-collect ∘ open  = id  on exact list values           (collect_items_list)
-capture ∘ open  = id  on canonical non-list values   (capture_items_of_canonical)
+spread ∘ collect = id  on supplies                    (items_collect)
+collect ∘ spread = id  on exact list values           (collect_items_list)
+capture ∘ spread = id  on canonical non-list values   (capture_items_of_canonical)
 ```
 
 The `capture` restriction is real: spreading a list and re-CAPTURING converts
@@ -157,12 +157,12 @@ The first law is what makes variadic forwarding ordinary list spread:
 `Forward(...items) = Target(items...)` re-supplies exactly the collected
 items with no hidden raw-supply metadata.
 
-## Rest binding collects an exact list
+## Collecting binding collects an exact list
 
 Python's `*rest` binds to a fresh `list`, a container type distinct from the
 tuples / iterables it unpacks. KatLang makes the same receiver-purpose
-distinction, with its own exact collection kind: every rest binding —
-deconstruction rest (`first, ...mid, last = …`) and variadic parameters
+distinction, with its own exact collection kind: every collecting binding —
+deconstruction collecting bindings (`first, ...mid, last = …`) and variadic parameters
 (`F(...x) = …`) — materializes the assigned item supply through `collect`:
 
 ```lean
@@ -193,31 +193,31 @@ The headline exactness laws in `CoreArityAlgebraProofs.lean`:
   the result depends only on the assembled supply, never on which source
   structures were spread to produce it.
 
-**The generic binding law.** `bindPats_rest_split` and `bindPats_rest_exact`
-establish rest collection for every single-rest parameter list at once: for
-rest-free `front`/`back` and any supply `frontVals ++ mid ++ backVals` with
+**The generic binding law.** `bindPats_collecting_split` and `bindPats_collect_exact`
+establish segment collection for every single-variadic parameter list at once: for
+collecting-free `front`/`back` and any supply `frontVals ++ mid ++ backVals` with
 matching fixed lengths,
 
 ```lean
-bindPats (front ++ Pat.rest r :: back) (frontVals ++ mid ++ backVals)
+bindPats (front ++ Pat.collecting r :: back) (frontVals ++ mid ++ backVals)
   = some (bindFixed front frontVals ++ (r, collect mid) :: bindFixed back backVals)
 ```
 
 — the fixed captures bind positionally from the front and the back, and the
-single movable rest collects exactly the middle supply, for empty, singleton,
-and multiple middles and for leading/middle/trailing rest positions
-(`bindPats_leading_rest`, `bindPats_middle_rest`, `bindPats_trailing_rest`,
-`bindPats_rest_only` are the shape instances). The environment is stated
+single movable collecting binding collects exactly the middle supply, for empty, singleton,
+and multiple middles and for leading/middle/trailing positions
+(`bindPats_leading_collecting`, `bindPats_middle_collecting`, `bindPats_trailing_collecting`,
+`bindPats_lone_collecting` are the shape instances). The environment is stated
 structurally, so no name-uniqueness premise is needed; surface KatLang
 rejects duplicate parameter names before this binder model is reached, and
 the full model's binder additionally merges duplicate bindings with an
 equality check that the extraction omits.
 
-The Lean algebra permits a lone rest binding as the abstract variadic case:
-`bindArgs [Pat.rest "x"] xs` corresponds to variadic capture. KatLang surface
-assignment separately rejects rest-only assignment targets such as
-`...all = 1, 2, 3`, so this abstract binder is reached through variadic parameter
-binding rather than through rest-only assignment syntax.
+The Lean algebra permits a lone collecting binding:
+`bindArgs [Pat.collecting "x"] xs` is the single variadic parameter
+`F(...items)`, and the lone-collecting assignment `...all = 1, 2, 3` reaches
+the same shape through the deconstruction receiver (`bindDeconstruct`),
+collecting the complete supply as one exact list.
 
 ## Canonical values and the canonical-supply invariant
 
@@ -251,16 +251,16 @@ invariant is closed under the algebra's operations:
   already canonical, with `collect_orphanFree_of_elements` as the
   orphan-freedom face and `normalize_collect_items_of_canonical` as the
   end-to-end composition. This is the precise sense in which `collect` needs
-  no normalization of its own — and the full model's `collectRest` / the C#
-  `CollectRest` likewise store their supply unchanged.
+  no normalization of its own — and the full model's `collectSegment` / the C#
+  `CollectSegment` likewise store their supply unchanged.
 
-## Zero-item opens are neutral
+## Zero-item spreads are neutral
 
 `()` and `[]` are exactly the values whose spread contributes no items
 (`items_eq_nil_iff`), and both materialization boundaries ignore such an
 open wherever it is inserted:
 
-* generic: `capture_zero_item_open_neutral`, `collect_zero_item_open_neutral`
+* generic: `capture_zero_item_spread_neutral`, `collect_zero_item_spread_neutral`
   (over any `items v = []`);
 * sequence instances: `capture_empty_spread_neutral`,
   `capture_atom_empty_spread` (`(n, ()...) == n`);
@@ -269,7 +269,7 @@ open wherever it is inserted:
 
 The unspread values stay visible one-item slots (`E(())` collects `[()]`,
 `E([])` collects `[[]]`), while their spreads vanish (`E(()...)` and
-`E([]...)` collect `[]`) — neutrality is a property of the *opened* supply,
+`E([]...)` collect `[]`) — neutrality is a property of the *spread* supply,
 never of the value itself.
 
 ## Faithfulness
@@ -277,16 +277,16 @@ never of the value itself.
 Every behaviour encoded as a theorem was cross-checked against the real evaluator
 in `KatLang.lean`, including the subtle points:
 
-* `collect` is exact: a rest/variadic that captures exactly one item binds the
+* `collect` is exact: a variadic parameter that collects exactly one item binds the
   one-element list (`H(x, ...rest) = rest` on `H(1, 2)` gives `rest = [2]`),
-  the empty capture is the empty list (`H(1)` gives `rest = []`), and
+  the empty segment is the empty list (`H(1)` gives `rest = []`), and
   two-or-more items stay `[…]`. In `KatLang.lean` the shared helper is
-  `collectRest`; in the C# runtime it is `CollectRest` inside
+  `collectSegment`; in the C# runtime it is `CollectSegment` inside
   `CreateVariadicCapture`.
 * `bindArgs` consumes the call's item supply exactly as supplied: `F(A)` is one
-  argument, while `F(A...)` explicitly opens `A` before binding. So a single stored
+  argument, while `F(A...)` explicitly spreads `A` before binding. So a single stored
   sequence or list value against fixed parameters is an arity error (`Add(A)`
-  fails), and a rest-only call distinguishes `F(A)` (`rest = [A]`) from
+  fails), and a single-variadic call distinguishes `F(A)` (`rest = [A]`) from
   `F(A...)` (`rest = [a₁, …]`).
 * `bindDeconstruct` is `bindPats ∘ openLoneStructure`: assignment
   deconstruction is an unpacking receiver, so a single sequence- or
@@ -298,9 +298,9 @@ in `KatLang.lean`, including the subtle points:
   This opening is deconstruction-specific — `bindArgs` (function calls) does
   not open — so it does **not** leak into calls (`G(A)` keeps `A` as one
   argument).
-* After the receiver-specific supply preparation, call and deconstruction rest
+* After the receiver-specific supply preparation, call and deconstruction collecting
   bindings share the SAME collection rule: both are `bindPats`, whose single
-  rest case materializes through `collect` (`bindArgs = bindPats`,
+  collecting case materializes through `collect` (`bindArgs = bindPats`,
   `bindDeconstruct = bindPats ∘ openLoneStructure` — definitional in
   `CoreArityAlgebra.lean`).
 * `structureItems?` mirrors the authoritative `Result.structureItems?`, and
@@ -313,7 +313,7 @@ See the provenance table in the file header for the exact `KatLang.lean`
 correspondences, and `KatLangArityLaws.lean` for the bridge theorems proved
 over the real `Result` model (binder-path collection laws, receiver-contrast
 laws for both structure kinds, round trips, and canonicality of collected
-rests).
+lists).
 
 ## Build / validate
 

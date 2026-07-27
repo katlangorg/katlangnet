@@ -89,10 +89,10 @@ public class Utf16FuzzHarnessTests
     }
 
     [Fact]
-    public void RestBindingTemplate_GeneratesCanonicalPrefixRest()
+    public void CollectingBindingTemplate_GeneratesCanonicalPrefixMarker()
     {
         var parameters = new Utf16Parameters(
-            Utf16TemplateKind.RestBinding,
+            Utf16TemplateKind.CollectingBinding,
             Utf16PlacementKind.Alone,
             Utf16LineEndingMode.Lf,
             Utf16ExecutionMode.ParseSyntax,
@@ -111,9 +111,9 @@ public class Utf16FuzzHarnessTests
             parsed.HasErrors,
             string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
         var function = Assert.Single(parsed.Root.Properties, static property => property.Name == "F").Value;
-        var rest = Assert.IsType<CaptureParameterPattern>(function.ParameterPatterns[1]);
-        Assert.Equal(ParameterKind.Variadic, rest.Kind);
-        Assert.Equal("z", rest.Name);
+        var variadic = Assert.IsType<CaptureParameterPattern>(function.ParameterPatterns[1]);
+        Assert.Equal(ParameterKind.Variadic, variadic.Kind);
+        Assert.Equal("z", variadic.Name);
     }
 
     [Fact]

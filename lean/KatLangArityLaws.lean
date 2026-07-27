@@ -19,15 +19,15 @@ Paper-facing alias for the real `Result` expression used to canonicalize
 ORDINARY captured item supplies: `Result.normalize (Result.sequenceValue xs)`.
 
 This is `capture : Supply -> Value` — the canonicalizing value/output capture
-boundary (`x = 1, 2, 3`). It is NOT the rest-binding operation: rest binding
-uses `collect : Supply -> ListValue` (`collectRest`, exact immutable list),
-and postfix spread is `open : Value -> Supply` (`Result.spreadItems`). The
+boundary (`x = 1, 2, 3`). It is NOT the collecting-binding operation: collecting binding
+uses `collect : Supply -> ListValue` (`collectSegment`, exact immutable list),
+and postfix spread is `spread : Value -> Supply` (`Result.spreadItems`). The
 binder-path theorems below pin which operation each receiver applies.
 -/
 def captureForArityLaw (xs : List Result) : Result :=
   Result.normalize (Result.sequenceValue xs)
 
-/-- Single rest-shaped signature used to expose the non-opaque variadic splitter. -/
+/-- Single-variadic signature used to expose the non-opaque variadic splitter. -/
 def singleVariadicSignatureForArityLaw : CallableSignature :=
   { name := "F", parameters := [{ name := "x", kind := .variadic }] }
 
@@ -54,11 +54,11 @@ theorem toItems_sequenceValue (xs : List Result) :
 /-
 The real model uses capture = Result.normalize after Result.sequenceValue.
 This alias theorem is intentionally small; capture is the ORDINARY
-value/output construction boundary only. Rest bindings never use it — the
-binder-path theorems `bindParameterPatternList_single_rest_binds_collect` and
+value/output construction boundary only. Collecting bindings never use it — the
+binder-path theorems `bindParameterPatternList_single_collecting_binds_collect` and
 the leading/middle/trailing bridge family below connect the real binder to
-`collectRest` instead. Capture is not raw grouping: singleton capture
-collapses, while a singleton rest collects `[item]`.
+`collectSegment` instead. Capture is not raw grouping: singleton capture
+collapses, while a singleton collected segment stays `[item]`.
 -/
 theorem captureForArityLaw_eq_normalize_sequenceValue (xs : List Result) :
     captureForArityLaw xs = Result.normalize (Result.sequenceValue xs) := by
@@ -144,28 +144,28 @@ private theorem bindPairs_nil_nil
   simp [bindParameterPatternList.bindPairs]
 
 /-
-## Rest collection laws (`collect : Supply -> ListValue`)
+## Segment collection laws (`collect : Supply -> ListValue`)
 
-`collectRest` is the single rest-materialization operation: every rest binding
-— deconstruction rest, rest-only variadic parameters, and mixed
-prefix/rest/suffix parameter lists — binds its assigned middle supply through
+`collectSegment` is the single collecting-binding materialization operation: every collecting binding
+— deconstruction collecting bindings, single variadic parameters, and mixed
+prefix/collecting/suffix parameter lists — binds its assigned middle supply through
 it, after receiver-specific supply preparation. The laws below establish the
 required exactness properties.
 -/
 
-/-- Stable result kind + exact elements: a rest binding is ALWAYS the exact
+/-- Stable result kind + exact elements: a collecting binding is ALWAYS the exact
 immutable list of precisely the assigned items, in order. This is the closed
 form of `collect`; length preservation and element exactness are immediate. -/
-theorem collectRest_eq_listValue (xs : List Result) :
-    collectRest xs = Result.listValue xs := rfl
+theorem collectSegment_eq_listValue (xs : List Result) :
+    collectSegment xs = Result.listValue xs := rfl
 
 /-- Exact length: collecting never adds, drops, or merges items. -/
-theorem collectRest_length (xs : List Result) :
-    (collectRest xs).projectionItems.length = xs.length := rfl
+theorem collectSegment_length (xs : List Result) :
+    (collectSegment xs).projectionItems.length = xs.length := rfl
 
 /-- Zero assigned items collect to the exact empty list `[]` — never the
 invisible empty sequence value `()`. -/
-theorem collectRest_empty : collectRest [] = Result.listValue [] := rfl
+theorem collectSegment_empty : collectSegment [] = Result.listValue [] := rfl
 
 /-- No value is an element of its own list payload: an element of `ys` is
 structurally smaller than `Result.listValue ys`. -/
@@ -179,28 +179,28 @@ theorem mem_ne_listValue {w : Result} {ys : List Result} (h : w ∈ ys) :
 
 /-- Singleton preservation: one assigned item collects to the one-element list
 `[v]` — for every value kind, including lists, sequences, `[]`, and `()`. -/
-theorem collectRest_singleton (v : Result) :
-    collectRest [v] = Result.listValue [v] := rfl
+theorem collectSegment_singleton (v : Result) :
+    collectSegment [v] = Result.listValue [v] := rfl
 
--- Structured singleton rests over the real model: the boundary of the one
+-- Structured singleton segments over the real model: the boundary of the one
 -- remaining item is preserved exactly, for every structure kind.
 example (ys : List Result) :
-    collectRest [Result.sequenceValue ys]
+    collectSegment [Result.sequenceValue ys]
       = Result.listValue [Result.sequenceValue ys] := rfl
 example (ys : List Result) :
-    collectRest [Result.listValue ys]
+    collectSegment [Result.listValue ys]
       = Result.listValue [Result.listValue ys] := rfl
-example : collectRest [Result.sequenceValue []]
+example : collectSegment [Result.sequenceValue []]
     = Result.listValue [Result.sequenceValue []] := rfl
-example : collectRest [Result.listValue []]
+example : collectSegment [Result.listValue []]
     = Result.listValue [Result.listValue []] := rfl
 
-/-- A singleton rest is NEVER erased to its item: `collect [v] ≠ v`. This is
+/-- A singleton collected segment is NEVER erased to its item: `collect [v] ≠ v`. This is
 the load-bearing difference from canonical capture (`capture [v] = v` after
 normalization), and what keeps one remaining structured row distinct from the
 row's own elements. -/
-theorem collectRest_singleton_ne_item (v : Result) :
-    collectRest [v] ≠ v := by
+theorem collectSegment_singleton_ne_item (v : Result) :
+    collectSegment [v] ≠ v := by
   intro he
   exact absurd he.symm (mem_ne_listValue List.mem_cons_self)
 
@@ -208,35 +208,35 @@ theorem collectRest_singleton_ne_item (v : Result) :
 re-supplies EXACTLY the collected items, so variadic forwarding
 (`Forward(...items) = Target(items...)`) is ordinary list spread with no
 hidden raw-supply metadata. -/
-theorem spreadItems_collectRest (xs : List Result) :
-    (collectRest xs).spreadItems = xs := rfl
+theorem spreadItems_collectSegment (xs : List Result) :
+    (collectSegment xs).spreadItems = xs := rfl
 
-/-- A rest value is one visible value: emitted count 1 at every boundary,
-including the empty rest `[]`. -/
-theorem valueCount_collectRest (xs : List Result) :
-    (collectRest xs).valueCount = 1 := rfl
+/-- A collected list is one visible value: emitted count 1 at every boundary,
+including the empty collected list `[]`. -/
+theorem valueCount_collectSegment (xs : List Result) :
+    (collectSegment xs).valueCount = 1 := rfl
 
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it — collecting the
 concatenation of two spread supplies is exactly the list of those items,
 whatever `a` and `b` were (`first, ...rest = 1, [2, 3]..., (4, 5)...` gives
 `rest = [2, 3, 4, 5]`). -/
-theorem collectRest_spread_concat_exact (a b : Result) :
-    collectRest (a.spreadItems ++ b.spreadItems)
+theorem collectSegment_spread_concat_exact (a b : Result) :
+    collectSegment (a.spreadItems ++ b.spreadItems)
       = Result.listValue (a.spreadItems ++ b.spreadItems) := rfl
 
 /-- Collect/open round trip on the list side: re-collecting a spread list's
 items reproduces the list exactly (`collect ∘ open = id` on exact list
 values, the real-model face of the core `collect_items_list`). -/
-theorem collectRest_spreadItems_listValue (xs : List Result) :
-    collectRest ((Result.listValue xs).spreadItems) = Result.listValue xs := rfl
+theorem collectSegment_spreadItems_listValue (xs : List Result) :
+    collectSegment ((Result.listValue xs).spreadItems) = Result.listValue xs := rfl
 
-/-- `collectRest` normalizes element-wise only: the collected list boundary is
+/-- `collectSegment` normalizes element-wise only: the collected list boundary is
 already canonical, so normalization can only touch the stored elements
 (the real-model face of the core `collect_normalize_elementwise`). -/
-theorem collectRest_normalize_elementwise (xs : List Result) :
-    (collectRest xs).normalize = collectRest (xs.map Result.normalize) := by
-  simp [collectRest, Result.normalize]
+theorem collectSegment_normalize_elementwise (xs : List Result) :
+    (collectSegment xs).normalize = collectSegment (xs.map Result.normalize) := by
+  simp [collectSegment, Result.normalize]
 
 private theorem map_normalize_id_of_canonical : ∀ {xs : List Result},
     (∀ r ∈ xs, r.normalize = r) -> xs.map Result.normalize = xs
@@ -247,26 +247,26 @@ private theorem map_normalize_id_of_canonical : ∀ {xs : List Result},
         (fun q hq => h q (List.mem_cons_of_mem r hq))
       simp [hr, ih]
 
-/-- Canonical-supply invariant at the real rest boundary: when every supplied
+/-- Canonical-supply invariant at the real collect boundary: when every supplied
 value is already canonical — which observable runtime supplies are, since
 every construction/capture boundary normalizes before storing — the collected
-rest is itself a `Result.normalize` fixed point. `collectRest` performs no
-normalization of its own (`collectRest xs = Result.listValue xs` stores the
+list is itself a `Result.normalize` fixed point. `collectSegment` performs no
+normalization of its own (`collectSegment xs = Result.listValue xs` stores the
 supply unchanged); canonicality of the result comes entirely from the input
 invariant. This is the real-model face of the core
 `normalize_collect_of_canonicalSupply`. -/
-theorem collectRest_canonical_of_canonical_elements {xs : List Result}
+theorem collectSegment_canonical_of_canonical_elements {xs : List Result}
     (h : ∀ r ∈ xs, r.normalize = r) :
-    (collectRest xs).normalize = collectRest xs := by
-  rw [collectRest_normalize_elementwise, map_normalize_id_of_canonical h]
+    (collectSegment xs).normalize = collectSegment xs := by
+  rw [collectSegment_normalize_elementwise, map_normalize_id_of_canonical h]
 
 /--
-The real parameter-pattern binder uses `collectRest` directly for a single
-top-level variadic/rest capture. This is the binder-path bridge theorem: the
+The real parameter-pattern binder uses `collectSegment` directly for a single
+top-level variadic capture. This is the binder-path bridge theorem: the
 successful binding records `x` as the exact immutable list of the supplied
 items, with emitted count 1.
 -/
-theorem bindParameterPatternList_single_rest_binds_collect
+theorem bindParameterPatternList_single_collecting_binds_collect
     (xs : List Result) (allowAlgorithmBindings : Bool) :
     runEvalM (bindParameterPatternList
       [.capture { name := "x", kind := .variadic }]
@@ -278,19 +278,19 @@ theorem bindParameterPatternList_single_rest_binds_collect
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
     bindPairs_nil_nil, collectValues_valueInputs, drop_length_valueInputs, take_length_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
-    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectRest]
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
   rfl
 
-theorem variadic_single_rest_binds_collect (xs : List Result) :
+theorem variadic_single_collecting_binds_collect (xs : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "x", kind := .variadic }]
       (xs.map (fun value => { value? := some value : ParameterPatternInput }))
       false)
-      = .ok { argEnv := [("x", collectRest xs)],
-              countedParamEnv := [("x", (collectRest xs, 1))],
+      = .ok { argEnv := [("x", collectSegment xs)],
+              countedParamEnv := [("x", (collectSegment xs, 1))],
               algEnv := [] } := by
-  simpa [collectRest] using
-    bindParameterPatternList_single_rest_binds_collect xs false
+  simpa [collectSegment] using
+    bindParameterPatternList_single_collecting_binds_collect xs false
 
 theorem bindCallableArguments_single_variadic_items (xs : List Result) :
     bindCallableArguments
@@ -311,25 +311,25 @@ theorem bindCallableArguments_variadic_items_then_collect (xs : List Result) :
         singleVariadicSignatureForArityLaw
         xs
         (fun required actual => Error.arityMismatch required actual) with
-    | .ok bindings => Except.ok (collectRest bindings.variadicItems)
+    | .ok bindings => Except.ok (collectSegment bindings.variadicItems)
     | .error err => Except.error err)
-      = Except.ok (collectRest xs) := by
+      = Except.ok (collectSegment xs) := by
   simp [bindCallableArguments_single_variadic_items]
 
-/-- Mixed prefix/rest/suffix signature used to expose the loop-state binder's
-empty-rest rule. -/
+/-- Mixed prefix/collecting/suffix signature used to expose the loop-state binder's
+empty-segment rule. -/
 def mixedVariadicSignatureForArityLaw : CallableSignature :=
   { name := "F",
     parameters :=
       [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] }
 
-/-- EMPTY LOOP-STATE REST over the real flat-variadic binder: supplying exactly
-the fixed parameters binds them from the ends and the rest is assigned ZERO
-middle items — the same `collectRest [] = []` rule as every other rest
+/-- EMPTY LOOP-STATE SEGMENT over the real flat-variadic binder: supplying exactly
+the fixed parameters binds them from the ends and the variadic parameter is assigned ZERO
+middle items — the same `collectSegment [] = []` rule as every other collecting-binding
 receiver (`bindParameterPatternList`: required = patterns - 1). This pins the
 uniform minimum (fixed parameter count), replacing the old loop-only
-"rest collects at least one slot" restriction. -/
-theorem bindCallableArguments_mixed_fixed_only_empty_rest (a b : Result) :
+"the variadic parameter collects at least one slot" restriction. -/
+theorem bindCallableArguments_mixed_fixed_only_empty_segment (a b : Result) :
     bindCallableArguments
       mixedVariadicSignatureForArityLaw
       [a, b]
@@ -369,13 +369,13 @@ theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
 /-
 ## Generic mixed-pattern bridge theorems
 
-For every supported flat rest shape — leading rest (`Init(...init, last)`),
-middle rest (`F(x, ...y, z)`), trailing rest (`Tail(first, ...rest)`); the
-rest-only shape is `bindParameterPatternList_single_rest_binds_collect` above —
-a successful bind through the REAL shared binder records the rest name as
-`collectRest` of exactly the allocated middle supply. The middle supply `mid`
+For every supported flat variadic shape — leading variadic (`Init(...init, last)`),
+middle variadic (`F(x, ...y, z)`), trailing variadic (`Tail(first, ...rest)`); the
+lone-variadic shape is `bindParameterPatternList_single_collecting_binds_collect` above —
+a successful bind through the REAL shared binder records the variadic parameter's name as
+`collectSegment` of exactly the allocated middle supply. The middle supply `mid`
 is universally quantified, so each theorem covers the empty, singleton, and
-multiple-item rests uniformly, and the fixed captures around the rest keep
+multiple-item segments uniformly, and the fixed captures around the variadic parameter keep
 their front/back argument boundaries unchanged.
 
 Honest limitation: the front/back capture lists are one fixed capture per
@@ -386,18 +386,18 @@ wider-arity content is carried by the executable matrices in `CoreTests.lean`
 and the generated differential corpora.
 -/
 
-/-- Trailing rest (`Tail(first, ...rest)`): for EVERY middle supply — empty,
-singleton, or multiple — the rest name binds `collectRest mid` and the leading
+/-- Trailing variadic (`Tail(first, ...rest)`): for EVERY middle supply — empty,
+singleton, or multiple — the variadic parameter binds `collectSegment mid` and the leading
 fixed capture keeps the front argument boundary. -/
-theorem bindParameterPatternList_trailing_rest_binds_collect
+theorem bindParameterPatternList_trailing_collecting_binds_collect
     (x : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "a", kind := .normal },
        .capture { name := "r", kind := .variadic }]
       ((x :: mid).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
-      = .ok { argEnv := [("a", x), ("r", collectRest mid)],
-              countedParamEnv := [("r", (collectRest mid, 1))],
+      = .ok { argEnv := [("a", x), ("r", collectSegment mid)],
+              countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
     bindParameterPatternList.bindPairs, bindParameterPattern,
@@ -405,33 +405,33 @@ theorem bindParameterPatternList_trailing_rest_binds_collect
     take_length_valueInputs, drop_length_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectRest]
+    collectSegment]
   rfl
 
-/-- Leading rest (`Init(...init, last)`): for EVERY middle supply the rest
-name binds `collectRest mid` and the trailing fixed capture keeps the back
+/-- Leading variadic (`Init(...init, last)`): for EVERY middle supply the variadic
+parameter binds `collectSegment mid` and the trailing fixed capture keeps the back
 argument boundary. -/
-theorem bindParameterPatternList_leading_rest_binds_collect
+theorem bindParameterPatternList_leading_collecting_binds_collect
     (y : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "r", kind := .variadic },
        .capture { name := "z", kind := .normal }]
       ((mid ++ [y]).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
-      = .ok { argEnv := [("r", collectRest mid), ("z", y)],
-              countedParamEnv := [("r", (collectRest mid, 1))],
+      = .ok { argEnv := [("r", collectSegment mid), ("z", y)],
+              countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectRest]
+    collectSegment]
   rfl
 
-/-- Middle rest (`F(x, ...y, z)`): for EVERY middle supply the rest name binds
-`collectRest mid` between the preserved front and back fixed boundaries. -/
-theorem bindParameterPatternList_middle_rest_binds_collect
+/-- Middle variadic (`F(x, ...y, z)`): for EVERY middle supply the variadic parameter binds
+`collectSegment mid` between the preserved front and back fixed boundaries. -/
+theorem bindParameterPatternList_middle_collecting_binds_collect
     (x y : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "a", kind := .normal },
@@ -439,8 +439,8 @@ theorem bindParameterPatternList_middle_rest_binds_collect
        .capture { name := "z", kind := .normal }]
       ((x :: (mid ++ [y])).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
-      = .ok { argEnv := [("a", x), ("r", collectRest mid), ("z", y)],
-              countedParamEnv := [("r", (collectRest mid, 1))],
+      = .ok { argEnv := [("a", x), ("r", collectSegment mid), ("z", y)],
+              countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
   have hlen : ¬ (mid.length + 1 + 1 < 2) := by omega
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
@@ -448,7 +448,7 @@ theorem bindParameterPatternList_middle_rest_binds_collect
     bindPairs_nil_nil, collectValues_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectRest, hlen]
+    collectSegment, hlen]
   rfl
 
 /-
@@ -483,10 +483,10 @@ theorem call_fixed_single_sequence_rejected :
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
   rfl
 
-/-- `G(A)` mixed fixed/rest call: one supplied item, so `first` receives the whole
+/-- `G(A)` mixed fixed/variadic call: one supplied item, so `first` receives the whole
 stored sequence value and `rest` collects the empty list `[]` — calls never
 implicitly open. -/
-theorem call_rest_single_sequence_preserved :
+theorem call_variadic_single_sequence_preserved :
     runEvalM (bindParameterPatternList
         [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
@@ -499,7 +499,7 @@ theorem call_rest_single_sequence_preserved :
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectRest]
+    collectSegment]
   rfl
 
 -- Assignment deconstruction: the `.sequenceValue` pattern OPENS its single value.
@@ -521,9 +521,9 @@ theorem deconstruct_fixed_single_sequence_opens :
   rfl
 
 /-- `first, ...rest = A`: the deconstruction sequence-value pattern opens `A`, so
-`first = 1` and `rest` COLLECTS the remaining items as one exact immutable
+`first = 1` and `rest` COLLECTS the matched items as one exact immutable
 list `[2, 3]`. -/
-theorem deconstruct_rest_single_sequence_opens :
+theorem deconstruct_collecting_single_sequence_opens :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "first", kind := .normal },
                          .capture { name := "rest", kind := .variadic }]]
@@ -537,7 +537,7 @@ theorem deconstruct_rest_single_sequence_opens :
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-    CountedParamEnv.lookup, ValEnv.lookup, collectRest]
+    CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
   rfl
 
 /-
@@ -696,14 +696,14 @@ theorem normalize_singleton_sequence_of_list (xs : List Result) :
       = Result.listValue (xs.map Result.normalize) := by
   simp [Result.normalize]
 
-/-- Ordinary capture and rest collection stay distinct operations on the same
+/-- Ordinary capture and segment collection stay distinct operations on the same
 supply: `capture` canonicalizes to a sequence value while `collect` preserves
 the exact list — `x = A...` re-groups list items as `(…)`, while
 `x, ...rest = A` collects them as `[…]`. -/
 theorem capture_and_collect_differ_on_pairs (a b : Result) :
     captureForArityLaw [a, b] =
         Result.sequenceValue [Result.normalize a, Result.normalize b]
-      ∧ collectRest [a, b] = Result.listValue [a, b] :=
+      ∧ collectSegment [a, b] = Result.listValue [a, b] :=
   ⟨capture_pair a b, rfl⟩
 
 -- Function calls: a lone list argument is ONE argument; calls never open lists.
@@ -719,10 +719,10 @@ theorem call_fixed_single_list_rejected :
   simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
   rfl
 
-/-- `G(A)` mixed fixed/rest call with a stored LIST `A`: `first` receives the
+/-- `G(A)` mixed fixed/variadic call with a stored LIST `A`: `first` receives the
 whole list value and `rest` collects the empty list `[]` — calls never
 implicitly open. -/
-theorem call_rest_single_list_preserved :
+theorem call_variadic_single_list_preserved :
     runEvalM (bindParameterPatternList
         [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
@@ -735,7 +735,7 @@ theorem call_rest_single_list_preserved :
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-    collectRest]
+    collectSegment]
   rfl
 
 -- Assignment deconstruction: the pattern opens a lone LIST exactly like a
@@ -758,9 +758,9 @@ theorem deconstruct_fixed_single_list_opens :
   rfl
 
 /-- `first, ...rest = [1, 2, 3]`: the deconstruction pattern opens the lone
-list; `first = 1` and `rest` COLLECTS the remaining items as the exact list
+list; `first = 1` and `rest` COLLECTS the matched items as the exact list
 `[2, 3]`. -/
-theorem deconstruct_rest_single_list_opens :
+theorem deconstruct_collecting_single_list_opens :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "first", kind := .normal },
                          .capture { name := "rest", kind := .variadic }]]
@@ -774,15 +774,15 @@ theorem deconstruct_rest_single_list_opens :
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-    CountedParamEnv.lookup, ValEnv.lookup, collectRest]
+    CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
   rfl
 
-/-- Lone-list receiver DISAGREEMENT, lone-rest shape: call binding collects the
+/-- Lone-list receiver DISAGREEMENT, lone-collecting shape: call binding collects the
 one supplied argument — the list itself — as `rest = [[1, 2]]`, while
 deconstruction opens the lone list first and collects its items as
 `rest = [1, 2]`. The receiver distinction is observable for every structured
 argument. -/
-theorem lone_rest_list_call_and_deconstruct_differ :
+theorem lone_collecting_list_call_and_deconstruct_differ :
     runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .variadic }]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
@@ -802,22 +802,22 @@ theorem lone_rest_list_call_and_deconstruct_differ :
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-      collectRest]
+      collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
       mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
-      CountedParamEnv.lookup, ValEnv.lookup, collectRest]
+      CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
     rfl
 
-/-- The rest-only grouped/spread COINCIDENCE is gone: `F(A)` with a stored
+/-- The single-variadic grouped/spread COINCIDENCE is gone: `F(A)` with a stored
 sequence `A` collects the one grouped argument (`items = [(1, 2)]`), while
-`F(A...)` collects the opened items (`items = [1, 2]`). The old claim that a
-rest-only parameter receives the same canonical value for both calls is
+`F(A...)` collects the spread items (`items = [1, 2]`). The old claim that a
+single variadic parameter receives the same canonical value for both calls is
 obsolete under exact list collection — supplying one grouped argument and
 supplying its items are observably different calls. -/
-theorem lone_rest_seq_call_grouped_and_spread_differ :
+theorem lone_collecting_seq_call_grouped_and_spread_differ :
     runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .variadic }]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
@@ -839,13 +839,13 @@ theorem lone_rest_seq_call_grouped_and_spread_differ :
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-      collectRest]
+      collectSegment]
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
-      collectRest, Result.spreadItems, Result.toItems]
+      collectSegment, Result.spreadItems, Result.toItems]
     rfl
 
 /-
@@ -1053,7 +1053,7 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
 
 /-- The SPREAD/capture round-trip is sequence-specific: it holds exactly on
 canonical values that are not lists. Spreading a list opens its boundary, and
-re-capturing the opened items groups them as a sequence value — spread-then-
+re-capturing the spread items groups them as a sequence value — spread-then-
 capture converts a list to a sequence (`x = A...` with `A = [1, 2, 3]` gives
 `x = (1, 2, 3)`), losslessly for every other value kind. -/
 theorem capture_spreadItems_of_canonical_non_list (r : Result)
@@ -1099,12 +1099,12 @@ empty instance of `toItems_sequenceValue` / `spreadItems_sequenceValue`;
 theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
 
 /-
-## Zero-item-open neutrality at the real capture boundary
+## Zero-item-spread neutrality at the real capture boundary
 
 `()` and `[]` spread to zero items, so inserting either spread anywhere in a
 captured item supply changes nothing — while the UNSPREAD values stay visible
 one-item slots. These are the real-model faces of the core
-`capture_zero_item_open_neutral` family.
+`capture_zero_item_spread_neutral` family.
 -/
 
 /-- Generic neutral open at the real capture expression: any value whose

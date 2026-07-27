@@ -108,9 +108,9 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_EmptyRestOutputSlot_StaysVisibleUnlessSpread()
+    public void Run_EmptyCollectedListOutputSlot_StaysVisibleUnlessSpread()
     {
-        // The empty rest is the exact empty list [] and stays a visible slot.
+        // The empty collected list is the exact list [] and stays a visible slot.
         AssertDisplay("x, ...rest = 1\nrest", "[]");
         AssertDisplay("x, ...rest = 1\nrest\nx", "[]\n1");
         // Spreading the empty list opens it and contributes zero items.
@@ -142,7 +142,7 @@ public class KatLangEngineTests
     [Fact]
     public void Run_IfSpreadArgument_OpensIntoThreeArguments()
     {
-        // Issue #131: explicit spread in call-argument position opens the value
+        // Issue #131: explicit spread in call-argument position supplies the value's items
         // into the three `if` argument slots, so `if(X...)` ≡ `if(1, 2, 3)` → 2.
         AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult...)", "2");
         AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult...)", "2");
@@ -456,7 +456,7 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
+        Assert.Contains("filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
         Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 
@@ -852,7 +852,7 @@ public class KatLangEngineTests
     public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsSingleListResult()
     {
         // A call boundary always returns one value. The receiver is one leading
-        // argument, so the rest binding collects it as the one-element list
+        // argument, so the collecting binding collects it as the one-element list
         // [(10, 20, 30)], displayed as a single row.
         var result = KatLangEngine.Run(
             """
@@ -867,7 +867,7 @@ public class KatLangEngineTests
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
         // The spread receiver supplies the items, so the collected list is
-        // [10, 20, 30]; explicit caller-site postfix `...` re-opens the returned
+        // [10, 20, 30]; explicit caller-site postfix `...` re-spreads the returned
         // list into the surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """

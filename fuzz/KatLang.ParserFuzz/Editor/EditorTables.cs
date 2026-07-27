@@ -60,8 +60,8 @@ internal enum EditorTemplateKind
     IncompleteSequence,
     Assignment,
     Deconstruction,
-    RestBinding,
-    IncompleteRest,
+    CollectingBinding,
+    IncompleteCollecting,
     Callback,
     IncompleteCallback,
     ConditionalClause,
@@ -120,8 +120,8 @@ internal static class EditorTables
         new(EditorTemplateIds.IncompleteSequence, "Output = (1, 2, ", ""),
         new(EditorTemplateIds.Assignment, "Total = ", "\nOutput = Total", ClosedWhenBenign: true),
         new(EditorTemplateIds.Deconstruction, "x, y, ", " = (1, 2, 3)\nOutput = x + y"),
-        new(EditorTemplateIds.RestBinding, "First(head, ...rest", ") = head\nOutput = First(1, 2, 3)"),
-        new(EditorTemplateIds.IncompleteRest, "First(head, ...", "\nOutput = 1"),
+        new(EditorTemplateIds.CollectingBinding, "First(head, ...rest", ") = head\nOutput = First(1, 2, 3)"),
+        new(EditorTemplateIds.IncompleteCollecting, "First(head, ...", "\nOutput = 1"),
         new(EditorTemplateIds.Callback, "Double(x) = x * ", "\nData = [1, 2, 3]\nOutput = Data.map(Double)", ClosedWhenBenign: true),
         new(EditorTemplateIds.IncompleteCallback, "Data = [1, 2, 3]\nOutput = Data.map(", ""),
         new(EditorTemplateIds.ConditionalClause, "F(0) = 'zero'\nF(", ") = 'other'\nOutput = F(0)"),
@@ -197,8 +197,8 @@ internal static class EditorTemplateIds
     public const string IncompleteSequence = "incomplete-sequence";
     public const string Assignment = "assignment";
     public const string Deconstruction = "deconstruction";
-    public const string RestBinding = "rest-binding";
-    public const string IncompleteRest = "incomplete-rest";
+    public const string CollectingBinding = "collecting-binding";
+    public const string IncompleteCollecting = "incomplete-collecting";
     public const string Callback = "callback";
     public const string IncompleteCallback = "incomplete-callback";
     public const string ConditionalClause = "conditional-clause";

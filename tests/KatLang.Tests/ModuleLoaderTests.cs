@@ -233,7 +233,7 @@ public class ModuleLoaderTests
     public void OpenStringLiteral_LoadedCallable_CanUseSequenceBuiltins()
     {
         // The spread supplies each vector as its own argument slot, so the
-        // loaded rest-only callable collects [(3, 4), (0, 0)].
+        // loaded single-variadic callable collects [(3, 4), (0, 0)].
         var source = """
             open 'https://katlang.org/demo/vec.kat'
             Add((Vector(3, 4), Vector(0, 0))...)

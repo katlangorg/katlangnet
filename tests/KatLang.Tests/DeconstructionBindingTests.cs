@@ -1,13 +1,13 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Deconstruction binding patterns: a comma binding pattern with one movable rest
+/// Deconstruction binding patterns: a comma binding pattern with one movable collecting binding
 /// binding. Assignment deconstruction (<c>x, ...y, z = RHS</c>) is an unpacking
 /// receiver (Python-style): a single sequence-valued right-hand side <c>A</c> is
 /// unpacked element-by-element, so <c>x, y, z = A</c> splits <c>A</c> and explicit
 /// <c>x, y, z = A...</c> supplies the same items. This unpacking is
 /// deconstruction-specific: a function call <c>F(A)</c> still passes <c>A</c> as one
-/// argument and needs <c>F(A...)</c> to open it. The rest binding collects its items
+/// argument and needs <c>F(A...)</c> to spread it. The collecting binding collects its items
 /// as one exact immutable list value and may appear at the start, middle, or end.
 /// </summary>
 public class DeconstructionBindingTests
@@ -39,10 +39,10 @@ public class DeconstructionBindingTests
     // ───────────────────────── Assignment deconstruction ─────────────────────
 
     [Fact]
-    public void Assignment_MovableRest_UnpacksAroundCapturedMiddle()
+    public void Assignment_MovableCollectingBinding_UnpacksAroundCapturedMiddle()
     {
         // The deconstruction pattern unpacks a stored sequence value (no spread
-        // needed). The rest binding collects the middle items as one exact list.
+        // needed). The collecting binding collects the middle items as one exact list.
         const string define = "A = 1, 2, 3, 4, 5\nx, ...y, z = A\n";
         AssertAtoms(define + "x", 1);
         AssertAtoms(define + "y", 2, 3, 4);
@@ -52,7 +52,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_MovableRest_ExplicitSpread_SuppliesSameItems()
+    public void Assignment_MovableCollectingBinding_ExplicitSpread_SuppliesSameItems()
         // Explicit `...` supplies the same items as the bare unpack above.
         => AssertAtoms("A = 1, 2, 3, 4, 5\nx, ...y, z = A...\nx, y.count, z", 1, 3, 5);
 
@@ -86,7 +86,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestForStoredSequenceValue_Unpacks()
+    public void Assignment_CollectingBindingForStoredSequenceValue_Unpacks()
     {
         // `first, ...rest = A` unpacks A: first = 1, rest = [2, 3] (the
         // collected exact list; the flat-atom view below opens it).
@@ -97,7 +97,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
+    public void Assignment_CollectingBindingForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
     {
         // `first, ...rest = A...` supplies the same items as the bare unpack above.
         const string define = "A = 1, 2, 3\nfirst, ...rest = A...\n";
@@ -106,18 +106,18 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestCollectsZeroItems_AsEmptyList()
+    public void Assignment_CollectingBindingCollectsZeroItems_AsEmptyList()
     {
         const string define = "x, ...y, z = 1, 2\n";
         AssertAtoms(define + "x", 1);
         AssertAtoms(define + "y.count", 0);
         AssertAtoms(define + "z", 2);
-        // The empty rest is the empty list [], so summing it is 0.
+        // The empty collected segment is the empty list [], so summing it is 0.
         AssertAtoms(define + "x + y.sum + z", 3);
     }
 
     [Fact]
-    public void Assignment_NoRest_RequiresExactCount()
+    public void Assignment_NoCollectingBinding_RequiresExactCount()
     {
         AssertAtoms("x, y = 1, 2\nx", 1);
         AssertAtoms("x, y = 1, 2\ny", 2);
@@ -170,7 +170,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestAtStart_CapturesLeadingItems()
+    public void Assignment_CollectingBindingAtStart_CapturesLeadingItems()
     {
         const string define = "...head, last = 1, 2, 3\n";
         AssertAtoms(define + "head", 1, 2);
@@ -179,10 +179,10 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestAtStart_ForStoredSequenceValue_Unpacks()
+    public void Assignment_CollectingBindingAtStart_ForStoredSequenceValue_Unpacks()
     {
-        // Head-position rest also unpacks a stored sequence value (Option A applies
-        // at head, middle, and tail rest positions). `...head, last = A` opens A.
+        // A head-position collecting binding also unpacks a stored sequence value (Option A applies
+        // at head, middle, and tail collecting positions). `...head, last = A` opens A.
         const string define = "A = 1, 2, 3\n...head, last = A\n";
         AssertAtoms(define + "head", 1, 2);
         AssertAtoms(define + "head.count", 2);
@@ -190,7 +190,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestAtStart_ForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
+    public void Assignment_CollectingBindingAtStart_ForStoredSequenceValue_ExplicitSpread_SuppliesSameItems()
     {
         // `...head, last = A...` supplies the same items as the bare unpack above.
         const string define = "A = 1, 2, 3\n...head, last = A...\n";
@@ -200,7 +200,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_RestAtEnd_CapturesTrailingItems()
+    public void Assignment_CollectingBindingAtEnd_CapturesTrailingItems()
     {
         const string define = "first, ...tail = 1, 2, 3\n";
         AssertAtoms(define + "first", 1);
@@ -246,27 +246,27 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_ScalarRhs_RestAtEndCollectsEmptyList()
+    public void Assignment_ScalarRhs_CollectingBindingAtEndCollectsEmptyList()
     {
         // A scalar right-hand side is a one-item supply, so the fixed `first` binds
-        // it and the rest collects zero items as the exact list [].
+        // it and the collecting binding collects zero items as the exact list [].
         const string define = "first, ...tail = 1\n";
         AssertAtoms(define + "first", 1);
         AssertAtoms(define + "tail.count", 0);
-        AssertAtoms(define + "tail"); // the empty rest is the empty list [], which has no atoms
+        AssertAtoms(define + "tail"); // the empty collected list is [], which has no atoms
     }
 
     [Fact]
-    public void Assignment_ScalarRhs_RestAtStartCollectsEmptyList()
+    public void Assignment_ScalarRhs_CollectingBindingAtStartCollectsEmptyList()
     {
         const string define = "...head, last = 1\n";
         AssertAtoms(define + "head.count", 0);
-        AssertAtoms(define + "head"); // the empty rest is the empty list [], which has no atoms
+        AssertAtoms(define + "head"); // the empty collected list is [], which has no atoms
         AssertAtoms(define + "last", 1);
     }
 
     [Fact]
-    public void Assignment_SingleRestOnly_CollectsExactList()
+    public void Assignment_SingleCollectingBinding_CollectsEntireSupplyAsExactList()
     {
         AssertAtoms("...all = 1, 2, 3\nall", 1, 2, 3);
         AssertAtoms("...all = 1\nall == [1]", 1);
@@ -306,11 +306,11 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void Assignment_MultipleRestBindings_IsRejected()
+    public void Assignment_MultipleCollectingBindings_AreRejected()
     {
         var result = KatLangEngine.Run("...a, ...b = 1, 2, 3\na");
         Assert.True(result.IsFailure);
-        Assert.Contains("at most one rest binding", result.ToDisplayString(), StringComparison.Ordinal);
+        Assert.Contains("at most one collecting binding", result.ToDisplayString(), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -346,8 +346,8 @@ public class DeconstructionBindingTests
         Assert.DoesNotContain("Assignment pattern", message, StringComparison.Ordinal);
         Assert.Contains("Expected 0 parameters", message, StringComparison.Ordinal);
 
-        var restFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, ...rest = sum\nx"));
-        Assert.DoesNotContain("Assignment pattern", restFailure.ToDisplayString(), StringComparison.Ordinal);
+        var bindingFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, ...rest = sum\nx"));
+        Assert.DoesNotContain("Assignment pattern", bindingFailure.ToDisplayString(), StringComparison.Ordinal);
     }
 
     // ───────────────────── Function-parameter deconstruction ──────────────────
@@ -370,8 +370,8 @@ public class DeconstructionBindingTests
         => AssertAtoms("F(x, ...y, z) = x + y.sum + z\nF(1, 2, 3, 4, 5)", 15);
 
     [Fact]
-    public void Parameter_RestCollectsEmptyList()
-        // x = 1, y = [], z = 2; sum of the empty rest is 0.
+    public void Parameter_VariadicCollectsEmptyList()
+        // x = 1, y = [], z = 2; sum of the empty collected list is 0.
         => AssertAtoms("F(x, ...y, z) = x + y.sum + z\nF(1, 2)", 3);
 
     [Fact]
@@ -381,12 +381,12 @@ public class DeconstructionBindingTests
             1, 2, 3, 6, 7);
 
     [Fact]
-    public void Parameter_ScalarArgument_RestCollectsEmptyList()
+    public void Parameter_ScalarArgument_VariadicCollectsEmptyList()
         // A single scalar argument is a one-item supply: first = 1, tail = [].
         => AssertAtoms("F(first, ...tail) = first, tail.count\nF(1)", 1, 0);
 
     [Fact]
-    public void Parameter_MixedRestShape_DistinguishesPlainArgumentFromSpread()
+    public void Parameter_MixedVariadicShape_DistinguishesPlainArgumentFromSpread()
     {
         // G(first, ...rest): a plain stored sequence value A is one supplied argument,
         // so first captures the whole value (count 2) and rest is empty (count 0).
@@ -405,9 +405,9 @@ public class DeconstructionBindingTests
         => AssertAtoms("c = 1, 2, 3\nc.count", 3);
 
     [Fact]
-    public void RestOnlyVariadicCall_ConsumesItemSupply()
+    public void SingleVariadicCall_ConsumesItemSupply()
     {
-        // Rest-only `Sum(...values)` collects the supplied argument slots as one
+        // Single-variadic `Sum(...values)` collects the supplied argument slots as one
         // exact list. A single grouped argument is ONE collected element, so the
         // numeric `.sum` fails on it; item-supplying calls (inline slots or
         // explicit spread) sum the collected items.
@@ -426,7 +426,7 @@ public class DeconstructionBindingTests
     // ─────────────────── Aspect 2: unified item-supply binding ─────────────────
 
     [Fact]
-    public void RestOnly_GroupedArgumentDiffersFromItemSupply()
+    public void SingleVariadic_GroupedArgumentDiffersFromItemSupply()
     {
         // G(...x) = x.sum exposes the call boundary: plain A and grouped
         // `(1, 2, 3, 4, 5)` each supply ONE sequence-valued argument, so the
@@ -440,12 +440,12 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void RestOnly_EmptyCallBindsEmptyItemSupply()
+    public void SingleVariadic_EmptyCallBindsEmptyItemSupply()
         // An empty call binds an empty item supply (min arity 0): sum is 0.
         => AssertAtoms("G(...x) = x.sum\nG()", 0);
 
     [Fact]
-    public void RestWithSuffix_PlainSequenceArgumentPreservesBoundary()
+    public void VariadicWithSuffix_PlainSequenceArgumentPreservesBoundary()
     {
         // Plain A supplies one sequence-valued argument, so y receives that value
         // and the numeric body fails. Explicit spread and direct item supplies work.
@@ -457,7 +457,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void RestWithPrefixAndSuffix_PlainSequenceArgumentPreservesBoundary()
+    public void VariadicWithPrefixAndSuffix_PlainSequenceArgumentPreservesBoundary()
     {
         const string h = "A = 1, 2, 3, 4, 5\nH(x, ...y, z) = x + y.sum + z\n";
         var groupedArity = AssertEvalError<EvalError.VariadicArityMismatch>(h + "H(A)");
@@ -472,7 +472,7 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void SiblingGroupedValues_ArePreservedUnlessExplicitlyOpened()
+    public void SiblingGroupedValues_ArePreservedUnlessExplicitlySpread()
     {
         // Multiple sibling grouped values are preserved (count 2), not flattened.
         AssertAtoms("A = 1, 2\nB = 3, 4\nG(...x) = x.count\nG(A, B)", 2);
@@ -484,7 +484,7 @@ public class DeconstructionBindingTests
     public void RepeatedSingletonBoundary_DoesNotImplicitlyOpenCallArgument()
     {
         // Redundant unary grouping canonicalizes the value, but function calls still
-        // receive one argument unless explicit spread is written — the rest-only
+        // receive one argument unless explicit spread is written — the single-variadic
         // shape collects one non-numeric element and fails like the mixed shapes.
         AssertEvalError<EvalError.BadArity>("G(...x) = x.sum\nG(((1, 2, 3, 4, 5)))");
         AssertAtoms("G(...x) = x.sum\nG(((1, 2, 3, 4, 5))...)", 15);
@@ -547,7 +547,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void CallbackDeconstruction_OnSequenceValueRows_BindsPerRow()
     {
-        // A rest-shaped callback applied per sequence-value row binds x/...y/z
+        // A variadic-shaped callback applied per sequence-value row binds x/...y/z
         // within each row: (1, 2, 3) -> 1 + 2 + 3 = 6 and (4, 5, 6) -> 15.
         // The flat form opens the lone row into slots (the flat-callback row
         // convention) and the shared binder collects y as an exact list; the

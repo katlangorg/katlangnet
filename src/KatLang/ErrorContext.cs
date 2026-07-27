@@ -64,7 +64,7 @@ public sealed record VariadicLoopStateBindingContext(
 /// </summary>
 public sealed record DeconstructionBindingContext(
     IReadOnlyList<string> TargetDisplayNames,
-    bool HasRestTarget) : ErrorContext
+    bool HasCollectingTarget) : ErrorContext
 {
     public override string ToLegacyString()
         => $"while binding assignment pattern {string.Join(", ", TargetDisplayNames)}";

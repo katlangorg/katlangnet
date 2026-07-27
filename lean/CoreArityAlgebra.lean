@@ -8,18 +8,18 @@ arity algebra used in the paper. It distinguishes:
   `Val.seq` as raw sequence construction and `Val.list` as the exact
   immutable list value;
 - the total item view `items`, the formal meaning of KatLang's surface
-  spread operator `...` (`open : Value -> Supply`);
+  spread operator `...` (`spread : Value -> Supply`);
 - persistent-value canonicalization `normalize`, with `capture` as the
   canonicalizing ordinary value-capture boundary
   (`capture : Supply -> Value`), and `canonicalSupply` as the invariant that
   an observable item supply already holds canonical values;
-- exact rest collection `collect`, the rest/variadic binding operation
+- exact segment collection `collect`, the collecting-binding operation
   (`collect : Supply -> ListValue`, implemented as `Supply -> Val` with a
   proven `Val.list` result kind);
 - the shared openable-structure projection `structureItems?` with the
   deconstruction-specific lone-structure opening of a supply,
   `openLoneStructure`, and its characterizing predicate `loneStructure`;
-- the shared name/rest binder `bindPats`, consumed by ordinary call binding
+- the shared fixed/collecting binder `bindPats`, consumed by ordinary call binding
   (`bindArgs`) and by deconstruction binding (`bindDeconstruct`).
 
 Proofs and executable checks are kept in CoreArityAlgebraProofs.lean.
@@ -46,7 +46,7 @@ capture                         Result.normalize after Result.sequenceValue
 canonicalSupply                 invariant of observable supplies (the full
                                 model normalizes at every construction
                                 boundary rather than naming the invariant)
-collect                         collectRest (exact immutable list collection)
+collect                         collectSegment (exact immutable list collection)
 openLoneStructure               deconstruction receiver opening of a lone
                                 sequence or lone list
                                 ((Result.structureItems? value).getD [value]
@@ -58,7 +58,7 @@ openLoneStructure               deconstruction receiver opening of a lone
 loneStructure                   artifact-local characterization of the one
                                 supply shape openLoneStructure rewrites
 Pat / bindArgs / bindDeconstruct / bindPats
-                                bindParameterPatternList name/rest binding model;
+                                bindParameterPatternList fixed/collecting-binding model;
                                 bindDeconstruct adds the deconstruction-receiver
                                 lone-structure opening
 
@@ -119,7 +119,7 @@ def structureItems? : Val -> Option Supply
   | _ => none
 
 /--
-The total item view of a value: `open : Value -> Supply`.
+The total item view of a value: `spread : Value -> Supply`.
 
 An atom supplies itself as one item; a sequence value supplies its stored
 items; an exact list value supplies its stored elements. This operation gives
@@ -159,8 +159,8 @@ end
 ORDINARY value-capture boundary (`capture : Supply -> Value`): it groups the
 supplied items and normalizes the result, so singleton sequence boundaries
 are erased before the captured value is observed (`x = 1, 2, 3` captures
-`(1, 2, 3)`; one supplied item captures as itself). Rest binding does NOT use
-this operation — rest binding is `collect`.
+`(1, 2, 3)`; one supplied item captures as itself). Collecting binding does NOT use
+this operation — collecting binding is `collect`.
 
 Raw `Val.seq` may still be appropriate internally, for example when modeling
 syntax, pre-normalization structure, or already-canonical shallow combination
@@ -192,10 +192,10 @@ guarantees the collected list is canonical
 def canonicalSupply (xs : Supply) : Prop := normalizeList xs = xs
 
 /--
-Exact rest collection: `collect : Supply -> ListValue`.
+Exact segment collection: `collect : Supply -> ListValue`.
 
-Every rest binding — deconstruction rest, rest-only variadic parameters, and
-mixed prefix/rest/suffix parameter lists — materializes its assigned item
+Every collecting binding — deconstruction collecting bindings, single variadic parameters, and
+mixed prefix/collecting/suffix parameter lists — materializes its assigned item
 supply as one EXACT immutable list value: `collect [] = []`,
 `collect [v] = [v]` (never erased to the item), `collect [v, w] = [v, w]`.
 The implementation type is `Supply -> Val`; the proofs establish that the
@@ -204,9 +204,9 @@ result is always `Val.list` with exactly the assigned items
 `items (collect xs) = xs` makes variadic forwarding ordinary list spread.
 
 This supersedes the pre-list `captureVariadic := capture` model, under which
-rest binding canonicalized to a sequence value and a singleton rest collapsed
+collecting binding canonicalized to a sequence value and a singleton collected segment collapsed
 to its item. That coincidence-based model (grouped call `F(A)` agreeing with
-spread call `F(A...)` for rest-only parameters) is intentionally obsolete:
+spread call `F(A...)` for a single variadic parameter) is intentionally obsolete:
 `collect` preserves the boundary around every assigned item, so the two calls
 are observably different.
 -/
@@ -227,7 +227,7 @@ underlies the collection builtins' post-binding collection view. Those are
 two runtime code paths with the same one-boundary behaviour, unified here as
 one operation — not a claim that assignment deconstruction and collection
 builtins share one runtime call path. It is NOT applied by function-call
-binding (`bindArgs`): a stored sequence or list value is reopened for a call
+binding (`bindArgs`): a stored sequence or list value is re-spread for a call
 only by an explicit spread.
 
 (Before exact list values entered the algebra this operation was named
@@ -251,27 +251,27 @@ def loneStructure : Supply -> Bool
 
 inductive Pat where
   | name : String -> Pat
-  | rest : String -> Pat
+  | collecting : String -> Pat
 
 abbrev Env := List (String × Val)
 
 def Pat.key : Pat -> String
   | Pat.name s => s
-  | Pat.rest s => s
+  | Pat.collecting s => s
 
-def Pat.isRest : Pat -> Bool
-  | Pat.rest _ => true
+def Pat.isCollecting : Pat -> Bool
+  | Pat.collecting _ => true
   | Pat.name _ => false
 
 def bindFixed (ps : List Pat) (vs : Supply) : Env :=
   List.zipWith (fun p v => (p.key, v)) ps vs
 
 def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
-  match ps.filter Pat.isRest with
+  match ps.filter Pat.isCollecting with
   | [] =>
       if ps.length = xs.length then some (bindFixed ps xs) else none
-  | [restPat] =>
-      match ps.findIdx? Pat.isRest with
+  | [collectingPat] =>
+      match ps.findIdx? Pat.isCollecting with
       | none => none
       | some i =>
           if xs.length < ps.length - 1 then none
@@ -283,22 +283,22 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
             let backVals    := xs.drop (xs.length - suffixCount)
             let midVals     := (xs.drop i).take (xs.length - suffixCount - i)
             some (bindFixed front frontVals
-                  ++ (restPat.key, collect midVals)
+                  ++ (collectingPat.key, collect midVals)
                      :: bindFixed back backVals)
   | _ => none
 
 /-- Function-call binding consumes the call's item supply exactly as supplied.
 
-A lone rest pattern is valid here because it models variadic capture:
-`bindArgs [Pat.rest x] xs`. This is an abstract binding shape, not a claim that
-KatLang surface assignment accepts rest-only targets such as `...x = 1, 2, 3`.
+A lone collecting pattern is valid here: it models the single variadic
+parameter, `bindArgs [Pat.collecting x] xs`. The lone-collecting surface
+assignment `...x = 1, 2, 3` is the deconstruction receiver's instance of the same shape (see `bindDeconstruct`).
 -/
 def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps xs
 
 /--
 Assignment deconstruction applies lone-structure opening before the shared
-name/rest binder: a lone sequence- or list-valued right-hand side `A` is
+fixed/collecting binder: a lone sequence- or list-valued right-hand side `A` is
 opened into its items and matched element-by-element, so `x, y, z = A` splits
 `A`. At this receiver boundary, `bindDeconstruct ps [A]` therefore binds the
 same immediate supply that `bindArgs ps (items A)` receives. This is not an

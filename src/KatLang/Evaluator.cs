@@ -1288,8 +1288,8 @@ public static class Evaluator
         }
 
         // The minimum is the FIXED (non-variadic) parameter count: like every
-        // other rest receiver, the rest may collect ZERO items (an empty rest
-        // is the exact list `[]`). This is the same rule the shared pattern
+        // other collecting binding, the variadic parameter may collect ZERO items
+        // (an empty collected segment is the exact list `[]`). This is the same rule the shared pattern
         // binder applies (BindParameterPatternList: required = patterns - 1).
         // (Collection builtins no longer bind here: they are ordinary
         // fixed-arity callables bound in BindSequenceBuiltinArguments.)
@@ -1329,24 +1329,24 @@ public static class Evaluator
         => BindCallableArguments(layout.Signature, items, arityMismatch);
 
     /// <summary>
-    /// Collect a rest-assigned item supply as ONE exact immutable list value.
+    /// Collect the item segment assigned to a collecting binding as ONE exact immutable list value.
     ///
     /// KatLang distinguishes three item-supply operations by receiver purpose:
     /// <c>capture</c> — ordinary value/output capture, the canonicalizing
     /// boundary (<see cref="Result.FromItems"/>, singleton erasure applies);
-    /// <c>collect</c> — THIS operation: rest/variadic binding materializes
+    /// <c>collect</c> — THIS operation: a collecting binding (variadic parameter) materializes
     /// exactly the assigned items as one exact immutable list
-    /// (<c>CollectRest([]) == []</c>, <c>CollectRest([v]) == [v]</c>, never
-    /// erased); and <c>open</c> — postfix spread
+    /// (<c>CollectSegment([]) == []</c>, <c>CollectSegment([v]) == [v]</c>, never
+    /// erased); and <c>spread</c> — postfix spread
     /// (<see cref="Result.SpreadItems"/>), which opens one sequence OR list
-    /// boundary. The round trip <c>SpreadItems(CollectRest(xs)) == xs</c>
+    /// boundary. The round trip <c>SpreadItems(CollectSegment(xs)) == xs</c>
     /// makes variadic forwarding ordinary list spread with no hidden
     /// raw-supply metadata. Snapshot construction: the public
     /// <see cref="Result.ListValue"/> constructor copies the supplied items,
     /// so no caller-retained buffer can mutate the collected value.
-    /// Lean: <c>collectRest</c>.
+    /// Lean: <c>collectSegment</c>.
     /// </summary>
-    private static EvalResult<Result.ListValue> CollectRest(
+    private static EvalResult<Result.ListValue> CollectSegment(
         EvalCtx ctx,
         IReadOnlyList<Result> capturedValues,
         SourceSpan? span = null)
@@ -1363,8 +1363,8 @@ public static class Evaluator
     /// FUNCTION-shaped — a builtin, a conditional clause family, or an
     /// algorithm declaring parameters/patterns — as opposed to a
     /// zero-parameter VALUE property that merely resolved through the dual
-    /// algorithm channel. Used to decide whether a valueless rest-bound
-    /// argument gets the targeted "collects values, but ... is a function"
+    /// algorithm channel. Used to decide whether a valueless argument
+    /// bound by a variadic parameter gets the targeted "collects values, but ... is a function"
     /// diagnostic or surfaces its genuine value-evaluation error.
     /// Lean: <c>Algorithm.isFunctionShaped</c>.
     /// </summary>
@@ -1382,11 +1382,11 @@ public static class Evaluator
         IReadOnlyList<Result> capturedValues,
         SourceSpan? span = null)
     {
-        var capturedResultR = CollectRest(ctx, capturedValues, span);
+        var capturedResultR = CollectSegment(ctx, capturedValues, span);
         if (capturedResultR.IsError) return capturedResultR.Error;
         var capturedResult = capturedResultR.Value;
-        // A list value is one visible value, so a rest binding always carries
-        // emitted count 1 (including the empty rest `[]`).
+        // A list value is one visible value, so a collecting binding always carries
+        // emitted count 1 (including the empty collected list `[]`).
         return EvalResult<VariadicCapture>.Ok(new VariadicCapture(
             name,
             capturedResult,
@@ -1477,7 +1477,7 @@ public static class Evaluator
         // counted supply denotes — regardless of how many items the expression
         // emitted (zero, one, or many; a counted-multi supply such as an index
         // projection is already represented by one structural value). Only an
-        // explicit spread opens the value into the surrounding item slots.
+        // explicit spread supplies the value's items into the surrounding item slots.
         return expr is Expr.SequenceSpread
             ? EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value))
             : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
@@ -1530,9 +1530,9 @@ public static class Evaluator
             {
                 var itemsR = GetSequenceValuePatternItems(input);
                 // A non-grouped scalar value is a one-item supply for the
-                // prefix/rest/suffix matcher (the same normalization the function
+                // prefix/collecting/suffix matcher (the same normalization the function
                 // deconstruction path applies via rule 4). This lets a scalar
-                // right-hand side bind a rest pattern that captures zero items,
+                // right-hand side bind a collecting pattern that captures zero items,
                 // e.g. `first, ...tail = 1` (first = 1, tail = []), instead of being
                 // rejected before the matcher runs.
                 if (itemsR.IsError && input.Value is not null)
@@ -1697,7 +1697,7 @@ public static class Evaluator
             var input = inputs[inputIndex];
             if (input.Value is null)
             {
-                // A rest binding collects VALUES. A FUNCTION-shaped argument
+                // A collecting binding collects VALUES. A FUNCTION-shaped argument
                 // (a builtin, a clause family, or a parameterized algorithm)
                 // has no value to collect — only fixed parameters keep the
                 // dual algorithm channel — so name the actual conflict instead
@@ -1707,7 +1707,7 @@ public static class Evaluator
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {
                     return new EvalError.TypeMismatch(
-                        $"Rest parameter `...{variadicCapture.Name}` collects values, but a supplied argument is a function. " +
+                        $"Variadic parameter `...{variadicCapture.Name}` collects values, but a supplied argument is a function. " +
                         "Pass a value, or call the function so its result is collected.");
                 }
 
@@ -1792,7 +1792,7 @@ public static class Evaluator
     /// deconstruction apply the SAME shared N-capture pattern to the SAME hoisted source value,
     /// so the whole bind is computed once per (group, binding context) and each target projects
     /// its own slot. The first demanded target pays the full bind (RHS evaluation, one pattern
-    /// bind, one rest-list materialization); every later target of the same group projects in
+    /// bind, one collected-list materialization); every later target of the same group projects in
     /// O(1). Deferred semantics are unchanged: nothing binds until a target is demanded, and a
     /// binding failure (wrong arity, phrased against the written pattern by
     /// <see cref="BindPatternedUserCall"/>) surfaces from the first demanded target with its span
@@ -1828,8 +1828,8 @@ public static class Evaluator
 
                 // Materialize the shared bind as the bound values in TARGET order. Index the bind by
                 // capture name and read the values out in the helper's parameter order (the written
-                // target order): the front/rest/back matcher may emit bindings in a different order
-                // than the written targets (a movable rest binds the fixed prefix and suffix before
+                // target order): the front/collecting/back matcher may emit bindings in a different order
+                // than the written targets (a movable collecting binding binds the fixed prefix and suffix before
                 // the middle). The helper body is `Param(xi)`, which resolves xi from the counted
                 // parameter environment first and the value environment second; deconstruction
                 // captures populate the value bindings (the counted bindings stay empty), so seed the
@@ -1984,8 +1984,8 @@ public static class Evaluator
 
     /// <summary>
     /// True when a callable's top-level parameter list captures the supplied call
-    /// argument stream: any top-level variadic capture, including rest-only
-    /// <c>...name</c> and mixed fixed/rest shapes such as <c>x, ...y, z</c>.
+    /// argument stream: any top-level variadic capture, including a lone variadic
+    /// <c>...name</c> and mixed fixed/variadic shapes such as <c>x, ...y, z</c>.
     /// Checked only after patterned (sequence-value / repeated-name) binding has
     /// been ruled out.
     /// Lean: <c>Algorithm.usesItemSupplyBinding</c>.
@@ -2013,7 +2013,7 @@ public static class Evaluator
     /// Binds a call to an item-supply parameter list (any top-level variadic).
     /// The call argument stream is already the receiver for parameter binding:
     /// a plain sequence-valued argument contributes one item, while explicit
-    /// spread contributes the opened items.
+    /// spread contributes the operand's items.
     /// Lean: <c>bindDeconstructionUserCall</c>.
     /// </summary>
     private static EvalResult<UserCallBindings> BindDeconstructionUserCall(
@@ -2029,7 +2029,7 @@ public static class Evaluator
 
         var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
 
-        // A deconstruction parameter list always carries a rest binding, so a
+        // A deconstruction parameter list always carries a collecting binding, so a
         // too-few-items failure reports the fixed-binding minimum ("at least N")
         // rather than the exact-count wording used by strict callables.
         return BindParameterPatternList(
@@ -2662,13 +2662,13 @@ public static class Evaluator
 
     /// <summary>
     /// Callback binding for a flat callee whose top-level parameters include a
-    /// rest parameter. The callback argument supply keeps the established
+    /// variadic parameter. The callback argument supply keeps the established
     /// flat-callback row convention: when fewer argument slots are supplied
     /// than top-level parameters, the final supplied argument opens into its
     /// items (matching <c>callee(S:i)</c>; exact lists stay opaque), exactly
     /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
     /// callees. The resulting slots then bind through the shared
-    /// prefix/rest/suffix binder, so the rest parameter COLLECTS its allocated
+    /// prefix/collecting/suffix binder, so the variadic parameter COLLECTS its allocated
     /// slots as one exact immutable list. Lean:
     /// <c>bindCountedCallbackParameterPatternList</c>.
     /// </summary>
@@ -2714,7 +2714,7 @@ public static class Evaluator
                 // immediate items (Lean: Result.structureItems?); the counted
                 // callback path keeps its stricter singleton-only scalar
                 // fallback (sequence-value-pattern callback deconstruction of
-                // scalar elements stays deferred; flat top-level rest
+                // scalar elements stays deferred; flat top-level variadic
                 // callbacks bind via BindCountedCallbackParameterPatternList).
                 var items = input.Value.StructureItems();
                 if (items is null && group.Items.Count == 1)
@@ -2822,9 +2822,9 @@ public static class Evaluator
             .Take(suffixInputStart - variadicIndex)
             .Select(static input => input.Value)
             .ToList();
-        // Rest binding COLLECTS: the assigned supply becomes one exact
+        // Collecting binding COLLECTS: the assigned supply becomes one exact
         // immutable list value, emitted count 1 (a list is one visible value).
-        var capturedResultR = CollectRest(ctx, capturedValues, variadicCapture.Span);
+        var capturedResultR = CollectSegment(ctx, capturedValues, variadicCapture.Span);
         if (capturedResultR.IsError) return capturedResultR.Error;
         var capturedResult = capturedResultR.Value;
         var captured = new CountedResult(capturedResult, 1);
@@ -2933,24 +2933,24 @@ public static class Evaluator
                     return EvalAlgOutputCounted(callee, patternCtx, valEnv);
                 }
 
-                // A flat callee with a top-level rest parameter (`Rows.map(F)`
-                // with `F(x, ...y, z)` or a rest-only `Collect(...items)`)
-                // binds through the shared prefix/rest/suffix binder so the
-                // rest parameter COLLECTS an exact immutable list, after the
+                // A flat callee with a top-level variadic parameter (`Rows.map(F)`
+                // with `F(x, ...y, z)` or a single-variadic `Collect(...items)`)
+                // binds through the shared prefix/collecting/suffix binder so the
+                // variadic parameter COLLECTS an exact immutable list, after the
                 // same final-argument row expansion the fixed-only flat path
-                // uses below. Rest-only callees keep the whole iterated
+                // uses below. Single-variadic callees keep the whole iterated
                 // element as one collected slot.
                 if (ParameterPattern.HasVariadicCaptureAtCurrentLevel(callee.ParameterPatterns))
                 {
-                    var restPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
-                    if (restPatternEnvR.IsError) return restPatternEnvR.Error;
+                    var collectingPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
+                    if (collectingPatternEnvR.IsError) return collectingPatternEnvR.Error;
 
-                    var restBindings = restPatternEnvR.Value;
-                    var restCtx = WithCountedParameterEnvironments(
+                    var collectingBindings = collectingPatternEnvR.Value;
+                    var collectingCtx = WithCountedParameterEnvironments(
                         ctx,
-                        restBindings.CountedBindings,
-                        restBindings.CountedBindings.Select(static binding => binding.Item1));
-                    return EvalAlgOutputCounted(callee, restCtx, valEnv);
+                        collectingBindings.CountedBindings,
+                        collectingBindings.CountedBindings.Select(static binding => binding.Item1));
+                    return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
                 }
 
                 // Fixed-only flat callback binding projects each callback item
@@ -3188,14 +3188,14 @@ public static class Evaluator
     // same structural value with emitted count <see cref="Result.ValueCount"/>
     // (0 for the empty sequence value, otherwise 1). A multi-output body therefore
     // becomes one sequence value at the boundary; only an explicit caller-site
-    // postfix `...` re-opens it (via ToItems, which reads the value, not this count).
+    // postfix `...` re-spreads it (via ToItems, which reads the value, not this count).
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already canonicalized redundant unary empty structure.
     // It is applied only to public result boundaries, never to internal
     // body/root output accumulation (EvalAlgOutputCountedCore) or to multi-slot
     // while/repeat loop state, both of which must keep their multi-item counts.
-    // (Rest bindings need no re-count: CollectRest stores one exact list with
+    // (Collecting bindings need no re-count: CollectSegment stores one exact list with
     // emitted count 1.) Lexical zero-arg property access (EvalCounted
     // Expr.Resolve) and the `if` builtin already perform this same re-count
     // inline; this helper generalizes it.
@@ -3949,7 +3949,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)",
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 
@@ -4005,7 +4005,7 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var predicateR = WithCtx(
-            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
+            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
             EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
         if (predicateR.IsError)
             return predicateR.Error;
@@ -4041,7 +4041,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
+                "while evaluating map transform (map passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
             if (transformR.IsError) return transformR.Error;
 
@@ -4160,7 +4160,7 @@ public static class Evaluator
         // `map(collection, mapper)`). An unspread sequence or list value is ONE
         // argument at this call boundary, exactly like at every other call
         // boundary; only explicit caller-site spread alters argument
-        // boundaries, and the spread-opened items obey the same fixed arity
+        // boundaries, and the spread items obey the same fixed arity
         // (`count([1, 2, 3]...)` supplies three arguments and is an arity
         // error). Nothing is opened before binding.
         var items = itemsR.Value;
@@ -5957,7 +5957,7 @@ public static class Evaluator
     /// Calls, name resolution, and collection builtins are value boundaries: they
     /// emit <c>Result.ValueCount</c> of the result value (one value for a
     /// non-empty result), so a multi-output body/collection is observed as one
-    /// sequence value and only caller-site <c>...</c> re-opens it.
+    /// sequence value and only caller-site <c>...</c> re-spreads it.
     /// Block expressions count as one sequence value when non-empty. Spread
     /// emits the immediate spread items of its operand. All other value
     /// expressions emit either zero values (empty result) or one value.
@@ -6753,7 +6753,7 @@ public static class Evaluator
     /// value while re-counting the emitted arity with
     /// <see cref="ReCountValueBoundary"/> (<c>Result.ValueCount</c>). A
     /// multi-output body therefore becomes one sequence value (count 1); only
-    /// caller-site <c>...</c> re-opens it.
+    /// caller-site <c>...</c> re-spreads it.
     /// Lean: <c>evalUserCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalUserCallCounted(

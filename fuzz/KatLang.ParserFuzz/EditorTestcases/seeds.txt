@@ -40,14 +40,14 @@ template=dotted-ordinary-pair bytes=26 00 00 00 00 00 00 00 00 00 00 00 00 desc=
 template=builtin-call bytes=24 06 00 00 00 00 00 00 00 00 00 00 00 desc=builtin signature metadata
 template=extension-builtin-call bytes=25 01 00 00 00 00 00 06 00 00 00 00 00 desc=extension-style builtin dotted call
 
-# ── Lists, sequences, spread, deconstruction, rest ───────────────────────────
+# ── Lists, sequences, spread, deconstruction, collecting ───────────────────────────
 template=list-literal bytes=14 00 00 00 00 00 00 00 00 00 00 00 00 desc=exact list literal
 template=sequence-literal bytes=15 00 00 00 00 00 00 00 00 00 00 00 00 desc=sequence literal
 template=spread bytes=12 01 00 00 00 00 00 07 00 00 00 00 00 desc=cursor inside a spread operator
 template=partial-spread bytes=13 01 00 00 00 00 00 07 00 00 00 00 00 desc=partial spread operator
 template=deconstruction bytes=19 00 00 00 00 00 00 00 00 00 00 00 00 desc=deconstruction targets, synthetic helper hidden
-template=rest-binding bytes=1A 06 00 00 00 00 00 00 00 00 00 00 00 desc=rest binding signature
-template=incomplete-rest bytes=1B 00 00 00 00 00 00 00 00 00 00 00 00 desc=malformed lone rest binding
+template=collecting-binding bytes=1A 06 00 00 00 00 00 00 00 00 00 00 00 desc=collecting binding signature
+template=incomplete-collecting bytes=1B 00 00 00 00 00 00 00 00 00 00 00 00 desc=malformed lone collecting binding
 
 # ── Callbacks, clauses ───────────────────────────────────────────────────────
 template=callback bytes=1C 01 00 00 00 00 00 04 00 00 00 00 00 desc=callback body scope

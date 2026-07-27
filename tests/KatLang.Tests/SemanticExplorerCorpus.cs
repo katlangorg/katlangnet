@@ -95,7 +95,7 @@ public enum InternalNodeRelation
 /// <summary>
 /// Bounded small-state corpus: structurally rich values crossed with receiver
 /// templates covering every boundary operation (capture, calls, variadic and
-/// mixed rest binding, deconstruction, spread, indexing, equality, count,
+/// mixed collecting binding, deconstruction, spread, indexing, equality, count,
 /// dot access, collection builtins, and re-entry), plus targeted specials.
 /// </summary>
 public static class SemanticExplorerCorpus
@@ -244,10 +244,10 @@ public static class SemanticExplorerCorpus
         new("deconPairSpread_x",
             v => $"x, y = {v.Source}...\nx",
             v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["x", "y"], -1, "x")], [".resolve \"x\""])),
-        new("deconRest_t",
+        new("deconCollect_t",
             v => $"h, ...t = {v.Source}\nt",
             v => LProg([LDecon(v.LeanExpr, ["h", "t"], 1, "t")], [".resolve \"t\""])),
-        new("deconRestSpread_t",
+        new("deconCollectSpread_t",
             v => $"h, ...t = {v.Source}...\nt",
             v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["h", "t"], 1, "t")], [".resolve \"t\""])),
         new("deconPrefix_p",
@@ -549,11 +549,11 @@ public static class SemanticExplorerCorpus
                 [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
                  "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
                 [".binary .eq (.resolve \"B\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
-        ("listRestNotSequenceKind", "x, ...rest = [1, 2, 3]\nrest == (2, 3)",
+        ("listCollectingNotSequenceKind", "x, ...rest = [1, 2, 3]\nrest == (2, 3)",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
                 [".binary .eq (.resolve \"rest\") (.block (alg [] [] [] [.num 2, .num 3]))"])),
-        ("listRestCollectsExactList", "x, ...rest = [1, 2, 3]\nrest == [2, 3]",
+        ("listCollectingCollectsExactList", "x, ...rest = [1, 2, 3]\nrest == [2, 3]",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
                 [".binary .eq (.resolve \"rest\") (.listLiteral [.num 2, .num 3])"])),
@@ -562,11 +562,11 @@ public static class SemanticExplorerCorpus
                 ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])",
                  "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") (alg [] [] [] [.param \"items\"])])"],
                 [LCall("Use", "(.listLiteral [.num 1, .num 2])")])),
-        ("callbackRestOnlyMap", "Collect(...items) = items\n[7].map(Collect)",
+        ("callbackSingleVariadicMap", "Collect(...items) = items\n[7].map(Collect)",
             LProg(
                 ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])"],
                 [".dotCall (.listLiteral [.num 7]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"])),
-        ("callbackMixedRestRow", "F(first, ...middle, last) = middle\n[(1, 2, 3, 4)].map(F)",
+        ("callbackMixedVariadicRow", "F(first, ...middle, last) = middle\n[(1, 2, 3, 4)].map(F)",
             LProg(
                 ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .variadic }, { name := \"last\" }] [] [] [.param \"middle\"])"],
                 [".dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]) \"map\" (some (alg [] [] [] [.resolve \"F\"]))"])),
@@ -585,7 +585,7 @@ public static class SemanticExplorerCorpus
         ("semicolonSeparator", "1 ; 2", null),
         ("listUnterminated", "[1, 2", null),
         ("listDefinitionInside", "[x = 1]", null),
-        ("listLoneRestAssignment", "...items = [1, 2, 3]",
+        ("listLoneCollectingAssignment", "...items = [1, 2, 3]",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["items"], 0, "items")],
                 [])),

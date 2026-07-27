@@ -34,22 +34,22 @@ DottedOpenPath  = Identifier { "." Identifier } ;
 PropertyDefinition = [ "public" ] NonOutputIdentifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
 
-DeconstructionDefinition = RestBinding "=" OutputBundle
+DeconstructionDefinition = CollectingBinding "=" OutputBundle
                          | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
-BindingTarget            = NonOutputIdentifier | RestBinding ;
-RestBinding              = "..." NonOutputIdentifier ;
+BindingTarget            = NonOutputIdentifier | CollectingBinding ;
+CollectingBinding        = "..." NonOutputIdentifier ;
                      (* Comma binding pattern shared by assignment binding and
                         function parameter binding. The right-hand side is matched
-                        against the targets prefix/rest/suffix: fixed targets bind
-                        from the start and end, and at most one rest target
-                        `...name` collects the remaining middle items as one exact
-                        immutable list value (possibly zero items). The rest target may
+                        against the targets prefix/collecting/suffix: fixed targets bind
+                        from the start and end, and at most one collecting target
+                        `...name` collects the matched middle items as one exact
+                        immutable list value (possibly zero items). The collecting target may
                         appear at the start, middle, or end. A plain `name = ...`
                         stays an ordinary PropertyDefinition; canonical `...all = ...`
-                        is the unambiguous single-rest assignment form. The `...`
+                        is the unambiguous lone-collecting-binding assignment form. The `...`
                         marker and its identifier must be on the same physical line;
                         same-line whitespace between them is allowed.
-                        Prefix `...name` is the ONLY rest-binding syntax. Postfix
+                        Prefix `...name` is the ONLY collecting-binding syntax. Postfix
                         `name...` is the SequenceAtom spread operator and is never a
                         binding: writing it in binding position is a parse error
                         naming the `...name` replacement. Assignment
@@ -60,11 +60,12 @@ RestBinding              = "..." NonOutputIdentifier ;
                         unpacks A, and `x, ...y, z = A...` and
                         `x, ...y, z = 1, 2, 3, 4, 5` supply the same items. This unpacking is assignment-specific
                         and does NOT change function calls, which still pass A as one
-                        argument unless `...` is written. More than one rest target is
-                        a parse error. A function parameter list with a top-level rest,
-                        e.g. F(x, ...y, z), uses the item-supply matcher over the
-                        supplied arguments (no implicit opening); a lone rest-only
-                        F(...values) is the degenerate single-rest case. *)
+                        argument unless `...` is written. More than one collecting target is
+                        a parse error. A function parameter list with a top-level
+                        variadic parameter, e.g. F(x, ...y, z), uses the item-supply
+                        matcher over the supplied arguments (no implicit opening); a
+                        single variadic parameter F(...values) is the degenerate
+                        lone-collecting-binding case. *)
 
 ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
@@ -80,7 +81,7 @@ ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBu
                         CountSequenceValue((...values)). A sequence-value parameter pattern
                         consumes one parent-level argument slot, so F((head,
                         ...tail), suffix) takes one sequence-value first argument and
-                        binds its immediate contents. Variadic captures consume
+                        binds its immediate contents. Collecting bindings consume
                         sibling values at their own pattern-list level and collect
                         the assigned slots as one exact immutable list.
                         Multi-clause families and literal/mixed heads elaborate as
@@ -98,7 +99,7 @@ ExplicitOutputDefinition = "Output" "=" OutputBundle ;
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = Identifier                    (* fixed bind *)
-                   | RestBinding                  (* rest/collect bind; the ONLY rest syntax.
+                   | CollectingBinding            (* collecting bind; the ONLY collecting-binding syntax.
                                                        Valid only for ordinary recursive
                                                        explicit parameter patterns, at most once per
                                                        sibling pattern level, and not with "~".
@@ -141,18 +142,17 @@ SequenceAtom          = Expression { "..." } ;
                         starts a new expression-list slot, so A...B,
                         A...(), A... B, and A... <newline> B all parse as
                         A..., B (whitespace
-                        before "..." stays insignificant). Postfix x... opens
-                        one item-producing boundary of the evaluated value
+                        before "..." stays insignificant). Postfix x... is a
+                        spread expression: it contributes the items of one
+                        item-producing boundary of the evaluated value
                         (sequence and list values supply their contained items;
-                        an atom or string supplies itself as one item) and
-                        contributes the items to the surrounding slot context —
+                        an atom or string supplies itself as one item) to the
+                        surrounding slot context —
                         it does not create a sequence value by itself — and
                         does not continue onto the next physical line. The source token after the dots is
                         an ordinary expression-list contribution, never a right operand;
                         internally x... is a unary spread node over its single
-                        operand, with no right operand. `X(a b...)` parses as X(a, b...).
-                        (Prose says "spreads"; "opens" above is the slot-expansion
-                        mechanism, not the `open` keyword.) *)
+                        operand, with no right operand. `X(a b...)` parses as X(a, b...). *)
                      (* Semicolon is intentionally absent from ExpressionList.
                      `1 ; 2`, `A... ; B`, `Output = 1 ; 2`, and `F(1 ; 2)`
                      all report the unsupported-semicolon diagnostic.

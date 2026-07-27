@@ -27,7 +27,7 @@ internal enum Utf16TemplateKind
     ListLiteral,
     SequenceLiteral,
     Deconstruction,
-    RestBinding,
+    CollectingBinding,
     CallbackBody,
     ConditionalClause,
     MultilineBody,

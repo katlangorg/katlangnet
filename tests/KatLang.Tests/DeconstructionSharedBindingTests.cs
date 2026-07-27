@@ -138,19 +138,19 @@ public class DeconstructionSharedBindingTests
         => Assert.Equal([1m, 2m, 3m], Atoms("a, b, c = (1, 2, 3)\na, b, c"));
 
     [Fact]
-    public void RestInMiddle_CollectsMovableItems()
+    public void CollectingBindingInMiddle_CollectsMovableItems()
         => Assert.Equal([1m, 2m, 4m], Atoms("a, ...b, c = (1, 2, 3, 4)\na, b.count, c"));
 
     [Fact]
-    public void RestAtBeginning_CollectsLeadingItems()
+    public void CollectingBindingAtBeginning_CollectsLeadingItems()
         => Assert.Equal([2m, 3m], Atoms("...a, b = (1, 2, 3)\na.count, b"));
 
     [Fact]
-    public void RestAtEnd_CollectsTrailingItems()
+    public void CollectingBindingAtEnd_CollectsTrailingItems()
         => Assert.Equal([1m, 2m], Atoms("a, ...b = (1, 2, 3)\na, b.count"));
 
     [Fact]
-    public void EmptyRest_CollectsEmptyList()
+    public void EmptyCollectingBinding_CollectsEmptyList()
         => Assert.Equal([1m, 2m, 0m], Atoms("a, b, ...c = (1, 2)\na, b, c.count"));
 
     [Fact]

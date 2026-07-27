@@ -241,7 +241,7 @@ public class SemanticExplorerTests
         AssertSame(findings, "LexicalDotMismatch", valueId, captured, "dotAccess", "dotAccessCall", "captureCall");
         AssertSame(findings, "BoundaryReentryChange", valueId, captured, "identity", "identityTwice", "propChain", "fixed", "root", "seqWrapSolo");
 
-        // Rest binding COLLECTS: a rest-only callee binds its ONE grouped
+        // Collecting binding COLLECTS: a single-variadic callee binds its ONE grouped
         // argument as the one-element exact list holding the value
         // (`F(...x) = x` with `F(V)` observes `[V]`), never the value itself —
         // the old grouped/singleton coincidence is gone for every value kind.
@@ -255,11 +255,11 @@ public class SemanticExplorerTests
             {
                 findings.Add(new Finding(
                     "BoundaryReentryChange", observation.CaseId,
-                    $"expected rest to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
+                    $"expected the variadic parameter to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
             }
         }
 
-        // The spread call `F(V...)` collects the spread-opened items as an
+        // The spread call `F(V...)` collects the spread items as an
         // exact list, uniformly for sequences and lists (open/collect round
         // trip: spreading a list re-collects the same list).
         var variadicSpread = Obs("variadicSpread", valueId);
@@ -287,11 +287,11 @@ public class SemanticExplorerTests
             }
         }
 
-        // `count(x...)` supplies the spread-opened items as ORDINARY argument
+        // `count(x...)` supplies the spread items as ORDINARY argument
         // slots that obey count's fixed one-parameter arity: exactly one
         // opened item binds the collection parameter (and is then interpreted
         // through the post-binding one-level collection view), while zero or
-        // several opened items are an ordinary arity error.
+        // several spread items are an ordinary arity error.
         var countSpread = Obs("countSpread", valueId);
         if (spreadItems.Count == 1)
         {
@@ -307,7 +307,7 @@ public class SemanticExplorerTests
         {
             findings.Add(new Finding(
                 "CountDisagreement", countSpread.CaseId,
-                $"expected an ordinary arity error for {spreadItems.Count} spread-opened arguments, observed {countSpread.Neutral}"));
+                $"expected an ordinary arity error for {spreadItems.Count} spread arguments, observed {countSpread.Neutral}"));
         }
 
         // Structural equality is reflexive and construction-path independent.
@@ -447,7 +447,7 @@ public class SemanticExplorerTests
         }
 
         // A builtin result re-enters value boundaries unchanged (a list value
-        // is one value for capture and identity calls), while a rest binding
+        // is one value for capture and identity calls), while a collecting binding
         // collects it as the one-element list holding it.
         var take1 = Obs("take1", valueId);
         AssertSame(findings, "BuiltinBoundaryMismatch", valueId, take1,
@@ -462,7 +462,7 @@ public class SemanticExplorerTests
             {
                 findings.Add(new Finding(
                     "BuiltinBoundaryMismatch", takeVariadic.CaseId,
-                    $"expected rest to collect {SemanticExplorerHarness.Neutral(expectedTakeCollected)} n=1, observed {takeVariadic.Neutral}"));
+                    $"expected the variadic parameter to collect {SemanticExplorerHarness.Neutral(expectedTakeCollected)} n=1, observed {takeVariadic.Neutral}"));
             }
         }
         else if (takeVariadic.Outcome != take1.Outcome)

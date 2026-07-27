@@ -179,7 +179,7 @@ internal static class SequencePipelineOptimizer
         // the BARE one-argument form — `count(filter(src, pred))` or
         // `count(src.filter(pred))` — where the filter result is count's one
         // collection argument. A spread form such as `count(filter(...)...)`
-        // supplies the opened items as separate arguments and is an ordinary
+        // supplies the spread items as separate arguments and is an ordinary
         // arity error, so it must NOT be recognized: it falls back to the
         // generic evaluator, which reports the arity mismatch.
         var countSource = args.Output[0];

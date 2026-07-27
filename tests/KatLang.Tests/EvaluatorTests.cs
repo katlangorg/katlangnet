@@ -1286,21 +1286,21 @@ public class EvaluatorTests
     [InlineData("X(...values) = values.count\nX (1 2)")]
     public void Eval_CallArgumentAdjacency_BindsAsItemSupply(string source)
         // X(values...) consumes an item supply. The adjacency form `1 2` supplies
-        // two slots, so the rest parameter captures two supplied arguments.
+        // two slots, so the variadic parameter captures two supplied arguments.
         => AssertEval(source, 2);
 
     [Theory]
     [InlineData("X(...values) = values.count\nX((1, 2))")]
     [InlineData("X(...values) = values.count\nX ((1, 2))")]
-    public void Eval_CallArgumentGroupedSequence_RestOnlyCollectsOneArgument(string source)
-        // The call supplies one sequence-valued argument, and the rest capture
+    public void Eval_CallArgumentGroupedSequence_SingleVariadicCollectsOneArgument(string source)
+        // The call supplies one sequence-valued argument, and the variadic parameter
         // collects the supplied slots as one exact list: [(1, 2)], count 1.
         => AssertEval(source, 1);
 
     [Fact]
-    public void Eval_RestOnlyVariadicWithCollectionOperation_GroupedArgumentIsOneElement()
+    public void Eval_SingleVariadicWithCollectionOperation_GroupedArgumentIsOneElement()
     {
-        // F((1, 2)) supplies one argument: the sequence value (1, 2). The rest
+        // F((1, 2)) supplies one argument: the sequence value (1, 2). The variadic parameter
         // capture collects it as the one-element list [(1, 2)], so x.sum hits the
         // per-element numeric constraint and fails. Only explicit spread opens the
         // call boundary: F((1, 2)...) supplies two arguments and sums to 3.
@@ -1522,7 +1522,7 @@ public class EvaluatorTests
     public void Eval_SequenceValuePostfixSequenceSpreadInCall_BindsAsOneSequenceValueArgument(string source)
     {
         // Explicit parentheses materialize the spread items into one argument,
-        // which the rest capture collects as the one-element list [(1, 2, 3)].
+        // which the variadic parameter collects as the one-element list [(1, 2, 3)].
         var program = "a = 1\nb = 2, 3\nX(...values) = values.count\n" + source;
         AssertEval(program, 1);
     }
@@ -2239,11 +2239,11 @@ public class EvaluatorTests
     // A property/call/builtin RESULT boundary always returns ONE value: a body or
     // collection that internally produces an item supply is observed by the caller
     // as one sequence value (emitted count 1). Only explicit caller-site postfix
-    // `...` re-opens it into the surrounding item supply. This generalizes the
+    // `...` spreads it back into the surrounding item supply. This generalizes the
     // lexical property-access and `if`-branch behavior to every value boundary.
     // Lean: reCountValueBoundary.
 
-    // User-defined variadic call: the rest binding collects the supplied argument
+    // User-defined variadic call: the collecting binding collects the supplied argument
     // slots as one exact immutable list value.
     [Fact]
     public void Eval_UserCall_VariadicReturn_IsOneListValue()
@@ -2267,7 +2267,7 @@ public class EvaluatorTests
     public void Eval_UserCall_VariadicBodySpreadThenSlot_IsOneFlatSequenceValue()
         => AssertEvalCounted("F(...a) = a..., 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
 
-    // Caller-site spread re-opens the returned value into an item supply.
+    // Caller-site spread turns the returned value back into an item supply.
     [Fact]
     public void Eval_UserCall_CallerSpread_OpensReturnedValue()
         => AssertEvalCounted("F(...a) = a\nF(5, 9)...", 2, ResultFromAtoms(5, 9));
@@ -2290,7 +2290,7 @@ public class EvaluatorTests
 
     // Internal variadic forwarding is unaffected: the body still sees the raw item
     // exact list, so collection builtins open it after binding and explicit
-    // spread-forwarding reopens it at the caller-selected boundary.
+    // spread-forwarding re-spreads it at the caller-selected boundary.
     [Theory]
     [InlineData("F(...a) = sum(a)\nF(5, 9)", 14)]
     [InlineData("F(...a) = count(a)\nF(5, 9)", 2)]
@@ -5561,7 +5561,7 @@ public class EvaluatorTests
     public void Eval_ParenthesizedSequenceSpread_VariadicCallArgumentIsOneSequenceValue()
     {
         // `(A...B)` materializes one sequence value (1, 2, (3, 4)), which the
-        // call supplies as one argument: the rest capture collects [that value].
+        // call supplies as one argument: the variadic parameter collects [that value].
         var source = """
             A = 1, 2
             B = 3, 4
@@ -5590,7 +5590,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_CountsOneReceiverArgument()
     {
-        // The receiver is one leading argument, so the rest capture collects the
+        // The receiver is one leading argument, so the variadic parameter collects the
         // one-element list [(1, 2)]. Lean twin: `(1, 2).CountItems` is 1.
         var source = """
             CountItems(...items) = items.count
@@ -5604,7 +5604,7 @@ public class EvaluatorTests
     public void Eval_UserDefinedVariadicDotCallReceiver_SpreadReceiverBindsItemsForBody()
     {
         // The parenthesized-spread receiver pre-expands the sequence's items,
-        // so the rest capture collects [1, 2] and the numeric body works.
+        // so the variadic parameter collects [1, 2] and the numeric body works.
         var source = """
             Mean(...vector) = vector.sum
             Output = ((1, 2)...).Mean
@@ -5641,7 +5641,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiver_LeadingFlatVariadic_IsOneReceiverArgument()
     {
-        // The ordinary receiver is one leading argument even for a rest-only
+        // The ordinary receiver is one leading argument even for a single-variadic
         // callee, so the capture is the one-element list [(10, 20)].
         var source = """
             NItems(...values) = values.count
@@ -5670,7 +5670,7 @@ public class EvaluatorTests
     public void Eval_SequenceValueReceiver_LeadingFlatVariadicWithSuffix_IsOneReceiverArgument()
     {
         // Two supplied arguments: the receiver and 99. The suffix binds 99 from
-        // the back and the rest collects the one-element list [(10, 20)].
+        // the back and the variadic parameter collects the one-element list [(10, 20)].
         var source = """
             BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
@@ -5699,7 +5699,7 @@ public class EvaluatorTests
     public void Eval_SequenceValueArgument_CanonicalCall_MatchesSequenceValueReceiverDotCall()
     {
         // Canonical-call twin of the dot-call above: Pair is one argument, so
-        // the rest collects [(10, 20)] — count 1, matching Pair.BeforeLastCount(99).
+        // the variadic parameter collects [(10, 20)] — count 1, matching Pair.BeforeLastCount(99).
         var source = """
             BeforeLastCount(...values, last) = values.count
             Pair = (10, 20)
@@ -7220,7 +7220,7 @@ public class EvaluatorTests
             map((1, 2, 3), Count)
             """;
 
-        // A rest-only callback receives each iterated element as ONE collected
+        // A single-variadic callback receives each iterated element as ONE collected
         // slot: values = [element], so values.count is 1 per invocation.
         AssertEvalSequenceModes(source, 1, 1, 1);
 
@@ -7263,7 +7263,7 @@ public class EvaluatorTests
             filter((1, 2, 3), One)
             """;
 
-        // Rest-only predicate callbacks collect one element slot per
+        // Single-variadic predicate callbacks collect one element slot per
         // invocation, so values.count == 1 succeeds for every source item.
         AssertEvalSequenceModes(source, 1, 2, 3);
 
@@ -7285,7 +7285,7 @@ public class EvaluatorTests
             reduce((1, 2, 3), Step, 0)
             """;
 
-        // A reducer rest in element position collects the projected item as
+        // A reducer variadic parameter in element position collects the projected item as
         // [element] each step; the accumulator stays a separate fixed slot.
         AssertEvalSequenceModes(source, 30);
 
@@ -9794,11 +9794,11 @@ public class EvaluatorTests
             """,
             1);
 
-    // Opened item supplies must not be silently vectorized by equality. A spread
+    // Spread item supplies must not be silently vectorized by equality. A spread
     // `A...` cannot be a binary operand: `A... == A...` is a parse error (the
     // spread ends its expression, so the following `==` is unexpected). This
     // boundary is owned by the parser and is unchanged by structural equality —
-    // equality never turns an opened item supply into an elementwise comparison. The
+    // equality never turns a spread item supply into an elementwise comparison. The
     // grouped form `(A...) == A` (covered above) is the supported way to compare
     // an opened-then-regrouped sequence value.
     [Fact]
@@ -10214,7 +10214,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicParameter_DotCallReceiverIsOneCapturedItem()
     {
-        // The ordinary receiver is one leading argument, so the rest capture is
+        // The ordinary receiver is one leading argument, so the variadic parameter is
         // the one-element list [(1, 2, 3)] — explicit receiver spread (below)
         // is what supplies the receiver's items.
         AssertEval(
@@ -10291,7 +10291,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicParameter_WithPrefix_CapturesRemainingItems()
     {
-        // The spread supplies 2 and 3 as separate slots, so the rest collects
+        // The spread supplies 2 and 3 as separate slots, so the variadic parameter collects
         // the list [2, 3]. (An unspread `(2, 3)` would be one collected item.)
         AssertEval(
             """
@@ -10403,7 +10403,7 @@ public class EvaluatorTests
     public void Eval_VariadicParameter_SpreadReceiverExpandsReceiverItems()
     {
         // Only the parenthesized-spread receiver form supplies the receiver's
-        // items to a leading flat variadic; the rest collects [10, 20, 30].
+        // items to a leading flat variadic; the variadic parameter collects [10, 20, 30].
         AssertEvalSequenceModes(
             """
             Collect(...list) = list.count
@@ -10436,7 +10436,7 @@ public class EvaluatorTests
     public void Eval_VariadicParameter_PlainCallBindsListSourceAsOneElement()
     {
         // Arg is the exact list [1, 2, 3]; the plain call passes it as one
-        // argument, so the rest collects [[1, 2, 3]] and the numeric body hits
+        // argument, so the variadic parameter collects [[1, 2, 3]] and the numeric body hits
         // the per-element constraint. Lean twin: Qmean(Vector) numeric error.
         var result = EvalFull(
             """
@@ -10468,7 +10468,7 @@ public class EvaluatorTests
     public void Eval_VariadicParameter_SpreadReceiverDotCallCapturesRangeItems()
     {
         // The parenthesized-spread receiver opens the range list's one boundary,
-        // supplying its items to the rest capture.
+        // supplying its items to the variadic parameter.
         AssertEval(
             """
             Arg = range(1, 3)
@@ -11322,7 +11322,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_PlainVariadicUserCall_CapturesAllItems()
     {
-        // The spread supplies three argument slots; the rest collects [1, 2, 3].
+        // The spread supplies three argument slots; the variadic parameter collects [1, 2, 3].
         AssertEval(
             """
             CountValues(...values) = values.count
@@ -11491,7 +11491,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_TopLevelVariadicParameter_GroupedArgumentIsOneCollectedItem()
     {
-        // Contrast with the sequence-value pattern below: the top-level rest
+        // Contrast with the sequence-value pattern below: the top-level variadic parameter
         // collects the grouped argument as one list element ([(1, 2)], count 1),
         // while F((...xs), y) opens the same argument to count 2.
         AssertEval(
@@ -11648,7 +11648,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicLoopStep_WithPrefix_CapturesRemainingStateItemsAsOneListSlot()
     {
-        // The step returns the rest capture unspread, so the collected list
+        // The step returns the collected list unspread, so the collected list
         // [2, 3] stays one state slot beside the spread first item.
         AssertEvalResultLoopModes(
             """
@@ -11684,7 +11684,7 @@ public class EvaluatorTests
     public void Eval_VariadicLoopStep_ExtraMiddleStateSlots_RepeatTwoIterations()
     {
         // Four state slots bind first=0, middle=[5, 5] (the collected exact list),
-        // last=10; the body re-opens middle with `...` so the extra middle slots
+        // last=10; the body re-spreads middle with `...` so the extra middle slots
         // survive across iterations. Mirrors the Lean guard
         // variadicLoopStepExtraMiddleRepeatsTwice.
         AssertEvalLoopModes(
@@ -11710,7 +11710,7 @@ public class EvaluatorTests
     public void Eval_VariadicLoopStep_ReportsMinimumStateArityWhenFixedParametersCannotBind()
     {
         // The minimum for Step(first, ...rest, last) is the FIXED parameter
-        // count (2), so a single state slot cannot bind first + last. The rest
+        // count (2), so a single state slot cannot bind first + last. The variadic parameter
         // itself may collect zero slots (see Eval_VariadicLoopStep_TwoStateSlots_*).
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
@@ -11733,14 +11733,14 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_VariadicLoopStep_TwoStateSlots_BindEmptyRestList()
+    public void Eval_VariadicLoopStep_TwoStateSlots_BindEmptyCollectedList()
     {
-        // Empty loop-state rest follows the SAME rule as every other rest
+        // The empty loop-state segment follows the SAME rule as every other collecting
         // receiver: Step(first, ...middle, last) with exactly two state slots
         // binds first/last from the ends and middle collects ZERO slots as the
         // exact empty list `[]` (count 0). Pins the parity boundary: 1 slot
         // fails (Eval_VariadicLoopStep_ReportsMinimumStateArity*), 2 bind an
-        // empty rest, 3 a singleton, 4+ a multi-item rest. Mirrors the Lean
+        // empty segment, 3 a singleton, 4+ a multi-item segment. Mirrors the Lean
         // guard variadicLoopStepEmptyMiddleBindsEmptyList.
         AssertEvalLoopModes(
             """
@@ -11874,11 +11874,11 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_PatternedAndFlatLoopSteps_ShareTheEmptyRestRule()
+    public void Eval_PatternedAndFlatLoopSteps_ShareTheEmptySegmentRule()
     {
         // The flat variadic loop path and the patterned loop path both allow a
-        // rest that collects zero state slots (the exact empty list `[]`) —
-        // the same rule as every other rest receiver.
+        // variadic parameter that collects zero state slots (the exact empty list `[]`) —
+        // the same rule as every other collecting binding.
         AssertEvalResultLoopModes(
             """
             Step(a, ...rest, a) = rest, 0
@@ -11888,9 +11888,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_RestOnlyLoopStep_MayShrinkStateToZeroSlots()
+    public void Eval_SingleVariadicLoopStep_MayShrinkStateToZeroSlots()
     {
-        // Deliberate consequence of the uniform empty-rest rule: a rest-only
+        // Deliberate consequence of the uniform empty-segment rule: a single-variadic
         // step has zero fixed parameters, so the state vector may shrink all
         // the way to zero slots, and the loop result is then the visible
         // empty sequence value `()`.
@@ -12094,7 +12094,7 @@ public class EvaluatorTests
     public void VariadicUserProperty_MatchesBuiltinSumAndCount()
     {
         // The stream-supplying call forms (spread argument, spread receiver)
-        // feed the rest capture the items the builtins see.
+        // feed the variadic parameter the items the builtins see.
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
@@ -12194,7 +12194,7 @@ public class EvaluatorTests
     public void OrdinaryParameter_RemainsStructuralAfterVariadicSupport()
     {
         // The fixed parameter binds the receiver value untouched (count 3 via
-        // the collection view), while the rest capture collects the receiver
+        // the collection view), while the variadic parameter collects the receiver
         // as one list element (count 1).
         AssertEvalSequenceModes(
             """
@@ -13093,7 +13093,7 @@ public class EvaluatorTests
     public void Eval_SequenceSpreadAfterSequenceConstruct_AppliesToImmediateExpression()
     {
         // The inner `...` binds to `b` only, so both forms supply the ONE
-        // sequence-valued argument (1, 2) and the rest collects [(1, 2)].
+        // sequence-valued argument (1, 2) and the variadic parameter collects [(1, 2)].
         // (Had the spread applied to the whole chain — `X((a, b)...)` — the
         // call would supply two arguments and collect [1, 2] instead.)
         var concise = EvalFull(
@@ -13601,8 +13601,8 @@ public class EvaluatorTests
     [InlineData("Sum((1, 2, 3))")]
     [InlineData("Seq = (1, 2, 3)\nSum(Seq)")]
     [InlineData("Seq = 1, 2, 3\nSum(Seq)")]
-    public void Eval_RestOnlyVariadic_GroupedArgumentIsOneCollectedItem(string call)
-        // Each call supplies ONE sequence-valued argument, and the rest binding
+    public void Eval_SingleVariadic_GroupedArgumentIsOneCollectedItem(string call)
+        // Each call supplies ONE sequence-valued argument, and the collecting binding
         // collects the supplied slots as the one-element list [(1, 2, 3)] — the
         // old grouped/opened display coincidence is intentionally gone.
         => AssertEval(
@@ -13615,7 +13615,7 @@ public class EvaluatorTests
     [Theory]
     [InlineData("Sum(1, 2, 3)")]
     [InlineData("Sum(1 2 3)")]
-    public void Eval_RestOnlyVariadic_InlineCommaOrAdjacencyBindsItemSupply(string call)
+    public void Eval_SingleVariadic_InlineCommaOrAdjacencyBindsItemSupply(string call)
         // Inline comma and adjacency both supply three argument slots, bound by the
         // item-supply matcher as one sequence value of count 3 — the same as the
         // grouped form `Sum((1, 2, 3))`.
@@ -13653,7 +13653,7 @@ public class EvaluatorTests
     [InlineData("F((1, 2, 3), 99)")]
     public void Eval_VariadicWithSuffix_SequenceArgumentStaysOneCollectedItem(string call)
         // F((1, 2, 3), 99) supplies one sequence-valued argument plus the suffix:
-        // the rest collects [(1, 2, 3)] (count 1) and last binds 99. Ordinary
+        // the variadic parameter collects [(1, 2, 3)] (count 1) and last binds 99. Ordinary
         // calls never implicitly open sequence arguments.
         => AssertEval(
             $$"""
@@ -13734,7 +13734,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_DotCallReceiver_RemainsCanonicalOneArgument()
     {
-        // The receiver is one argument, so the rest collects [(1, 2, 3)].
+        // The receiver is one argument, so the variadic parameter collects [(1, 2, 3)].
         AssertEval(
             """
             Seq = (1, 2, 3)

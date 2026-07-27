@@ -1,6 +1,6 @@
 namespace KatLang.Tests;
 
-public class RestBindingSyntaxTests
+public class CollectingBindingSyntaxTests
 {
     private static string Display(string source)
     {
@@ -10,7 +10,7 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void PrefixRestBinding_CollectsEmptySingletonAndMultipleArgumentsAsExactLists()
+    public void PrefixCollectingBinding_CollectsEmptySingletonAndMultipleArgumentsAsExactLists()
     {
         Assert.Equal("[]", Display("F(...items) = items\nF()"));
         Assert.Equal("[1]", Display("F(...items) = items\nF(1)"));
@@ -18,7 +18,7 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void PrefixRestBinding_SupportsSumAndMovableMiddle()
+    public void PrefixCollectingBinding_SupportsSumAndMovableMiddle()
     {
         Assert.Equal("6", Display("Sum(...items) = items.sum\nSum(1, 2, 3)"));
         Assert.Equal(
@@ -27,7 +27,7 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void PrefixRestBinding_SupportsFrontMiddleAndFinalPositions()
+    public void PrefixCollectingBinding_SupportsFrontMiddleAndFinalPositions()
     {
         Assert.Equal("[1, 2]", Display("F(...prefix, last) = prefix\nF(1, 2, 3)"));
         Assert.Equal("[2, 3]", Display("F(first, ...middle, last) = middle\nF(1, 2, 3, 4)"));
@@ -35,7 +35,7 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void PrefixRestDeconstruction_CollectsMovableMiddleAsExactList()
+    public void PrefixCollectingDeconstruction_CollectsMovableMiddleAsExactList()
         => Assert.Equal(
             "(1, [2, 3, 4], 5)",
             Display(
@@ -64,18 +64,18 @@ public class RestBindingSyntaxTests
     [InlineData("F([]...)", "[]")]
     [InlineData("F(())", "[()]")]
     [InlineData("F(()...)", "[]")]
-    public void PrefixRestBinding_PreservesExistingListAndSequenceArgumentBoundaries(
+    public void PrefixCollectingBinding_PreservesExistingListAndSequenceArgumentBoundaries(
         string call,
         string expected)
         => Assert.Equal(expected, Display($"F(...items) = items\n{call}"));
 
     /// <summary>
     /// The central orientation test: ONE source containing both ellipsis forms, proving
-    /// the left occurrence elaborates to a rest binding and the right to a spread
+    /// the left occurrence elaborates to a collecting binding and the right to a spread
     /// expression, and that neither is mistaken for the other.
     /// </summary>
     [Fact]
-    public void PrefixIsARestBindingAndPostfixIsASpread_InTheSameDeclaration()
+    public void PrefixIsACollectingBindingAndPostfixIsASpread_InTheSameDeclaration()
     {
         const string source =
             """
@@ -89,13 +89,13 @@ public class RestBindingSyntaxTests
 
         var forward = Assert.Single(parse.Root.Properties, property => property.Name == "Forward").Value;
 
-        // Left `...items`: a rest binding carrying the source-backed marker span.
+        // Left `...items`: a collecting binding carrying the source-backed marker span.
         var parameter = Assert.Single(forward.Parameters);
         Assert.Equal(ParameterKind.Variadic, parameter.Kind);
         Assert.Equal("...items", parameter.DisplayName);
-        Assert.Equal(new SourceSpan(2, 9, 2, 11), parameter.RestMarkerSpan);
+        Assert.Equal(new SourceSpan(2, 9, 2, 11), parameter.CollectingMarkerSpan);
 
-        // Right `items...`: a spread expression over the bound rest parameter, not a binding.
+        // Right `items...`: a spread expression over the bound variadic parameter, not a binding.
         var call = Assert.IsType<Expr.Call>(Assert.Single(forward.Output));
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
@@ -112,7 +112,7 @@ public class RestBindingSyntaxTests
     [InlineData("first, middle..., last = values", "middle", 8, 16)]
     [InlineData("items..., last = values", "items", 1, 8)]
     [InlineData("first, items... = values", "items", 8, 15)]
-    public void PostfixRestBinding_IsRejectedEverywhere(
+    public void PostfixBindingSpelling_IsRejectedEverywhere(
         string source,
         string name,
         int startColumn,
@@ -126,7 +126,7 @@ public class RestBindingSyntaxTests
         var error = Assert.Single(parse.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+            "Postfix `...` is the spread operator and cannot declare a collecting binding. "
                 + $"Write `...{name}` instead of `{name}...`.",
             error.Message);
         Assert.Equal(new SourceSpan(1, startColumn, 1, endColumn), error.Span);
@@ -148,13 +148,13 @@ public class RestBindingSyntaxTests
         => Assert.Empty(Parser.Parse(source).Diagnostics);
 
     [Theory]
-    [InlineData("F(...a, ...b) = a", "Only one rest binding")]
-    [InlineData("...a, ...b = 1, 2", "at most one rest binding")]
-    [InlineData("F(...items...) = items", "Malformed rest binding")]
-    [InlineData("first, ...middle..., last = 1, 2, 3", "Malformed rest binding")]
-    [InlineData("F(...a, b...) = a", "cannot declare a rest binding")]
-    [InlineData("F(a..., ...b) = b", "cannot declare a rest binding")]
-    public void MalformedRestForms_FailSafelyWithATargetedDiagnostic(
+    [InlineData("F(...a, ...b) = a", "Only one collecting binding")]
+    [InlineData("...a, ...b = 1, 2", "at most one collecting binding")]
+    [InlineData("F(...items...) = items", "Malformed collecting binding")]
+    [InlineData("first, ...middle..., last = 1, 2, 3", "Malformed collecting binding")]
+    [InlineData("F(...a, b...) = a", "cannot declare a collecting binding")]
+    [InlineData("F(a..., ...b) = b", "cannot declare a collecting binding")]
+    public void MalformedCollectingForms_FailSafelyWithATargetedDiagnostic(
         string source,
         string expectedFragment)
     {
@@ -173,7 +173,7 @@ public class RestBindingSyntaxTests
     [InlineData("F(...1) = 0")]
     [InlineData("F(...items...) = items")]
     [InlineData("first, ...middle..., last = 1, 2, 3")]
-    public void MalformedRestForms_DoNotCreateRecoveredRestBindings(string source)
+    public void MalformedCollectingForms_DoNotCreateRecoveredCollectingBindings(string source)
     {
         var syntax = Parser.ParseSyntax(source);
         var parse = Parser.Parse(source);
@@ -185,14 +185,14 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void CombinedPrefixAndPostfixRest_ReportsOneTargetedError()
+    public void CombinedPrefixAndPostfixMarkers_ReportsOneTargetedError()
     {
         var parse = Parser.Parse("first, ...middle..., last = values");
 
         var error = Assert.Single(parse.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Malformed rest binding `...middle...`; write `...middle`. "
+            "Malformed collecting binding `...middle...`; write `...middle`. "
                 + "Postfix `...` is reserved for value spreading.",
             error.Message);
         Assert.Equal(new SourceSpan(1, 8, 1, 19), error.Span);
@@ -203,7 +203,7 @@ public class RestBindingSyntaxTests
         "Broken(items...) = items\nGood(...values) = values\nGood(1, 2)")]
     [InlineData(
         "first, middle..., last = values\nGood(...values) = values\nGood(1, 2)")]
-    public void PostfixRestBinding_RecoversSoFollowingDeclarationsStillParse(string source)
+    public void PostfixBindingSpelling_RecoversSoFollowingDeclarationsStillParse(string source)
     {
         var parse = Parser.Parse(source);
 
@@ -215,13 +215,13 @@ public class RestBindingSyntaxTests
     }
 
     [Fact]
-    public void PrefixRestBinding_DotReceiverRemainsOneSlotUnlessExplicitlySpread()
+    public void PrefixCollectingBinding_DotReceiverRemainsOneSlotUnlessExplicitlySpread()
     {
         Assert.Equal("[[1, 2]]", Display("F(...items) = items\nA = [1, 2]\nA.F"));
         Assert.Equal("[1, 2]", Display("F(...items) = items\nA = [1, 2]\n(A...).F"));
     }
 
-    private sealed class RestBindingFinder : AstWalker
+    private sealed class CollectingBindingFinder : AstWalker
     {
         public List<string> VariadicBindings { get; } = [];
 
@@ -242,8 +242,8 @@ public class RestBindingSyntaxTests
 
     private static void AssertNoVariadicBindings(Algorithm root)
     {
-        var restFinder = new RestBindingFinder();
-        restFinder.VisitAlgorithm(root);
-        Assert.Empty(restFinder.VariadicBindings);
+        var collectingFinder = new CollectingBindingFinder();
+        collectingFinder.VisitAlgorithm(root);
+        Assert.Empty(collectingFinder.VariadicBindings);
     }
 }

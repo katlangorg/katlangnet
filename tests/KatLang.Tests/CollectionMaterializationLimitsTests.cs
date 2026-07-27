@@ -212,7 +212,7 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Fact]
-    public void OrdinaryFlatRest_IsCheckedBeforeItsExactListIsCreated()
+    public void OrdinaryFlatVariadic_IsCheckedBeforeItsExactListIsCreated()
     {
         const string source = "F(...items) = items.count\nOutput = F(1, 2, 3, 4)";
         var failed = Observe(source, Items(3));
@@ -226,7 +226,7 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Fact]
-    public void RestCollection_DefaultHardCeilingRejectsDoubledMaximumRange()
+    public void CollectingBinding_DefaultHardCeilingRejectsDoubledMaximumRange()
     {
         const string source =
             "A = range(1, 100000)\n" +
@@ -238,7 +238,7 @@ public class CollectionMaterializationLimitsTests
         Assert.Equal(EvaluationLimits.MaxSupportedCollectionItems, error.Limit);
         Assert.Equal(2L * EvaluationLimits.MaxSupportedCollectionItems, error.Requested);
         // The range and the two explicit caller-side spreads each create one checked
-        // 100,000-slot sequence/list value. The rejected 200,000-item rest list itself
+        // 100,000-slot sequence/list value. The rejected 200,000-item collected list itself
         // is not charged because its reservation fails before construction.
         Assert.Equal(3L * EvaluationLimits.MaxSupportedCollectionItems, observed.Budget.MaterializedItems);
     }
@@ -248,7 +248,7 @@ public class CollectionMaterializationLimitsTests
     [InlineData("x, ...tail = [1, 2, 3, 4]\nOutput = tail.count", 7)]
     [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
     [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
-    public void EveryRestBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
+    public void EveryCollectingBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
     {
         var observed = Observe(source, Total(expectedItems));
         Assert.False(observed.Result.IsError);

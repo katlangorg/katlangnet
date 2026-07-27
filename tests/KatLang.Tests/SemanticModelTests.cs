@@ -177,7 +177,7 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_PrefixRestAndPostfixSpread_KeepDistinctSourceBackedIdentifierSites()
+    public void Build_PrefixCollectingAndPostfixSpread_KeepDistinctSourceBackedIdentifierSites()
     {
         const string source =
             """
@@ -210,8 +210,8 @@ public class SemanticModelTests
             static property => property.Name == "Pack").Value;
         var parameter = Assert.Single(packAlgorithm.Parameters);
         Assert.Equal(ParameterKind.Variadic, parameter.Kind);
-        AssertSpan(Assert.IsType<SourceSpan>(parameter.RestMarkerSpan), 1, 6, 1, 8);
-        AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.RestMarkerSpan));
+        AssertSpan(Assert.IsType<SourceSpan>(parameter.CollectingMarkerSpan), 1, 6, 1, 8);
+        AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.CollectingMarkerSpan));
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(parseResult.Root.Output));
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));

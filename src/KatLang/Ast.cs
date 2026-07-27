@@ -111,7 +111,7 @@ public enum ParameterKind
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
     /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
-    public SourceSpan? RestMarkerSpan { get; init; }
+    public SourceSpan? CollectingMarkerSpan { get; init; }
 
     public string DisplayName => Kind switch
     {
@@ -121,7 +121,7 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
 
     public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
     {
-        RestMarkerSpan = RestMarkerSpan,
+        CollectingMarkerSpan = CollectingMarkerSpan,
     };
 }
 
@@ -176,7 +176,7 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
     : ParameterPattern
 {
     /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
-    public SourceSpan? RestMarkerSpan { get; init; }
+    public SourceSpan? CollectingMarkerSpan { get; init; }
 
     public override string DisplayName => Kind == ParameterKind.Variadic ? $"...{Name}" : Name;
 
@@ -184,7 +184,7 @@ public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = nul
     [
         new(Name, Span, Kind)
         {
-            RestMarkerSpan = RestMarkerSpan,
+            CollectingMarkerSpan = CollectingMarkerSpan,
         }
     ];
 }
@@ -346,7 +346,7 @@ public abstract record Pattern
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
 
         /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
-        public SourceSpan? RestMarkerSpan { get; init; }
+        public SourceSpan? CollectingMarkerSpan { get; init; }
     }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
@@ -457,7 +457,7 @@ public abstract record Pattern
         {
             parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
             {
-                RestMarkerSpan = binder.RestMarkerSpan,
+                CollectingMarkerSpan = binder.CollectingMarkerSpan,
             };
             return true;
         }
@@ -495,7 +495,7 @@ public abstract record Pattern
             [
                 new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
                 {
-                    RestMarkerSpan = binder.RestMarkerSpan,
+                    CollectingMarkerSpan = binder.CollectingMarkerSpan,
                 }
             ];
 

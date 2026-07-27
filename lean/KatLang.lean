@@ -156,7 +156,7 @@ namespace ParameterPattern
       | .sequenceValue _ => true
       | _ => false)
 
-  /-- True when the pattern list itself contains a rest capture (nested
+  /-- True when the pattern list itself contains a collecting binding (nested
       captures inside sequence-value patterns do not count).
       C#: `ParameterPattern.HasVariadicCaptureAtCurrentLevel`. -/
   def hasVariadicCaptureAtCurrentLevel (patterns : List ParameterPattern) : Bool :=
@@ -242,7 +242,7 @@ def CallableSignature.requiredNormalParameterCount (signature : CallableSignatur
   (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.normal)).length
 
 def CallableSignature.acceptsItemCount (signature : CallableSignature) (count : Nat) : Bool :=
-  -- A rest-shaped user signature consumes an item supply: it accepts at least
+  -- A variadic user signature consumes an item supply: it accepts at least
   -- the fixed (non-variadic) count. Fixed signatures, including collection
   -- builtins, stay exact.
   match signature.variadicIndex? with
@@ -314,11 +314,11 @@ def CallableSignature.validate (signature : CallableSignature) : Except Error Un
   | some message => .error (Error.illegalInEval message)
   | none => .ok ()
 
-/-- Variable-middle variadic binding (mirrors C# `BindCallableArguments`). The fixed
+/-- Variable-middle variadic-parameter binding (mirrors C# `BindCallableArguments`). The fixed
     prefix binds from the front, the fixed suffix from the back, and the variadic
     captures the remaining middle items (zero or more). The minimum is the FIXED
-    (non-variadic) parameter count: like every other rest receiver, the rest may
-    collect ZERO items (an empty rest is the exact list `[]`) — the same rule the
+    (non-variadic) parameter count: like every other collecting binding, the variadic parameter may
+    collect ZERO items (an empty collected segment is the exact list `[]`) — the same rule the
     shared pattern binder applies (`bindParameterPatternList`: required =
     patterns - 1).
     (Collection builtins no longer bind here: they are ordinary fixed-arity
@@ -338,8 +338,8 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
           else
             .error (arityMismatch signature.parameters.length items.length)
       | some variadicIndex =>
-          -- Minimum = fixed (non-variadic) parameter count, so the rest may
-          -- collect zero items (empty rest = `[]`) at every receiver,
+          -- Minimum = fixed (non-variadic) parameter count, so the collecting binding may
+          -- collect zero items (empty collected segment = `[]`) at every receiver,
           -- including loop-state binding.
           let minimum := signature.parameters.length - 1
           if items.length < minimum then
@@ -1147,8 +1147,8 @@ end AlgEnv
 
 /-- Counted parameter environment for callback-bound values that must preserve
     expression-level emitted counts, for example higher-order sequence items
-    projected through the same one-level rule as `:`. Rest/variadic captures
-    also record their bound value here; since rest binding collects ONE exact
+    projected through the same one-level rule as `:`. Collecting bindings
+    also record their bound value here; since collecting binding collects ONE exact
     immutable list value, those entries always carry emitted count 1 and agree
     with ordinary value-environment lookup (there is no separate raw-supply
     forwarding environment). -/
@@ -1406,7 +1406,7 @@ namespace Algorithm
       go 0 (parameters a)
 
   /-- A callable whose top-level parameter list consumes the supplied call
-      argument stream: any top-level variadic capture, whether rest-only
+      argument stream: any top-level variadic capture, whether a lone variadic
       `...name` or a comma shape such as `x, ...y, z`. A plain sequence-valued
       argument stays one supplied argument; only explicit spread opens it first. -/
   def usesItemSupplyBinding (a : Algorithm) : Bool :=
@@ -2098,7 +2098,7 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     FUNCTION-shaped — a builtin, a conditional clause family, or an algorithm
     declaring parameters/patterns — as opposed to a zero-parameter VALUE
     property that merely resolved through the dual algorithm channel. Used to
-    decide whether a valueless rest-bound argument gets the targeted
+    decide whether a valueless argument bound by a variadic parameter gets the targeted
     "collects values, but ... is a function" diagnostic or surfaces its
     genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
 def Algorithm.isFunctionShaped : Algorithm -> Bool
@@ -2106,7 +2106,7 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
   | .conditional _ _ _ => true
   | a => !(Algorithm.params a).isEmpty || !(Algorithm.parameterPatterns a).isEmpty
 
-/-- Collect a rest-assigned item supply as ONE exact immutable list value.
+/-- Collect the item segment assigned to a collecting binding as ONE exact immutable list value.
 
     KatLang distinguishes three item-supply operations by receiver purpose:
 
@@ -2114,23 +2114,23 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
       canonicalizing boundary `Result.normalize (Result.sequenceValue xs)`
       (singleton erasure applies: `x = 1, 2, 3` is `(1, 2, 3)`, one supplied
       item is itself);
-    - `collect : Supply -> ListValue` — THIS operation: rest/variadic binding
+    - `collect : Supply -> ListValue` — THIS operation: a collecting binding (variadic parameter)
       materializes exactly the assigned items as one exact immutable list
-      (`collectRest [] = []`, `collectRest [v] = [v]`, never erased);
-    - `open : Value -> Supply` — postfix spread (`Result.spreadItems`), which
+      (`collectSegment [] = []`, `collectSegment [v] = [v]`, never erased);
+    - `spread : Value -> Supply` — postfix spread (`Result.spreadItems`), which
       opens one sequence OR list boundary.
 
-    Every rest binding — deconstruction rest, rest-only variadic parameters,
-    and mixed prefix/rest/suffix parameter lists — binds its assigned middle
+    Every collecting binding — deconstruction collecting bindings, single variadic parameters,
+    and mixed prefix/collecting/suffix parameter lists — binds its assigned middle
     supply through this single helper, after the receiver-specific supply
     preparation (call binding preserves argument slots; deconstruction may
     open one lone sequence or list). The round trip
-    `Result.spreadItems (collectRest xs) = xs` makes variadic forwarding
+    `Result.spreadItems (collectSegment xs) = xs` makes variadic forwarding
     ordinary list spread: `Forward(...items) = Target(items...)` re-supplies
-    exactly the collected items with no hidden raw-supply metadata. A rest
+    exactly the collected items with no hidden raw-supply metadata. A collecting
     value is one visible value, so its emitted count is always 1 (including
-    `[]`). C#: `CollectRest` (inside `CreateVariadicCapture`). -/
-def collectRest (items : List Result) : Result :=
+    `[]`). C#: `CollectSegment` (inside `CreateVariadicCapture`). -/
+def collectSegment (items : List Result) : Result :=
   Result.listValue items
 
 /-- Re-count a counted result at a public property/call/builtin RESULT boundary.
@@ -2140,14 +2140,14 @@ def collectRest (items : List Result) : Result :=
     same structural value with emitted count `Result.valueCount value` (0 for the
     empty sequence value, otherwise 1). A multi-output body therefore becomes one
     sequence value at the boundary; only an explicit caller-site postfix `...`
-    re-opens it (via `Result.spreadItems`, which reads the value, not this count).
+    re-spreads it (via `Result.spreadItems`, which reads the value, not this count).
 
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already canonicalized redundant unary empty structure. It is
     applied only to public result boundaries, never to internal
     body/root output accumulation (`evalAlgOutputCountedCore`), which must keep
-    its multi-item counts. (Rest/variadic parameter storage needs no re-count:
-    rest binding collects one exact list value, so its stored count is already
+    its multi-item counts. (Variadic parameter storage needs no re-count:
+    collecting binding collects one exact list value, so its stored count is already
     1.) Lexical zero-arg property access (`evalCounted .resolve`) and the `if`
     builtin already perform this same re-count inline; this helper generalizes
     it. -/
@@ -2182,7 +2182,7 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
     `...` layer opens exactly one structure boundary, applied compositionally
     and iteratively (stack-safe for deep `A......` chains, matching the C#
     evaluator). For sequence values the extra layers are fixed points (the
-    re-captured sequence reopens to the same items), so stacked spread is
+    re-captured sequence re-spreads to the same items), so stacked spread is
     value-equivalent to one spread; for exact LIST values each layer opens one
     more list boundary (`[[7]]......` is `7`, like `([[7]]...)...`). This is
     NOT binary spine flattening: there is no right operand, it only unwraps
@@ -2314,9 +2314,9 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let prefixBindings <- bindPairs prefixPatterns prefixInputs
         let suffixBindings <- bindPairs suffixPatterns suffixInputs
         let capturedValues := capturedInputs.map Prod.fst
-        -- Rest binding COLLECTS: the assigned supply becomes one exact
+        -- Collecting binding COLLECTS: the assigned supply becomes one exact
         -- immutable list value, emitted count 1 (a list is one visible value).
-        let captured := collectRest capturedValues
+        let captured := collectSegment capturedValues
         let capturedBinding := (variadicParameter.name, (captured, 1))
         let variadicBindings : CountedParameterPatternBindings :=
           { countedParamEnv := [capturedBinding] }
@@ -2325,12 +2325,12 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
       end
 
 /-- Callback binding for a flat callee whose top-level parameters include a
-    rest parameter. The callback argument supply keeps the established
+    variadic parameter. The callback argument supply keeps the established
     flat-callback row convention: when fewer argument slots are supplied than
     top-level parameters, the final supplied argument opens into its items
     (matching `callee(S:i)`; exact lists stay opaque), exactly as
     `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
-    slots then bind through the shared prefix/rest/suffix binder, so the rest
+    slots then bind through the shared prefix/collecting/suffix binder, so the variadic
     parameter COLLECTS its allocated slots as one exact immutable list.
     C#: `BindCountedCallbackParameterPatternList`. -/
 def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
@@ -3757,7 +3757,7 @@ mutual
             -- receiver opens ONE lone structure boundary of either kind, so
             -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]...`.
             -- A non-grouped scalar is a one-item supply for the
-            -- prefix/rest/suffix matcher (the same normalization the function
+            -- prefix/collecting/suffix matcher (the same normalization the function
             -- deconstruction path applies).
             | some value => some ((Result.structureItems? value).getD [value])
             | none => none
@@ -3832,7 +3832,7 @@ mutual
                     let values <- collectValues rest
                     pure (value :: values)
                 | none =>
-                    -- A rest binding collects VALUES. A FUNCTION-shaped
+                    -- A collecting binding collects VALUES. A FUNCTION-shaped
                     -- argument (builtin, clause family, or parameterized
                     -- algorithm) has no value to collect — only fixed
                     -- parameters keep the dual algorithm channel — so name
@@ -3841,19 +3841,19 @@ mutual
                     -- VALUE property whose body failed is NOT a function: its
                     -- genuine evaluation error surfaces.
                     -- C#: `BindParameterPatternList` (whose message also
-                    -- names the rest parameter).
+                    -- names the variadic parameter).
                     match input.algorithm? with
                     | some alg =>
                         if alg.isFunctionShaped then
                           .error (Error.typeMismatch
-                            "A rest parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
+                            "A variadic parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
                         else
                           .error (input.error?.getD Error.badArity)
                     | none => .error (input.error?.getD Error.badArity)
           let capturedValues <- collectValues capturedInputs
-          -- Rest binding COLLECTS: the assigned supply becomes one exact
+          -- Collecting binding COLLECTS: the assigned supply becomes one exact
           -- immutable list value, emitted count 1 (a list is one visible value).
-          let captured := collectRest capturedValues
+          let captured := collectSegment capturedValues
           let variadicBindings : ParameterPatternBindings :=
             { argEnv := [(variadicParameter.name, captured)],
               countedParamEnv := [(variadicParameter.name, (captured, 1))],
@@ -3895,9 +3895,9 @@ def bindLoopStepState (step : Algorithm) (stateValues : List Result)
         match bindings.variadicName? with
         | none => .error Error.badArity
         | some variadicName =>
-            -- Rest binding COLLECTS (same rule as the pattern binders): the
+            -- Collecting binding COLLECTS (same rule as the pattern binders): the
             -- assigned state slots become one exact immutable list value.
-            let captured := collectRest bindings.variadicItems
+            let captured := collectSegment bindings.variadicItems
             let argEnv <- bindLoopStepValueEnv signature.parameters bindings.normalBindings variadicName captured
             let variadicBinding := (variadicName, (captured, 1))
             pure (argEnv, [variadicBinding])
@@ -4156,11 +4156,11 @@ mutual
             let newCtx := ctx.withCountedParamEnv
               (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
-          -- A flat callee with a top-level rest parameter (`Rows.map(F)` with
-          -- `F(x, ...y, z)` or a rest-only `Collect(...items)`) binds through
-          -- the shared prefix/rest/suffix binder so the rest parameter
+          -- A flat callee with a top-level variadic parameter (`Rows.map(F)` with
+          -- `F(x, ...y, z)` or a single-variadic `Collect(...items)`) binds through
+          -- the shared prefix/collecting/suffix binder so the variadic parameter
           -- COLLECTS an exact immutable list, after the same final-argument
-          -- row expansion the fixed-only flat path uses below. Rest-only
+          -- row expansion the fixed-only flat path uses below. Single-variadic
           -- callees keep the whole iterated element as one collected slot.
           else if ParameterPattern.hasVariadicCaptureAtCurrentLevel
               (Algorithm.parameterPatterns callee) then do
@@ -4276,7 +4276,7 @@ mutual
     -- `map(collection, mapper)`). An unspread sequence or list value is ONE
     -- argument at this call boundary, exactly like at every other call
     -- boundary; only explicit caller-site spread alters argument boundaries,
-    -- and the spread-opened items obey the same fixed arity
+    -- and the spread items obey the same fixed arity
     -- (`count([1, 2, 3]...)` supplies three arguments and is an arity error).
     -- Nothing is opened before binding.
     let expectedArgCount := 1 + metadata.suffixArgs.length
@@ -4348,7 +4348,7 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
@@ -4372,7 +4372,7 @@ mutual
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
       | _, [] => pure []
       | index, item :: rest => do
-        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
+        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
           evalSequenceCallbackCall predicateAlg item ctx env "filter predicate") with
           | .error err =>
               .error err
@@ -4409,7 +4409,7 @@ mutual
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each iterated collection item as collected; a rest parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
+            "while evaluating map transform (map passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
             evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
@@ -4732,7 +4732,7 @@ mutual
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
       The call argument stream is already the receiver for parameter binding: a
       plain sequence-valued argument contributes one item, while explicit spread
-      contributes the opened items. -/
+      contributes the operand's items. -/
   partial def bindDeconstructionUserCall (callee : Algorithm) (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
@@ -4791,7 +4791,7 @@ mutual
         -- written slot contributes exactly ONE persistent value — the value
         -- its counted supply denotes — regardless of how many items the
         -- expression emitted (zero, one, or many). Only an explicit spread
-        -- opens the value into the surrounding item slots.
+        -- supplies the value's items into the surrounding item slots.
         pure [out.fst]
 
   partial def explicitSequenceValueItems? (argExpr : Expr)
@@ -4851,7 +4851,7 @@ mutual
       evaluation are unchanged, but the public result preserves the structural
       value while re-counting the emitted arity to `Result.valueCount` (via
       `reCountValueBoundary`). A multi-output body therefore becomes one sequence
-      value (count 1); only caller-site `...` re-opens it. -/
+      value (count 1); only caller-site `...` re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM CountedResult := do
@@ -5023,7 +5023,7 @@ mutual
       structural zero-arg property access and collection builtins re-count to
       `Result.valueCount`, and user/lexical member calls re-count via
       `evalUserCallCounted`, so a multi-output member becomes one sequence value
-      (count 1) and only caller-site `...` re-opens it. This is the single owner
+      (count 1) and only caller-site `...` re-spreads it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
       Smart dispatch:
       - "string" value intrinsic → evaluate target, convert numeric result to string
@@ -5192,7 +5192,7 @@ mutual
       Calls, name resolution, and collection builtins are value boundaries: they
       emit `Result.valueCount` of the result value (one value for a non-empty
       result), so a multi-output body/collection is observed as one sequence
-      value and only caller-site `...` re-opens it.
+      value and only caller-site `...` re-spreads it.
       Block expressions count as one sequence value when non-empty. `sequenceConstruct`
       emits one constructed sequence value. `sequenceSpread`
       emits the immediate spread items of its operand. All other value expressions emit either zero values (empty
@@ -5300,7 +5300,7 @@ mutual
           evalAlgOutput callee newCtx (argEnv ++ env)
     else match Algorithm.variadicParam? callee with
       | some _ =>
-          -- Any top-level variadic (rest-only or comma deconstruction) binds
+          -- Any top-level variadic (lone variadic or comma deconstruction) binds
           -- through the shared item-supply matcher.
           let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries

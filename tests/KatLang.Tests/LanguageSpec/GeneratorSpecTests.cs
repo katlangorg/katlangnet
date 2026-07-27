@@ -68,12 +68,12 @@ public class LanguageSpecArtifactsGeneratorPromptTests
 
     [Theory]
     [MemberData(nameof(PromptFilePaths))]
-    public void PromptFile_UsesOnlyCanonicalPrefixRestGuidance(string relativePath)
+    public void PromptFile_UsesOnlyCanonicalPrefixCollectingGuidance(string relativePath)
     {
         var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
 
         Assert.Contains(
-            "Prefix `...name` is the ONLY rest-binding syntax",
+            "Prefix `...name` is the ONLY collecting-binding syntax",
             content,
             StringComparison.Ordinal);
         Assert.DoesNotContain(

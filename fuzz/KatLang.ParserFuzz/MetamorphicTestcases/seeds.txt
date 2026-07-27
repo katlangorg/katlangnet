@@ -98,7 +98,7 @@ family=builtin-callback-wrapper bytes=04 00 00 01 01 00 02 0d 07 00 desc=reduce 
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 01 desc=wrapper spelled as an ordinary call rather than dotted
 family=builtin-callback-wrapper bytes=04 00 01 00 01 00 00 00 00 00 desc=cumulative item budget one below the measured total
 family=builtin-callback-wrapper bytes=04 00 04 00 01 00 00 00 03 00 desc=cumulative string budget one below the measured total
-family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: rest projection collects a list, not the supplied value
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: variadic projection collects a list, not the supplied value
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 03 desc=REJECTED: wrapper arity does not match the callback projection
 
 # ── Phase 3 Group A: one source, optimizations ON (left) against OFF (right) ───────────────

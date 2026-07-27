@@ -170,7 +170,7 @@ parentheses/braces/exact-list brackets and their empty/nested forms, comma vs ad
 newline/CRLF/lone-CR boundaries, comments, property/`public`/`Output =` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
 leading-dot continuation, `open` declarations, `:` indexing, `~` grace, `...` spread,
-deconstruction and movable-rest patterns, and malformed delimiter/semicolon/unexpected-
+deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-
 character mixtures. Keep new seeds small and reviewable; do not commit generated corpora
 (they belong in `fuzz/artifacts/corpus`).
 
@@ -535,9 +535,9 @@ argument binding. A consumer supplies a fixed number of values per invocation, a
 that binds exactly those values positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:
 
-* **Rest** (`MmWrap(...xs)`) — a rest parameter *collects* the supplied slots into an exact list,
+* **Variadic** (`MmWrap(...xs)`) — a variadic parameter *collects* the supplied slots into an exact list,
   so the wrapper receives `[element]` where the builtin receives `element`. Measured:
-  `[[1, 2], [3]].map(count)` is `[2, 1]` while the rest wrapper gives `[1, 1]`. That is correct
+  `[[1, 2], [3]].map(count)` is `[2, 1]` while the variadic wrapper gives `[1, 1]`. That is correct
   language behaviour and a false equivalence, not a defect.
 * **Arity-mismatched** — a flat multi-parameter callee first opens a lone *sequence*-valued
   element into row slots and arity-errors on other kinds, so it matches neither a one-value nor a
@@ -840,8 +840,8 @@ shown invalid independently.
   qualification under *Declared relations*); those cases still compare their full semantic
   observation, including the structured resource-limit payload.
 * Group B's exact-work claim covers steps and peak depth only for the shapes in its body table.
-* Rest-parameter and multi-parameter callback wrappers are represented as rejections, not as
-  trusted equivalences; establishing a trusted rest-wrapper form is future work.
+* Variadic-parameter and multi-parameter callback wrappers are represented as rejections, not as
+  trusted equivalences; establishing a trusted variadic-wrapper form is future work.
 
 *Phase 3:*
 
@@ -961,7 +961,7 @@ byte 0  template          25 entries: identifier start/continue, property name, 
                           parameter name, number boundary, string literal, backslash in string,
                           unterminated string, line comment, comment at EOF, delimiter adjacency,
                           dotted call, spread, list literal, sequence literal, deconstruction,
-                          rest binding, callback body, conditional clause, multiline body,
+                          collecting binding, callback body, conditional clause, multiline body,
                           recovery point, EOF boundary, plus the two raw modes
 byte 1  placement         alone, after/before/around an ASCII letter, doubled, tripled, split by a
                           newline, split by punctuation, after a dot, before a spread, at end of source
@@ -1241,11 +1241,11 @@ legitimately shifts offsets is compared on structure:
 * **dotted-ordinary** — `F(A, …)` and `A.F(…)` resolve to the same callable declaration (`A.F(B)`
   means `F(A, B)`, receiver as one leading argument boundary). Only on the dotted/ordinary template.
 
-### Synthetic-symbol, list/sequence/rest and dotted-call policy
+### Synthetic-symbol, list/sequence/collecting-binding and dotted-call policy
 
 Synthetic implementation names (deconstruction `$deconstruct$N` helpers and anything with `$`, all
 declaration-span-free) must never surface as an occurrence, declaration, property, hover, or outline
-symbol. The list/sequence/rest and spread distinctions are inherited from the elaborated AST the
+symbol. The list/sequence/collecting-binding and spread distinctions are inherited from the elaborated AST the
 model projects and are recorded as a fingerprint dimension; the model reports the receiver of a
 dotted call as one leading argument boundary, never a spread.
 
@@ -1296,7 +1296,7 @@ deterministically, record the reconstructed code units as hex, identify the temp
 and edit, minimize, and classify as exactly one of — decoder / edit-application / replay defect;
 invalid relation; semantic-oracle defect; fingerprint defect; span-validation defect; stale-source
 leak; scope leak; synthetic-symbol leak; classification / hover / navigation / document-symbol /
-diagnostic-conversion defect; dotted-call disagreement; builtin-metadata drift; list/sequence/rest
+diagnostic-conversion defect; dotted-call disagreement; builtin-metadata drift; list/sequence/collecting-binding
 documentation drift; UTF-16 coordinate defect; parser-recovery interaction; unexpected CLR exception.
 A structured "no result" is never a finding, and broadening a "no result" to silence a mismatch is
 never a legitimate fix.

@@ -258,7 +258,7 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicSuffixBinding_NormalArgumentIsOneCollectedItem()
-        // The plain argument is one supplied slot: the rest collects the
+        // The plain argument is one supplied slot: the variadic parameter collects the
         // one-element list [(10, 20)], so the numeric `.sum` fails on the
         // sequence-valued element. The spread segment form above supplies
         // the items.
@@ -273,7 +273,7 @@ public class SequenceSpreadTests
     public void VariadicSuffixBinding_NormalArgumentPreservesSingleGroupedValue()
         // One grouped sequence-value argument is not implicitly opened for a
         // mixed variadic call; val receives the sequence value and the numeric
-        // body fails. Use Values... to open it explicitly.
+        // body fails. Use Values... to spread it explicitly.
         => AssertEvaluationFailure(
             """
             Values = 10, 20
@@ -292,7 +292,7 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicSuffixBinding_DotCallReceiverWithSuffixIsOneCollectedItem()
-        // The receiver is one leading argument (Sum(Values, 7)), so the rest
+        // The receiver is one leading argument (Sum(Values, 7)), so the variadic parameter
         // collects [(10, 20)] and the numeric body fails exactly like the
         // canonical call above.
         => AssertEvaluationFailure(
@@ -313,7 +313,7 @@ public class SequenceSpreadTests
             30m);
 
     [Fact]
-    public void RestOnlyBinding_QmeanSpreadCallSucceedsWhileGroupedCallFails()
+    public void SingleVariadic_QmeanSpreadCallSucceedsWhileGroupedCallFails()
     {
         // Vector is the exact list [1..10]. The plain call collects it as one
         // non-numeric element, so the numeric body fails; explicit spread
@@ -335,7 +335,7 @@ public class SequenceSpreadTests
     }
 
     [Fact]
-    public void RestOnlyBinding_QmeanSpreadDotCallMatchesSpreadCall()
+    public void SingleVariadic_QmeanSpreadDotCallMatchesSpreadCall()
         => AssertEval(
             """
             Vector = range(1, 10)
@@ -345,7 +345,7 @@ public class SequenceSpreadTests
             1m);
 
     [Fact]
-    public void RestOnlyBinding_MultiOutputPropertyIsOneCollectedItem()
+    public void SingleVariadic_MultiOutputPropertyIsOneCollectedItem()
         => AssertEval(
             """
             Values = 10, 20
@@ -355,7 +355,7 @@ public class SequenceSpreadTests
             1m);
 
     [Fact]
-    public void RestOnlyBinding_VisibleGroupIsOneCollectedItem()
+    public void SingleVariadic_VisibleGroupIsOneCollectedItem()
         => AssertEval(
             """
             Pair = (10, 20)
@@ -365,7 +365,7 @@ public class SequenceSpreadTests
             1m);
 
     [Fact]
-    public void RestOnlyBinding_DotCallVisibleGroupIsOneCollectedItem()
+    public void SingleVariadic_DotCallVisibleGroupIsOneCollectedItem()
         => AssertEval(
             """
             Pair = (10, 20)
@@ -385,7 +385,7 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicParameterForwarding_DirectCallForwardsStreamWithExplicitSpread()
-        // Forwarding a rest capture's ITEMS is explicit spread at the forwarding
+        // Forwarding a collected list's ITEMS is explicit spread at the forwarding
         // call (and the root call supplies the stream by spreading too); a bare
         // `CountItem(values, 1)` would pass the whole collected list as one
         // argument.
@@ -431,7 +431,7 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicParameterForwarding_NonVariadicCalleeReceivesOneListValue()
-        // Passing the rest capture bare hands the callee the whole collected
+        // Passing the collected list bare hands the callee the whole collected
         // list as ONE argument; the fixed parameter's collection view then
         // counts its three elements.
         => AssertEval(
@@ -454,7 +454,7 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicParameterForwarding_TopLevelCaptureRoundTripsThroughSpread()
-        // Round trip: the callee's rest re-collects exactly the caller's items.
+        // Round trip: the callee's variadic parameter re-collects exactly the caller's items.
         => AssertEval(
             """
             CountItems(...items) = items.count
@@ -656,7 +656,7 @@ public class SequenceSpreadTests
 
     // `(Values...7)` materializes ONE sequence value (10, 20, 7): unlike the lone
     // `(Values...)` spread receiver it is an ordinary grouped receiver, so the
-    // rest collects [(10, 20, 7)] and the numeric body fails. Re-spreading the
+    // variadic parameter collects [(10, 20, 7)] and the numeric body fails. Re-spreading the
     // group — `((Values...7)...)` — supplies the items.
     [Theory]
     [InlineData("(Values...7).Sum")]
@@ -695,7 +695,7 @@ public class SequenceSpreadTests
     public void DotCall_GroupSpreadJoinReceiver_IsOneCollectedItem()
     {
         // Same rule for a sequence-valued source: `(Pair...7)` is one grouped
-        // receiver argument, so the rest collects [(10, 20, 7)] and the numeric
+        // receiver argument, so the variadic parameter collects [(10, 20, 7)] and the numeric
         // body fails; re-spreading the group supplies the items.
         AssertEvaluationFailure(
             """
@@ -736,7 +736,7 @@ public class SequenceSpreadTests
     {
         // The inner `...` binds to `b` only: `(a, b...)` is (1, 2, 3) while
         // `(a, (b...))` is (1, (2, 3)). Spreading the outer group at the call
-        // exposes the distinct item counts through the rest binding.
+        // exposes the distinct item counts through the collecting binding.
         AssertEval(
             """
             a = 1
@@ -775,7 +775,7 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceSpread_VersusVariadicCapture_AreDistinct()
     {
-        // Definition side: `...values` is a VARIADIC (rest) CAPTURE — NOT a spread.
+        // Definition side: `...values` is a VARIADIC PARAMETER — NOT a spread.
         // The call-site spread supplies Vals's items as the collected list
         // [1, 2, 3]; a bare `Sum(Vals)` would collect [(1, 2, 3)] whose element
         // is non-numeric.

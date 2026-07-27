@@ -85,9 +85,9 @@ public class WideDeconstructionScalabilityTests
     }
 
     [Fact]
-    public void Semantics_WidePrefixRestSuffix_BindsMovableMiddleAtScale()
+    public void Semantics_WidePrefixCollectingSuffix_BindsMovableMiddleAtScale()
     {
-        // 100 fixed prefix, one movable rest, two fixed suffix, over range(1, 150):
+        // 100 fixed prefix, one movable collecting binding, two fixed suffix, over range(1, 150):
         // x0=1..x99=100, rest=[101..148] (48 items), y=149, z=150.
         var sb = new StringBuilder();
         for (var i = 0; i < 100; i++)

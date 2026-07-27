@@ -650,8 +650,8 @@ public sealed class Parser
                 });
                 declaredPropertyNames.Add(name);
             }
-            // Deconstruction / rest binding pattern: x, ...y, z = RHS (including
-            // the unambiguous canonical single-rest form `...name = RHS`). A plain
+            // Deconstruction / collecting binding pattern: x, ...y, z = RHS (including
+            // the unambiguous canonical lone-collecting-binding form `...name = RHS`). A plain
             // single `name = RHS` is handled by the property branch above.
             else if ((Current.Kind is TokenKind.Identifier or TokenKind.Ellipsis)
                 && LookaheadIsBindingPatternAssignment())
@@ -714,7 +714,7 @@ public sealed class Parser
                 if (PatternContainsVariadicParameter(condAlg.Branches[i].Pattern))
                 {
                     ReportError(
-                        $"Rest bindings are only supported in ordinary explicit parameter lists for '{name}'.",
+                        $"Collecting bindings are only supported in ordinary explicit parameter lists for '{name}'.",
                         spans[i]);
                 }
             }
@@ -982,43 +982,43 @@ public sealed class Parser
     private bool LookaheadIsEquals()
         => PeekSignificant(1).Kind == TokenKind.Equals;
 
-    private const string MissingRestBindingNameDiagnostic =
-        "Expected a binding name after prefix `...`; a rest binding must have the form `...identifier`.";
+    private const string MissingCollectingBindingNameDiagnostic =
+        "Expected a binding name after prefix `...`; a collecting binding must have the form `...identifier`.";
 
-    private const string InvalidRestBindingTargetDiagnostic =
-        "A rest binding target after prefix `...` must be an identifier.";
+    private const string InvalidCollectingBindingTargetDiagnostic =
+        "A collecting binding target after prefix `...` must be an identifier.";
 
     private const string PrefixSpreadExpressionDiagnostic =
-        "Prefix `...` is only valid for rest bindings such as `...items`. Postfix `...` is reserved for value spreading.";
+        "Prefix `...` is only valid for collecting bindings such as `...items`. Postfix `...` is reserved for value spreading.";
 
-    private static string PostfixRestBindingDiagnostic(string name) =>
-        $"Postfix `...` is the spread operator and cannot declare a rest binding. Write `...{name}` instead of `{name}...`.";
+    private static string PostfixCollectingBindingDiagnostic(string name) =>
+        $"Postfix `...` is the spread operator and cannot declare a collecting binding. Write `...{name}` instead of `{name}...`.";
 
-    private static string MalformedPrefixAndPostfixRestDiagnostic(string name) =>
-        $"Malformed rest binding `...{name}...`; write `...{name}`. Postfix `...` is reserved for value spreading.";
+    private static string MalformedCollectingBindingDiagnostic(string name) =>
+        $"Malformed collecting binding `...{name}...`; write `...{name}`. Postfix `...` is reserved for value spreading.";
 
     private readonly record struct BindingTarget(
         string Name,
         ParameterKind Kind,
         SourceSpan NameSpan,
-        SourceSpan? RestMarkerSpan);
+        SourceSpan? CollectingMarkerSpan);
 
     /// <summary>
     /// Checks whether the tokens at the current position form a deconstruction
     /// assignment with identifier targets. A plain single <c>name =</c> is left to the
     /// ordinary property path; canonical <c>...name =</c> is the unambiguous
-    /// single-rest form.
+    /// lone-collecting-binding form.
     ///
     /// A POSTFIX <c>name...</c> marker is scanned here only so the rejected form still
     /// reaches <see cref="ParseBindingPatternAssignment"/> and reports the targeted
     /// "postfix `...` is the spread operator" error instead of a generic expression
-    /// diagnostic. Postfix never denotes a rest binding, and such a parse always fails.
+    /// diagnostic. Postfix never denotes a collecting binding, and such a parse always fails.
     /// </summary>
     private bool LookaheadIsBindingPatternAssignment()
     {
         var index = NextSignificantIndex(_pos);
         var sawComma = false;
-        var sawRestMarker = false;
+        var sawCollectingMarker = false;
 
         while (true)
         {
@@ -1031,7 +1031,7 @@ public sealed class Parser
                 {
                     return false;
                 }
-                sawRestMarker = true;
+                sawCollectingMarker = true;
             }
 
             if (_tokens[index].Kind != TokenKind.Identifier)
@@ -1041,7 +1041,7 @@ public sealed class Parser
             if (_tokens[index].Kind == TokenKind.Ellipsis)
             {
                 index = NextSignificantIndex(index + 1);
-                sawRestMarker = true;
+                sawCollectingMarker = true;
             }
 
             switch (_tokens[index].Kind)
@@ -1051,7 +1051,7 @@ public sealed class Parser
                     index = NextSignificantIndex(index + 1);
                     continue;
                 case TokenKind.Equals:
-                    return sawComma || sawRestMarker;
+                    return sawComma || sawCollectingMarker;
                 default:
                     return false;
             }
@@ -1060,10 +1060,10 @@ public sealed class Parser
 
     /// <summary>
     /// Parses a deconstruction assignment <c>x, ...y, z = RHS</c>. A canonical
-    /// single-rest form <c>...items = RHS</c> is also supported. The right-hand side
+    /// lone-collecting-binding form <c>...items = RHS</c> is also supported. The right-hand side
     /// is evaluated once and its items are bound to the targets by the shared
-    /// deconstruction matcher, with one optional movable rest binding that COLLECTS
-    /// its assigned items as one exact immutable list (<c>CollectRest</c>).
+    /// deconstruction matcher, with one optional movable collecting binding that COLLECTS
+    /// its assigned items as one exact immutable list (<c>CollectSegment</c>).
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
@@ -1073,38 +1073,38 @@ public sealed class Parser
         var targets = new List<BindingTarget>();
         while (true)
         {
-            Token? restMarkerToken = null;
+            Token? collectingMarkerToken = null;
             if (Current.Kind == TokenKind.Ellipsis)
-                restMarkerToken = Advance();
+                collectingMarkerToken = Advance();
             var hasPostfixMarker = false;
 
             var nameToken = Current; // Identifier, guaranteed by the lookahead
             var name = nameToken.StringValue!;
             Advance(); // consume identifier
 
-            // Postfix `...` is the spread operator and never declares a rest binding.
+            // Postfix `...` is the spread operator and never declares a collecting binding.
             // The lookahead admits this shape only so the rejection is reported here
             // with an exact span and replacement; the target stays a fixed binding.
             if (Current.Kind == TokenKind.Ellipsis)
             {
                 hasPostfixMarker = true;
                 var postfixMarker = Advance();
-                var (message, startSpan) = restMarkerToken is { } prefixMarker
-                    ? (MalformedPrefixAndPostfixRestDiagnostic(name), TokenSpan(prefixMarker))
-                    : (PostfixRestBindingDiagnostic(name), TokenSpan(nameToken));
+                var (message, startSpan) = collectingMarkerToken is { } prefixMarker
+                    ? (MalformedCollectingBindingDiagnostic(name), TokenSpan(prefixMarker))
+                    : (PostfixCollectingBindingDiagnostic(name), TokenSpan(nameToken));
                 ReportError(message, CombineSpans(startSpan, TokenSpan(postfixMarker))!);
             }
 
-            // A malformed combined `...name...` target is not retained as a rest
+            // A malformed combined `...name...` target is not retained as a collecting
             // binding in the recovered AST. Only a clean prefix marker activates
             // variadic semantics.
-            var isRestBinding = restMarkerToken is not null && !hasPostfixMarker;
-            var kind = isRestBinding ? ParameterKind.Variadic : ParameterKind.Normal;
+            var isCollectingBinding = collectingMarkerToken is not null && !hasPostfixMarker;
+            var kind = isCollectingBinding ? ParameterKind.Variadic : ParameterKind.Normal;
             targets.Add(new BindingTarget(
                 name,
                 kind,
                 TokenSpan(nameToken),
-                isRestBinding && restMarkerToken is { } prefixMarkerForSpan
+                isCollectingBinding && collectingMarkerToken is { } prefixMarkerForSpan
                     ? TokenSpan(prefixMarkerForSpan)
                     : null));
 
@@ -1123,7 +1123,7 @@ public sealed class Parser
         if (targets.Count(static target => target.Kind == ParameterKind.Variadic) > 1)
         {
             ReportError(
-                "A deconstruction binding pattern may contain at most one rest binding (`...name`).",
+                "A deconstruction binding pattern may contain at most one collecting binding (`...name`).",
                 targets[0].NameSpan);
         }
 
@@ -1153,7 +1153,7 @@ public sealed class Parser
     /// items. This unpacking is deconstruction-specific and does not change function
     /// calls, which still pass <c>A</c> as one argument unless <c>...</c> is written.
     /// Synthetic constructs carry no source spans; only the target property names are
-    /// source-backed declarations. The rest-marker metadata is the one additional
+    /// source-backed declarations. The collecting-marker metadata is the one additional
     /// source-backed syntax span retained on the synthetic binding pattern.
     /// </summary>
     private void AddDeconstructionProperties(
@@ -1169,7 +1169,7 @@ public sealed class Parser
         var captures = targets
             .Select(static target => (ParameterPattern)new CaptureParameterPattern(target.Name, Span: null, target.Kind)
             {
-                RestMarkerSpan = target.RestMarkerSpan,
+                CollectingMarkerSpan = target.CollectingMarkerSpan,
             })
             .ToList();
         var seqPattern = new SequenceValueParameterPattern(captures);
@@ -1372,7 +1372,7 @@ public sealed class Parser
             if (PatternContainsVariadicParameter(pattern))
             {
                 ReportError(
-                    $"Rest bindings are only supported in ordinary explicit parameter lists for '{propertyName}'.",
+                    $"Collecting bindings are only supported in ordinary explicit parameter lists for '{propertyName}'.",
                     span);
             }
             return;
@@ -1380,11 +1380,11 @@ public sealed class Parser
 
         if (ParameterPattern.HasMultipleVariadicCapturesAtAnyLevel(parameterPatterns))
         {
-            ReportError("Only one rest binding is allowed per pattern level.", span);
+            ReportError("Only one collecting binding is allowed per pattern level.", span);
         }
         else if (ParameterPattern.HasRepeatedCaptureNameIncludingVariadic(parameterPatterns))
         {
-            ReportError("Repeated parameter names cannot include rest bindings.", span);
+            ReportError("Repeated parameter names cannot include collecting bindings.", span);
         }
     }
 
@@ -1441,7 +1441,7 @@ public sealed class Parser
         finally { _nestingDepth--; }
     }
 
-    private Pattern ParsePrefixRestBindingPatternAtom()
+    private Pattern ParsePrefixCollectingBindingPatternAtom()
     {
         var markerToken = Advance(); // consume canonical prefix '...'
         var markerSpan = TokenSpan(markerToken);
@@ -1457,7 +1457,7 @@ public sealed class Parser
                 ? markerSpan
                 : CombineSpans(markerSpan, TokenSpan(Current))!;
             ReportError(
-                isMissing ? MissingRestBindingNameDiagnostic : InvalidRestBindingTargetDiagnostic,
+                isMissing ? MissingCollectingBindingNameDiagnostic : InvalidCollectingBindingTargetDiagnostic,
                 diagnosticSpan);
 
             // Consume one malformed same-line pattern atom where possible so a
@@ -1466,7 +1466,7 @@ public sealed class Parser
                 _ = ParsePatternAtom();
 
             // Malformed syntax gets an ordinary recovery placeholder. It must not
-            // introduce rest semantics into the recovered tree.
+            // introduce collecting-binding semantics into the recovered tree.
             return new Pattern.Bind("_error_");
         }
 
@@ -1479,14 +1479,14 @@ public sealed class Parser
             Advance();
         }
         if (hadPostfixGrace)
-            ReportError("Rest bindings cannot use `~` reordering.", TokenSpan(nameToken));
+            ReportError("Collecting bindings cannot use `~` reordering.", TokenSpan(nameToken));
 
         if (Current.Kind == TokenKind.Ellipsis
             && MayContinueClosedExpression(TokenKind.Ellipsis))
         {
             var postfixMarker = Advance();
             ReportError(
-                MalformedPrefixAndPostfixRestDiagnostic(name),
+                MalformedCollectingBindingDiagnostic(name),
                 CombineSpans(markerSpan, TokenSpan(postfixMarker))!);
             return new Pattern.Bind(name)
             {
@@ -1498,7 +1498,7 @@ public sealed class Parser
         {
             NameSpan = TokenSpan(nameToken),
             ParameterKind = ParameterKind.Variadic,
-            RestMarkerSpan = markerSpan,
+            CollectingMarkerSpan = markerSpan,
         };
     }
 
@@ -1507,7 +1507,7 @@ public sealed class Parser
         switch (Current.Kind)
         {
             case TokenKind.Ellipsis:
-                return ParsePrefixRestBindingPatternAtom();
+                return ParsePrefixCollectingBindingPatternAtom();
 
             case TokenKind.Tilde:
             {
@@ -1519,12 +1519,12 @@ public sealed class Parser
                     ReportError("Grace is not allowed in clause-head patterns.");
 
                     // Postfix `...` is the spread operator, so `~name...` is a grace
-                    // error plus a rejected rest-binding spelling, never a rest binding.
+                    // error plus a rejected collecting-binding spelling, never a collecting binding.
                     if (Current.Kind == TokenKind.Ellipsis)
                     {
                         var markerToken = Advance();
                         ReportError(
-                            PostfixRestBindingDiagnostic(token.StringValue!),
+                            PostfixCollectingBindingDiagnostic(token.StringValue!),
                             CombineSpans(TokenSpan(token), TokenSpan(markerToken))!);
                     }
 
@@ -1577,14 +1577,14 @@ public sealed class Parser
                 if (hadPostfixGrace)
                     ReportError("Grace is not allowed in clause-head patterns.");
 
-                // Postfix `...` is the spread operator and never declares a rest
-                // binding; a rest binding is written `...name`. Reject the spelling
+                // Postfix `...` is the spread operator and never declares a collecting
+                // binding; a collecting binding is written `...name`. Reject the spelling
                 // with an exact span over `name...` and the canonical replacement.
                 if (Current.Kind == TokenKind.Ellipsis)
                 {
                     var markerToken = Advance();
                     ReportError(
-                        PostfixRestBindingDiagnostic(token.StringValue!),
+                        PostfixCollectingBindingDiagnostic(token.StringValue!),
                         CombineSpans(TokenSpan(token), TokenSpan(markerToken))!);
                 }
 
@@ -2198,9 +2198,9 @@ public sealed class Parser
                 and not TokenKind.EndOfFile;
         ReportError(
             !sameLineTarget
-                ? $"{MissingRestBindingNameDiagnostic} {PrefixSpreadExpressionDiagnostic}"
+                ? $"{MissingCollectingBindingNameDiagnostic} {PrefixSpreadExpressionDiagnostic}"
                 : Current.Kind != TokenKind.Identifier
-                    ? $"{InvalidRestBindingTargetDiagnostic} {PrefixSpreadExpressionDiagnostic}"
+                    ? $"{InvalidCollectingBindingTargetDiagnostic} {PrefixSpreadExpressionDiagnostic}"
                     : PrefixSpreadExpressionDiagnostic,
             sameLineTarget
                 ? CombineSpans(TokenSpan(token), TokenSpan(Current))!

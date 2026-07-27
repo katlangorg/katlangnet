@@ -29,7 +29,7 @@ public class CallArgumentAssemblyTests
             $"Expected {expected} but got {actual}");
 
     /// <summary>
-    /// Same 4-way parity matrix as <c>RestCollectionTests</c>: public engine,
+    /// Same 4-way parity matrix as <c>CollectingBindingTests</c>: public engine,
     /// plain evaluation with optimizers on and off, and counted evaluation
     /// must agree on one result value.
     /// </summary>
@@ -86,15 +86,15 @@ public class CallArgumentAssemblyTests
     // ── Spread has identical meaning for every callee shape ─────────────────
 
     [Fact]
-    public void SequenceSpread_FlatCallee_SuppliesOpenedItemsAsSlots()
+    public void SequenceSpread_FlatCallee_SuppliesSpreadItemsAsSlots()
         => AssertEvaluates("G(x, y) = x + y\nA = (1, 2)\nG(A...)", Atom(3));
 
     [Fact]
-    public void SequenceSpread_PatternedCallee_SuppliesOpenedItemsAsSlots()
+    public void SequenceSpread_PatternedCallee_SuppliesSpreadItemsAsSlots()
         => AssertEvaluates("F(x, x) = x + 1\nA = (7, 7)\nF(A...)", Atom(8));
 
     [Fact]
-    public void SequenceSpread_ConditionalCallee_SuppliesOpenedItemsBeforeClauseSelection()
+    public void SequenceSpread_ConditionalCallee_SuppliesSpreadItemsBeforeClauseSelection()
         => AssertEvaluates(TwoClauseConditional + "A = (1, 2)\nF(A...)", Atom(3));
 
     [Fact]
@@ -106,7 +106,7 @@ public class CallArgumentAssemblyTests
     }
 
     [Fact]
-    public void ListSpread_PatternedAndConditionalCallees_SupplyOpenedItems()
+    public void ListSpread_PatternedAndConditionalCallees_SupplySpreadItems()
     {
         AssertEvaluates("F(x, x) = x\nB = [7, 7]\nF(B...)", Atom(7));
         AssertEvaluates(TwoClauseConditional + "B = [1, 2]\nF(B...)", Atom(3));
@@ -224,14 +224,14 @@ public class CallArgumentAssemblyTests
         Assert.IsType<EvalError.NoMatchingBranch>(Innermost(listError));
     }
 
-    // ── Function-valued argument in a rest binding (targeted diagnostic) ─────
+    // ── Function-valued argument in a collecting binding (targeted diagnostic) ─────
 
     [Fact]
-    public void FunctionValuedArgument_InRestBinding_ReportsTargetedDiagnostic()
+    public void FunctionValuedArgument_InVariadicParameter_ReportsTargetedDiagnostic()
     {
         var error = AssertFails("F(...fs) = fs\nF(sum)");
         var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
-        Assert.Contains("Rest parameter `...fs` collects values", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("Variadic parameter `...fs` collects values", mismatch.Message, StringComparison.Ordinal);
         Assert.Contains("a supplied argument is a function", mismatch.Message, StringComparison.Ordinal);
 
         // A parameterized user function is function-shaped too.
@@ -244,10 +244,10 @@ public class CallArgumentAssemblyTests
     }
 
     [Fact]
-    public void ErroredValuePropertyArgument_InRestBinding_SurfacesTheRealError()
+    public void ErroredValuePropertyArgument_InVariadicParameter_SurfacesTheRealError()
     {
         // A zero-parameter VALUE property is NOT function-shaped: when its
-        // body fails, the rest binding surfaces the genuine evaluation error
+        // body fails, the collecting binding surfaces the genuine evaluation error
         // instead of misdescribing the argument as "a function".
         var divisionError = AssertFails("Bad = 1 / 0\nG(...items) = items.count\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));

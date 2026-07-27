@@ -13,7 +13,7 @@ This note locks down binding ownership boundaries before any future `BindingInpu
 - `CallableBindingPlan`: binding shape.
 - `FlatVariadicBindingLayout`: plan-derived runtime layout for flat variadic user calls and generic `Algorithm.User` loop-step evaluated-slot binding.
 - `BindCallableArguments`: suffix-from-back binding kernel over already-built items.
-- `CollectRest` / `CreateVariadicCapture`: rest materialization — the collected rest is ONE exact immutable `Result.ListValue` with emitted count 1 (the `collect` operation; Lean `collectRest`). No raw-supply counts or forwarding provenance are stored.
+- `CollectSegment` / `CreateVariadicCapture`: collecting-binding materialization — the collected segment is ONE exact immutable `Result.ListValue` with emitted count 1 (the `collect` operation; Lean `collectSegment`). No raw-supply counts or forwarding provenance are stored.
 - Runtime executors: context-specific semantics.
 
 ## Runtime executor ownership
@@ -138,7 +138,7 @@ Reopen patterned executor policy only if a second non-evaluator consumer of patt
 
 Callback binding unification is deferred. Callback binding remains executor-owned runtime policy across counted callback evaluation, flat callback parameter binding, patterned callback parameter binding, conditional callback dispatch, map callbacks, filter callbacks, reduce step callbacks, and builtin-as-callback paths. `CallableBindingPlan` may describe callback signature shape, but it does not own callback input shaping or execution policy.
 
-Rest parameter kinds are never discarded on any callback route (July 2026 correction): a flat callee whose top-level parameters include a rest routes through `BindCountedCallbackParameterPatternList` (Lean `bindCountedCallbackParameterPatternList`), which applies the established flat-callback row expansion to the supplied argument slots and then delegates to the shared `BindCountedParameterPatternList`, so the rest COLLECTS an exact immutable list — there is no callback-specific rest algorithm. Only fixed-only flat callees stay on `BindCountedCallbackParams`.
+Variadic parameter kinds are never discarded on any callback route (July 2026 correction): a flat callee whose top-level parameters include a variadic parameter routes through `BindCountedCallbackParameterPatternList` (Lean `bindCountedCallbackParameterPatternList`), which applies the established flat-callback row expansion to the supplied argument slots and then delegates to the shared `BindCountedParameterPatternList`, so the variadic parameter COLLECTS an exact immutable list — there is no callback-specific collecting algorithm. Only fixed-only flat callees stay on `BindCountedCallbackParams`.
 
 `UsesPatternBinding` remains for now because callbacks, evaluated loop slots, and loop fallbacks still share that runtime helper. Do not partially migrate only the callback call site to `CallableBindingPlan.RequiresPatternedBinding`.
 
@@ -174,7 +174,7 @@ Reopen only when a concrete consumer appears, such as accepted guard-expression 
 
 Call argument-slot assembly is now centralized: `BuildCallArgumentInputs` (Lean `collectVariadicCallItems`) serves EVERY callable shape — flat fixed, flat/mixed variadic, patterned, and multi-clause conditional. It evaluates each written slot, reifies every non-spread slot as exactly one argument value (with the dual algorithm channel where resolvable), and expands every explicit spread slot by one value boundary BEFORE any arity checking, clause selection, or pattern binding. The July 2026 call-spread repair introduced this after an audit found spread expansion implemented in only two of four per-shape assemblers (patterned and conditional callees silently received a spread argument as one closed value).
 
-Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/rest/suffix binder, `ParameterPattern` binding (which additionally consumes the explicit written-item channel for zero-parameter block arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver boundary preservation, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
+Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/collecting/suffix binder, `ParameterPattern` binding (which additionally consumes the explicit written-item channel for zero-parameter block arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver boundary preservation, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
 
 ## `BindingPolicy` deferred
 

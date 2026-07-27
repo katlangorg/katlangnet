@@ -374,7 +374,7 @@ public sealed class KatLangError
                 && context.Inner is EvalError.ArityMismatch mismatch)
             {
                 var pattern = string.Join(", ", deconstruction.TargetDisplayNames);
-                var expectation = deconstruction.HasRestTarget
+                var expectation = deconstruction.HasCollectingTarget
                     ? $"at least {FormatCount(mismatch.Expected, "value")}"
                     : FormatCount(mismatch.Expected, "value");
                 message = $"Assignment pattern `{pattern}` expects {expectation} from the right-hand side, but it supplied {FormatCount(mismatch.Actual, "value")}.";

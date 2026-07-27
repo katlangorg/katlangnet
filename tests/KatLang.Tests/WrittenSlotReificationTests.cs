@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// pattern argument item, or the reduce initial accumulator — contributes
 /// exactly ONE persistent value, even when the expression's counted supply
 /// emitted zero or many items (index projections, loop results, counted
-/// callback parameters). Only an explicit spread opens the value into the
+/// callback parameters). Only an explicit spread supplies the value's items into the
 /// surrounding slots. This matches every sibling receiver (capture, call
 /// arguments, root rows beside other rows, deconstruction). Lean twins: the
 /// <c>list-written-slot-reifies-projection</c> and

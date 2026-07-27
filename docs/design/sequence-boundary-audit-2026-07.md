@@ -10,9 +10,9 @@ validator, and the reference for the invariants that validator enforces.
 > `makeCollectionListResult` / `MakeCollectionListResult`;
 > `combineCollectionResult` / `CombineCollectionResult` no longer exists:
 > zero kept items form `[]`, one kept item forms `[item]`, and builtin
-> collection binding opens a lone bound LIST like a lone sequence value.
+> the builtin collection view opens a lone bound LIST like a lone sequence value.
 > Canonical arity capture and output-slot combination remain sequence-centered.
-> Variadic/rest binding now uses exact immutable list collection instead. The semantic descriptions below have been updated;
+> Variadic/collecting binding now uses exact immutable list collection instead. The semantic descriptions below have been updated;
 > the corpus/accounting history remains the July 2026 audit record. See
 > AGENTS.md and `src/KatLang/CALLABLES.md` for the operational rules.
 
@@ -41,7 +41,7 @@ collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`,
 
 **Non-boundaries** (multi-item counts flow through):
 
-1. Root/body output accumulation: a spread slot contributes its opened item
+1. Root/body output accumulation: a spread slot contributes its spread item
    count (possibly 0); a **non-spread slot contributes `max(1, emitted)`** —
    so `()` stays one visible row, and a supply-emitting expression such as
    `x:0` emits several rows at root.
@@ -49,12 +49,12 @@ collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`,
 3. The strict single-value `map`/`reduce` callback contract (multi-output or
    `()`-valued callback results are errors, not grouped values).
 
-*(Superseded, July 2026 rest-collection change: raw variadic parameter
+*(Superseded, July 2026 collecting-binding change: raw variadic parameter
 storage — `variadicSupplyEnv` / `VariadicStreamEnv` with raw item counts —
-was removed. Rest bindings now collect ONE exact immutable list with emitted
-count 1 (`collectRest` / `CollectRest`), and forwarding is ordinary list
+was removed. Collecting bindings now collect ONE exact immutable list with emitted
+count 1 (`collectSegment` / `CollectSegment`), and forwarding is ordinary list
 spread: `sum(a)` passes the bound list as the one collection argument, and
-`a...` re-opens exactly the collected items.)*
+`a...` re-spreads exactly the collected items.)*
 
 **Construction.** Parenthesized lists parse to zero-parameter blocks whose
 output slots keep `()` items visible; slots are combined with the shallow
@@ -138,8 +138,8 @@ observable count at root; notes):
 | capture `x = V` | 1 | canonical V | 1 | identical for `x`, `x()`, `A.X`, `A.X()` |
 | fixed param `F(V)` | 1 arg | V | 1 | call never opens a grouped arg |
 | fixed `F(V...)` | `items(V)` args | item / `E:arity` | 1 | succeeds iff exactly 1 item |
-| variadic `F(V)` / `F(V...)` | 1 arg / items | `L[V]` / `L[items(V)...]` | 1 | rest COLLECTS an exact list; grouped and spread calls always differ (July 2026 supersession of the old rest-only coincidence) |
-| mixed `F(h, ...t)(V...)` | items | front/back split; rest collects middle as `L[...]` | 1 | a 1-item rest stays `[item]` (no collapse; July 2026 supersession of the old capture law) |
+| variadic `F(V)` / `F(V...)` | 1 arg / items | `L[V]` / `L[items(V)...]` | 1 | the variadic parameter COLLECTS an exact list; grouped and spread calls always differ (July 2026 supersession of the old single-variadic coincidence) |
+| mixed `F(h, ...t)(V...)` | items | front/back split; the variadic parameter collects the middle as `L[...]` | 1 | a 1-item collected segment stays `[item]` (no collapse; July 2026 supersession of the old capture law) |
 | deconstruction `x, y = V` | `items(V)` | element-wise match | 1 | `= V` ≡ `= V...` (unpacking receiver) |
 | explicit seq `(V, 99)` | 2 slots | `S[V, 99]` | 1 | `()` survives as item; nesting intact |
 | spread in seq `(V..., 99)` | items+1 | shallow combine | 1 | `(()..., 99)` = `99` (singleton collapse) |
@@ -170,9 +170,9 @@ observable count at root; notes):
    argument slot, sequence-literal item, and stored binding.
 5. **Where is capture/normalization applied?** Deep `normalize` at written
    sequence construction and ordinary value capture (inputs canonical); shallow
-   combine at output slots. Rest binding and collection-producing builtins
+   combine at output slots. Collecting binding and collection-producing builtins
    instead construct exact lists and never renormalize item internals.
-6. **Where may spread reopen a value?** Any expression-list context (root/body
+6. **Where may a value be re-spread?** Any expression-list context (root/body
    slots, call args, sequence literals, builtin supplies) — exactly one layer.
 7. **Can any operation construct a literal-unwritable value?** No. 0 orphan
    singleton nodes across all generated cases (enforced as `UnexpectedWrapper`).
@@ -189,7 +189,7 @@ observable count at root; notes):
 11. **Can a collection builtin erase a one-survivor boundary?** No. The exact
     result is `[survivor]`, so `count(take(V, 1))` is 1 whenever `V` supplies an
     item, including when that item is a sequence value or `()`. Explicit
-    `take(V, 1)...` re-opens the list and supplies the survivor itself.
+    `take(V, 1)...` re-spreads the list and supplies the survivor itself.
 12. **Can a non-spread `()` disappear from an item position?** Not from any
     parser-reachable position (root rows, property bodies, sequence literals,
     argument slots, builtin supplies all preserve it — validated as
@@ -259,19 +259,19 @@ documented rules. Candidates examined and resolved as rule-consistent:
 deconstruction opening asymmetry; strict single-value map/reduce callback
 result contract; string display non-roundtrip.
 
-*(Superseded, July 2026 rest-collection change: the rest-only coincidence
+*(Superseded, July 2026 collecting-binding change: the single-variadic coincidence
 `F(V)` ≡ `F(V...)` and its theorem `agree_on_lone_seq_iff_lone_rest` are
-GONE — rest bindings collect exact immutable lists, so `F(V)` and `F(V...)`
+GONE — collecting bindings collect exact immutable lists, so `F(V)` and `F(V...)`
 always differ, and the receiver contrast is now proven by
-`receivers_never_agree_on_lone_seq` / `lone_rest_disagrees_on_lone_list` in
+`receivers_never_agree_on_lone_seq` / `lone_collecting_disagrees_on_lone_list` in
 `CoreArityAlgebraProofs.lean` plus the collect bridge laws in
 `KatLangArityLaws.lean`. The correction pass additionally routed flat
-callbacks with a top-level rest through the shared prefix/rest/suffix binder,
+callbacks with a top-level variadic parameter through the shared prefix/collecting/suffix binder,
 so `[7].map(Collect)` collects `items = [7]`.)*
 
 **Unresolved design choices (pre-existing, unchanged):** sequence-value
 callback deconstruction on scalar elements (still strict; deferred per
-BINDING-ARCHITECTURE.md Phase 26 — flat top-level rest callbacks now bind
+BINDING-ARCHITECTURE.md Phase 26 — flat top-level variadic callbacks now bind
 through the shared binder, but the nested-pattern scalar fallback stays
 singleton-only); zero-item root output displaying as empty text (not
 reconstructable as a program).
@@ -354,10 +354,10 @@ to keep it and enforce it):**
 > boundaries (singleton wrap, redundant empty nesting) and nothing else;
 > collection-producing builtins construct exact writable list boundaries.
 
-*(July 2026 rest-collection update: the original recommendation listed "raw
+*(July 2026 collecting-binding update: the original recommendation listed "raw
 variadic storage" as a third item-supply site. That storage no longer exists —
-rest bindings collect ONE exact immutable list (`collectRest`), a value
-boundary like every other stored binding, and forwarding re-opens it only
+collecting bindings collect ONE exact immutable list (`collectSegment`), a value
+boundary like every other stored binding, and forwarding re-spreads it only
 through written `...`.)*
 
 The smallest implementation change needed to enforce it: **none** — the rule

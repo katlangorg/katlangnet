@@ -62,7 +62,7 @@ internal static class Utf16Tables
         new(Utf16TemplateIds.ListLiteral, "Output = [1, ", "2]", ClosedWhenBenign: false),
         new(Utf16TemplateIds.SequenceLiteral, "Output = (1, ", "2)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.Deconstruction, "x, ", ", z = (1, 2, 3)\nOutput = x", ClosedWhenBenign: false),
-        new(Utf16TemplateIds.RestBinding, "F(a, ...", ") = a\nOutput = F(1, 2)", ClosedWhenBenign: false),
+        new(Utf16TemplateIds.CollectingBinding, "F(a, ...", ") = a\nOutput = F(1, 2)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.CallbackBody, "F(x) = x + ", "\nOutput = [1, 2].map(F)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.ConditionalClause, "F(0) = 1\nF(", ") = 2\nOutput = F(0)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.MultilineBody, "A = 1 +\n", "\nOutput = A", ClosedWhenBenign: false),
@@ -300,7 +300,7 @@ internal static class Utf16TemplateIds
     public const string ListLiteral = "list-literal";
     public const string SequenceLiteral = "sequence-literal";
     public const string Deconstruction = "deconstruction";
-    public const string RestBinding = "rest-binding";
+    public const string CollectingBinding = "collecting-binding";
     public const string CallbackBody = "callback-body";
     public const string ConditionalClause = "conditional-clause";
     public const string MultilineBody = "multiline-body";

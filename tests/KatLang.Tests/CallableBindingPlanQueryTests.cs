@@ -142,7 +142,7 @@ public class CallableBindingPlanQueryTests
             hasOnlyFlatFixedTopLevelCaptures: false,
             hasTopLevelVariadic: true,
             hasNestedVariadic: false,
-            // Rest-only item supply: no fixed bindings, so min 0 and unbounded max.
+            // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
             min: 0,
             max: null);
         Assert.NotNull(plan.TopLevelVariadicCapture);

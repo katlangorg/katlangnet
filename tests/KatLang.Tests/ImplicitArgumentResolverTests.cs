@@ -217,8 +217,8 @@ public class ImplicitArgumentResolverTests
         Assert.Equal("CountItems", function.Name);
 
         // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values...)`):
-        // the caller's rest holds one exact list, and the spread re-supplies its
-        // collected items so the callee's rest re-collects exactly them.
+        // the caller's variadic parameter holds one exact list, and the spread re-supplies its
+        // collected items so the callee's variadic parameter re-collects exactly them.
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
         var param = Assert.IsType<Expr.Param>(spread.Operand);
         Assert.Equal("values", param.Name);
@@ -449,7 +449,7 @@ public class ImplicitArgumentResolverTests
     public void Eval_VariadicImplicitCall_SameNameTopLevelVariadic_ForwardsCallerStream()
     {
         // The root spread supplies the three items, and the synthesized spread
-        // forwarding re-supplies them to the callee's rest binding.
+        // forwarding re-supplies them to the callee's collecting binding.
         var source = """
             CountValues(...values) = values.count
             Use(...values) = CountValues
@@ -496,7 +496,7 @@ public class ImplicitArgumentResolverTests
     {
         // The implicit spread decision is made from the SOURCE binding kind:
         // `Use.items` is an ordinary fixed parameter, so the synthesized call
-        // is `Target(items)` — one argument — and the callee's rest collects
+        // is `Target(items)` — one argument — and the callee's variadic parameter collects
         // exactly one slot. The destination being variadic must not open it.
         var source = """
             Target(...items) = items
@@ -543,11 +543,11 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_RestSourceParameter_ForwardsCollectedItemsAsSpread()
+    public void Eval_VariadicSourceParameter_ForwardsCollectedItemsAsSpread()
     {
-        // Genuine rest forwarding: the caller's own rest is the source, so
+        // Genuine variadic forwarding: the caller's own collected list is the source, so
         // the synthesized call is `Target(items...)` and the collected items
-        // round-trip exactly (open(collect(xs)) = xs).
+        // round-trip exactly (spread(collect(xs)) = xs).
         var source = """
             Target(...items) = items
             Use(...items) = Target

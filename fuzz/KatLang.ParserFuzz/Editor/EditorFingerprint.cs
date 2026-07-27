@@ -69,19 +69,19 @@ internal static class EditorFingerprint
         EditorTemplateKind.ConditionalClause or EditorTemplateKind.ClauseFamily => "conditional",
         EditorTemplateKind.Callback or EditorTemplateKind.IncompleteCallback => "callback",
         EditorTemplateKind.Deconstruction => "deconstruction",
-        EditorTemplateKind.RestBinding or EditorTemplateKind.IncompleteRest => "rest",
+        EditorTemplateKind.CollectingBinding or EditorTemplateKind.IncompleteCollecting => "collecting",
         EditorTemplateKind.FunctionName or EditorTemplateKind.FunctionCall or EditorTemplateKind.IncompleteCall => "function",
         EditorTemplateKind.LoadImport => "module",
         _ => "root",
     };
 
-    /// <summary>List / sequence / rest distinction a template exercises.</summary>
+    /// <summary>List / sequence / collecting-binding distinction a template exercises.</summary>
     private static string CollectionClass(EditorTemplateKind template) => template switch
     {
         EditorTemplateKind.ListLiteral or EditorTemplateKind.IncompleteList or EditorTemplateKind.DottedAfterList => "list",
         EditorTemplateKind.SequenceLiteral or EditorTemplateKind.IncompleteSequence or EditorTemplateKind.DottedAfterSequence => "sequence",
         EditorTemplateKind.Spread or EditorTemplateKind.PartialSpread => "spread",
-        EditorTemplateKind.RestBinding or EditorTemplateKind.IncompleteRest => "rest",
+        EditorTemplateKind.CollectingBinding or EditorTemplateKind.IncompleteCollecting => "collecting",
         EditorTemplateKind.Deconstruction => "deconstruction",
         _ => "none",
     };

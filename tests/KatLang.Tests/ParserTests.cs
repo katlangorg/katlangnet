@@ -3781,7 +3781,7 @@ public class ParserTests
         var result = Parser.ParseSyntax("Bad(...a, ...b) = b");
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Only one rest binding is allowed per pattern level."));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Only one collecting binding is allowed per pattern level."));
     }
 
     [Fact]
@@ -3791,7 +3791,7 @@ public class ParserTests
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Repeated parameter names cannot include rest bindings."));
+            diagnostic.Message.Contains("Repeated parameter names cannot include collecting bindings."));
     }
 
     [Fact]
@@ -3801,7 +3801,7 @@ public class ParserTests
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Message.Contains("Only one rest binding is allowed per pattern level."));
+            diagnostic.Message.Contains("Only one collecting binding is allowed per pattern level."));
     }
 
     [Fact]
@@ -3810,11 +3810,11 @@ public class ParserTests
         var result = Parser.ParseSyntax("Bad(...a~) = a");
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Rest bindings cannot use `~` reordering."));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Collecting bindings cannot use `~` reordering."));
     }
 
     [Fact]
-    public void Parse_PostfixRestBinding_IsRejectedWithCanonicalReplacement()
+    public void Parse_PostfixBindingSpelling_IsRejectedWithCanonicalReplacement()
     {
         var result = Parser.ParseSyntax("Collect(items...) = items");
 
@@ -3822,24 +3822,24 @@ public class ParserTests
         var error = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+            "Postfix `...` is the spread operator and cannot declare a collecting binding. "
                 + "Write `...items` instead of `items...`.",
             error.Message);
         Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `items...`
 
-        // The rejected spelling never becomes a rest binding.
+        // The rejected spelling never becomes a collecting binding.
         var property = Assert.Single(result.Root.Properties);
         var user = Assert.IsType<Algorithm.User>(property.Value);
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
         Assert.Equal(ParameterKind.Normal, capture.Kind);
         Assert.Equal("items", capture.DisplayName);
-        Assert.Null(capture.RestMarkerSpan);
+        Assert.Null(capture.CollectingMarkerSpan);
     }
 
     [Theory]
     [InlineData("Collect(...items) = items")]
     [InlineData("Collect(... items) = items")]
-    public void Parse_PrefixRestBinding_ParsesCanonicalOrientationAndExactSpans(string source)
+    public void Parse_PrefixCollectingBinding_ParsesCanonicalOrientationAndExactSpans(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -3849,7 +3849,7 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
         Assert.Equal(ParameterKind.Variadic, capture.Kind);
         Assert.Equal("...items", capture.DisplayName);
-        Assert.Equal(new SourceSpan(1, 9, 1, 11), capture.RestMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 9, 1, 11), capture.CollectingMarkerSpan);
         Assert.Equal(
             source.Contains("... ", StringComparison.Ordinal)
                 ? new SourceSpan(1, 13, 1, 17)
@@ -3858,7 +3858,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_PrefixRestBinding_MarkerCannotBeSeparatedFromNameByNewline()
+    public void Parse_PrefixCollectingBinding_MarkerCannotBeSeparatedFromNameByNewline()
     {
         var result = Parser.ParseSyntax(
             """
@@ -3874,7 +3874,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_PrefixRestDeconstruction_PreservesNameAndMarkerSpans()
+    public void Parse_PrefixCollectingDeconstruction_PreservesNameAndMarkerSpans()
     {
         var result = Parser.ParseSyntax("first, ...middle, last = values");
 
@@ -3888,14 +3888,14 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
         Assert.Equal("middle", capture.Name);
         Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
-        Assert.Equal(new SourceSpan(1, 8, 1, 10), capture.RestMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), capture.CollectingMarkerSpan);
         Assert.Equal(new SourceSpan(1, 11, 1, 16), Assert.Single(middle.DeclarationSpans));
     }
 
     [Theory]
     [InlineData("first, middle..., last = values", "middle", 1, 8, 1, 16)]
     [InlineData("items... = values", "items", 1, 1, 1, 8)]
-    public void Parse_PostfixRestDeconstruction_IsRejectedWithCanonicalReplacement(
+    public void Parse_PostfixDeconstructionSpelling_IsRejectedWithCanonicalReplacement(
         string source,
         string name,
         int startLine,
@@ -3909,14 +3909,14 @@ public class ParserTests
         var error = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Postfix `...` is the spread operator and cannot declare a rest binding. "
+            "Postfix `...` is the spread operator and cannot declare a collecting binding. "
                 + $"Write `...{name}` instead of `{name}...`.",
             error.Message);
         Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
     }
 
     [Fact]
-    public void Parse_PostfixRestDeconstruction_NeverProducesARestBinding()
+    public void Parse_PostfixDeconstructionSpelling_NeverProducesACollectingBinding()
     {
         var result = Parser.ParseSyntax("first, middle..., last = values");
 
@@ -3928,15 +3928,15 @@ public class ParserTests
             Assert.Single(helperBlock.Algorithm.ParameterPatterns));
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
         Assert.Equal(ParameterKind.Normal, capture.Kind);
-        Assert.Null(capture.RestMarkerSpan);
+        Assert.Null(capture.CollectingMarkerSpan);
     }
 
     [Theory]
     [InlineData("Bad(...) = 0", "Expected a binding name")]
     [InlineData("Bad(...1) = 0", "must be an identifier")]
     [InlineData("Bad(...(item)) = 0", "must be an identifier")]
-    [InlineData("Bad(...items...) = 0", "Malformed rest binding")]
-    [InlineData("Use(...items)", "Prefix `...` is only valid for rest bindings")]
+    [InlineData("Bad(...items...) = 0", "Malformed collecting binding")]
+    [InlineData("Use(...items)", "Prefix `...` is only valid for collecting bindings")]
     public void Parse_InvalidPrefixEllipsis_ReportsTargetedDiagnosticAndRecovers(
         string source,
         string expectedMessage)
@@ -3951,7 +3951,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_MalformedPrefixRest_RecoversToFollowingDeclarationAndOutput()
+    public void Parse_MalformedPrefixCollecting_RecoversToFollowingDeclarationAndOutput()
     {
         var result = Parser.ParseSyntax(
             """
@@ -4524,7 +4524,7 @@ public class ParserTests
 
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d =>
-            d.Message.Contains("Rest bindings are only supported in ordinary explicit parameter lists") &&
+            d.Message.Contains("Collecting bindings are only supported in ordinary explicit parameter lists") &&
             d.Message.Contains("F"));
         Assert.Equal(2, diag.Span.StartLineNumber);
     }

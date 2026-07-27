@@ -95,7 +95,7 @@ public abstract record EvalError
         public CallableSignature? Signature { get; init; }
     }
 
-    /// <summary>Variadic binding did not receive enough items for its fixed parameters.</summary>
+    /// <summary>A variadic callable did not receive enough items for its fixed parameters.</summary>
     public sealed record VariadicArityMismatch(string CalleeName, int ExpectedMinimum, int Actual) : EvalError
     {
         public CallableSignature? Signature { get; init; }

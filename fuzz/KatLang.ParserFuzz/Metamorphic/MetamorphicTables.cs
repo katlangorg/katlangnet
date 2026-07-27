@@ -60,8 +60,8 @@ internal enum MetamorphicWrapperProjection
     /// <summary>`MmWrap(a, ...) = a.builtin(...)` — the same binding written as a dotted call.</summary>
     DottedFixed,
 
-    /// <summary>`MmWrap(...xs) = ...` — a REST parameter. Never equivalent; always rejected.</summary>
-    Rest,
+    /// <summary>`MmWrap(...xs) = ...` — a VARIADIC parameter. Never equivalent; always rejected.</summary>
+    Variadic,
 
     /// <summary>Fixed parameters at the WRONG arity for the consumer. Never equivalent; always rejected.</summary>
     ArityMismatched,
@@ -75,7 +75,7 @@ internal enum MetamorphicWrapperProjection
 /// dotted contract from <c>AGENTS.md</c> and <c>DottedReceiverEvaluationTests</c>, and every
 /// (builtin x receiver) and (consumer x callback x input) combination below was measured to
 /// agree on semantics, materialized items, and materialized string units before being
-/// admitted. Combinations that were measured NOT to agree — rest and arity-mismatched
+/// admitted. Combinations that were measured NOT to agree — variadic and arity-mismatched
 /// callback projections — are represented too, as explicitly REJECTED cases.</para>
 ///
 /// <para>All tables are immutable: the harness has no static mutable state.</para>
@@ -191,7 +191,7 @@ internal static class MetamorphicTables
     [
         MetamorphicWrapperProjection.DottedFixed,
         MetamorphicWrapperProjection.OrdinaryFixed,
-        MetamorphicWrapperProjection.Rest,
+        MetamorphicWrapperProjection.Variadic,
         MetamorphicWrapperProjection.ArityMismatched,
     ];
 
