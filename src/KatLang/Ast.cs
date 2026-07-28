@@ -110,12 +110,12 @@ public enum ParameterKind
 
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
-    /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
+    /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
     public SourceSpan? CollectingMarkerSpan { get; init; }
 
     public string DisplayName => Kind switch
     {
-        ParameterKind.Variadic => $"...{Name}",
+        ParameterKind.Variadic => $"{Name}...",
         _ => Name,
     };
 
@@ -175,10 +175,10 @@ public abstract record ParameterPattern
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
-    /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
+    /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
     public SourceSpan? CollectingMarkerSpan { get; init; }
 
-    public override string DisplayName => Kind == ParameterKind.Variadic ? $"...{Name}" : Name;
+    public override string DisplayName => Kind == ParameterKind.Variadic ? $"{Name}..." : Name;
 
     public override IReadOnlyList<ParameterDeclaration> Captures =>
     [
@@ -232,8 +232,9 @@ public abstract record Expr
 
     /// <summary>
     /// INTERNAL sequence-join node retained for semantic AST compatibility
-    /// (the encoding of the removed binary spread-join, before surface
-    /// <c>A...B</c> became the expression-list slots <c>A..., B</c>).
+    /// with the Lean model. Surface spreading is the named
+    /// <c>spread(expr)</c> / <c>expr.spread</c> intrinsic forms
+    /// (<see cref="SequenceSpread"/>), never this node.
     ///
     /// This is NOT the AST representation of written sequence-value syntax:
     /// the parser and all production transformations have ZERO ORIGIN SITES
@@ -261,13 +262,29 @@ public abstract record Expr
     public sealed record EmptySequence(int Depth) : Expr;
 
     /// <summary>
-    /// Postfix spread expression written with the spread operator <c>...</c>.
-    /// <c>SequenceSpread(operand)</c> spreads the top-level output items of <c>operand</c>.
-    /// <c>...</c> is postfix-only and never consumes a right operand, so a following
-    /// expression is a separate expression-list slot; semicolon is not surface expression syntax.
+    /// Spread expression. Both surface spellings — the named intrinsic call
+    /// <c>spread(operand)</c> and its extension-property equivalent
+    /// <c>operand.spread</c> — lower to this ONE node at parse time, so there
+    /// is a single evaluation path and neither spelling crosses an ordinary
+    /// call/property value boundary. <c>SequenceSpread(operand)</c> evaluates
+    /// its operand exactly once and contributes the operand's item view to the
+    /// surrounding item supply; it does not return or materialize a sequence
+    /// or list itself (the receiver decides what the supplied items become).
+    /// <c>spread</c> is a reserved intrinsic name: the parser rejects it as a
+    /// declaration, binding, or bare value, so the meaning of
+    /// <c>expr.spread</c> is never scope-dependent.
     /// Lean: <c>sequenceSpread : Expr → Expr</c>.
     /// </summary>
-    public sealed record SequenceSpread(Expr Operand) : Expr;
+    public sealed record SequenceSpread(Expr Operand) : Expr
+    {
+        /// <summary>
+        /// Exact span of the source <c>spread</c> intrinsic token (the callee
+        /// identifier in <c>spread(operand)</c>, or the member identifier in
+        /// <c>operand.spread</c>) when the parser has source information for
+        /// it. Synthetic spreads (e.g. variadic forwarding) stay spanless.
+        /// </summary>
+        public SourceSpan? IntrinsicNameSpan { get; init; }
+    }
 
     /// <summary>
     /// Surface list literal <c>[e1, ..., en]</c>. Evaluates to exactly ONE
@@ -345,7 +362,7 @@ public abstract record Pattern
         /// <summary>Parameter binding kind when this binder elaborates to an ordinary explicit parameter.</summary>
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
 
-        /// <summary>Exact span of the source prefix <c>...</c> marker, when source-backed.</summary>
+        /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
         public SourceSpan? CollectingMarkerSpan { get; init; }
     }
 
@@ -431,7 +448,7 @@ public abstract record Pattern
     /// <list type="bullet">
     ///   <item><c>Bind(x)</c>, corresponding to <c>F(x) = ...</c></item>
     ///   <item><c>SequenceValue [Bind(x), Bind(y), ...]</c></item>
-    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, ...tail))</c></item>
+    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, tail...))</c></item>
     /// </list>
     ///
     /// Rejected on purpose:
@@ -971,7 +988,7 @@ public abstract record Algorithm
     /// Parser elaboration may also predeclare parameters here for recursive
     /// capture/sequence-value clause syntax such as <c>Apply(f) = f(4)</c>,
     /// <c>PairSum((x, y)) = x + y</c>, or
-    /// <c>CountSequenceValue((...values)) = values.count</c>.
+    /// <c>CountSequenceValue((values...)) = values.count</c>.
     /// </summary>
     public sealed record User : Algorithm
     {
@@ -1001,7 +1018,7 @@ public abstract record Algorithm
 
         /// <summary>
         /// True for the synthetic inline helper the parser elaborates an
-        /// assignment deconstruction (<c>x, ...y, z = RHS</c>) into.
+        /// assignment deconstruction (<c>x, y..., z = RHS</c>) into.
         /// Diagnostics-only metadata: binding failures are phrased against the
         /// written assignment pattern instead of the anonymous helper call.
         /// Never encoded to the Lean model (wording-only, the structured error

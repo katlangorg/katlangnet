@@ -588,16 +588,16 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A...B")]
-    [InlineData("A ...B")]
-    [InlineData("A... B")]
-    [InlineData("A ... B")]
-    [InlineData("A...\nB")]
-    public void Parse_EllipsisFollowedByExpression_IsPostfixSpreadThenExpressionListSlot(string source)
+    [InlineData("A.spread B")]
+    [InlineData("A .spread B")]
+    [InlineData("spread(A) B")]
+    [InlineData("spread(A), B")]
+    [InlineData("A.spread\nB")]
+    public void Parse_SpreadFollowedByExpression_IsSpreadThenExpressionListSlot(string source)
     {
-        // `...` is postfix-only and never consumes a right operand. The token
-        // after the dots — tight, spaced, or on a later line — starts a new
-        // expression-list slot, so every spelling parses as A..., B.
+        // A spread expression never consumes a right operand. The token after
+        // the spread — tight, spaced, or on a later line — starts a new
+        // expression-list slot, so every spelling parses as A.spread, B.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -608,14 +608,14 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A...empty")]
-    [InlineData("A... empty")]
-    [InlineData("A...\nempty")]
-    public void Parse_EllipsisFollowedByEmpty_IsPostfixSpreadThenEmptyExpressionListSlot(string source)
+    [InlineData("A.spread empty")]
+    [InlineData("spread(A) empty")]
+    [InlineData("A.spread\nempty")]
+    public void Parse_SpreadFollowedByEmpty_IsSpreadThenEmptyExpressionListSlot(string source)
     {
-        // `A...empty` is not a binary spread with `empty` as a right operand:
-        // `...` takes no right operand, so source `empty` is an ordinary
-        // expression-list slot and every spelling is A..., empty.
+        // `A.spread empty` is not a binary spread with `empty` as a right operand:
+        // a spread expression takes no right operand, so source `empty` is an
+        // ordinary expression-list slot and every spelling is A.spread, empty.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -628,7 +628,7 @@ public class ParserTests
     [Fact]
     public void Parse_PostfixEllipsis_IsUnarySpreadWithNoRightOperand()
     {
-        var result = Parser.ParseSyntax("A...");
+        var result = Parser.ParseSyntax("A.spread");
 
         Assert.False(result.HasErrors);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
@@ -642,7 +642,7 @@ public class ParserTests
             """
             A = range(1, 3)
 
-            A...
+            A.spread
             A
             """);
 
@@ -660,7 +660,7 @@ public class ParserTests
             """
             A = range(1, 3)
 
-            A...,
+            A.spread,
             A
             """);
 
@@ -696,7 +696,7 @@ public class ParserTests
             A = range(1, 3)
 
             A
-            ...A
+            A...
             """);
 
         Assert.True(result.HasErrors);
@@ -709,7 +709,7 @@ public class ParserTests
             """
             A = range(1, 3)
 
-            A... // no longer continues spread on the next line
+            A.spread // a newline never continues a closed expression
             A
             """);
 
@@ -721,10 +721,10 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A = range(1, 3)\n\nA...A\nA")]
+    [InlineData("A = range(1, 3)\n\nA.spread A\nA")]
     public void Parse_NewlineAfterSequenceSpread_CreatesExpressionListSlots(string source)
     {
-        // At root output a newline separates expression-list slots, and `...`
+        // At root output a newline separates expression-list slots, and `.spread`
         // takes no right operand, so same-line and newline followers become
         // ordinary slots.
         var result = Parser.ParseSyntax(source);
@@ -742,7 +742,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            F(x...)
+            F(x.spread)
             y
             """);
 
@@ -759,7 +759,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            F(x...) // the physical line ends with ')' before the comment
+            F(x.spread) // the physical line ends with ')' before the comment
             y
             """);
 
@@ -776,7 +776,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            (x...)
+            (x.spread)
             y
             """);
 
@@ -793,7 +793,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            (x...) // the physical line ends with ')' before the comment
+            (x.spread) // the physical line ends with ')' before the comment
             y
             """);
 
@@ -808,7 +808,7 @@ public class ParserTests
     [Fact]
     public void Parse_UnparenthesizedSequenceSpread_RemainsBareSequenceSpread()
     {
-        var result = Parser.ParseSyntax("A...");
+        var result = Parser.ParseSyntax("A.spread");
 
         Assert.False(result.HasErrors);
         Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
@@ -817,7 +817,7 @@ public class ParserTests
     [Fact]
     public void Parse_ParenthesizedSequenceSpread_ReturnsBlockExpr()
     {
-        var result = Parser.ParseSyntax("(A...)");
+        var result = Parser.ParseSyntax("(A.spread)");
 
         Assert.False(result.HasErrors);
         var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
@@ -829,7 +829,7 @@ public class ParserTests
     [Fact]
     public void Parse_DoubleParenthesizedSequenceSpread_PreservesOuterBlockLayer()
     {
-        var result = Parser.ParseSyntax("((A...))");
+        var result = Parser.ParseSyntax("((A.spread))");
 
         Assert.False(result.HasErrors);
         var outer = Assert.IsType<Expr.Block>(result.Root.Output[0]);
@@ -873,23 +873,25 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Ellipsis_ChainedPostfixSpread()
+    public void Parse_SpreadOfBinaryOperands_ChainedSlots()
     {
-        // 1 + 2...3 + 4...5 + 6: each '...' is postfix and the following
-        // expression is another expression-list slot.
-        var result = Parser.ParseSyntax("1 + 2...3 + 4...5 + 6");
+        // spread(1 + 2) spread(3 + 4) 5 + 6: each spread wraps a whole binary
+        // operand and the following expression is another expression-list slot.
+        var result = Parser.ParseSyntax("spread(1 + 2) spread(3 + 4) 5 + 6");
         Assert.False(result.HasErrors);
         Assert.Equal(3, result.Root.Output.Count);
-        Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
-        Assert.IsType<Expr.SequenceSpread>(result.Root.Output[1]);
+        var first = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
+        Assert.IsType<Expr.Binary>(first.Operand);
+        var second = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[1]);
+        Assert.IsType<Expr.Binary>(second.Operand);
         Assert.IsType<Expr.Binary>(result.Root.Output[2]); // 5 + 6
     }
 
     [Fact]
     public void Parse_CommaAndEllipsis_CorrectStructure()
     {
-        // `2...3` is expression-list adjacency after a postfix spread.
-        var result = Parser.ParseSyntax("1, 2...3");
+        // `2.spread 3` is expression-list adjacency after a spread expression.
+        var result = Parser.ParseSyntax("1, 2.spread 3");
         Assert.False(result.HasErrors);
         Assert.Equal(3, result.Root.Output.Count);
         Assert.Equal(1m, Assert.IsType<Expr.Num>(result.Root.Output[0]).Value);
@@ -901,8 +903,8 @@ public class ParserTests
     [Fact]
     public void Parse_PropertyDetectionWithEllipsis()
     {
-        // A = 1...2 B = 3 -> two properties; A's body is the expression list (1..., 2).
-        var result = Parser.ParseSyntax("A = 1...2 B = 3");
+        // A = 1.spread 2 B = 3 -> two properties; A's body is the expression list (1.spread, 2).
+        var result = Parser.ParseSyntax("A = 1.spread 2 B = 3");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Properties.Count);
     }
@@ -1129,8 +1131,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B...")]
-    [InlineData("A\nB...")]
+    [InlineData("A B.spread")]
+    [InlineData("A\nB.spread")]
     public void Parse_AdjacencyBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1143,8 +1145,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B C...")]
-    [InlineData("A\nB\nC...")]
+    [InlineData("A B C.spread")]
+    [InlineData("A\nB\nC.spread")]
     public void Parse_MultipleAdjacencyBeforePostfixSequenceSpread_SpreadsImmediateExpression(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1158,8 +1160,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A, (B...)")]
-    [InlineData("A\n(B...)")]
+    [InlineData("A, (B.spread)")]
+    [InlineData("A\n(B.spread)")]
     public void Parse_ExplicitlySequenceValuePostfixSequenceSpread_AppliesOnlyToSequenceValueOperand(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1173,8 +1175,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A, B C...")]
-    [InlineData("A, B\nC...")]
+    [InlineData("A, B C.spread")]
+    [InlineData("A, B\nC.spread")]
     public void Parse_CommaContributionBeforeJoinedPostfixSequenceSpread_PreservesCommaStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1188,8 +1190,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B, C...")]
-    [InlineData("A\nB, C...")]
+    [InlineData("A B, C.spread")]
+    [InlineData("A\nB, C.spread")]
     public void Parse_JoinContributionBeforeCommaSlotPostfixSequenceSpread_PreservesCommaStructure(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1205,7 +1207,7 @@ public class ParserTests
     [Fact]
     public void Parse_DefinitionSeparatedPostfixSequenceSpreadContribution_PreservesPriorCommaSlot()
     {
-        var result = Parser.ParseSyntax("A, B\nP = 1\nC...");
+        var result = Parser.ParseSyntax("A, B\nP = 1\nC.spread");
 
         Assert.False(result.HasErrors);
         Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
@@ -1219,7 +1221,7 @@ public class ParserTests
     [Fact]
     public void Parse_DefinitionSeparatedCommaSlotSpreadContribution_PreservesPriorSequenceSlot()
     {
-        var result = Parser.ParseSyntax("A\nP = 1\nB, C...");
+        var result = Parser.ParseSyntax("A\nP = 1\nB, C.spread");
 
         Assert.False(result.HasErrors);
         Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
@@ -1234,8 +1236,8 @@ public class ParserTests
     public void Parse_CommaSlotPostfixSequenceSpreadWithoutJoin_KeepsCommaStructure()
     {
         // Comma slots stay structural and the spread stays local to its own
-        // slot — no adjacency pulls `B...` into `A`'s slot.
-        var result = Parser.ParseSyntax("A, B...");
+        // slot — no adjacency pulls `B.spread` into `A`'s slot.
+        var result = Parser.ParseSyntax("A, B.spread");
 
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
@@ -1245,8 +1247,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A B... C")]
-    [InlineData("A\nB...\nC")]
+    [InlineData("A B.spread C")]
+    [InlineData("A\nB.spread\nC")]
     public void Parse_MiddlePostfixSequenceSpread_AppliesToImmediateExpressionAndLaterOutputContinues(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1260,8 +1262,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("(A B...)")]
-    [InlineData("(A\nB...)")]
+    [InlineData("(A B.spread)")]
+    [InlineData("(A\nB.spread)")]
     public void Parse_ParenthesizedAdjacencyBeforePostfixSequenceSpread_IsOneSequenceValue(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1275,8 +1277,8 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("F(A B...)")]
-    [InlineData("F(A\nB...)")]
+    [InlineData("F(A B.spread)")]
+    [InlineData("F(A\nB.spread)")]
     public void Parse_CallArgumentAdjacencyBeforePostfixSequenceSpread_IsExpressionListArguments(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1292,7 +1294,7 @@ public class ParserTests
     [Fact]
     public void Parse_CallArgumentCommaBeforePostfixSequenceSpread_RemainsTwoArguments()
     {
-        var result = Parser.ParseSyntax("F(A, B...)");
+        var result = Parser.ParseSyntax("F(A, B.spread)");
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
@@ -1303,12 +1305,12 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_CallArgument_PostfixSpreadJoinVsCommaSpread_DiffersInArgumentCount()
+    public void Parse_CallArgument_SpreadAdjacencyAndCommaBothProduceTwoSlots()
     {
-        // The paired distinction: `...` is postfix with no right operand.
-        // `F(X...Y)` and `F(X..., Y)` are both TWO argument slots under
-        // adjacency-as-expression-list: `X...` and `Y`.
-        var oneArg = Parser.ParseSyntax("F(X...Y)");
+        // A spread expression has no right operand.
+        // `F(X.spread Y)` and `F(X.spread, Y)` are both TWO argument slots under
+        // adjacency-as-expression-list: `X.spread` and `Y`.
+        var oneArg = Parser.ParseSyntax("F(X.spread Y)");
         Assert.False(oneArg.HasErrors);
         var call1 = Assert.IsType<Expr.Call>(Assert.Single(oneArg.Root.Output));
         Assert.Equal(2, call1.Args.Output.Count);
@@ -1316,7 +1318,7 @@ public class ParserTests
             Assert.IsType<Expr.SequenceSpread>(call1.Args.Output[0]).Operand).Name);
         Assert.Equal("Y", Assert.IsType<Expr.Resolve>(call1.Args.Output[1]).Name);
 
-        var twoArgs = Parser.ParseSyntax("F(X..., Y)");
+        var twoArgs = Parser.ParseSyntax("F(X.spread, Y)");
         Assert.False(twoArgs.HasErrors);
         var call2 = Assert.IsType<Expr.Call>(Assert.Single(twoArgs.Root.Output));
         Assert.Equal(2, call2.Args.Output.Count);
@@ -1662,11 +1664,11 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A...B\nC")]
-    [InlineData("A...B\nP = 9\nC")]
+    [InlineData("A.spread B\nC")]
+    [InlineData("A.spread B\nP = 9\nC")]
     public void Parse_PostfixSpreadThenLaterOutput_SequencesAfterSpread(string source)
     {
-        // `...` takes no right operand, so later output never lands "inside" a
+        // `.spread` takes no right operand, so later output never lands "inside" a
         // spread. A newline at root and a definition-separated contribution
         // keep the spread value and later output as expression-list slots.
         var result = Parser.ParseSyntax(source);
@@ -1680,11 +1682,11 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A...\nC")]
-    [InlineData("A...\nP = 9\nC")]
+    [InlineData("A.spread\nC")]
+    [InlineData("A.spread\nP = 9\nC")]
     public void Parse_PostfixSpreadLaterOutput_ContinuesAfterSpread(string source)
     {
-        // Postfix `A...` lets later output continue after the spread in every
+        // Postfix `A.spread` lets later output continue after the spread in every
         // spelling: a newline at root and definition-separated rows both
         // produce expression-list slots after the spread.
         var result = Parser.ParseSyntax(source);
@@ -1697,12 +1699,11 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A...empty\nC")]
-    [InlineData("A...empty\nP = 9\nC")]
+    [InlineData("A.spread empty\nC")]
+    [InlineData("A.spread empty\nP = 9\nC")]
     public void Parse_PostfixSpreadThenEmptyThenLaterOutput_SequencesAfterSpread(string source)
     {
-        // `A...empty` is no longer a binary spread with `empty` as the right
-        // operand: `...` takes no right operand, so source `empty` is an
+        // `.spread` takes no right operand, so a following `empty` is an
         // ordinary expression-list contribution.
         var result = Parser.ParseSyntax(source);
 
@@ -1798,32 +1799,37 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_PostfixSpread_SpanCoversExactlyTheSpreadOperandAndEllipsis()
+    public void Parse_Spread_SpanCoversExactlyTheSpreadExpression()
     {
-        // `A...B` parses as the two expression-list slots `A...` and `B`. The
-        // SequenceSpread node must span exactly `A...` (columns 1-4: `A` at 1,
-        // `...` at 2-4) — NOT `A...B`. The trailing `B` is a separate
+        // `A.spread B` parses as the two expression-list slots `A.spread` and
+        // `B`. The SequenceSpread node must span exactly `A.spread` (columns
+        // 1-8) — NOT `A.spread B`. The trailing `B` is a separate
         // expression-list slot, not part of the spread. This behavioral span
         // check replaces the old source-text regex that counted construction
         // sites (the unary node has no parser-local metadata to protect; the
         // real invariant is the exact source span).
-        var result = Parser.ParseSyntax("A...B");
+        var dotResult = Parser.ParseSyntax("A.spread B");
 
-        Assert.False(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
-        var spread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
+        Assert.False(dotResult.HasErrors);
+        Assert.Equal(2, dotResult.Root.Output.Count);
+        var dotSpread = Assert.IsType<Expr.SequenceSpread>(dotResult.Root.Output[0]);
+        Assert.Equal(new SourceSpan(1, 1, 1, 8), dotSpread.Span);
+        Assert.Equal(new SourceSpan(1, 3, 1, 8), dotSpread.IntrinsicNameSpan);
 
-        var span = spread.Span;
-        Assert.NotNull(span);
-        Assert.Equal(1, span!.StartLineNumber);
-        Assert.Equal(1, span.StartColumn);
-        Assert.Equal(1, span.EndLineNumber);
-        Assert.Equal(4, span.EndColumn);
-
-        // The following `B` is the next expression-list slot, positioned after `A...`.
-        var b = Assert.IsType<Expr.Resolve>(result.Root.Output[1]);
+        // The following `B` is the next expression-list slot, positioned after `A.spread`.
+        var b = Assert.IsType<Expr.Resolve>(dotResult.Root.Output[1]);
         Assert.Equal("B", b.Name);
-        Assert.Equal(5, b.Span!.StartColumn);
+        Assert.Equal(10, b.Span!.StartColumn);
+
+        // The call form spans `spread(A)` with the intrinsic-name span on the keyword.
+        var callResult = Parser.ParseSyntax("spread(A) B");
+
+        Assert.False(callResult.HasErrors);
+        Assert.Equal(2, callResult.Root.Output.Count);
+        var callSpread = Assert.IsType<Expr.SequenceSpread>(callResult.Root.Output[0]);
+        Assert.Equal(new SourceSpan(1, 1, 1, 9), callSpread.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 6), callSpread.IntrinsicNameSpan);
+        Assert.Equal(11, callResult.Root.Output[1].Span!.StartColumn);
     }
 
     [Fact]
@@ -1901,17 +1907,33 @@ public class ParserTests
     [InlineData("A // comment\n...")]
     public void Parse_EllipsisLedLine_IsRejectedIdentically(string source)
     {
-        // The '...' token is line-bound; a '...'-led line is rejected the
-        // same way with or without a trailing comment above it.
+        // The '...' token is line-bound; an '...'-led line is rejected through
+        // ordinary unexpected-token handling, with or without a trailing
+        // comment above it.
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Expected a binding name after prefix `...`"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Unexpected token: 'Ellipsis'"));
     }
 
     [Theory]
-    [InlineData("A B C...")]
-    [InlineData("A\nB\nC...")]
+    [InlineData("A\n.spread")]
+    [InlineData("A // comment\n.spread")]
+    public void Parse_DotSpreadLedLine_ContinuesTheMethodChain(string source)
+    {
+        // A leading '.' is the whitelisted cross-line continuation, so a
+        // '.spread'-led line continues the previous expression as a spread —
+        // with or without a trailing comment above it.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(result.Root.Output));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
+    }
+
+    [Theory]
+    [InlineData("A B C.spread")]
+    [InlineData("A\nB\nC.spread")]
     public void Parse_TrailingPostfixSpreadAfterJoinChain_SpreadsImmediateExpression(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -2271,7 +2293,7 @@ public class ParserTests
     [Fact]
     public void Parse_SequenceSpreadAfterSemicolon_ReportsUnsupportedExpressionSeparator()
     {
-        var result = Parser.ParseSyntax("X(a ; b...)");
+        var result = Parser.ParseSyntax("X(a ; b.spread)");
 
         AssertUnsupportedSemicolonDiagnostic(result);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
@@ -2282,12 +2304,12 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A... ; B")]
-    [InlineData("X(a... ; b)")]
+    [InlineData("A.spread ; B")]
+    [InlineData("X(a.spread ; b)")]
     public void Parse_SemicolonAfterPostfixSpread_ReportsUnsupportedSemicolon(string source)
     {
-        // `;` is invalid expression syntax even immediately after postfix `...`.
-        // `...` takes no right operand, so the diagnostic fires and recovery
+        // `;` is invalid expression syntax even immediately after a spread expression.
+        // `.spread` takes no right operand, so the diagnostic fires and recovery
         // keeps the spread value as a postfix Expr.SequenceSpread slot; this is
         // never a binary/right-operand spread or a valid sequence
         // expression.
@@ -2305,7 +2327,7 @@ public class ParserTests
     [Fact]
     public void Parse_SequenceSpreadWithCommaInCall_KeepsCommaStructural()
     {
-        var result = Parser.ParseSyntax("X(a..., b)");
+        var result = Parser.ParseSyntax("X(a.spread, b)");
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
@@ -3178,11 +3200,11 @@ public class ParserTests
 
     [Theory]
     [InlineData("open 'url'...")]
-    [InlineData("open 'url'...A")]
+    [InlineData("open 'url'... A")]
     [InlineData("open A, 'url'...")]
-    public void Parse_Open_SequenceSpreadOnStringTarget_ReportsSpreadDiagnostic(string source)
+    public void Parse_Open_EllipsisOnStringTarget_ReportsTargetedDiagnostic(string source)
     {
-        // String atoms go through the same post-atom spread detection as
+        // String atoms go through the same post-atom ellipsis detection as
         // every other atom kind — never just a generic missing-comma
         // diagnostic.
         var result = Parser.ParseSyntax(source);
@@ -3190,7 +3212,7 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
         Assert.DoesNotContain(result.Root.Opens, static open => open is Expr.SequenceSpread);
     }
 
@@ -3236,29 +3258,29 @@ public class ParserTests
     [Theory]
     [InlineData("open A...")]
     [InlineData("open A...B")]
-    public void Parse_Open_SequenceSpreadTarget_ReportsTargetedDiagnostic(string source)
+    public void Parse_Open_EllipsisTarget_ReportsTargetedDiagnostic(string source)
     {
-        // '...' is the spread operator, not an open-target
+        // `...` is the collecting-binding marker, not an open-target
         // separator: the parser rejects it immediately with a targeted
-        // diagnostic instead of passing a SequenceSpread to open resolution.
+        // diagnostic instead of passing anything to open resolution.
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
         Assert.DoesNotContain(result.Root.Opens, static open => open is Expr.SequenceSpread);
     }
 
     [Fact]
-    public void Parse_Open_SequenceSpreadTarget_ReportsSourcePositionedSpan()
+    public void Parse_Open_EllipsisTarget_ReportsSourcePositionedSpan()
     {
         var result = Parser.ParseSyntax("open A...B");
 
         Assert.True(result.HasErrors);
         var diagnostic = Assert.Single(
             result.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
         Assert.Equal(1, diagnostic.Span.StartLineNumber);
         Assert.Equal(6, diagnostic.Span.StartColumn);
         Assert.Equal(1, diagnostic.Span.EndLineNumber);
@@ -3266,19 +3288,35 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Open_SequenceSpreadInCommaList_ReportsDiagnosticAndKeepsValidTargets()
+    public void Parse_Open_EllipsisInCommaList_ReportsDiagnosticAndKeepsValidTargets()
     {
-        // Valid comma-separated targets before the invalid spread do not
-        // hide the error, and the rejected spread never lands in the opens
+        // Valid comma-separated targets before the invalid ellipsis do not
+        // hide the error, and the rejected target never lands in the opens
         // list.
         var result = Parser.ParseSyntax("open A, B...");
 
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
         Assert.DoesNotContain(result.Root.Opens, static open => open is Expr.SequenceSpread);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+    }
+
+    [Theory]
+    [InlineData("open spread(A)")]
+    [InlineData("open A.spread")]
+    [InlineData("open A, B.spread")]
+    public void Parse_Open_NamedSpreadTarget_IsRejectedByOpenFormValidation(string source)
+    {
+        // A named spread expression parses to a SequenceSpread open target,
+        // which open-form validation rejects — spread is not an open form.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(
+            result.Diagnostics,
+            d => d.Message.Contains("Invalid open form: 'spread' is not allowed in open declarations"));
     }
 
     [Fact]
@@ -3286,9 +3324,9 @@ public class ParserTests
     {
         // The ';' separator mistake is reported on the open declaration; the
         // rest of the line is ordinary output (where spread is
-        // legal), never a second open target. `B...C` parses as the two
-        // expression-list slots `B...` and `C` (`...` takes no right operand).
-        var result = Parser.ParseSyntax("open A ; B...C");
+        // legal), never a second open target. `B.spread C` parses as the two
+        // expression-list slots `B.spread` and `C` (`.spread` takes no right operand).
+        var result = Parser.ParseSyntax("open A ; B.spread C");
 
         Assert.True(result.HasErrors);
         Assert.Contains(
@@ -3499,13 +3537,13 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("P = a... b")]
-    [InlineData("P = a..., b")]
+    [InlineData("P = a.spread b")]
+    [InlineData("P = a.spread, b")]
     public void Parse_PropertyBody_SpreadThenSameLineAdjacency_KeepsSiblingSlotInBody(string source)
     {
-        // Postfix `...` spreads only its immediate operand `a`; the following
+        // The `.spread` intrinsic opens only its immediate operand `a`; the following
         // same-line `b` is a sibling expression-list slot inside P's body. So
-        // `P = a... b` matches `P = a..., b`, and `b` does NOT escape to root.
+        // `P = a.spread b` matches `P = a.spread, b`, and `b` does NOT escape to root.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -3537,10 +3575,10 @@ public class ParserTests
     [Fact]
     public void Parse_PropertyBody_SpreadSameLineVsNewline_DiffersInBodyMembership()
     {
-        // Contrast: same-line `P = a... b` keeps `b` as a sibling slot inside P;
+        // Contrast: same-line `P = a.spread b` keeps `b` as a sibling slot inside P;
         // a newline after the spread ends P's body, so `b` becomes a separate
         // root output. Spread does not change the newline boundary.
-        var sameLine = Parser.ParseSyntax("P = a... b");
+        var sameLine = Parser.ParseSyntax("P = a.spread b");
         Assert.False(sameLine.HasErrors);
         var sameLineProperty = Assert.Single(sameLine.Root.Properties);
         Assert.Empty(sameLine.Root.Output);
@@ -3548,7 +3586,7 @@ public class ParserTests
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(sameLineProperty.Value.Output[0]).Operand).Name);
         Assert.Equal("b", Assert.IsType<Expr.Resolve>(sameLineProperty.Value.Output[1]).Name);
 
-        var newline = Parser.ParseSyntax("P = a...\nb");
+        var newline = Parser.ParseSyntax("P = a.spread\nb");
         Assert.False(newline.HasErrors);
         var newlineProperty = Assert.Single(newline.Root.Properties);
         var bodySpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(newlineProperty.Value.Output));
@@ -3702,83 +3740,83 @@ public class ParserTests
     [Fact]
     public void Parse_VariadicExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Collect(...list) = list",
+            "Collect(list...) = list",
             ["list"],
             [ParameterKind.Variadic]);
 
     [Fact]
     public void Parse_NormalThenVariadicExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Collect(a, ...rest) = rest",
+            "Collect(a, rest...) = rest",
             ["a", "rest"],
             [ParameterKind.Normal, ParameterKind.Variadic]);
 
     [Fact]
     public void Parse_VariadicThenSuffixExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Scale(...values, factor) = values",
+            "Scale(values..., factor) = values",
             ["values", "factor"],
             [ParameterKind.Variadic, ParameterKind.Normal]);
 
     [Fact]
     public void Parse_SequenceValueVariadicExplicitParameter_ParsesFixedSlotKind()
         => AssertVariadicParameters(
-            "Collect((...list)) = list",
+            "Collect((list...)) = list",
             ["list"],
             [ParameterKind.Variadic],
-            ["(...list)"]);
+            ["(list...)"]);
 
     [Fact]
     public void Parse_SequenceValueVariadicWithSuffixExplicitParameters_ParsesFixedSlotKind()
         => AssertVariadicParameters(
-            "Collect((...history), previous, next) = history",
+            "Collect((history...), previous, next) = history",
             ["history", "previous", "next"],
             [ParameterKind.Variadic, ParameterKind.Normal, ParameterKind.Normal],
-            ["(...history)", "previous", "next"]);
+            ["(history...)", "previous", "next"]);
 
     [Fact]
     public void Parse_HeadTailSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect((head, ...tail)) = head, tail",
+            "Collect((head, tail...)) = head, tail",
             ["head", "tail"],
             [ParameterKind.Normal, ParameterKind.Variadic],
-            ["(head, ...tail)"]);
+            ["(head, tail...)"]);
 
     [Fact]
     public void Parse_FirstMiddleLastSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect((first, ...middle, last)) = first, middle, last",
+            "Collect((first, middle..., last)) = first, middle, last",
             ["first", "middle", "last"],
             [ParameterKind.Normal, ParameterKind.Variadic, ParameterKind.Normal],
-            ["(first, ...middle, last)"]);
+            ["(first, middle..., last)"]);
 
     [Fact]
     public void Parse_NestedSequenceValueExplicitParameter_ParsesRecursivePattern()
         => AssertVariadicParameters(
-            "Collect(((...history, pre2), pre1)) = history, pre2, pre1",
+            "Collect(((history..., pre2), pre1)) = history, pre2, pre1",
             ["history", "pre2", "pre1"],
             [ParameterKind.Variadic, ParameterKind.Normal, ParameterKind.Normal],
-            ["((...history, pre2), pre1)"]);
+            ["((history..., pre2), pre1)"]);
 
     [Fact]
     public void Parse_PrefixVariadicSuffixExplicitParameter_ParsesNameAndKind()
         => AssertVariadicParameters(
-            "Surround(prefix, ...values, suffix) = values",
+            "Surround(prefix, values..., suffix) = values",
             ["prefix", "values", "suffix"],
             [ParameterKind.Normal, ParameterKind.Variadic, ParameterKind.Normal]);
 
     [Fact]
     public void Parse_SeparateVariadicCapturesAtDifferentPatternLevels_Parses()
         => AssertVariadicParameters(
-            "Nested((...inner), ...outer) = inner.count, outer.count",
+            "Nested((inner...), outer...) = inner.count, outer.count",
             ["inner", "outer"],
             [ParameterKind.Variadic, ParameterKind.Variadic],
-            ["(...inner)", "...outer"]);
+            ["(inner...)", "outer..."]);
 
     [Fact]
     public void Parse_MultipleVariadicExplicitParameters_ReportsError()
     {
-        var result = Parser.ParseSyntax("Bad(...a, ...b) = b");
+        var result = Parser.ParseSyntax("Bad(a..., b...) = b");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Only one collecting binding is allowed per pattern level."));
@@ -3787,7 +3825,7 @@ public class ParserTests
     [Fact]
     public void Parse_RepeatedVariadicAndNormalName_ReportsUnsupportedError()
     {
-        var result = Parser.ParseSyntax("Bad(...xs, xs) = xs");
+        var result = Parser.ParseSyntax("Bad(xs..., xs) = xs");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
@@ -3797,7 +3835,7 @@ public class ParserTests
     [Fact]
     public void Parse_RepeatedVariadicNameAtSameLevel_RemainsRejected()
     {
-        var result = Parser.ParseSyntax("Bad(...xs, ...xs) = xs");
+        var result = Parser.ParseSyntax("Bad(xs..., xs...) = xs");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
@@ -3807,25 +3845,24 @@ public class ParserTests
     [Fact]
     public void Parse_VariadicExplicitParameterWithGrace_ReportsError()
     {
-        var result = Parser.ParseSyntax("Bad(...a~) = a");
+        var result = Parser.ParseSyntax("Bad(a...~) = a");
 
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Collecting bindings cannot use `~` reordering."));
     }
 
     [Fact]
-    public void Parse_PostfixBindingSpelling_IsRejectedWithCanonicalReplacement()
+    public void Parse_PrefixBindingSpelling_IsRejectedWithCanonicalReplacement()
     {
-        var result = Parser.ParseSyntax("Collect(items...) = items");
+        var result = Parser.ParseSyntax("Collect(...items) = items");
 
         Assert.True(result.HasErrors);
         var error = Assert.Single(result.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(
-            "Postfix `...` is the spread operator and cannot declare a collecting binding. "
-                + "Write `...items` instead of `items...`.",
+            "Prefix `...` cannot declare a collecting binding. Write `items...` instead of `...items`.",
             error.Message);
-        Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `items...`
+        Assert.Equal(new SourceSpan(1, 9, 1, 16), error.Span); // covers `...items`
 
         // The rejected spelling never becomes a collecting binding.
         var property = Assert.Single(result.Root.Properties);
@@ -3837,9 +3874,9 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("Collect(...items) = items")]
-    [InlineData("Collect(... items) = items")]
-    public void Parse_PrefixCollectingBinding_ParsesCanonicalOrientationAndExactSpans(string source)
+    [InlineData("Collect(items...) = items")]
+    [InlineData("Collect(items ...) = items")]
+    public void Parse_PostfixCollectingBinding_ParsesCanonicalOrientationAndExactSpans(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -3848,35 +3885,38 @@ public class ParserTests
         var user = Assert.IsType<Algorithm.User>(property.Value);
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(user.ParameterPatterns));
         Assert.Equal(ParameterKind.Variadic, capture.Kind);
-        Assert.Equal("...items", capture.DisplayName);
-        Assert.Equal(new SourceSpan(1, 9, 1, 11), capture.CollectingMarkerSpan);
+        Assert.Equal("items...", capture.DisplayName);
+        Assert.Equal(new SourceSpan(1, 9, 1, 13), capture.Span);
         Assert.Equal(
-            source.Contains("... ", StringComparison.Ordinal)
-                ? new SourceSpan(1, 13, 1, 17)
-                : new SourceSpan(1, 12, 1, 16),
-            capture.Span);
+            source.Contains("items ...", StringComparison.Ordinal)
+                ? new SourceSpan(1, 15, 1, 17)
+                : new SourceSpan(1, 14, 1, 16),
+            capture.CollectingMarkerSpan);
     }
 
     [Fact]
-    public void Parse_PrefixCollectingBinding_MarkerCannotBeSeparatedFromNameByNewline()
+    public void Parse_PostfixCollectingBinding_MarkerCannotBeSeparatedFromNameByNewline()
     {
         var result = Parser.ParseSyntax(
             """
-            Collect(...
-              items) = items
+            Collect(items
+              ...) = items
             """);
 
         Assert.True(result.HasErrors);
-        var diagnostic = Assert.Single(
+        // The cross-line marker is never a collecting binding: `items` stays a
+        // fixed binding and the orphaned cross-line `...` fails through
+        // ordinary unexpected-token recovery.
+        Assert.Contains(
             result.Diagnostics,
-            diagnostic => diagnostic.Message.Contains("Expected a binding name after prefix `...`", StringComparison.Ordinal));
-        Assert.Equal(new SourceSpan(1, 9, 1, 11), diagnostic.Span);
+            diagnostic => diagnostic.Message.Contains("Unexpected token: 'Ellipsis'", StringComparison.Ordinal));
+        AssertNoCollectingBindings(result.Root);
     }
 
     [Fact]
-    public void Parse_PrefixCollectingDeconstruction_PreservesNameAndMarkerSpans()
+    public void Parse_PostfixCollectingDeconstruction_PreservesNameAndMarkerSpans()
     {
-        var result = Parser.ParseSyntax("first, ...middle, last = values");
+        var result = Parser.ParseSyntax("first, middle..., last = values");
 
         Assert.Empty(result.Diagnostics);
         var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
@@ -3888,56 +3928,38 @@ public class ParserTests
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
         Assert.Equal("middle", capture.Name);
         Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
-        Assert.Equal(new SourceSpan(1, 8, 1, 10), capture.CollectingMarkerSpan);
-        Assert.Equal(new SourceSpan(1, 11, 1, 16), Assert.Single(middle.DeclarationSpans));
+        Assert.Equal(new SourceSpan(1, 14, 1, 16), capture.CollectingMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 8, 1, 13), Assert.Single(middle.DeclarationSpans));
     }
 
     [Theory]
-    [InlineData("first, middle..., last = values", "middle", 1, 8, 1, 16)]
-    [InlineData("items... = values", "items", 1, 1, 1, 8)]
-    public void Parse_PostfixDeconstructionSpelling_IsRejectedWithCanonicalReplacement(
-        string source,
-        string name,
-        int startLine,
-        int startColumn,
-        int endLine,
-        int endColumn)
+    [InlineData("first, ...middle, last = values")]
+    [InlineData("...items = values")]
+    public void Parse_PrefixDeconstructionSpelling_FailsAsOrdinaryInvalidSyntax(string source)
     {
+        // A leading `...` is not a deconstruction-target shape, so the line is
+        // never claimed as a binding pattern: the stray token fails through
+        // ordinary unexpected-token handling and no collecting binding exists
+        // in the recovered tree.
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        var error = Assert.Single(result.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
-        Assert.Equal(
-            "Postfix `...` is the spread operator and cannot declare a collecting binding. "
-                + $"Write `...{name}` instead of `{name}...`.",
-            error.Message);
-        Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
-    }
-
-    [Fact]
-    public void Parse_PostfixDeconstructionSpelling_NeverProducesACollectingBinding()
-    {
-        var result = Parser.ParseSyntax("first, middle..., last = values");
-
-        var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
-        var body = Assert.IsType<Algorithm.User>(middle.Value);
-        var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
-        var helperBlock = Assert.IsType<Expr.Block>(call.Function);
-        var sequence = Assert.IsType<SequenceValueParameterPattern>(
-            Assert.Single(helperBlock.Algorithm.ParameterPatterns));
-        var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
-        Assert.Equal(ParameterKind.Normal, capture.Kind);
-        Assert.Null(capture.CollectingMarkerSpan);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Unexpected token: 'Ellipsis'", StringComparison.Ordinal));
+        Assert.All(
+            result.Diagnostics,
+            diagnostic => Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity));
+        AssertNoCollectingBindings(result.Root);
     }
 
     [Theory]
-    [InlineData("Bad(...) = 0", "Expected a binding name")]
-    [InlineData("Bad(...1) = 0", "must be an identifier")]
-    [InlineData("Bad(...(item)) = 0", "must be an identifier")]
+    [InlineData("Bad(...) = 0", "Unexpected token in pattern: 'Ellipsis'")]
+    [InlineData("Bad(...1) = 0", "Unexpected token in pattern: 'Ellipsis'")]
+    [InlineData("Bad(...(item)) = 0", "Unexpected token in pattern: 'Ellipsis'")]
     [InlineData("Bad(...items...) = 0", "Malformed collecting binding")]
-    [InlineData("Use(...items)", "Prefix `...` is only valid for collecting bindings")]
-    public void Parse_InvalidPrefixEllipsis_ReportsTargetedDiagnosticAndRecovers(
+    [InlineData("Use(...items)", "Unexpected token: 'Ellipsis'")]
+    public void Parse_InvalidPatternEllipsis_ReportsErrorAndRecovers(
         string source,
         string expectedMessage)
     {
@@ -3951,7 +3973,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_MalformedPrefixCollecting_RecoversToFollowingDeclarationAndOutput()
+    public void Parse_MalformedPatternEllipsis_RecoversToFollowingDeclarationAndOutput()
     {
         var result = Parser.ParseSyntax(
             """
@@ -3963,11 +3985,37 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
-            diagnostic => diagnostic.Message.Contains("Expected a binding name", StringComparison.Ordinal));
+            diagnostic => diagnostic.Message.Contains("Unexpected token in pattern: 'Ellipsis'", StringComparison.Ordinal));
         Assert.Contains(result.Root.Properties, static property => property.Name == "Good");
         Assert.Equal(
             "Good",
             Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
+    }
+
+    private sealed class ParserCollectingBindingFinder : AstWalker
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitExplicitParameterDeclaration(
+            Algorithm algorithm,
+            ParameterDeclaration declaration)
+        {
+            if (declaration.Kind == ParameterKind.Variadic)
+                Found = true;
+        }
+
+        protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span)
+        {
+            if (pattern.ParameterKind == ParameterKind.Variadic)
+                Found = true;
+        }
+    }
+
+    private static void AssertNoCollectingBindings(Algorithm root)
+    {
+        var finder = new ParserCollectingBindingFinder();
+        finder.VisitAlgorithm(root);
+        Assert.False(finder.Found);
     }
 
     [Fact]
@@ -4370,7 +4418,7 @@ public class ParserTests
     [Fact]
     public void Parse_If_SpreadArgument_NoArityError_KeepsSpread()
     {
-        var result = Parser.ParseSyntax("if(X...)");
+        var result = Parser.ParseSyntax("if(X.spread)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
@@ -4383,7 +4431,7 @@ public class ParserTests
     [Fact]
     public void Parse_If_MixedLiteralAndSpread_NoArityError_KeepsSpread()
     {
-        var result = Parser.ParseSyntax("if(1, Pair...)");
+        var result = Parser.ParseSyntax("if(1, Pair.spread)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
@@ -4404,12 +4452,12 @@ public class ParserTests
     }
 
     // Only a TOP-LEVEL argument spread relaxes the gate. A spread nested inside
-    // parentheses materializes one sequence-value argument, so `if((X...), 1)`
+    // parentheses materializes one sequence-value argument, so `if((X.spread), 1)`
     // is two structural arguments and must still report the arity diagnostic.
     [Fact]
     public void Parse_If_ParenthesizedNestedSpread_StillReportsBuiltinArityError()
     {
-        var result = Parser.ParseSyntax("if((X...), 1)");
+        var result = Parser.ParseSyntax("if((X.spread), 1)");
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics, diagnostic =>
             diagnostic.Message.Contains("Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse."));
@@ -4419,7 +4467,7 @@ public class ParserTests
     [Fact]
     public void Parse_If_MultipleSpreads_NoArityError()
     {
-        var result = Parser.ParseSyntax("if(A..., B...)");
+        var result = Parser.ParseSyntax("if(A.spread, B.spread)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         Assert.Equal(2, call.Args.Output.Count);
@@ -4518,7 +4566,7 @@ public class ParserTests
     {
         var source = """
             F(0) = 0
-            F(...values) = values.count
+            F(values...) = values.count
             """;
         var result = Parser.ParseSyntax(source);
 

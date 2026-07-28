@@ -19,12 +19,13 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
                      Math.Pi is an open plus a report row. ";" and same-line
                      adjacency are NOT open-target separators (open A ; B
                      and open A B report a missing-comma diagnostic).
-                     "..." is the spread operator and is NOT valid in open
-                     targets for any atom kind, including string targets:
-                     open A..., open A...B, open A, B..., and open 'url'...
-                     report a targeted parse diagnostic — use comma for
-                     multiple targets. The parser validates each target as
-                     an individual Lean-compatible open form. *)
+                     "..." is the collecting-binding marker and is NOT valid
+                     in open targets: an attached ellipsis is a parse error —
+                     use comma for multiple targets. A named spread expression
+                     (open spread(A), open A.spread) parses but is rejected
+                     by open-form validation: spread is not an open form.
+                     The parser validates each target as an individual
+                     Lean-compatible open form. *)
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
                 | Identifier                 (* resolve form *)
                 | DottedOpenPath             (* argumentless dot-call path, e.g. Lib.Sub *)
@@ -36,36 +37,36 @@ PropertyBody       = Algorithm ;
 
 DeconstructionDefinition = CollectingBinding "=" OutputBundle
                          | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
-BindingTarget            = NonOutputIdentifier | CollectingBinding ;
-CollectingBinding        = "..." NonOutputIdentifier ;
+BindingTarget            = BindingIdentifier | CollectingBinding ;
+CollectingBinding        = BindingIdentifier "..." ;
                      (* Comma binding pattern shared by assignment binding and
                         function parameter binding. The right-hand side is matched
                         against the targets prefix/collecting/suffix: fixed targets bind
                         from the start and end, and at most one collecting target
-                        `...name` collects the matched middle items as one exact
+                        `name...` collects the matched middle items as one exact
                         immutable list value (possibly zero items). The collecting target may
                         appear at the start, middle, or end. A plain `name = ...`
-                        stays an ordinary PropertyDefinition; canonical `...all = ...`
-                        is the unambiguous lone-collecting-binding assignment form. The `...`
-                        marker and its identifier must be on the same physical line;
-                        same-line whitespace between them is allowed.
-                        Prefix `...name` is the ONLY collecting-binding syntax. Postfix
-                        `name...` is the SequenceAtom spread operator and is never a
-                        binding: writing it in binding position is a parse error
-                        naming the `...name` replacement. Assignment
-                        deconstruction is an unpacking receiver (Python-style): a
-                        single sequence-valued OR exact-list-valued right-hand side
-                        is unpacked into its items (Result.structureItems?). So
-                        `x, ...y, z = A` (A a stored sequence value or exact list)
-                        unpacks A, and `x, ...y, z = A...` and
-                        `x, ...y, z = 1, 2, 3, 4, 5` supply the same items. This unpacking is assignment-specific
+                        stays an ordinary PropertyDefinition; canonical `all... = ...`
+                        is the unambiguous lone-collecting-binding assignment form. The
+                        identifier and its `...` marker must be on the same physical
+                        line; same-line whitespace between them is allowed.
+                        Postfix `...` is collecting-binding syntax and is not an
+                        expression operator. Expression spreading is the named
+                        intrinsic (SpreadCall / the `.spread` member continuation).
+                        Assignment deconstruction is an unpacking receiver
+                        (Python-style): a single sequence-valued OR exact-list-valued
+                        right-hand side is unpacked into its items
+                        (Result.structureItems?). So `x, y..., z = A` (A a stored
+                        sequence value or exact list) unpacks A, and
+                        `x, y..., z = spread(A)` and `x, y..., z = 1, 2, 3, 4, 5`
+                        supply the same items. This unpacking is assignment-specific
                         and does NOT change function calls, which still pass A as one
-                        argument unless `...` is written. More than one collecting target is
-                        a parse error. A function parameter list with a top-level
-                        variadic parameter, e.g. F(x, ...y, z), uses the item-supply
-                        matcher over the supplied arguments (no implicit opening); a
-                        single variadic parameter F(...values) is the degenerate
-                        lone-collecting-binding case. *)
+                        argument unless an explicit spread is written. More than one
+                        collecting target is a parse error. A function parameter list
+                        with a top-level variadic parameter, e.g. F(x, y..., z), uses
+                        the item-supply matcher over the supplied arguments (no
+                        implicit opening); a single variadic parameter F(values...)
+                        is the degenerate lone-collecting-binding case. *)
 
 ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
@@ -78,9 +79,9 @@ ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBu
                         same-name group with exactly one clause whose head consists
                         only of captures and structural sequence-value patterns elaborates as an
                         ordinary explicit parameter list, e.g. PairSum((x, y)) or
-                        CountSequenceValue((...values)). A sequence-value parameter pattern
+                        CountSequenceValue((values...)). A sequence-value parameter pattern
                         consumes one parent-level argument slot, so F((head,
-                        ...tail), suffix) takes one sequence-value first argument and
+                        tail...), suffix) takes one sequence-value first argument and
                         binds its immediate contents. Collecting bindings consume
                         sibling values at their own pattern-list level and collect
                         the assigned slots as one exact immutable list.
@@ -98,13 +99,12 @@ ExplicitOutputDefinition = "Output" "=" OutputBundle ;
                         separate explicit output slots. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
-PatternAtom        = Identifier                    (* fixed bind *)
-                   | CollectingBinding            (* collecting bind; the ONLY collecting-binding syntax.
-                                                       Valid only for ordinary recursive
-                                                       explicit parameter patterns, at most once per
-                                                       sibling pattern level, and not with "~".
-                                                       Postfix "name..." is SequenceAtom spread
-                                                       syntax and is a parse error here. *)
+PatternAtom        = BindingIdentifier             (* fixed bind *)
+                   | CollectingBinding            (* collecting bind `name...`; the ONLY
+                                                       collecting-binding syntax. Valid only for
+                                                       ordinary recursive explicit parameter
+                                                       patterns, at most once per sibling pattern
+                                                       level, and not with "~". *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
                    | StringLiteral                 (* litString *)
                    | "(" Pattern ")" ;             (* sequence-value pattern; always structural, even for singletons *)
@@ -112,49 +112,49 @@ PatternAtom        = Identifier                    (* fixed bind *)
 OutputLine      = OutputBundle ;
 OutputBundle    = ExpressionList ;
 
-(* Canonical output precedence and shape:
-       1. "..." — postfix spread binds to its immediate operand.
-                        It opens that operand's evaluated sequence value into the
-                        surrounding expression-list context.
-      2. "," / adjacency — comma and allowed expression adjacency create a
+(* Canonical output shape:
+      1. "," / adjacency — comma and allowed expression adjacency create a
                syntax-level expression list. Root output consumes a
                bare list as output slots, call syntax consumes it as
                argument slots, and parentheses materialize it as one
-               sequence value.
-      3. ";"   — unsupported expression syntax. It reports a targeted
+               sequence value. A spread expression (SpreadCall or the
+               `.spread` member continuation) stands as one whole slot and
+               contributes its operand's items to the surrounding supply.
+      2. ";"   — unsupported expression syntax. It reports a targeted
                semicolon diagnostic and recovers as an expression-list separator.
-    The tricky cases this precedence implies:
+    The tricky cases this implies:
        F(1, 2, 3)      has three argument slots.
       F(1 2 3)        has three argument slots.
         F((1, 2, 3))    has one sequence-value argument.
          1, (2, 3)       has two output slots: 1 and sequence value (2, 3).
-         A...B C         is A..., B, C.
-       A, B...         keeps B... local to its comma slot.
+         spread(A) B C   is spread(A), B, C.
+       A, B.spread     keeps B.spread local to its comma slot.
     Parsing is purely syntactic: callable arity, runtime values, and
-      inferred types never change comma, parentheses, or ellipsis behavior. *)
+      inferred types never change comma, parentheses, or spread behavior. *)
 
 ExpressionList        = SequenceAtom { ExpressionListSeparator SequenceAtom } ;
 ExpressionListSeparator = "," | ImplicitAdjacency ;
-SequenceAtom          = Expression { "..." } ;
-                     (* "..." is the POSTFIX spread operator.
-                        It NEVER consumes a right operand: any token after
-                        "..." — tight, spaced, or on the next physical line —
-                        starts a new expression-list slot, so A...B,
-                        A...(), A... B, and A... <newline> B all parse as
-                        A..., B (whitespace
-                        before "..." stays insignificant). Postfix x... is a
-                        spread expression: it contributes the items of one
-                        item-producing boundary of the evaluated value
-                        (sequence and list values supply their contained items;
-                        an atom or string supplies itself as one item) to the
-                        surrounding slot context —
-                        it does not create a sequence value by itself — and
-                        does not continue onto the next physical line. The source token after the dots is
-                        an ordinary expression-list contribution, never a right operand;
-                        internally x... is a unary spread node over its single
-                        operand, with no right operand. `X(a b...)` parses as X(a, b...). *)
+SequenceAtom          = Expression ;
+                     (* A spread expression — SpreadCall `spread(expr)` or the
+                        `.spread` member continuation `expr.spread` — is legal
+                        ONLY as a whole expression-list slot (or as the operand
+                        of another spread). It NEVER consumes a right operand:
+                        any token after it — tight, spaced, or on the next
+                        physical line — starts a new expression-list slot, so
+                        spread(A) B, A.spread B, and A.spread <newline> B all
+                        parse as spread-of-A, B. A spread expression
+                        contributes the items of one item-producing boundary of
+                        the evaluated operand (sequence and list values supply
+                        their contained items; an atom or string supplies
+                        itself as one item) to the surrounding slot context —
+                        it does not create a sequence or list value by itself.
+                        Using a spread expression as an operand of a unary or
+                        binary operator, an indexing target or selector, or a
+                        non-spread dot-call target is a targeted parse error.
+                        Postfix `...` is collecting-binding syntax and is not
+                        an expression operator. *)
                      (* Semicolon is intentionally absent from ExpressionList.
-                     `1 ; 2`, `A... ; B`, `Output = 1 ; 2`, and `F(1 ; 2)`
+                     `1 ; 2`, `spread(A) ; B`, `Output = 1 ; 2`, and `F(1 ; 2)`
                      all report the unsupported-semicolon diagnostic.
                      ImplicitAdjacency is not a token: a complete expression
                      followed by the start of another complete expression
@@ -163,9 +163,9 @@ SequenceAtom          = Expression { "..." } ;
                      1, 2, F(1 2) is the two-argument call F(1, 2), and (1 2)
                      is the sequence value (1, 2). In output contexts, a
                      physical newline between complete expressions implies the
-                     same expression-list separation. Postfix "..." applies only
-                     to its immediate operand: A B... and A newline B... parse
-                     as A, B....
+                     same expression-list separation. A spread expression applies
+                     only to its own operand: A B.spread and A newline B.spread
+                     parse as A, B.spread.
                      Definition bodies and open targets are
                      line-bounded instead: a newline ends a definition body
                      unless a leading-dot continuation carries it on, and ends an open target list unless an
@@ -188,11 +188,10 @@ SequenceAtom          = Expression { "..." } ;
                      call F(1, 2) — because an already-open argument list or
                      brace block spans lines normally. Explicit comma keeps
                      expression-list structure: F, (1) has two slots, and
-                     F newline (1) also has two slots. The "..." operator token
+                     F newline (1) also has two slots. The "..." marker token
                      itself is line-bound and postfix-only: it must appear on
-                     the same physical line as the expression it follows, and
-                     it never takes a right operand — any token after the dots
-                     starts a new expression. Adjacency
+                     the same physical line as the binding name it follows.
+                     Adjacency
                      applies only between complete expressions: it never
                      splits identifiers or numbers, is never multiplication,
                      and a token sequence that begins a
@@ -208,8 +207,8 @@ SequenceAtom          = Expression { "..." } ;
                      (dot-chain continuation) or an
                      already-open "("/"{" delimiter may carry it across the
                      line — call delimiters, indexing ":", postfix grace "~",
-                     binary operators, and the "..." token all require the
-                     same physical line (write a trailing operator, e.g.
+                     binary operators, and the "..." marker token all require
+                     the same physical line (write a trailing operator, e.g.
                      A - newline 1, to continue arithmetic). Comments are
                      semantically invisible for these decisions: A newline -1
                      and A // note newline -1 parse identically as the expression
@@ -243,7 +242,16 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    is insignificant (Pair:0, Pair :0, Pair : 0). *)
                 | "." Identifier [ CallArgs ]
                                 (* a '.'-led line intentionally continues the
-                                   dot-call chain (method-chain layout). *)
+                                   dot-call chain (method-chain layout).
+                                   The member name "spread" is the reserved
+                                   spread intrinsic: `expr.spread` lowers
+                                   directly to the one spread node — never to
+                                   a dot-call — evaluating the receiver once
+                                   and contributing its items to the
+                                   surrounding supply. `.spread` takes no
+                                   arguments (`expr.spread(x)` is a targeted
+                                   error), chains (`x.spread.spread`), and is
+                                   never scope-dependent. *)
                 | CallArgs ;    (* only when LHS is a callable target: Resolve, DotCall, or Grace,
                                    and only when the call delimiter is on the same physical
                                    line as the callable expression's last token. Same-line
@@ -263,10 +271,30 @@ ParenArgs       = "(" Algorithm ")" ;
 
 Primary         = NumberLiteral
                 | StringLiteral
+                | SpreadCall
                 | GraceIdentifier
                 | ParenBundleExpr
                 | BraceAlgorithmExpr
                 | ListLiteral ;
+
+SpreadCall      = "spread" "(" Expression ")" ;
+                  (* The named spread intrinsic call form. `spread` is a
+                     RESERVED intrinsic name: it cannot be declared, bound,
+                     shadowed, or used as a bare value, so both spellings
+                     always mean the intrinsic. spread(expr) lowers directly
+                     to the one unary spread node (the same node as
+                     expr.spread) — there is no ordinary call boundary, the
+                     operand is evaluated exactly once, and the operand's
+                     items are contributed to the surrounding supply
+                     (conceptually spread : Value -> Supply; the RECEIVER
+                     decides what the items become). The "(" is a call
+                     delimiter: same physical line only, whitespace allowed,
+                     and the open list spans lines. Exactly ONE operand:
+                     spread() and spread(a, b) are intrinsic-arity errors and
+                     declarations inside spread(...) are rejected. Chained
+                     spread is spread(spread(expr)) / expr.spread.spread. A
+                     spread expression is legal only as a whole
+                     expression-list slot (see SequenceAtom). *)
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
                   (* postfix "~" is same-physical-line only: a "~"-led line
@@ -288,7 +316,7 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
                      bracket content is a pure expression list — declarations
                      are not legal inside brackets — and spread elements insert
                      their item supply into the list being constructed
-                     ([0, A..., 4]). UNLIKE ParenBundleExpr, no canonicalization
+                     ([0, A.spread, 4]). UNLIKE ParenBundleExpr, no canonicalization
                      applies to list structure: "[]", "[7]", and "[[7]]" are
                      three distinct exact values ("[7]" never collapses to "7"
                      and "[]" is a different value from "()"). Ordinary
@@ -298,14 +326,15 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
                      indexing delimiter, so same-line "A[1]" is the adjacency
                      expression list "A, [1]" (indexing is ":"). An already-open
                      "[" spans physical lines exactly like "(" and "{" until
-                     its "]" closes. Postfix "..." after "]" follows the normal
-                     same-physical-line spread rule and opens exactly one list
-                     boundary: "[1, 2, 3]..." supplies 1, 2, 3 and "[]..."
-                     supplies zero items. *)
+                     its "]" closes. A spread of a list opens exactly one list
+                     boundary: "spread([1, 2, 3])" / "[1, 2, 3].spread"
+                     supplies 1, 2, 3 and "spread([])" supplies zero items. *)
 
 NumberLiteral   = Number ;
 Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;
-NonOutputIdentifier = Identifier ;       (* except reserved definition-position name "Output" *)
+NonOutputIdentifier = Identifier ;       (* except reserved definition-position name "Output"
+                                            and the reserved intrinsic name "spread" *)
+BindingIdentifier = Identifier ;         (* except the reserved intrinsic name "spread" *)
 Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
 StringLiteral   = /'([^'\r\n])*'/ ;
 Comment         = /\/\/[^\r\n]*/ ;

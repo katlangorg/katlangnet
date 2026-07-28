@@ -23,7 +23,7 @@ public static class CallableSignatureDiagnostics
         // A user item-supply signature — plain top-level captures containing one
         // collecting binding (a lone variadic or a comma deconstruction) — binds the fixed captures and
         // lets the collecting binding capture any number of items, so it accepts at least the
-        // fixed-binding count and has no upper bound. A single variadic `G(...x)` is the
+        // fixed-binding count and has no upper bound. A single variadic `G(x...)` is the
         // degenerate case with min 0. Fixed-only, sequence-value, and builtin sequence
         // signatures keep their exact top-level slot count.
         if (IsItemSupplySignature(signature, topLevelVariadicCount))
@@ -43,7 +43,7 @@ public static class CallableSignatureDiagnostics
     }
 
     // A top-level variadic signature consumes an item supply (a user-defined
-    // shape such as `Inspect(...items)` or `Scale(...values, factor)`): the
+    // shape such as `Inspect(items...)` or `Scale(values..., factor)`): the
     // fixed captures bind and the variadic parameter accepts any number of argument slots
     // (collected as one exact immutable list at binding time), so
     // min = fixed count and max is unbounded. Collection builtins are NOT

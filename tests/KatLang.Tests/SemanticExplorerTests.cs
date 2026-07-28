@@ -169,7 +169,7 @@ public class SemanticExplorerTests
         if (observation.Emitted == 0)
         {
             // A zero-item output displays as no rows. The empty display is not
-            // a parseable program (documented `()...` edge); require exactly
+            // a parseable program (documented `().spread` edge); require exactly
             // the empty display so the exemption stays as narrow as written.
             if (observation.Display != "")
             {
@@ -243,7 +243,7 @@ public class SemanticExplorerTests
 
         // Collecting binding COLLECTS: a single-variadic callee binds its ONE grouped
         // argument as the one-element exact list holding the value
-        // (`F(...x) = x` with `F(V)` observes `[V]`), never the value itself —
+        // (`F(x...) = x` with `F(V)` observes `[V]`), never the value itself —
         // the old grouped/singleton coincidence is gone for every value kind.
         var expectedCollectedOne = new Result.ListValue([capturedValue]);
         foreach (var template in new[] { "variadic", "variadicViaProp" })
@@ -259,7 +259,7 @@ public class SemanticExplorerTests
             }
         }
 
-        // The spread call `F(V...)` collects the spread items as an
+        // The spread call `F(V.spread)` collects the spread items as an
         // exact list, uniformly for sequences and lists (open/collect round
         // trip: spreading a list re-collects the same list).
         var variadicSpread = Obs("variadicSpread", valueId);
@@ -287,7 +287,7 @@ public class SemanticExplorerTests
             }
         }
 
-        // `count(x...)` supplies the spread items as ORDINARY argument
+        // `count(x.spread)` supplies the spread items as ORDINARY argument
         // slots that obey count's fixed one-parameter arity: exactly one
         // opened item binds the collection parameter (and is then interpreted
         // through the post-binding one-level collection view), while zero or
@@ -648,9 +648,9 @@ public class SemanticExplorerTests
         { "((), 1)", "ok raw=S[S[], 1] n=1" },
         { "((1, 2), ())", "ok raw=S[S[1, 2], S[]] n=1" },
         { "1, 2", "ok raw=S[1, 2] n=2" },
-        { "(1, 2)...", "ok raw=S[1, 2] n=2" },
-        { "()...", "ok raw=S[] n=0" },
-        { "(()..., 99)", "ok raw=99 n=1" },
+        { "(1, 2).spread", "ok raw=S[1, 2] n=2" },
+        { "().spread", "ok raw=S[] n=0" },
+        { "(().spread, 99)", "ok raw=99 n=1" },
         { "((), 99)", "ok raw=S[S[], 99] n=1" },
         { "take(((1, 2), (3, 4)), 1)", "ok raw=L[S[1, 2]] n=1" },
         { "distinct(((), ()))", "ok raw=L[S[]] n=1" },
@@ -660,19 +660,19 @@ public class SemanticExplorerTests
         { "count([1, 2, 3])", "ok raw=3 n=1" },
         { "count(1, 2, 3)", "err arity" },
         { "count()", "err arity" },
-        { "count([1, 2, 3]...)", "err arity" },
+        { "count([1, 2, 3].spread)", "err arity" },
         { "take([1, 2, 3])", "err arity" },
         { "take([1, 2, 3], 0)", "ok raw=L[] n=1" },
         { "take([[1, 2], [3, 4]], 1)", "ok raw=L[L[1, 2]] n=1" },
         { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
-        { "F(...a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
+        { "F(a...) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         { "() > 1", "ok raw=1 n=1" },
         { "() == (())", "ok raw=1 n=1" },
-        { "x = (1, 2)\n(x..., 99)", "ok raw=S[1, 2, 99] n=1" },
-        { "(1..., (), 2...)", "ok raw=S[1, S[], 2] n=1" },
-        { "A = (1, 2)\nA..., 99", "ok raw=S[1, 2, 99] n=3" },
+        { "x = (1, 2)\n(x.spread, 99)", "ok raw=S[1, 2, 99] n=1" },
+        { "(1.spread, (), 2.spread)", "ok raw=S[1, S[], 2] n=1" },
+        { "A = (1, 2)\nA.spread, 99", "ok raw=S[1, 2, 99] n=3" },
     };
 
     [Theory]

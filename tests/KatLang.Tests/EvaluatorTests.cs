@@ -399,15 +399,15 @@ public class EvaluatorTests
           GcdStep = b~, a mod b, a mod b != 0
           Gcd = GcdStep.while(a, b):1
 
-          FindNext(...history, pre1, pre2) = {
+          FindNext(history..., pre1, pre2) = {
               IsYSCandidate = not history.contains(candidate) and
                   Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
               FindStep = candidate + 1, not IsYSCandidate
               FindStep.while(1):0
           }
-          YSStep((...history), pre2, pre1) = {
-              Next = FindNext(history..., pre1, pre2)
-              (history..., Next), pre1, Next
+          YSStep((history...), pre2, pre1) = {
+              Next = FindNext(history.spread, pre1, pre2)
+              (history.spread, Next), pre1, Next
           }
           {{finalExpression}}
           """;
@@ -518,7 +518,7 @@ public class EvaluatorTests
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.Equal(
-            $"Cannot spread because the spread operand has no defined output.\nUse `()...` if you intended to spread zero items.",
+            $"Cannot spread because the spread operand has no defined output.\nUse `spread(())` if you intended to spread zero items.",
             formatted);
 
         var error = result.Error;
@@ -830,12 +830,12 @@ public class EvaluatorTests
     {
         // `atoms` now traverses list values directly, so `atoms(values)` on a
         // spread-recaptured list works without a workaround. The explicit
-        // spread (`rest = list.skip(1)...`) is kept because a sequence-shaped
+        // spread (`rest = list.skip(1).spread`) is kept because a sequence-shaped
         // recursion argument is what exercises the current-value binding here.
         var source = """
             reduceCollection(values) = {
                 list = atoms(values)
-                rest = list.skip(1)...
+                rest = list.skip(1).spread
                 if(
                     list.count <= 1,
                     list,
@@ -1282,16 +1282,16 @@ public class EvaluatorTests
         => AssertEvalCounted(source, 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Theory]
-    [InlineData("X(...values) = values.count\nX(1 2)")]
-    [InlineData("X(...values) = values.count\nX (1 2)")]
+    [InlineData("X(values...) = values.count\nX(1 2)")]
+    [InlineData("X(values...) = values.count\nX (1 2)")]
     public void Eval_CallArgumentAdjacency_BindsAsItemSupply(string source)
-        // X(values...) consumes an item supply. The adjacency form `1 2` supplies
+        // X(values.spread) consumes an item supply. The adjacency form `1 2` supplies
         // two slots, so the variadic parameter captures two supplied arguments.
         => AssertEval(source, 2);
 
     [Theory]
-    [InlineData("X(...values) = values.count\nX((1, 2))")]
-    [InlineData("X(...values) = values.count\nX ((1, 2))")]
+    [InlineData("X(values...) = values.count\nX((1, 2))")]
+    [InlineData("X(values...) = values.count\nX ((1, 2))")]
     public void Eval_CallArgumentGroupedSequence_SingleVariadicCollectsOneArgument(string source)
         // The call supplies one sequence-valued argument, and the variadic parameter
         // collects the supplied slots as one exact list: [(1, 2)], count 1.
@@ -1303,17 +1303,17 @@ public class EvaluatorTests
         // F((1, 2)) supplies one argument: the sequence value (1, 2). The variadic parameter
         // capture collects it as the one-element list [(1, 2)], so x.sum hits the
         // per-element numeric constraint and fails. Only explicit spread opens the
-        // call boundary: F((1, 2)...) supplies two arguments and sums to 3.
+        // call boundary: F((1, 2).spread) supplies two arguments and sums to 3.
         AssertEvalFails(
             """
-            F(...x) = x.sum
+            F(x...) = x.sum
             F((1, 2))
             """);
 
         AssertEval(
             """
-            F(...x) = x.sum
-            F((1, 2)...)
+            F(x...) = x.sum
+            F((1, 2).spread)
             """,
             3);
     }
@@ -1332,7 +1332,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Add(x, y) = x + y
-            Add((1, 2)...)
+            Add((1, 2).spread)
             """,
             3);
     }
@@ -1343,14 +1343,14 @@ public class EvaluatorTests
         AssertEval(
             """
             A = 1, 2
-            G(first, ...rest) = first.count, rest.count
+            G(first, rest...) = first.count, rest.count
             G(A)
             """,
             2, 0);
 
         AssertEval(
             """
-            G(first, ...rest) = first.count, rest.count
+            G(first, rest...) = first.count, rest.count
             G((1, 2))
             """,
             2, 0);
@@ -1362,15 +1362,15 @@ public class EvaluatorTests
         AssertEval(
             """
             A = 1, 2
-            G(first, ...rest) = first.count, rest.count
-            G(A...)
+            G(first, rest...) = first.count, rest.count
+            G(A.spread)
             """,
             1, 1);
 
         AssertEval(
             """
-            G(first, ...rest) = first.count, rest.count
-            G((1, 2)...)
+            G(first, rest...) = first.count, rest.count
+            G((1, 2).spread)
             """,
             1, 1);
     }
@@ -1484,11 +1484,11 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("X(...values) = values.count\nX(1, 2 3)")]
-    [InlineData("X(...values) = values.count\nX(1, (2, 3))")]
+    [InlineData("X(values...) = values.count\nX(1, 2 3)")]
+    [InlineData("X(values...) = values.count\nX(1, (2, 3))")]
     public void Eval_CallArgumentMixedCommaAndAdjacency_BindsItemSupply(string source)
     {
-        // X(values...) consumes the item supply. `1, 2 3` is three slots
+        // X(values.spread) consumes the item supply. `1, 2 3` is three slots
         // (count 3); `1, (2, 3)` is two slots, the second a grouped value
         // preserved as a sibling (count 2).
         if (source.Contains("(2, 3)", StringComparison.Ordinal))
@@ -1498,8 +1498,8 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("A B...")]
-    [InlineData("A\nB...")]
+    [InlineData("A B.spread")]
+    [InlineData("A\nB.spread")]
     public void Eval_AdjacencyBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var program = "A = 1\nB = 2, 3\n" + source;
@@ -1507,29 +1507,29 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("X(a b...)")]
-    [InlineData("X(a\nb...)")]
+    [InlineData("X(a b.spread)")]
+    [InlineData("X(a\nb.spread)")]
     public void Eval_CallArgumentAdjacencyBeforePostfixSequenceSpread_BindsItemSupply(string source)
     {
-        // `a b...` is three slots (1, 2, 3); X(values...) binds them as one item supply.
-        var program = "a = 1\nb = 2, 3\nX(...values) = values.count\n" + source;
+        // `a b.spread` is three slots (1, 2, 3); X(values.spread) binds them as one item supply.
+        var program = "a = 1\nb = 2, 3\nX(values...) = values.count\n" + source;
         AssertEval(program, 3);
     }
 
     [Theory]
-    [InlineData("X((a, b...))")]
-    [InlineData("X((a\nb...))")]
+    [InlineData("X((a, b.spread))")]
+    [InlineData("X((a\nb.spread))")]
     public void Eval_SequenceValuePostfixSequenceSpreadInCall_BindsAsOneSequenceValueArgument(string source)
     {
         // Explicit parentheses materialize the spread items into one argument,
         // which the variadic parameter collects as the one-element list [(1, 2, 3)].
-        var program = "a = 1\nb = 2, 3\nX(...values) = values.count\n" + source;
+        var program = "a = 1\nb = 2, 3\nX(values...) = values.count\n" + source;
         AssertEval(program, 1);
     }
 
     [Theory]
-    [InlineData("A B... C")]
-    [InlineData("A\nB...\nC")]
+    [InlineData("A B.spread C")]
+    [InlineData("A\nB.spread\nC")]
     public void Eval_MiddlePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var program = "A = 1\nB = 2, 3\nC = 4\n" + source;
@@ -1537,8 +1537,8 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("A, B C...")]
-    [InlineData("A, B\nC...")]
+    [InlineData("A, B C.spread")]
+    [InlineData("A, B\nC.spread")]
     public void Eval_CommaContributionBeforeJoinedPostfixSequenceSpread_PreservesCommaStructure(string source)
     {
         var program = "A = 1, 2\nB = 3\nC = 4\n" + source;
@@ -1546,23 +1546,23 @@ public class EvaluatorTests
     }
 
     [Theory]
-    [InlineData("F(a, b, c) = a + b + c\nF(1 2, 3...)")]
-    [InlineData("F(a, b, c) = a + b + c\nF(1\n2, 3...)")]
-    [InlineData("F(a, b, c) = a + b + c\nF(1, (2, 3)...)")]
-    public void Eval_MixedCommaAndJoinBeforePostfixSpread_NoLongerSpreadsWholeChainIntoArguments(string source)
+    [InlineData("F(a, b, c) = a + b + c\nF(1 2, 3.spread)")]
+    [InlineData("F(a, b, c) = a + b + c\nF(1\n2, 3.spread)")]
+    [InlineData("F(a, b, c) = a + b + c\nF(1, (2, 3).spread)")]
+    public void Eval_MixedCommaAndJoinWithSpreadSlot_SpreadAppliesOnlyToItsOperand(string source)
         => AssertEval(source, 6);
 
     [Fact]
     public void Eval_DefinitionSeparatedCommaSlotSpreadContribution_PreservesCommaStructure()
     {
-        var program = "A = 1\nB = 2\nC = 3\n\nA\nP = 9\nB, C...";
+        var program = "A = 1\nB = 2\nC = 3\n\nA\nP = 9\nB, C.spread";
         AssertEvalCounted(program, 3, ResultFromAtoms(1, 2, 3));
     }
 
     [Fact]
     public void Eval_DefinitionSeparatedCommaSlotSpreadContributionInCallArguments_PreservesTwoArguments()
     {
-        var program = "F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\n\nF(\nA\nP = 9\nB, C...\n)";
+        var program = "F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\n\nF(\nA\nP = 9\nB, C.spread\n)";
         AssertEval(program, 6);
     }
 
@@ -1579,17 +1579,17 @@ public class EvaluatorTests
         => AssertEvalCounted(source, 2, ResultFromAtoms(10, -1));
 
     [Theory]
-    [InlineData("F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\nF(\nA...B\nP = 9\nC\n)")]
+    [InlineData("F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\nF(\nA.spread B\nP = 9\nC\n)")]
     public void Eval_PostfixSpreadThenLaterOutputInCall_IsOneSequenceValueArgument(string source)
         => AssertEval(source, 6);
 
     [Theory]
-    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA...()\nP = 9\nC\n)")]
+    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA.spread, ()\nP = 9\nC\n)")]
     public void Eval_PostfixSpreadThenEmptyThenLaterOutputInCall_IsOneSequenceValueArgument(string source)
         => AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 3);
 
     [Theory]
-    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA...\nP = 9\nC\n)")]
+    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA.spread\nP = 9\nC\n)")]
     public void Eval_PostfixSpreadThenLaterOutputInCall_StaysOneJoinedArgument(string source)
         => AssertEval(source, 3);
 
@@ -2196,24 +2196,24 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_If_SpreadResult_OpensSelectedBranchIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nif(1, X, X)...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 1, 2, 3\nif(1, X, X).spread", 3, ResultFromAtoms(1, 2, 3));
 
     // Issue #131: an explicit spread argument opens its value into the three `if`
-    // call-argument slots, so `if(X...)` with `X = 1, 2, 3` is equivalent to
+    // call-argument slots, so `if(X.spread)` with `X = 1, 2, 3` is equivalent to
     // `if(1, 2, 3)` and selects the `whenTrue` branch (2) as one value.
     [Theory]
-    [InlineData("TrueResult = 1, 2, 3\nif(TrueResult...)")]
-    [InlineData("TrueResult = (1, 2, 3)\nif(TrueResult...)")]
-    [InlineData("Pair = 2, 3\nif(1, Pair...)")]
+    [InlineData("TrueResult = 1, 2, 3\nif(TrueResult.spread)")]
+    [InlineData("TrueResult = (1, 2, 3)\nif(TrueResult.spread)")]
+    [InlineData("Pair = 2, 3\nif(1, Pair.spread)")]
     public void Eval_If_SpreadArgument_OpensIntoThreeArguments(string source)
         => AssertEvalCounted(source, 1, Atom(2));
 
-    // A direct builtin `if(X...)` matches the user-wrapper `MyIF(X...)` path.
+    // A direct builtin `if(X.spread)` matches the user-wrapper `MyIF(X.spread)` path.
     [Fact]
     public void Eval_If_SpreadArgument_MatchesUserWrapper()
     {
-        var direct = EvalFull("TrueResult = 1, 2, 3\nif(TrueResult...)");
-        var wrapped = EvalFull("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult...)");
+        var direct = EvalFull("TrueResult = 1, 2, 3\nif(TrueResult.spread)");
+        var wrapped = EvalFull("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult.spread)");
         Assert.False(direct.IsError);
         Assert.False(wrapped.IsError);
         Assert.True(Result.ValueComparer.Equals(direct.Value, wrapped.Value));
@@ -2224,7 +2224,7 @@ public class EvaluatorTests
     // the normal builtin arity mismatch (expected 3), not a parser arity error.
     [Fact]
     public void Eval_If_SpreadArgument_WrongExpandedArity_FailsAtEvaluation()
-        => AssertEvalFailsWithArityMismatch("Two = 1, 2\nif(Two...)", expected: 3, actual: 2);
+        => AssertEvalFailsWithArityMismatch("Two = 1, 2\nif(Two.spread)", expected: 3, actual: 2);
 
     // The fix changes counted/display provenance only; the selected branch value
     // is unchanged, so operations that consume the value still open it as before.
@@ -2238,8 +2238,9 @@ public class EvaluatorTests
     // ── Property / call / builtin boundary arity = 1 ──────────────────────────
     // A property/call/builtin RESULT boundary always returns ONE value: a body or
     // collection that internally produces an item supply is observed by the caller
-    // as one sequence value (emitted count 1). Only explicit caller-site postfix
-    // `...` spreads it back into the surrounding item supply. This generalizes the
+    // as one sequence value (emitted count 1). Only an explicit caller-site
+    // `spread(value)` / `value.spread` slot contributes it back to the surrounding
+    // item supply. This generalizes the
     // lexical property-access and `if`-branch behavior to every value boundary.
     // Lean: reCountValueBoundary.
 
@@ -2247,30 +2248,30 @@ public class EvaluatorTests
     // slots as one exact immutable list value.
     [Fact]
     public void Eval_UserCall_VariadicReturn_IsOneListValue()
-        => AssertEvalCounted("F(...a) = a\nF(5, 9)", 1, ListValue(Atom(5), Atom(9)));
+        => AssertEvalCounted("F(a...) = a\nF(5, 9)", 1, ListValue(Atom(5), Atom(9)));
 
     [Fact]
     public void Eval_UserCall_VariadicReturnWithBodySpread_IsOneSequenceValue()
-        => AssertEvalCounted("F(...a) = a...\nF(5, 9)", 1, ResultFromAtoms(5, 9));
+        => AssertEvalCounted("F(a...) = a.spread\nF(5, 9)", 1, ResultFromAtoms(5, 9));
 
     // Body `a, 0`: the variadic capture stays grouped as a nested list value.
     [Fact]
     public void Eval_UserCall_VariadicCommaSlot_GroupsCaptureAsNestedValue()
         => AssertEvalCounted(
-            "F(...a) = a, 0\nF(5, 9)",
+            "F(a...) = a, 0\nF(5, 9)",
             1,
             Result.FromItems([ListValue(Atom(5), Atom(9)), Atom(0)]));
 
-    // Body `a..., 0`: the body spread flattens the capture into sibling slots, and
+    // Body `a.spread, 0`: the body spread flattens the capture into sibling slots, and
     // the boundary still returns the whole flat item supply as one value.
     [Fact]
     public void Eval_UserCall_VariadicBodySpreadThenSlot_IsOneFlatSequenceValue()
-        => AssertEvalCounted("F(...a) = a..., 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
+        => AssertEvalCounted("F(a...) = a.spread, 0\nF(5, 9)", 1, ResultFromAtoms(5, 9, 0));
 
     // Caller-site spread turns the returned value back into an item supply.
     [Fact]
     public void Eval_UserCall_CallerSpread_OpensReturnedValue()
-        => AssertEvalCounted("F(...a) = a\nF(5, 9)...", 2, ResultFromAtoms(5, 9));
+        => AssertEvalCounted("F(a...) = a\nF(5, 9).spread", 2, ResultFromAtoms(5, 9));
 
     // Explicit zero-arg call `X()` is a call boundary (unlike property access `X`)
     // and now also returns one value.
@@ -2292,10 +2293,10 @@ public class EvaluatorTests
     // exact list, so collection builtins open it after binding and explicit
     // spread-forwarding re-spreads it at the caller-selected boundary.
     [Theory]
-    [InlineData("F(...a) = sum(a)\nF(5, 9)", 14)]
-    [InlineData("F(...a) = count(a)\nF(5, 9)", 2)]
-    [InlineData("G(...a) = a...\nsum(G(5, 9))", 14)]
-    [InlineData("F(...a) = a\nsum(F(5, 9))", 14)]
+    [InlineData("F(a...) = sum(a)\nF(5, 9)", 14)]
+    [InlineData("F(a...) = count(a)\nF(5, 9)", 2)]
+    [InlineData("G(a...) = a.spread\nsum(G(5, 9))", 14)]
+    [InlineData("F(a...) = a\nsum(F(5, 9))", 14)]
     public void Eval_VariadicForwarding_UsesCollectedListViews(string source, int expected)
         => AssertEval(source, expected);
 
@@ -2309,7 +2310,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 3, 1, 2\nX.order...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 3, 1, 2\nX.order.spread", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_Take_IsOneExactListValue()
@@ -2317,7 +2318,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_CollectionBuiltin_TakeSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nX.take(2)...", 2, ResultFromAtoms(1, 2));
+        => AssertEvalCounted("X = 1, 2, 3\nX.take(2).spread", 2, ResultFromAtoms(1, 2));
 
     [Fact]
     public void Eval_CollectionBuiltin_Skip_IsOneExactListValue()
@@ -2337,7 +2338,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_CollectionBuiltin_RangeSpread_OpensIntoItems()
-        => AssertEvalCounted("range(1, 3)...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("range(1, 3).spread", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_Atoms_IsOneExactListValue()
@@ -2349,27 +2350,27 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderDescSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 3, 1, 2\nX.orderDesc...", 3, ResultFromAtoms(3, 2, 1));
+        => AssertEvalCounted("X = 3, 1, 2\nX.orderDesc.spread", 3, ResultFromAtoms(3, 2, 1));
 
     [Fact]
     public void Eval_CollectionBuiltin_DistinctSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 1, 2, 3\nX.distinct...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 1, 1, 2, 3\nX.distinct.spread", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_SkipSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nX.skip(1)...", 2, ResultFromAtoms(2, 3));
+        => AssertEvalCounted("X = 1, 2, 3\nX.skip(1).spread", 2, ResultFromAtoms(2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_FilterSpread_OpensIntoItems()
-        => AssertEvalCounted("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig)...", 2, ResultFromAtoms(2, 3));
+        => AssertEvalCounted("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig).spread", 2, ResultFromAtoms(2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_MapSpread_OpensIntoItems()
-        => AssertEvalCounted("Double = x * 2\nX = 1, 2, 3\nX.map(Double)...", 3, ResultFromAtoms(2, 4, 6));
+        => AssertEvalCounted("Double = x * 2\nX = 1, 2, 3\nX.map(Double).spread", 3, ResultFromAtoms(2, 4, 6));
 
     [Fact]
     public void Eval_CollectionBuiltin_AtomsSpread_OpensIntoItems()
-        => AssertEvalCounted("atoms((1, (2, 3)))...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("atoms((1, (2, 3))).spread", 3, ResultFromAtoms(1, 2, 3));
 
     // A collection-builtin result fed into another sequence builtin is still
     // opened by singleton-boundary normalization (value-based, not count-based).
@@ -2407,7 +2408,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_RootOutput_Spread_StaysMultiOutput()
-        => AssertEvalCounted("X = 1, 2, 3\nX...", 3, ResultFromAtoms(1, 2, 3));
+        => AssertEvalCounted("X = 1, 2, 3\nX.spread", 3, ResultFromAtoms(1, 2, 3));
 
     // Regression: while/repeat intentionally preserve multi-slot loop state and are
     // NOT collapsed by the boundary rule.
@@ -2563,7 +2564,7 @@ public class EvaluatorTests
     public void Eval_OptimizedLoop_VariadicStep_RejectedAtEligibilityGate()
     {
         var source = """
-            Step(...values) = values, 0
+            Step(values...) = values, 0
             Step.while(1, 2, 3)
             """;
 
@@ -3312,7 +3313,7 @@ public class EvaluatorTests
         => AssertEval(
             """
             X = 1, 2, 3
-            X...
+            X.spread
             """,
             1, 2, 3);
 
@@ -3321,7 +3322,7 @@ public class EvaluatorTests
         => AssertEval(
             """
             X = (1, 2, 3)
-            X...
+            X.spread
             """,
             1, 2, 3);
 
@@ -3353,7 +3354,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Range_SequenceSpread_PreservesOrdering()
-        => AssertEval("range(3, 1)...0", 3, 2, 1, 0);
+        => AssertEval("range(3, 1).spread 0", 3, 2, 1, 0);
 
     // ── Filter builtin ───────────────────────────────────────────────────────
 
@@ -3374,7 +3375,7 @@ public class EvaluatorTests
     {
         var source = """
             IsEven = x mod 2 == 0
-            filter((range(3, 6)..., 8), IsEven)
+            filter((range(3, 6).spread, 8), IsEven)
             """;
 
         AssertEval(source, 4, 6, 8);
@@ -3410,7 +3411,7 @@ public class EvaluatorTests
         var source = """
             IsEven = x mod 2 == 0
             Data = 3, 4, 5, 6
-            filter((Data..., 8), IsEven)
+            filter((Data.spread, 8), IsEven)
             """;
 
         AssertEval(source, 4, 6, 8);
@@ -3434,7 +3435,7 @@ public class EvaluatorTests
         var source = """
             KeepWideRange((a, b, c, d)) = 1
             KeepWideRange(x) = 0
-            filter(((1, 2), range(3, 6)...), KeepWideRange)
+            filter(((1, 2), range(3, 6).spread), KeepWideRange)
             """;
 
         AssertEval(source);
@@ -3575,7 +3576,7 @@ public class EvaluatorTests
         var source = """
             MarkSequenceValueRange((a, b, c)) = 1
             MarkSequenceValueRange(x) = 0
-            map((1, range(2, 4)...), MarkSequenceValueRange)
+            map((1, range(2, 4).spread), MarkSequenceValueRange)
             """;
 
         AssertEval(source, 0, 0, 0, 0);
@@ -3690,7 +3691,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Order_DirectCallMixedArgs_ExpandsRangeTopLevelItems()
-        => AssertEval("order((3, 4, range(1, 5)..., 7))", 1, 2, 3, 3, 4, 4, 5, 7);
+        => AssertEval("order((3, 4, range(1, 5).spread, 7))", 1, 2, 3, 3, 4, 4, 5, 7);
 
     [Fact]
     public void Eval_Order_DotCallReceiverAsSingleSource_SortsRangeItems()
@@ -4090,7 +4091,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequencePipeline_UnarySpreadReceiver_FusesAndMatchesGeneric()
     {
-        // A parenthesized postfix-spread dot receiver `(range(1, 10)...)` feeds a
+        // A parenthesized postfix-spread dot receiver `(range(1, 10).spread)` feeds a
         // dot filter/count pipeline. It fuses through the GENERIC dot-receiver
         // source plan (the receiver is iterated by EvaluateDotReceiverIterationItems)
         // — NOT via UnwrapSpread (which only serves the plain-count path)
@@ -4098,7 +4099,7 @@ public class EvaluatorTests
         // not a bare `range(...)` call). The fused result equals the generic one.
         var source = """
             IsEven = x mod 2 == 0
-            (range(1, 10)...).filter(IsEven).count
+            (range(1, 10).spread).filter(IsEven).count
             """;
 
         var generic = EvalFull(source, enableLoopOptimization: true, enableSequencePipelineOptimization: false);
@@ -4195,7 +4196,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequencePipeline_NestedSpreadReceiver_FusesAndMatchesGeneric()
     {
-        // A doubly-nested postfix-spread dot receiver `(range(1, 10)......)`.
+        // A doubly-nested postfix-spread dot receiver `(range(1, 10).spread.spread)`.
         // Like the single-spread case it fuses through the GENERIC dot-receiver
         // source plan (the receiver is iterated by EvaluateDotReceiverIterationItems,
         // which evaluates the nested unary spread to the same items) — NOT via
@@ -4203,7 +4204,7 @@ public class EvaluatorTests
         // equals the generic one.
         var source = """
             IsEven = x mod 2 == 0
-            (range(1, 10)......).filter(IsEven).count
+            (range(1, 10).spread.spread).filter(IsEven).count
             """;
 
         var generic = EvalFull(source, enableLoopOptimization: true, enableSequencePipelineOptimization: false);
@@ -4231,7 +4232,7 @@ public class EvaluatorTests
         // non-range source would be evaluated once during the failed fusion probe
         // and again during generic fallback — double evaluation).
         //
-        // Models `count(filter(Data..., IsEven)...)` with `Data` a non-range
+        // Models `count(filter(Data.spread, IsEven).spread)` with `Data` a non-range
         // (named) source. The counting EvaluateSequenceIterationItems delegate
         // must be invoked exactly zero times.
         var sequenceEvalCount = 0;
@@ -4425,7 +4426,7 @@ public class EvaluatorTests
     public void Eval_SequencePipelineS1_FilterCount_RespectsBuiltinShadowing()
     {
         var filterShadow = """
-            filter(...source, predicate) = 123
+            filter(source..., predicate) = 123
             IsEven = x mod 2 == 0
             range(1, 10).filter(IsEven).count
             """;
@@ -4470,7 +4471,7 @@ public class EvaluatorTests
         Assert.Equal(1, countStats.FallbackReasons["count does not resolve to builtin"]);
 
         var plainFilterShadow = """
-            filter(...source, predicate) = 123
+            filter(source..., predicate) = 123
             IsEven = x mod 2 == 0
             count(filter(range(1, 10), IsEven))
             """;
@@ -5267,8 +5268,8 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_MixedOutput_SpreadOfEmptyContributesNoSlot()
-        // Only an explicit spread drops to zero: `()...` adds no slot, so `()...` then `1` is just `1`.
-        => AssertEval("()...\n1", 1);
+        // Only an explicit spread drops to zero: `().spread` adds no slot, so `().spread` then `1` is just `1`.
+        => AssertEval("().spread\n1", 1);
 
     [Fact]
     public void Eval_PropertyOnlyProgram_HasNoDefinedOutput()
@@ -5420,7 +5421,7 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Count_DirectCallMixedArgs_CountsExpandedTopLevelItems()
-        => AssertEval("count((3, 4, range(1, 5)..., 7))", 8);
+        => AssertEval("count((3, 4, range(1, 5).spread, 7))", 8);
 
     [Fact]
     public void Eval_Count_SingleSequenceValueArg_CountsSequenceItems()
@@ -5485,7 +5486,7 @@ public class EvaluatorTests
     public void Eval_SequenceReceiverBoundary_SequenceSpreadPropertyExposesSpreadSlots()
         => AssertEval(
             """
-            A = 1...2...3
+            A = 1.spread 2.spread 3
             A.take(2)
             """,
             1,
@@ -5497,7 +5498,7 @@ public class EvaluatorTests
         var result = EvalFull(
             """
             A = (1, 2)
-            A...3
+            A.spread 3
             """);
 
         if (result.IsError)
@@ -5550,7 +5551,7 @@ public class EvaluatorTests
         var source = """
             A = 1, 2
             B = 3, 4
-            Test = (A...B)
+            Test = (A.spread B)
             Test.count
             """;
 
@@ -5560,13 +5561,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_ParenthesizedSequenceSpread_VariadicCallArgumentIsOneSequenceValue()
     {
-        // `(A...B)` materializes one sequence value (1, 2, (3, 4)), which the
+        // `(A.spread B)` materializes one sequence value (1, 2, (3, 4)), which the
         // call supplies as one argument: the variadic parameter collects [that value].
         var source = """
             A = 1, 2
             B = 3, 4
-            F(...values) = values.count
-            F((A...B))
+            F(values...) = values.count
+            F((A.spread B))
             """;
 
         AssertEval(source, 1);
@@ -5575,13 +5576,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_BareSequenceSpread_AdjacentExpressionBindsItemSupply()
     {
-        // A...B is three slots (1, 2, (3, 4)); F(...values) binds them as one
+        // A.spread B is three slots (1, 2, (3, 4)); F(values...) binds them as one
         // sequence value of count 3.
         var source = """
             A = 1, 2
             B = 3, 4
-            F(...values) = values.count
-            F(A...B)
+            F(values...) = values.count
+            F(A.spread B)
             """;
 
         AssertEval(source, 3);
@@ -5593,7 +5594,7 @@ public class EvaluatorTests
         // The receiver is one leading argument, so the variadic parameter collects the
         // one-element list [(1, 2)]. Lean twin: `(1, 2).CountItems` is 1.
         var source = """
-            CountItems(...items) = items.count
+            CountItems(items...) = items.count
             Output = (1, 2).CountItems
             """;
 
@@ -5606,8 +5607,8 @@ public class EvaluatorTests
         // The parenthesized-spread receiver pre-expands the sequence's items,
         // so the variadic parameter collects [1, 2] and the numeric body works.
         var source = """
-            Mean(...vector) = vector.sum
-            Output = ((1, 2)...).Mean
+            Mean(vector...) = vector.sum
+            Output = ((1, 2).spread).Mean
             """;
 
         AssertEval(source, 3);
@@ -5616,19 +5617,19 @@ public class EvaluatorTests
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_PreservesSingleGroupedValueBeforeSuffixAllocation()
     {
-        // Sum(...values, last) receives Values as one argument. `last` receives
-        // the sequence value, so the numeric body fails unless Values... is used.
+        // Sum(values..., last) receives Values as one argument. `last` receives
+        // the sequence value, so the numeric body fails unless Values.spread is used.
         var source = """
             Values = 10, 20
-            Sum(...values, last) = values.sum + last
+            Sum(values..., last) = values.sum + last
             Values.Sum
             """;
 
         AssertEvalFails(source);
     }
 
-    // Dot-call receiver symmetry: receiver.F(args...) == F(receiver, args...)
-    // and (receiver...).F(args...) == F(receiver..., args...). An ordinary
+    // Dot-call receiver symmetry: receiver.F(C, D) == F(receiver, C, D)
+    // and (receiver.spread).F(C, D) == F(receiver.spread, C, D). An ordinary
     // receiver is one leading argument slot even for callees with a leading
     // flat variadic parameter; explicit receiver spread spreads the
     // receiver's emitted top-level values. A sequence-valued property such as
@@ -5644,7 +5645,7 @@ public class EvaluatorTests
         // The ordinary receiver is one leading argument even for a single-variadic
         // callee, so the capture is the one-element list [(10, 20)].
         var source = """
-            NItems(...values) = values.count
+            NItems(values...) = values.count
             Pair = (10, 20)
             Pair.NItems
             """;
@@ -5655,12 +5656,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemSupply()
     {
-        // NItems(...values) consumes an item supply: (Pair...) spreads into two
+        // NItems(values...) consumes an item supply: (Pair.spread) spreads into two
         // slots [10, 20], bound as a sequence value of count 2.
         var source = """
-            NItems(...values) = values.count
+            NItems(values...) = values.count
             Pair = (10, 20)
-            (Pair...).NItems
+            (Pair.spread).NItems
             """;
 
         AssertEval(source, 2);
@@ -5672,7 +5673,7 @@ public class EvaluatorTests
         // Two supplied arguments: the receiver and 99. The suffix binds 99 from
         // the back and the variadic parameter collects the one-element list [(10, 20)].
         var source = """
-            BeforeLastCount(...values, last) = values.count
+            BeforeLastCount(values..., last) = values.count
             Pair = (10, 20)
             Pair.BeforeLastCount(99)
             """;
@@ -5683,13 +5684,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpreadWithSuffix_OverSuppliesVariadicByDeconstruction()
     {
-        // BeforeLastCount(...values, last) is a comma deconstruction parameter
+        // BeforeLastCount(values..., last) is a comma deconstruction parameter
         // list, so the spread receiver's two items plus the suffix 99 give three
         // items: the variadic captures [10, 20] (count 2) and last binds 99.
         var source = """
-            BeforeLastCount(...values, last) = values.count
+            BeforeLastCount(values..., last) = values.count
             Pair = (10, 20)
-            (Pair...).BeforeLastCount(99)
+            (Pair.spread).BeforeLastCount(99)
             """;
 
         AssertEval(source, 2);
@@ -5701,7 +5702,7 @@ public class EvaluatorTests
         // Canonical-call twin of the dot-call above: Pair is one argument, so
         // the variadic parameter collects [(10, 20)] — count 1, matching Pair.BeforeLastCount(99).
         var source = """
-            BeforeLastCount(...values, last) = values.count
+            BeforeLastCount(values..., last) = values.count
             Pair = (10, 20)
             BeforeLastCount(Pair, 99)
             """;
@@ -5712,12 +5713,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueSpreadArgument_CanonicalCall_OverSuppliesVariadicByDeconstruction()
     {
-        // Canonical-call twin: Pair... spreads into [10, 20] and 99 fills the
+        // Canonical-call twin: Pair.spread spreads into [10, 20] and 99 fills the
         // suffix, so the deconstruction matcher captures [10, 20] (count 2).
         var source = """
-            BeforeLastCount(...values, last) = values.count
+            BeforeLastCount(values..., last) = values.count
             Pair = (10, 20)
-            BeforeLastCount(Pair..., 99)
+            BeforeLastCount(Pair.spread, 99)
             """;
 
         AssertEval(source, 2);
@@ -5730,21 +5731,21 @@ public class EvaluatorTests
         // pass one sequence-valued slot (rest collects [(10, 20)], count 1); the
         // spread forms pass two separate slots (rest collects [10, 20], count 2).
         var define = """
-            NItems(...values) = values.count
+            NItems(values...) = values.count
             Values = 10, 20
 
             """;
         AssertEval(define + "Values.NItems", 1);
         AssertEval(define + "NItems(Values)", 1);
-        AssertEval(define + "(Values...).NItems", 2);
-        AssertEval(define + "NItems(Values...)", 2);
+        AssertEval(define + "(Values.spread).NItems", 2);
+        AssertEval(define + "NItems(Values.spread)", 2);
     }
 
     [Fact]
     public void Eval_MultiOutputReceiverWithSuffix_DotCallMatchesCanonicalCalls()
     {
         var define = """
-            BeforeLastCount(...values, last) = values.count
+            BeforeLastCount(values..., last) = values.count
             Values = 10, 20
 
             """;
@@ -5754,17 +5755,17 @@ public class EvaluatorTests
         // allocation (rest collects [10, 20], count 2).
         AssertEval(define + "Values.BeforeLastCount(99)", 1);
         AssertEval(define + "BeforeLastCount(Values, 99)", 1);
-        AssertEval(define + "(Values...).BeforeLastCount(99)", 2);
-        AssertEval(define + "BeforeLastCount(Values..., 99)", 2);
+        AssertEval(define + "(Values.spread).BeforeLastCount(99)", 2);
+        AssertEval(define + "BeforeLastCount(Values.spread, 99)", 2);
     }
 
     [Fact]
     public void Eval_OrdinaryMultiOutputArgument_PreservesSingleGroupedValueAtSuffixAllocation()
     {
-        // Sum(...values, last) receives Values as one argument. `last` receives
-        // the sequence value, so the numeric body fails unless Values... is used.
+        // Sum(values..., last) receives Values as one argument. `last` receives
+        // the sequence value, so the numeric body fails unless Values.spread is used.
         var source = """
-            Sum(...values, last) = values.sum + last
+            Sum(values..., last) = values.sum + last
             Values = 10, 20
             Sum(Values)
             """;
@@ -5778,12 +5779,12 @@ public class EvaluatorTests
         // Explicit spread spreads 10 and 20 as separate items before slot
         // allocation, so `last` binds 20 and the variadic captures [10].
         var define = """
-            Sum(...values, last) = values.sum + last
+            Sum(values..., last) = values.sum + last
             Values = 10, 20
 
             """;
-        AssertEval(define + "(Values...).Sum", 30);
-        AssertEval(define + "Sum(Values...)", 30);
+        AssertEval(define + "(Values.spread).Sum", 30);
+        AssertEval(define + "Sum(Values.spread)", 30);
     }
 
     [Fact]
@@ -5803,7 +5804,7 @@ public class EvaluatorTests
         var source = """
             A = 1, 2
             B = 3, 4
-            (A...B).count
+            (A.spread B).count
             """;
 
         AssertEval(source, 3);
@@ -5815,7 +5816,7 @@ public class EvaluatorTests
         var source = """
             A = 1, 2
             B = 3, 4
-            ((A...B)).count
+            ((A.spread B)).count
             """;
 
         AssertEval(source, 3);
@@ -5865,16 +5866,16 @@ public class EvaluatorTests
         var dataSource = "Data = 3, 4, 5, 6\n";
 
         AssertEval(dataSource + "sum(Data)", 18);
-        AssertEval(dataSource + "sum((Data..., 8))", 26);
+        AssertEval(dataSource + "sum((Data.spread, 8))", 26);
 
         AssertEval(dataSource + "min(Data)", 3);
-        AssertEval(dataSource + "min((Data..., 8))", 3);
+        AssertEval(dataSource + "min((Data.spread, 8))", 3);
 
         AssertEval(dataSource + "max(Data)", 6);
-        AssertEval(dataSource + "max((Data..., 8))", 8);
+        AssertEval(dataSource + "max((Data.spread, 8))", 8);
 
         AssertEval(dataSource + "avg(Data)", 4.5m);
-        AssertEval(dataSource + "avg((Data..., 8))", 5.2m);
+        AssertEval(dataSource + "avg((Data.spread, 8))", 5.2m);
     }
 
     [Fact]
@@ -5883,13 +5884,13 @@ public class EvaluatorTests
         var dataSource = "Data = 3, 4, 5, 6\n";
 
         AssertEval(dataSource + "skip(Data, 1)", 4, 5, 6);
-        AssertEval(dataSource + "skip((Data..., 8), 1)", 4, 5, 6, 8);
+        AssertEval(dataSource + "skip((Data.spread, 8), 1)", 4, 5, 6, 8);
 
         AssertEval(dataSource + "count(distinct(Data))", 4);
-        AssertEval(dataSource + "count(distinct((Data..., 4)))", 4);
+        AssertEval(dataSource + "count(distinct((Data.spread, 4)))", 4);
 
         AssertEval(dataSource + "orderDesc(Data)", 6, 5, 4, 3);
-        AssertEval(dataSource + "orderDesc((Data..., 8))", 8, 6, 5, 4, 3);
+        AssertEval(dataSource + "orderDesc((Data.spread, 8))", 8, 6, 5, 4, 3);
     }
 
     // ── Contains builtin ─────────────────────────────────────────────────────
@@ -5908,11 +5909,11 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Contains_DirectCallMixedArgs_SearchesExpandedRangeTopLevelItems()
-        => AssertEval("contains((3, 4, range(1, 5)..., 7), 5)", 1);
+        => AssertEval("contains((3, 4, range(1, 5).spread, 7), 5)", 1);
 
     [Fact]
     public void Eval_Contains_DirectCallMixedArgs_DoesNotMatchExpandedRangeAsSequenceValue()
-        => AssertEval("contains((3, 4, range(1, 5)..., 7), (1, 2, 3, 4, 5))", 0);
+        => AssertEval("contains((3, 4, range(1, 5).spread, 7), (1, 2, 3, 4, 5))", 0);
 
     [Fact]
     public void Eval_Contains_SequenceValueItem_UsesOrdinaryValueEquality()
@@ -6176,7 +6177,7 @@ public class EvaluatorTests
     public void Eval_Take_DotCall_VariadicRepeatReceiverUsesExpandedFinalStateSlots()
         => AssertEvalLoopModes(
             """
-            Grow(...history, tail) = (history..., tail + 1), tail + 1
+            Grow(history..., tail) = (history.spread, tail + 1), tail + 1
             Grow.repeat(3, 1, 2).take(4)
             """,
             1,
@@ -6327,7 +6328,7 @@ public class EvaluatorTests
 
             YSStep(history, pre2, pre1) = {
                 Next = FindNext(history, pre1, pre2)
-                (history..., Next), pre1, Next
+                (history.spread, Next), pre1, Next
             }
             """;
 
@@ -6529,12 +6530,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Skip_SpreadArguments_FollowOrdinaryFixedArity()
     {
-        // Spread has only its ordinary meaning: `Bad...` opens to two argument
-        // slots, so skip((3, 4), Bad...) supplies three arguments to the fixed
+        // Spread has only its ordinary meaning: `Bad.spread` opens to two argument
+        // slots, so skip((3, 4), Bad.spread) supplies three arguments to the fixed
         // skip(collection, count) signature — an ordinary arity error.
         var source = """
             Bad = 1, 2
-            skip((3, 4), Bad...)
+            skip((3, 4), Bad.spread)
             """;
 
         AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 3);
@@ -6871,7 +6872,7 @@ public class EvaluatorTests
     {
         var source = """
             AddItemCount(x, acc) = x.count + acc
-            reduce(((1, 2), range(3, 4)...), AddItemCount, 0)
+            reduce(((1, 2), range(3, 4).spread), AddItemCount, 0)
             """;
 
         AssertEval(source, 4);
@@ -6883,7 +6884,7 @@ public class EvaluatorTests
         var source = """
             AddSequenceValueRange((a, b, c), acc) = acc + 100
             AddSequenceValueRange(x, acc) = acc + x
-            reduce((1, range(2, 4)...), AddSequenceValueRange, 0)
+            reduce((1, range(2, 4).spread), AddSequenceValueRange, 0)
             """;
 
         AssertEval(source, 10);
@@ -7045,7 +7046,7 @@ public class EvaluatorTests
     public void Eval_Reduce_VariadicAccumulatorState_FlattensNaturally()
     {
         var source = """
-            Append(item, ...history) = (history...item)
+            Append(item, history...) = (history.spread item)
             reduce((2, 3, 4), Append, 1)
             """;
 
@@ -7067,7 +7068,7 @@ public class EvaluatorTests
     public void Eval_Reduce_NonVariadicAccumulator_PreservesStructuralAccumulator()
     {
         var source = """
-            Append(item, history) = (history...item)
+            Append(item, history) = (history.spread item)
             reduce((2, 3, 4), Append, 1)
             """;
 
@@ -7216,7 +7217,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicMap_CollectsOneElementSlotPerInvocation()
     {
         var source = """
-            Count(...values) = values.count
+            Count(values...) = values.count
             map((1, 2, 3), Count)
             """;
 
@@ -7229,7 +7230,7 @@ public class EvaluatorTests
         // pin the collected list kind exactly.
         var identity = EvalFull(
             """
-            Collect(...values) = values
+            Collect(values...) = values
             map((7, 8), Collect)
             """);
         Assert.True(identity.IsOk, $"expected success: {(identity.IsError ? identity.Error.ToString() : "")}");
@@ -7249,7 +7250,7 @@ public class EvaluatorTests
 
         AssertEvalSequenceModes(
             """
-            IsSingleSeven(...values) = values == [7]
+            IsSingleSeven(values...) = values == [7]
             map((7, 8), IsSingleSeven)
             """,
             1, 0);
@@ -7259,7 +7260,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicFilter_CollectsOneElementSlotPerInvocation()
     {
         var source = """
-            One(...values) = values.count == 1
+            One(values...) = values.count == 1
             filter((1, 2, 3), One)
             """;
 
@@ -7271,7 +7272,7 @@ public class EvaluatorTests
         // [element], not the bare scalar (7 == [7] is false, [7] == [7] true).
         AssertEvalSequenceModes(
             """
-            IsSingleSeven(...values) = values == [7]
+            IsSingleSeven(values...) = values == [7]
             filter((7, 8), IsSingleSeven)
             """,
             7);
@@ -7281,7 +7282,7 @@ public class EvaluatorTests
     public void Eval_Callback_TopLevelVariadicReduce_CollectsElementSlotBeforeAccumulator()
     {
         var source = """
-            Step(...values, acc) = values.count * 10 + acc
+            Step(values..., acc) = values.count * 10 + acc
             reduce((1, 2, 3), Step, 0)
             """;
 
@@ -7292,7 +7293,7 @@ public class EvaluatorTests
         // Kind-sensitive form: the step observes the collected list [element].
         AssertEvalSequenceModes(
             """
-            Step(...values, acc) = acc + (values == [3])
+            Step(values..., acc) = acc + (values == [3])
             reduce((1, 2, 3), Step, 0)
             """,
             1);
@@ -8270,7 +8271,7 @@ public class EvaluatorTests
         var source = """
             A = 1, 2
             B = 3, 4
-            atoms((A...B))
+            atoms((A.spread B))
             """;
         AssertEval(source, 1, 2, 3, 4);
     }
@@ -8668,7 +8669,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_MathSin_One_ReturnsApproximate()
     {
-        // Sin(1) ≈ 0.8414709848... — should be a sensible approximate result
+        // Sin(1) ≈ 0.8414709848.spread — should be a sensible approximate result
         var result = Eval("Math.Sin(1)");
         Assert.True(result.IsOk);
         Assert.Single(result.Value);
@@ -8763,9 +8764,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_SequenceSpreadTargetFails()
+    public void Eval_Open_EllipsisTargetFails()
     {
-        // '...' is not open-target syntax: the parser rejects it with a
+        // `...` is not open-target syntax: the parser rejects it with a
         // targeted diagnostic before evaluation ever runs.
         var source = """
             A = (public X = 1
@@ -8779,7 +8780,27 @@ public class EvaluatorTests
         Assert.True(parseResult.HasErrors);
         Assert.Contains(
             parseResult.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
+
+        AssertEvalAllPublicFails(source);
+    }
+
+    [Fact]
+    public void Eval_Open_SpreadExpressionTargetFails()
+    {
+        // A named spread expression is not an open form: the parser rejects
+        // it before evaluation ever runs.
+        var source = """
+            A = (public X = 1
+            X)
+            open spread(A)
+            X
+            """;
+        var parseResult = Parser.Parse(source);
+        Assert.True(parseResult.HasErrors);
+        Assert.Contains(
+            parseResult.Diagnostics,
+            d => d.Message.Contains("Invalid open form: 'spread' is not allowed in open declarations"));
 
         AssertEvalAllPublicFails(source);
     }
@@ -9790,16 +9811,16 @@ public class EvaluatorTests
         => AssertEval(
             """
             A = 1, 2
-            (A...) == A
+            (A.spread) == A
             """,
             1);
 
     // Spread item supplies must not be silently vectorized by equality. A spread
-    // `A...` cannot be a binary operand: `A... == A...` is a parse error (the
+    // `A.spread` cannot be a binary operand: `A.spread == A.spread` is a parse error (the
     // spread ends its expression, so the following `==` is unexpected). This
     // boundary is owned by the parser and is unchanged by structural equality —
     // equality never turns a spread item supply into an elementwise comparison. The
-    // grouped form `(A...) == A` (covered above) is the supported way to compare
+    // grouped form `(A.spread) == A` (covered above) is the supported way to compare
     // an opened-then-regrouped sequence value.
     [Fact]
     public void Eval_Equal_OpenedItemSupplies_NotSilentlyVectorized_IsParseError()
@@ -9807,7 +9828,7 @@ public class EvaluatorTests
         var parseResult = Parser.Parse(
             """
             A = 1, 2
-            A... == A...
+            A.spread == A.spread
             """);
         Assert.True(parseResult.HasErrors);
     }
@@ -10220,7 +10241,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Collect(...list) = list
+            Collect(list...) = list
             Output = Arg.Collect.count
             """,
             1);
@@ -10232,8 +10253,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Collect(...list) = list
-            Output = (Arg...).Collect.count
+            Collect(list...) = list
+            Output = (Arg.spread).Collect.count
             """,
             3);
     }
@@ -10258,8 +10279,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = (1, 2), (3, 4)
-            Collect(...list) = list
-            Output = (Arg...).Collect.count
+            Collect(list...) = list
+            Output = (Arg.spread).Collect.count
             """,
             2);
     }
@@ -10270,7 +10291,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = (1, 2), (3, 4)
-            Collect(...list) = list
+            Collect(list...) = list
             atoms(Arg.Collect).count
             """,
             4);
@@ -10282,7 +10303,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Head(first, ...rest) = first
+            Head(first, rest...) = first
             Head(1, (2, 3))
             """,
             1);
@@ -10296,8 +10317,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Tail(first, ...rest) = rest
-            Tail(1, (2, 3)...).count
+            Tail(first, rest...) = rest
+            Tail(1, (2, 3).spread).count
             """,
             2);
     }
@@ -10308,8 +10329,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Init(...init, last) = init
-            Init((1, 2)..., 3).count
+            Init(init..., last) = init
+            Init((1, 2).spread, 3).count
             """,
             2);
     }
@@ -10320,7 +10341,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Last(...init, last) = last
+            Last(init..., last) = last
             Last(Arg, 3)
             """,
             3);
@@ -10333,8 +10354,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3
-            Scale(...values, factor) = values.map{n * factor}
-            Output = (Arg...).Scale(10)
+            Scale(values..., factor) = values.map{n * factor}
+            Output = (Arg.spread).Scale(10)
             """,
             10, 20, 30);
     }
@@ -10344,8 +10365,8 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(...values, fee) = values.sum + fee
-            Output = ((10, 20, 30)...).TotalWithFee(5)
+            TotalWithFee(values..., fee) = values.sum + fee
+            Output = ((10, 20, 30).spread).TotalWithFee(5)
             """,
             65);
     }
@@ -10355,9 +10376,9 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(...values, fee) = values.sum + fee
+            TotalWithFee(values..., fee) = values.sum + fee
             Data = 10, 20, 30
-            (Data...).TotalWithFee(5)
+            (Data.spread).TotalWithFee(5)
             """,
             65);
     }
@@ -10367,9 +10388,9 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            TotalWithFee(...values, fee) = values.sum + fee
+            TotalWithFee(values..., fee) = values.sum + fee
             Data = 10, 20, 30
-            (Data...).TotalWithFee(5), ((10, 20, 30)...).TotalWithFee(5)
+            (Data.spread).TotalWithFee(5), ((10, 20, 30).spread).TotalWithFee(5)
             """,
             65, 65);
     }
@@ -10381,7 +10402,7 @@ public class EvaluatorTests
         // rest collects [(10, 20, 30)] and the numeric `values.sum` fails on the
         // sequence-valued element. The spread forms above supply the items.
         var source = """
-            TotalWithFee(...values, fee) = values.sum + fee
+            TotalWithFee(values..., fee) = values.sum + fee
             Output = ((10, 20, 30)).TotalWithFee(5)
             """;
 
@@ -10406,8 +10427,8 @@ public class EvaluatorTests
         // items to a leading flat variadic; the variadic parameter collects [10, 20, 30].
         AssertEvalSequenceModes(
             """
-            Collect(...list) = list.count
-            Output = ((10, 20, 30)...).Collect
+            Collect(list...) = list.count
+            Output = ((10, 20, 30).spread).Collect
             """,
             3);
     }
@@ -10426,8 +10447,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = 1, 2, 3, 4, 5
-            Between(...values, min, max) = values.filter{n >= min and n <= max}
-            Output = (Arg...).Between(2, 4)
+            Between(values..., min, max) = values.filter{n >= min and n <= max}
+            Output = (Arg.spread).Between(2, 4)
             """,
             2, 3, 4);
     }
@@ -10441,7 +10462,7 @@ public class EvaluatorTests
         var result = EvalFull(
             """
             Arg = range(1, 3)
-            Qmean(...values) = values.sum / values.count
+            Qmean(values...) = values.sum / values.count
             Qmean(Arg)
             """);
 
@@ -10458,8 +10479,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = range(1, 3)
-            Qmean(...values) = values.sum / values.count
-            Qmean(Arg...)
+            Qmean(values...) = values.sum / values.count
+            Qmean(Arg.spread)
             """,
             2);
     }
@@ -10472,8 +10493,8 @@ public class EvaluatorTests
         AssertEval(
             """
             Arg = range(1, 3)
-            Qmean(...values) = values.sum / values.count
-            Output = (Arg...).Qmean
+            Qmean(values...) = values.sum / values.count
+            Output = (Arg.spread).Qmean
             """,
             2);
     }
@@ -10497,12 +10518,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicParameter_ReportsBindingErrorWhenNormalParametersCannotBind()
     {
-        // F(first, ...rest, last) is a comma deconstruction parameter list. F(1)
+        // F(first, rest..., last) is a comma deconstruction parameter list. F(1)
         // supplies one scalar item (not implicitly opened), but the two fixed
         // bindings first and last need at least two items.
         var result = EvalFull(
             """
-            F(first, ...rest, last) = first, rest, last
+            F(first, rest..., last) = first, rest, last
             F(1)
             """);
 
@@ -10518,7 +10539,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...xs)) = xs.count
+            F((xs...)) = xs.count
             F((1, 2, 3))
             """,
             3);
@@ -10529,7 +10550,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...xs)) = xs.count
+            F((xs...)) = xs.count
             F(((1, 2), 3))
             """,
             2);
@@ -10540,7 +10561,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((...xs)) = xs:0
+            F((xs...)) = xs:0
             F(((1, 2), 3))
             """);
 
@@ -10562,9 +10583,9 @@ public class EvaluatorTests
         // written level around a depth-1 pattern leaves one nested item.
         AssertEval(
             """
-            CountSequenceValue1(...values) = values.count
-            CountSequenceValue2((...values)) = values.count
-            CountSequenceValue3(((...values))) = values.count
+            CountSequenceValue1(values...) = values.count
+            CountSequenceValue2((values...)) = values.count
+            CountSequenceValue3(((values...))) = values.count
 
             CountSequenceValue1((1, 2, 3))
             CountSequenceValue1(((1, 2, 3)))
@@ -10584,7 +10605,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            CountSequenceValue3(((...values))) = values.count
+            CountSequenceValue3(((values...))) = values.count
             CountSequenceValue3((1, 2, 3))
             """);
 
@@ -10604,7 +10625,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Inner = (1, 2, 3)
-            CountSequenceValue2((...values)) = values.count
+            CountSequenceValue2((values...)) = values.count
 
             CountSequenceValue2(Inner)
             CountSequenceValue2((Inner))
@@ -10710,13 +10731,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueParameterBinding_SpreadOfEmptyStillContributesNoItems()
     {
-        // Only an explicit spread contributes zero items: E... with E = ()
+        // Only an explicit spread contributes zero items: E.spread with E = ()
         // vanishes, so the pattern sees the single item 6.
         AssertEval(
             """
             E = ()
-            F((...xs)) = xs.count
-            F((E..., 6))
+            F((xs...)) = xs.count
+            F((E.spread, 6))
             """,
             1);
     }
@@ -10861,7 +10882,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((...xs)) = xs.count
+            F((xs...)) = xs.count
             F(1, 2, 3)
             """);
 
@@ -10904,15 +10925,15 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            CountSequenceValue((...values)) = values.count
+            CountSequenceValue((values...)) = values.count
             CountSequenceValue(1, 2, 3)
             """);
 
         Assert.True(result.IsError);
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("CountSequenceValue((...values))", formatted, StringComparison.Ordinal);
-        Assert.DoesNotContain("CountSequenceValue(...values)", formatted, StringComparison.Ordinal);
-        Assert.Equal("Callable `CountSequenceValue((...values))` expects 1 argument, but was called with 3 arguments.", formatted);
+        Assert.Contains("CountSequenceValue((values...))", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("CountSequenceValue(values...)", formatted, StringComparison.Ordinal);
+        Assert.Equal("Callable `CountSequenceValue((values...))` expects 1 argument, but was called with 3 arguments.", formatted);
     }
 
     [Fact]
@@ -10981,7 +11002,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            Signature((...values)) = values.count * 10 + values.sum
+            Signature((values...)) = values.count * 10 + values.sum
             map(((1, 2, 3), (4, 5)), Signature)
             """,
             36, 29);
@@ -10992,7 +11013,7 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            CountSequenceValue((...values)) = values.count
+            CountSequenceValue((values...)) = values.count
             map(((1, 2), (3, 4)), CountSequenceValue)
             """,
             2, 2);
@@ -11003,7 +11024,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...xs), a, b) = xs.count, a, b
+            F((xs...), a, b) = xs.count, a, b
             F((1, 2, 3), 4, 5)
             """,
             3, 4, 5);
@@ -11014,7 +11035,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...inner), ...outer) = inner.count, outer.count
+            F((inner...), outer...) = inner.count, outer.count
             F((1, 2), 3, 4)
             """,
             2, 2);
@@ -11104,7 +11125,7 @@ public class EvaluatorTests
             """
             Pair = 10, 20
             Add(x, y) = x + y
-            Add(Pair...)
+            Add(Pair.spread)
             """,
             30);
     }
@@ -11113,7 +11134,7 @@ public class EvaluatorTests
     public void Eval_FlatFixedUserCall_DotCallMultiOutputDoesNotBecomeArgumentSpreading()
     {
         // A multi-output dot-call expression (here `.atoms`) is still ONE
-        // argument expression in a flat fixed call; only `...` spreads.
+        // argument expression in a flat fixed call; only the named spread intrinsic opens it.
         AssertEvalFailsWithArityMismatch(
             """
             Pair = (10, 20)
@@ -11227,7 +11248,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            A = 1... { 2, 3 }
+            A = spread(1), { 2, 3 }
             A
             """,
             1,
@@ -11313,7 +11334,7 @@ public class EvaluatorTests
         // The grouped call collects one item, so the returned list is [(1, 2, 3)].
         AssertEval(
             """
-            F(...xs) = xs
+            F(xs...) = xs
             F((1, 2, 3)).count
             """,
             1);
@@ -11325,8 +11346,8 @@ public class EvaluatorTests
         // The spread supplies three argument slots; the variadic parameter collects [1, 2, 3].
         AssertEval(
             """
-            CountValues(...values) = values.count
-            CountValues((1, 2, 3)...)
+            CountValues(values...) = values.count
+            CountValues((1, 2, 3).spread)
             """,
             3);
     }
@@ -11336,8 +11357,8 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            Scale(...items, factor) = items.map{n * factor}
-            Scale((1, 2, 3)..., 10)
+            Scale(items..., factor) = items.map{n * factor}
+            Scale((1, 2, 3).spread, 10)
             """,
             10, 20, 30);
     }
@@ -11347,9 +11368,9 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            Apply(...values, f) = f(values:0)
+            Apply(values..., f) = f(values:0)
             Inc = a + 1
-            Apply((10, 20)..., Inc)
+            Apply((10, 20).spread, Inc)
             """,
             11);
     }
@@ -11359,8 +11380,8 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F(prefix, ...values, suffix) = prefix, values.count, suffix
-            F(1, (2, 3)..., 4)
+            F(prefix, values..., suffix) = prefix, values.count, suffix
+            F(1, (2, 3).spread, 4)
             """,
             1, 2, 4);
     }
@@ -11370,7 +11391,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            Scale(...items, factor) = items.map{n * factor}
+            Scale(items..., factor) = items.map{n * factor}
             Scale()
             """);
 
@@ -11381,11 +11402,11 @@ public class EvaluatorTests
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.Contains(
-            "Callable `Scale(...items, factor)` expects at least 1 item, but received 0 items.",
+            "Callable `Scale(items..., factor)` expects at least 1 item, but received 0 items.",
             formatted,
             StringComparison.Ordinal);
         Assert.NotNull(arity.Signature);
-        Assert.Equal("Scale(...items, factor)", arity.Signature.DisplayText);
+        Assert.Equal("Scale(items..., factor)", arity.Signature.DisplayText);
     }
 
     [Fact]
@@ -11393,7 +11414,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F(prefix, ...values, suffix) = prefix...values...suffix
+            F(prefix, values..., suffix) = prefix.spread values.spread suffix
             F()
             """);
 
@@ -11403,19 +11424,19 @@ public class EvaluatorTests
         Assert.Equal(0, arity.Actual);
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("F(prefix, ...values, suffix)", formatted, StringComparison.Ordinal);
+        Assert.Contains("F(prefix, values..., suffix)", formatted, StringComparison.Ordinal);
         Assert.Contains("expects at least 2 items", formatted, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Eval_Count_UserCallDeconstructionRouteReportsSignatureInMinimumArityFailure()
     {
-        // F(...xs, last) is a comma deconstruction parameter list. F() supplies no
+        // F(xs..., last) is a comma deconstruction parameter list. F() supplies no
         // items, so the matcher cannot bind the single fixed parameter `last`: it
         // needs at least 1 item, reported against the callable signature.
         var result = EvalFull(
             """
-            F(...xs, last) = xs...last
+            F(xs..., last) = xs.spread last
             F().count
             """);
 
@@ -11425,9 +11446,9 @@ public class EvaluatorTests
         Assert.Equal(0, arity.Actual);
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("F(...xs, last)", formatted, StringComparison.Ordinal);
+        Assert.Contains("F(xs..., last)", formatted, StringComparison.Ordinal);
         Assert.Contains(
-            "Callable `F(...xs, last)` expects at least 1 item, but received 0 items.",
+            "Callable `F(xs..., last)` expects at least 1 item, but received 0 items.",
             formatted,
             StringComparison.Ordinal);
     }
@@ -11437,7 +11458,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...inner), ...outer) = inner...outer
+            F((inner...), outer...) = inner.spread outer
             F((1, 2), ((3, 4))).count
             """,
             3);
@@ -11448,7 +11469,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((head, ...tail)) = head, tail.count
+            F((head, tail...)) = head, tail.count
             F((1, 2, 3, 4))
             """,
             1, 3);
@@ -11459,7 +11480,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((first, ...middle, last)) = first, middle.count, last
+            F((first, middle..., last)) = first, middle.count, last
             F((1, 2, 3, 4, 5))
             """,
             1, 3, 5);
@@ -11470,7 +11491,7 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...history, pre2), pre1) = history.count, pre2, pre1
+            F((history..., pre2), pre1) = history.count, pre2, pre1
             F((1, 2, 3), 4)
             """,
             2, 3, 4);
@@ -11481,7 +11502,7 @@ public class EvaluatorTests
     {
         var result = EvalFull(
             """
-            F((...history, pre2), pre1) = history.count, pre2, pre1
+            F((history..., pre2), pre1) = history.count, pre2, pre1
             F((), 4)
             """);
 
@@ -11493,10 +11514,10 @@ public class EvaluatorTests
     {
         // Contrast with the sequence-value pattern below: the top-level variadic parameter
         // collects the grouped argument as one list element ([(1, 2)], count 1),
-        // while F((...xs), y) opens the same argument to count 2.
+        // while F((xs...), y) opens the same argument to count 2.
         AssertEval(
             """
-            F(...xs, y) = xs.count, y
+            F(xs..., y) = xs.count, y
             F((1, 2), 3)
             """,
             1, 3);
@@ -11507,14 +11528,14 @@ public class EvaluatorTests
     {
         AssertEval(
             """
-            F((...xs), y) = xs.count, y
+            F((xs...), y) = xs.count, y
             F((1, 2), 3)
             """,
             2, 3);
 
         var result = EvalFull(
             """
-            F((...xs), y) = xs.count, y
+            F((xs...), y) = xs.count, y
             F(1, 2, 3)
             """);
 
@@ -11574,7 +11595,7 @@ public class EvaluatorTests
             GcdStep = b, ~a mod b, a mod b != 0
             Gcd = GcdStep.while(a, b):1
 
-            FindNext(...history, pre1, pre2) = {
+            FindNext(history..., pre1, pre2) = {
                 IsYSCandidate(candidate) = not history.contains(candidate) and
                     Gcd(candidate, pre1) == 1 and
                     Gcd(candidate, pre2) != 1
@@ -11583,9 +11604,9 @@ public class EvaluatorTests
                 FindStep.while(1):0
             }
 
-            YSStep((...history), pre2, pre1) = {
-                Next = FindNext(history..., pre1, pre2)
-                (history..., Next), pre1, Next
+            YSStep((history...), pre2, pre1) = {
+                Next = FindNext(history.spread, pre1, pre2)
+                (history.spread, Next), pre1, Next
             }
 
             YSStep.repeat(27, (1, 2, 3), 2, 3):0
@@ -11600,7 +11621,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendNext(...history) = history...history.atoms.last + 1
+            AppendNext(history...) = history.spread history.atoms.last + 1
             AppendNext.repeat(1, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5));
@@ -11611,7 +11632,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendNext(...history) = history...history.atoms.last + 1
+            AppendNext(history...) = history.spread history.atoms.last + 1
             AppendNext.repeat(2, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
@@ -11622,8 +11643,8 @@ public class EvaluatorTests
     {
         AssertEvalSequenceModes(
             """
-            AppendNext(...history) = history...history.atoms.last + 1
-            AppendNext((1, 2, 4))...AppendNext((1, 2, 4, 5))
+            AppendNext(history...) = history.spread history.atoms.last + 1
+            AppendNext((1, 2, 4)).spread AppendNext((1, 2, 4, 5))
             """,
             1, 2, 4, 5, 1, 2, 4, 5, 6);
     }
@@ -11633,7 +11654,7 @@ public class EvaluatorTests
     {
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
-            AppendNext = history...history.atoms.last + 1
+            AppendNext = history.spread history.atoms.last + 1
             AppendNext.repeat(1, 1, 2, 4)
             """);
 
@@ -11652,7 +11673,7 @@ public class EvaluatorTests
         // [2, 3] stays one state slot beside the spread first item.
         AssertEvalResultLoopModes(
             """
-            Step(first, ...rest) = first...rest
+            Step(first, rest...) = first.spread rest
             Step.repeat(1, 1, 2, 3)
             """,
             Result.FromItems([Atom(1), ListValue(Atom(2), Atom(3))]));
@@ -11663,7 +11684,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            Step(...values, last) = values...last
+            Step(values..., last) = values.spread last
             Step.repeat(1, 1, 2, 3)
             """,
             ResultFromAtoms(1, 2, 3));
@@ -11674,7 +11695,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            Step(first, ...middle, last) = first...middle...last
+            Step(first, middle..., last) = first.spread middle.spread last
             Step.repeat(1, 1, 2, 3, 4)
             """,
             ResultFromAtoms(1, 2, 3, 4));
@@ -11684,12 +11705,12 @@ public class EvaluatorTests
     public void Eval_VariadicLoopStep_ExtraMiddleStateSlots_RepeatTwoIterations()
     {
         // Four state slots bind first=0, middle=[5, 5] (the collected exact list),
-        // last=10; the body re-spreads middle with `...` so the extra middle slots
+        // last=10; the body re-spreads middle with `.spread` so the extra middle slots
         // survive across iterations. Mirrors the Lean guard
         // variadicLoopStepExtraMiddleRepeatsTwice.
         AssertEvalLoopModes(
             """
-            Step(first, ...middle, last) = first + 1, middle..., last + 1
+            Step(first, middle..., last) = first + 1, middle.spread, last + 1
             Step.repeat(2, 0, 5, 5, 10)
             """,
             2, 5, 5, 12);
@@ -11700,7 +11721,7 @@ public class EvaluatorTests
     {
         AssertEvalLoopModes(
             """
-            Step(first, ...middle, last) = first, middle.count, last
+            Step(first, middle..., last) = first, middle.count, last
             Step.repeat(1, 10, 20, 30, 40)
             """,
             10, 2, 40);
@@ -11709,12 +11730,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_VariadicLoopStep_ReportsMinimumStateArityWhenFixedParametersCannotBind()
     {
-        // The minimum for Step(first, ...rest, last) is the FIXED parameter
+        // The minimum for Step(first, rest..., last) is the FIXED parameter
         // count (2), so a single state slot cannot bind first + last. The variadic parameter
         // itself may collect zero slots (see Eval_VariadicLoopStep_TwoStateSlots_*).
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
-            Step(first, ...rest, last) = first...rest...last
+            Step(first, rest..., last) = first.spread rest.spread last
             Step.repeat(1, 1)
             """);
 
@@ -11728,7 +11749,7 @@ public class EvaluatorTests
             Assert.Contains("`repeat` variadic step expects at least 2 state values", formatted, StringComparison.Ordinal);
             Assert.Contains("for fixed parameter(s) 'first' and 'last'", formatted, StringComparison.Ordinal);
             Assert.Contains("current loop state has 1 state value", formatted, StringComparison.Ordinal);
-            Assert.DoesNotContain("Callable `Step(first, ...rest, last)`", formatted, StringComparison.Ordinal);
+            Assert.DoesNotContain("Callable `Step(first, rest..., last)`", formatted, StringComparison.Ordinal);
         }
     }
 
@@ -11736,7 +11757,7 @@ public class EvaluatorTests
     public void Eval_VariadicLoopStep_TwoStateSlots_BindEmptyCollectedList()
     {
         // The empty loop-state segment follows the SAME rule as every other collecting
-        // receiver: Step(first, ...middle, last) with exactly two state slots
+        // receiver: Step(first, middle..., last) with exactly two state slots
         // binds first/last from the ends and middle collects ZERO slots as the
         // exact empty list `[]` (count 0). Pins the parity boundary: 1 slot
         // fails (Eval_VariadicLoopStep_ReportsMinimumStateArity*), 2 bind an
@@ -11744,7 +11765,7 @@ public class EvaluatorTests
         // guard variadicLoopStepEmptyMiddleBindsEmptyList.
         AssertEvalLoopModes(
             """
-            Step(first, ...middle, last) = first, (middle == []), middle.count, last
+            Step(first, middle..., last) = first, (middle == []), middle.count, last
             Step.repeat(1, 10, 20)
             """,
             10, 1, 0, 20);
@@ -11805,13 +11826,13 @@ public class EvaluatorTests
         // optimizer must complete that iteration once and hand off the
         // shrunken slot vector without replaying it.
         AssertEvalResultLoopModes(
-            "repeat({if(a == 0, (), ())..., b}, 1, 0, 9)",
+            "repeat({if(a == 0, (), ()).spread, b}, 1, 0, 9)",
             ResultFromAtoms(9));
 
         // A spread-empty continuation leaves the preceding numeric output as
         // the generic continuation slot; zero stops and returns the old state.
         AssertEvalResultLoopModes(
-            "while({a + 1, if(a == -1, (), ())...}, -1)",
+            "while({a + 1, if(a == -1, (), ()).spread}, -1)",
             ResultFromAtoms(-1));
 
         // Non-spread `()` is a visible output slot, so it is an invalid
@@ -11831,7 +11852,7 @@ public class EvaluatorTests
         // state three slots against a two-parameter step; both modes must
         // report the same loop-state arity mismatch at the same program point.
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
-            "repeat({(a + 1, a + 2)..., b}, 2, 0, 9)");
+            "repeat({(a + 1, a + 2).spread, b}, 2, 0, 9)");
 
         var genericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(generic));
         var optimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(optimized));
@@ -11862,12 +11883,12 @@ public class EvaluatorTests
         // Structural state slots (exact lists, growing via spread) are bound
         // and rebuilt identically in both loop modes.
         AssertEvalResultLoopModes(
-            "repeat({[a..., 1]}, 3, [])",
+            "repeat({[a.spread, 1]}, 3, [])",
             ListValue(ResultFromAtoms(1), ResultFromAtoms(1), ResultFromAtoms(1)));
 
         AssertEvalResultLoopModes(
             """
-            Step(acc, ...x) = acc + x.count, 0
+            Step(acc, x...) = acc + x.count, 0
             repeat(Step, 1, 5)
             """,
             SequenceValue(ResultFromAtoms(5), ResultFromAtoms(0)));
@@ -11881,7 +11902,7 @@ public class EvaluatorTests
         // the same rule as every other collecting binding.
         AssertEvalResultLoopModes(
             """
-            Step(a, ...rest, a) = rest, 0
+            Step(a, rest..., a) = rest, 0
             repeat(Step, 1, 7, 7)
             """,
             SequenceValue(ListValue(), ResultFromAtoms(0)));
@@ -11896,14 +11917,14 @@ public class EvaluatorTests
         // empty sequence value `()`.
         AssertEvalResultLoopModes(
             """
-            Step(...x) = x.skip(1)...
+            Step(x...) = x.skip(1).spread
             repeat(Step, 3, 7, 8)
             """,
             SequenceValue());
 
         AssertEvalResultLoopModes(
             """
-            Step(...x) = x.skip(1)...
+            Step(x...) = x.skip(1).spread
             repeat(Step, 1, 7, 8)
             """,
             ResultFromAtoms(8));
@@ -11914,7 +11935,7 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            AppendWhile(...history) = (history..., history.atoms.last + 1), if(history.atoms.last + 1 < 6, 1, 0)
+            AppendWhile(history...) = (history.spread, history.atoms.last + 1), if(history.atoms.last + 1 < 6, 1, 0)
             AppendWhile.while(1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5));
@@ -11990,7 +12011,7 @@ public class EvaluatorTests
         => AssertEvalResultLoopModes(
             """
             History = (1, 2, 4)
-            Step = (history..., history.atoms.last + 1)
+            Step = (history.spread, history.atoms.last + 1)
             Step.repeat(2, History)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
@@ -11998,17 +12019,17 @@ public class EvaluatorTests
     [Fact]
     public void Eval_LoopStep_ParenthesizedSequenceSpreadPreservesSequenceValueOperandBoundary()
     {
-        // `FindNext(history...)` forwards the state sequence's items explicitly;
+        // `FindNext(history.spread)` forwards the state sequence's items explicitly;
         // a bare `FindNext(history)` would pass the whole sequence as one
         // collected element.
         var definitions = """
-            FindNext(...history) = {
+            FindNext(history...) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
                 FindStep.while(Tail+1):0
             }
-            TestStep = (history...FindNext(history...))
+            TestStep = (history.spread FindNext(history.spread))
             LIST = 1, 2, 4
             """;
 
@@ -12021,13 +12042,13 @@ public class EvaluatorTests
     public void Eval_LoopStep_SequenceValueSequenceSpreadCarriesOneSequenceStateSlot()
         => AssertEvalResultLoopModes(
             """
-            FindNext(...history) = {
+            FindNext(history...) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
                 FindStep.while(Tail+1):0
             }
-            TestStep = (history..., FindNext(history...))
+            TestStep = (history.spread, FindNext(history.spread))
             LIST = 1, 2, 4
             TestStep.repeat(2, LIST)
             """,
@@ -12038,13 +12059,13 @@ public class EvaluatorTests
     {
         AssertEvalResultLoopModes(
             """
-            FindNext(...history) = {
+            FindNext(history...) = {
                 Tail = history:(history.atoms.count-1)
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
                 FindStep.while(Tail+1):0
             }
-            TestStep(...history) = history...FindNext(history...)
+            TestStep(history...) = history.spread FindNext(history.spread)
             TestStep.repeat(2, 1, 2, 4)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
@@ -12054,7 +12075,7 @@ public class EvaluatorTests
     public void Eval_LoopStep_SequenceValueCommaHistorySlotUsesExplicitSpreadAcrossRepeat()
     {
         const string source = """
-            Step((...history), previous) = (history..., previous + 1), previous + 1
+            Step((history...), previous) = (history.spread, previous + 1), previous + 1
             Step.repeat(2, (1, 2), 2):0
             """;
 
@@ -12098,8 +12119,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Mean(...values) = values.sum / values.count
-            Mean(Arg...), (Arg...).Mean
+            Mean(values...) = values.sum / values.count
+            Mean(Arg.spread), (Arg.spread).Mean
             """,
             2, 2);
     }
@@ -12110,9 +12131,9 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Mean(...values) = values.sum / values.count
+            Mean(values...) = values.sum / values.count
             Direct = Arg.sum / Arg.count
-            Mean(Arg...), Direct
+            Mean(Arg.spread), Direct
             """,
             2, 2);
     }
@@ -12123,8 +12144,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = (1, 2), (3, 4)
-            CountViaVariadic(...values) = values.count
-            CountViaVariadic(Arg...), (Arg...).CountViaVariadic, Arg.count
+            CountViaVariadic(values...) = values.count
+            CountViaVariadic(Arg.spread), (Arg.spread).CountViaVariadic, Arg.count
             """,
             2, 2, 2);
     }
@@ -12135,9 +12156,9 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = (1, 2), (3, 4)
-            CountViaVariadic(...values) = values.count
-            CountAtoms(...values) = atoms(values).count
-            CountViaVariadic(Arg...), CountAtoms(Arg...)
+            CountViaVariadic(values...) = values.count
+            CountAtoms(values...) = atoms(values).count
+            CountViaVariadic(Arg.spread), CountAtoms(Arg.spread)
             """,
             2, 4);
     }
@@ -12148,8 +12169,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
-            Scale(...values, factor) = values.map{n * factor}
-            Output = (Arg...).Scale(10), Arg.map{n * 10}
+            Scale(values..., factor) = values.map{n * factor}
+            Output = (Arg.spread).Scale(10), Arg.map{n * 10}
             """,
             10, 20, 30, 10, 20, 30);
     }
@@ -12160,8 +12181,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4, 5
-            KeepBetween(...values, minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
-            Output = (Arg...).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
+            KeepBetween(values..., minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
+            Output = (Arg.spread).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
             """,
             2, 3, 4, 2, 3, 4);
     }
@@ -12172,8 +12193,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4
-            TakeFirst(...values, itemCount) = values.take(itemCount)
-            Output = (Arg...).TakeFirst(2), Arg.take(2)
+            TakeFirst(values..., itemCount) = values.take(itemCount)
+            Output = (Arg.spread).TakeFirst(2), Arg.take(2)
             """,
             1, 2, 1, 2);
     }
@@ -12184,8 +12205,8 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3, 4
-            SkipFirst(...values, itemCount) = values.skip(itemCount)
-            Output = (Arg...).SkipFirst(2), Arg.skip(2)
+            SkipFirst(values..., itemCount) = values.skip(itemCount)
+            Output = (Arg.spread).SkipFirst(2), Arg.skip(2)
             """,
             3, 4, 3, 4);
     }
@@ -12200,7 +12221,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Ordinary(list) = list.count
-            Variadic(...list) = list.count
+            Variadic(list...) = list.count
             Arg.Ordinary, Arg.Variadic
             """,
             3, 1);
@@ -12333,11 +12354,11 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Open_SequenceSpreadDoesNotMergeLibraries()
+    public void Eval_Open_EllipsisSpellingDoesNotMergeLibraries()
     {
         // Libraries are opened through one comma-separated open declaration
-        // (semicolon is not an open-target separator); the spread spelling
-        // is a parse error, not a merged open.
+        // (semicolon is not an open-target separator); an `...`-joined
+        // spelling is a parse error, not a merged open.
         var source = """
             A = (public X = 1)
             B = (public Y = 2)
@@ -12348,7 +12369,7 @@ public class EvaluatorTests
         Assert.True(parseResult.HasErrors);
         Assert.Contains(
             parseResult.Diagnostics,
-            d => d.Message.Contains("The spread operator '...' is not valid in open targets"));
+            d => d.Message.Contains("`...` is not valid in open targets"));
 
         AssertEvalAllPublicFails(source);
     }
@@ -12987,7 +13008,7 @@ public class EvaluatorTests
         AssertEval(source, 119.04m);
     }
 
-    // ── Ellipsis: spread operator ──────────────────────────────────
+    // ── Named spread intrinsic ─────────────────────────────────────
 
     // A. Existing property detection still works
 
@@ -13092,26 +13113,26 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpreadAfterSequenceConstruct_AppliesToImmediateExpression()
     {
-        // The inner `...` binds to `b` only, so both forms supply the ONE
+        // The inner `.spread` binds to `b` only, so both forms supply the ONE
         // sequence-valued argument (1, 2) and the variadic parameter collects [(1, 2)].
-        // (Had the spread applied to the whole chain — `X((a, b)...)` — the
+        // (Had the spread applied to the whole chain — `X((a, b).spread)` — the
         // call would supply two arguments and collect [1, 2] instead.)
         var concise = EvalFull(
             """
-            X(...values) = values
+            X(values...) = values
             a = 1
             b = 2
-            X((a, b...))
+            X((a, b.spread))
             """);
         if (concise.IsError)
             Assert.Fail($"Expected concise success but got error: {concise.Error}");
 
         var sequenceValueResult = EvalFull(
             """
-            X(...values) = values
+            X(values...) = values
             a = 1
             b = 2
-            X((a, (b...)))
+            X((a, (b.spread)))
             """);
         if (sequenceValueResult.IsError)
             Assert.Fail($"Expected sequence-value success but got error: {sequenceValueResult.Error}");
@@ -13129,13 +13150,13 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_TwoFragments()
     {
-        AssertEval("1 + 2, 2 + 3...3 + 4", 3, 5, 7);
+        AssertEval("1 + 2, 2 + 3.spread 3 + 4", 3, 5, 7);
     }
 
     [Fact]
     public void Eval_SequenceSpread_MultipleFragments()
     {
-        AssertEval("1 + 2, 2 + 3...3 + 4...4 + 5, 5 + 6, 6 + 7", 3, 5, 7, 9, 11, 13);
+        AssertEval("1 + 2, 2 + 3.spread 3 + 4.spread 4 + 5, 5 + 6, 6 + 7", 3, 5, 7, 9, 11, 13);
     }
 
     [Fact]
@@ -13143,7 +13164,7 @@ public class EvaluatorTests
     {
         const int itemCount = 8192;
 
-        // Postfix spread over a deep sequence-construction chain `(1 ; 1 ; ... ; 1)...`
+        // A spread AST over a deep internal sequence-construction chain
         // stays stack-safe and spreads all 8192 items.
         var deepJoin = LongOneJoin(itemCount);
         var spreadJoin = new Expr.SequenceSpread(deepJoin);
@@ -13174,7 +13195,7 @@ public class EvaluatorTests
             Assert.Fail($"Expected success but got error: {countedR.Error}");
         Assert.Equal([(decimal)itemCount, (decimal)itemCount], countedR.Value);
 
-        // Deeply-nested postfix spread (`1` followed by 8192 `...`) stays
+        // A deeply nested `.spread` chain stays
         // stack-safe; every level spreads the single item of the innermost
         // operand, so the flat result is the one spread value.
         Expr nested = new Expr.Num(1);
@@ -13208,28 +13229,29 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_SourceDrivenPostfixChainAtParserLimit_IsStackSafe()
     {
-        // Source-driven coverage (not raw AST construction): `1` followed by postfix `...`
-        // parses to a deeply-nested unary spread chain `SequenceSpread(SequenceSpread(...(1)))`.
-        // Parsing, elaborating, and evaluating it from source stays stack-safe; every level
-        // spreads the single item 1, so the flat result is [1].
+        // Source-driven coverage (not raw AST construction): `1` followed by `.spread`
+        // continuations parses to a deeply-nested unary spread chain
+        // `SequenceSpread(SequenceSpread(...(1)))`. Parsing, elaborating, and evaluating it
+        // from source stays stack-safe; every level spreads the single item 1, so the flat
+        // result is [1].
         //
         // The depth is DERIVED from the parser's own supported ceiling rather than picked:
-        // a base primary contributes no expression-chain level and each postfix `...`
-        // contributes exactly one, so `Parser.MaxExpressionChainDepth` spreads is the deepest
-        // chain the parser accepts. Both sides of that boundary are pinned by
-        // ParserExpressionChainDepthTests.PostfixSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth.
+        // a base primary contributes no expression-chain level and each `.spread`
+        // continuation contributes exactly one, so `Parser.MaxExpressionChainDepth` spreads
+        // is the deepest chain the parser accepts. Both sides of that boundary are pinned by
+        // ParserExpressionChainDepthTests.DotSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth.
         //
         // Evaluator stack safety BEYOND the parser ceiling is a separate guarantee and is
         // already covered by Eval_SequenceSpread_LongChain_IsStackSafeForFlatAndCountedEvaluation
         // above, which builds the same nested spread chain directly as an AST at depth 8192.
         const int spreadCount = Parser.MaxExpressionChainDepth;
-        var source = "1" + string.Concat(Enumerable.Repeat("...", spreadCount));
+        var source = "1" + string.Concat(Enumerable.Repeat(".spread", spreadCount));
 
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors);
         Assert.Empty(parsed.Diagnostics);   // in particular, no "chain is too deep" diagnostic
 
-        // The source really produced the chain under test, one spread level per written `...`.
+        // The source really produced the chain under test, one spread level per written `.spread`.
         var output = Assert.Single(parsed.Root.Output);
         var nesting = 0;
         var operand = output;
@@ -13250,7 +13272,7 @@ public class EvaluatorTests
     {
         var source = """
             A = 1, 2
-            B = 1...2
+            B = 1.spread 2
             A.count
             B.count
             """;
@@ -13261,21 +13283,21 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_GroupsSpreadOneLevel()
     {
-        AssertEval("(1, 2)...3", 1, 2, 3);
-        AssertEval("1...(2, 3)", 1, 2, 3);
-        AssertEval("(1, 2)...(3, 4)", 1, 2, 3, 4);
+        AssertEval("(1, 2).spread 3", 1, 2, 3);
+        AssertEval("1.spread, (2, 3)", 1, 2, 3);
+        AssertEval("(1, 2).spread, (3, 4)", 1, 2, 3, 4);
     }
 
     [Fact]
     public void Eval_SequenceSpread_NestedSequenceValuesArePreserved()
     {
-        var nestedLeft = EvalFull("((1, 2))...3");
+        var nestedLeft = EvalFull("((1, 2)).spread 3");
         if (nestedLeft.IsError)
             Assert.Fail($"Expected success but got error: {nestedLeft.Error}");
 
         AssertSequenceValueAtoms(nestedLeft.Value, 1, 2, 3);
 
-        var nestedMiddle = EvalFull("(1, (2, 3))...4");
+        var nestedMiddle = EvalFull("(1, (2, 3)).spread 4");
         if (nestedMiddle.IsError)
             Assert.Fail($"Expected success but got error: {nestedMiddle.Error}");
 
@@ -13289,7 +13311,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_InlineDotCallCountMatchesComma()
     {
-        AssertEval("(1...2).count", 2);
+        AssertEval("(1.spread 2).count", 2);
         AssertEval("(1, 2).count", 2);
     }
 
@@ -13299,7 +13321,7 @@ public class EvaluatorTests
         // Sequence-value evaluation evaluates contributions left to right and surfaces the
         // first failure: the unknown-name error from `Math.Nope` is reported
         // before the later `1 / 0` divide-by-zero is ever evaluated. (This is an
-        // evaluation ordering test — the source contains no postfix `...`.)
+        // evaluation ordering test — the source contains no spread expression.)
         var error = GetEvalError("(1, Math.Nope, 1 / 0)");
         Assert.NotNull(error);
 
@@ -13319,7 +13341,7 @@ public class EvaluatorTests
         var source = """
             Property1 = 1
             Property2 = 2, 3
-            Property1...Property2
+            Property1.spread Property2
             """;
         AssertEval(source, 1, 2, 3);
     }
@@ -13333,7 +13355,7 @@ public class EvaluatorTests
         // Spread calls with additional expressions.
         var source = """
             Next = if(a > 5, (a - 1, b + 1), (b - 1, a + 1))
-            Result = Next(10, 0)...10 > 5
+            Result = Next(10, 0).spread 10 > 5
             Result
             """;
         AssertEval(source, 9, 1, 1);
@@ -13344,8 +13366,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_InParenAlgorithm()
     {
-        // (1 + 2...3 + 4) is a parameterless nested algorithm with spread.
-        AssertEval("(1 + 2...3 + 4)", 3, 7);
+        // (1 + 2.spread 3 + 4) is a parameterless nested algorithm with spread.
+        AssertEval("(1 + 2.spread 3 + 4)", 3, 7);
     }
 
     // G. Capturing algorithm with spread
@@ -13353,7 +13375,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_InBraceAlgorithm()
     {
-        var source = "{ X = 10\nX + 1...X + 2 }";
+        var source = "{ X = 10\nX + 1.spread X + 2 }";
         AssertEval(source, 11, 12);
     }
 
@@ -13371,11 +13393,11 @@ public class EvaluatorTests
     public void Eval_SequenceSpread_MultilineWithExplicitCommasEquivalentToOneline()
     {
         var multiline = """
-            1 + 2, 2 + 3...,
-            3 + 4...,
+            1 + 2, 2 + 3.spread,
+            3 + 4.spread,
             4 + 5, 5 + 6
             """;
-        var oneline = "1 + 2, 2 + 3..., 3 + 4..., 4 + 5, 5 + 6";
+        var oneline = "1 + 2, 2 + 3.spread, 3 + 4.spread, 4 + 5, 5 + 6";
         var r1 = Eval(multiline);
         var r2 = Eval(oneline);
         Assert.Equal(r1.Value, r2.Value);
@@ -13401,7 +13423,7 @@ public class EvaluatorTests
 
         var sequenceSpreadSource = """
             A = 1, 2
-            F = a...3
+            F = a.spread 3
             A.F
             """;
 
@@ -13422,7 +13444,7 @@ public class EvaluatorTests
                 20
             }
 
-            C = A...B
+            C = A.spread B
             C
             """;
         AssertEval(valueSource, 10, 20);
@@ -13438,7 +13460,7 @@ public class EvaluatorTests
                 20
             }
 
-            C = A...B
+            C = A.spread B
             C.X
             """;
         AssertEvalFails(xSource);
@@ -13454,7 +13476,7 @@ public class EvaluatorTests
                 20
             }
 
-            C = A...B
+            C = A.spread B
             C.Y
             """;
         AssertEvalFails(ySource);
@@ -13463,7 +13485,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_NoOutputOperandFails()
     {
-        // Postfix `Bad...` spreads its (only) operand; a no-output operand
+        // Postfix `Bad.spread` spreads its (only) operand; a no-output operand
         // fails with the spread missing-output diagnostic, whose span
         // points at the offending operand `Bad` (line 5, columns 1-3), not at the
         // whole spread or some synthetic location.
@@ -13472,19 +13494,19 @@ public class EvaluatorTests
                 X = 1
             }
 
-            Bad...
+            Bad.spread
             """;
         AssertSpreadMissingOutput(operandSource, 5, 1, 5, 3);
 
         // A no-output expression after the spread is an ordinary missing-output
-        // failure, not the spread's right operand: `3...Bad` is the two
-        // expression-list slots `3...` and `Bad`.
+        // failure, not the spread's right operand: `3.spread Bad` is the two
+        // expression-list slots `3.spread` and `Bad`.
         var joinedSource = """
             Bad = {
                 X = 1
             }
 
-            3...Bad
+            3.spread Bad
             """;
         AssertEvalFails(joinedSource);
     }
@@ -13492,9 +13514,9 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpreadThenMissingAdjacentExpression_FailsOutsideSpread()
     {
-        // `3...Bad` is the two expression-list slots `3...` and `Bad`. The
-        // `3...` spread succeeds; `Bad` is a SEPARATE expression-list slot that
-        // fails on its own because it has no output. Since `...` has no right
+        // `3.spread Bad` is the two expression-list slots `3.spread` and `Bad`. The
+        // `3.spread` spread succeeds; `Bad` is a SEPARATE expression-list slot that
+        // fails on its own because it has no output. Since `.spread` has no right
         // operand, `Bad` never enters the spread, so the failure is the ordinary
         // missing-output error, NOT SpreadMissingOutput.
         var source = """
@@ -13502,7 +13524,7 @@ public class EvaluatorTests
                 X = 1
             }
 
-            3...Bad
+            3.spread Bad
             """;
         var error = GetEvalError(source);
         Assert.NotNull(error);
@@ -13516,26 +13538,26 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_Call_PostfixSpreadCommaSpreadVsJoinedArgument_DiffersInArity()
+    public void Eval_Call_SpreadAdjacencyAndCommaBothSupplySeparateArguments()
     {
-        // Paired distinction. `...` is postfix with no right operand:
-        // `F(X..., 2)` is TWO argument slots — `X...` spreads X's items (just 1),
+        // A spread expression has no right operand:
+        // `F(X.spread, 2)` is TWO argument slots — `X.spread` spreads X's items (just 1),
         // then `2` — so it binds the two-parameter F to 1 + 2 = 3.
         AssertEval(
             """
             X = 1
             F(a, b) = a + b
-            F(X..., 2)
+            F(X.spread, 2)
             """,
             3m);
 
-        // `F(X...2)` is also TWO argument slots under adjacency-as-expression-list:
-        // `X...` and `2`.
+        // `F(X.spread 2)` is also TWO argument slots under adjacency-as-expression-list:
+        // `X.spread` and `2`.
         AssertEval(
             """
             X = 1
             F(a, b) = a + b
-            F(X...2)
+            F(X.spread 2)
             """,
             3m);
     }
@@ -13543,25 +13565,28 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_OfEmptySequenceContributesNoItems()
     {
-        AssertEval("1, ()..., 2", 1, 2);
-        AssertEval("1, (())..., 2", 1, 2);
-        AssertEval("()..., 1", 1);
-        AssertEval("1, ()...", 1);
-        AssertEvalEmptyOutput("()...");
+        AssertEval("1, ().spread, 2", 1, 2);
+        AssertEval("1, (()).spread, 2", 1, 2);
+        AssertEval("().spread, 1", 1);
+        AssertEval("1, ().spread", 1);
+        AssertEvalEmptyOutput("().spread");
     }
 
     // Additional: simple spread of two literals
 
     [Theory]
-    [InlineData("A...B")]
-    [InlineData("A... B")]
-    [InlineData("A ...B")]
-    [InlineData("A ... B")]
-    [InlineData("A...\nB")]
-    public void Eval_PostfixSpreadThenJoin_CreatesExpressionListSlots(string tail)
+    [InlineData("A.spread B")]
+    [InlineData("A.spread, B")]
+    [InlineData("A .spread B")]
+    [InlineData("spread(A) B")]
+    [InlineData("spread(A), B")]
+    [InlineData("A.spread\nB")]
+    public void Eval_SpreadThenJoin_CreatesExpressionListSlots(string tail)
     {
-        // `A...B` is expression-list adjacency after postfix spread, not the
-        // old binary spread.
+        // `A.spread B` is expression-list adjacency after a spread slot, not a
+        // binary spread: a spread expression never consumes a right operand,
+        // and same-line whitespace before `.spread` stays a postfix
+        // continuation. The call form `spread(A) B` joins identically.
         var program = "A = 1, 2\nB = 3, 4\n" + tail;
         AssertEvalCounted(program, 3, Result.FromItems([Atom(1), Atom(2), SequenceValue(Atom(3), Atom(4))]));
     }
@@ -13569,14 +13594,14 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_SimpleLiterals()
     {
-        AssertEval("1...2", 1, 2);
-        AssertEval("1...2...3", 1, 2, 3);
+        AssertEval("1.spread 2", 1, 2);
+        AssertEval("1.spread 2.spread 3", 1, 2, 3);
     }
 
     [Fact]
     public void Eval_SequenceSpread_PropertyBody()
     {
-        AssertEval("A = 1...2\nA", 1, 2);
+        AssertEval("A = 1.spread 2\nA", 1, 2);
     }
 
     [Fact]
@@ -13607,7 +13632,7 @@ public class EvaluatorTests
         // old grouped/opened display coincidence is intentionally gone.
         => AssertEval(
             $$"""
-            Sum(...values) = values.count
+            Sum(values...) = values.count
             {{call}}
             """,
             1m);
@@ -13621,7 +13646,7 @@ public class EvaluatorTests
         // grouped form `Sum((1, 2, 3))`.
         => AssertEval(
             $$"""
-            Sum(...values) = values.count
+            Sum(values...) = values.count
             {{call}}
             """,
             3m);
@@ -13639,8 +13664,8 @@ public class EvaluatorTests
             actual: 1);
 
     [Theory]
-    [InlineData("Pair = (1, 2)\nAdd(Pair...)")]
-    [InlineData("Pair = 1, 2\nAdd(Pair...)")]
+    [InlineData("Pair = (1, 2)\nAdd(Pair.spread)")]
+    [InlineData("Pair = 1, 2\nAdd(Pair.spread)")]
     public void Eval_FixedCalls_ExplicitSpreadDestructuresSequenceArgument(string call)
         => AssertEval(
             $$"""
@@ -13657,7 +13682,7 @@ public class EvaluatorTests
         // calls never implicitly open sequence arguments.
         => AssertEval(
             $$"""
-            F(...values, last) = values.count, last
+            F(values..., last) = values.count, last
             {{call}}
             """,
             1m,
@@ -13665,14 +13690,14 @@ public class EvaluatorTests
 
     [Theory]
     [InlineData("F(1, 2, 3, 99)")]
-    [InlineData("Seq = (1, 2, 3)\nF(Seq..., 99)")]
+    [InlineData("Seq = (1, 2, 3)\nF(Seq.spread, 99)")]
     public void Eval_VariadicWithSuffix_DeconstructsInlineCommaOrSpreadSlots(string call)
-        // F(...values, last) is a comma deconstruction parameter list: the inline
+        // F(values..., last) is a comma deconstruction parameter list: the inline
         // comma slots and the spread both supply four items, so the variadic
         // captures [1, 2, 3] (count 3) and last binds 99.
         => AssertEval(
             $$"""
-            F(...values, last) = values.count, last
+            F(values..., last) = values.count, last
             {{call}}
             """,
             3m,
@@ -13685,8 +13710,8 @@ public class EvaluatorTests
             """
             Seq1 = (1, 2, 3)
             Seq2 = (1, 2, 3)
-            Seq1...
-            Seq2...
+            Seq1.spread
+            Seq2.spread
             """,
             1m,
             2m,
@@ -13698,14 +13723,14 @@ public class EvaluatorTests
         AssertEvalResultLoopModes(
             """
             Nested = ((1, 2), 3)
-            Nested...
+            Nested.spread
             """,
             Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3)]));
     }
 
     [Theory]
     [InlineData("Add(Pair)", false)]
-    [InlineData("Add(Pair...)", true)]
+    [InlineData("Add(Pair.spread)", true)]
     public void Eval_SequenceValue_FixedCallSlotSpreadRequiresEllipsis(string call, bool succeeds)
     {
         var source = $$"""
@@ -13738,7 +13763,7 @@ public class EvaluatorTests
         AssertEval(
             """
             Seq = (1, 2, 3)
-            Sum(...values) = values.count
+            Sum(values...) = values.count
             Seq.Sum()
             """,
             1m);
@@ -14378,7 +14403,7 @@ public class EvaluatorTests
         var source = """
             MarkSequenceValueRange((a, b, c)) = 1
             MarkSequenceValueRange(x) = 0
-            MarkSequenceValueRange((range(1, 3)...))
+            MarkSequenceValueRange((range(1, 3).spread))
             """;
 
         AssertEval(source, 1);

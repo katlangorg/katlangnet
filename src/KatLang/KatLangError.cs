@@ -360,7 +360,7 @@ public sealed class KatLangError
 
     /// <summary>
     /// Phrase an assignment-deconstruction binding failure against the WRITTEN
-    /// pattern (<c>a, ...rest, z = RHS</c>) instead of the synthetic inline
+    /// pattern (<c>a, rest..., z = RHS</c>) instead of the synthetic inline
     /// helper the parser elaborated the assignment into. The context may be
     /// nested under ordinary call/property evaluation contexts, so the chain
     /// is searched.
@@ -504,7 +504,7 @@ public sealed class KatLangError
         => RunResult.NoProgramOutput.DefaultMessage;
 
     private static string FormatSpreadMissingOutput()
-        => "Cannot spread because the spread operand has no defined output.\nUse `()...` if you intended to spread zero items.";
+        => "Cannot spread because the spread operand has no defined output.\nUse `spread(())` if you intended to spread zero items.";
 
     private static string FormatGenericArityMismatch(int expected, int actual)
         => $"Expected {FormatCount(expected, "parameter")}, but was called with {FormatCount(actual, "argument")}.";
@@ -525,7 +525,7 @@ public sealed class KatLangError
     }
 
     private static string FormatVariadicLoopStateArityMismatch(VariadicLoopStateBindingContext context)
-        => $"`{context.LoopName}` variadic step expects at least {FormatCount(context.ExpectedMinimumStateValueCount, "state value")} for fixed parameter(s) {FormatQuotedList(context.StepParameterNames)}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. Variadic loop parameters collect the remaining state values as an exact list with `...name`; ordinary implicit parameters still bind one state value each.";
+        => $"`{context.LoopName}` variadic step expects at least {FormatCount(context.ExpectedMinimumStateValueCount, "state value")} for fixed parameter(s) {FormatQuotedList(context.StepParameterNames)}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. Variadic loop parameters collect the remaining state values as an exact list with `name...`; ordinary implicit parameters still bind one state value each.";
 
     private static string FormatReduceInitialAccumulator(IReadOnlyList<string> requiredParameterNames)
     {

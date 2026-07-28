@@ -116,7 +116,7 @@ public class DottedReceiverEvaluationTests
     [InlineData("[7]")]
     [InlineData("[1, 2, 3]")]
     [InlineData("[(1, 2), [3, 4]]")]
-    [InlineData("[range(1, 3)..., 9]")]
+    [InlineData("[range(1, 3).spread, 9]")]
     public void EveryReceiverValueKind_AgreesBetweenForms(string receiver)
     {
         var ordinarySource = $"R = {receiver}\nOutput = count(R)";

@@ -111,17 +111,17 @@ public class KatLangEngineTests
     public void Run_EmptyCollectedListOutputSlot_StaysVisibleUnlessSpread()
     {
         // The empty collected list is the exact list [] and stays a visible slot.
-        AssertDisplay("x, ...rest = 1\nrest", "[]");
-        AssertDisplay("x, ...rest = 1\nrest\nx", "[]\n1");
+        AssertDisplay("x, rest... = 1\nrest", "[]");
+        AssertDisplay("x, rest... = 1\nrest\nx", "[]\n1");
         // Spreading the empty list opens it and contributes zero items.
-        AssertDisplay("x, ...rest = 1\nrest...\nx", "1");
+        AssertDisplay("x, rest... = 1\nrest.spread\nx", "1");
     }
 
     [Fact]
     public void Run_EmptyAndNestedEmptySpread_Canonicalize()
     {
-        AssertDisplay("1, ()..., 2", "1\n2");
-        AssertDisplay("1, (())..., 2", "1\n2");
+        AssertDisplay("1, ().spread, 2", "1\n2");
+        AssertDisplay("1, (()).spread, 2", "1\n2");
     }
 
     [Fact]
@@ -136,19 +136,19 @@ public class KatLangEngineTests
         AssertDisplay("X = 1, 2, 3\nif(1, X, X)", "(1, 2, 3)");
         AssertDisplay("X = 1, 2, 3\nif(0, X, X)", "(1, 2, 3)");
         // Explicit spread opens it back into separate rows.
-        AssertDisplay("X = 1, 2, 3\nif(1, X, X)...", "1\n2\n3");
+        AssertDisplay("X = 1, 2, 3\nif(1, X, X).spread", "1\n2\n3");
     }
 
     [Fact]
     public void Run_IfSpreadArgument_OpensIntoThreeArguments()
     {
         // Issue #131: explicit spread in call-argument position supplies the value's items
-        // into the three `if` argument slots, so `if(X...)` ≡ `if(1, 2, 3)` → 2.
-        AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult...)", "2");
-        AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult...)", "2");
-        AssertDisplay("Pair = 2, 3\nif(1, Pair...)", "2");
+        // into the three `if` argument slots, so `if(X.spread)` ≡ `if(1, 2, 3)` → 2.
+        AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult.spread)", "2");
+        AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult.spread)", "2");
+        AssertDisplay("Pair = 2, 3\nif(1, Pair.spread)", "2");
         // Direct builtin `if` now matches the user-defined wrapper.
-        AssertDisplay("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult...)", "2");
+        AssertDisplay("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult.spread)", "2");
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public class KatLangEngineTests
     {
         // The spread now parses; a wrong expanded count surfaces as an evaluation
         // arity error, not a parser arity error.
-        var result = KatLangEngine.Run("Two = 1, 2\nif(Two...)");
+        var result = KatLangEngine.Run("Two = 1, 2\nif(Two.spread)");
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         Assert.Contains(failure.Errors, e => e.Message.Contains("3 arguments"));
     }
@@ -726,17 +726,35 @@ public class KatLangEngineTests
     [InlineData("open A...B")]
     [InlineData("open 'url'...")]
     [InlineData("open A, 'url'...")]
-    public void Run_OpenSequenceSpreadTarget_ReportsParseFailure(string source)
+    public void Run_OpenEllipsisTarget_ReportsParseFailure(string source)
     {
-        // '...' is not open-target syntax; the rejection happens at parse
-        // time, before any evaluation.
+        // `...` is not open-target syntax (it is the collecting-binding
+        // marker); the rejection happens at parse time, before any evaluation.
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         Assert.Contains(
             failure.Errors,
             static error => error.Message.Contains(
-                "The spread operator '...' is not valid in open targets",
+                "`...` is not valid in open targets",
+                StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("open spread(A)")]
+    [InlineData("open A.spread")]
+    [InlineData("open A, B.spread")]
+    public void Run_OpenSpreadExpressionTarget_ReportsParseFailure(string source)
+    {
+        // A named spread expression is not an open form; the rejection
+        // happens at parse time, before any evaluation.
+        var result = KatLangEngine.Run(source);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        Assert.Contains(
+            failure.Errors,
+            static error => error.Message.Contains(
+                "Invalid open form: 'spread' is not allowed in open declarations",
                 StringComparison.Ordinal));
     }
 
@@ -856,7 +874,7 @@ public class KatLangEngineTests
         // [(10, 20, 30)], displayed as a single row.
         var result = KatLangEngine.Run(
             """
-            Collect(...list) = list
+            Collect(list...) = list
             Output = (10, 20, 30).Collect
             """);
 
@@ -867,12 +885,12 @@ public class KatLangEngineTests
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
         // The spread receiver supplies the items, so the collected list is
-        // [10, 20, 30]; explicit caller-site postfix `...` re-spreads the returned
+        // [10, 20, 30]; an explicit caller-site spread re-spreads the returned
         // list into the surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """
-            Collect(...list) = list
-            Output = ((10, 20, 30)...).Collect...
+            Collect(list...) = list
+            Output = ((10, 20, 30).spread).Collect.spread
             """);
 
         Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());

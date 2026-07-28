@@ -389,8 +389,8 @@ public static class Evaluator
         // SequenceConstruct is an internal value node; ';' is not surface
         // syntax, so render it as one sequence value, never with ';'.
         Expr.SequenceConstruct(var a, var b) => "(" + OpenExprName(a) + ", " + OpenExprName(b) + ")",
-        // Postfix spread renders as `a...` over its single operand.
-        Expr.SequenceSpread(var a) => OpenExprName(a) + "...",
+        // A spread expression renders in the canonical named-intrinsic form.
+        Expr.SequenceSpread(var a) => "spread(" + OpenExprName(a) + ")",
         // Exact list literal `[a, b, c]`.
         Expr.ListLiteral(var items) => "[" + string.Join(", ", items.Select(OpenExprName)) + "]",
         // Empty sequence core nodes render by depth for diagnostics; evaluation
@@ -426,7 +426,7 @@ public static class Evaluator
     /// selector is a primary in source syntax, so any form that would continue
     /// the postfix chain rebinds to the target instead: <c>A:B.C</c> reads as
     /// <c>(A:B).C</c>, <c>A:B:C</c> as <c>(A:B):C</c>, <c>A:f(0)</c> as
-    /// adjacency, and <c>A:B...</c> as a spread of the whole index. A bare
+    /// adjacency, and <c>A:B.spread</c> as a spread of the whole index. A bare
     /// negative literal (<c>A:-1</c>) is not selector syntax at all. A binary
     /// selector is already self-parenthesized by <see cref="OpenExprName"/>.
     /// Lean: indexSelectorNeedsParens.
@@ -1042,7 +1042,7 @@ public static class Evaluator
     /// Argument passing rule: a single atom is wrapped in a one-element list;
     /// a sequence value is unpacked into its elements. Exact list values are
     /// NOT unpacked: call-argument binding preserves a list as one argument;
-    /// only explicit caller-site <c>...</c> opens it. Lean: unpackArgs.
+    /// only an explicit caller-site <c>spread</c> opens it. Lean: unpackArgs.
     /// </summary>
     private static IReadOnlyList<Result> UnpackArgs(Result r) => r switch
     {
@@ -1337,7 +1337,7 @@ public static class Evaluator
     /// <c>collect</c> — THIS operation: a collecting binding (variadic parameter) materializes
     /// exactly the assigned items as one exact immutable list
     /// (<c>CollectSegment([]) == []</c>, <c>CollectSegment([v]) == [v]</c>, never
-    /// erased); and <c>spread</c> — postfix spread
+    /// erased); and <c>spread</c> — the named spread intrinsic
     /// (<see cref="Result.SpreadItems"/>), which opens one sequence OR list
     /// boundary. The round trip <c>SpreadItems(CollectSegment(xs)) == xs</c>
     /// makes variadic forwarding ordinary list spread with no hidden
@@ -1491,7 +1491,7 @@ public static class Evaluator
         // A received sequence value or exact list value opens to its immediate
         // items (Lean: Result.structureItems?): the deconstruction receiver
         // opens ONE lone structure boundary of either kind, so
-        // `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]...`.
+        // `x, y, z = [1, 2, 3]` binds like `x, y, z = spread([1, 2, 3])`.
         if (input.Value?.StructureItems() is { } structureItems)
             return EvalResult<IReadOnlyList<Result>>.Ok(structureItems);
 
@@ -1533,7 +1533,7 @@ public static class Evaluator
                 // prefix/collecting/suffix matcher (the same normalization the function
                 // deconstruction path applies via rule 4). This lets a scalar
                 // right-hand side bind a collecting pattern that captures zero items,
-                // e.g. `first, ...tail = 1` (first = 1, tail = []), instead of being
+                // e.g. `first, tail... = 1` (first = 1, tail = []), instead of being
                 // rejected before the matcher runs.
                 if (itemsR.IsError && input.Value is not null)
                 {
@@ -1707,7 +1707,7 @@ public static class Evaluator
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {
                     return new EvalError.TypeMismatch(
-                        $"Variadic parameter `...{variadicCapture.Name}` collects values, but a supplied argument is a function. " +
+                        $"Variadic parameter `{variadicCapture.Name}...` collects values, but a supplied argument is a function. " +
                         "Pass a value, or call the function so its result is collected.");
                 }
 
@@ -1985,7 +1985,7 @@ public static class Evaluator
     /// <summary>
     /// True when a callable's top-level parameter list captures the supplied call
     /// argument stream: any top-level variadic capture, including a lone variadic
-    /// <c>...name</c> and mixed fixed/variadic shapes such as <c>x, ...y, z</c>.
+    /// <c>name...</c> and mixed fixed/variadic shapes such as <c>x, y..., z</c>.
     /// Checked only after patterned (sequence-value / repeated-name) binding has
     /// been ruled out.
     /// Lean: <c>Algorithm.usesItemSupplyBinding</c>.
@@ -2934,7 +2934,7 @@ public static class Evaluator
                 }
 
                 // A flat callee with a top-level variadic parameter (`Rows.map(F)`
-                // with `F(x, ...y, z)` or a single-variadic `Collect(...items)`)
+                // with `F(x, y..., z)` or a single-variadic `Collect(items...)`)
                 // binds through the shared prefix/collecting/suffix binder so the
                 // variadic parameter COLLECTS an exact immutable list, after the
                 // same final-argument row expansion the fixed-only flat path
@@ -3058,8 +3058,8 @@ public static class Evaluator
         }
 
         // Output-slot capture is a persistent collection: spread can expand it well beyond
-        // any single input (`(A..., A...)` doubles), so the reservation happens here, before
-        // the sequence value is built.
+        // any single input (`(spread(A), spread(A))` doubles), so the reservation happens
+        // here, before the sequence value is built.
         if (ReserveSequenceCapture(ctx, results.Count, FirstSpan(alg.Output)) is { } capturedLimitError)
             return capturedLimitError;
 
@@ -3188,7 +3188,7 @@ public static class Evaluator
     // same structural value with emitted count <see cref="Result.ValueCount"/>
     // (0 for the empty sequence value, otherwise 1). A multi-output body therefore
     // becomes one sequence value at the boundary; only an explicit caller-site
-    // postfix `...` re-spreads it (via ToItems, which reads the value, not this count).
+    // `spread` re-spreads it (via ToItems, which reads the value, not this count).
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already canonicalized redundant unary empty structure.
@@ -3594,15 +3594,16 @@ public static class Evaluator
 
     // Evaluate a unary `sequenceSpread` node by evaluating its single operand
     // once and spreading immediate top-level items. Directly-nested spreads
-    // (`A......`) are unwrapped iteratively (stack-safe for deep nesting) and
-    // then each written layer is applied COMPOSITIONALLY: every `...` opens
-    // exactly one boundary of the value the previous layer would have
-    // captured, so `A......` agrees with `(A...)...`. For sequence values the
-    // extra layers are fixed points (value-equivalent to a single spread);
-    // a singleton-list chain opens one list boundary per layer
-    // (`[[7]]......` supplies `7`), while a multi-element list re-captures as
-    // a sequence after the first layer and then stays fixed
-    // (`[[1, 2], [3, 4]]......` supplies the two inner lists unchanged).
+    // (`spread(spread(A))`, equally `A.spread.spread`) are unwrapped
+    // iteratively (stack-safe for deep nesting) and then each written layer
+    // is applied COMPOSITIONALLY: every spread layer opens exactly one
+    // boundary of the value the previous layer would have captured, so
+    // `spread(spread(A))` agrees with `spread((spread(A)))`. For sequence
+    // values the extra layers are fixed points (value-equivalent to a single
+    // spread); a singleton-list chain opens one list boundary per layer
+    // (`[[7]].spread.spread` supplies `7`), while a multi-element list
+    // re-captures as a sequence after the first layer and then stays fixed
+    // (`[[1, 2], [3, 4]].spread.spread` supplies the two inner lists unchanged).
     // Lean: evalSequenceSpreadCounted.
     private static EvalResult<CountedResult> EvalSequenceSpreadCounted(
         Expr expr,
@@ -4161,7 +4162,7 @@ public static class Evaluator
         // argument at this call boundary, exactly like at every other call
         // boundary; only explicit caller-site spread alters argument
         // boundaries, and the spread items obey the same fixed arity
-        // (`count([1, 2, 3]...)` supplies three arguments and is an arity
+        // (`count(spread([1, 2, 3]))` supplies three arguments and is an arity
         // error). Nothing is opened before binding.
         var items = itemsR.Value;
         var expectedArgCount = 1 + metadata.SuffixArgs.Count;
@@ -4788,7 +4789,7 @@ public static class Evaluator
                 // property access. A multi-output branch property such as
                 // `X = 1, 2, 3` therefore yields the grouped sequence value
                 // `(1, 2, 3)` with emitted count 1, not three separate outputs.
-                // Explicit spread (`if(1, X, X)...`) is the way to open it.
+                // Explicit spread (`spread(if(1, X, X))`) is the way to open it.
                 // Unlike `while`/`repeat`, which intentionally preserve multi-slot
                 // loop state, `if` re-counts the chosen branch value here.
                 var branchR = truth.Value
@@ -5566,7 +5567,7 @@ public static class Evaluator
                     : EvalResolvedArgument(args[2], ctx, valEnv);
             }
 
-            // while(step, ...init)
+            // while(step, init...)
             case (BuiltinId.@while, _) when args.Count >= 2:
             {
                 var stepR = ResolveArgumentAlgorithm(args[0]);
@@ -5576,7 +5577,7 @@ public static class Evaluator
                 return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
             }
 
-            // repeat(step, count, ...init)
+            // repeat(step, count, init...)
             case (BuiltinId.@repeat, _) when args.Count >= 3:
             {
                 var stepR = ResolveArgumentAlgorithm(args[0]);
@@ -5957,7 +5958,7 @@ public static class Evaluator
     /// Calls, name resolution, and collection builtins are value boundaries: they
     /// emit <c>Result.ValueCount</c> of the result value (one value for a
     /// non-empty result), so a multi-output body/collection is observed as one
-    /// sequence value and only caller-site <c>...</c> re-spreads it.
+    /// sequence value and only caller-site <c>spread</c> re-spreads it.
     /// Block expressions count as one sequence value when non-empty. Spread
     /// emits the immediate spread items of its operand. All other value
     /// expressions emit either zero values (empty result) or one value.
@@ -6753,7 +6754,7 @@ public static class Evaluator
     /// value while re-counting the emitted arity with
     /// <see cref="ReCountValueBoundary"/> (<c>Result.ValueCount</c>). A
     /// multi-output body therefore becomes one sequence value (count 1); only
-    /// caller-site <c>...</c> re-spreads it.
+    /// caller-site <c>spread</c> re-spreads it.
     /// Lean: <c>evalUserCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalUserCallCounted(
@@ -7115,7 +7116,7 @@ public static class Evaluator
         // The injected receiver is still one leading argument segment. When a
         // leading flat variadic parameter exists, that segment may carry its
         // emitted-count metadata into the capture after slot allocation.
-        // Parenthesized receiver spread, as in (Arg...).F, can feed the
+        // Parenthesized receiver spread, as in (spread(Arg)).F, can feed the
         // receiver's top-level items only to leading flat variadic receiver params.
         // Fixed receiver params keep the receiver as one argument boundary.
         if (TryGetParenthesizedSequenceSpreadReceiver(receiver, out var spreadReceiver)

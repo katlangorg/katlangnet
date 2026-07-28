@@ -87,29 +87,29 @@ public class CallArgumentAssemblyTests
 
     [Fact]
     public void SequenceSpread_FlatCallee_SuppliesSpreadItemsAsSlots()
-        => AssertEvaluates("G(x, y) = x + y\nA = (1, 2)\nG(A...)", Atom(3));
+        => AssertEvaluates("G(x, y) = x + y\nA = (1, 2)\nG(A.spread)", Atom(3));
 
     [Fact]
     public void SequenceSpread_PatternedCallee_SuppliesSpreadItemsAsSlots()
-        => AssertEvaluates("F(x, x) = x + 1\nA = (7, 7)\nF(A...)", Atom(8));
+        => AssertEvaluates("F(x, x) = x + 1\nA = (7, 7)\nF(A.spread)", Atom(8));
 
     [Fact]
     public void SequenceSpread_ConditionalCallee_SuppliesSpreadItemsBeforeClauseSelection()
-        => AssertEvaluates(TwoClauseConditional + "A = (1, 2)\nF(A...)", Atom(3));
+        => AssertEvaluates(TwoClauseConditional + "A = (1, 2)\nF(A.spread)", Atom(3));
 
     [Fact]
     public void SequenceSpread_ConditionalCallee_DispatchHappensAfterExpansion()
     {
         // Dispatch-after-expansion proof: the literal clause F(0, 0) can only
         // win if the spread supplied TWO slots before clause selection.
-        AssertEvaluates(TwoClauseConditional + "A = (0, 0)\nF(A...)", Atom(100));
+        AssertEvaluates(TwoClauseConditional + "A = (0, 0)\nF(A.spread)", Atom(100));
     }
 
     [Fact]
     public void ListSpread_PatternedAndConditionalCallees_SupplySpreadItems()
     {
-        AssertEvaluates("F(x, x) = x\nB = [7, 7]\nF(B...)", Atom(7));
-        AssertEvaluates(TwoClauseConditional + "B = [1, 2]\nF(B...)", Atom(3));
+        AssertEvaluates("F(x, x) = x\nB = [7, 7]\nF(B.spread)", Atom(7));
+        AssertEvaluates(TwoClauseConditional + "B = [1, 2]\nF(B.spread)", Atom(3));
     }
 
     // ── A catch-all clause can no longer absorb a spread as one closed value ─
@@ -118,7 +118,7 @@ public class CallArgumentAssemblyTests
     public void SequenceSpread_ConditionalCallee_CatchAllCannotAbsorbClosedValue()
     {
         // The clause family has arity 2; the spread supplies 2 slots that no
-        // clause matches (neither literal pair (9, 9) nor... both binder
+        // clause matches (neither the literal pair (9, 9) nor the two binder
         // clause DOES match here) — so pin the 1-vs-family case: the unspread
         // argument is ONE closed value, which no two-argument clause matches.
         var error = AssertFails(TwoClauseConditional + "A = (1, 2)\nF(A)");
@@ -129,26 +129,26 @@ public class CallArgumentAssemblyTests
 
     [Fact]
     public void AtomSpread_ConditionalCallee_SuppliesTheAtomItself()
-        => AssertEvaluates("F(0) = 100\nF(x) = x + 1\nF(7...)", Atom(8));
+        => AssertEvaluates("F(0) = 100\nF(x) = x + 1\nF(7.spread)", Atom(8));
 
     [Fact]
     public void StringSpread_ConditionalCallee_SuppliesTheStringItself()
-        => AssertEvaluates("F('a') = 1\nF(other) = 0\nF('a'...)", Atom(1));
+        => AssertEvaluates("F('a') = 1\nF(other) = 0\nF('a'.spread)", Atom(1));
 
     [Fact]
     public void EmptySequenceSpread_IsNeutralForEveryCalleeShape()
     {
-        AssertEvaluates("G(x, y) = x + y\nG(()..., 1, 2)", Atom(3));
-        AssertEvaluates("F(x, x) = x\nF(()..., 7, 7)", Atom(7));
-        AssertEvaluates(TwoClauseConditional + "F(()..., 1, 2)", Atom(3));
+        AssertEvaluates("G(x, y) = x + y\nG(().spread, 1, 2)", Atom(3));
+        AssertEvaluates("F(x, x) = x\nF(().spread, 7, 7)", Atom(7));
+        AssertEvaluates(TwoClauseConditional + "F(().spread, 1, 2)", Atom(3));
     }
 
     [Fact]
     public void EmptyListSpread_IsNeutralForEveryCalleeShape()
     {
-        AssertEvaluates("G(x, y) = x + y\nG([]..., 1, 2)", Atom(3));
-        AssertEvaluates("F(x, x) = x\nF([]..., 7, 7)", Atom(7));
-        AssertEvaluates(TwoClauseConditional + "F([]..., 1, 2)", Atom(3));
+        AssertEvaluates("G(x, y) = x + y\nG([].spread, 1, 2)", Atom(3));
+        AssertEvaluates("F(x, x) = x\nF([].spread, 7, 7)", Atom(7));
+        AssertEvaluates(TwoClauseConditional + "F([].spread, 1, 2)", Atom(3));
     }
 
     // ── Mixed fixed and spread slots ────────────────────────────────────────
@@ -156,7 +156,7 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void MixedFixedAndSpreadSlots_ConditionalCallee_FormOneArgumentSupply()
         => AssertEvaluates(
-            "F(0, 0, 0) = 100\nF(x, y, z) = x + y + z\nA = (2, 3)\nF(1, A...)",
+            "F(0, 0, 0) = 100\nF(x, y, z) = x + y + z\nA = (2, 3)\nF(1, A.spread)",
             Atom(6));
 
     // ── Arity is checked after expansion ────────────────────────────────────
@@ -164,7 +164,7 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void SequenceSpread_PatternedCallee_ArityCheckedAfterExpansion()
     {
-        var error = AssertFails("F(x, x) = x\nA = (7, 7, 7)\nF(A...)");
+        var error = AssertFails("F(x, x) = x\nA = (7, 7, 7)\nF(A.spread)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(2, arity.Expected);
         Assert.Equal(3, arity.Actual);
@@ -173,7 +173,7 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void SequenceSpread_ConditionalCallee_UnmatchedExpandedArityIsNoMatchingBranch()
     {
-        var error = AssertFails(TwoClauseConditional + "A = (1, 2, 3)\nF(A...)");
+        var error = AssertFails(TwoClauseConditional + "A = (1, 2, 3)\nF(A.spread)");
         Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error));
     }
 
@@ -182,10 +182,10 @@ public class CallArgumentAssemblyTests
     {
         // Migration fact of the uniform rule: the old per-shape assembler let
         // a spread reach a patterned callee as ONE closed value, so
-        // `F(A..., 9)` bound the (x, y) pattern from A. Spread now supplies
+        // `F(A.spread, 9)` bound the (x, y) pattern from A. Spread now supplies
         // ordinary argument slots — three slots against two parameters is an
         // arity error; write `F(A, 9)` for the destructuring reading.
-        var error = AssertFails("F((x, y), z) = (x, y, z)\nA = (1, 2)\nF(A..., 9)");
+        var error = AssertFails("F((x, y), z) = (x, y, z)\nA = (1, 2)\nF(A.spread, 9)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(2, arity.Expected);
         Assert.Equal(3, arity.Actual);
@@ -199,8 +199,8 @@ public class CallArgumentAssemblyTests
     public void DottedCallWithSpreadArguments_AgreesWithOrdinaryForm()
     {
         const string Defs = "F(0, 0, 0) = 100\nF(x, y, z) = x + y + z\nB = (2, 3)\n";
-        AssertEvaluates(Defs + "(1).F(B...)", Atom(6));
-        AssertEvaluates(Defs + "F(1, B...)", Atom(6));
+        AssertEvaluates(Defs + "(1).F(B.spread)", Atom(6));
+        AssertEvaluates(Defs + "F(1, B.spread)", Atom(6));
     }
 
     // ── Non-spread sequence/list arguments remain closed ────────────────────
@@ -229,18 +229,18 @@ public class CallArgumentAssemblyTests
     [Fact]
     public void FunctionValuedArgument_InVariadicParameter_ReportsTargetedDiagnostic()
     {
-        var error = AssertFails("F(...fs) = fs\nF(sum)");
+        var error = AssertFails("F(fs...) = fs\nF(sum)");
         var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
-        Assert.Contains("Variadic parameter `...fs` collects values", mismatch.Message, StringComparison.Ordinal);
+        Assert.Contains("Variadic parameter `fs...` collects values", mismatch.Message, StringComparison.Ordinal);
         Assert.Contains("a supplied argument is a function", mismatch.Message, StringComparison.Ordinal);
 
         // A parameterized user function is function-shaped too.
-        var userError = AssertFails("H(x) = x\nF(...fs) = fs\nF(H)");
+        var userError = AssertFails("H(x) = x\nF(fs...) = fs\nF(H)");
         Assert.IsType<EvalError.TypeMismatch>(Innermost(userError));
 
         // Fixed parameters keep the dual algorithm channel: the same argument
         // is legal where a fixed parameter receives it.
-        AssertEvaluates("Apply(f, ...xs) = f(xs)\nApply(sum, 1, 2)", Atom(3));
+        AssertEvaluates("Apply(f, xs...) = f(xs)\nApply(sum, 1, 2)", Atom(3));
     }
 
     [Fact]
@@ -249,10 +249,10 @@ public class CallArgumentAssemblyTests
         // A zero-parameter VALUE property is NOT function-shaped: when its
         // body fails, the collecting binding surfaces the genuine evaluation error
         // instead of misdescribing the argument as "a function".
-        var divisionError = AssertFails("Bad = 1 / 0\nG(...items) = items.count\nG(Bad)");
+        var divisionError = AssertFails("Bad = 1 / 0\nG(items...) = items.count\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));
 
-        var emptyError = AssertFails("Data = first([])\nG(...items) = items\nG(Data)");
+        var emptyError = AssertFails("Data = first([])\nG(items...) = items\nG(Data)");
         Assert.IsType<EvalError.BadArity>(Innermost(emptyError));
     }
 }

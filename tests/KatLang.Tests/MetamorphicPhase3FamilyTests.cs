@@ -166,7 +166,9 @@ public class MetamorphicPhase3FamilyTests
             Assert.Equal(MetamorphicFamilyRegistry.All[index].Family, MetamorphicDecoder.Decode(payload).Family);
         }
 
-        Assert.Equal(frozen.Length + Phase3Families.Length, MetamorphicFamilyRegistry.All.Length);
+        // Frozen Phase 1/2 families + the Phase 3 families + the appended Group E
+        // spread-spelling-parity family (spread(X) vs X.spread).
+        Assert.Equal(frozen.Length + Phase3Families.Length + 1, MetamorphicFamilyRegistry.All.Length);
     }
 
     /// <summary>Old payload LENGTHS still select old families: nothing Phase 3 added is reachable in six bytes.</summary>

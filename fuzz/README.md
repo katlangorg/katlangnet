@@ -169,7 +169,7 @@ strings (incl. unterminated and Unicode), identifiers, operators and precedence,
 parentheses/braces/exact-list brackets and their empty/nested forms, comma vs adjacency,
 newline/CRLF/lone-CR boundaries, comments, property/`public`/`Output =` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
-leading-dot continuation, `open` declarations, `:` indexing, `~` grace, `...` spread,
+leading-dot continuation, `open` declarations, `:` indexing, `~` grace, `name...` collecting markers, `spread(expr)`/`expr.spread` spreading,
 deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-
 character mixtures. Keep new seeds small and reviewable; do not commit generated corpora
 (they belong in `fuzz/artifacts/corpus`).
@@ -518,7 +518,7 @@ The five laws:
 ### The dotted rewrite contract, and structural-member exclusion
 
 `A.F(B, C)` means `F(A, B, C)`: the receiver is supplied as **one leading argument boundary**,
-never `F(A..., B, C)`. Templates therefore never introduce a spread when building the dotted
+never `F(spread(A), B, C)`. Templates therefore never introduce a spread when building the dotted
 form; the one spread body Group B generates places the spread identically in the **suffix** of
 both members, because a spread receiver has no dotted spelling at all.
 
@@ -535,7 +535,7 @@ argument binding. A consumer supplies a fixed number of values per invocation, a
 that binds exactly those values positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:
 
-* **Variadic** (`MmWrap(...xs)`) — a variadic parameter *collects* the supplied slots into an exact list,
+* **Variadic** (`MmWrap(xs...)`) — a variadic parameter *collects* the supplied slots into an exact list,
   so the wrapper receives `[element]` where the builtin receives `element`. Measured:
   `[[1, 2], [3]].map(count)` is `[2, 1]` while the variadic wrapper gives `[1, 1]`. That is correct
   language behaviour and a false equivalence, not a defect.

@@ -1,2 +1,2 @@
 Values = [1, 2, 3]
-Output = [Values..., Values...].count
+Output = [spread(Values), spread(Values)].count

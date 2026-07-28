@@ -54,7 +54,7 @@ storage — `variadicSupplyEnv` / `VariadicStreamEnv` with raw item counts —
 was removed. Collecting bindings now collect ONE exact immutable list with emitted
 count 1 (`collectSegment` / `CollectSegment`), and forwarding is ordinary list
 spread: `sum(a)` passes the bound list as the one collection argument, and
-`a...` re-spreads exactly the collected items.)*
+`a.spread` re-spreads exactly the collected items.)*
 
 **Construction.** Parenthesized lists parse to zero-parameter blocks whose
 output slots keep `()` items visible; slots are combined with the shallow
@@ -74,8 +74,8 @@ list boundaries via the dedicated `languageAtoms` collector and materializes
 them as one exact list, while truth testing keeps reading the sequence-only
 `Result.atoms` view (lists still have no truth value).
 
-**Spread.** `expr...` opens exactly one layer via `spreadItems`: `()...` and
-`[]...` contribute zero items, an atom spreads to itself, a sequence or list
+**Spread.** `expr.spread` opens exactly one layer via `spreadItems`: `().spread` and
+`[].spread` contribute zero items, an atom spreads to itself, a sequence or list
 supplies its immediate items, and nested values stay intact.
 
 **Indexing.** `x:i` selects one top-level item and projects its content one
@@ -93,7 +93,7 @@ first-class operand for `==`/`!=`.
 **count / .count.** Both paths supply exactly one fixed `collection` argument.
 Only after fixed binding, the builtin collection view opens one outer sequence
 or exact-list boundary; sibling groups remain items. `count(V)` and `V.count`
-therefore agree. `count(V...)` has ordinary spread-call meaning instead: it is
+therefore agree. `count(V.spread)` has ordinary spread-call meaning instead: it is
 valid only when the spread supplies exactly one argument, and otherwise is an
 ordinary arity error for `count(collection)`.
 
@@ -133,18 +133,18 @@ observable count at root; notes):
 | Receiver / operation | internal supplied arity | output raw | n | notes |
 |---|---|---|---|---|
 | root output `V` | 1 slot | canonical V | 1 | non-spread slot ≥ 1 row, incl. `()` |
-| root `V...` | `items(V)` | canonical V | `items(V).count` | `()...` -> 0 rows, display `""` |
+| root `V.spread` | `items(V)` | canonical V | `items(V).count` | `().spread` -> 0 rows, display `""` |
 | root `(), 99` | 2 slots | `S[S[], 99]` | 2 | `()` stays a visible row |
 | capture `x = V` | 1 | canonical V | 1 | identical for `x`, `x()`, `A.X`, `A.X()` |
 | fixed param `F(V)` | 1 arg | V | 1 | call never opens a grouped arg |
-| fixed `F(V...)` | `items(V)` args | item / `E:arity` | 1 | succeeds iff exactly 1 item |
-| variadic `F(V)` / `F(V...)` | 1 arg / items | `L[V]` / `L[items(V)...]` | 1 | the variadic parameter COLLECTS an exact list; grouped and spread calls always differ (July 2026 supersession of the old single-variadic coincidence) |
-| mixed `F(h, ...t)(V...)` | items | front/back split; the variadic parameter collects the middle as `L[...]` | 1 | a 1-item collected segment stays `[item]` (no collapse; July 2026 supersession of the old capture law) |
-| deconstruction `x, y = V` | `items(V)` | element-wise match | 1 | `= V` ≡ `= V...` (unpacking receiver) |
+| fixed `F(V.spread)` | `items(V)` args | item / `E:arity` | 1 | succeeds iff exactly 1 item |
+| variadic `F(V)` / `F(V.spread)` | 1 arg / items | `L[V]` / `L[items(V).spread]` | 1 | the variadic parameter COLLECTS an exact list; grouped and spread calls always differ (July 2026 supersession of the old single-variadic coincidence) |
+| mixed `F(h, t...)(V.spread)` | items | front/back split; the variadic parameter collects the middle as `L[...]` | 1 | a 1-item collected segment stays `[item]` (no collapse; July 2026 supersession of the old capture law) |
+| deconstruction `x, y = V` | `items(V)` | element-wise match | 1 | `= V` ≡ `= V.spread` (unpacking receiver) |
 | explicit seq `(V, 99)` | 2 slots | `S[V, 99]` | 1 | `()` survives as item; nesting intact |
-| spread in seq `(V..., 99)` | items+1 | shallow combine | 1 | `(()..., 99)` = `99` (singleton collapse) |
+| spread in seq `(V.spread, 99)` | items+1 | shallow combine | 1 | `(().spread, 99)` = `99` (singleton collapse) |
 | `count(V)` / `V.count` | 1 fixed collection arg | `items(V).count` | 1 | collection view opens one bound sequence/list boundary |
-| `count(V...)` | `items(V).count` ordinary args | count or `E:arity` | 1 / — | succeeds only when spread supplies exactly one argument |
+| `count(V.spread)` | `items(V).count` ordinary args | count or `E:arity` | 1 / — | succeeds only when spread supplies exactly one argument |
 | `x:0` (item = pair) | — | projected item content | `max(1, k)` | supply at root; 1 value everywhere else |
 | `x:0` (item = `()`) | — | `S[]` | 1 | projection count 0, root bump to 1 row |
 | `x:9` / `x:-1` | — | `E:index` / parse error | — | negative selector rejected at parse (C#) |
@@ -180,7 +180,7 @@ observable count at root; notes):
    values including all counts (enforced as `DisplayNotReconstructable`),
    with two documented exceptions: string display drops quotes (explicit
    non-goal), and a zero-item output displays as no text, which is not a
-   parseable program (`()...` at root).
+   parseable program (`().spread` at root).
 9. **Can two values display identically but behave differently?** No collision
    found across the corpus (enforced as `DisplayCollision`).
 10. **Can one raw value observe differently by construction path?** No.
@@ -189,7 +189,7 @@ observable count at root; notes):
 11. **Can a collection builtin erase a one-survivor boundary?** No. The exact
     result is `[survivor]`, so `count(take(V, 1))` is 1 whenever `V` supplies an
     item, including when that item is a sequence value or `()`. Explicit
-    `take(V, 1)...` re-spreads the list and supplies the survivor itself.
+    `take(V, 1).spread` re-spreads the list and supplies the survivor itself.
 12. **Can a non-spread `()` disappear from an item position?** Not from any
     parser-reachable position (root rows, property bodies, sequence literals,
     argument slots, builtin supplies all preserve it — validated as
@@ -217,10 +217,10 @@ observable count at root; notes):
 `evalAlgOutputCore` kept a non-empty spread output slot as **one un-expanded
 slot**, while Lean's own counted core (`evalAlgOutputCountedCore`) and the C#
 evaluator splice the spread items. Observable divergence on the surface
-program `(A..., 99)` with a multi-item `A` — Lean produced `((1, 2), 99)`
-where C# and the tutorial (`(Values..., 8)` = `(1, 2, 3, 8)`) produce
+program `(A.spread, 99)` with a multi-item `A` — Lean produced `((1, 2), 99)`
+where C# and the tutorial (`(Values.spread, 8)` = `(1, 2, 3, 8)`) produce
 `(1, 2, 99)` — through every plain-evaluation path: value-position sequence
-literals, binary-operand evaluation (so `(P..., 99) == (1, 2, 99)` was `0` in
+literals, binary-operand evaluation (so `(P.spread, 99) == (1, 2, 99)` was `0` in
 Lean), spread operands of written blocks, the `eval .param` thunk fallback,
 and Lean's own `runResult` root. Lean was also internally inconsistent: its
 plain and counted evaluators disagreed on the same AST. 11 of the 905 initial
@@ -260,8 +260,8 @@ deconstruction opening asymmetry; strict single-value map/reduce callback
 result contract; string display non-roundtrip.
 
 *(Superseded, July 2026 collecting-binding change: the single-variadic coincidence
-`F(V)` ≡ `F(V...)` and its theorem `agree_on_lone_seq_iff_lone_rest` are
-GONE — collecting bindings collect exact immutable lists, so `F(V)` and `F(V...)`
+`F(V)` ≡ `F(V.spread)` and its theorem `agree_on_lone_seq_iff_lone_rest` are
+GONE — collecting bindings collect exact immutable lists, so `F(V)` and `F(V.spread)`
 always differ, and the receiver contrast is now proven by
 `receivers_never_agree_on_lone_seq` / `lone_collecting_disagrees_on_lone_list` in
 `CoreArityAlgebraProofs.lean` plus the collect bridge laws in
@@ -280,7 +280,7 @@ reconstructable as a program).
 
 The generated artifact pins every Lean-representable corpus case
 (**1,386 surface cases** as of this update — the surface corpus minus its 31
-parse-level cases such as `(3,)`, `x:-1`, `A... == A...`, and `1 ; 2`, which
+parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, and `1 ; 2`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **13**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
@@ -346,7 +346,7 @@ to keep it and enforce it):**
 > Every property/call/builtin result, argument slot, sequence-literal item,
 > and stored binding is a *value* boundary: one value, count `valueCount`.
 > Item supplies exist only inside root/body output accumulation and loop
-> state; only written `...` (or the documented openers: deconstruction RHS
+> state; only a written `spread(value)` / `value.spread` intrinsic (or the documented openers: deconstruction RHS
 > and `:` projection) may open one layer of a value into a surrounding
 > supply. Collection builtins first bind one ordinary fixed `collection`
 > value, then apply their separate post-binding one-level view.
@@ -358,7 +358,7 @@ to keep it and enforce it):**
 variadic storage" as a third item-supply site. That storage no longer exists —
 collecting bindings collect ONE exact immutable list (`collectSegment`), a value
 boundary like every other stored binding, and forwarding re-spreads it only
-through written `...`.)*
+through a written named spread intrinsic.)*
 
 The smallest implementation change needed to enforce it: **none** — the rule
 holds today; the change delivered is the validator that keeps it holding.
@@ -377,9 +377,10 @@ holds today; the change delivered is the validator that keeps it holding.
 ## 7. `Expr.SequenceConstruct` containment (July 2026 follow-up)
 
 **Role (provenance-audited).** `Expr.SequenceConstruct` / Lean
-`Expr.sequenceConstruct` is an internal sequence-JOIN node: the retained
-encoding of the removed binary spread-join (`A...B` before it became the
-expression-list slots `A..., B`). It is **not** the AST representation of
+`Expr.sequenceConstruct` is an internal sequence-JOIN node retained for
+semantic AST compatibility with the Lean model; surface spreading is the
+named `spread` intrinsic (`Expr.SequenceSpread`) and never builds it. It is
+**not** the AST representation of
 written parenthesized sequence values — those parse to zero-parameter
 `Expr.Block`s (and `()` to `Expr.EmptySequence`).
 
@@ -404,11 +405,11 @@ exported `sequenceConstruct` helper, and the test suites. The node is
 therefore unreachable from valid KatLang surface syntax, but deliberately
 reachable through public semantic-AST construction.
 
-**Why its evaluation drops `()`.** Join semantics inherited from the old
-two-operand spread form: an empty contribution adds no items
+**Why its evaluation drops `()`.** The node has join semantics: an empty
+contribution adds no items
 (`evalSequenceConstructCounted` skips `valueCount = 0` leaves, splices spread
 leaves, normalizes). This is intentional for the internal role, pinned by
-CoreTests (`postfixSpreadEmptyJoinContributesNoItems`,
+CoreTests (`spreadEmptyJoinContributesNoItems`,
 `internalSequenceConstruct*` guards), and exactly why the node must stay
 surface-unreachable: written parentheses always keep a non-spread `()`
 visible. Canonical counterexample: internal `sequenceConstruct((), 1)`

@@ -178,7 +178,7 @@ internal static class SequencePipelineOptimizer
         // Under fixed collection-object arity the valid plain composition is
         // the BARE one-argument form — `count(filter(src, pred))` or
         // `count(src.filter(pred))` — where the filter result is count's one
-        // collection argument. A spread form such as `count(filter(...)...)`
+        // collection argument. A spread form such as `count(spread(filter(...)))`
         // supplies the spread items as separate arguments and is an ordinary
         // arity error, so it must NOT be recognized: it falls back to the
         // generic evaluator, which reports the arity mismatch.
@@ -259,12 +259,13 @@ internal static class SequencePipelineOptimizer
     private static bool IsFilterFunctionCandidate(Expr function)
         => function is Expr.Resolve(var name) && name == BuiltinId.@filter.ToString();
 
-    // Returns the innermost operand of a (possibly nested) unary spread,
-    // or the expression unchanged when it is not a spread. Nested spread such as
-    // `A......` (`sequenceSpread (sequenceSpread A)`) is value-equivalent to a
-    // single spread of `A` — every layer spreads the same items — so peeling all
-    // layers is semantics-preserving and lets nested-spread sources still reach
-    // direct-range fusion instead of falling back.
+    // Returns the innermost operand of a (possibly nested) unary spread, or the
+    // expression unchanged when it is not a spread. This is a recognition
+    // helper, not a general semantic rewrite: chained spread can open more than
+    // one list boundary (`[[7]].spread.spread` differs from one layer).
+    // Callers either use the peeled form only to identify an unsupported
+    // filter/count candidate, or to identify a builtin range source whose flat
+    // scalar result is unchanged by additional spread layers.
     private static Expr UnwrapSpread(Expr expression)
     {
         while (expression is Expr.SequenceSpread(var supplied))

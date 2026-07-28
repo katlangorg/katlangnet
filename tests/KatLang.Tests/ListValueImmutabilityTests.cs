@@ -178,7 +178,7 @@ public class ListValueImmutabilityTests
     {
         Assert.Equal(
             string.Join(Environment.NewLine, "1", "2", "3"),
-            Display("A = [1, 2, 3]\nA..."));
+            Display("A = [1, 2, 3]\nA.spread"));
     }
 
     // ── 4. Structure/deconstruction view cannot mutate the original list ────
@@ -321,11 +321,11 @@ public class ListValueImmutabilityTests
     [InlineData("[[]]", "[[]]")]
     [InlineData("[1, 2] == [1, 2]", "1")]
     [InlineData("[1, 2] != (1, 2)", "1")]
-    [InlineData("A = [1, 2, 3]\n[A...]", "[1, 2, 3]")]
+    [InlineData("A = [1, 2, 3]\n[A.spread]", "[1, 2, 3]")]
     [InlineData("A = [1, 2, 3]\nx = A\nx", "[1, 2, 3]")]
-    [InlineData("A = [1, 2, 3]\nx = A...\nx", "(1, 2, 3)")]
+    [InlineData("A = [1, 2, 3]\nx = A.spread\nx", "(1, 2, 3)")]
     [InlineData("F(x) = x\nA = [1, 2, 3]\nF(A)", "[1, 2, 3]")]
-    [InlineData("F(a, b, c) = a + b + c\nA = [1, 2, 3]\nF(A...)", "6")]
+    [InlineData("F(a, b, c) = a + b + c\nA = [1, 2, 3]\nF(A.spread)", "6")]
     public void RepresentativeListSemantics_Unchanged(string source, string expected)
         => Assert.Equal(expected, Display(source));
 
@@ -335,5 +335,5 @@ public class ListValueImmutabilityTests
         // immutable list value.
         => Assert.Equal(
             string.Join(Environment.NewLine, "1", "[2, 3]"),
-            Display("A = [1, 2, 3]\nx, ...rest = A\nx, rest"));
+            Display("A = [1, 2, 3]\nx, rest... = A\nx, rest"));
 }

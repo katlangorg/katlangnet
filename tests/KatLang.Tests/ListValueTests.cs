@@ -185,59 +185,59 @@ public class ListValueTests
 
     [Fact]
     public void Spread_OpensOneListBoundary()
-        => AssertEvalCounted("A = [1, 2, 3]\nB = A...\nB", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("A = [1, 2, 3]\nB = A.spread\nB", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void Spread_EmptyList_CapturesEmptySequence()
         // The capture is the empty sequence value; at root output the
         // non-spread row stays one VISIBLE `()` slot (visible-empty rule).
-        => AssertEvalCounted("A = []\nB = A...\nB", 1, SequenceValue());
+        => AssertEvalCounted("A = []\nB = A.spread\nB", 1, SequenceValue());
 
     [Fact]
     public void Spread_SingletonList_CapturesItem()
-        => AssertEvalCounted("A = [7]\nB = A...\nB", 1, Atom(7));
+        => AssertEvalCounted("A = [7]\nB = A.spread\nB", 1, Atom(7));
 
     [Fact]
     public void Spread_NestedList_OpensExactlyOneBoundary()
-        => AssertEvalCounted("A = [[7]]\nB = A...\nB", 1, ListValue(Atom(7)));
+        => AssertEvalCounted("A = [[7]]\nB = A.spread\nB", 1, ListValue(Atom(7)));
 
     [Fact]
     public void Spread_ListLiteral_Directly()
-        => AssertEvalCounted("[1, 2, 3]...", 3, SequenceValue(Atom(1), Atom(2), Atom(3)))
+        => AssertEvalCounted("[1, 2, 3].spread", 3, SequenceValue(Atom(1), Atom(2), Atom(3)))
         ;
 
     [Fact]
     public void Spread_Scalar_StillSuppliesItself()
-        => AssertAtoms("7...", 7);
+        => AssertAtoms("7.spread", 7);
 
     [Fact]
     public void Spread_ListContainingSequence_KeepsSequenceItem()
         // Spread supplies the sequence item; the single-name CAPTURE boundary
         // then singleton-collapses, so B stores (1, 2).
-        => AssertEvalCounted("A = [(1, 2)]\nB = A...\nB", 1, SequenceValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("A = [(1, 2)]\nB = A.spread\nB", 1, SequenceValue(Atom(1), Atom(2)));
 
     [Fact]
     public void StackedSpread_OpensOneListBoundaryPerLayer()
     {
-        // Each written `...` opens exactly one boundary, so the stacked form
+        // Each written `.spread` opens exactly one boundary, so the stacked form
         // agrees with the value-boundary-separated form.
-        AssertEvalCounted("A = [[7]]\nA......", 1, Atom(7));
-        AssertEvalCounted("A = [[7]]\n(A...)...", 1, Atom(7));
-        AssertEvalCounted("A = [[1, 2]]\nA......", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [[7]]\nA.spread.spread", 1, Atom(7));
+        AssertEvalCounted("A = [[7]]\n(A.spread).spread", 1, Atom(7));
+        AssertEvalCounted("A = [[1, 2]]\nA.spread.spread", 2, SequenceValue(Atom(1), Atom(2)));
         // Extra layers on a sequence value stay fixed points (unchanged
         // pre-list behavior).
-        AssertEvalCounted("A = (1, 2)\nA......", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = (1, 2)\nA.spread.spread", 2, SequenceValue(Atom(1), Atom(2)));
     }
 
     // ── Spread inside list literals ──────────────────────────────────────────
 
     [Fact]
     public void ListLiteral_SpreadOfSequenceProperty()
-        => AssertEvalCounted("A = 1, 2, 3\n[A...]", 1, ListValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("A = 1, 2, 3\n[A.spread]", 1, ListValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void ListLiteral_SpreadBetweenFixedElements()
-        => AssertEvalCounted("A = 1, 2, 3\n[0, A..., 4]", 1,
+        => AssertEvalCounted("A = 1, 2, 3\n[0, A.spread, 4]", 1,
             ListValue(Atom(0), Atom(1), Atom(2), Atom(3), Atom(4)));
 
     [Fact]
@@ -247,21 +247,21 @@ public class ListValueTests
 
     [Fact]
     public void ListLiteral_SpreadLists_ConcatenatesElements()
-        => AssertEvalCounted("A = [1, 2]\nB = [3, 4]\n[A..., B...]", 1,
+        => AssertEvalCounted("A = [1, 2]\nB = [3, 4]\n[A.spread, B.spread]", 1,
             ListValue(Atom(1), Atom(2), Atom(3), Atom(4)));
 
     [Fact]
     public void ListLiteral_MixedSpreadAndNonSpread()
-        => AssertEvalCounted("A = [1, 2]\nB = [3, 4]\n[A, B...]", 1,
+        => AssertEvalCounted("A = [1, 2]\nB = [3, 4]\n[A, B.spread]", 1,
             ListValue(ListValue(Atom(1), Atom(2)), Atom(3), Atom(4)));
 
     [Fact]
     public void ListLiteral_EmptyListSpread_ContributesNoElements()
-        => AssertEvalCounted("[1, []..., 2]", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("[1, [].spread, 2]", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void ListLiteral_EmptySequenceSpread_ContributesNoElements()
-        => AssertEvalCounted("[1, ()..., 2]", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("[1, ().spread, 2]", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void ListLiteral_SequenceElementStaysOneElement()
@@ -275,7 +275,7 @@ public class ListValueTests
 
     [Fact]
     public void Call_ListWithSpread_SuppliesElements()
-        => AssertAtoms("F(a, b, c) = a + b + c\nF([1, 2, 3]...)", 6);
+        => AssertAtoms("F(a, b, c) = a + b + c\nF([1, 2, 3].spread)", 6);
 
     [Fact]
     public void Call_ListWithoutSpread_DoesNotSatisfyFixedArity()
@@ -285,7 +285,7 @@ public class ListValueTests
     public void Call_ThroughVariable_PreservesBoundary()
     {
         AssertAtoms("F(x) = 9\nA = [1, 2, 3]\nF(A)", 9);
-        AssertAtoms("F(a, b, c) = a + b + c\nA = [1, 2, 3]\nF(A...)", 6);
+        AssertAtoms("F(a, b, c) = a + b + c\nA = [1, 2, 3]\nF(A.spread)", 6);
     }
 
     [Fact]
@@ -297,8 +297,8 @@ public class ListValueTests
     {
         // Zero arguments reach the callee: a fixed one-parameter callee
         // rejects the call, and a single-variadic callee collects the empty list.
-        Assert.True(Fails("F(a) = a\nF([]...)"));
-        AssertEvalCounted("Inspect(...items) = items\nInspect([]...)", 1, ListValue());
+        Assert.True(Fails("F(a) = a\nF([].spread)"));
+        AssertEvalCounted("Inspect(items...) = items\nInspect([].spread)", 1, ListValue());
     }
 
     [Fact]
@@ -309,16 +309,16 @@ public class ListValueTests
     public void Call_VariadicParameter_KeepsListAsOneSuppliedItem()
         // The unspread list is one supplied argument, so the variadic parameter collects the
         // nested one-element list [[1, 2]].
-        => AssertEvalCounted("F(...items) = items\nA = [1, 2]\nF(A)", 1, ListValue(ListValue(Atom(1), Atom(2))));
+        => AssertEvalCounted("F(items...) = items\nA = [1, 2]\nF(A)", 1, ListValue(ListValue(Atom(1), Atom(2))));
 
     [Fact]
     public void Call_VariadicParameter_SpreadSuppliesElements()
-        => AssertEvalCounted("F(...items) = items\nA = [1, 2]\nF(A...)", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("F(items...) = items\nA = [1, 2]\nF(A.spread)", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void Call_MixedFixedVariadic_LoneListStaysWhole()
         => AssertEvalCounted(
-            "F(first, ...rest) = (first, rest)\nA = [1, 2, 3]\nF(A)",
+            "F(first, rest...) = (first, rest)\nA = [1, 2, 3]\nF(A)",
             1,
             SequenceValue(ListValue(Atom(1), Atom(2), Atom(3)), ListValue()));
 
@@ -338,7 +338,7 @@ public class ListValueTests
 
     [Fact]
     public void SingleNameCapture_OfSpread_CapturesSequence()
-        => AssertEvalCounted("A = [1, 2, 3]\ny = A...\ny", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("A = [1, 2, 3]\ny = A.spread\ny", 1, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     [Fact]
     public void SingleNameCapture_EmptyList()
@@ -347,7 +347,7 @@ public class ListValueTests
     [Fact]
     public void SingleNameCapture_EmptyListSpread_IsEmptySequence()
         // The capture is `()`; the root row keeps it one visible slot.
-        => AssertEvalCounted("x = []...\nx", 1, SequenceValue());
+        => AssertEvalCounted("x = [].spread\nx", 1, SequenceValue());
 
     // ── Lone-list deconstruction ─────────────────────────────────────────────
 
@@ -357,7 +357,7 @@ public class ListValueTests
 
     [Fact]
     public void Deconstruction_ExplicitSpread_BindsIdentically()
-        => AssertAtoms("x, y, z = [1, 2, 3]...\nx\ny\nz", 1, 2, 3);
+        => AssertAtoms("x, y, z = [1, 2, 3].spread\nx\ny\nz", 1, 2, 3);
 
     [Fact]
     public void Deconstruction_OpensLoneListThroughVariable()
@@ -385,52 +385,52 @@ public class ListValueTests
 
     [Fact]
     public void CollectingBinding_CollectsExactList()
-        => AssertEvalCounted("x, ...rest = [1, 2, 3]\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = [1, 2, 3]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2), Atom(3))));
 
     [Fact]
     public void CollectingBinding_EmptySegment_IsEmptyList()
-        => AssertEvalCounted("x, ...rest = [1]\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = [1]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue()));
 
     [Fact]
     public void CollectingBinding_SingletonSegment_StaysSingletonList()
         // `[2]` is never collapsed to `2` — list structure is exact.
-        => AssertEvalCounted("x, ...rest = [1, 2]\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = [1, 2]\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2))));
 
     [Fact]
     public void CollectingBinding_NestedLoneList_OpensOuterOnly()
-        => AssertEvalCounted("x, ...rest = [[1, 2, 3]]\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = [[1, 2, 3]]\n(x, rest)", 1,
             SequenceValue(ListValue(Atom(1), Atom(2), Atom(3)), ListValue()));
 
     [Fact]
     public void CollectingBinding_SpreadProvenance_DoesNotAffectResultKind()
-        => AssertEvalCounted("x, ...rest = [1, 2]..., [3, 4]...\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = [1, 2].spread, [3, 4].spread\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(Atom(2), Atom(3), Atom(4))));
 
     [Fact]
     public void CollectingBinding_NonSpreadListItem_StaysOneListValue()
-        => AssertEvalCounted("x, ...rest = 1, [2, 3], 4\n(x, rest)", 1,
+        => AssertEvalCounted("x, rest... = 1, [2, 3], 4\n(x, rest)", 1,
             SequenceValue(Atom(1), ListValue(ListValue(Atom(2), Atom(3)), Atom(4))));
 
     // ── Canonical lone-collecting assignment ────────────────────────────────────────
 
     [Fact]
     public void LoneCollectingBinding_OfList_CollectsExactList()
-        => AssertDisplay("...items = [1, 2, 3]\nitems", "[1, 2, 3]");
+        => AssertDisplay("items... = [1, 2, 3]\nitems", "[1, 2, 3]");
 
     [Fact]
     public void LoneCollectingBinding_EmptySupply_CollectsEmptyExactList()
-        => AssertDisplay("...items = ()...\nitems", "[]");
+        => AssertDisplay("items... = ().spread\nitems", "[]");
 
     [Fact]
     public void SingleVariadicParameter_StillWorks()
-        => AssertEvalCounted("Inspect(...items) = items\nInspect(1, 2)", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("Inspect(items...) = items\nInspect(1, 2)", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void ExplicitOpeningForm_IsProducerSideSpread()
-        => AssertEvalCounted("value = [1, 2, 3]\nitems = value...\nitems", 1,
+        => AssertEvalCounted("value = [1, 2, 3]\nitems = value.spread\nitems", 1,
             SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     // ── Builtins: lone-list collection view (one boundary opens) ─────────────
@@ -467,9 +467,9 @@ public class ListValueTests
         // Spread supplies the list's items as ordinary argument slots, so a
         // multi-item spread overflows the one-collection signature. The
         // grouped (non-spread) list argument is the supported form.
-        AssertArityFailure("count([1, 2, 3]...)", "count(collection)");
-        AssertArityFailure("sum([1, 2, 3]...)", "sum(collection)");
-        AssertArityFailure("A = [5, 1, 3]\norder(A...)", "order(collection)");
+        AssertArityFailure("count([1, 2, 3].spread)", "count(collection)");
+        AssertArityFailure("sum([1, 2, 3].spread)", "sum(collection)");
+        AssertArityFailure("A = [5, 1, 3]\norder(A.spread)", "order(collection)");
         AssertAtoms("count([1, 2, 3])", 3);
         AssertAtoms("sum([1, 2, 3])", 6);
         AssertAtoms("A = [5, 1, 3]\norder(A)", 1, 3, 5);
@@ -527,10 +527,10 @@ public class ListValueTests
     [Fact]
     public void Builtin_FilterCountPipeline_SpreadListSourceIsArityErrorInBothOptimizerModes()
     {
-        // `filter(A..., predicate)` spreads three ordinary argument slots into
+        // `filter(A.spread, predicate)` spreads three ordinary argument slots into
         // the two-argument signature, so the pipeline is an arity error on the
         // generic and the fused path alike.
-        var source = "A = [1, 2, 3]\ncount(filter(A..., {x > 1})...)";
+        var source = "A = [1, 2, 3]\ncount(filter(A.spread, {x > 1}).spread)";
         var parseResult = Parser.Parse(source);
         Assert.False(parseResult.HasErrors);
 
@@ -564,21 +564,21 @@ public class ListValueTests
     [InlineData("Inspect(7)", "[7]")]
     [InlineData("Inspect(1, 2)", "[1, 2]")]
     [InlineData("Inspect([1, 2])", "[[1, 2]]")]
-    [InlineData("Inspect([1, 2]...)", "[1, 2]")]
+    [InlineData("Inspect([1, 2].spread)", "[1, 2]")]
     public void VariadicCapture_CollectsExactListOfSuppliedArguments(string call, string expected)
         // Calls never open lists implicitly: a plain list is one supplied
-        // argument (collected as one nested element), and only explicit `...`
+        // argument (collected as one nested element), and only an explicit spread
         // opens it into the stream. The collecting binding always collects the
         // supplied slots as one exact list — zero slots form [], one slot
         // forms [item], never collapsed.
-        => AssertDisplay($"Inspect(...items) = items\n{call}", expected);
+        => AssertDisplay($"Inspect(items...) = items\n{call}", expected);
 
     [Theory]
-    [InlineData("head, ...rest = [1, 2, 3]\nrest", "[2, 3]")]
-    [InlineData("head, ...rest = [1]\nrest", "[]")]
-    [InlineData("head, ...rest = [1, 2]\nrest", "[2]")]
-    [InlineData("first, ...rest = 1, [2, 3]..., (4, 5)...\nfirst", "1")]
-    [InlineData("first, ...rest = 1, [2, 3]..., (4, 5)...\nrest", "[2, 3, 4, 5]")]
+    [InlineData("head, rest... = [1, 2, 3]\nrest", "[2, 3]")]
+    [InlineData("head, rest... = [1]\nrest", "[]")]
+    [InlineData("head, rest... = [1, 2]\nrest", "[2]")]
+    [InlineData("first, rest... = 1, [2, 3].spread, (4, 5).spread\nfirst", "1")]
+    [InlineData("first, rest... = 1, [2, 3].spread, (4, 5).spread\nrest", "[2, 3, 4, 5]")]
     public void CollectingBinding_CollectsExactList_AcrossListSources(string source, string expected)
         => AssertDisplay(source, expected);
 
@@ -587,9 +587,9 @@ public class ListValueTests
     {
         // The collecting binding and the collection builtin now both produce an exact
         // list of the same items, so they compare equal.
-        AssertDisplay("head, ...rest = [1, 2, 3]\nrest", "[2, 3]");
+        AssertDisplay("head, rest... = [1, 2, 3]\nrest", "[2, 3]");
         AssertDisplay("skip([1, 2, 3], 1)", "[2, 3]");
-        AssertAtoms("head, ...rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 1);
+        AssertAtoms("head, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)", 1);
     }
 
     // ── Collection-producing builtins return one exact list value ────────────
@@ -602,7 +602,7 @@ public class ListValueTests
 
     [Theory]
     [InlineData("take(1, 2, 3, 1)")]
-    [InlineData("take([1, 2, 3]..., 1)")]
+    [InlineData("take([1, 2, 3].spread, 1)")]
     public void BuiltinBindingForms_InlineItemsAndSpreadAreArityErrors(string source)
         // Inline items and spread both supply ordinary argument slots, which
         // overflow the fixed `take(collection, count)` signature.
@@ -652,16 +652,16 @@ public class ListValueTests
         AssertAtoms("A = [1, 2, 3]\nsum(A)", 6);
         // Spread supplies three ordinary argument slots — an arity error;
         // regrouping the spread restores one collection argument.
-        AssertArityFailure("A = [1, 2, 3]\nsum(A...)", "sum(collection)");
-        AssertAtoms("A = [1, 2, 3]\nsum((A...))", 6);
+        AssertArityFailure("A = [1, 2, 3]\nsum(A.spread)", "sum(collection)");
+        AssertAtoms("A = [1, 2, 3]\nsum((A.spread))", 6);
     }
 
     [Fact]
     public void BuiltinListResult_ReEntersArityThroughOrdinaryRules()
     {
         // A stored builtin list result spreads like any other list value.
-        AssertDisplay("A = take([1, 2, 3], 1)\nA...", "1");
-        AssertDisplay("A = take([1, 2, 3], 2)\nB = A...\nB", "(1, 2)");
+        AssertDisplay("A = take([1, 2, 3], 1)\nA.spread", "1");
+        AssertDisplay("A = take([1, 2, 3], 2)\nB = A.spread\nB", "(1, 2)");
     }
 
     [Fact]
@@ -670,7 +670,7 @@ public class ListValueTests
         AssertDisplay("range(1, 3)", "[1, 2, 3]");
         AssertDisplay("range(3, 3)", "[3]");
         AssertDisplay("range(3, 1)", "[3, 2, 1]");
-        AssertDisplay("A = range(1, 3)\nB = A...\nB", "(1, 2, 3)");
+        AssertDisplay("A = range(1, 3)\nB = A.spread\nB", "(1, 2, 3)");
         Assert.True(Fails("range(1.5, 3)"));
     }
 
@@ -834,11 +834,11 @@ public class ListValueTests
     public void Indexing_SelectsOneElement_WhileSpreadOpensAll()
     {
         AssertEvalCounted("A = [1, 2]\nA:0", 1, Atom(1));
-        AssertEvalCounted("A = [1, 2]\nA...", 2, SequenceValue(Atom(1), Atom(2)));
-        AssertEvalCounted("A = [1, 2]\nB = A...\nB", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [1, 2]\nA.spread", 2, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("A = [1, 2]\nB = A.spread\nB", 1, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("A = [7]\nA:0", 1, Atom(7));
-        AssertEvalCounted("A = [7]\nB = A...\nB", 1, Atom(7));
-        AssertEvalCounted("A = []\nB = A...\nB", 1, SequenceValue());
+        AssertEvalCounted("A = [7]\nB = A.spread\nB", 1, Atom(7));
+        AssertEvalCounted("A = []\nB = A.spread\nB", 1, SequenceValue());
     }
 
     [Fact]
@@ -846,9 +846,9 @@ public class ListValueTests
     {
         // The projected element is one supplied argument, collected as the one
         // element of the collecting binding's exact list.
-        AssertEvalCounted("Inspect(...items) = items\nA = [1, 2, 3]\nInspect(A:1)", 1, ListValue(Atom(2)));
+        AssertEvalCounted("Inspect(items...) = items\nA = [1, 2, 3]\nInspect(A:1)", 1, ListValue(Atom(2)));
         AssertEvalCounted(
-            "Inspect(...items) = items\nA = [[1, 2]]\nInspect(A:0)",
+            "Inspect(items...) = items\nA = [[1, 2]]\nInspect(A:0)",
             1,
             ListValue(ListValue(Atom(1), Atom(2))));
     }

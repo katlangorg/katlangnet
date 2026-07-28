@@ -16,7 +16,7 @@ public sealed record CallableParameter(
 {
     public string DisplayName => Kind switch
     {
-        ParameterKind.Variadic => $"...{Name}",
+        ParameterKind.Variadic => $"{Name}...",
         _ => Name,
     };
 }

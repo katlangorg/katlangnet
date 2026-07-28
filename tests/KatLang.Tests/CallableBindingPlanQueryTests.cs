@@ -133,7 +133,7 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void TopLevelVariadicLayout_SucceedsAsFlatVariadic()
     {
-        var plan = PlanFor("CountValues(...values) = values.count", "CountValues");
+        var plan = PlanFor("CountValues(values...) = values.count", "CountValues");
 
         AssertQueryFacts(
             plan,
@@ -154,7 +154,7 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void VariadicSuffixLayout_ReturnsFlatSuffixCaptures()
     {
-        var plan = PlanFor("Scale(...items, factor) = items.map{n * factor}", "Scale");
+        var plan = PlanFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
 
         AssertQueryFacts(
             plan,
@@ -172,8 +172,8 @@ public class CallableBindingPlanQueryTests
     public void FlatVariadicLayout_OrderMatchesSignatureParameterOrder()
     {
         // Body is incidental to this plan-shape test; comma slots avoid the
-        // confusing tight `A...B` adjacency.
-        var plan = PlanFor("F(first, ...middle, last) = first, middle..., last", "F");
+        // confusing tight `A.spread B` adjacency.
+        var plan = PlanFor("F(first, middle..., last) = first, middle.spread, last", "F");
 
         Assert.True(plan.TryGetFlatVariadicLayout(out var prefix, out var variadic, out var suffix));
         var layoutNames = prefix
@@ -184,13 +184,13 @@ public class CallableBindingPlanQueryTests
 
         Assert.Equal(["first", "middle", "last"], layoutNames);
         Assert.Equal(plan.Signature.Parameters.Select(static parameter => parameter.Name).ToArray(), layoutNames);
-        Assert.Equal(["first", "...middle", "last"], plan.Signature.Parameters.Select(static parameter => parameter.DisplayName).ToArray());
+        Assert.Equal(["first", "middle...", "last"], plan.Signature.Parameters.Select(static parameter => parameter.DisplayName).ToArray());
     }
 
     [Fact]
     public void SequenceValueVariadicLayout_IsNestedNotTopLevel()
     {
-        var plan = PlanFor("CountSequenceValue((...values)) = values.count", "CountSequenceValue");
+        var plan = PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
 
         AssertQueryFacts(
             plan,
@@ -209,7 +209,7 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void MixedPatternedAndTopLevelVariadicLayout_RequiresPatternedBindingFirst()
     {
-        var plan = PlanFor("F((...inner), ...outer) = inner..., outer", "F");
+        var plan = PlanFor("F((inner...), outer...) = inner.spread, outer", "F");
 
         AssertQueryFacts(
             plan,
@@ -229,7 +229,7 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void NestedSequenceValueRecursiveLayout_PreservesNestedVariadicFacts()
     {
-        var plan = PlanFor("G(((...history), previous)) = history.count + previous", "G");
+        var plan = PlanFor("G(((history...), previous)) = history.count + previous", "G");
 
         AssertQueryFacts(
             plan,
@@ -312,9 +312,9 @@ public class CallableBindingPlanQueryTests
     public void LoopStepShapeQueries_IncludePrefixSuffixAndSequenceValueVariadic()
     {
         // These plans inspect only the parameter pattern; the bodies are
-        // incidental, so they use comma slots (not tight `A...B` adjacency,
+        // incidental, so they use comma slots (not tight `A.spread B` adjacency,
         // which reads like a non-existent binary spread) for clarity.
-        var flat = PlanFor("Step(first, ...middle, last) = first, middle..., last, 0", "Step");
+        var flat = PlanFor("Step(first, middle..., last) = first, middle.spread, last, 0", "Step");
         AssertQueryFacts(
             flat,
             requiresPatternedBinding: false,
@@ -323,13 +323,13 @@ public class CallableBindingPlanQueryTests
             hasTopLevelVariadic: true,
             hasNestedVariadic: false,
             // Deconstruction-shaped: `first` and `last` are the fixed bindings,
-            // `...middle` captures any number of middle items.
+            // `middle...` captures any number of middle items.
             min: 2,
             max: null);
         AssertTopLevelNodes(flat, "Capture(first:Explicit)", "Variadic(middle:Explicit:top)", "Capture(last:Explicit)");
         AssertFlatVariadicLayout(flat, ["first"], "middle", CallableParameterSource.Explicit, ["last"], CallableParameterSource.Explicit);
 
-        var sequenceValuePlan = PlanFor("Step((...history), previous) = history..., previous, 0", "Step");
+        var sequenceValuePlan = PlanFor("Step((history...), previous) = history.spread, previous, 0", "Step");
         AssertQueryFacts(
             sequenceValuePlan,
             requiresPatternedBinding: true,
@@ -344,7 +344,7 @@ public class CallableBindingPlanQueryTests
         Assert.False(sequenceValuePlan.TryGetFlatFixedLayout(out _));
         Assert.False(sequenceValuePlan.TryGetFlatVariadicLayout(out _, out _, out _));
 
-        var nested = PlanFor("Step((...history, previous), current) = history..., previous, current, 0", "Step");
+        var nested = PlanFor("Step((history..., previous), current) = history.spread, previous, current, 0", "Step");
         AssertQueryFacts(
             nested,
             requiresPatternedBinding: true,

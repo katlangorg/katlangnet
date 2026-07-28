@@ -13,23 +13,23 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, never put explicit algorithm parameters on a container with no output, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
-- The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` canonicalize to `()`, so `() == (())` is `1` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `...` contributes zero items; a plain `()` output stays a visible slot.
+- The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` canonicalize to `()`, so `() == (())` is `1` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `spread(())` contributes zero items; a plain `()` output stays a visible slot.
 - Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
 - Construction preserves structure; selection projects content. With `Pairs = (1, 2), (3, 4)`, `Pairs:0` yields `1, 2`; with `Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))`, `Bags:0` yields `(1, 2), (3, 4)`. Exact list targets index the same way (`[10, 20, 30]:1` is `20`), and a selected LIST element is returned exactly as stored (`[[1, 2], [3, 4]]:0` is `[1, 2]`). Chained `:` repeats the same one-level projection step and never recursively flattens nested sequence or list elements. For a state result such as `State = candidate, found`, use `State:1` for `found`; do not write `State:0:1` unless `State:0` is itself a sequence value and its second member is needed.
 - Comma `,` is the explicit expression-list separator, and same-line adjacency is an implicit comma where an expression-list context is active, so `1, 2, 3` and `1 2 3` are three slots. A newline is a separate mechanism — a body/statement/output boundary, not a global implicit comma: at root output or inside an explicitly open context it may separate slots (so `1`/`2`/`3` on three lines are three output rows), but a simple one-line property body ends at the newline. Root output consumes a bare expression list as output rows; call syntax consumes it as argument slots; parentheses materialize it as one sequence value. `F(1 2)` means `F(1, 2)` (two argument slots), not one sequence-value argument `F((1, 2))`.
 - Semicolon `;` is not supported as expression syntax. Never generate it as a separator or collection constructor. Use comma/adjacency for separate slots and parentheses for one sequence value, such as `sum((10, 20, 30))`, `take((1, 2, 3), 2)`, and `Reports = (row1), (row2)`.
-- In expression context, ellipsis `...` is the POSTFIX spread operator. `x...` spreads the evaluated value, contributing the items of ONE item-producing boundary (sequence and list values supply their contained items; an atom or string supplies itself as one item) to the surrounding item supply — it does not create or emit a sequence value by itself — and does not continue onto the next line. It NEVER consumes a right operand: any token after `...` starts a new expression-list slot, so `x...y` is `x..., y` and `x...()` is `x..., ()`. `...` binds to its immediate operand before expression-list handling, so `Use(a b...)` means `Use(a, b...)`; use `Use((a, b...))` for one sequence-value argument. Prefix `...name` is reserved for collecting bindings in parameter and deconstruction patterns; never generate JavaScript-style prefix spread expressions.
-- Prefix `...name` is the ONLY collecting-binding syntax: generate `F(...items) = body`, `F(first, ...middle, last) = body`, and `first, ...middle, last = value`. A postfix binding spelling such as `F(items...) = body` or `first, middle..., last = value` is a PARSE ERROR, never a variadic definition. Keep value spreading postfix, for example `Forward(...items) = Target(items...)`.
-- Square brackets construct an EXACT immutable list value: `[1, 2, 3]`, `[]`, `[[1, 2], [3, 4]]`. Lists are a second collection kind, distinct from sequence values: no singleton or empty canonicalization ever applies to list structure (`[7] != 7`, `[[]] != []`, `[] != ()`, `[1, 2] != (1, 2)`), while ordinary parentheses AROUND a list stay redundant grouping (`([1, 2]) == [1, 2]`). Equality is structural and recursive. `[` always begins a NEW expression — it is never a call or indexing delimiter (`A[1]` is the adjacency list `A, [1]`; indexing is `:`). Selection `:` indexes lists positionally: `[1, 2, 3]:0` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]]:0` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]]:1:0` is `3`), and `[]:0` or `[1, 2]:2` is the ordinary out-of-range index error. Element slots follow the ordinary expression-list model, including spread: with `A = 1, 2, 3`, `[A...]` is `[1, 2, 3]` and `[0, A..., 4]` is `[0, 1, 2, 3, 4]`; `[1, []..., 2]` is `[1, 2]`. Postfix `x...` on a list-valued `x` opens exactly ONE list boundary (`[]...` supplies zero items, `[[7]]...` supplies `[7]`), so `x = A` preserves a stored list while `x = A...` captures the canonical sequence of its elements. Calls never open lists implicitly (`F(A)` is one list argument; write `F(A...)` to supply elements), while a multi-target deconstruction whose right side is exactly one list opens it (`x, y, z = [1, 2, 3]`); collecting bindings collect exact lists (`x, ...rest = [1, 2, 3]` gives `rest = [2, 3]`, and `rest == skip([1, 2, 3], 1)` holds). Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]...)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return exact immutable list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
-- Flat fixed calls preserve expression boundaries. A property reference used as one argument is one argument expression, even if it evaluates to multiple outputs. Do not pass `Pair` to `Add(x, y)` expecting `Pair = 10, 20` or `Pair.atoms` to fill both parameters. Use separate arguments such as `Add(10, 20)`, explicit indexing such as `Add(Pair:0, Pair:1)`, or explicit spread such as `Use(1, Tail...)` when a result sequence should spread into fixed parameters (`...` is postfix; spread a tail into separate slots with a comma).
+- Expression spreading is the named `spread` intrinsic. The call form `spread(x)` and the extension-property form `x.spread` are fully equivalent — both lower to the same spread operation, evaluate `x` exactly once, and contribute the items of ONE item-producing boundary (sequence and list values supply their contained items; an atom or string supplies itself as one item) to the surrounding item supply. `spread` produces an item supply and does not return a list or sequence — the receiver decides what the items become (a capture materializes a canonical sequence, a collecting binding collects an exact list, a call receives separate argument slots, root output emits rows). A spread expression NEVER consumes a right operand: any token after it starts a new expression-list slot, so `x.spread y` is `x.spread, y` and `spread(x) ()` is `spread(x), ()`. A spread is one whole slot, so `Use(a b.spread)` means `Use(a, b.spread)`; use `Use((a, b.spread))` for one sequence-value argument. `spread` is a reserved intrinsic name: never define or shadow it, never use it as a bare value, and never write `spread()`, `spread(a, b)`, or `x.spread(y)` (intrinsic-arity errors). Chained spread is `spread(spread(x))` or `x.spread.spread`.
+- Postfix `name...` is the ONLY collecting-binding syntax, and it is BINDING syntax only — the marker is never an expression operator: generate `F(items...) = body`, `F(first, middle..., last) = body`, and `first, middle..., last = value` for collecting bindings, and `spread(items)` / `items.spread` for spreading. The canonical forwarding idiom is `Forward(items...) = Target(spread(items))`, equivalently `Forward(items...) = Target(items.spread)`.
+- Square brackets construct an EXACT immutable list value: `[1, 2, 3]`, `[]`, `[[1, 2], [3, 4]]`. Lists are a second collection kind, distinct from sequence values: no singleton or empty canonicalization ever applies to list structure (`[7] != 7`, `[[]] != []`, `[] != ()`, `[1, 2] != (1, 2)`), while ordinary parentheses AROUND a list stay redundant grouping (`([1, 2]) == [1, 2]`). Equality is structural and recursive. `[` always begins a NEW expression — it is never a call or indexing delimiter (`A[1]` is the adjacency list `A, [1]`; indexing is `:`). Selection `:` indexes lists positionally: `[1, 2, 3]:0` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]]:0` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]]:1:0` is `3`), and `[]:0` or `[1, 2]:2` is the ordinary out-of-range index error. Element slots follow the ordinary expression-list model, including spread: with `A = 1, 2, 3`, `[A.spread]` is `[1, 2, 3]` and `[0, A.spread, 4]` is `[0, 1, 2, 3, 4]`; `[1, [].spread, 2]` is `[1, 2]`. The property spelling `x.spread` on a list-valued `x` opens exactly ONE list boundary (`[].spread` supplies zero items, `[[7]].spread` supplies `[7]`), so `x = A` preserves a stored list while `x = A.spread` captures the canonical sequence of its elements. Calls never open lists implicitly (`F(A)` is one list argument; write `F(A.spread)` to supply elements), while a multi-target deconstruction whose right side is exactly one list opens it (`x, y, z = [1, 2, 3]`); collecting bindings collect exact lists (`x, rest... = [1, 2, 3]` gives `rest = [2, 3]`, and `rest == skip([1, 2, 3], 1)` holds). Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3].spread)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return exact immutable list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
+- Flat fixed calls preserve expression boundaries. A property reference used as one argument is one argument expression, even if it evaluates to multiple outputs. Do not pass `Pair` to `Add(x, y)` expecting `Pair = 10, 20` or `Pair.atoms` to fill both parameters. Use separate arguments such as `Add(10, 20)`, explicit indexing such as `Add(Pair:0, Pair:1)`, or an explicit spread such as `Use(1, Tail.spread)` when a result sequence should spread into fixed parameters.
 - For ordinary user-defined dot-call fallback, the receiver is one leading argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Do not generate `(a, b).F` expecting `F(a, b)`; use `F(a, b)` or `a.F(b)`.
-- A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed as `(…)` on a single row — not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE exact immutable list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use postfix `...` at the call site to spread the returned value into separate rows/items: `F(5)...` and `X.order...` emit the items (spread opens one returned boundary). This mirrors `if` (a multi-output branch becomes one value). A collecting binding stores an exact list, so `F(...a) = sum(a)` works because the builtin opens the bound list after binding, while `a...` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows), explicit caller-site spread, and `while`/`repeat` loop state. Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value; a `map`/`reduce` callback must still return exactly one element.
-- Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted:0` selects its first element (`range(1, 3):2` is `3`, `[3, 1, 2].order:0` is `1`), so no spread-capture step is needed for `:` indexing. Arithmetic or comparison on a WHOLE list value is still a type error (lists are not operator-transparent and have no truth value) — select an element first (`Sorted:0 + 1`) or spread-capture (`Sorted = X.order...`) when a canonical sequence VALUE is specifically wanted. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
-- For a reusable collection helper that collects supplied arguments, declare a lone variadic parameter, such as `Many(...values) = values.count`. A user `...values` parameter COLLECTS the call argument slots as one exact immutable list: with `Arg = 1, 2, 3`, `Many(Arg...)` and `Many(1, 2, 3)` supply three slots (`values = [1, 2, 3]`, count 3), while `Many(Arg)` and `Arg.Many` supply ONE sequence-valued argument (`values = [Arg]`, count 1) — grouped and spread calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total), so spread when the helper needs the items. A parameter list with two or more captures containing one variadic parameter binds the supplied call stream from the front and back, and does not implicitly open a single sequence argument; use explicit `...` when a sequence value should fill those slots. The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding, so with `A = 1, 2, 3`, `x, y, z = A` binds `x = 1`, `y = 2`, `z = 3` and `x, y, z = A...` supplies the same items (`first, ...rest = A` unpacks to `first = 1`, `rest = [2, 3]` — the collecting binding collects an exact list). This unpacking is assignment-specific — a function call `F(A)` still passes `A` as one argument, so calls need `F(A...)`. At most one collecting binding is allowed. Do not use `atoms` unless recursive flattening is intentionally required.
-- Collection builtins are ordinary FIXED-ARITY callables: `count(collection)`, `sum(collection)`, `avg(collection)`, `min(collection)`, `max(collection)`, `first(collection)`, `last(collection)`, `order(collection)`, `orderDesc(collection)`, `distinct(collection)`, `take(collection, count)`, `skip(collection, count)`, `contains(collection, item)`, `map(collection, mapper)`, `filter(collection, predicate)`, and `reduce(collection, reducer, initial)`. Each receives ONE collection object plus its fixed controls. Use `()` for a canonical sequence, `[]` for an exact list, or receiver-style syntax for concise expressions — the dot receiver fills the collection parameter (`Values.count`, `X.take(2)`). After binding, the one bound collection opens one outer sequence OR list boundary (a scalar or string is a one-element collection; nested collections stay opaque items), so with `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3`, and `count(3)` is `1`. Inline items are an arity error: `count(1, 2, 3)` is three arguments, not a collection. Spread supplies ordinary argument slots that must fit the fixed arity, so `count(Values...)` and `sum(A..., B...)` are arity errors; group the spread into one collection argument instead — `count((Values...))` is `3`, and `sum((A..., B...))` is the concatenation rewrite. `count()` is an arity error, distinct from `count(())` which is `0` — absence of an argument is never an empty collection.
-- A collection builtin takes exactly one collection argument plus its fixed controls. Never generate inline-item calls (`count(1, 2, 3)`) or spread-fed calls (`count(A...)`); pass one value (`X.count`, `count(X)`) or group explicitly (`count((A..., B...))`).
+- A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed as `(…)` on a single row — not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE exact immutable list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit `spread` at the call site to spread the returned value into separate rows/items: `F(5).spread` and `X.order.spread` emit the items (spread opens one returned boundary). This mirrors `if` (a multi-output branch becomes one value). A collecting binding stores an exact list, so `F(a...) = sum(a)` works because the builtin opens the bound list after binding, while `a.spread` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows), explicit caller-site spread, and `while`/`repeat` loop state. Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value; a `map`/`reduce` callback must still return exactly one element.
+- Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted:0` selects its first element (`range(1, 3):2` is `3`, `[3, 1, 2].order:0` is `1`), so no spread-capture step is needed for `:` indexing. Arithmetic or comparison on a WHOLE list value is still a type error (lists are not operator-transparent and have no truth value) — select an element first (`Sorted:0 + 1`) or spread-capture (`Sorted = X.order.spread`) when a canonical sequence VALUE is specifically wanted. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
+- For a reusable collection helper that collects supplied arguments, declare a lone variadic parameter, such as `Many(values...) = values.count`. A user `values...` parameter COLLECTS the call argument slots as one exact immutable list: with `Arg = 1, 2, 3`, `Many(Arg.spread)` and `Many(1, 2, 3)` supply three slots (`values = [1, 2, 3]`, count 3), while `Many(Arg)` and `Arg.Many` supply ONE sequence-valued argument (`values = [Arg]`, count 1) — grouped and spread calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total), so spread when the helper needs the items. A parameter list with two or more captures containing one variadic parameter binds the supplied call stream from the front and back, and does not implicitly open a single sequence argument; use an explicit `spread` when a sequence value should fill those slots. The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding, so with `A = 1, 2, 3`, `x, y, z = A` binds `x = 1`, `y = 2`, `z = 3` and `x, y, z = A.spread` supplies the same items (`first, rest... = A` unpacks to `first = 1`, `rest = [2, 3]` — the collecting binding collects an exact list). This unpacking is assignment-specific — a function call `F(A)` still passes `A` as one argument, so calls need `F(A.spread)`. At most one collecting binding is allowed. Do not use `atoms` unless recursive flattening is intentionally required.
+- Collection builtins are ordinary FIXED-ARITY callables: `count(collection)`, `sum(collection)`, `avg(collection)`, `min(collection)`, `max(collection)`, `first(collection)`, `last(collection)`, `order(collection)`, `orderDesc(collection)`, `distinct(collection)`, `take(collection, count)`, `skip(collection, count)`, `contains(collection, item)`, `map(collection, mapper)`, `filter(collection, predicate)`, and `reduce(collection, reducer, initial)`. Each receives ONE collection object plus its fixed controls. Use `()` for a canonical sequence, `[]` for an exact list, or receiver-style syntax for concise expressions — the dot receiver fills the collection parameter (`Values.count`, `X.take(2)`). After binding, the one bound collection opens one outer sequence OR list boundary (a scalar or string is a one-element collection; nested collections stay opaque items), so with `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3`, and `count(3)` is `1`. Inline items are an arity error: `count(1, 2, 3)` is three arguments, not a collection. Spread supplies ordinary argument slots that must fit the fixed arity, so `count(Values.spread)` and `sum(A.spread, B.spread)` are arity errors; group the spread into one collection argument instead — `count((Values.spread))` is `3`, and `sum((A.spread, B.spread))` is the concatenation rewrite. `count()` is an arity error, distinct from `count(())` which is `0` — absence of an argument is never an empty collection.
+- A collection builtin takes exactly one collection argument plus its fixed controls. Never generate inline-item calls (`count(1, 2, 3)`) or spread-fed calls (`count(A.spread)`); pass one value (`X.count`, `count(X)`) or group explicitly (`count((A.spread, B.spread))`).
 - For `filter`, `map`, and `reduce`, keep that same top-level iteration structure, but bind each callback item as the same one-level projected view that `S:i` would produce. `filter` still keeps or discards the original top-level item, `reduce` leaves accumulator semantics unchanged, and nothing recursively flattens. Dot-call sequence builtins on the callback variable consume that projected item's counted top-level items, so `item.count` can reflect projected sequence content. If you need members of a sequence-value callback item, use ordinary parameters or `item:i`.
-- Callbacks with a variadic parameter collect exact lists like ordinary calls. A single-variadic map/filter callback (`Collect(...items) = items`) receives each iterated element as ONE collected slot — `[7].map(Collect)` is `[[7]]`, `[(1, 2)].map(Collect)` is `[[(1, 2)]]` — so predicates can compare kinds exactly (`IsSingleSeven(...items) = items == [7]`). A multi-parameter flat callback (`F(first, ...middle, last)`) opens a lone sequence-valued element into row slots first (the same row rule as fixed callbacks) and then collects the middle: `[(1, 2, 3, 4)].map(F)` binds `middle = [2, 3]`, agreeing with the nested `F((first, ...middle, last))` form. Reduce supplies two callback slots, element and accumulator: `R(...items) = items` therefore binds `items = [element, accumulator]`, while `R(...items, acc)` binds `items = [element]`.
+- Callbacks with a variadic parameter collect exact lists like ordinary calls. A single-variadic map/filter callback (`Collect(items...) = items`) receives each iterated element as ONE collected slot — `[7].map(Collect)` is `[[7]]`, `[(1, 2)].map(Collect)` is `[[(1, 2)]]` — so predicates can compare kinds exactly (`IsSingleSeven(items...) = items == [7]`). A multi-parameter flat callback (`F(first, middle..., last)`) opens a lone sequence-valued element into row slots first (the same row rule as fixed callbacks) and then collects the middle: `[(1, 2, 3, 4)].map(F)` binds `middle = [2, 3]`, agreeing with the nested `F((first, middle..., last))` form. Reduce supplies two callback slots, element and accumulator: `R(items...) = items` therefore binds `items = [element, accumulator]`, while `R(items..., acc)` binds `items = [element]`.
 - Avoid shadowing builtin or prelude algorithm names with implicit parameter names, local binders, or helper placeholders. Only `Output` (in definition position) is a hard-reserved parser-level name; the names below are syntactically shadowable but unsafe to shadow because it can break lookup, collection pipelines, or intended builtin calls. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
@@ -38,7 +38,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Use comments only when they materially improve clarity. Otherwise prefer none.
 - Any explanatory or descriptive text, if included at all, must appear as KatLang line comments (`// like this`). Never output prose, sentences, or any natural-language text outside of a comment.
 - Do not `open Math` for an isolated single use such as one `Math.Sqrt(...)` or one `Math.Pi`; prefer the qualified form instead. Use `open Math` only when multiple Math members are used and it clearly improves readability. Keep Math style consistent within each generated example.
-- Open multiple targets with ONE comma-separated `open` declaration: `open A, B` (string targets use single quotes: `open 'url', A`). Each algorithm allows at most one `open` statement. Comma is the only separator — never write `open A ; B`, `open A B`, or repeated `open` lines. The first target must start on the `open` line; a long list may continue across lines with a trailing or leading comma, and a leading `.` continues a dotted target, but a plain newline never continues `open`. Never use spread in open targets — `open A...`, `open A...B`, and `open 'url'...` are parse errors.
+- Open multiple targets with ONE comma-separated `open` declaration: `open A, B` (string targets use single quotes: `open 'url', A`). Each algorithm allows at most one `open` statement. Comma is the only separator — never write `open A ; B`, `open A B`, or repeated `open` lines. The first target must start on the `open` line; a long list may continue across lines with a trailing or leading comma, and a leading `.` continues a dotted target, but a plain newline never continues `open`. Never use `...` or a spread in open targets — open targets are plain names, dotted paths, string URLs, and blocks.
 
 ## Whitespace And Visual Structure
 
@@ -268,12 +268,12 @@ GOOD — assumed values in final call:
 - Parenthesized sub-expressions work normally as call arguments. `f((a + b) mod 2, c)` is valid and parses as two arguments.
 - Single-quoted strings in `open 'url'` / load targets are compile-time directives. String literals used as runtime values follow separate rules (see String Literals).
 - No dummy arithmetic (`a * 0 + b`, `a - a + b`, `0 * a + b`) for parameter ordering — use grace `~`.
-- Do not use more than one collecting binding in the same comma-separated pattern level, do not combine collecting bindings with grace `~`, and do not write `Output(...values) = ...`.
+- Do not use more than one collecting binding in the same comma-separated pattern level, do not combine collecting bindings with grace `~`, and do not write `Output(values...) = ...`.
 - Do not replace a general mathematical definition with a bounded constant checklist derived from the requested numeric input.
 - Do not bake task-specific cutoff constants into helper predicates when the problem defines a reusable concept.
 - Do not specialize a predicate to one requested limit unless the user explicitly asks for a bounded shortcut.
 - Do not invent hidden default values inside algorithm definitions.
-- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X...)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
+- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X.spread)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `// assumed annual salary = 50000`.
 - Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. Only `Output` (in definition position) is hard-reserved at the parser level; the rest are syntactically shadowable but unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
@@ -301,7 +301,7 @@ Before emitting code, verify silently:
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
 - Nested property bodies use `( ... )` or `{ ... }` correctly; simple property bodies are not wrapped.
-- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X...)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
+- Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X.spread)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step's state is validated against its parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list): fixed and implicit interfaces need an exact slot count, a top-level user variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the variadic parameter collects the remaining middle slots as one exact list, max unbounded), and captured enclosing names are not state slots.
@@ -322,7 +322,7 @@ Before emitting code, verify silently:
 - Math arities are correct, especially `Log(value, base)`, `Pow(x, y)`, `Atan2(y, x)`, `Round(x, digits)`, `Random(start, end)`, and `RandomInt(start, end)`.
 - Numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators.
 - Strings are single-line, single-quoted literals with no invented escapes or double quotes.
-- Named sequence inputs can be passed as the value itself, via dot-call, or with explicit `...`, but those are not interchangeable. For fixed signatures — `range`, `atoms`, and ALL collection builtins — avoid explicit `...` unless the spread slot count matches the required call shape (`range(Bounds...)` with a two-item `Bounds` is valid). For user variadics, `...` is a valid item-supply input: spread items join the call argument stream, so `Scale(Arg..., 10)` works for `Scale(...items, factor)`. A collection builtin takes exactly one collection argument, so pass the named input directly: with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are `3`, while `count(Values...)` is a three-argument arity error.
+- Named sequence inputs can be passed as the value itself, via dot-call, or with the named spread intrinsic, but those are not interchangeable. For fixed signatures — `range`, `atoms`, and ALL collection builtins — avoid `spread(value)` / `value.spread` unless the supplied slot count matches the required call shape (`range(Bounds.spread)` with a two-item `Bounds` is valid). For user variadics, a spread expression is a valid item-supply input: spread items join the call argument stream, so `Scale(Arg.spread, 10)` works for `Scale(items..., factor)`. A collection builtin takes exactly one collection argument, so pass the named input directly: with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are `3`, while `count(Values.spread)` is a three-argument arity error.
 - Loop step state shape is taken from the step's explicit parameter pattern when it has one (not only from free identifiers); fixed and implicit interfaces need an exact slot count, while a top-level user variadic loop interface binds the state as an item supply (structural minimum = parameter count, fixed prefix/suffix bind from the ends, the variadic parameter collects the matched middle slots as one exact immutable list, max unbounded); captured enclosing names are not counted as state slots.
 - Callback item projection and reducer accumulator shape are intentional; reducers emit exactly one accumulator value (a sequence value is one; a bare multi-output is invalid), with sequence-value vs top-level-variadic accumulator binding chosen deliberately.
 - `load` appears only in valid compile-time positions (property definition or open list) with exactly one literal HTTPS URL.
@@ -347,8 +347,8 @@ Before emitting code, verify silently:
 - The code must not stop after defining the main algorithm.
 - A same-name clause family with exactly one capture/sequence-value parameter-pattern head elaborates as an ordinary algorithm, even though the surface syntax is `Name(pattern) = body`.
 - In those sole explicit-parameter clause families, higher-order parameters remain callable: `Apply(f) = f(4)` and `Choose(x, predicate) = if(predicate(x), x, 0)` are valid ordinary interfaces.
-- Ordinary algorithm definitions may use recursive parameter patterns, including sequence-value patterns and nested collecting bindings: `PairSum((x, y)) = x + y`, `CountSequenceValue((...values)) = values.count`.
-- A sole parameter-pattern head with one explicit variadic binder at a pattern level, such as `Many(...values)`, `Scale(...values, factor)`, or `CountSequenceValue((...values))`, is also an ordinary explicit-parameter interface, not a true conditional pattern family.
+- Ordinary algorithm definitions may use recursive parameter patterns, including sequence-value patterns and nested collecting bindings: `PairSum((x, y)) = x + y`, `CountSequenceValue((values...)) = values.count`.
+- A sole parameter-pattern head with one explicit variadic binder at a pattern level, such as `Many(values...)`, `Scale(values..., factor)`, or `CountSequenceValue((values...))`, is also an ordinary explicit-parameter interface, not a true conditional pattern family.
 - If conditional algorithms are used, their syntax is `Name(pattern) = body`; use `public Name(pattern) = body` only for exported APIs.
 - If conditional algorithms are used, branch order is meaningful and intentional.
 - If fallback behavior is needed, it is expressed as a final catch-all branch, not by invalid implicit default syntax.
@@ -444,7 +444,7 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - Property: `Name = expression`. Public: `public Name = expression`.
 - Indexing is zero-based: `expr:index`. It selects one top-level item and projects that selected item's content. Indexing is same-physical-line only — never start a line with `:`; a `:`-led line is a parse error, not a continuation of the previous expression. Do not add a leading `:0` to unwrap a `repeat` or `reduce` state tuple; select the needed state field directly.
 - Sequence values: parentheses materialize an expression list as one sequence value. Comma/adjacency expression lists are consumed as root output slots or call argument slots unless parentheses materialize them. Bare `1 2 3` and `1, 2, 3` remain three root output slots or three call argument slots; `(1, 2, 3)` is one sequence value. Result-window row display is presentation only and does not imply semantic sequence-value construction. Semicolon is invalid expression syntax.
-- Spread: POSTFIX `expr...` opens one item-producing boundary (sequence or list) of the evaluated value and contributes the items to the surrounding item supply; `...` NEVER consumes a right operand. The `...` token must stay on the same physical line as the expression it follows, and any token after it starts a new expression-list slot, so `A...B` is `A..., B`. `...` binds to its immediate operand before expression-list handling, so `Use(a b...)` means `Use(a, b...)`.
+- Spread: the named intrinsic `spread(expr)` / `expr.spread` opens one item-producing boundary (sequence or list) of the evaluated value and contributes the items to the surrounding item supply. It NEVER consumes a right operand, so `A.spread B` is `A.spread, B`. The `.spread` continuation binds to its immediate receiver before expression-list handling, so `Use(a b.spread)` means `Use(a, b.spread)`. The `...` token is the same-line postfix marker of a collecting binding only.
 - Calls only on identifiers and dot-call expressions. A call delimiter continues the callable across same-line whitespace: `F (1, 2)` and `F(1, 2)` are the same call, and likewise for dot calls and brace callbacks. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row. For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`). Indexing `:` is same-line only; a `:`-led line is a parse error. Postfix grace `~` is same-line only; a `~`-led line is its own prefix-grace row. Binary operators never continue across a newline (`A` newline `-1` is `A, -1`, not subtraction; write the trailing operator `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls.
 
 ## Arithmetic, Operators, and Precedence
@@ -457,7 +457,7 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) return `1` or `0`. Logical operators are `and`, `or`, `xor`, `not`.
 - `==` and `!=` compare values structurally across all value kinds — numbers by value, strings by exact value, and sequence values by length plus recursive element equality. Different value kinds (e.g. a number and a sequence value) compare unequal rather than erroring. The ordering operators (`<`, `>`, `<=`, `>=`) and the arithmetic operators require numeric scalar operands.
 - Use `not` for logical negation; a lone `!` is not a valid token. `!=` is the not-equal operator.
-- Operator precedence, lowest to highest: `or` < `xor` < `and` < (`==` `!=`) < (`<` `>` `<=` `>=`) < (`+` `-`) < (`*` `/` `div` `mod`) < `^` < unary prefix `-` and `not` < postfix `.` `:` and call application. (Output-structure syntax — comma/adjacency, parentheses, and postfix `...` — is documented separately above.)
+- Operator precedence, lowest to highest: `or` < `xor` < `and` < (`==` `!=`) < (`<` `>` `<=` `>=`) < (`+` `-`) < (`*` `/` `div` `mod`) < `^` < unary prefix `-` and `not` < postfix `.` `:` and call application. (Output-structure syntax — comma/adjacency, parentheses, and the named spread intrinsic — is documented separately above.)
 - `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`. The comparison and equality levels are left-associative.
 - Unary minus binds tighter than `^`, so `-3 ^ 2` means `(-3) ^ 2` (which is `9`), NOT `-(3 ^ 2)`. To negate a power, generate `-(a ^ b)` or `0 - a ^ b`.
 - `not` binds tighter than comparison/equality/logical operators, so `not x > 0` means `(not x) > 0`. Prefer `not (x > 0)`, or a direct comparison such as `x <= 0` or `a != b`.
@@ -564,7 +564,7 @@ Unless numeric coding was explicitly part of the user's request.
 ## Parentheses vs Braces
 
 - `( ... )` — concrete values, sequence-value data, call arguments, multi-output branch bodies, and property bodies containing nested definitions.
-- `(expr...)` — one sequence-value result materialized from the spread items; without parentheses, `expr...` contributes the spread items to the surrounding item supply (output rows, call argument slots, or list/sequence elements) — it does not create or emit a sequence value by itself.
+- `(expr.spread)` — one sequence-value result materialized from the spread items; without parentheses, `expr.spread` contributes the spread items to the surrounding item supply (output rows, call argument slots, or list/sequence elements) — it does not create or emit a sequence value by itself.
 - `{ ... }` — algorithm-valued expressions whose free identifiers become parameters; also property bodies containing nested definitions.
 - Both `( ... )` and `{ ... }` work identically for property bodies with nested definitions.
 - Simple property bodies (no nested definitions) are already implicitly parametrized — do not wrap them.
@@ -599,7 +599,7 @@ or equivalently with braces:
 
 ## Step–State Arity in repeat/while
 
-The initial state must provide the slots the interface requires. A fixed or implicit interface needs an exact slot count. A top-level user variadic interface — a step with a variadic parameter such as `Step(first, ...middle, last)` — instead binds the loop state as an item supply: the fixed prefix and suffix slots are required, and the variadic parameter collects the remaining middle slots as one exact immutable list. This is not an exact three-slot interface, and `...middle` is not a single required sequence-valued state slot; the step accepts additional middle slots (max unbounded) and requires at least as many state slots as it has parameters. For example, `Step(first, ...middle, last)` with `Step.repeat(2, 0, 5, 5, 10)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`. The step output must be bindable as the next iteration's state interface, and `while` adds one extra final continue flag after the next-state output. Captured enclosing names consume no loop-state slots.
+The initial state must provide the slots the interface requires. A fixed or implicit interface needs an exact slot count. A top-level user variadic interface — a step with a variadic parameter such as `Step(first, middle..., last)` — instead binds the loop state as an item supply: the fixed prefix and suffix slots are required, and the variadic parameter collects the remaining middle slots as one exact immutable list. This is not an exact three-slot interface, and `middle...` is not a single required sequence-valued state slot; the step accepts additional middle slots (max unbounded) and requires at least as many state slots as it has parameters. For example, `Step(first, middle..., last)` with `Step.repeat(2, 0, 5, 5, 10)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`. The step output must be bindable as the next iteration's state interface, and `while` adds one extra final continue flag after the next-state output. Captured enclosing names consume no loop-state slots.
 
 Explicit-signature step (valid even though `x` is not a free identifier):
 
@@ -608,12 +608,12 @@ Explicit-signature step (valid even though `x` is not a free identifier):
 
 Sequence-value-state step (one sequence-value slot threaded across iterations):
 
-    Step((...history, previous)) = (history..., previous + 1)
+    Step((history..., previous)) = (history.spread, previous + 1)
     Step.repeat(3, (1, 2)):1       // 5
 
-Variadic-state step (prefix + variadic + suffix bound as an item supply; the variadic parameter collects the extra middle slots as one exact list, and `middle...` re-spreads it):
+Variadic-state step (prefix + variadic + suffix bound as an item supply; the variadic parameter collects the extra middle slots as one exact list, and `middle.spread` re-spreads it):
 
-    Step(first, ...middle, last) = first + 1, middle..., last + 1
+    Step(first, middle..., last) = first + 1, middle.spread, last + 1
     Step.repeat(2, 0, 5, 5, 10)    // 2, 5, 5, 12
 
 Nested capture (a nested step may capture enclosing parameters; the captured name is not a state slot):
@@ -704,7 +704,7 @@ The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provi
 ### Self-Check for repeat/while
 
 - Determine the step's state interface. If the step has an explicit parameter pattern, validate the loop state against that pattern; otherwise validate against the inferred implicit parameters (free identifiers that are not sibling properties, built-ins, opened names, or captured enclosing names).
-- A fixed explicit signature requires its declared parent-level slots. A sequence-value pattern consumes one parent-level slot and binds inside that sequence value. A top-level user variadic signature instead binds the loop state as an item supply: the fixed prefix and suffix slots are required and the variadic parameter collects the matched middle slots as one exact immutable list, so `Step(first, ...middle, last)` is not an exact three-slot interface — it requires at least as many state slots as it has parameters and accepts additional middle slots (max unbounded).
+- A fixed explicit signature requires its declared parent-level slots. A sequence-value pattern consumes one parent-level slot and binds inside that sequence value. A top-level user variadic signature instead binds the loop state as an item supply: the fixed prefix and suffix slots are required and the variadic parameter collects the matched middle slots as one exact immutable list, so `Step(first, middle..., last)` is not an exact three-slot interface — it requires at least as many state slots as it has parameters and accepts additional middle slots (max unbounded).
 - Captured enclosing constants are not state slots. Thread a value through loop state only when it changes between iterations, must be returned as part of the state, or intentionally belongs to the state interface.
 - For an implicit-parameter step, trace the first-appearance order and apply grace `~` if it differs from the init tuple order.
 - Verify the step output is bindable to the next iteration's interface; for `while`, add one final continue flag after the next-state output.
@@ -765,24 +765,24 @@ versus:
 Use one explicit variadic parameter with postfix ellipsis when a user-defined helper should consume an item supply.
 
 Core rules:
-- A collecting binding COLLECTS the argument slots assigned to it into one exact immutable list: zero slots form `[]`, one slot forms `[item]` (never erased to the item), many form `[a, b, ...]`. `Name(...values) = body` binds `values` to that collected list. `Name(Arg)` supplies ONE argument (`values = [Arg]`, count 1), while `Name(Arg...)` explicitly spreads `Arg` first (`values = [Arg's items...]`). The two calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total) — supply items with explicit `...`. An empty call `Name()` collects `[]`.
-- `Name((...values)) = body` is different: it consumes exactly one sequence-value argument slot, opens it during binding, and collects its immediate top-level contents.
-- Normal parameters before `...values` bind from the front; normal parameters after it bind from the back, and the variadic parameter collects the matched middle arguments. With `Scale(...values, factor) = values.map{n * factor}` and `Arg = 1, 2, 3`, use `Scale(Arg..., 10)`, `(Arg...).Scale(10)`, or `Scale(1, 2, 3, 10)` to bind values as separate items; `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as ONE argument (`values = [Arg]`), so the numeric callback then fails on the sequence element — always spread when the helper needs the items. Collection builtins are separate ordinary fixed-arity callables with one `collection` argument plus fixed controls.
-- Nested sequence values remain intact; sibling grouped values are not auto-flattened. With `Arg = (1, 2), (3, 4)` and `Many(...values) = values.count`, `Many(Arg...)` is `2` — the spread opens `Arg` into the item supply, keeping its two grouped values as siblings — while `Many(Arg)` is `1` (one collected slot).
-- Forwarding a collected list is ordinary spread: `Forward(...items) = Target(items...)` re-supplies exactly the collected items; passing `items` without spread passes the whole list as one argument. Inside a helper body, pass the collected list unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)`), never spread into it (`sum(values...)` is an arity error).
+- A collecting binding COLLECTS the argument slots assigned to it into one exact immutable list: zero slots form `[]`, one slot forms `[item]` (never erased to the item), many form `[a, b, ...]`. `Name(values...) = body` binds `values` to that collected list. `Name(Arg)` supplies ONE argument (`values = [Arg]`, count 1), while `Name(Arg.spread)` explicitly spreads `Arg` first (`values` becomes the exact list of Arg's immediate items). The two calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total) — supply items with explicit `spread(Arg)` or `Arg.spread`. An empty call `Name()` collects `[]`.
+- `Name((values...)) = body` is different: it consumes exactly one sequence-value argument slot, opens it during binding, and collects its immediate top-level contents.
+- Normal parameters before `values...` bind from the front; normal parameters after it bind from the back, and the variadic parameter collects the matched middle arguments. With `Scale(values..., factor) = values.map{n * factor}` and `Arg = 1, 2, 3`, use `Scale(Arg.spread, 10)`, `(Arg.spread).Scale(10)`, or `Scale(1, 2, 3, 10)` to bind values as separate items; `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as ONE argument (`values = [Arg]`), so the numeric callback then fails on the sequence element — always spread when the helper needs the items. Collection builtins are separate ordinary fixed-arity callables with one `collection` argument plus fixed controls.
+- Nested sequence values remain intact; sibling grouped values are not auto-flattened. With `Arg = (1, 2), (3, 4)` and `Many(values...) = values.count`, `Many(Arg.spread)` is `2` — the spread opens `Arg` into the item supply, keeping its two grouped values as siblings — while `Many(Arg)` is `1` (one collected slot).
+- Forwarding a collected list is ordinary spread: `Forward(items...) = Target(items.spread)` re-supplies exactly the collected items; passing `items` without spread passes the whole list as one argument. Inside a helper body, pass the collected list unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)`), never spread into it (`sum(values.spread)` is an arity error).
 - A normal parameter remains one ordinary argument boundary, but sequence builtins applied later may destructure that returned value. With `Collect(list) = list` and `Arg = 1, 2, 3`, `Arg.Collect.count` is `3` because `count` opens the returned sequence value one level.
-- Variadic parameters are explicit only. Use at most one per sibling pattern level, never combine with grace `~`, and never write `Output(...values) = ...`.
+- Variadic parameters are explicit only. Use at most one per sibling pattern level, never combine with grace `~`, and never write `Output(values...) = ...`.
 
 Preferred sequence-style helper shapes:
 
-    Many(...values) = values.count
-    Head(first, ...rest) = first
-    Tail(first, ...rest) = rest
-    Scale(...values, factor) = values.map{n * factor}
-    Between(...values, minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
-    Step((...history), previous) = (history..., previous + 1), previous + 1
+    Many(values...) = values.count
+    Head(first, rest...) = first
+    Tail(first, rest...) = rest
+    Scale(values..., factor) = values.map{n * factor}
+    Between(values..., minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
+    Step((history...), previous) = (history.spread, previous + 1), previous + 1
 
-Do not use `atoms` to simulate `...values`; `atoms` recursively flattens nested structure and changes semantics. Prefer `(...values)` when destructuring one sequence-value parameter slot at binding time, and postfix spread `value...` when opening one sequence value into the surrounding output, argument, or item supply. Do not generate `content(...)`; it is no longer a builtin.
+Do not use `atoms` to simulate `values...`; `atoms` recursively flattens nested structure and changes semantics. Prefer `(values...)` when destructuring one sequence-value parameter slot at binding time, and the named spread intrinsic (`spread(value)` or `value.spread`) when opening one sequence value into the surrounding output, argument, or item supply. Do not generate `content(...)`; it is no longer a builtin.
 
 ## Grace Operator (~)
 Reorders implicit parameters without adding computation.
@@ -805,15 +805,15 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X...)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair...)` with `Pair = 2, 3` is also valid. A direct `if(X...)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X...)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument `if`. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use the result spread operator `if(cond, X, Y)...` to open that result into separate output slots.
+Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition is numeric. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X.spread)` with `X = 1, 2, 3` opens into the three slots and equals `if(1, 2, 3)`, and `if(1, Pair.spread)` with `Pair = 2, 3` is also valid. A direct `if(X.spread)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X.spread)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument `if`. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use the result spread intrinsic `if(cond, X, Y).spread` to contribute that result as separate output slots.
 
 ### `repeat`
 
-`repeat(step, count, ...init)` — fixed-count iteration. `step` returns next state, `count` is a non-negative integer, and each explicit init argument becomes one initial state slot. `repeat(Step, 3, a, b)` starts with two slots; `repeat(Step, 3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: `...` is postfix and takes no right operand, so `Step = history... next` emits history's items followed by `next` as separate slots, while `Step = (history..., next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((...history), previous) = (history..., previous + 1), previous + 1` emits the sequence-value history slot `(history..., previous + 1)` followed by the helper slot, so callers can select `:0`. Select outputs with `:index`; for a state `(candidate, found)`, use `repeat(...):1` for `found`, not `repeat(...):0:1`.
+`repeat(step, count, init...)` — fixed-count iteration. `step` returns next state, `count` is a non-negative integer, and each explicit init argument becomes one initial state slot. `repeat(Step, 3, a, b)` starts with two slots; `repeat(Step, 3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: a spread expression takes no right operand, so `Step = history.spread next` emits history's items followed by `next` as separate slots, while `Step = (history.spread, next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((history...), previous) = (history.spread, previous + 1), previous + 1` emits the sequence-value history slot `(history.spread, previous + 1)` followed by the helper slot, so callers can select `:0`. Select outputs with `:index`; for a state `(candidate, found)`, use `repeat(...):1` for `found`, not `repeat(...):0:1`.
 
 ### `while`
 
-`while(step, ...init)` or dot-call `Step.while(...init)` — condition-based loop. Step returns `(new_state..., continue_flag)`. Flag is the last item; when `0`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step.while(x, 0)` and `while(Step, x, 0)` start with two slots, while `Step.while((x, 0))` starts with one sequence-value slot.
+`while(step, init...)` or dot-call `Step.while(init...)` — condition-based loop. Step returns `(new_state.spread, continue_flag)`. Flag is the last item; when `0`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step.while(x, 0)` and `while(Step, x, 0)` start with two slots, while `Step.while((x, 0))` starts with one sequence-value slot.
 
 Because the final `continue_flag = 0` step is discarded, do not place the only meaningful update in that final step. For trial division and other searches, let the step that records `found = 1` continue once, then stop on the following step so the returned previous state contains the recorded value.
 
@@ -877,15 +877,15 @@ Builtin-first pipeline preference:
 
 For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `min`, `max`, `sum`, `avg`, and `reduce`:
 
-- The `collection` parameter is exactly ONE argument. With `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3` (a lone grouped sequence value or a lone exact list opens one boundary after binding). `count(1, 2, 3)` and `count(Values...)` are three-argument arity errors.
+- The `collection` parameter is exactly ONE argument. With `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3` (a lone grouped sequence value or a lone exact list opens one boundary after binding). `count(1, 2, 3)` and `count(Values.spread)` are three-argument arity errors.
 - Controls are fixed positional parameters, and a wrong argument count is an ordinary arity error. For `take(collection, count)`, `take((1, 2, 3), 2)` and `collection.take(2)` bind the collection and the count; `take(1, 2, 3, 2)` is a four-argument arity error, and `take((1, 2, 3))` is an arity error because the count is missing.
-- Inline items are an arity error — group them: `sum((10, 20, 30))`, never `sum(10, 20, 30)`; `order((3, 4, 2, 1))`, never `order(3, 4, 2, 1)`; `filter((range(1, 5)..., 8), Pred)`, never `filter(range(1, 5)..., 8, Pred)`; `reduce((1, 2, 3), Step, 0)`, never `reduce(1, 2, 3, Step, 0)`. Spread inside the parentheses builds the one collection value; spread directly in the call supplies ordinary argument slots that break the fixed arity.
-- A user variadic-with-suffix callable binds an item supply. With `Sum(...values, last)` and `Values = 10, 20`, `Sum(Values...)` binds `values = [10]` and `last = 20`, while `Sum(Values..., 7)` binds `values = [10, 20]` and `last = 7` (the spread items join the supply).
-- For reusable user-defined collection helpers, use an explicit variadic parameter such as `...values`. `Collect(...values) = values` collects the supplied call arguments as one exact immutable list: direct inline items (`Collect(1, 2, 3)` is `[1, 2, 3]`), spread items (`Collect(Values...)`), and empty input (`Collect()` is `[]`) are the item-supplying forms, while one grouped argument (`Collect(Values)`) collects `[Values]` — one element. By contrast, `Collect(list) = list` preserves one ordinary argument boundary until another operation consumes it. Inside such a helper body, pass the collected list directly to a collection builtin as its one collection argument (`values.count`, `sum(values)` — the builtin opens the bound list one level); spreading it into a builtin (`sum(values...)`) is an arity error.
+- Inline items are an arity error — group them: `sum((10, 20, 30))`, never `sum(10, 20, 30)`; `order((3, 4, 2, 1))`, never `order(3, 4, 2, 1)`; `filter((range(1, 5).spread, 8), Pred)`, never `filter(range(1, 5).spread, 8, Pred)`; `reduce((1, 2, 3), Step, 0)`, never `reduce(1, 2, 3, Step, 0)`. Spread inside the parentheses builds the one collection value; spread directly in the call supplies ordinary argument slots that break the fixed arity.
+- A user variadic-with-suffix callable binds an item supply. With `Sum(values..., last)` and `Values = 10, 20`, `Sum(Values.spread)` binds `values = [10]` and `last = 20`, while `Sum(Values.spread, 7)` binds `values = [10, 20]` and `last = 7` (the spread items join the supply).
+- For reusable user-defined collection helpers, use an explicit variadic parameter such as `values...`. `Collect(values...) = values` collects the supplied call arguments as one exact immutable list: direct inline items (`Collect(1, 2, 3)` is `[1, 2, 3]`), spread items (`Collect(Values.spread)`), and empty input (`Collect()` is `[]`) are the item-supplying forms, while one grouped argument (`Collect(Values)`) collects `[Values]` — one element. By contrast, `Collect(list) = list` preserves one ordinary argument boundary until another operation consumes it. Inside such a helper body, pass the collected list directly to a collection builtin as its one collection argument (`values.count`, `sum(values)` — the builtin opens the bound list one level); spreading it into a builtin (`sum(values.spread)`) is an arity error.
 - `take` and `skip` follow the same family pattern as the other collection builtins: use `take(collection, count)` / `skip(collection, count)` for direct calls, and `collection.take(count)` / `collection.skip(count)` for dot-calls.
 - After binding, the one collection argument opens one outer sequence or list boundary; sequence values inside it remain intact (no recursive flattening) and a list value inside it stays one opaque item. Numeric ordering and aggregation builtins require each resulting top-level item to be one atomic numeric value, so a list item is invalid for them.
 - Construction preserves structure; selection projects content. `Values:0` projects one selected item one level, so sequence-value selections expose their immediate members and chained `:` repeats that same one-level rule without recursive flattening.
-- Do not generate `content(...)`; it is no longer a builtin. Use postfix spread `x...` when opening a sequence into the surrounding item supply, and use `atoms(x)` only when recursive atom projection is intended.
+- Do not generate `content(...)`; it is no longer a builtin. Use the named spread intrinsic (`spread(x)` or `x.spread`) when opening a sequence into the surrounding item supply, and use `atoms(x)` only when recursive atom projection is intended.
 - The dot-call receiver fills the collection parameter, so `Values.count` and `range(1, 5).sum` work without receiver spreading, and `collection.take(2)` supplies the remaining fixed control.
 - Higher-order callbacks still bind the current item like `S:i`, and dot-call sequence builtins on that callback variable consume the projected item's counted top-level items. A variadic-parameter callback collects through the shared binder: single-variadic map/filter callees keep the element as one collected slot (`[7].map(Collect)` binds `items = [7]`), mixed flat callees open a lone sequence element into row slots before front/collecting/back allocation, and a single-variadic reducer collects both supplied slots as `[element, accumulator]`.
 - `contains` compares its final searched item against those extracted top-level items using ordinary KatLang value equality; it does not search recursively inside nested sequence elements.
@@ -897,7 +897,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 - `order` sorts ascending
 - `orderDesc` sorts descending
 - Duplicates are preserved
-- Collection-producing builtins return ONE exact immutable list value at the call/property boundary. `X.order` returns `[1, 2, 3]`, not direct top-level `1, 2, 3` and not a sequence value. Use caller-site spread, `X.order...`, when the surrounding context needs the ordered items as an item supply (spread opens the one list boundary).
+- Collection-producing builtins return ONE exact immutable list value at the call/property boundary. `X.order` returns `[1, 2, 3]`, not direct top-level `1, 2, 3` and not a sequence value. Use caller-site spread, `X.order.spread`, when the surrounding context needs the ordered items as an item supply (spread opens the one list boundary).
 - Each top-level element must be exactly one atomic numeric value
 - The one collection argument is opened one level (a lone grouped sequence value or a lone exact list alike); sequence values inside that collection are not recursively flattened. `order((3, 4, 2, 1))` is valid and returns `[1, 2, 3, 4]`, while `order(3, 4, 2, 1)` is a four-argument arity error and `order(((3, 4), (2, 1)))` is invalid because each element is a sequence value; list elements are likewise invalid.
 - Strings are invalid
@@ -955,7 +955,7 @@ Sequence-value accumulator (select fields with `:0` / `:1`):
 
 Top-level variadic accumulator (binds the accumulator's slots; here building up a sequence-value accumulator):
 
-    Append(item, ...history) = (history..., item)
+    Append(item, history...) = (history.spread, item)
     reduce((2, 3, 4), Append, 1)                 // (1, 2, 3, 4)
 
 ### `count`
@@ -968,7 +968,7 @@ Top-level variadic accumulator (binds the accumulator's slots; here building up 
 - Sequence values inside the collection are not recursively flattened
 - Empty collections return `0`
 - `().count`, `count(())`, `(()).count`, and `count((()))` are `0` because repeated ordinary parentheses around the empty sequence canonicalize to `()`; `{}.count` and `count({})` are missing-output errors (a no-output body is not a value)
-- `count((1, 2, 3))`, `count(Values)` with `Values = (1, 2, 3)`, `Values.count` with `Values = (1, 2, 3)`, and `((1, 2, 3)).count` are all `3`; with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are also `3`. `count(1, 2, 3)` and `count(Values...)` are three-argument arity errors — pass one collection value or group explicitly (`count((Values...))` is `3`). A lone exact list opens the same way: `count([1, 2, 3])` is `3`, while `count((1, [2], 3))` is `3` because the nested list is one opaque item.
+- `count((1, 2, 3))`, `count(Values)` with `Values = (1, 2, 3)`, `Values.count` with `Values = (1, 2, 3)`, and `((1, 2, 3)).count` are all `3`; with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are also `3`. `count(1, 2, 3)` and `count(Values.spread)` are three-argument arity errors — pass one collection value or group explicitly (`count((Values.spread))` is `3`). A lone exact list opens the same way: `count([1, 2, 3])` is `3`, while `count((1, [2], 3))` is `3` because the nested list is one opaque item.
 
 ### `sum`
 
@@ -1022,7 +1022,7 @@ Sorting paired lists by index (map over an index range; `index` is the callback'
     Difference = Math.Abs(SortedLeft:index - SortedRight:index)
     range(0, SortedLeft.count - 1).map(Difference).sum
 
-No spread-capture step is needed for indexing: a collection-builtin result is an exact list whose elements `:` selects positionally. Spread-capture (`SortedLeft = Left.order...`) remains available when a canonical sequence VALUE is specifically wanted, and arithmetic on a WHOLE list value (rather than a selected element) is still a type error. Terminal builtin steps such as `.sum`, `.count`, or a following `filter`/`map` need no spread because a lone list collection is opened one boundary.
+No spread-capture step is needed for indexing: a collection-builtin result is an exact list whose elements `:` selects positionally. Spread-capture (`SortedLeft = Left.order.spread`) remains available when a canonical sequence VALUE is specifically wanted, and arithmetic on a WHOLE list value (rather than a selected element) is still a type error. Terminal builtin steps such as `.sum`, `.count`, or a following `filter`/`map` need no spread because a lone list collection is opened one boundary.
 
 ### When Loops Are Still Appropriate
 
@@ -1051,11 +1051,11 @@ Not every clause-style definition is a true conditional algorithm. A same-name c
     Choose(x, predicate) = if(predicate(x), x, 0)
     K(a, b) = a
     PairSum((x, y)) = x + y
-    CountSequenceValue((...values)) = values.count
+    CountSequenceValue((values...)) = values.count
 
 These sole explicit-parameter clause families keep ordinary call semantics, so higher-order parameters remain callable. For example, `Apply(IsEven)` works, and `Choose(4, IsEven)` works.
 
-A recursive parameter pattern may include one variadic binder at its own pattern-list level, such as `Many(...values)`, `Scale(...values, factor)`, or `CountSequenceValue((...values))`; this is ordinary explicit-parameter syntax, not conditional matching.
+A recursive parameter pattern may include one variadic binder at its own pattern-list level, such as `Many(values...)`, `Scale(values..., factor)`, or `CountSequenceValue((values...))`; this is ordinary explicit-parameter syntax, not conditional matching.
 
 True conditional algorithms are literal/mixed matching or multi-clause families such as:
 
@@ -1125,11 +1125,11 @@ A same-name clause family with exactly one clause and a recursive capture/sequen
     Choose(x, predicate) = if(predicate(x), x, 0)
     K(a, b) = a
     PairSum((x, y)) = x + y
-    CountSequenceValue((...values)) = values.count
+    CountSequenceValue((values...)) = values.count
 
 Because these elaborate as ordinary algorithms, higher-order arguments remain callable. This is the right surface form for higher-order interfaces, ignored parameters, sequence-value deconstruction, and nested collecting bindings when there is only one formula.
 
-The same ordinary-interface rule applies when that single parameter pattern has one explicit variadic binder at its own pattern level, for example `Many(...values)`, `Scale(...values, factor)`, or `CountSequenceValue((...values))`.
+The same ordinary-interface rule applies when that single parameter pattern has one explicit variadic binder at its own pattern level, for example `Many(values...)`, `Scale(values..., factor)`, or `CountSequenceValue((values...))`.
 
 A true single-branch conditional algorithm needs actual non-parameter matching semantics, such as a literal inside the pattern. For example:
 
@@ -1272,7 +1272,7 @@ BETTER — specific branch first:
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.
 - Ordinary lexical dot-call preserves that injected receiver as one argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
-- A user-defined property with an explicit variadic parameter (`...values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading argument. For `Scale(...values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg..., 10)`, `(Arg...).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument. Multiple sibling grouped values are preserved unless opened with `...`.
+- A user-defined property with an explicit variadic parameter (`values...`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading argument. For `Scale(values..., factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg.spread, 10)`, `(Arg.spread).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument. Multiple sibling grouped values are preserved unless explicitly passed through `spread`.
 
 ## Zero-Parameter Property Calls
 
@@ -1572,28 +1572,28 @@ Regenerate this block from the repo root with:
   Displays:
     (1, 2, 3)
 
-[capture-supply-spread] Postfix `...` spreads one sequence-value layer back into the surrounding item supply — here back into three root output rows.
+[capture-supply-spread] A spread expression spreads one sequence-value layer back into the surrounding item supply — here back into three root output rows.
 
     A = 1, 2, 3
-    A...
+    A.spread
 
   Displays:
     1
     2
     3
 
-[call-value-boundary] A call returns exactly one value — here the collected list `[5, 9]` — and only explicit caller-site `...` spreads it back into the surrounding item supply.
+[call-value-boundary] A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site `spread(value)` / `value.spread` intrinsic opens it back into the surrounding item supply.
 
-    F(...a) = a
+    F(a...) = a
     F(5, 9)
-    F(5, 9)...
+    F(5, 9).spread
 
   Displays:
     [5, 9]
     5
     9
 
-[fixed-call-preserves-boundaries] A property reference is one argument expression even when it evaluates to several items: `Add(Pair)` is an arity error. Open it explicitly with `Add(Pair...)` or index with `Add(Pair:0, Pair:1)`.
+[fixed-call-preserves-boundaries] A property reference is one argument expression even when it evaluates to several items: `Add(Pair)` is an arity error. Open it explicitly with `Add(Pair.spread)` or index with `Add(Pair:0, Pair:1)`.
 
     Pair = 10, 20
     Add(x, y) = x + y
@@ -1609,22 +1609,22 @@ Regenerate this block from the repo root with:
   Displays:
     2
 
-[fixed-empty-spread-zero-items] Spreading `()` contributes zero items, so `F(()...)` supplies no arguments and the one-parameter call fails.
+[fixed-empty-spread-zero-items] Spreading `()` contributes zero items, so `F(().spread)` supplies no arguments and the one-parameter call fails.
 
     F(a) = a
-    F(()...)
+    F(().spread)
 
   Fails with an evaluation error (arity).
 
 [decon-collecting-middle] Front and back fixed targets bind first; the middle collecting binding collects its matched segment as one exact immutable list.
 
-    x, ...middle, z = 1, 2, 3, 4
+    x, middle..., z = 1, 2, 3, 4
     middle
 
   Displays:
     [2, 3]
 
-[decon-unpacks-stored-value] Assignment deconstruction is an unpacking receiver: a single stored sequence value is opened and matched element-by-element, so `= A` and `= A...` bind identically. Function calls do NOT unpack this way — `F(A)` still passes one argument.
+[decon-unpacks-stored-value] Assignment deconstruction is an unpacking receiver: a single stored sequence value is opened and matched element-by-element, so `= A` and `= A.spread` bind identically. Function calls do NOT unpack this way — `F(A)` still passes one argument.
 
     A = 1, 2, 3
     x, y, z = A
@@ -1633,37 +1633,37 @@ Regenerate this block from the repo root with:
   Displays:
     2
 
-[variadic-grouped-and-spread] A variadic parameter collects the supplied argument slots as one exact list. `G(A...)` and `G(1, 2, 3, 4, 5)` supply five numeric slots (sum 15), while the grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued slot — `x = [A]` — so the numeric `sum` element constraint rejects it. Supplying items is always explicit spread.
+[variadic-grouped-and-spread] A variadic parameter collects the supplied argument slots as one exact list. `G(A.spread)` and `G(1, 2, 3, 4, 5)` supply five numeric slots (sum 15), while the grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued slot — `x = [A]` — so the numeric `sum` element constraint rejects it. Supplying items is always explicit spread.
 
     A = 1, 2, 3, 4, 5
 
-    G(...x) = x.sum
+    G(x...) = x.sum
 
-    G(A...)
+    G(A.spread)
     G(1, 2, 3, 4, 5)
 
   Displays:
     15
     15
 
-[variadic-siblings-preserved] Sibling grouped values are preserved as two items unless each is explicitly spread with `...`.
+[variadic-siblings-preserved] Sibling grouped values are preserved as two items unless each is explicitly opened with the named spread intrinsic.
 
     A = 1, 2
     B = 3, 4
 
-    G(...x) = x.count
+    G(x...) = x.count
 
     G(A, B)
-    G(A..., B...)
+    G(A.spread, B.spread)
 
   Displays:
     2
     4
 
-[variadic-forwarding-list-spread] Variadic forwarding is ordinary list spread: spreading a collected list re-supplies exactly its items (`Target(items...)` re-collects the caller's slots, including the empty and singleton cases), while passing the collected list without spread passes ONE list argument (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply forwarding.
+[variadic-forwarding-list-spread] Variadic forwarding is ordinary list spread: spreading a collected list re-supplies exactly its items (`Target(items.spread)` re-collects the caller's slots, including the empty and singleton cases), while passing the collected list without spread passes ONE list argument (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply forwarding.
 
-    Target(...items) = items
-    Forward(...items) = Target(items...)
+    Target(items...) = items
+    Forward(items...) = Target(items.spread)
 
     Forward(1, 2)
     Forward([1, 2])
@@ -1672,11 +1672,11 @@ Regenerate this block from the repo root with:
     [1, 2]
     [[1, 2]]
 
-[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a variadic destination (`Use(items) = Target` elaborates to `Target(items)`, so the list stays one collected slot), while a caller variadic parameter legitimately forwards as spread (`UseVariadic(...items) = Target` elaborates to `Target(items...)`).
+[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a variadic destination (`Use(items) = Target` elaborates to `Target(items)`, so the list stays one collected slot), while a caller variadic parameter legitimately forwards as spread (`UseVariadic(items...) = Target` elaborates to `Target(items.spread)`).
 
-    Target(...items) = items
+    Target(items...) = items
     Use(items) = Target
-    UseVariadic(...items) = Target
+    UseVariadic(items...) = Target
 
     Use([1, 2])
     Use((1, 2))
@@ -1687,13 +1687,13 @@ Regenerate this block from the repo root with:
     [(1, 2)]
     [1, 2]
 
-[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver in `A.Inspect` is the same one slot — while explicit spread supplies the immediate items (`Inspect(A...)` collects `[1, 2, 3]`, count 3). The old grouped/spread coincidence is intentionally gone.
+[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver in `A.Inspect` is the same one slot — while explicit spread supplies the immediate items (`Inspect(A.spread)` collects `[1, 2, 3]`, count 3). The old grouped/spread coincidence is intentionally gone.
 
-    Inspect(...items) = items
+    Inspect(items...) = items
     A = [1, 2, 3]
 
     Inspect(A)
-    Inspect(A...)
+    Inspect(A.spread)
 
   Displays:
     [[1, 2, 3]]
@@ -1701,32 +1701,32 @@ Regenerate this block from the repo root with:
 
 [mixed-variadic-parameter] Mixed fixed/variadic parameter lists bind the call's argument stream: fixed captures take the front and back, and the variadic parameter collects the middle as one exact immutable list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.
 
-    F(x, ...y, z) = x + y.sum + z
+    F(x, y..., z) = x + y.sum + z
     F(1, 2, 3, 4, 5)
 
   Displays:
     15
 
-[call-spread-into-conditional-clauses] Explicit call-site spread has identical meaning for every callable shape: `F(A...)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.
+[call-spread-into-conditional-clauses] Explicit call-site spread has identical meaning for every callable shape: `F(A.spread)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.
 
     F(0, 0) = 100
     F(x, y) = x + y
     A = (1, 2)
-    F(A...)
+    F(A.spread)
 
   Displays:
     3
 
 [spread-one-level-only] Spread opens exactly one level: the inner `(2, 3)` stays intact, and `4` is a separate expression-list slot.
 
-    (1, (2, 3))...4
+    (1, (2, 3)).spread 4
 
   Displays:
     1
     (2, 3)
     4
 
-[take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and explicit spread `...` re-spreads the list to the kept pair.
+[take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and explicit `spread(value)` / `value.spread` re-spreads the list to the kept pair.
 
     take(((1, 2), (3, 4)), 1)
 
@@ -1735,7 +1735,7 @@ Regenerate this block from the repo root with:
 
 [callback-variadic-collects] A single-variadic map/filter callback receives each iterated element as ONE collected slot: `items` is the exact list `[element]`, preserving the element's kind (scalar, sequence value, or nested list). Reducers supply element and accumulator slots, so a genuine single-variadic reducer collects both as `[element, accumulator]`; an element-side variadic parameter before a fixed accumulator still observes `[element]`.
 
-    Collect(...items) = items
+    Collect(items...) = items
 
     [7].map(Collect)
     [(1, 2)].map(Collect)
@@ -1767,7 +1767,7 @@ Regenerate this block from the repo root with:
   Displays:
     [1, 2]
 
-[builtin-fixed-collection-arity] A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread items (`take([1, 2, 3]..., 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic functions remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.
+[builtin-fixed-collection-arity] A collection builtin receives exactly ONE fixed collection argument plus its fixed control arguments: `count(collection)` and `take(collection, count)` are ordinary fixed-arity callables, so inline items (`count(1, 2, 3)`), a missing control (`take((1, 2, 3))`), a missing collection (`count()`), and spread items (`take([1, 2, 3].spread, 2)`) are ordinary arity errors. A scalar is a one-element collection. USER-DEFINED variadic functions remain a separate general arity mechanism: `Inspect(1, 2, 3)` collects the three argument slots as the exact list `[1, 2, 3]`.
 
     count((1, 2, 3))
 
@@ -1776,7 +1776,7 @@ Regenerate this block from the repo root with:
 
 [reduce-accumulates-value] `reduce(collection, reducer, initial)` takes exactly three arguments and threads one accumulator value; the result displays as ONE sequence value `(1, 2, 3, 4)` — not as separate rows. Supplying the items inline (`reduce(2, 3, 4, Append, 1)`) is an ordinary five-argument arity error.
 
-    Append(item, ...history) = (history..., item)
+    Append(item, history...) = (history.spread, item)
     reduce((2, 3, 4), Append, 1)
 
   Displays:
@@ -1847,12 +1847,12 @@ Regenerate this block from the repo root with:
   Displays:
     3
 
-[list-spread-capture] Single-name capture preserves the list; postfix spread opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.
+[list-spread-capture] Single-name capture preserves the list; the named spread intrinsic opens exactly one list boundary into the item supply, so capturing the spread yields the canonical sequence of the elements.
 
     A = [1, 2, 3]
 
     x = A
-    y = A...
+    y = A.spread
 
     x
     y
@@ -1865,25 +1865,25 @@ Regenerate this block from the repo root with:
 
     A = 1, 2, 3
 
-    [A...]
-    [0, A..., 4]
+    [A.spread]
+    [0, A.spread, 4]
 
   Displays:
     [1, 2, 3]
     [0, 1, 2, 3, 4]
 
-[list-written-slot-reifies-projection] A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only explicit `...` opens the projected value into the surrounding slots.
+[list-written-slot-reifies-projection] A non-spread expression occupying one written slot contributes exactly ONE persistent value: `S:0` is a two-item projection, but as a list element it is the pair `(1, 2)` — matching capture, call arguments, and every other written-slot receiver. Only explicit `spread(S:0)` / `(S:0).spread` opens the projected value into the surrounding slots.
 
     S = ((1, 2), (3, 4))
 
     [S:0, 5]
-    [S:0..., 5]
+    [S:0.spread, 5]
 
   Displays:
     [(1, 2), 5]
     [1, 2, 5]
 
-[list-call-boundary] Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A...)` explicitly supplies its three elements, and `F([]...)` supplies zero arguments.
+[list-call-boundary] Calls never open lists implicitly: `One(A)` passes one list-valued argument, `F(A.spread)` explicitly supplies its three elements, and `F([].spread)` supplies zero arguments.
 
     F(a, b, c) = a + b + c
     One(x) = 7
@@ -1891,7 +1891,7 @@ Regenerate this block from the repo root with:
     A = [1, 2, 3]
 
     One(A)
-    F(A...)
+    F(A.spread)
 
   Displays:
     7
@@ -1910,9 +1910,9 @@ Regenerate this block from the repo root with:
     2
     3
 
-[collecting-binding-exact-list] A collecting binding COLLECTS the item slots assigned to it into one exact immutable list: `rest` from `x, ...rest = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.
+[collecting-binding-exact-list] A collecting binding COLLECTS the item slots assigned to it into one exact immutable list: `rest` from `x, rest... = [1, 2, 3]` is `[2, 3]`, the empty segment is `[]`, a singleton segment is `[item]` (a one-row segment of `[[1, 2], [3, 4]]` stays `[[3, 4]]`, count 1), and the result agrees with collection builtins — `rest == skip([1, 2, 3], 1)`.
 
-    x, ...rest = [1, 2, 3]
+    x, rest... = [1, 2, 3]
 
     x
     rest
@@ -1921,7 +1921,7 @@ Regenerate this block from the repo root with:
     1
     [2, 3]
 
-[list-builtin-collection] A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3]...)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3]...))`) to pass its items as one collection.
+[list-builtin-collection] A list is ONE collection argument: `count([1, 2, 3])` and `A.count` count three items through the post-binding one-level collection view. The view is never recursive — a grouped pair of lists counts its two opaque list items (`count(([], []))` is 2), and a nested list stays one item. Spread supplies ordinary argument slots, so `count([1, 2, 3].spread)` and the bare two-argument `count([], [])` are arity errors; re-group a spread (`sum(([1, 2, 3].spread))`) to pass its items as one collection.
 
     count([1, 2, 3])
 

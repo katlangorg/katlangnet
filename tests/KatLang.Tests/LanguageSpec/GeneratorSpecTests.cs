@@ -68,20 +68,29 @@ public class LanguageSpecArtifactsGeneratorPromptTests
 
     [Theory]
     [MemberData(nameof(PromptFilePaths))]
-    public void PromptFile_UsesOnlyCanonicalPrefixCollectingGuidance(string relativePath)
+    public void PromptFile_UsesOnlyCanonicalCollectingAndSpreadGuidance(string relativePath)
     {
         var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
 
+        // Collecting bindings: postfix `name...` is the one canonical spelling.
         Assert.Contains(
-            "Prefix `...name` is the ONLY collecting-binding syntax",
+            "Postfix `name...` is the ONLY collecting-binding syntax",
             content,
             StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "Use postfix ellipsis on an explicit parameter",
+
+        // Spreading: the named intrinsic, in both spellings, producing a SUPPLY.
+        Assert.Contains("spread(items)", content, StringComparison.Ordinal);
+        Assert.Contains("items.spread", content, StringComparison.Ordinal);
+        Assert.Contains(
+            "produces an item supply and does not return a list or sequence",
             content,
-            StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("accepted only for migration", content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("deprecation warning", content, StringComparison.OrdinalIgnoreCase);
+            StringComparison.Ordinal);
+
+        // The canonical forwarding example must be present.
+        Assert.Contains(
+            "Forward(items...) = Target(spread(items))",
+            content,
+            StringComparison.Ordinal);
     }
 
     private static string ReplaceOrAppendBlock(string content, string block)

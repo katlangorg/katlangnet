@@ -209,7 +209,7 @@ internal static class PropertyDependencyGraphBuilder
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames)
     {
-        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is self-contained: it
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is self-contained: it
         // binds its own N-capture pattern and outputs one of those bound params, capturing no
         // ancestor-owned parameter and referencing no visible or sibling property (the shared
         // `$deconstruct$` source is referenced by the helper's ARGS, not the helper itself). Its

@@ -189,11 +189,11 @@ public class AtomsBuiltinTests
 
     [Fact]
     public void Atoms_SpreadMultiElementList_IsArityError()
-        => AssertArityFailure("atoms([1, 2]...)");
+        => AssertArityFailure("atoms([1, 2].spread)");
 
     [Fact]
     public void Atoms_SpreadRegrouped_IsOneArgument()
-        => AssertEvalCounted("atoms(([1, 2]...))", 1, ListValue(Atom(1), Atom(2)));
+        => AssertEvalCounted("atoms(([1, 2].spread))", 1, ListValue(Atom(1), Atom(2)));
 
     [Fact]
     public void Atoms_UnspreadList_IsOneArgument()
@@ -253,19 +253,19 @@ public class AtomsBuiltinTests
 
     [Fact]
     public void Atoms_Spread_OpensOneListBoundary()
-        => AssertEvalCounted("A = atoms((10, 20))\nB = A...\nB", 1, SequenceValue(Atom(10), Atom(20)));
+        => AssertEvalCounted("A = atoms((10, 20))\nB = A.spread\nB", 1, SequenceValue(Atom(10), Atom(20)));
 
     [Fact]
     public void Atoms_SingletonSpread_CapturesItem()
-        => AssertEvalCounted("A = atoms(7)\nB = A...\nB", 1, Atom(7));
+        => AssertEvalCounted("A = atoms(7)\nB = A.spread\nB", 1, Atom(7));
 
     [Fact]
     public void Atoms_EmptySpread_ContributesNoItems()
-        => AssertEvalCounted("A = atoms('text')\nB = A...\nB", 1, SequenceValue());
+        => AssertEvalCounted("A = atoms('text')\nB = A.spread\nB", 1, SequenceValue());
 
     [Fact]
     public void Atoms_DirectSpread_OpensIntoItems()
-        => AssertEvalCounted("atoms([1, [2, 3]])...", 3, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => AssertEvalCounted("atoms([1, [2, 3]]).spread", 3, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     // ── Output count: one persistent collection value ────────────────────────
 

@@ -196,7 +196,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void ListLiteralWithSpread_ChargesTheExpandedSlots()
     {
-        const string source = "Values = [1, 2, 3]\nOutput = [Values..., Values...].count";
+        const string source = "Values = [1, 2, 3]\nOutput = [Values.spread, Values.spread].count";
         Assert.False(Eval(source, Items(6)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
     }
@@ -204,9 +204,9 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void SequenceCaptureWithSpread_IsBounded()
     {
-        // `(A..., A...)` doubles a captured sequence value; without charging capture this
+        // `(A.spread, A.spread)` doubles a captured sequence value; without charging capture this
         // is an unbounded growth path that never touches a collection builtin.
-        const string source = "A = (1, 2, 3)\nB = (A..., A...)\nOutput = B.count";
+        const string source = "A = (1, 2, 3)\nB = (A.spread, A.spread)\nOutput = B.count";
         Assert.False(Eval(source, Items(6)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
     }
@@ -214,7 +214,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void OrdinaryFlatVariadic_IsCheckedBeforeItsExactListIsCreated()
     {
-        const string source = "F(...items) = items.count\nOutput = F(1, 2, 3, 4)";
+        const string source = "F(items...) = items.count\nOutput = F(1, 2, 3, 4)";
         var failed = Observe(source, Items(3));
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(failed.Result.Error);
         Assert.Equal(4, error.Requested);
@@ -230,8 +230,8 @@ public class CollectionMaterializationLimitsTests
     {
         const string source =
             "A = range(1, 100000)\n" +
-            "F(...items) = items.count\n" +
-            "Output = F(A..., A...)";
+            "F(items...) = items.count\n" +
+            "Output = F(A.spread, A.spread)";
 
         var observed = Observe(source);
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(observed.Result.Error);
@@ -244,10 +244,10 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Theory]
-    [InlineData("F((head, ...tail)) = tail.count\nOutput = F((1, 2, 3))", 5)]
-    [InlineData("x, ...tail = [1, 2, 3, 4]\nOutput = tail.count", 7)]
-    [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
-    [InlineData("Collect(...items) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
+    [InlineData("F((head, tail...)) = tail.count\nOutput = F((1, 2, 3))", 5)]
+    [InlineData("x, tail... = [1, 2, 3, 4]\nOutput = tail.count", 7)]
+    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
+    [InlineData("Collect(items...) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
     public void EveryCollectingBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
     {
         var observed = Observe(source, Total(expectedItems));
@@ -298,8 +298,8 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void DirectNestedSpreads_ChargeEveryRealSequenceRecapture()
     {
-        const string oneLayer = "A = (1, 2, 3)\nOutput = A...";
-        const string twoLayers = "A = (1, 2, 3)\nOutput = A......";
+        const string oneLayer = "A = (1, 2, 3)\nOutput = A.spread";
+        const string twoLayers = "A = (1, 2, 3)\nOutput = A.spread.spread";
 
         var one = Observe(oneLayer, Total(9));
         var two = Observe(twoLayers, Total(12));
@@ -308,6 +308,42 @@ public class CollectionMaterializationLimitsTests
         Assert.Equal(9, one.Budget.MaterializedItems);
         Assert.Equal(12, two.Budget.MaterializedItems);
         Assert.IsType<EvalError.MaterializationLimitExceeded>(Observe(twoLayers, Total(11)).Result.Error);
+    }
+
+    [Fact]
+    public void SpreadSpellings_HaveIdenticalTightMaterializationAccounting()
+    {
+        const string prefix = "A = [1, 2, 3]\nOutput = ";
+
+        for (var maxItems = 1L; maxItems <= 12L; maxItems++)
+        {
+            var callForm = Observe(prefix + "spread(A)", Total(maxItems));
+            var propertyForm = Observe(prefix + "A.spread", Total(maxItems));
+
+            Assert.Equal(callForm.Result.IsError, propertyForm.Result.IsError);
+            Assert.Equal(
+                callForm.Budget.MaterializedItems,
+                propertyForm.Budget.MaterializedItems);
+
+            if (callForm.Result.IsError)
+            {
+                Assert.Equal(callForm.Result.Error.GetType(), propertyForm.Result.Error.GetType());
+                var callLimit = Assert.IsType<EvalError.MaterializationLimitExceeded>(
+                    callForm.Result.Error);
+                var propertyLimit = Assert.IsType<EvalError.MaterializationLimitExceeded>(
+                    propertyForm.Result.Error);
+                Assert.Equal(callLimit.Limit, propertyLimit.Limit);
+            }
+            else
+            {
+                Assert.Equal(
+                    callForm.Result.Value.EmittedCount,
+                    propertyForm.Result.Value.EmittedCount);
+                Assert.True(Result.ValueComparer.Equals(
+                    callForm.Result.Value.Value,
+                    propertyForm.Result.Value.Value));
+            }
+        }
     }
 
     [Fact]

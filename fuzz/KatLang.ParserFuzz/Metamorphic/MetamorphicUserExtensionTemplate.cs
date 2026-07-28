@@ -21,7 +21,7 @@ internal sealed record MetamorphicExtensionBody(string Id, string Body, int Suff
 /// user callable: <c>A.F(B, C)</c> is <c>F(A, B, C)</c>. Written argument boundaries are
 /// preserved exactly — the template NEVER introduces a spread when building the dotted form,
 /// and the one spread body it generates places the spread identically in the SUFFIX of both
-/// members (<c>F(R, S...)</c> against <c>R.F(S...)</c>), never on the receiver, which has no
+/// members (<c>F(R, S.spread)</c> against <c>R.F(S.spread)</c>), never on the receiver, which has no
 /// dotted spelling at all.</para>
 ///
 /// <para><b>Receiver evaluation.</b> The receiver is written as a whole expression on both
@@ -53,7 +53,7 @@ internal static class MetamorphicUserExtensionTemplate
         new("receiverCount", "r.count", 0),
         new("firstElement", "r:0", 0),
         new("wrapInList", "[r]", 0),
-        new("spreadIntoList", "[r...]", 0),
+        new("spreadIntoList", "[r.spread]", 0),
         new("builtinCall", "take(r, 1)", 0),
         new("multipleOutputs", "r, r", 0),
         new("constantList", "[1, 2]", 0),
@@ -83,7 +83,7 @@ internal static class MetamorphicUserExtensionTemplate
     /// <summary>
     /// Collapses the suffix dimension to its canonical index wherever the selected body does not
     /// USE it: a zero-suffix body writes no suffix at all, and a spread-suffix body writes the
-    /// same generated <c>MmS...</c> whatever the variant says. Leaving an ignored dimension free
+    /// same generated <c>MmS.spread</c> whatever the variant says. Leaving an ignored dimension free
     /// would let several payloads build byte-identical pairs and then be reported under distinct
     /// fingerprints — corpus and campaign effort spent re-testing one case.
     ///
@@ -159,7 +159,7 @@ internal static class MetamorphicUserExtensionTemplate
         {
             // Identical spread on both sides, in the suffix only.
             preamble.Append(MetamorphicTables.NamePrefix).Append("S = (8, 9)\n");
-            var spread = MetamorphicTables.NamePrefix + "S...";
+            var spread = MetamorphicTables.NamePrefix + "S.spread";
             left = $"{preamble}Output = {F}({R}, {spread})";
             right = $"{preamble}Output = {R}.{F}({spread})";
         }

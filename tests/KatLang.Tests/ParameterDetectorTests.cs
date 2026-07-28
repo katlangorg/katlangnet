@@ -283,10 +283,10 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_PostfixSpreadThenAdjacentExpression_ParamsFromBothSlots()
     {
-        // `a...b` is the expression list `a..., b`.
+        // `a.spread b` is the expression list `a.spread, b`.
         // Parameter detection still finds both `a` (the spread operand) and
         // `b` (the adjacent expression-list slot).
-        var ast = ParseAndDetect("a...b");
+        var ast = ParseAndDetect("a.spread b");
 
         Assert.Equal(2, ast.Params.Count);
         Assert.Equal(2, ast.Output.Count);
@@ -494,7 +494,7 @@ public class ParameterDetectorTests
         var source = """
             A = (public foo = 1)
             B = (public bar = 2)
-            open A...B
+            open A.spread B
             foo + bar + z
             """;
         var ast = ParseAndDetect(source);

@@ -426,7 +426,7 @@ public class MetamorphicPhase2FamilyTests
             var testCase = MetamorphicTemplates.Build(parameters);
 
             // The rewrite lives in the CALL, so that is where the spread rule applies:
-            // `A.F(B, C)` is `F(A, B, C)`, never `F(A..., B, C)`, so the dotted call may not add
+            // `A.F(B, C)` is `F(A, B, C)`, never `F(A.spread, B, C)`, so the dotted call may not add
             // or drop a spread relative to the ordinary call. (A rejected variadic-projection
             // wrapper legitimately writes a variadic parameter in its DEFINITION; that is the very
             // thing its precondition rejects, and it is never compared.)
@@ -573,11 +573,11 @@ public class MetamorphicPhase2FamilyTests
             var chain = MetamorphicChainTemplate.ChainOf(parameters);
             Assert.InRange(chain.Length, 2, MetamorphicChainTemplate.MaxChainLength);
 
-            // The dotted form applies the links left to right...
+            // The dotted form applies the links left to right.spread
             var expectedDotted = MetamorphicTables.ReceiverProperty + string.Concat(chain.Select(link => link.Dotted));
             Assert.Equal(expectedDotted, OutputExpression(testCase.RightSource));
 
-            // ...and the ordinary form wraps the same links in the same order.
+            // and... the ordinary form wraps the same links in the same order.
             var expectedOrdinary = MetamorphicTables.ReceiverProperty;
             foreach (var link in chain) expectedOrdinary = link.Ordinary(expectedOrdinary);
             Assert.Equal(expectedOrdinary, OutputExpression(testCase.LeftSource));
@@ -601,8 +601,8 @@ public class MetamorphicPhase2FamilyTests
             {
                 // The spread sits in the SUFFIX on BOTH sides — never on the receiver, which has
                 // no dotted spelling at all.
-                Assert.Contains("MmS...", left, StringComparison.Ordinal);
-                Assert.Contains("MmS...", right, StringComparison.Ordinal);
+                Assert.Contains("MmS.spread", left, StringComparison.Ordinal);
+                Assert.Contains("MmS.spread", right, StringComparison.Ordinal);
                 Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}...", left, StringComparison.Ordinal);
                 Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}...", right, StringComparison.Ordinal);
             }
@@ -622,7 +622,7 @@ public class MetamorphicPhase2FamilyTests
 
     /// <summary>
     /// A dimension the selected body IGNORES must collapse to one canonical index. The
-    /// spread-suffix body writes the same generated <c>MmS...</c> whatever the suffix variant
+    /// spread-suffix body writes the same generated <c>MmS.spread</c> whatever the suffix variant
     /// says, so all six variants are one case — not six payloads building byte-identical pairs
     /// under six distinct fingerprints.
     /// </summary>
@@ -787,7 +787,7 @@ public class MetamorphicPhase2FamilyTests
         // Evidence for the precondition: a variadic parameter COLLECTS the supplied slot into a
         // list, so the wrapper sees [element] where the direct builtin sees element.
         const string direct = "MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)";
-        const string variadicWrapper = "MmWrap(...xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
+        const string variadicWrapper = "MmWrap(xs...) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
         Assert.True(MetamorphicExecutor.TryObserve(variadicWrapper, null, true, out var b, out _));
@@ -892,7 +892,7 @@ public class MetamorphicPhase2FamilyTests
             // The wrapper really is written in the shape its rejection reason names.
             var wrapperLine = testCase.RightSource.Split('\n')[0];
             var expectedWrapper = kind == MetamorphicWrapperProjection.Variadic
-                ? $"{MetamorphicTables.WrapperFunction}(...xs) = "
+                ? $"{MetamorphicTables.WrapperFunction}(xs...) = "
                 : $"{MetamorphicTables.WrapperFunction}({(arity == 1 ? "a, b" : "a")}) = ";
             Assert.StartsWith(expectedWrapper, wrapperLine, StringComparison.Ordinal);
 
@@ -1159,7 +1159,7 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, false, out var left, out _));
         Assert.True(MetamorphicExecutor.TryObserve(dotted, limits, false, out var right, out _));
 
-        // The structured resource outcome IS still compared...
+        // The structured resource outcome IS still compared.spread
         Assert.Equal(left.Semantic, right.Semantic);
         Assert.True(left.Semantic.IsResourceLimit);
         Assert.Equal("StringMaterializationLimitExceeded", left.Semantic.ErrorCategory);
@@ -1170,7 +1170,7 @@ public class MetamorphicPhase2FamilyTests
                 Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 0, payload: "limit=1"),
                 Failed("StringMaterializationLimitExceeded", isResourceLimit: true, items: 0, payload: "limit=2"))!.Kind);
 
-        // ...but the partial counters are not.
+        // but... the partial counters are not.
         Assert.NotEqual(left.MaterializedItems, right.MaterializedItems);
         Assert.False(MetamorphicComparator.WorkIsComparable(left, right));
         Assert.Null(MetamorphicComparator.Compare(

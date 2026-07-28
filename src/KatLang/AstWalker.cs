@@ -230,7 +230,7 @@ public abstract class AstWalker
     }
 
     /// <summary>
-    /// Visits a source-backed collecting-binding prefix <c>...</c> marker.
+    /// Visits a source-backed collecting-binding postfix <c>...</c> marker.
     /// </summary>
     protected virtual void VisitCollectingBindingMarker(SourceSpan span)
     {

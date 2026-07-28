@@ -40,7 +40,7 @@ public static class ParameterDetector
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is already a
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
         // opens, no properties, and an output that is exactly the single bound target name.
         // Its only required elaboration is rewriting that bound Resolve to a Param. Running
@@ -207,7 +207,11 @@ public static class ParameterDetector
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    ProcessOpenExpr(operand, openParentScope, diagnostics)) { Span = expr.Span };
+                    ProcessOpenExpr(operand, openParentScope, diagnostics))
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
@@ -381,7 +385,11 @@ public static class ParameterDetector
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteBinderRefs(operand, binderNames, scope, capturedParamNames)) { Span = expr.Span };
+                    RewriteBinderRefs(operand, binderNames, scope, capturedParamNames))
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
@@ -683,7 +691,11 @@ public static class ParameterDetector
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteParams(operand, paramNames, scope, capturedParamNames)) { Span = expr.Span };
+                    RewriteParams(operand, paramNames, scope, capturedParamNames))
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
@@ -803,7 +815,11 @@ public static class ParameterDetector
                 ProcessExpr(t, scope, capturedParamNames),
                 ProcessExpr(s, scope, capturedParamNames)) { Span = expr.Span },
             Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExpr(operand, scope, capturedParamNames)) { Span = expr.Span },
+                ProcessExpr(operand, scope, capturedParamNames))
+            {
+                Span = expr.Span,
+                IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+            },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExpr(l, scope, capturedParamNames),
                 ProcessExpr(r, scope, capturedParamNames)) { Span = expr.Span },

@@ -21,11 +21,11 @@ never changes the meaning of caller-side spread.
 
 | Program | Before | After |
 |---|---|---|
-| `F(A...)` | catch-all-style clause could absorb `A` as ONE closed value (or `NoMatchingBranch`) | `3` — spread supplies two slots, the two-binder clause binds |
-| `F(A...)` with `A = (0, 0)` | same absorption | `100` — the literal clause wins, proving dispatch happens after expansion |
-| `F(x, x) = x` + `F((7, 7)...)` | arity error `expects 2 arguments, called with 1` | `7` |
-| `F((x, y), z) = ...` + `F(A..., 9)` | `(1, 2, 9)` — the spread reached the patterned callee as ONE closed value and the pattern opened it | arity error `expects 2 arguments, called with 3` — write `F(A, 9)` for the destructuring reading (success→error migration fact of the uniform rule) |
-| dotted `A.F(C...)` on a patterned callee | arity error (spread stayed closed) | expands like every other shape |
+| `F(A.spread)` | catch-all-style clause could absorb `A` as ONE closed value (or `NoMatchingBranch`) | `3` — spread supplies two slots, the two-binder clause binds |
+| `F(A.spread)` with `A = (0, 0)` | same absorption | `100` — the literal clause wins, proving dispatch happens after expansion |
+| `F(x, x) = x` + `F((7, 7).spread)` | arity error `expects 2 arguments, called with 1` | `7` |
+| `F((x, y), z) = ...` + `F(A.spread, 9)` | `(1, 2, 9)` — the spread reached the patterned callee as ONE closed value and the pattern opened it | arity error `expects 2 arguments, called with 3` — write `F(A, 9)` for the destructuring reading (success→error migration fact of the uniform rule) |
+| dotted `A.F(C.spread)` on a patterned callee | arity error (spread stayed closed) | expands like every other shape |
 
 Non-spread arguments are unchanged: `F(A)` still supplies one closed value
 for every callee shape. Flat and variadic callees already expanded spread and
@@ -47,7 +47,8 @@ incidental drift.
 list-literal element or a written sequence-value pattern argument item —
 contributes exactly ONE persistent value (the value its counted supply
 denotes), even when the expression emitted zero or many items (index
-projections, loop results, counted callback parameters). Only explicit `...`
+projections, loop results, counted callback parameters). Only an explicit
+`spread(value)` / `value.spread` slot
 opens a value into the surrounding slots. Owner:
 `EvalExplicitSequenceValueExprSlots` / `evalExplicitSequenceValueExprSlots`
 (shared by list literals and written pattern arguments).
@@ -57,7 +58,7 @@ opens a value into the surrounding slots. Owner:
 | Program | Before | After |
 |---|---|---|
 | `[S:0, 5]` | `[1, 2, 5]` (spliced) | `[(1, 2), 5]` |
-| `[S:0..., 5]` | `[1, 2, 5]` | `[1, 2, 5]` (unchanged — the spread contrast) |
+| `[S:0.spread, 5]` | `[1, 2, 5]` | `[1, 2, 5]` (unchanged — the spread contrast) |
 | `F((x, y)) = ...` + `F((S:0, 5))` | written group supplied 3 items | supplies 2 items: `x = (1, 2)`, `y = 5` |
 | `[repeat({a + 1, b + a}, 3, 0, 0), 9]` | `[3, 3, 9]` | `[(3, 3), 9]` |
 | `((1, 2), (3, 4)).map({[x, x]})` | rows spliced per re-emitted count | `[[(1, 2), (1, 2)], [(3, 4), (3, 4)]]` |
@@ -97,7 +98,7 @@ The flat-variadic loop-state minimum is now the FIXED parameter count, the
 same rule as every other collecting binding (`bindParameterPatternList`,
 deconstruction, calls, callbacks, and the patterned loop path): the variadic parameter may
 collect ZERO slots as the exact empty list `[]`. Before:
-`Step(acc, ...x) = ...` + `repeat(Step, 3, 10)` failed with
+`Step(acc, x...) = ...` + `repeat(Step, 3, 10)` failed with
 "expects at least 2 state values". After: binds `acc = 10`, `x = []`.
 The old loop-only "the variadic parameter collects at least one slot" restriction had no
 independent semantic justification and was bypassed by patterned steps.
@@ -106,7 +107,7 @@ Pinned by `bindCallableArguments_mixed_fixed_only_empty_segment` /
 and twin C#/Lean tests. Deliberate corollary: a SINGLE-VARIADIC step has zero
 fixed parameters, so its state vector may now shrink to ZERO slots, and the
 loop then returns the visible empty sequence value `()` where the old
-minimum errored (`Step(...x) = x.skip(1)...` + `repeat(Step, 3, 7, 8)` is
+minimum errored (`Step(x...) = x.skip(1).spread` + `repeat(Step, 3, 7, 8)` is
 `()`); pinned by `Eval_SingleVariadicLoopStep_MayShrinkStateToZeroSlots`.
 
 ## 6. Culture-invariant canonical display (F10)
@@ -137,8 +138,8 @@ colliding with the element separator. Display-only; no Lean impact.
 - A FUNCTION-shaped argument (a builtin, a clause family, or a parameterized
   algorithm — `Algorithm.isFunctionShaped` / `IsFunctionShapedAlgorithm`)
   reaching a TOP-LEVEL collecting binding now reports a targeted `TypeMismatch`
-  ("Variadic parameter `...fs` collects values, but a supplied argument is a
-  function...") in both C# and Lean, instead of the self-contradictory
+  ("Variadic parameter `fs...` collects values, but a supplied argument is a
+  function.spread") in both C# and Lean, instead of the self-contradictory
   "Expected 0 parameters, but was called with 0 arguments" surfaced from
   evaluating the bare function as a value. A zero-parameter VALUE property
   whose body failed is NOT function-shaped: its genuine evaluation error

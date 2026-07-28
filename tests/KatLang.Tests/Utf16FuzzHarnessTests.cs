@@ -89,7 +89,7 @@ public class Utf16FuzzHarnessTests
     }
 
     [Fact]
-    public void CollectingBindingTemplate_GeneratesCanonicalPrefixMarker()
+    public void CollectingBindingTemplate_GeneratesCanonicalPostfixMarker()
     {
         var parameters = new Utf16Parameters(
             Utf16TemplateKind.CollectingBinding,
@@ -103,8 +103,8 @@ public class Utf16FuzzHarnessTests
             RawUnits: []);
 
         var source = Utf16SourceBuilder.Build(parameters).Source;
-        Assert.Contains("F(a, ...z)", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("z...", source, StringComparison.Ordinal);
+        Assert.Contains("F(a, z...)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("...z", source, StringComparison.Ordinal);
 
         var parsed = Parser.ParseSyntax(source);
         Assert.False(

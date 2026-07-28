@@ -91,7 +91,7 @@ public class CallableBindingPlanTests
     [Fact]
     public void FromSignature_TopLevelVariadicPlan_HasZeroMinimumAndUnboundedMaximum()
     {
-        var plan = PlanFor("CountValues(...values) = values.count", "CountValues");
+        var plan = PlanFor("CountValues(values...) = values.count", "CountValues");
         var topLevel = plan.TopLevelPatternList;
 
         var values = AssertVariadic(Assert.Single(topLevel.Nodes), "values", CallableParameterSource.Explicit, isTopLevel: true);
@@ -102,13 +102,13 @@ public class CallableBindingPlanTests
         Assert.Equal(0, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
         Assert.True(topLevel.HasVariadicAtThisLevel);
-        Assert.Equal(["...values"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
+        Assert.Equal(["values..."], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
     }
 
     [Fact]
     public void FromSignature_TopLevelVariadicWithSuffixPlan_BindsSuffixFromBack()
     {
-        var plan = PlanFor("Scale(...items, factor) = items.map{n * factor}", "Scale");
+        var plan = PlanFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
         var topLevel = plan.TopLevelPatternList;
 
         Assert.Empty(topLevel.Prefix);
@@ -118,7 +118,7 @@ public class CallableBindingPlanTests
         var suffix = Assert.Single(topLevel.Suffix);
         AssertCapture(suffix, "factor", CallableParameterSource.Explicit);
         // Deconstruction-shaped: the fixed suffix `factor` is the only required
-        // slot, and the variadic parameter `...items` may collect any number of prefix items.
+        // slot, and the variadic parameter `items...` may collect any number of prefix items.
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
         Assert.True(topLevel.HasVariadicAtThisLevel);
@@ -127,7 +127,7 @@ public class CallableBindingPlanTests
     [Fact]
     public void FromSignature_SequenceValueVariadicPlan_IsNestedNotTopLevel()
     {
-        var plan = PlanFor("CountSequenceValue((...values)) = values.count", "CountSequenceValue");
+        var plan = PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
         var topLevel = plan.TopLevelPatternList;
 
         var group = Assert.IsType<SequenceValueBindingNode>(Assert.Single(topLevel.Nodes));
@@ -143,7 +143,7 @@ public class CallableBindingPlanTests
     [Fact]
     public void FromSignature_NestedSequenceValueRecursivePlan_PreservesNestedStructure()
     {
-        var plan = PlanFor("G(((...history), previous)) = history.count + previous", "G");
+        var plan = PlanFor("G(((history...), previous)) = history.count + previous", "G");
         var topLevel = plan.TopLevelPatternList;
 
         var outerGroup = Assert.IsType<SequenceValueBindingNode>(Assert.Single(topLevel.Nodes));
@@ -155,7 +155,7 @@ public class CallableBindingPlanTests
         Assert.True(topLevel.HasVariadicInDescendants);
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Equal(1, topLevel.MaxSlotCount);
-        Assert.Equal(["...history", "previous"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
+        Assert.Equal(["history...", "previous"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
     }
 
     [Fact]
@@ -211,8 +211,8 @@ public class CallableBindingPlanTests
         {
             PlanFor("Add(x, y) = x + y", "Add").Signature,
             PlanFor("PairSum((x, y)) = x + y", "PairSum").Signature,
-            PlanFor("CountValues(...values) = values.count", "CountValues").Signature,
-            PlanFor("CountSequenceValue((...values)) = values.count", "CountSequenceValue").Signature,
+            PlanFor("CountValues(values...) = values.count", "CountValues").Signature,
+            PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue").Signature,
             CallableSignature.FromBuiltin(BuiltinId.map),
             CallableSignature.FromBuiltin(BuiltinId.count),
         };

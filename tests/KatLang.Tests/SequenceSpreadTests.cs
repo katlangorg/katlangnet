@@ -68,7 +68,7 @@ public class SequenceSpreadTests
             """
             Pair = 10, 20
             Add(x, y) = x + y
-            Add(Pair...)
+            Add(Pair.spread)
             """,
             30m);
 
@@ -78,7 +78,7 @@ public class SequenceSpreadTests
             """
             Pair = (10, 20)
             Add(x, y) = x + y
-            Add(Pair...)
+            Add(Pair.spread)
             """,
             30m);
 
@@ -106,7 +106,7 @@ public class SequenceSpreadTests
             """
             Tail = 2, 3
             Use(a, b, c) = a + b + c
-            Use(1, Tail...)
+            Use(1, Tail.spread)
             """,
             6m);
 
@@ -117,20 +117,20 @@ public class SequenceSpreadTests
             Head = 1, 2
             Tail = 4, 5
             Use(a, b, c, d, e) = a + b + c + d + e
-            Use(Head..., 3, Tail...)
+            Use(Head.spread, 3, Tail.spread)
             """,
             15m);
 
     [Fact]
     public void LineEndingPostfixEllipsis_DoesNotContinueSequenceSpreadForFixedCall()
         // Inside the open call-argument list a newline separates slots, so the
-        // call sees two argument slots `A...` and `A` — not a continued spread
-        // A...A and not four call arguments.
+        // call sees two argument slots `A.spread` and `A` — not a continued spread
+        // A.spread A and not four call arguments.
         => AssertArityFailure(
             """
             A = 1, 2
             Sum4(a, b, c, d) = a + b + c + d
-            Sum4(A...
+            Sum4(A.spread
             A)
             """);
 
@@ -140,7 +140,7 @@ public class SequenceSpreadTests
             """
             A = 1, 2
             Use(a, b, c) = a + b + c.count
-            Use(A...,
+            Use(A.spread,
             A)
             """,
             5m);
@@ -166,19 +166,19 @@ public class SequenceSpreadTests
             A = 1, 2
             Sum4(a, b, c, d) = a + b + c + d
             Sum4(A
-            ...A)
+            A...)
             """);
 
-    // A postfix spread never consumes a following binary operator, so an opened
-    // item supply cannot be a binary operand. `A... == A...` is a parse error
+    // A spread expression never consumes a following binary operator, so an opened
+    // item supply cannot be a binary operand. `A.spread == A.spread` is a parse error
     // rather than an elementwise comparison — structural `==`/`!=` operate on whole
-    // values, never on opened item supplies. Compare regrouped values with `(A...) == A`.
+    // values, never on opened item supplies. Compare regrouped values with `(A.spread) == A`.
     [Fact]
     public void PostfixEllipsisFollowedByEqualityOperator_IsParseError()
         => AssertParseFailure(
             """
             A = 1, 2
-            A... == A...
+            A.spread == A.spread
             """);
 
     [Fact]
@@ -187,7 +187,7 @@ public class SequenceSpreadTests
             """
             A = 1, 2
             F(x, y) = x + y
-            F(A...)
+            F(A.spread)
             9
             """,
             3m,
@@ -199,7 +199,7 @@ public class SequenceSpreadTests
             """
             A = 1, 2
             F(x, y) = x + y
-            F(A...) // the line ends with the call, not the inner ellipsis
+            F(A.spread) // the line ends with the call, not the inner ellipsis
             9
             """,
             3m,
@@ -211,7 +211,7 @@ public class SequenceSpreadTests
         var result = EvalFull(
             """
             A = 1, 2
-            (A...)
+            (A.spread)
             9
             """);
 
@@ -228,31 +228,33 @@ public class SequenceSpreadTests
         Assert.Equal(9m, Assert.IsType<Result.Atom>(outer.Items[1]).Value);
     }
 
-    // `Values...7` is not a binary spread: `...` is postfix and takes no right
-    // operand, so it parses as the expression list `Values..., 7` = three slots
-    // [10, 20, 7], bound by the item-supply matcher (sum 37).
+    // `Values.spread 7` is not a binary spread: a spread expression takes no
+    // right operand, so it parses as the expression list `Values.spread, 7` =
+    // three slots [10, 20, 7], bound by the item-supply matcher (sum 37).
+    // Same-line whitespace before `.spread` stays a postfix continuation.
     [Theory]
-    [InlineData("Sum(Values...7)")]
-    [InlineData("Sum(Values ...7)")]
+    [InlineData("Sum(Values.spread 7)")]
+    [InlineData("Sum(Values .spread 7)")]
+    [InlineData("Sum(spread(Values) 7)")]
     public void PostfixSpreadThenJoinInsideCall_BindsItemSupply(string call)
         => AssertEval(
             $$"""
             Values = 10, 20
-            Sum(...values) = values.sum
+            Sum(values...) = values.sum
             {{call}}
             """,
             37m);
 
     [Fact]
     public void VariadicSuffixBinding_CommaSeparatedSpreadSegmentBindsByDeconstruction()
-        // Sum(...values, val) is a comma deconstruction parameter list. Values...
+        // Sum(values..., val) is a comma deconstruction parameter list. Values.spread
         // spreads into [10, 20] and 7 fills the suffix, so the variadic captures
         // [10, 20] (sum 30) and val binds 7: 30 + 7 = 37.
         => AssertEval(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
-            Sum(Values..., 7)
+            Sum(values..., val) = values.sum + val
+            Sum(Values.spread, 7)
             """,
             37m);
 
@@ -265,7 +267,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
+            Sum(values..., val) = values.sum + val
             Sum(Values, 7)
             """);
 
@@ -273,11 +275,11 @@ public class SequenceSpreadTests
     public void VariadicSuffixBinding_NormalArgumentPreservesSingleGroupedValue()
         // One grouped sequence-value argument is not implicitly opened for a
         // mixed variadic call; val receives the sequence value and the numeric
-        // body fails. Use Values... to spread it explicitly.
+        // body fails. Use Values.spread to spread it explicitly.
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
+            Sum(values..., val) = values.sum + val
             Sum(Values)
             """);
 
@@ -286,7 +288,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
+            Sum(values..., val) = values.sum + val
             Values.Sum
             """);
 
@@ -298,7 +300,7 @@ public class SequenceSpreadTests
         => AssertEvaluationFailure(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
+            Sum(values..., val) = values.sum + val
             Values.Sum(7)
             """);
 
@@ -307,8 +309,8 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Sum(...values, val) = values.sum + val
-            Sum(Values...)
+            Sum(values..., val) = values.sum + val
+            Sum(Values.spread)
             """,
             30m);
 
@@ -321,15 +323,15 @@ public class SequenceSpreadTests
         AssertEvaluationFailure(
             """
             Vector = range(1, 10)
-            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
             Qmean(Vector)
             """);
 
         AssertEval(
             """
             Vector = range(1, 10)
-            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
-            Qmean(Vector...) == Math.Sqrt(385 / 10)
+            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            Qmean(Vector.spread) == Math.Sqrt(385 / 10)
             """,
             1m);
     }
@@ -339,8 +341,8 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Vector = range(1, 10)
-            Qmean(...args) = Math.Sqrt(args.map{x * x}.sum / args.count)
-            (Vector...).Qmean() == Qmean(Vector...)
+            Qmean(args...) = Math.Sqrt(args.map{x * x}.sum / args.count)
+            (Vector.spread).Qmean() == Qmean(Vector.spread)
             """,
             1m);
 
@@ -349,7 +351,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Count(...args) = args.count
+            Count(args...) = args.count
             Count(Values)
             """,
             1m);
@@ -359,7 +361,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Pair = (10, 20)
-            Count(...args) = args.count
+            Count(args...) = args.count
             Count(Pair)
             """,
             1m);
@@ -369,7 +371,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Pair = (10, 20)
-            Count(...args) = args.count
+            Count(args...) = args.count
             Pair.Count()
             """,
             1m);
@@ -391,9 +393,9 @@ public class SequenceSpreadTests
         // argument.
         => AssertEval(
             """
-            CountItem(...values, item) = values.filter{value == item}.count
-            Use(...values) = CountItem(values..., 1)
-            Use((1, 1, 2, 4, 4)...)
+            CountItem(values..., item) = values.filter{value == item}.count
+            Use(values...) = CountItem(values.spread, 1)
+            Use((1, 1, 2, 4, 4).spread)
             """,
             2m);
 
@@ -401,14 +403,14 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_CallbackBodyForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItem(...values, item) = values.filter{value == item}.count
+            CountItem(values..., item) = values.filter{value == item}.count
 
-            Mode(...values) = {
-                Freqs = values.distinct.map{CountItem(values..., candidate)}
+            Mode(values...) = {
+                Freqs = values.distinct.map{CountItem(values.spread, candidate)}
                 Freqs
             }
 
-            Mode((1, 1, 2, 4, 4)...)
+            Mode((1, 1, 2, 4, 4).spread)
             """,
             2m, 1m, 2m);
 
@@ -416,16 +418,16 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_FullModeExampleForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItem(...values, item) = values.filter{value == item}.count
+            CountItem(values..., item) = values.filter{value == item}.count
 
-            Mode(...values) = {
-                Freqs = values.distinct.map{CountItem(values..., candidate)}
+            Mode(values...) = {
+                Freqs = values.distinct.map{CountItem(values.spread, candidate)}
                 MaxFreq = Freqs.max
 
-                values.distinct.filter{CountItem(values..., candidate) == MaxFreq}
+                values.distinct.filter{CountItem(values.spread, candidate) == MaxFreq}
             }
 
-            Mode((1, 1, 2, 4, 4)...)
+            Mode((1, 1, 2, 4, 4).spread)
             """,
             1m, 4m);
 
@@ -437,8 +439,8 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Collect(list) = list.count
-            Use(...values) = Collect(values)
-            Use((10, 20, 30)...)
+            Use(values...) = Collect(values)
+            Use((10, 20, 30).spread)
             """,
             3m);
 
@@ -446,9 +448,9 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_TopLevelVariadicCalleeReceivesStreamViaSpread()
         => AssertEval(
             """
-            Collect(...list) = list.count
-            Use(...values) = Collect(values...)
-            Use((10, 20, 30)...)
+            Collect(list...) = list.count
+            Use(values...) = Collect(values.spread)
+            Use((10, 20, 30).spread)
             """,
             3m);
 
@@ -457,9 +459,9 @@ public class SequenceSpreadTests
         // Round trip: the callee's variadic parameter re-collects exactly the caller's items.
         => AssertEval(
             """
-            CountItems(...items) = items.count
-            Use(...values) = CountItems(values...)
-            Use((1, 2, 3)...)
+            CountItems(items...) = items.count
+            Use(values...) = CountItems(values.spread)
+            Use((1, 2, 3).spread)
             """,
             3m);
 
@@ -469,9 +471,9 @@ public class SequenceSpreadTests
         // passed bare and the sequence-value pattern opens its one boundary.
         => AssertEval(
             """
-            CountSequenceValue((...values)) = values.count
-            Use(...values) = CountSequenceValue(values)
-            Use((10, 20, 30)...)
+            CountSequenceValue((values...)) = values.count
+            Use(values...) = CountSequenceValue(values)
+            Use((10, 20, 30).spread)
             """,
             3m);
 
@@ -479,8 +481,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            FindNext(...history, pre1, pre2) = history.count + pre1 + pre2
-            YSStep((...history), pre2, pre1) = FindNext(history..., pre1, pre2)
+            FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
+            YSStep((history...), pre2, pre1) = FindNext(history.spread, pre1, pre2)
             YSStep((1, 2, 3), 2, 3)
             """,
             8m);
@@ -489,8 +491,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            CountItems(...items) = items.count
-            Use((...history)) = CountItems(history...)
+            CountItems(items...) = items.count
+            Use((history...)) = CountItems(history.spread)
             Use((1, 2, 3))
             """,
             3m);
@@ -499,7 +501,7 @@ public class SequenceSpreadTests
     public void SequenceValueVariadicCalleeBoundary_DoesNotUseFlatSlotSpread()
         => AssertEval(
             """
-            CountSequenceValue((...items)) = items.count
+            CountSequenceValue((items...)) = items.count
             Pair = 10, 20
             CountSequenceValue(Pair)
             """,
@@ -511,8 +513,8 @@ public class SequenceSpreadTests
         // parameter is called — no name matching is involved.
         => AssertEval(
             """
-            CountItems(...items, last) = items.count + last
-            Use((...history), last) = CountItems(history..., last)
+            CountItems(items..., last) = items.count + last
+            Use((history...), last) = CountItems(history.spread, last)
             Use((10, 20, 30), 7)
             """,
             10m);
@@ -522,7 +524,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Collect(list) = list.count
-            Use((...history), marker) = Collect(history)
+            Use((history...), marker) = Collect(history)
             Use((10, 20, 30), 99)
             """,
             3m);
@@ -531,8 +533,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_SequenceValueVariadicCaptureOnlyExpandsInTargetVariadicSlot()
         => AssertEval(
             """
-            TakeLast(...first, last) = first.count
-            Use((...history), marker) = TakeLast(0, history)
+            TakeLast(first..., last) = first.count
+            Use((history...), marker) = TakeLast(0, history)
             Use((10, 20, 30), 99)
             """,
             1m);
@@ -541,8 +543,8 @@ public class SequenceSpreadTests
     public void VariadicParameterForwarding_LoopStepSequenceValueVariadicCaptureForwardsStreamWithExplicitSpread()
         => AssertEval(
             """
-            FindNext(...history, pre1, pre2) = history.count + pre1 + pre2
-            YSStep((...history), pre2, pre1) = FindNext(history..., pre1, pre2), pre1, pre2
+            FindNext(history..., pre1, pre2) = history.count + pre1 + pre2
+            YSStep((history...), pre2, pre1) = FindNext(history.spread, pre1, pre2), pre1, pre2
             YSStep.repeat(1, (1, 2, 3), 2, 3):0
             """,
             8m);
@@ -559,19 +561,19 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceBuiltin_SpreadFollowsOrdinaryFixedArity()
     {
-        // Spread has only its ordinary meaning: `Values...` opens to two
+        // Spread has only its ordinary meaning: `Values.spread` opens to two
         // argument slots, over-supplying the fixed count(collection) — an
         // ordinary arity error. Grouping the spread back into one collection
         // argument is the valid rewrite.
         AssertArityFailure(
             """
             Values = 10, 20
-            count(Values...)
+            count(Values.spread)
             """);
         AssertEval(
             """
             Values = 10, 20
-            count((Values...))
+            count((Values.spread))
             """,
             2m);
     }
@@ -588,17 +590,17 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceBuiltin_NumericSpreadFollowsOrdinaryFixedArity()
     {
-        // Same rule for the numeric reducers: sum(Values...) supplies two
+        // Same rule for the numeric reducers: sum(Values.spread) supplies two
         // arguments to the fixed sum(collection); the grouped form is valid.
         AssertArityFailure(
             """
             Values = 10, 20
-            sum(Values...)
+            sum(Values.spread)
             """);
         AssertEval(
             """
             Values = 10, 20
-            sum((Values...))
+            sum((Values.spread))
             """,
             30m);
     }
@@ -608,7 +610,7 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Bounds = 1, 3
-            range(Bounds...)
+            range(Bounds.spread)
             """,
             1m, 2m, 3m);
 
@@ -632,8 +634,8 @@ public class SequenceSpreadTests
     }
 
     [Theory]
-    [InlineData("A = 1...{ 2, 3 }")]
-    [InlineData("A = 1 ... { 2, 3 }")]
+    [InlineData("A = 1.spread, { 2, 3 }")]
+    [InlineData("A = spread(1), { 2, 3 }")]
     public void NonCallResultContext_SequenceSpreadSpreadsNestedBlockOutput(string definition)
         => AssertEval(
             $$"""
@@ -642,30 +644,30 @@ public class SequenceSpreadTests
             """,
             1m, 2m, 3m);
 
-    // `(Values...)` spreads the receiver into the item supply, so `Sum(values...)`
+    // `(Values.spread)` spreads the receiver into the item supply, so `Sum(values.spread)`
     // binds [10, 20] and sums to 30.
     [Fact]
     public void DotCall_ExplicitSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
             """
             Values = 10, 20
-            Sum(...values) = values.sum
-            Output = (Values...).Sum
+            Sum(values...) = values.sum
+            Output = (Values.spread).Sum
             """,
             30m);
 
-    // `(Values...7)` materializes ONE sequence value (10, 20, 7): unlike the lone
-    // `(Values...)` spread receiver it is an ordinary grouped receiver, so the
+    // `(Values.spread 7)` materializes ONE sequence value (10, 20, 7): unlike the lone
+    // `(Values.spread)` spread receiver it is an ordinary grouped receiver, so the
     // variadic parameter collects [(10, 20, 7)] and the numeric body fails. Re-spreading the
-    // group — `((Values...7)...)` — supplies the items.
+    // group — `((Values.spread 7).spread)` — supplies the items.
     [Theory]
-    [InlineData("(Values...7).Sum")]
-    [InlineData("(Values ...7).Sum")]
+    [InlineData("(Values.spread 7).Sum")]
+    [InlineData("(spread(Values) 7).Sum")]
     public void DotCall_SpreadJoinGroupReceiver_IsOneCollectedItem(string call)
         => AssertEvaluationFailure(
             $$"""
             Values = 10, 20
-            Sum(...values) = values.sum
+            Sum(values...) = values.sum
             Output = {{call}}
             """);
 
@@ -674,41 +676,41 @@ public class SequenceSpreadTests
         => AssertEval(
             """
             Values = 10, 20
-            Sum(...values) = values.sum
-            Output = ((Values...7)...).Sum
+            Sum(values...) = values.sum
+            Output = ((Values.spread 7).spread).Sum
             """,
             37m);
 
-    // `(Pair...)` spreads the receiver items into the item supply, so
-    // `Sum(values...)` binds [10, 20] and sums to 30.
+    // `(Pair.spread)` spreads the receiver items into the item supply, so
+    // `Sum(values.spread)` binds [10, 20] and sums to 30.
     [Fact]
     public void DotCall_GroupSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
             """
             Pair = (10, 20)
-            Sum(...values) = values.sum
-            Output = (Pair...).Sum
+            Sum(values...) = values.sum
+            Output = (Pair.spread).Sum
             """,
             30m);
 
     [Fact]
     public void DotCall_GroupSpreadJoinReceiver_IsOneCollectedItem()
     {
-        // Same rule for a sequence-valued source: `(Pair...7)` is one grouped
+        // Same rule for a sequence-valued source: `(Pair.spread 7)` is one grouped
         // receiver argument, so the variadic parameter collects [(10, 20, 7)] and the numeric
         // body fails; re-spreading the group supplies the items.
         AssertEvaluationFailure(
             """
             Pair = (10, 20)
-            Sum(...values) = values.sum
-            Output = (Pair...7).Sum
+            Sum(values...) = values.sum
+            Output = (Pair.spread 7).Sum
             """);
 
         AssertEval(
             """
             Pair = (10, 20)
-            Sum(...values) = values.sum
-            Output = ((Pair...7)...).Sum
+            Sum(values...) = values.sum
+            Output = ((Pair.spread 7).spread).Sum
             """,
             37m);
     }
@@ -719,7 +721,7 @@ public class SequenceSpreadTests
             """
             Pair = 10, 20
             Add(x, y) = x + y
-            Output = (Pair...).Add
+            Output = (Pair.spread).Add
             """);
 
     [Fact]
@@ -734,16 +736,16 @@ public class SequenceSpreadTests
     [Fact]
     public void PostfixSequenceSpreadInsideSequenceValueArgument_SpreadsImmediateExpressionOnly()
     {
-        // The inner `...` binds to `b` only: `(a, b...)` is (1, 2, 3) while
-        // `(a, (b...))` is (1, (2, 3)). Spreading the outer group at the call
+        // The inner `.spread` binds to `b` only: `(a, b.spread)` is (1, 2, 3) while
+        // `(a, (b.spread))` is (1, (2, 3)). Spreading the outer group at the call
         // exposes the distinct item counts through the collecting binding.
         AssertEval(
             """
             a = 1
             b = 2, 3
-            X(...values) = values.count
+            X(values...) = values.count
 
-            X((a, b...)...)
+            X((a, b.spread).spread)
             """,
             3m);
 
@@ -751,9 +753,9 @@ public class SequenceSpreadTests
             """
             a = 1
             b = 2, 3
-            X(...values) = values.count
+            X(values...) = values.count
 
-            X((a, (b...))...)
+            X((a, (b.spread)).spread)
             """,
             2m);
     }
@@ -763,26 +765,26 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceSpread_PreferredSemantics_OpensSequenceValueIntoSlots()
     {
-        AssertEval("(1, 2, 3)...", 1m, 2m, 3m); // contributes 1, 2, 3
-        AssertEval("(1)...", 1m);               // contributes 1
-        AssertEval("()...");                    // contributes zero items
+        AssertEval("(1, 2, 3).spread", 1m, 2m, 3m); // contributes 1, 2, 3
+        AssertEval("(1).spread", 1m);               // contributes 1
+        AssertEval("().spread");                    // contributes zero items
     }
 
     [Fact]
     public void SequenceSpread_OfEmpty_ContributesZeroItemsInContext()
-        => AssertEval("1, ()..., 2", 1m, 2m);
+        => AssertEval("1, ().spread, 2", 1m, 2m);
 
     [Fact]
     public void SequenceSpread_VersusVariadicCapture_AreDistinct()
     {
-        // Definition side: `...values` is a VARIADIC PARAMETER — NOT a spread.
+        // Definition side: `values...` is a VARIADIC PARAMETER — NOT a spread.
         // The call-site spread supplies Vals's items as the collected list
         // [1, 2, 3]; a bare `Sum(Vals)` would collect [(1, 2, 3)] whose element
         // is non-numeric.
         const string variadicDef = """
-            Sum(...values) = sum(values)
+            Sum(values...) = sum(values)
             Vals = (1, 2, 3)
-            Sum(Vals...)
+            Sum(Vals.spread)
             """;
         AssertEval(variadicDef, 6m);
 
@@ -791,12 +793,12 @@ public class SequenceSpreadTests
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(sum.ParameterPatterns));
         Assert.Equal(ParameterKind.Variadic, capture.Kind);
 
-        // Use site: `Pair...` is a SPREAD expression (Expr.SequenceSpread) that opens
+        // Use site: `Pair.spread` is a SPREAD expression (Expr.SequenceSpread) that opens
         // a multi-output into a fixed-arity call's argument slots.
         const string useSiteSpread = """
             Pair = 10, 20
             Add(x, y) = x + y
-            Add(Pair...)
+            Add(Pair.spread)
             """;
         AssertEval(useSiteSpread, 30m);
 

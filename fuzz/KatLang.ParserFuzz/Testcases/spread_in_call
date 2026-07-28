@@ -1,1 +1,1 @@
-f(xs...)
+f(spread(xs))

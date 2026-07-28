@@ -1,3 +1,3 @@
 A = (1, 2, 3)
-B = (A..., A...)
+B = (spread(A), spread(A))
 Output = B.count

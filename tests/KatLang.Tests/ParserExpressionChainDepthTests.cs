@@ -29,18 +29,24 @@ public class ParserExpressionChainDepthTests
             Enumerable.Repeat($"{separator}.Member()", operatorCount));
     }
 
-    private const string SpreadOperator = "...";
+    private const string SpreadContinuation = ".spread";
 
     /// <summary>
-    /// `1` followed by <paramref name="spreadCount"/> postfix `...`. The base primary
-    /// contributes NO expression-chain level (only guarded operator/postfix nodes are
-    /// recorded), so the chain depth equals the number of written spreads exactly —
-    /// there is no root-node off-by-one to account for. Written both as an explicit
-    /// `Output = ...` body and as a bare root-output row, which reach the same guard.
+    /// `1` followed by <paramref name="spreadCount"/> `.spread` continuations. The base
+    /// primary contributes NO expression-chain level (only guarded operator/postfix
+    /// nodes are recorded), so the chain depth equals the number of written spreads
+    /// exactly — there is no root-node off-by-one to account for. Written both as an
+    /// explicit `Output = ...` body and as a bare root-output row, which reach the
+    /// same guard.
     /// </summary>
-    private static string PostfixSpreadChain(int spreadCount, bool explicitOutput = true)
+    private static string DotSpreadChain(int spreadCount, bool explicitOutput = true)
         => (explicitOutput ? "Output = 1" : "1")
-            + string.Concat(Enumerable.Repeat(SpreadOperator, spreadCount));
+            + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
+
+    private static string DotThenSpreadChain(int dotCount, int spreadCount)
+        => "Output = Root"
+            + string.Concat(Enumerable.Repeat(".Member", dotCount))
+            + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
 
     private static Diagnostic AssertControlledChainFailure(string source)
     {
@@ -97,9 +103,9 @@ public class ParserExpressionChainDepthTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void PostfixSpreadChain_AtLimit_ParsesWithoutDiagnostics(bool explicitOutput)
+    public void DotSpreadChain_AtLimit_ParsesWithoutDiagnostics(bool explicitOutput)
     {
-        var result = Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth, explicitOutput));
+        var result = Parser.Parse(DotSpreadChain(Parser.MaxExpressionChainDepth, explicitOutput));
         Assert.False(result.HasErrors);
         Assert.Empty(result.Diagnostics);
     }
@@ -107,33 +113,36 @@ public class ParserExpressionChainDepthTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void PostfixSpreadChain_AboveLimit_ReturnsStructuredError(bool explicitOutput)
+    public void DotSpreadChain_AboveLimit_ReturnsStructuredError(bool explicitOutput)
         => AssertControlledChainFailure(
-            PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput));
+            DotSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput));
 
     [Fact]
-    public void PostfixSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth()
+    public void DotSpreadChain_BoundaryIsExactlyMaxExpressionChainDepth()
     {
         // The greatest accepted and smallest rejected chains are ADJACENT, which pins the
-        // depth accounting itself: a base primary costs 0 levels and each postfix `...`
-        // costs exactly 1, so the deepest accepted spread chain is MaxExpressionChainDepth.
-        Assert.False(Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth)).HasErrors);
-        Assert.True(Parser.Parse(PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1)).HasErrors);
+        // depth accounting itself: a base primary costs 0 levels and each `.spread`
+        // continuation costs exactly 1, so the deepest accepted spread chain is
+        // MaxExpressionChainDepth.
+        Assert.False(Parser.Parse(DotSpreadChain(Parser.MaxExpressionChainDepth)).HasErrors);
+        Assert.True(Parser.Parse(DotSpreadChain(Parser.MaxExpressionChainDepth + 1)).HasErrors);
     }
 
     [Fact]
-    public void PostfixSpreadChain_JustAboveLimit_ReportsOneDeterministicDiagnosticOnTheOffendingOperator()
+    public void DotSpreadChain_JustAboveLimit_ReportsOneDeterministicDiagnosticOnTheOffendingOperator()
     {
-        // Smallest over-limit chain. The diagnostic must point at the `...` that crossed the
-        // limit — the (MaxExpressionChainDepth + 1)-th — rather than at the whole expression.
-        var source = PostfixSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput: false);
-        var offendingColumn = "1".Length + (Parser.MaxExpressionChainDepth * SpreadOperator.Length) + 1;
+        // Smallest over-limit chain. The diagnostic must point at the `.` of the `.spread`
+        // continuation that crossed the limit — the (MaxExpressionChainDepth + 1)-th —
+        // rather than at the whole expression (matching the dot-call chain guard,
+        // which anchors on the dot token).
+        var source = DotSpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput: false);
+        var offendingColumn = "1".Length + (Parser.MaxExpressionChainDepth * SpreadContinuation.Length) + 1;
 
         var first = AssertControlledChainFailure(source);
         Assert.Equal(1, first.Span.StartLineNumber);
         Assert.Equal(offendingColumn, first.Span.StartColumn);
         Assert.Equal(1, first.Span.EndLineNumber);
-        Assert.Equal(offendingColumn + SpreadOperator.Length - 1, first.Span.EndColumn);
+        Assert.Equal(offendingColumn, first.Span.EndColumn);
 
         // Parsing terminates normally and repeats identically: same severity, message, span.
         for (var repeat = 0; repeat < 3; repeat++)
@@ -147,6 +156,36 @@ public class ParserExpressionChainDepthTests
             Assert.Equal(first.Span.EndColumn, again.Span.EndColumn);
         }
     }
+
+    [Fact]
+    public void DotThenSpreadChain_UsesOneCombinedExpressionChainBudget()
+    {
+        // A non-spread member may precede `.spread`; a non-spread member after
+        // spread is a placement error, so this is the real mixed-chain shape.
+        // Both continuation kinds charge the same flat budget, with no reset at
+        // the intrinsic boundary.
+        var dotCount = Parser.MaxExpressionChainDepth / 2;
+        var spreadCount = Parser.MaxExpressionChainDepth - dotCount;
+
+        Assert.False(Parser.Parse(DotThenSpreadChain(dotCount, spreadCount)).HasErrors);
+        AssertControlledChainFailure(DotThenSpreadChain(dotCount, spreadCount + 1));
+    }
+
+    [Fact]
+    public void NestedSpreadCalls_OverBudget_EmitNestingDiagnostic()
+    {
+        // The CALL form nests structurally (`spread(spread(...))`) and is bounded by the
+        // parser recursion budget rather than the flat-chain guard: deep nesting reports
+        // the structured nesting diagnostic, never a crash.
+        var source = Rep("spread(", 5000) + "1" + Rep(")", 5000);
+        var result = Parser.ParseSyntax(source);
+        Assert.True(result.HasErrors);
+        Assert.Contains(
+            result.Diagnostics,
+            d => d.Message.Contains("Nesting is too deep", StringComparison.Ordinal));
+    }
+
+    private static string Rep(string s, int n) => string.Concat(Enumerable.Repeat(s, n));
 
     [Fact]
     public void ThousandsOfIndependentShortExpressions_RemainAccepted()
@@ -229,9 +268,30 @@ public class ParserExpressionChainDepthTests
             MultilineTrailingOperatorChain("+", 5_000),
             DotCallChain(5_000),
             DotCallChain(5_000, leadingNewlines: true),
-            PostfixSpreadChain(5_000),
+            DotSpreadChain(5_000),
         };
 
         Assert.All(sources, source => AssertControlledChainFailure(source));
+
+        static void AssertControlledNestingFailure(string source)
+        {
+            var result = Parser.ParseSyntax(source);
+            Assert.True(result.HasErrors);
+            Assert.Contains(
+                result.Diagnostics,
+                diagnostic => diagnostic.Message.Contains(
+                    "Nesting is too deep",
+                    StringComparison.Ordinal));
+        }
+
+        // Run the recursive forms in this fresh process as well. The parent
+        // test executes this child from whichever Debug/Release assembly is
+        // under test, proving the configured diagnostic boundary is reached
+        // without terminating the host.
+        AssertControlledNestingFailure(Rep("(", 5_000) + "1" + Rep(")", 5_000));
+        AssertControlledNestingFailure(Rep("spread(", 5_000) + "1" + Rep(")", 5_000));
+        AssertControlledNestingFailure(
+            Rep("spread(F(", 5_000) + "1" + Rep("))", 5_000));
+        AssertControlledNestingFailure(Rep("spread(", 5_000) + "1");
     }
 }

@@ -27,11 +27,11 @@ bindings, and `spread` exposes one stored boundary as a supply:
 ```text
 capture : Supply → Value      -- ordinary value/output capture (canonicalizing)
 collect : Supply → ListValue  -- collecting binding (exact)
-spread  : Value → Supply      -- postfix spread `...` (one boundary)
+spread  : Value → Supply      -- the spread intrinsic `spread(e)` / `e.spread` (one boundary)
 ```
 
 The responsibilities never mix: ordinary value/output boundaries go through
-`capture`, collecting bindings go through `collect`, and postfix spread is `spread`.
+`capture`, collecting bindings go through `collect`, and the spread intrinsic is `spread`.
 Grouping preserves one value boundary, spread opens one boundary, and a collecting binding
 collects the resulting slots into an exact immutable list.
 
@@ -62,7 +62,7 @@ abbrev Supply := List Val      -- many slots (the ungrouped, multi-output contex
 | partial projection of a sequence value's stored items | `sequenceItems? : Val → Option Supply` |
 | partial projection of a list value's stored elements | `listItems? : Val → Option Supply` |
 | shared openable-structure projection    | `structureItems? : Val → Option Supply` |
-| the total `...` view (`spread`)           | `items  : Val → Supply`          |
+| the total named-spread view               | `items  : Val → Supply`          |
 | recursively collapse singleton sequence groups | `normalize : Val → Val`   |
 | ordinary value capture                  | `capture : Supply → Val`         |
 | the canonical-supply invariant          | `canonicalSupply : Supply → Prop` |
@@ -120,11 +120,11 @@ that predicate:
   where both modes DO succeed, so even the Option values differ.
 
 The item-view equation is deliberately receiver-level. It is not an
-unrestricted source rewrite from `x, y = A` to `x, y = A...`, because a
+unrestricted source rewrite from `x, y = A` to `x, y = A.spread`, because a
 written assignment RHS is captured into one shared value before the
 deconstruction receiver runs. For the minimal boundary-sensitive case
 `A = [(1, 2)]`, bare `x, y = A` opens the list once and still sees one row, so
-it fails arity; `x, y = A...` spreads that row into the capture boundary,
+it fails arity; `x, y = A.spread` spreads that row into the capture boundary,
 whose singleton normalization returns `(1, 2)`, and the receiver then opens
 the row and succeeds. `deconstruct_spread_capture_can_open_further` pins this
 counterexample in the extraction, while `CoreTests.lean` and
@@ -151,10 +151,10 @@ capture ∘ spread = id  on canonical non-list values   (capture_items_of_canoni
 ```
 
 The `capture` restriction is real: spreading a list and re-CAPTURING converts
-it to the sequence world (`capture_items_of_list` — `x = A...` with
+it to the sequence world (`capture_items_of_list` — `x = A.spread` with
 `A = [1, 2, 3]` gives `(1, 2, 3)`), so the unrestricted claim would be false.
 The first law is what makes variadic forwarding ordinary list spread:
-`Forward(...items) = Target(items...)` re-supplies exactly the collected
+`Forward(items...) = Target(items.spread)` re-supplies exactly the collected
 items with no hidden raw-supply metadata.
 
 ## Collecting binding collects an exact list
@@ -162,8 +162,8 @@ items with no hidden raw-supply metadata.
 Python's `*rest` binds to a fresh `list`, a container type distinct from the
 tuples / iterables it unpacks. KatLang makes the same receiver-purpose
 distinction, with its own exact collection kind: every collecting binding —
-deconstruction collecting bindings (`first, ...mid, last = …`) and variadic parameters
-(`F(...x) = …`) — materializes the assigned item supply through `collect`:
+deconstruction collecting bindings (`first, mid..., last = …`) and variadic parameters
+(`F(x...) = …`) — materializes the assigned item supply through `collect`:
 
 ```lean
 def collect (xs : Supply) : Val := Val.list xs
@@ -185,7 +185,7 @@ The headline exactness laws in `CoreArityAlgebraProofs.lean`:
 * `collect_singleton` / `collect_singleton_seq` / `collect_singleton_list`
   with `collect_singleton_ne_item` — singleton preservation for EVERY value
   kind (`collect [v] = [v] ≠ v`), which keeps one remaining structured row
-  distinct from the row's own elements (`first, ...rest = 1, (2, 3)` binds
+  distinct from the row's own elements (`first, rest... = 1, (2, 3)` binds
   `rest = [(2, 3)]`; `1, [2, 3]` binds `[[2, 3]]`; `1, ()` binds `[()]`;
   `1, []` binds `[[]]`);
 * `items_collect` — the open/collect round trip;
@@ -215,7 +215,7 @@ equality check that the extraction omits.
 
 The Lean algebra permits a lone collecting binding:
 `bindArgs [Pat.collecting "x"] xs` is the single variadic parameter
-`F(...items)`, and the lone-collecting assignment `...all = 1, 2, 3` reaches
+`F(items...)`, and the lone-collecting assignment `all... = 1, 2, 3` reaches
 the same shape through the deconstruction receiver (`bindDeconstruct`),
 collecting the complete supply as one exact list.
 
@@ -263,13 +263,13 @@ open wherever it is inserted:
 * generic: `capture_zero_item_spread_neutral`, `collect_zero_item_spread_neutral`
   (over any `items v = []`);
 * sequence instances: `capture_empty_spread_neutral`,
-  `capture_atom_empty_spread` (`(n, ()...) == n`);
+  `capture_atom_empty_spread` (`(n, ().spread) == n`);
 * list instances: `capture_empty_list_spread_neutral`,
-  `capture_atom_empty_list_spread` (`(n, []...) == n`).
+  `capture_atom_empty_list_spread` (`(n, [].spread) == n`).
 
 The unspread values stay visible one-item slots (`E(())` collects `[()]`,
-`E([])` collects `[[]]`), while their spreads vanish (`E(()...)` and
-`E([]...)` collect `[]`) — neutrality is a property of the *spread* supply,
+`E([])` collects `[[]]`), while their spreads vanish (`E(().spread)` and
+`E([].spread)` collect `[]`) — neutrality is a property of the *spread* supply,
 never of the value itself.
 
 ## Faithfulness
@@ -278,16 +278,16 @@ Every behaviour encoded as a theorem was cross-checked against the real evaluato
 in `KatLang.lean`, including the subtle points:
 
 * `collect` is exact: a variadic parameter that collects exactly one item binds the
-  one-element list (`H(x, ...rest) = rest` on `H(1, 2)` gives `rest = [2]`),
+  one-element list (`H(x, rest...) = rest` on `H(1, 2)` gives `rest = [2]`),
   the empty segment is the empty list (`H(1)` gives `rest = []`), and
   two-or-more items stay `[…]`. In `KatLang.lean` the shared helper is
   `collectSegment`; in the C# runtime it is `CollectSegment` inside
   `CreateVariadicCapture`.
 * `bindArgs` consumes the call's item supply exactly as supplied: `F(A)` is one
-  argument, while `F(A...)` explicitly spreads `A` before binding. So a single stored
+  argument, while `F(A.spread)` explicitly spreads `A` before binding. So a single stored
   sequence or list value against fixed parameters is an arity error (`Add(A)`
   fails), and a single-variadic call distinguishes `F(A)` (`rest = [A]`) from
-  `F(A...)` (`rest = [a₁, …]`).
+  `F(A.spread)` (`rest = [a₁, …]`).
 * `bindDeconstruct` is `bindPats ∘ openLoneStructure`: assignment
   deconstruction is an unpacking receiver, so a single sequence- or
   list-valued right-hand side is opened and matched element-by-element.

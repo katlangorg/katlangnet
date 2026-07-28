@@ -873,1042 +873,1042 @@ def case_fixed__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_fixed__pl1 == "ok raw=L[1] n=1"
 
--- fixedSpread__e: F(a) = a \n F(()...)
+-- fixedSpread__e: F(a) = a \n F(spread(()))
 def case_fixedSpread__e : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_fixedSpread__e == "err arity"
 
--- fixedSpread__n0: F(a) = a \n F(0...)
+-- fixedSpread__n0: F(a) = a \n F(spread(0))
 def case_fixedSpread__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_fixedSpread__n0 == "ok raw=0 n=1"
 
--- fixedSpread__n1: F(a) = a \n F(1...)
+-- fixedSpread__n1: F(a) = a \n F(spread(1))
 def case_fixedSpread__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_fixedSpread__n1 == "ok raw=1 n=1"
 
--- fixedSpread__p1: F(a) = a \n F((1)...)
+-- fixedSpread__p1: F(a) = a \n F(spread((1)))
 def case_fixedSpread__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_fixedSpread__p1 == "ok raw=1 n=1"
 
--- fixedSpread__p12: F(a) = a \n F((1, 2)...)
+-- fixedSpread__p12: F(a) = a \n F(spread((1, 2)))
 def case_fixedSpread__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_fixedSpread__p12 == "err arity"
 
--- fixedSpread__p123: F(a) = a \n F((1, 2, 3)...)
+-- fixedSpread__p123: F(a) = a \n F(spread((1, 2, 3)))
 def case_fixedSpread__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_fixedSpread__p123 == "err arity"
 
--- fixedSpread__pee: F(a) = a \n F(((), ())...)
+-- fixedSpread__pee: F(a) = a \n F(spread(((), ())))
 def case_fixedSpread__pee : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__pee == "err arity"
 
--- fixedSpread__pe1: F(a) = a \n F(((), 1)...)
+-- fixedSpread__pe1: F(a) = a \n F(spread(((), 1)))
 def case_fixedSpread__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_fixedSpread__pe1 == "err arity"
 
--- fixedSpread__p1e: F(a) = a \n F((1, ())...)
+-- fixedSpread__p1e: F(a) = a \n F(spread((1, ())))
 def case_fixedSpread__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__p1e == "err arity"
 
--- fixedSpread__p12_3: F(a) = a \n F(((1, 2), 3)...)
+-- fixedSpread__p12_3: F(a) = a \n F(spread(((1, 2), 3)))
 def case_fixedSpread__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_fixedSpread__p12_3 == "err arity"
 
--- fixedSpread__p12_34: F(a) = a \n F(((1, 2), (3, 4))...)
+-- fixedSpread__p12_34: F(a) = a \n F(spread(((1, 2), (3, 4))))
 def case_fixedSpread__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_fixedSpread__p12_34 == "err arity"
 
--- fixedSpread__pe_12: F(a) = a \n F(((), (1, 2))...)
+-- fixedSpread__pe_12: F(a) = a \n F(spread(((), (1, 2))))
 def case_fixedSpread__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_fixedSpread__pe_12 == "err arity"
 
--- fixedSpread__ppe1_2: F(a) = a \n F((((), 1), 2)...)
+-- fixedSpread__ppe1_2: F(a) = a \n F(spread((((), 1), 2)))
 def case_fixedSpread__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_fixedSpread__ppe1_2 == "err arity"
 
--- fixedSpread__p12_e: F(a) = a \n F(((1, 2), ())...)
+-- fixedSpread__p12_e: F(a) = a \n F(spread(((1, 2), ())))
 def case_fixedSpread__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__p12_e == "err arity"
 
--- fixedSpread__ppe: F(a) = a \n F((())...)
+-- fixedSpread__ppe: F(a) = a \n F(spread((())))
 def case_fixedSpread__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_fixedSpread__ppe == "err arity"
 
--- fixedSpread__pp1: F(a) = a \n F(((1))...)
+-- fixedSpread__pp1: F(a) = a \n F(spread(((1))))
 def case_fixedSpread__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_fixedSpread__pp1 == "ok raw=1 n=1"
 
--- fixedSpread__ppp12: F(a) = a \n F((((1, 2)))...)
+-- fixedSpread__ppp12: F(a) = a \n F(spread((((1, 2)))))
 def case_fixedSpread__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_fixedSpread__ppp12 == "err arity"
 
--- fixedSpread__le: F(a) = a \n F([]...)
+-- fixedSpread__le: F(a) = a \n F(spread([]))
 def case_fixedSpread__le : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_fixedSpread__le == "err arity"
 
--- fixedSpread__l7: F(a) = a \n F([7]...)
+-- fixedSpread__l7: F(a) = a \n F(spread([7]))
 def case_fixedSpread__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_fixedSpread__l7 == "ok raw=7 n=1"
 
--- fixedSpread__l12: F(a) = a \n F([1, 2]...)
+-- fixedSpread__l12: F(a) = a \n F(spread([1, 2]))
 def case_fixedSpread__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_fixedSpread__l12 == "err arity"
 
--- fixedSpread__l12_3: F(a) = a \n F([[1, 2], 3]...)
+-- fixedSpread__l12_3: F(a) = a \n F(spread([[1, 2], 3]))
 def case_fixedSpread__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_fixedSpread__l12_3 == "err arity"
 
--- fixedSpread__lle: F(a) = a \n F([[]]...)
+-- fixedSpread__lle: F(a) = a \n F(spread([[]]))
 def case_fixedSpread__lle : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_fixedSpread__lle == "ok raw=L[] n=1"
 
--- fixedSpread__l_e: F(a) = a \n F([()]...)
+-- fixedSpread__l_e: F(a) = a \n F(spread([()]))
 def case_fixedSpread__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_fixedSpread__l_e == "ok raw=S[] n=1"
 
--- fixedSpread__l_p12: F(a) = a \n F([(1, 2)]...)
+-- fixedSpread__l_p12: F(a) = a \n F(spread([(1, 2)]))
 def case_fixedSpread__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_fixedSpread__l_p12 == "ok raw=S[1, 2] n=1"
 
--- fixedSpread__p_l12: F(a) = a \n F(([1, 2], 3)...)
+-- fixedSpread__p_l12: F(a) = a \n F(spread(([1, 2], 3)))
 def case_fixedSpread__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_fixedSpread__p_l12 == "err arity"
 
--- fixedSpread__pl1: F(a) = a \n F(([1])...)
+-- fixedSpread__pl1: F(a) = a \n F(spread(([1])))
 def case_fixedSpread__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_fixedSpread__pl1 == "ok raw=1 n=1"
 
--- variadic__e: F(...a) = a \n F(())
+-- variadic__e: F(a...) = a \n F(())
 def case_variadic__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.emptySequence 0)])])
 #guard obs case_variadic__e == "ok raw=L[S[]] n=1"
 
--- variadic__n0: F(...a) = a \n F(0)
+-- variadic__n0: F(a...) = a \n F(0)
 def case_variadic__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.num 0)])])
 #guard obs case_variadic__n0 == "ok raw=L[0] n=1"
 
--- variadic__n1: F(...a) = a \n F(1)
+-- variadic__n1: F(a...) = a \n F(1)
 def case_variadic__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.num 1)])])
 #guard obs case_variadic__n1 == "ok raw=L[1] n=1"
 
--- variadic__p1: F(...a) = a \n F((1))
+-- variadic__p1: F(a...) = a \n F((1))
 def case_variadic__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_variadic__p1 == "ok raw=L[1] n=1"
 
--- variadic__p12: F(...a) = a \n F((1, 2))
+-- variadic__p12: F(a...) = a \n F((1, 2))
 def case_variadic__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_variadic__p12 == "ok raw=L[S[1, 2]] n=1"
 
--- variadic__p123: F(...a) = a \n F((1, 2, 3))
+-- variadic__p123: F(a...) = a \n F((1, 2, 3))
 def case_variadic__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_variadic__p123 == "ok raw=L[S[1, 2, 3]] n=1"
 
--- variadic__pee: F(...a) = a \n F(((), ()))
+-- variadic__pee: F(a...) = a \n F(((), ()))
 def case_variadic__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_variadic__pee == "ok raw=L[S[S[], S[]]] n=1"
 
--- variadic__pe1: F(...a) = a \n F(((), 1))
+-- variadic__pe1: F(a...) = a \n F(((), 1))
 def case_variadic__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_variadic__pe1 == "ok raw=L[S[S[], 1]] n=1"
 
--- variadic__p1e: F(...a) = a \n F((1, ()))
+-- variadic__p1e: F(a...) = a \n F((1, ()))
 def case_variadic__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_variadic__p1e == "ok raw=L[S[1, S[]]] n=1"
 
--- variadic__p12_3: F(...a) = a \n F(((1, 2), 3))
+-- variadic__p12_3: F(a...) = a \n F(((1, 2), 3))
 def case_variadic__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_variadic__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
 
--- variadic__p12_34: F(...a) = a \n F(((1, 2), (3, 4)))
+-- variadic__p12_34: F(a...) = a \n F(((1, 2), (3, 4)))
 def case_variadic__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_variadic__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
 
--- variadic__pe_12: F(...a) = a \n F(((), (1, 2)))
+-- variadic__pe_12: F(a...) = a \n F(((), (1, 2)))
 def case_variadic__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_variadic__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
 
--- variadic__ppe1_2: F(...a) = a \n F((((), 1), 2))
+-- variadic__ppe1_2: F(a...) = a \n F((((), 1), 2))
 def case_variadic__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_variadic__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
 
--- variadic__p12_e: F(...a) = a \n F(((1, 2), ()))
+-- variadic__p12_e: F(a...) = a \n F(((1, 2), ()))
 def case_variadic__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_variadic__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
 
--- variadic__ppe: F(...a) = a \n F((()))
+-- variadic__ppe: F(a...) = a \n F((()))
 def case_variadic__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_variadic__ppe == "ok raw=L[S[]] n=1"
 
--- variadic__pp1: F(...a) = a \n F(((1)))
+-- variadic__pp1: F(a...) = a \n F(((1)))
 def case_variadic__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_variadic__pp1 == "ok raw=L[1] n=1"
 
--- variadic__ppp12: F(...a) = a \n F((((1, 2))))
+-- variadic__ppp12: F(a...) = a \n F((((1, 2))))
 def case_variadic__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_variadic__ppp12 == "ok raw=L[S[1, 2]] n=1"
 
--- variadic__le: F(...a) = a \n F([])
+-- variadic__le: F(a...) = a \n F([])
 def case_variadic__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [])])])
 #guard obs case_variadic__le == "ok raw=L[L[]] n=1"
 
--- variadic__l7: F(...a) = a \n F([7])
+-- variadic__l7: F(a...) = a \n F([7])
 def case_variadic__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.num 7)])])])
 #guard obs case_variadic__l7 == "ok raw=L[L[7]] n=1"
 
--- variadic__l12: F(...a) = a \n F([1, 2])
+-- variadic__l12: F(a...) = a \n F([1, 2])
 def case_variadic__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_variadic__l12 == "ok raw=L[L[1, 2]] n=1"
 
--- variadic__l12_3: F(...a) = a \n F([[1, 2], 3])
+-- variadic__l12_3: F(a...) = a \n F([[1, 2], 3])
 def case_variadic__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_variadic__l12_3 == "ok raw=L[L[L[1, 2], 3]] n=1"
 
--- variadic__lle: F(...a) = a \n F([[]])
+-- variadic__lle: F(a...) = a \n F([[]])
 def case_variadic__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.listLiteral [])])])])
 #guard obs case_variadic__lle == "ok raw=L[L[L[]]] n=1"
 
--- variadic__l_e: F(...a) = a \n F([()])
+-- variadic__l_e: F(a...) = a \n F([()])
 def case_variadic__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])])
 #guard obs case_variadic__l_e == "ok raw=L[L[S[]]] n=1"
 
--- variadic__l_p12: F(...a) = a \n F([(1, 2)])
+-- variadic__l_p12: F(a...) = a \n F([(1, 2)])
 def case_variadic__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_variadic__l_p12 == "ok raw=L[L[S[1, 2]]] n=1"
 
--- variadic__p_l12: F(...a) = a \n F(([1, 2], 3))
+-- variadic__p_l12: F(a...) = a \n F(([1, 2], 3))
 def case_variadic__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_variadic__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
 
--- variadic__pl1: F(...a) = a \n F(([1]))
+-- variadic__pl1: F(a...) = a \n F(([1]))
 def case_variadic__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_variadic__pl1 == "ok raw=L[L[1]] n=1"
 
--- variadicSpread__e: F(...a) = a \n F(()...)
+-- variadicSpread__e: F(a...) = a \n F(spread(()))
 def case_variadicSpread__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_variadicSpread__e == "ok raw=L[] n=1"
 
--- variadicSpread__n0: F(...a) = a \n F(0...)
+-- variadicSpread__n0: F(a...) = a \n F(spread(0))
 def case_variadicSpread__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_variadicSpread__n0 == "ok raw=L[0] n=1"
 
--- variadicSpread__n1: F(...a) = a \n F(1...)
+-- variadicSpread__n1: F(a...) = a \n F(spread(1))
 def case_variadicSpread__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_variadicSpread__n1 == "ok raw=L[1] n=1"
 
--- variadicSpread__p1: F(...a) = a \n F((1)...)
+-- variadicSpread__p1: F(a...) = a \n F(spread((1)))
 def case_variadicSpread__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_variadicSpread__p1 == "ok raw=L[1] n=1"
 
--- variadicSpread__p12: F(...a) = a \n F((1, 2)...)
+-- variadicSpread__p12: F(a...) = a \n F(spread((1, 2)))
 def case_variadicSpread__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_variadicSpread__p12 == "ok raw=L[1, 2] n=1"
 
--- variadicSpread__p123: F(...a) = a \n F((1, 2, 3)...)
+-- variadicSpread__p123: F(a...) = a \n F(spread((1, 2, 3)))
 def case_variadicSpread__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_variadicSpread__p123 == "ok raw=L[1, 2, 3] n=1"
 
--- variadicSpread__pee: F(...a) = a \n F(((), ())...)
+-- variadicSpread__pee: F(a...) = a \n F(spread(((), ())))
 def case_variadicSpread__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_variadicSpread__pee == "ok raw=L[S[], S[]] n=1"
 
--- variadicSpread__pe1: F(...a) = a \n F(((), 1)...)
+-- variadicSpread__pe1: F(a...) = a \n F(spread(((), 1)))
 def case_variadicSpread__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_variadicSpread__pe1 == "ok raw=L[S[], 1] n=1"
 
--- variadicSpread__p1e: F(...a) = a \n F((1, ())...)
+-- variadicSpread__p1e: F(a...) = a \n F(spread((1, ())))
 def case_variadicSpread__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_variadicSpread__p1e == "ok raw=L[1, S[]] n=1"
 
--- variadicSpread__p12_3: F(...a) = a \n F(((1, 2), 3)...)
+-- variadicSpread__p12_3: F(a...) = a \n F(spread(((1, 2), 3)))
 def case_variadicSpread__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_variadicSpread__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
 
--- variadicSpread__p12_34: F(...a) = a \n F(((1, 2), (3, 4))...)
+-- variadicSpread__p12_34: F(a...) = a \n F(spread(((1, 2), (3, 4))))
 def case_variadicSpread__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_variadicSpread__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
 
--- variadicSpread__pe_12: F(...a) = a \n F(((), (1, 2))...)
+-- variadicSpread__pe_12: F(a...) = a \n F(spread(((), (1, 2))))
 def case_variadicSpread__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_variadicSpread__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
--- variadicSpread__ppe1_2: F(...a) = a \n F((((), 1), 2)...)
+-- variadicSpread__ppe1_2: F(a...) = a \n F(spread((((), 1), 2)))
 def case_variadicSpread__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_variadicSpread__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
 
--- variadicSpread__p12_e: F(...a) = a \n F(((1, 2), ())...)
+-- variadicSpread__p12_e: F(a...) = a \n F(spread(((1, 2), ())))
 def case_variadicSpread__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_variadicSpread__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
--- variadicSpread__ppe: F(...a) = a \n F((())...)
+-- variadicSpread__ppe: F(a...) = a \n F(spread((())))
 def case_variadicSpread__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_variadicSpread__ppe == "ok raw=L[] n=1"
 
--- variadicSpread__pp1: F(...a) = a \n F(((1))...)
+-- variadicSpread__pp1: F(a...) = a \n F(spread(((1))))
 def case_variadicSpread__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_variadicSpread__pp1 == "ok raw=L[1] n=1"
 
--- variadicSpread__ppp12: F(...a) = a \n F((((1, 2)))...)
+-- variadicSpread__ppp12: F(a...) = a \n F(spread((((1, 2)))))
 def case_variadicSpread__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_variadicSpread__ppp12 == "ok raw=L[1, 2] n=1"
 
--- variadicSpread__le: F(...a) = a \n F([]...)
+-- variadicSpread__le: F(a...) = a \n F(spread([]))
 def case_variadicSpread__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_variadicSpread__le == "ok raw=L[] n=1"
 
--- variadicSpread__l7: F(...a) = a \n F([7]...)
+-- variadicSpread__l7: F(a...) = a \n F(spread([7]))
 def case_variadicSpread__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_variadicSpread__l7 == "ok raw=L[7] n=1"
 
--- variadicSpread__l12: F(...a) = a \n F([1, 2]...)
+-- variadicSpread__l12: F(a...) = a \n F(spread([1, 2]))
 def case_variadicSpread__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_variadicSpread__l12 == "ok raw=L[1, 2] n=1"
 
--- variadicSpread__l12_3: F(...a) = a \n F([[1, 2], 3]...)
+-- variadicSpread__l12_3: F(a...) = a \n F(spread([[1, 2], 3]))
 def case_variadicSpread__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_variadicSpread__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
--- variadicSpread__lle: F(...a) = a \n F([[]]...)
+-- variadicSpread__lle: F(a...) = a \n F(spread([[]]))
 def case_variadicSpread__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_variadicSpread__lle == "ok raw=L[L[]] n=1"
 
--- variadicSpread__l_e: F(...a) = a \n F([()]...)
+-- variadicSpread__l_e: F(a...) = a \n F(spread([()]))
 def case_variadicSpread__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_variadicSpread__l_e == "ok raw=L[S[]] n=1"
 
--- variadicSpread__l_p12: F(...a) = a \n F([(1, 2)]...)
+-- variadicSpread__l_p12: F(a...) = a \n F(spread([(1, 2)]))
 def case_variadicSpread__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_variadicSpread__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
--- variadicSpread__p_l12: F(...a) = a \n F(([1, 2], 3)...)
+-- variadicSpread__p_l12: F(a...) = a \n F(spread(([1, 2], 3)))
 def case_variadicSpread__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_variadicSpread__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
 
--- variadicSpread__pl1: F(...a) = a \n F(([1])...)
+-- variadicSpread__pl1: F(a...) = a \n F(spread(([1])))
 def case_variadicSpread__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_variadicSpread__pl1 == "ok raw=L[1] n=1"
 
--- variadicViaProp__e: F(...a) = a \n x = () \n F(x)
+-- variadicViaProp__e: F(a...) = a \n x = () \n F(x)
 def case_variadicViaProp__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__e == "ok raw=L[S[]] n=1"
 
--- variadicViaProp__n0: F(...a) = a \n x = 0 \n F(x)
+-- variadicViaProp__n0: F(a...) = a \n x = 0 \n F(x)
 def case_variadicViaProp__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.num 0)])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__n0 == "ok raw=L[0] n=1"
 
--- variadicViaProp__n1: F(...a) = a \n x = 1 \n F(x)
+-- variadicViaProp__n1: F(a...) = a \n x = 1 \n F(x)
 def case_variadicViaProp__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.num 1)])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__n1 == "ok raw=L[1] n=1"
 
--- variadicViaProp__p1: F(...a) = a \n x = (1) \n F(x)
+-- variadicViaProp__p1: F(a...) = a \n x = (1) \n F(x)
 def case_variadicViaProp__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p1 == "ok raw=L[1] n=1"
 
--- variadicViaProp__p12: F(...a) = a \n x = (1, 2) \n F(x)
+-- variadicViaProp__p12: F(a...) = a \n x = (1, 2) \n F(x)
 def case_variadicViaProp__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p12 == "ok raw=L[S[1, 2]] n=1"
 
--- variadicViaProp__p123: F(...a) = a \n x = (1, 2, 3) \n F(x)
+-- variadicViaProp__p123: F(a...) = a \n x = (1, 2, 3) \n F(x)
 def case_variadicViaProp__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p123 == "ok raw=L[S[1, 2, 3]] n=1"
 
--- variadicViaProp__pee: F(...a) = a \n x = ((), ()) \n F(x)
+-- variadicViaProp__pee: F(a...) = a \n x = ((), ()) \n F(x)
 def case_variadicViaProp__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__pee == "ok raw=L[S[S[], S[]]] n=1"
 
--- variadicViaProp__pe1: F(...a) = a \n x = ((), 1) \n F(x)
+-- variadicViaProp__pe1: F(a...) = a \n x = ((), 1) \n F(x)
 def case_variadicViaProp__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__pe1 == "ok raw=L[S[S[], 1]] n=1"
 
--- variadicViaProp__p1e: F(...a) = a \n x = (1, ()) \n F(x)
+-- variadicViaProp__p1e: F(a...) = a \n x = (1, ()) \n F(x)
 def case_variadicViaProp__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p1e == "ok raw=L[S[1, S[]]] n=1"
 
--- variadicViaProp__p12_3: F(...a) = a \n x = ((1, 2), 3) \n F(x)
+-- variadicViaProp__p12_3: F(a...) = a \n x = ((1, 2), 3) \n F(x)
 def case_variadicViaProp__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p12_3 == "ok raw=L[S[S[1, 2], 3]] n=1"
 
--- variadicViaProp__p12_34: F(...a) = a \n x = ((1, 2), (3, 4)) \n F(x)
+-- variadicViaProp__p12_34: F(a...) = a \n x = ((1, 2), (3, 4)) \n F(x)
 def case_variadicViaProp__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p12_34 == "ok raw=L[S[S[1, 2], S[3, 4]]] n=1"
 
--- variadicViaProp__pe_12: F(...a) = a \n x = ((), (1, 2)) \n F(x)
+-- variadicViaProp__pe_12: F(a...) = a \n x = ((), (1, 2)) \n F(x)
 def case_variadicViaProp__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__pe_12 == "ok raw=L[S[S[], S[1, 2]]] n=1"
 
--- variadicViaProp__ppe1_2: F(...a) = a \n x = (((), 1), 2) \n F(x)
+-- variadicViaProp__ppe1_2: F(a...) = a \n x = (((), 1), 2) \n F(x)
 def case_variadicViaProp__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__ppe1_2 == "ok raw=L[S[S[S[], 1], 2]] n=1"
 
--- variadicViaProp__p12_e: F(...a) = a \n x = ((1, 2), ()) \n F(x)
+-- variadicViaProp__p12_e: F(a...) = a \n x = ((1, 2), ()) \n F(x)
 def case_variadicViaProp__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p12_e == "ok raw=L[S[S[1, 2], S[]]] n=1"
 
--- variadicViaProp__ppe: F(...a) = a \n x = (()) \n F(x)
+-- variadicViaProp__ppe: F(a...) = a \n x = (()) \n F(x)
 def case_variadicViaProp__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__ppe == "ok raw=L[S[]] n=1"
 
--- variadicViaProp__pp1: F(...a) = a \n x = ((1)) \n F(x)
+-- variadicViaProp__pp1: F(a...) = a \n x = ((1)) \n F(x)
 def case_variadicViaProp__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__pp1 == "ok raw=L[1] n=1"
 
--- variadicViaProp__ppp12: F(...a) = a \n x = (((1, 2))) \n F(x)
+-- variadicViaProp__ppp12: F(a...) = a \n x = (((1, 2))) \n F(x)
 def case_variadicViaProp__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__ppp12 == "ok raw=L[S[1, 2]] n=1"
 
--- variadicViaProp__le: F(...a) = a \n x = [] \n F(x)
+-- variadicViaProp__le: F(a...) = a \n x = [] \n F(x)
 def case_variadicViaProp__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__le == "ok raw=L[L[]] n=1"
 
--- variadicViaProp__l7: F(...a) = a \n x = [7] \n F(x)
+-- variadicViaProp__l7: F(a...) = a \n x = [7] \n F(x)
 def case_variadicViaProp__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.num 7)])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__l7 == "ok raw=L[L[7]] n=1"
 
--- variadicViaProp__l12: F(...a) = a \n x = [1, 2] \n F(x)
+-- variadicViaProp__l12: F(a...) = a \n x = [1, 2] \n F(x)
 def case_variadicViaProp__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__l12 == "ok raw=L[L[1, 2]] n=1"
 
--- variadicViaProp__l12_3: F(...a) = a \n x = [[1, 2], 3] \n F(x)
+-- variadicViaProp__l12_3: F(a...) = a \n x = [[1, 2], 3] \n F(x)
 def case_variadicViaProp__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__l12_3 == "ok raw=L[L[L[1, 2], 3]] n=1"
 
--- variadicViaProp__lle: F(...a) = a \n x = [[]] \n F(x)
+-- variadicViaProp__lle: F(a...) = a \n x = [[]] \n F(x)
 def case_variadicViaProp__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__lle == "ok raw=L[L[L[]]] n=1"
 
--- variadicViaProp__l_e: F(...a) = a \n x = [()] \n F(x)
+-- variadicViaProp__l_e: F(a...) = a \n x = [()] \n F(x)
 def case_variadicViaProp__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__l_e == "ok raw=L[L[S[]]] n=1"
 
--- variadicViaProp__l_p12: F(...a) = a \n x = [(1, 2)] \n F(x)
+-- variadicViaProp__l_p12: F(a...) = a \n x = [(1, 2)] \n F(x)
 def case_variadicViaProp__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__l_p12 == "ok raw=L[L[S[1, 2]]] n=1"
 
--- variadicViaProp__p_l12: F(...a) = a \n x = ([1, 2], 3) \n F(x)
+-- variadicViaProp__p_l12: F(a...) = a \n x = ([1, 2], 3) \n F(x)
 def case_variadicViaProp__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__p_l12 == "ok raw=L[S[L[1, 2], 3]] n=1"
 
--- variadicViaProp__pl1: F(...a) = a \n x = ([1]) \n F(x)
+-- variadicViaProp__pl1: F(a...) = a \n x = ([1]) \n F(x)
 def case_variadicViaProp__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "x"])])
 #guard obs case_variadicViaProp__pl1 == "ok raw=L[L[1]] n=1"
 
--- mixed_h__e: F(h, ...t) = h \n F(()...)
+-- mixed_h__e: F(h, t...) = h \n F(spread(()))
 def case_mixed_h__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_mixed_h__e == "err arity"
 
--- mixed_h__n0: F(h, ...t) = h \n F(0...)
+-- mixed_h__n0: F(h, t...) = h \n F(spread(0))
 def case_mixed_h__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_mixed_h__n0 == "ok raw=0 n=1"
 
--- mixed_h__n1: F(h, ...t) = h \n F(1...)
+-- mixed_h__n1: F(h, t...) = h \n F(spread(1))
 def case_mixed_h__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_mixed_h__n1 == "ok raw=1 n=1"
 
--- mixed_h__p1: F(h, ...t) = h \n F((1)...)
+-- mixed_h__p1: F(h, t...) = h \n F(spread((1)))
 def case_mixed_h__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_mixed_h__p1 == "ok raw=1 n=1"
 
--- mixed_h__p12: F(h, ...t) = h \n F((1, 2)...)
+-- mixed_h__p12: F(h, t...) = h \n F(spread((1, 2)))
 def case_mixed_h__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_mixed_h__p12 == "ok raw=1 n=1"
 
--- mixed_h__p123: F(h, ...t) = h \n F((1, 2, 3)...)
+-- mixed_h__p123: F(h, t...) = h \n F(spread((1, 2, 3)))
 def case_mixed_h__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_mixed_h__p123 == "ok raw=1 n=1"
 
--- mixed_h__pee: F(h, ...t) = h \n F(((), ())...)
+-- mixed_h__pee: F(h, t...) = h \n F(spread(((), ())))
 def case_mixed_h__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_mixed_h__pee == "ok raw=S[] n=1"
 
--- mixed_h__pe1: F(h, ...t) = h \n F(((), 1)...)
+-- mixed_h__pe1: F(h, t...) = h \n F(spread(((), 1)))
 def case_mixed_h__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_mixed_h__pe1 == "ok raw=S[] n=1"
 
--- mixed_h__p1e: F(h, ...t) = h \n F((1, ())...)
+-- mixed_h__p1e: F(h, t...) = h \n F(spread((1, ())))
 def case_mixed_h__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_mixed_h__p1e == "ok raw=1 n=1"
 
--- mixed_h__p12_3: F(h, ...t) = h \n F(((1, 2), 3)...)
+-- mixed_h__p12_3: F(h, t...) = h \n F(spread(((1, 2), 3)))
 def case_mixed_h__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_mixed_h__p12_3 == "ok raw=S[1, 2] n=1"
 
--- mixed_h__p12_34: F(h, ...t) = h \n F(((1, 2), (3, 4))...)
+-- mixed_h__p12_34: F(h, t...) = h \n F(spread(((1, 2), (3, 4))))
 def case_mixed_h__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_mixed_h__p12_34 == "ok raw=S[1, 2] n=1"
 
--- mixed_h__pe_12: F(h, ...t) = h \n F(((), (1, 2))...)
+-- mixed_h__pe_12: F(h, t...) = h \n F(spread(((), (1, 2))))
 def case_mixed_h__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_mixed_h__pe_12 == "ok raw=S[] n=1"
 
--- mixed_h__ppe1_2: F(h, ...t) = h \n F((((), 1), 2)...)
+-- mixed_h__ppe1_2: F(h, t...) = h \n F(spread((((), 1), 2)))
 def case_mixed_h__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_mixed_h__ppe1_2 == "ok raw=S[S[], 1] n=1"
 
--- mixed_h__p12_e: F(h, ...t) = h \n F(((1, 2), ())...)
+-- mixed_h__p12_e: F(h, t...) = h \n F(spread(((1, 2), ())))
 def case_mixed_h__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_mixed_h__p12_e == "ok raw=S[1, 2] n=1"
 
--- mixed_h__ppe: F(h, ...t) = h \n F((())...)
+-- mixed_h__ppe: F(h, t...) = h \n F(spread((())))
 def case_mixed_h__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_mixed_h__ppe == "err arity"
 
--- mixed_h__pp1: F(h, ...t) = h \n F(((1))...)
+-- mixed_h__pp1: F(h, t...) = h \n F(spread(((1))))
 def case_mixed_h__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_mixed_h__pp1 == "ok raw=1 n=1"
 
--- mixed_h__ppp12: F(h, ...t) = h \n F((((1, 2)))...)
+-- mixed_h__ppp12: F(h, t...) = h \n F(spread((((1, 2)))))
 def case_mixed_h__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_mixed_h__ppp12 == "ok raw=1 n=1"
 
--- mixed_h__le: F(h, ...t) = h \n F([]...)
+-- mixed_h__le: F(h, t...) = h \n F(spread([]))
 def case_mixed_h__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_mixed_h__le == "err arity"
 
--- mixed_h__l7: F(h, ...t) = h \n F([7]...)
+-- mixed_h__l7: F(h, t...) = h \n F(spread([7]))
 def case_mixed_h__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_mixed_h__l7 == "ok raw=7 n=1"
 
--- mixed_h__l12: F(h, ...t) = h \n F([1, 2]...)
+-- mixed_h__l12: F(h, t...) = h \n F(spread([1, 2]))
 def case_mixed_h__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_mixed_h__l12 == "ok raw=1 n=1"
 
--- mixed_h__l12_3: F(h, ...t) = h \n F([[1, 2], 3]...)
+-- mixed_h__l12_3: F(h, t...) = h \n F(spread([[1, 2], 3]))
 def case_mixed_h__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_mixed_h__l12_3 == "ok raw=L[1, 2] n=1"
 
--- mixed_h__lle: F(h, ...t) = h \n F([[]]...)
+-- mixed_h__lle: F(h, t...) = h \n F(spread([[]]))
 def case_mixed_h__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_mixed_h__lle == "ok raw=L[] n=1"
 
--- mixed_h__l_e: F(h, ...t) = h \n F([()]...)
+-- mixed_h__l_e: F(h, t...) = h \n F(spread([()]))
 def case_mixed_h__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_mixed_h__l_e == "ok raw=S[] n=1"
 
--- mixed_h__l_p12: F(h, ...t) = h \n F([(1, 2)]...)
+-- mixed_h__l_p12: F(h, t...) = h \n F(spread([(1, 2)]))
 def case_mixed_h__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_mixed_h__l_p12 == "ok raw=S[1, 2] n=1"
 
--- mixed_h__p_l12: F(h, ...t) = h \n F(([1, 2], 3)...)
+-- mixed_h__p_l12: F(h, t...) = h \n F(spread(([1, 2], 3)))
 def case_mixed_h__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_mixed_h__p_l12 == "ok raw=L[1, 2] n=1"
 
--- mixed_h__pl1: F(h, ...t) = h \n F(([1])...)
+-- mixed_h__pl1: F(h, t...) = h \n F(spread(([1])))
 def case_mixed_h__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "h"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_mixed_h__pl1 == "ok raw=1 n=1"
 
--- mixed_t__e: F(h, ...t) = t \n F(()...)
+-- mixed_t__e: F(h, t...) = t \n F(spread(()))
 def case_mixed_t__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_mixed_t__e == "err arity"
 
--- mixed_t__n0: F(h, ...t) = t \n F(0...)
+-- mixed_t__n0: F(h, t...) = t \n F(spread(0))
 def case_mixed_t__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_mixed_t__n0 == "ok raw=L[] n=1"
 
--- mixed_t__n1: F(h, ...t) = t \n F(1...)
+-- mixed_t__n1: F(h, t...) = t \n F(spread(1))
 def case_mixed_t__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_mixed_t__n1 == "ok raw=L[] n=1"
 
--- mixed_t__p1: F(h, ...t) = t \n F((1)...)
+-- mixed_t__p1: F(h, t...) = t \n F(spread((1)))
 def case_mixed_t__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_mixed_t__p1 == "ok raw=L[] n=1"
 
--- mixed_t__p12: F(h, ...t) = t \n F((1, 2)...)
+-- mixed_t__p12: F(h, t...) = t \n F(spread((1, 2)))
 def case_mixed_t__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_mixed_t__p12 == "ok raw=L[2] n=1"
 
--- mixed_t__p123: F(h, ...t) = t \n F((1, 2, 3)...)
+-- mixed_t__p123: F(h, t...) = t \n F(spread((1, 2, 3)))
 def case_mixed_t__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_mixed_t__p123 == "ok raw=L[2, 3] n=1"
 
--- mixed_t__pee: F(h, ...t) = t \n F(((), ())...)
+-- mixed_t__pee: F(h, t...) = t \n F(spread(((), ())))
 def case_mixed_t__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_mixed_t__pee == "ok raw=L[S[]] n=1"
 
--- mixed_t__pe1: F(h, ...t) = t \n F(((), 1)...)
+-- mixed_t__pe1: F(h, t...) = t \n F(spread(((), 1)))
 def case_mixed_t__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_mixed_t__pe1 == "ok raw=L[1] n=1"
 
--- mixed_t__p1e: F(h, ...t) = t \n F((1, ())...)
+-- mixed_t__p1e: F(h, t...) = t \n F(spread((1, ())))
 def case_mixed_t__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_mixed_t__p1e == "ok raw=L[S[]] n=1"
 
--- mixed_t__p12_3: F(h, ...t) = t \n F(((1, 2), 3)...)
+-- mixed_t__p12_3: F(h, t...) = t \n F(spread(((1, 2), 3)))
 def case_mixed_t__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_mixed_t__p12_3 == "ok raw=L[3] n=1"
 
--- mixed_t__p12_34: F(h, ...t) = t \n F(((1, 2), (3, 4))...)
+-- mixed_t__p12_34: F(h, t...) = t \n F(spread(((1, 2), (3, 4))))
 def case_mixed_t__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_mixed_t__p12_34 == "ok raw=L[S[3, 4]] n=1"
 
--- mixed_t__pe_12: F(h, ...t) = t \n F(((), (1, 2))...)
+-- mixed_t__pe_12: F(h, t...) = t \n F(spread(((), (1, 2))))
 def case_mixed_t__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_mixed_t__pe_12 == "ok raw=L[S[1, 2]] n=1"
 
--- mixed_t__ppe1_2: F(h, ...t) = t \n F((((), 1), 2)...)
+-- mixed_t__ppe1_2: F(h, t...) = t \n F(spread((((), 1), 2)))
 def case_mixed_t__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_mixed_t__ppe1_2 == "ok raw=L[2] n=1"
 
--- mixed_t__p12_e: F(h, ...t) = t \n F(((1, 2), ())...)
+-- mixed_t__p12_e: F(h, t...) = t \n F(spread(((1, 2), ())))
 def case_mixed_t__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_mixed_t__p12_e == "ok raw=L[S[]] n=1"
 
--- mixed_t__ppe: F(h, ...t) = t \n F((())...)
+-- mixed_t__ppe: F(h, t...) = t \n F(spread((())))
 def case_mixed_t__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_mixed_t__ppe == "err arity"
 
--- mixed_t__pp1: F(h, ...t) = t \n F(((1))...)
+-- mixed_t__pp1: F(h, t...) = t \n F(spread(((1))))
 def case_mixed_t__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_mixed_t__pp1 == "ok raw=L[] n=1"
 
--- mixed_t__ppp12: F(h, ...t) = t \n F((((1, 2)))...)
+-- mixed_t__ppp12: F(h, t...) = t \n F(spread((((1, 2)))))
 def case_mixed_t__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_mixed_t__ppp12 == "ok raw=L[2] n=1"
 
--- mixed_t__le: F(h, ...t) = t \n F([]...)
+-- mixed_t__le: F(h, t...) = t \n F(spread([]))
 def case_mixed_t__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_mixed_t__le == "err arity"
 
--- mixed_t__l7: F(h, ...t) = t \n F([7]...)
+-- mixed_t__l7: F(h, t...) = t \n F(spread([7]))
 def case_mixed_t__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_mixed_t__l7 == "ok raw=L[] n=1"
 
--- mixed_t__l12: F(h, ...t) = t \n F([1, 2]...)
+-- mixed_t__l12: F(h, t...) = t \n F(spread([1, 2]))
 def case_mixed_t__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_mixed_t__l12 == "ok raw=L[2] n=1"
 
--- mixed_t__l12_3: F(h, ...t) = t \n F([[1, 2], 3]...)
+-- mixed_t__l12_3: F(h, t...) = t \n F(spread([[1, 2], 3]))
 def case_mixed_t__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_mixed_t__l12_3 == "ok raw=L[3] n=1"
 
--- mixed_t__lle: F(h, ...t) = t \n F([[]]...)
+-- mixed_t__lle: F(h, t...) = t \n F(spread([[]]))
 def case_mixed_t__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_mixed_t__lle == "ok raw=L[] n=1"
 
--- mixed_t__l_e: F(h, ...t) = t \n F([()]...)
+-- mixed_t__l_e: F(h, t...) = t \n F(spread([()]))
 def case_mixed_t__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_mixed_t__l_e == "ok raw=L[] n=1"
 
--- mixed_t__l_p12: F(h, ...t) = t \n F([(1, 2)]...)
+-- mixed_t__l_p12: F(h, t...) = t \n F(spread([(1, 2)]))
 def case_mixed_t__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_mixed_t__l_p12 == "ok raw=L[] n=1"
 
--- mixed_t__p_l12: F(h, ...t) = t \n F(([1, 2], 3)...)
+-- mixed_t__p_l12: F(h, t...) = t \n F(spread(([1, 2], 3)))
 def case_mixed_t__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_mixed_t__p_l12 == "ok raw=L[3] n=1"
 
--- mixed_t__pl1: F(h, ...t) = t \n F(([1])...)
+-- mixed_t__pl1: F(h, t...) = t \n F(spread(([1])))
 def case_mixed_t__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_mixed_t__pl1 == "ok raw=L[] n=1"
 
--- mixedBack_t__e: F(...t, z) = t \n F(()...)
+-- mixedBack_t__e: F(t..., z) = t \n F(spread(()))
 def case_mixedBack_t__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_mixedBack_t__e == "err arity"
 
--- mixedBack_t__n0: F(...t, z) = t \n F(0...)
+-- mixedBack_t__n0: F(t..., z) = t \n F(spread(0))
 def case_mixedBack_t__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_mixedBack_t__n0 == "ok raw=L[] n=1"
 
--- mixedBack_t__n1: F(...t, z) = t \n F(1...)
+-- mixedBack_t__n1: F(t..., z) = t \n F(spread(1))
 def case_mixedBack_t__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_mixedBack_t__n1 == "ok raw=L[] n=1"
 
--- mixedBack_t__p1: F(...t, z) = t \n F((1)...)
+-- mixedBack_t__p1: F(t..., z) = t \n F(spread((1)))
 def case_mixedBack_t__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_mixedBack_t__p1 == "ok raw=L[] n=1"
 
--- mixedBack_t__p12: F(...t, z) = t \n F((1, 2)...)
+-- mixedBack_t__p12: F(t..., z) = t \n F(spread((1, 2)))
 def case_mixedBack_t__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_mixedBack_t__p12 == "ok raw=L[1] n=1"
 
--- mixedBack_t__p123: F(...t, z) = t \n F((1, 2, 3)...)
+-- mixedBack_t__p123: F(t..., z) = t \n F(spread((1, 2, 3)))
 def case_mixedBack_t__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_mixedBack_t__p123 == "ok raw=L[1, 2] n=1"
 
--- mixedBack_t__pee: F(...t, z) = t \n F(((), ())...)
+-- mixedBack_t__pee: F(t..., z) = t \n F(spread(((), ())))
 def case_mixedBack_t__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_t__pee == "ok raw=L[S[]] n=1"
 
--- mixedBack_t__pe1: F(...t, z) = t \n F(((), 1)...)
+-- mixedBack_t__pe1: F(t..., z) = t \n F(spread(((), 1)))
 def case_mixedBack_t__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_mixedBack_t__pe1 == "ok raw=L[S[]] n=1"
 
--- mixedBack_t__p1e: F(...t, z) = t \n F((1, ())...)
+-- mixedBack_t__p1e: F(t..., z) = t \n F(spread((1, ())))
 def case_mixedBack_t__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_t__p1e == "ok raw=L[1] n=1"
 
--- mixedBack_t__p12_3: F(...t, z) = t \n F(((1, 2), 3)...)
+-- mixedBack_t__p12_3: F(t..., z) = t \n F(spread(((1, 2), 3)))
 def case_mixedBack_t__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_mixedBack_t__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
--- mixedBack_t__p12_34: F(...t, z) = t \n F(((1, 2), (3, 4))...)
+-- mixedBack_t__p12_34: F(t..., z) = t \n F(spread(((1, 2), (3, 4))))
 def case_mixedBack_t__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_mixedBack_t__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
--- mixedBack_t__pe_12: F(...t, z) = t \n F(((), (1, 2))...)
+-- mixedBack_t__pe_12: F(t..., z) = t \n F(spread(((), (1, 2))))
 def case_mixedBack_t__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_mixedBack_t__pe_12 == "ok raw=L[S[]] n=1"
 
--- mixedBack_t__ppe1_2: F(...t, z) = t \n F((((), 1), 2)...)
+-- mixedBack_t__ppe1_2: F(t..., z) = t \n F(spread((((), 1), 2)))
 def case_mixedBack_t__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_mixedBack_t__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
--- mixedBack_t__p12_e: F(...t, z) = t \n F(((1, 2), ())...)
+-- mixedBack_t__p12_e: F(t..., z) = t \n F(spread(((1, 2), ())))
 def case_mixedBack_t__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_t__p12_e == "ok raw=L[S[1, 2]] n=1"
 
--- mixedBack_t__ppe: F(...t, z) = t \n F((())...)
+-- mixedBack_t__ppe: F(t..., z) = t \n F(spread((())))
 def case_mixedBack_t__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_mixedBack_t__ppe == "err arity"
 
--- mixedBack_t__pp1: F(...t, z) = t \n F(((1))...)
+-- mixedBack_t__pp1: F(t..., z) = t \n F(spread(((1))))
 def case_mixedBack_t__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_mixedBack_t__pp1 == "ok raw=L[] n=1"
 
--- mixedBack_t__ppp12: F(...t, z) = t \n F((((1, 2)))...)
+-- mixedBack_t__ppp12: F(t..., z) = t \n F(spread((((1, 2)))))
 def case_mixedBack_t__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_mixedBack_t__ppp12 == "ok raw=L[1] n=1"
 
--- mixedBack_t__le: F(...t, z) = t \n F([]...)
+-- mixedBack_t__le: F(t..., z) = t \n F(spread([]))
 def case_mixedBack_t__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_mixedBack_t__le == "err arity"
 
--- mixedBack_t__l7: F(...t, z) = t \n F([7]...)
+-- mixedBack_t__l7: F(t..., z) = t \n F(spread([7]))
 def case_mixedBack_t__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_mixedBack_t__l7 == "ok raw=L[] n=1"
 
--- mixedBack_t__l12: F(...t, z) = t \n F([1, 2]...)
+-- mixedBack_t__l12: F(t..., z) = t \n F(spread([1, 2]))
 def case_mixedBack_t__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_mixedBack_t__l12 == "ok raw=L[1] n=1"
 
--- mixedBack_t__l12_3: F(...t, z) = t \n F([[1, 2], 3]...)
+-- mixedBack_t__l12_3: F(t..., z) = t \n F(spread([[1, 2], 3]))
 def case_mixedBack_t__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_mixedBack_t__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
--- mixedBack_t__lle: F(...t, z) = t \n F([[]]...)
+-- mixedBack_t__lle: F(t..., z) = t \n F(spread([[]]))
 def case_mixedBack_t__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_mixedBack_t__lle == "ok raw=L[] n=1"
 
--- mixedBack_t__l_e: F(...t, z) = t \n F([()]...)
+-- mixedBack_t__l_e: F(t..., z) = t \n F(spread([()]))
 def case_mixedBack_t__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_mixedBack_t__l_e == "ok raw=L[] n=1"
 
--- mixedBack_t__l_p12: F(...t, z) = t \n F([(1, 2)]...)
+-- mixedBack_t__l_p12: F(t..., z) = t \n F(spread([(1, 2)]))
 def case_mixedBack_t__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_mixedBack_t__l_p12 == "ok raw=L[] n=1"
 
--- mixedBack_t__p_l12: F(...t, z) = t \n F(([1, 2], 3)...)
+-- mixedBack_t__p_l12: F(t..., z) = t \n F(spread(([1, 2], 3)))
 def case_mixedBack_t__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_mixedBack_t__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
--- mixedBack_t__pl1: F(...t, z) = t \n F(([1])...)
+-- mixedBack_t__pl1: F(t..., z) = t \n F(spread(([1])))
 def case_mixedBack_t__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "t"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_mixedBack_t__pl1 == "ok raw=L[] n=1"
 
--- mixedBack_z__e: F(...t, z) = z \n F(()...)
+-- mixedBack_z__e: F(t..., z) = z \n F(spread(()))
 def case_mixedBack_z__e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_mixedBack_z__e == "err arity"
 
--- mixedBack_z__n0: F(...t, z) = z \n F(0...)
+-- mixedBack_z__n0: F(t..., z) = z \n F(spread(0))
 def case_mixedBack_z__n0 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_mixedBack_z__n0 == "ok raw=0 n=1"
 
--- mixedBack_z__n1: F(...t, z) = z \n F(1...)
+-- mixedBack_z__n1: F(t..., z) = z \n F(spread(1))
 def case_mixedBack_z__n1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_mixedBack_z__n1 == "ok raw=1 n=1"
 
--- mixedBack_z__p1: F(...t, z) = z \n F((1)...)
+-- mixedBack_z__p1: F(t..., z) = z \n F(spread((1)))
 def case_mixedBack_z__p1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_mixedBack_z__p1 == "ok raw=1 n=1"
 
--- mixedBack_z__p12: F(...t, z) = z \n F((1, 2)...)
+-- mixedBack_z__p12: F(t..., z) = z \n F(spread((1, 2)))
 def case_mixedBack_z__p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_mixedBack_z__p12 == "ok raw=2 n=1"
 
--- mixedBack_z__p123: F(...t, z) = z \n F((1, 2, 3)...)
+-- mixedBack_z__p123: F(t..., z) = z \n F(spread((1, 2, 3)))
 def case_mixedBack_z__p123 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_mixedBack_z__p123 == "ok raw=3 n=1"
 
--- mixedBack_z__pee: F(...t, z) = z \n F(((), ())...)
+-- mixedBack_z__pee: F(t..., z) = z \n F(spread(((), ())))
 def case_mixedBack_z__pee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_z__pee == "ok raw=S[] n=1"
 
--- mixedBack_z__pe1: F(...t, z) = z \n F(((), 1)...)
+-- mixedBack_z__pe1: F(t..., z) = z \n F(spread(((), 1)))
 def case_mixedBack_z__pe1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_mixedBack_z__pe1 == "ok raw=1 n=1"
 
--- mixedBack_z__p1e: F(...t, z) = z \n F((1, ())...)
+-- mixedBack_z__p1e: F(t..., z) = z \n F(spread((1, ())))
 def case_mixedBack_z__p1e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_z__p1e == "ok raw=S[] n=1"
 
--- mixedBack_z__p12_3: F(...t, z) = z \n F(((1, 2), 3)...)
+-- mixedBack_z__p12_3: F(t..., z) = z \n F(spread(((1, 2), 3)))
 def case_mixedBack_z__p12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_mixedBack_z__p12_3 == "ok raw=3 n=1"
 
--- mixedBack_z__p12_34: F(...t, z) = z \n F(((1, 2), (3, 4))...)
+-- mixedBack_z__p12_34: F(t..., z) = z \n F(spread(((1, 2), (3, 4))))
 def case_mixedBack_z__p12_34 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_mixedBack_z__p12_34 == "ok raw=S[3, 4] n=1"
 
--- mixedBack_z__pe_12: F(...t, z) = z \n F(((), (1, 2))...)
+-- mixedBack_z__pe_12: F(t..., z) = z \n F(spread(((), (1, 2))))
 def case_mixedBack_z__pe_12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_mixedBack_z__pe_12 == "ok raw=S[1, 2] n=1"
 
--- mixedBack_z__ppe1_2: F(...t, z) = z \n F((((), 1), 2)...)
+-- mixedBack_z__ppe1_2: F(t..., z) = z \n F(spread((((), 1), 2)))
 def case_mixedBack_z__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_mixedBack_z__ppe1_2 == "ok raw=2 n=1"
 
--- mixedBack_z__p12_e: F(...t, z) = z \n F(((1, 2), ())...)
+-- mixedBack_z__p12_e: F(t..., z) = z \n F(spread(((1, 2), ())))
 def case_mixedBack_z__p12_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_mixedBack_z__p12_e == "ok raw=S[] n=1"
 
--- mixedBack_z__ppe: F(...t, z) = z \n F((())...)
+-- mixedBack_z__ppe: F(t..., z) = z \n F(spread((())))
 def case_mixedBack_z__ppe : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_mixedBack_z__ppe == "err arity"
 
--- mixedBack_z__pp1: F(...t, z) = z \n F(((1))...)
+-- mixedBack_z__pp1: F(t..., z) = z \n F(spread(((1))))
 def case_mixedBack_z__pp1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_mixedBack_z__pp1 == "ok raw=1 n=1"
 
--- mixedBack_z__ppp12: F(...t, z) = z \n F((((1, 2)))...)
+-- mixedBack_z__ppp12: F(t..., z) = z \n F(spread((((1, 2)))))
 def case_mixedBack_z__ppp12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_mixedBack_z__ppp12 == "ok raw=2 n=1"
 
--- mixedBack_z__le: F(...t, z) = z \n F([]...)
+-- mixedBack_z__le: F(t..., z) = z \n F(spread([]))
 def case_mixedBack_z__le : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_mixedBack_z__le == "err arity"
 
--- mixedBack_z__l7: F(...t, z) = z \n F([7]...)
+-- mixedBack_z__l7: F(t..., z) = z \n F(spread([7]))
 def case_mixedBack_z__l7 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_mixedBack_z__l7 == "ok raw=7 n=1"
 
--- mixedBack_z__l12: F(...t, z) = z \n F([1, 2]...)
+-- mixedBack_z__l12: F(t..., z) = z \n F(spread([1, 2]))
 def case_mixedBack_z__l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_mixedBack_z__l12 == "ok raw=2 n=1"
 
--- mixedBack_z__l12_3: F(...t, z) = z \n F([[1, 2], 3]...)
+-- mixedBack_z__l12_3: F(t..., z) = z \n F(spread([[1, 2], 3]))
 def case_mixedBack_z__l12_3 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_mixedBack_z__l12_3 == "ok raw=3 n=1"
 
--- mixedBack_z__lle: F(...t, z) = z \n F([[]]...)
+-- mixedBack_z__lle: F(t..., z) = z \n F(spread([[]]))
 def case_mixedBack_z__lle : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_mixedBack_z__lle == "ok raw=L[] n=1"
 
--- mixedBack_z__l_e: F(...t, z) = z \n F([()]...)
+-- mixedBack_z__l_e: F(t..., z) = z \n F(spread([()]))
 def case_mixedBack_z__l_e : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_mixedBack_z__l_e == "ok raw=S[] n=1"
 
--- mixedBack_z__l_p12: F(...t, z) = z \n F([(1, 2)]...)
+-- mixedBack_z__l_p12: F(t..., z) = z \n F(spread([(1, 2)]))
 def case_mixedBack_z__l_p12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_mixedBack_z__l_p12 == "ok raw=S[1, 2] n=1"
 
--- mixedBack_z__p_l12: F(...t, z) = z \n F(([1, 2], 3)...)
+-- mixedBack_z__p_l12: F(t..., z) = z \n F(spread(([1, 2], 3)))
 def case_mixedBack_z__p_l12 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_mixedBack_z__p_l12 == "ok raw=3 n=1"
 
--- mixedBack_z__pl1: F(...t, z) = z \n F(([1])...)
+-- mixedBack_z__pl1: F(t..., z) = z \n F(spread(([1])))
 def case_mixedBack_z__pl1 : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .variadic }, { name := "z" }] [] [] [.param "z"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_mixedBack_z__pl1 == "ok raw=1 n=1"
@@ -2173,652 +2173,652 @@ def case_deconPair_y__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])])] [.resolve "y"])
 #guard obs case_deconPair_y__pl1 == "err arity"
 
--- deconPairSpread_x__e: x, y = ()... \n x
+-- deconPairSpread_x__e: x, y = spread(()) \n x
 def case_deconPairSpread_x__e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.emptySequence 0)]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__e == "err arity"
 
--- deconPairSpread_x__n0: x, y = 0... \n x
+-- deconPairSpread_x__n0: x, y = spread(0) \n x
 def case_deconPairSpread_x__n0 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.num 0)]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n0 == "err arity"
 
--- deconPairSpread_x__n1: x, y = 1... \n x
+-- deconPairSpread_x__n1: x, y = spread(1) \n x
 def case_deconPairSpread_x__n1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.num 1)]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n1 == "err arity"
 
--- deconPairSpread_x__p1: x, y = (1)... \n x
+-- deconPairSpread_x__p1: x, y = spread((1)) \n x
 def case_deconPairSpread_x__p1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p1 == "err arity"
 
--- deconPairSpread_x__p12: x, y = (1, 2)... \n x
+-- deconPairSpread_x__p12: x, y = spread((1, 2)) \n x
 def case_deconPairSpread_x__p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__p123: x, y = (1, 2, 3)... \n x
+-- deconPairSpread_x__p123: x, y = spread((1, 2, 3)) \n x
 def case_deconPairSpread_x__p123 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p123 == "err arity"
 
--- deconPairSpread_x__pee: x, y = ((), ())... \n x
+-- deconPairSpread_x__pee: x, y = spread(((), ())) \n x
 def case_deconPairSpread_x__pee : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pee == "ok raw=S[] n=1"
 
--- deconPairSpread_x__pe1: x, y = ((), 1)... \n x
+-- deconPairSpread_x__pe1: x, y = spread(((), 1)) \n x
 def case_deconPairSpread_x__pe1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pe1 == "ok raw=S[] n=1"
 
--- deconPairSpread_x__p1e: x, y = (1, ())... \n x
+-- deconPairSpread_x__p1e: x, y = spread((1, ())) \n x
 def case_deconPairSpread_x__p1e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p1e == "ok raw=1 n=1"
 
--- deconPairSpread_x__p12_3: x, y = ((1, 2), 3)... \n x
+-- deconPairSpread_x__p12_3: x, y = spread(((1, 2), 3)) \n x
 def case_deconPairSpread_x__p12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_3 == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__p12_34: x, y = ((1, 2), (3, 4))... \n x
+-- deconPairSpread_x__p12_34: x, y = spread(((1, 2), (3, 4))) \n x
 def case_deconPairSpread_x__p12_34 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_34 == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__pe_12: x, y = ((), (1, 2))... \n x
+-- deconPairSpread_x__pe_12: x, y = spread(((), (1, 2))) \n x
 def case_deconPairSpread_x__pe_12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pe_12 == "ok raw=S[] n=1"
 
--- deconPairSpread_x__ppe1_2: x, y = (((), 1), 2)... \n x
+-- deconPairSpread_x__ppe1_2: x, y = spread((((), 1), 2)) \n x
 def case_deconPairSpread_x__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppe1_2 == "ok raw=S[S[], 1] n=1"
 
--- deconPairSpread_x__p12_e: x, y = ((1, 2), ())... \n x
+-- deconPairSpread_x__p12_e: x, y = spread(((1, 2), ())) \n x
 def case_deconPairSpread_x__p12_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p12_e == "ok raw=S[1, 2] n=1"
 
--- deconPairSpread_x__ppe: x, y = (())... \n x
+-- deconPairSpread_x__ppe: x, y = spread((())) \n x
 def case_deconPairSpread_x__ppe : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppe == "err arity"
 
--- deconPairSpread_x__pp1: x, y = ((1))... \n x
+-- deconPairSpread_x__pp1: x, y = spread(((1))) \n x
 def case_deconPairSpread_x__pp1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pp1 == "err arity"
 
--- deconPairSpread_x__ppp12: x, y = (((1, 2)))... \n x
+-- deconPairSpread_x__ppp12: x, y = spread((((1, 2)))) \n x
 def case_deconPairSpread_x__ppp12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppp12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__le: x, y = []... \n x
+-- deconPairSpread_x__le: x, y = spread([]) \n x
 def case_deconPairSpread_x__le : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__le == "err arity"
 
--- deconPairSpread_x__l7: x, y = [7]... \n x
+-- deconPairSpread_x__l7: x, y = spread([7]) \n x
 def case_deconPairSpread_x__l7 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l7 == "err arity"
 
--- deconPairSpread_x__l12: x, y = [1, 2]... \n x
+-- deconPairSpread_x__l12: x, y = spread([1, 2]) \n x
 def case_deconPairSpread_x__l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__l12_3: x, y = [[1, 2], 3]... \n x
+-- deconPairSpread_x__l12_3: x, y = spread([[1, 2], 3]) \n x
 def case_deconPairSpread_x__l12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l12_3 == "ok raw=L[1, 2] n=1"
 
--- deconPairSpread_x__lle: x, y = [[]]... \n x
+-- deconPairSpread_x__lle: x, y = spread([[]]) \n x
 def case_deconPairSpread_x__lle : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__lle == "err arity"
 
--- deconPairSpread_x__l_e: x, y = [()]... \n x
+-- deconPairSpread_x__l_e: x, y = spread([()]) \n x
 def case_deconPairSpread_x__l_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l_e == "err arity"
 
--- deconPairSpread_x__l_p12: x, y = [(1, 2)]... \n x
+-- deconPairSpread_x__l_p12: x, y = spread([(1, 2)]) \n x
 def case_deconPairSpread_x__l_p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l_p12 == "ok raw=1 n=1"
 
--- deconPairSpread_x__p_l12: x, y = ([1, 2], 3)... \n x
+-- deconPairSpread_x__p_l12: x, y = spread(([1, 2], 3)) \n x
 def case_deconPairSpread_x__p_l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p_l12 == "ok raw=L[1, 2] n=1"
 
--- deconPairSpread_x__pl1: x, y = ([1])... \n x
+-- deconPairSpread_x__pl1: x, y = spread(([1])) \n x
 def case_deconPairSpread_x__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pl1 == "err arity"
 
--- deconCollect_t__e: h, ...t = () \n t
+-- deconCollect_t__e: h, t... = () \n t
 def case_deconCollect_t__e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.emptySequence 0)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__e == "err arity"
 
--- deconCollect_t__n0: h, ...t = 0 \n t
+-- deconCollect_t__n0: h, t... = 0 \n t
 def case_deconCollect_t__n0 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 0)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__n0 == "ok raw=L[] n=1"
 
--- deconCollect_t__n1: h, ...t = 1 \n t
+-- deconCollect_t__n1: h, t... = 1 \n t
 def case_deconCollect_t__n1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 1)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__n1 == "ok raw=L[] n=1"
 
--- deconCollect_t__p1: h, ...t = (1) \n t
+-- deconCollect_t__p1: h, t... = (1) \n t
 def case_deconCollect_t__p1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p1 == "ok raw=L[] n=1"
 
--- deconCollect_t__p12: h, ...t = (1, 2) \n t
+-- deconCollect_t__p12: h, t... = (1, 2) \n t
 def case_deconCollect_t__p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p12 == "ok raw=L[2] n=1"
 
--- deconCollect_t__p123: h, ...t = (1, 2, 3) \n t
+-- deconCollect_t__p123: h, t... = (1, 2, 3) \n t
 def case_deconCollect_t__p123 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p123 == "ok raw=L[2, 3] n=1"
 
--- deconCollect_t__pee: h, ...t = ((), ()) \n t
+-- deconCollect_t__pee: h, t... = ((), ()) \n t
 def case_deconCollect_t__pee : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pee == "ok raw=L[S[]] n=1"
 
--- deconCollect_t__pe1: h, ...t = ((), 1) \n t
+-- deconCollect_t__pe1: h, t... = ((), 1) \n t
 def case_deconCollect_t__pe1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pe1 == "ok raw=L[1] n=1"
 
--- deconCollect_t__p1e: h, ...t = (1, ()) \n t
+-- deconCollect_t__p1e: h, t... = (1, ()) \n t
 def case_deconCollect_t__p1e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p1e == "ok raw=L[S[]] n=1"
 
--- deconCollect_t__p12_3: h, ...t = ((1, 2), 3) \n t
+-- deconCollect_t__p12_3: h, t... = ((1, 2), 3) \n t
 def case_deconCollect_t__p12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p12_3 == "ok raw=L[3] n=1"
 
--- deconCollect_t__p12_34: h, ...t = ((1, 2), (3, 4)) \n t
+-- deconCollect_t__p12_34: h, t... = ((1, 2), (3, 4)) \n t
 def case_deconCollect_t__p12_34 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p12_34 == "ok raw=L[S[3, 4]] n=1"
 
--- deconCollect_t__pe_12: h, ...t = ((), (1, 2)) \n t
+-- deconCollect_t__pe_12: h, t... = ((), (1, 2)) \n t
 def case_deconCollect_t__pe_12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pe_12 == "ok raw=L[S[1, 2]] n=1"
 
--- deconCollect_t__ppe1_2: h, ...t = (((), 1), 2) \n t
+-- deconCollect_t__ppe1_2: h, t... = (((), 1), 2) \n t
 def case_deconCollect_t__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__ppe1_2 == "ok raw=L[2] n=1"
 
--- deconCollect_t__p12_e: h, ...t = ((1, 2), ()) \n t
+-- deconCollect_t__p12_e: h, t... = ((1, 2), ()) \n t
 def case_deconCollect_t__p12_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p12_e == "ok raw=L[S[]] n=1"
 
--- deconCollect_t__ppe: h, ...t = (()) \n t
+-- deconCollect_t__ppe: h, t... = (()) \n t
 def case_deconCollect_t__ppe : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__ppe == "err arity"
 
--- deconCollect_t__pp1: h, ...t = ((1)) \n t
+-- deconCollect_t__pp1: h, t... = ((1)) \n t
 def case_deconCollect_t__pp1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pp1 == "ok raw=L[] n=1"
 
--- deconCollect_t__ppp12: h, ...t = (((1, 2))) \n t
+-- deconCollect_t__ppp12: h, t... = (((1, 2))) \n t
 def case_deconCollect_t__ppp12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__ppp12 == "ok raw=L[2] n=1"
 
--- deconCollect_t__le: h, ...t = [] \n t
+-- deconCollect_t__le: h, t... = [] \n t
 def case_deconCollect_t__le : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__le == "err arity"
 
--- deconCollect_t__l7: h, ...t = [7] \n t
+-- deconCollect_t__l7: h, t... = [7] \n t
 def case_deconCollect_t__l7 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 7)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__l7 == "ok raw=L[] n=1"
 
--- deconCollect_t__l12: h, ...t = [1, 2] \n t
+-- deconCollect_t__l12: h, t... = [1, 2] \n t
 def case_deconCollect_t__l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__l12 == "ok raw=L[2] n=1"
 
--- deconCollect_t__l12_3: h, ...t = [[1, 2], 3] \n t
+-- deconCollect_t__l12_3: h, t... = [[1, 2], 3] \n t
 def case_deconCollect_t__l12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__l12_3 == "ok raw=L[3] n=1"
 
--- deconCollect_t__lle: h, ...t = [[]] \n t
+-- deconCollect_t__lle: h, t... = [[]] \n t
 def case_deconCollect_t__lle : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__lle == "ok raw=L[] n=1"
 
--- deconCollect_t__l_e: h, ...t = [()] \n t
+-- deconCollect_t__l_e: h, t... = [()] \n t
 def case_deconCollect_t__l_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__l_e == "ok raw=L[] n=1"
 
--- deconCollect_t__l_p12: h, ...t = [(1, 2)] \n t
+-- deconCollect_t__l_p12: h, t... = [(1, 2)] \n t
 def case_deconCollect_t__l_p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__l_p12 == "ok raw=L[] n=1"
 
--- deconCollect_t__p_l12: h, ...t = ([1, 2], 3) \n t
+-- deconCollect_t__p_l12: h, t... = ([1, 2], 3) \n t
 def case_deconCollect_t__p_l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__p_l12 == "ok raw=L[3] n=1"
 
--- deconCollect_t__pl1: h, ...t = ([1]) \n t
+-- deconCollect_t__pl1: h, t... = ([1]) \n t
 def case_deconCollect_t__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__pl1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__e: h, ...t = ()... \n t
+-- deconCollectSpread_t__e: h, t... = spread(()) \n t
 def case_deconCollectSpread_t__e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.emptySequence 0)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__e == "err arity"
 
--- deconCollectSpread_t__n0: h, ...t = 0... \n t
+-- deconCollectSpread_t__n0: h, t... = spread(0) \n t
 def case_deconCollectSpread_t__n0 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.num 0)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__n0 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__n1: h, ...t = 1... \n t
+-- deconCollectSpread_t__n1: h, t... = spread(1) \n t
 def case_deconCollectSpread_t__n1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.num 1)]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__n1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__p1: h, ...t = (1)... \n t
+-- deconCollectSpread_t__p1: h, t... = spread((1)) \n t
 def case_deconCollectSpread_t__p1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__p12: h, ...t = (1, 2)... \n t
+-- deconCollectSpread_t__p12: h, t... = spread((1, 2)) \n t
 def case_deconCollectSpread_t__p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p123: h, ...t = (1, 2, 3)... \n t
+-- deconCollectSpread_t__p123: h, t... = spread((1, 2, 3)) \n t
 def case_deconCollectSpread_t__p123 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p123 == "ok raw=L[2, 3] n=1"
 
--- deconCollectSpread_t__pee: h, ...t = ((), ())... \n t
+-- deconCollectSpread_t__pee: h, t... = spread(((), ())) \n t
 def case_deconCollectSpread_t__pee : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pee == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__pe1: h, ...t = ((), 1)... \n t
+-- deconCollectSpread_t__pe1: h, t... = spread(((), 1)) \n t
 def case_deconCollectSpread_t__pe1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pe1 == "ok raw=L[1] n=1"
 
--- deconCollectSpread_t__p1e: h, ...t = (1, ())... \n t
+-- deconCollectSpread_t__p1e: h, t... = spread((1, ())) \n t
 def case_deconCollectSpread_t__p1e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p1e == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__p12_3: h, ...t = ((1, 2), 3)... \n t
+-- deconCollectSpread_t__p12_3: h, t... = spread(((1, 2), 3)) \n t
 def case_deconCollectSpread_t__p12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_3 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__p12_34: h, ...t = ((1, 2), (3, 4))... \n t
+-- deconCollectSpread_t__p12_34: h, t... = spread(((1, 2), (3, 4))) \n t
 def case_deconCollectSpread_t__p12_34 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_34 == "ok raw=L[S[3, 4]] n=1"
 
--- deconCollectSpread_t__pe_12: h, ...t = ((), (1, 2))... \n t
+-- deconCollectSpread_t__pe_12: h, t... = spread(((), (1, 2))) \n t
 def case_deconCollectSpread_t__pe_12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pe_12 == "ok raw=L[S[1, 2]] n=1"
 
--- deconCollectSpread_t__ppe1_2: h, ...t = (((), 1), 2)... \n t
+-- deconCollectSpread_t__ppe1_2: h, t... = spread((((), 1), 2)) \n t
 def case_deconCollectSpread_t__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppe1_2 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p12_e: h, ...t = ((1, 2), ())... \n t
+-- deconCollectSpread_t__p12_e: h, t... = spread(((1, 2), ())) \n t
 def case_deconCollectSpread_t__p12_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p12_e == "ok raw=L[S[]] n=1"
 
--- deconCollectSpread_t__ppe: h, ...t = (())... \n t
+-- deconCollectSpread_t__ppe: h, t... = spread((())) \n t
 def case_deconCollectSpread_t__ppe : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppe == "err arity"
 
--- deconCollectSpread_t__pp1: h, ...t = ((1))... \n t
+-- deconCollectSpread_t__pp1: h, t... = spread(((1))) \n t
 def case_deconCollectSpread_t__pp1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pp1 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__ppp12: h, ...t = (((1, 2)))... \n t
+-- deconCollectSpread_t__ppp12: h, t... = spread((((1, 2)))) \n t
 def case_deconCollectSpread_t__ppp12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppp12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__le: h, ...t = []... \n t
+-- deconCollectSpread_t__le: h, t... = spread([]) \n t
 def case_deconCollectSpread_t__le : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__le == "err arity"
 
--- deconCollectSpread_t__l7: h, ...t = [7]... \n t
+-- deconCollectSpread_t__l7: h, t... = spread([7]) \n t
 def case_deconCollectSpread_t__l7 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l7 == "ok raw=L[] n=1"
 
--- deconCollectSpread_t__l12: h, ...t = [1, 2]... \n t
+-- deconCollectSpread_t__l12: h, t... = spread([1, 2]) \n t
 def case_deconCollectSpread_t__l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__l12_3: h, ...t = [[1, 2], 3]... \n t
+-- deconCollectSpread_t__l12_3: h, t... = spread([[1, 2], 3]) \n t
 def case_deconCollectSpread_t__l12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l12_3 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__lle: h, ...t = [[]]... \n t
+-- deconCollectSpread_t__lle: h, t... = spread([[]]) \n t
 def case_deconCollectSpread_t__lle : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__lle == "err arity"
 
--- deconCollectSpread_t__l_e: h, ...t = [()]... \n t
+-- deconCollectSpread_t__l_e: h, t... = spread([()]) \n t
 def case_deconCollectSpread_t__l_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l_e == "err arity"
 
--- deconCollectSpread_t__l_p12: h, ...t = [(1, 2)]... \n t
+-- deconCollectSpread_t__l_p12: h, t... = spread([(1, 2)]) \n t
 def case_deconCollectSpread_t__l_p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l_p12 == "ok raw=L[2] n=1"
 
--- deconCollectSpread_t__p_l12: h, ...t = ([1, 2], 3)... \n t
+-- deconCollectSpread_t__p_l12: h, t... = spread(([1, 2], 3)) \n t
 def case_deconCollectSpread_t__p_l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__p_l12 == "ok raw=L[3] n=1"
 
--- deconCollectSpread_t__pl1: h, ...t = ([1])... \n t
+-- deconCollectSpread_t__pl1: h, t... = spread(([1])) \n t
 def case_deconCollectSpread_t__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "t" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .variadic }]] [] [] [.param "t"])) (alg [] [] [] [.resolve "d"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__pl1 == "ok raw=L[] n=1"
 
--- deconPrefix_p__e: ...p, z = () \n p
+-- deconPrefix_p__e: p..., z = () \n p
 def case_deconPrefix_p__e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.emptySequence 0)]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__e == "err arity"
 
--- deconPrefix_p__n0: ...p, z = 0 \n p
+-- deconPrefix_p__n0: p..., z = 0 \n p
 def case_deconPrefix_p__n0 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 0)]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__n0 == "ok raw=L[] n=1"
 
--- deconPrefix_p__n1: ...p, z = 1 \n p
+-- deconPrefix_p__n1: p..., z = 1 \n p
 def case_deconPrefix_p__n1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 1)]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__n1 == "ok raw=L[] n=1"
 
--- deconPrefix_p__p1: ...p, z = (1) \n p
+-- deconPrefix_p__p1: p..., z = (1) \n p
 def case_deconPrefix_p__p1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p1 == "ok raw=L[] n=1"
 
--- deconPrefix_p__p12: ...p, z = (1, 2) \n p
+-- deconPrefix_p__p12: p..., z = (1, 2) \n p
 def case_deconPrefix_p__p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p12 == "ok raw=L[1] n=1"
 
--- deconPrefix_p__p123: ...p, z = (1, 2, 3) \n p
+-- deconPrefix_p__p123: p..., z = (1, 2, 3) \n p
 def case_deconPrefix_p__p123 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p123 == "ok raw=L[1, 2] n=1"
 
--- deconPrefix_p__pee: ...p, z = ((), ()) \n p
+-- deconPrefix_p__pee: p..., z = ((), ()) \n p
 def case_deconPrefix_p__pee : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__pee == "ok raw=L[S[]] n=1"
 
--- deconPrefix_p__pe1: ...p, z = ((), 1) \n p
+-- deconPrefix_p__pe1: p..., z = ((), 1) \n p
 def case_deconPrefix_p__pe1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__pe1 == "ok raw=L[S[]] n=1"
 
--- deconPrefix_p__p1e: ...p, z = (1, ()) \n p
+-- deconPrefix_p__p1e: p..., z = (1, ()) \n p
 def case_deconPrefix_p__p1e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p1e == "ok raw=L[1] n=1"
 
--- deconPrefix_p__p12_3: ...p, z = ((1, 2), 3) \n p
+-- deconPrefix_p__p12_3: p..., z = ((1, 2), 3) \n p
 def case_deconPrefix_p__p12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p12_3 == "ok raw=L[S[1, 2]] n=1"
 
--- deconPrefix_p__p12_34: ...p, z = ((1, 2), (3, 4)) \n p
+-- deconPrefix_p__p12_34: p..., z = ((1, 2), (3, 4)) \n p
 def case_deconPrefix_p__p12_34 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p12_34 == "ok raw=L[S[1, 2]] n=1"
 
--- deconPrefix_p__pe_12: ...p, z = ((), (1, 2)) \n p
+-- deconPrefix_p__pe_12: p..., z = ((), (1, 2)) \n p
 def case_deconPrefix_p__pe_12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__pe_12 == "ok raw=L[S[]] n=1"
 
--- deconPrefix_p__ppe1_2: ...p, z = (((), 1), 2) \n p
+-- deconPrefix_p__ppe1_2: p..., z = (((), 1), 2) \n p
 def case_deconPrefix_p__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__ppe1_2 == "ok raw=L[S[S[], 1]] n=1"
 
--- deconPrefix_p__p12_e: ...p, z = ((1, 2), ()) \n p
+-- deconPrefix_p__p12_e: p..., z = ((1, 2), ()) \n p
 def case_deconPrefix_p__p12_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p12_e == "ok raw=L[S[1, 2]] n=1"
 
--- deconPrefix_p__ppe: ...p, z = (()) \n p
+-- deconPrefix_p__ppe: p..., z = (()) \n p
 def case_deconPrefix_p__ppe : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__ppe == "err arity"
 
--- deconPrefix_p__pp1: ...p, z = ((1)) \n p
+-- deconPrefix_p__pp1: p..., z = ((1)) \n p
 def case_deconPrefix_p__pp1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__pp1 == "ok raw=L[] n=1"
 
--- deconPrefix_p__ppp12: ...p, z = (((1, 2))) \n p
+-- deconPrefix_p__ppp12: p..., z = (((1, 2))) \n p
 def case_deconPrefix_p__ppp12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__ppp12 == "ok raw=L[1] n=1"
 
--- deconPrefix_p__le: ...p, z = [] \n p
+-- deconPrefix_p__le: p..., z = [] \n p
 def case_deconPrefix_p__le : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__le == "err arity"
 
--- deconPrefix_p__l7: ...p, z = [7] \n p
+-- deconPrefix_p__l7: p..., z = [7] \n p
 def case_deconPrefix_p__l7 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 7)])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__l7 == "ok raw=L[] n=1"
 
--- deconPrefix_p__l12: ...p, z = [1, 2] \n p
+-- deconPrefix_p__l12: p..., z = [1, 2] \n p
 def case_deconPrefix_p__l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__l12 == "ok raw=L[1] n=1"
 
--- deconPrefix_p__l12_3: ...p, z = [[1, 2], 3] \n p
+-- deconPrefix_p__l12_3: p..., z = [[1, 2], 3] \n p
 def case_deconPrefix_p__l12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__l12_3 == "ok raw=L[L[1, 2]] n=1"
 
--- deconPrefix_p__lle: ...p, z = [[]] \n p
+-- deconPrefix_p__lle: p..., z = [[]] \n p
 def case_deconPrefix_p__lle : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__lle == "ok raw=L[] n=1"
 
--- deconPrefix_p__l_e: ...p, z = [()] \n p
+-- deconPrefix_p__l_e: p..., z = [()] \n p
 def case_deconPrefix_p__l_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__l_e == "ok raw=L[] n=1"
 
--- deconPrefix_p__l_p12: ...p, z = [(1, 2)] \n p
+-- deconPrefix_p__l_p12: p..., z = [(1, 2)] \n p
 def case_deconPrefix_p__l_p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__l_p12 == "ok raw=L[] n=1"
 
--- deconPrefix_p__p_l12: ...p, z = ([1, 2], 3) \n p
+-- deconPrefix_p__p_l12: p..., z = ([1, 2], 3) \n p
 def case_deconPrefix_p__p_l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__p_l12 == "ok raw=L[L[1, 2]] n=1"
 
--- deconPrefix_p__pl1: ...p, z = ([1]) \n p
+-- deconPrefix_p__pl1: p..., z = ([1]) \n p
 def case_deconPrefix_p__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "p" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "p"])) (alg [] [] [] [.resolve "d"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__pl1 == "ok raw=L[] n=1"
 
--- deconPrefix_z__e: ...p, z = () \n z
+-- deconPrefix_z__e: p..., z = () \n z
 def case_deconPrefix_z__e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.emptySequence 0)]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__e == "err arity"
 
--- deconPrefix_z__n0: ...p, z = 0 \n z
+-- deconPrefix_z__n0: p..., z = 0 \n z
 def case_deconPrefix_z__n0 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 0)]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__n0 == "ok raw=0 n=1"
 
--- deconPrefix_z__n1: ...p, z = 1 \n z
+-- deconPrefix_z__n1: p..., z = 1 \n z
 def case_deconPrefix_z__n1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.num 1)]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__n1 == "ok raw=1 n=1"
 
--- deconPrefix_z__p1: ...p, z = (1) \n z
+-- deconPrefix_z__p1: p..., z = (1) \n z
 def case_deconPrefix_z__p1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p1 == "ok raw=1 n=1"
 
--- deconPrefix_z__p12: ...p, z = (1, 2) \n z
+-- deconPrefix_z__p12: p..., z = (1, 2) \n z
 def case_deconPrefix_z__p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p12 == "ok raw=2 n=1"
 
--- deconPrefix_z__p123: ...p, z = (1, 2, 3) \n z
+-- deconPrefix_z__p123: p..., z = (1, 2, 3) \n z
 def case_deconPrefix_z__p123 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p123 == "ok raw=3 n=1"
 
--- deconPrefix_z__pee: ...p, z = ((), ()) \n z
+-- deconPrefix_z__pee: p..., z = ((), ()) \n z
 def case_deconPrefix_z__pee : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__pee == "ok raw=S[] n=1"
 
--- deconPrefix_z__pe1: ...p, z = ((), 1) \n z
+-- deconPrefix_z__pe1: p..., z = ((), 1) \n z
 def case_deconPrefix_z__pe1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__pe1 == "ok raw=1 n=1"
 
--- deconPrefix_z__p1e: ...p, z = (1, ()) \n z
+-- deconPrefix_z__p1e: p..., z = (1, ()) \n z
 def case_deconPrefix_z__p1e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p1e == "ok raw=S[] n=1"
 
--- deconPrefix_z__p12_3: ...p, z = ((1, 2), 3) \n z
+-- deconPrefix_z__p12_3: p..., z = ((1, 2), 3) \n z
 def case_deconPrefix_z__p12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p12_3 == "ok raw=3 n=1"
 
--- deconPrefix_z__p12_34: ...p, z = ((1, 2), (3, 4)) \n z
+-- deconPrefix_z__p12_34: p..., z = ((1, 2), (3, 4)) \n z
 def case_deconPrefix_z__p12_34 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p12_34 == "ok raw=S[3, 4] n=1"
 
--- deconPrefix_z__pe_12: ...p, z = ((), (1, 2)) \n z
+-- deconPrefix_z__pe_12: p..., z = ((), (1, 2)) \n z
 def case_deconPrefix_z__pe_12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__pe_12 == "ok raw=S[1, 2] n=1"
 
--- deconPrefix_z__ppe1_2: ...p, z = (((), 1), 2) \n z
+-- deconPrefix_z__ppe1_2: p..., z = (((), 1), 2) \n z
 def case_deconPrefix_z__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__ppe1_2 == "ok raw=2 n=1"
 
--- deconPrefix_z__p12_e: ...p, z = ((1, 2), ()) \n z
+-- deconPrefix_z__p12_e: p..., z = ((1, 2), ()) \n z
 def case_deconPrefix_z__p12_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p12_e == "ok raw=S[] n=1"
 
--- deconPrefix_z__ppe: ...p, z = (()) \n z
+-- deconPrefix_z__ppe: p..., z = (()) \n z
 def case_deconPrefix_z__ppe : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__ppe == "err arity"
 
--- deconPrefix_z__pp1: ...p, z = ((1)) \n z
+-- deconPrefix_z__pp1: p..., z = ((1)) \n z
 def case_deconPrefix_z__pp1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__pp1 == "ok raw=1 n=1"
 
--- deconPrefix_z__ppp12: ...p, z = (((1, 2))) \n z
+-- deconPrefix_z__ppp12: p..., z = (((1, 2))) \n z
 def case_deconPrefix_z__ppp12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__ppp12 == "ok raw=2 n=1"
 
--- deconPrefix_z__le: ...p, z = [] \n z
+-- deconPrefix_z__le: p..., z = [] \n z
 def case_deconPrefix_z__le : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__le == "err arity"
 
--- deconPrefix_z__l7: ...p, z = [7] \n z
+-- deconPrefix_z__l7: p..., z = [7] \n z
 def case_deconPrefix_z__l7 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 7)])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__l7 == "ok raw=7 n=1"
 
--- deconPrefix_z__l12: ...p, z = [1, 2] \n z
+-- deconPrefix_z__l12: p..., z = [1, 2] \n z
 def case_deconPrefix_z__l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__l12 == "ok raw=2 n=1"
 
--- deconPrefix_z__l12_3: ...p, z = [[1, 2], 3] \n z
+-- deconPrefix_z__l12_3: p..., z = [[1, 2], 3] \n z
 def case_deconPrefix_z__l12_3 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__l12_3 == "ok raw=3 n=1"
 
--- deconPrefix_z__lle: ...p, z = [[]] \n z
+-- deconPrefix_z__lle: p..., z = [[]] \n z
 def case_deconPrefix_z__lle : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__lle == "ok raw=L[] n=1"
 
--- deconPrefix_z__l_e: ...p, z = [()] \n z
+-- deconPrefix_z__l_e: p..., z = [()] \n z
 def case_deconPrefix_z__l_e : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__l_e == "ok raw=S[] n=1"
 
--- deconPrefix_z__l_p12: ...p, z = [(1, 2)] \n z
+-- deconPrefix_z__l_p12: p..., z = [(1, 2)] \n z
 def case_deconPrefix_z__l_p12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__l_p12 == "ok raw=S[1, 2] n=1"
 
--- deconPrefix_z__p_l12: ...p, z = ([1, 2], 3) \n z
+-- deconPrefix_z__p_l12: p..., z = ([1, 2], 3) \n z
 def case_deconPrefix_z__p_l12 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__p_l12 == "ok raw=3 n=1"
 
--- deconPrefix_z__pl1: ...p, z = ([1]) \n z
+-- deconPrefix_z__pl1: p..., z = ([1]) \n z
 def case_deconPrefix_z__pl1 : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "p", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__pl1 == "ok raw=1 n=1"
@@ -3083,262 +3083,262 @@ def case_seqWrapSolo__pl1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_seqWrapSolo__pl1 == "ok raw=L[1] n=1"
 
--- spreadRoot__e: ()...
+-- spreadRoot__e: spread(())
 def case_spreadRoot__e : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.emptySequence 0)])
 #guard obs case_spreadRoot__e == "ok raw=S[] n=0"
 
--- spreadRoot__n0: 0...
+-- spreadRoot__n0: spread(0)
 def case_spreadRoot__n0 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.num 0)])
 #guard obs case_spreadRoot__n0 == "ok raw=0 n=1"
 
--- spreadRoot__n1: 1...
+-- spreadRoot__n1: spread(1)
 def case_spreadRoot__n1 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.num 1)])
 #guard obs case_spreadRoot__n1 == "ok raw=1 n=1"
 
--- spreadRoot__p1: (1)...
+-- spreadRoot__p1: spread((1))
 def case_spreadRoot__p1 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])
 #guard obs case_spreadRoot__p1 == "ok raw=1 n=1"
 
--- spreadRoot__p12: (1, 2)...
+-- spreadRoot__p12: spread((1, 2))
 def case_spreadRoot__p12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])
 #guard obs case_spreadRoot__p12 == "ok raw=S[1, 2] n=2"
 
--- spreadRoot__p123: (1, 2, 3)...
+-- spreadRoot__p123: spread((1, 2, 3))
 def case_spreadRoot__p123 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])
 #guard obs case_spreadRoot__p123 == "ok raw=S[1, 2, 3] n=3"
 
--- spreadRoot__pee: ((), ())...
+-- spreadRoot__pee: spread(((), ()))
 def case_spreadRoot__pee : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])
 #guard obs case_spreadRoot__pee == "ok raw=S[S[], S[]] n=2"
 
--- spreadRoot__pe1: ((), 1)...
+-- spreadRoot__pe1: spread(((), 1))
 def case_spreadRoot__pe1 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])
 #guard obs case_spreadRoot__pe1 == "ok raw=S[S[], 1] n=2"
 
--- spreadRoot__p1e: (1, ())...
+-- spreadRoot__p1e: spread((1, ()))
 def case_spreadRoot__p1e : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])
 #guard obs case_spreadRoot__p1e == "ok raw=S[1, S[]] n=2"
 
--- spreadRoot__p12_3: ((1, 2), 3)...
+-- spreadRoot__p12_3: spread(((1, 2), 3))
 def case_spreadRoot__p12_3 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])
 #guard obs case_spreadRoot__p12_3 == "ok raw=S[S[1, 2], 3] n=2"
 
--- spreadRoot__p12_34: ((1, 2), (3, 4))...
+-- spreadRoot__p12_34: spread(((1, 2), (3, 4)))
 def case_spreadRoot__p12_34 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])
 #guard obs case_spreadRoot__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=2"
 
--- spreadRoot__pe_12: ((), (1, 2))...
+-- spreadRoot__pe_12: spread(((), (1, 2)))
 def case_spreadRoot__pe_12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])
 #guard obs case_spreadRoot__pe_12 == "ok raw=S[S[], S[1, 2]] n=2"
 
--- spreadRoot__ppe1_2: (((), 1), 2)...
+-- spreadRoot__ppe1_2: spread((((), 1), 2))
 def case_spreadRoot__ppe1_2 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])
 #guard obs case_spreadRoot__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=2"
 
--- spreadRoot__p12_e: ((1, 2), ())...
+-- spreadRoot__p12_e: spread(((1, 2), ()))
 def case_spreadRoot__p12_e : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])
 #guard obs case_spreadRoot__p12_e == "ok raw=S[S[1, 2], S[]] n=2"
 
--- spreadRoot__ppe: (())...
+-- spreadRoot__ppe: spread((()))
 def case_spreadRoot__ppe : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])
 #guard obs case_spreadRoot__ppe == "ok raw=S[] n=0"
 
--- spreadRoot__pp1: ((1))...
+-- spreadRoot__pp1: spread(((1)))
 def case_spreadRoot__pp1 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])
 #guard obs case_spreadRoot__pp1 == "ok raw=1 n=1"
 
--- spreadRoot__ppp12: (((1, 2)))...
+-- spreadRoot__ppp12: spread((((1, 2))))
 def case_spreadRoot__ppp12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])
 #guard obs case_spreadRoot__ppp12 == "ok raw=S[1, 2] n=2"
 
--- spreadRoot__le: []...
+-- spreadRoot__le: spread([])
 def case_spreadRoot__le : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [])])
 #guard obs case_spreadRoot__le == "ok raw=S[] n=0"
 
--- spreadRoot__l7: [7]...
+-- spreadRoot__l7: spread([7])
 def case_spreadRoot__l7 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])
 #guard obs case_spreadRoot__l7 == "ok raw=7 n=1"
 
--- spreadRoot__l12: [1, 2]...
+-- spreadRoot__l12: spread([1, 2])
 def case_spreadRoot__l12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])
 #guard obs case_spreadRoot__l12 == "ok raw=S[1, 2] n=2"
 
--- spreadRoot__l12_3: [[1, 2], 3]...
+-- spreadRoot__l12_3: spread([[1, 2], 3])
 def case_spreadRoot__l12_3 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])
 #guard obs case_spreadRoot__l12_3 == "ok raw=S[L[1, 2], 3] n=2"
 
--- spreadRoot__lle: [[]]...
+-- spreadRoot__lle: spread([[]])
 def case_spreadRoot__lle : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])
 #guard obs case_spreadRoot__lle == "ok raw=L[] n=1"
 
--- spreadRoot__l_e: [()]...
+-- spreadRoot__l_e: spread([()])
 def case_spreadRoot__l_e : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])
 #guard obs case_spreadRoot__l_e == "ok raw=S[] n=1"
 
--- spreadRoot__l_p12: [(1, 2)]...
+-- spreadRoot__l_p12: spread([(1, 2)])
 def case_spreadRoot__l_p12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_spreadRoot__l_p12 == "ok raw=S[1, 2] n=1"
 
--- spreadRoot__p_l12: ([1, 2], 3)...
+-- spreadRoot__p_l12: spread(([1, 2], 3))
 def case_spreadRoot__p_l12 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])
 #guard obs case_spreadRoot__p_l12 == "ok raw=S[L[1, 2], 3] n=2"
 
--- spreadRoot__pl1: ([1])...
+-- spreadRoot__pl1: spread(([1]))
 def case_spreadRoot__pl1 : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])
 #guard obs case_spreadRoot__pl1 == "ok raw=1 n=1"
 
--- spreadInSeq__e: (()..., 99)
+-- spreadInSeq__e: (spread(()), 99)
 def case_spreadInSeq__e : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.emptySequence 0), .num 99])])
 #guard obs case_spreadInSeq__e == "ok raw=99 n=1"
 
--- spreadInSeq__n0: (0..., 99)
+-- spreadInSeq__n0: (spread(0), 99)
 def case_spreadInSeq__n0 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.num 0), .num 99])])
 #guard obs case_spreadInSeq__n0 == "ok raw=S[0, 99] n=1"
 
--- spreadInSeq__n1: (1..., 99)
+-- spreadInSeq__n1: (spread(1), 99)
 def case_spreadInSeq__n1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.num 1), .num 99])])
 #guard obs case_spreadInSeq__n1 == "ok raw=S[1, 99] n=1"
 
--- spreadInSeq__p1: ((1)..., 99)
+-- spreadInSeq__p1: (spread((1)), 99)
 def case_spreadInSeq__p1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)])), .num 99])])
 #guard obs case_spreadInSeq__p1 == "ok raw=S[1, 99] n=1"
 
--- spreadInSeq__p12: ((1, 2)..., 99)
+-- spreadInSeq__p12: (spread((1, 2)), 99)
 def case_spreadInSeq__p12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)])), .num 99])])
 #guard obs case_spreadInSeq__p12 == "ok raw=S[1, 2, 99] n=1"
 
--- spreadInSeq__p123: ((1, 2, 3)..., 99)
+-- spreadInSeq__p123: (spread((1, 2, 3)), 99)
 def case_spreadInSeq__p123 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 99])])
 #guard obs case_spreadInSeq__p123 == "ok raw=S[1, 2, 3, 99] n=1"
 
--- spreadInSeq__pee: (((), ())..., 99)
+-- spreadInSeq__pee: (spread(((), ())), 99)
 def case_spreadInSeq__pee : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 99])])
 #guard obs case_spreadInSeq__pee == "ok raw=S[S[], S[], 99] n=1"
 
--- spreadInSeq__pe1: (((), 1)..., 99)
+-- spreadInSeq__pe1: (spread(((), 1)), 99)
 def case_spreadInSeq__pe1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 99])])
 #guard obs case_spreadInSeq__pe1 == "ok raw=S[S[], 1, 99] n=1"
 
--- spreadInSeq__p1e: ((1, ())..., 99)
+-- spreadInSeq__p1e: (spread((1, ())), 99)
 def case_spreadInSeq__p1e : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 99])])
 #guard obs case_spreadInSeq__p1e == "ok raw=S[1, S[], 99] n=1"
 
--- spreadInSeq__p12_3: (((1, 2), 3)..., 99)
+-- spreadInSeq__p12_3: (spread(((1, 2), 3)), 99)
 def case_spreadInSeq__p12_3 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 99])])
 #guard obs case_spreadInSeq__p12_3 == "ok raw=S[S[1, 2], 3, 99] n=1"
 
--- spreadInSeq__p12_34: (((1, 2), (3, 4))..., 99)
+-- spreadInSeq__p12_34: (spread(((1, 2), (3, 4))), 99)
 def case_spreadInSeq__p12_34 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 99])])
 #guard obs case_spreadInSeq__p12_34 == "ok raw=S[S[1, 2], S[3, 4], 99] n=1"
 
--- spreadInSeq__pe_12: (((), (1, 2))..., 99)
+-- spreadInSeq__pe_12: (spread(((), (1, 2))), 99)
 def case_spreadInSeq__pe_12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 99])])
 #guard obs case_spreadInSeq__pe_12 == "ok raw=S[S[], S[1, 2], 99] n=1"
 
--- spreadInSeq__ppe1_2: ((((), 1), 2)..., 99)
+-- spreadInSeq__ppe1_2: (spread((((), 1), 2)), 99)
 def case_spreadInSeq__ppe1_2 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 99])])
 #guard obs case_spreadInSeq__ppe1_2 == "ok raw=S[S[S[], 1], 2, 99] n=1"
 
--- spreadInSeq__p12_e: (((1, 2), ())..., 99)
+-- spreadInSeq__p12_e: (spread(((1, 2), ())), 99)
 def case_spreadInSeq__p12_e : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 99])])
 #guard obs case_spreadInSeq__p12_e == "ok raw=S[S[1, 2], S[], 99] n=1"
 
--- spreadInSeq__ppe: ((())..., 99)
+-- spreadInSeq__ppe: (spread((())), 99)
 def case_spreadInSeq__ppe : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)])), .num 99])])
 #guard obs case_spreadInSeq__ppe == "ok raw=99 n=1"
 
--- spreadInSeq__pp1: (((1))..., 99)
+-- spreadInSeq__pp1: (spread(((1))), 99)
 def case_spreadInSeq__pp1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 99])])
 #guard obs case_spreadInSeq__pp1 == "ok raw=S[1, 99] n=1"
 
--- spreadInSeq__ppp12: ((((1, 2)))..., 99)
+-- spreadInSeq__ppp12: (spread((((1, 2)))), 99)
 def case_spreadInSeq__ppp12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 99])])
 #guard obs case_spreadInSeq__ppp12 == "ok raw=S[1, 2, 99] n=1"
 
--- spreadInSeq__le: ([]..., 99)
+-- spreadInSeq__le: (spread([]), 99)
 def case_spreadInSeq__le : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral []), .num 99])])
 #guard obs case_spreadInSeq__le == "ok raw=99 n=1"
 
--- spreadInSeq__l7: ([7]..., 99)
+-- spreadInSeq__l7: (spread([7]), 99)
 def case_spreadInSeq__l7 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)]), .num 99])])
 #guard obs case_spreadInSeq__l7 == "ok raw=S[7, 99] n=1"
 
--- spreadInSeq__l12: ([1, 2]..., 99)
+-- spreadInSeq__l12: (spread([1, 2]), 99)
 def case_spreadInSeq__l12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)]), .num 99])])
 #guard obs case_spreadInSeq__l12 == "ok raw=S[1, 2, 99] n=1"
 
--- spreadInSeq__l12_3: ([[1, 2], 3]..., 99)
+-- spreadInSeq__l12_3: (spread([[1, 2], 3]), 99)
 def case_spreadInSeq__l12_3 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 99])])
 #guard obs case_spreadInSeq__l12_3 == "ok raw=S[L[1, 2], 3, 99] n=1"
 
--- spreadInSeq__lle: ([[]]..., 99)
+-- spreadInSeq__lle: (spread([[]]), 99)
 def case_spreadInSeq__lle : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])]), .num 99])])
 #guard obs case_spreadInSeq__lle == "ok raw=S[L[], 99] n=1"
 
--- spreadInSeq__l_e: ([()]..., 99)
+-- spreadInSeq__l_e: (spread([()]), 99)
 def case_spreadInSeq__l_e : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)]), .num 99])])
 #guard obs case_spreadInSeq__l_e == "ok raw=S[S[], 99] n=1"
 
--- spreadInSeq__l_p12: ([(1, 2)]..., 99)
+-- spreadInSeq__l_p12: (spread([(1, 2)]), 99)
 def case_spreadInSeq__l_p12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 99])])
 #guard obs case_spreadInSeq__l_p12 == "ok raw=S[S[1, 2], 99] n=1"
 
--- spreadInSeq__p_l12: (([1, 2], 3)..., 99)
+-- spreadInSeq__p_l12: (spread(([1, 2], 3)), 99)
 def case_spreadInSeq__p_l12 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 99])])
 #guard obs case_spreadInSeq__p_l12 == "ok raw=S[L[1, 2], 3, 99] n=1"
 
--- spreadInSeq__pl1: (([1])..., 99)
+-- spreadInSeq__pl1: (spread(([1])), 99)
 def case_spreadInSeq__pl1 : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 99])])
 #guard obs case_spreadInSeq__pl1 == "ok raw=S[1, 99] n=1"
@@ -3473,132 +3473,132 @@ def case_count__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_count__pl1 == "ok raw=1 n=1"
 
--- countSpread__e: count(()...)
+-- countSpread__e: count(spread(()))
 def case_countSpread__e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_countSpread__e == "err arity"
 
--- countSpread__n0: count(0...)
+-- countSpread__n0: count(spread(0))
 def case_countSpread__n0 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.num 0)])])
 #guard obs case_countSpread__n0 == "ok raw=1 n=1"
 
--- countSpread__n1: count(1...)
+-- countSpread__n1: count(spread(1))
 def case_countSpread__n1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.num 1)])])
 #guard obs case_countSpread__n1 == "ok raw=1 n=1"
 
--- countSpread__p1: count((1)...)
+-- countSpread__p1: count(spread((1)))
 def case_countSpread__p1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1)]))])])
 #guard obs case_countSpread__p1 == "ok raw=1 n=1"
 
--- countSpread__p12: count((1, 2)...)
+-- countSpread__p12: count(spread((1, 2)))
 def case_countSpread__p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)]))])])
 #guard obs case_countSpread__p12 == "err arity"
 
--- countSpread__p123: count((1, 2, 3)...)
+-- countSpread__p123: count(spread((1, 2, 3)))
 def case_countSpread__p123 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])])
 #guard obs case_countSpread__p123 == "err arity"
 
--- countSpread__pee: count(((), ())...)
+-- countSpread__pee: count(spread(((), ())))
 def case_countSpread__pee : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_countSpread__pee == "err arity"
 
--- countSpread__pe1: count(((), 1)...)
+-- countSpread__pe1: count(spread(((), 1)))
 def case_countSpread__pe1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])])
 #guard obs case_countSpread__pe1 == "err arity"
 
--- countSpread__p1e: count((1, ())...)
+-- countSpread__p1e: count(spread((1, ())))
 def case_countSpread__p1e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])])
 #guard obs case_countSpread__p1e == "err arity"
 
--- countSpread__p12_3: count(((1, 2), 3)...)
+-- countSpread__p12_3: count(spread(((1, 2), 3)))
 def case_countSpread__p12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])])
 #guard obs case_countSpread__p12_3 == "err arity"
 
--- countSpread__p12_34: count(((1, 2), (3, 4))...)
+-- countSpread__p12_34: count(spread(((1, 2), (3, 4))))
 def case_countSpread__p12_34 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])])
 #guard obs case_countSpread__p12_34 == "err arity"
 
--- countSpread__pe_12: count(((), (1, 2))...)
+-- countSpread__pe_12: count(spread(((), (1, 2))))
 def case_countSpread__pe_12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
 #guard obs case_countSpread__pe_12 == "err arity"
 
--- countSpread__ppe1_2: count((((), 1), 2)...)
+-- countSpread__ppe1_2: count(spread((((), 1), 2)))
 def case_countSpread__ppe1_2 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])])
 #guard obs case_countSpread__ppe1_2 == "err arity"
 
--- countSpread__p12_e: count(((1, 2), ())...)
+-- countSpread__p12_e: count(spread(((1, 2), ())))
 def case_countSpread__p12_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])])
 #guard obs case_countSpread__p12_e == "err arity"
 
--- countSpread__ppe: count((())...)
+-- countSpread__ppe: count(spread((())))
 def case_countSpread__ppe : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_countSpread__ppe == "err arity"
 
--- countSpread__pp1: count(((1))...)
+-- countSpread__pp1: count(spread(((1))))
 def case_countSpread__pp1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])])
 #guard obs case_countSpread__pp1 == "ok raw=1 n=1"
 
--- countSpread__ppp12: count((((1, 2)))...)
+-- countSpread__ppp12: count(spread((((1, 2)))))
 def case_countSpread__ppp12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])])
 #guard obs case_countSpread__ppp12 == "err arity"
 
--- countSpread__le: count([]...)
+-- countSpread__le: count(spread([]))
 def case_countSpread__le : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [])])])
 #guard obs case_countSpread__le == "err arity"
 
--- countSpread__l7: count([7]...)
+-- countSpread__l7: count(spread([7]))
 def case_countSpread__l7 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 7)])])])
 #guard obs case_countSpread__l7 == "ok raw=1 n=1"
 
--- countSpread__l12: count([1, 2]...)
+-- countSpread__l12: count(spread([1, 2]))
 def case_countSpread__l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.num 1), (.num 2)])])])
 #guard obs case_countSpread__l12 == "err arity"
 
--- countSpread__l12_3: count([[1, 2], 3]...)
+-- countSpread__l12_3: count(spread([[1, 2], 3]))
 def case_countSpread__l12_3 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])])
 #guard obs case_countSpread__l12_3 == "err arity"
 
--- countSpread__lle: count([[]]...)
+-- countSpread__lle: count(spread([[]]))
 def case_countSpread__lle : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.listLiteral [])])])])
 #guard obs case_countSpread__lle == "ok raw=0 n=1"
 
--- countSpread__l_e: count([()]...)
+-- countSpread__l_e: count(spread([()]))
 def case_countSpread__l_e : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.emptySequence 0)])])])
 #guard obs case_countSpread__l_e == "ok raw=0 n=1"
 
--- countSpread__l_p12: count([(1, 2)]...)
+-- countSpread__l_p12: count(spread([(1, 2)]))
 def case_countSpread__l_p12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])])
 #guard obs case_countSpread__l_p12 == "ok raw=2 n=1"
 
--- countSpread__p_l12: count(([1, 2], 3)...)
+-- countSpread__p_l12: count(spread(([1, 2], 3)))
 def case_countSpread__p_l12 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
 #guard obs case_countSpread__p_l12 == "err arity"
 
--- countSpread__pl1: count(([1])...)
+-- countSpread__pl1: count(spread(([1])))
 def case_countSpread__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])])
 #guard obs case_countSpread__pl1 == "ok raw=1 n=1"
@@ -6463,132 +6463,132 @@ def case_takeCount__pl1 : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
 #guard obs case_takeCount__pl1 == "ok raw=1 n=1"
 
--- takeVariadic__e: G(...a) = a \n G(take((), 1))
+-- takeVariadic__e: G(a...) = a \n G(take((), 1))
 def case_takeVariadic__e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.emptySequence 0), .num 1])])])
 #guard obs case_takeVariadic__e == "ok raw=L[L[]] n=1"
 
--- takeVariadic__n0: G(...a) = a \n G(take(0, 1))
+-- takeVariadic__n0: G(a...) = a \n G(take(0, 1))
 def case_takeVariadic__n0 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 0), .num 1])])])
 #guard obs case_takeVariadic__n0 == "ok raw=L[L[0]] n=1"
 
--- takeVariadic__n1: G(...a) = a \n G(take(1, 1))
+-- takeVariadic__n1: G(a...) = a \n G(take(1, 1))
 def case_takeVariadic__n1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.num 1), .num 1])])])
 #guard obs case_takeVariadic__n1 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__p1: G(...a) = a \n G(take((1), 1))
+-- takeVariadic__p1: G(a...) = a \n G(take((1), 1))
 def case_takeVariadic__p1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1)])), .num 1])])])
 #guard obs case_takeVariadic__p1 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__p12: G(...a) = a \n G(take((1, 2), 1))
+-- takeVariadic__p12: G(a...) = a \n G(take((1, 2), 1))
 def case_takeVariadic__p12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), .num 1])])])
 #guard obs case_takeVariadic__p12 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__p123: G(...a) = a \n G(take((1, 2, 3), 1))
+-- takeVariadic__p123: G(a...) = a \n G(take((1, 2, 3), 1))
 def case_takeVariadic__p123 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])), .num 1])])])
 #guard obs case_takeVariadic__p123 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__pee: G(...a) = a \n G(take(((), ()), 1))
+-- takeVariadic__pee: G(a...) = a \n G(take(((), ()), 1))
 def case_takeVariadic__pee : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])), .num 1])])])
 #guard obs case_takeVariadic__pee == "ok raw=L[L[S[]]] n=1"
 
--- takeVariadic__pe1: G(...a) = a \n G(take(((), 1), 1))
+-- takeVariadic__pe1: G(a...) = a \n G(take(((), 1), 1))
 def case_takeVariadic__pe1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), .num 1])])])
 #guard obs case_takeVariadic__pe1 == "ok raw=L[L[S[]]] n=1"
 
--- takeVariadic__p1e: G(...a) = a \n G(take((1, ()), 1))
+-- takeVariadic__p1e: G(a...) = a \n G(take((1, ()), 1))
 def case_takeVariadic__p1e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)])), .num 1])])])
 #guard obs case_takeVariadic__p1e == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__p12_3: G(...a) = a \n G(take(((1, 2), 3), 1))
+-- takeVariadic__p12_3: G(a...) = a \n G(take(((1, 2), 3), 1))
 def case_takeVariadic__p12_3 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])), .num 1])])])
 #guard obs case_takeVariadic__p12_3 == "ok raw=L[L[S[1, 2]]] n=1"
 
--- takeVariadic__p12_34: G(...a) = a \n G(take(((1, 2), (3, 4)), 1))
+-- takeVariadic__p12_34: G(a...) = a \n G(take(((1, 2), (3, 4)), 1))
 def case_takeVariadic__p12_34 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])), .num 1])])])
 #guard obs case_takeVariadic__p12_34 == "ok raw=L[L[S[1, 2]]] n=1"
 
--- takeVariadic__pe_12: G(...a) = a \n G(take(((), (1, 2)), 1))
+-- takeVariadic__pe_12: G(a...) = a \n G(take(((), (1, 2)), 1))
 def case_takeVariadic__pe_12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])), .num 1])])])
 #guard obs case_takeVariadic__pe_12 == "ok raw=L[L[S[]]] n=1"
 
--- takeVariadic__ppe1_2: G(...a) = a \n G(take((((), 1), 2), 1))
+-- takeVariadic__ppe1_2: G(a...) = a \n G(take((((), 1), 2), 1))
 def case_takeVariadic__ppe1_2 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])), .num 1])])])
 #guard obs case_takeVariadic__ppe1_2 == "ok raw=L[L[S[S[], 1]]] n=1"
 
--- takeVariadic__p12_e: G(...a) = a \n G(take(((1, 2), ()), 1))
+-- takeVariadic__p12_e: G(a...) = a \n G(take(((1, 2), ()), 1))
 def case_takeVariadic__p12_e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])), .num 1])])])
 #guard obs case_takeVariadic__p12_e == "ok raw=L[L[S[1, 2]]] n=1"
 
--- takeVariadic__ppe: G(...a) = a \n G(take((()), 1))
+-- takeVariadic__ppe: G(a...) = a \n G(take((()), 1))
 def case_takeVariadic__ppe : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)])), .num 1])])])
 #guard obs case_takeVariadic__ppe == "ok raw=L[L[]] n=1"
 
--- takeVariadic__pp1: G(...a) = a \n G(take(((1)), 1))
+-- takeVariadic__pp1: G(a...) = a \n G(take(((1)), 1))
 def case_takeVariadic__pp1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])), .num 1])])])
 #guard obs case_takeVariadic__pp1 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__ppp12: G(...a) = a \n G(take((((1, 2))), 1))
+-- takeVariadic__ppp12: G(a...) = a \n G(take((((1, 2))), 1))
 def case_takeVariadic__ppp12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])), .num 1])])])
 #guard obs case_takeVariadic__ppp12 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__le: G(...a) = a \n G(take([], 1))
+-- takeVariadic__le: G(a...) = a \n G(take([], 1))
 def case_takeVariadic__le : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral []), .num 1])])])
 #guard obs case_takeVariadic__le == "ok raw=L[L[]] n=1"
 
--- takeVariadic__l7: G(...a) = a \n G(take([7], 1))
+-- takeVariadic__l7: G(a...) = a \n G(take([7], 1))
 def case_takeVariadic__l7 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 7)]), .num 1])])])
 #guard obs case_takeVariadic__l7 == "ok raw=L[L[7]] n=1"
 
--- takeVariadic__l12: G(...a) = a \n G(take([1, 2], 1))
+-- takeVariadic__l12: G(a...) = a \n G(take([1, 2], 1))
 def case_takeVariadic__l12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), .num 1])])])
 #guard obs case_takeVariadic__l12 == "ok raw=L[L[1]] n=1"
 
--- takeVariadic__l12_3: G(...a) = a \n G(take([[1, 2], 3], 1))
+-- takeVariadic__l12_3: G(a...) = a \n G(take([[1, 2], 3], 1))
 def case_takeVariadic__l12_3 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]), .num 1])])])
 #guard obs case_takeVariadic__l12_3 == "ok raw=L[L[L[1, 2]]] n=1"
 
--- takeVariadic__lle: G(...a) = a \n G(take([[]], 1))
+-- takeVariadic__lle: G(a...) = a \n G(take([[]], 1))
 def case_takeVariadic__lle : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.listLiteral [])]), .num 1])])])
 #guard obs case_takeVariadic__lle == "ok raw=L[L[L[]]] n=1"
 
--- takeVariadic__l_e: G(...a) = a \n G(take([()], 1))
+-- takeVariadic__l_e: G(a...) = a \n G(take([()], 1))
 def case_takeVariadic__l_e : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.emptySequence 0)]), .num 1])])])
 #guard obs case_takeVariadic__l_e == "ok raw=L[L[S[]]] n=1"
 
--- takeVariadic__l_p12: G(...a) = a \n G(take([(1, 2)], 1))
+-- takeVariadic__l_p12: G(a...) = a \n G(take([(1, 2)], 1))
 def case_takeVariadic__l_p12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]), .num 1])])])
 #guard obs case_takeVariadic__l_p12 == "ok raw=L[L[S[1, 2]]] n=1"
 
--- takeVariadic__p_l12: G(...a) = a \n G(take(([1, 2], 3), 1))
+-- takeVariadic__p_l12: G(a...) = a \n G(take(([1, 2], 3), 1))
 def case_takeVariadic__p_l12 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])), .num 1])])])
 #guard obs case_takeVariadic__p_l12 == "ok raw=L[L[L[1, 2]]] n=1"
 
--- takeVariadic__pl1: G(...a) = a \n G(take(([1]), 1))
+-- takeVariadic__pl1: G(a...) = a \n G(take(([1]), 1))
 def case_takeVariadic__pl1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
 #guard obs case_takeVariadic__pl1 == "ok raw=L[L[1]] n=1"
@@ -6628,32 +6628,32 @@ def case_special__multiPropEq : Expr :=
   .block (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [.binary .eq (.resolve "P") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))])
 #guard obs case_special__multiPropEq == "ok raw=1 n=1"
 
--- special__multiVariadic: F(...a) = a \n F(1, 2, 3)
+-- special__multiVariadic: F(a...) = a \n F(1, 2, 3)
 def case_special__multiVariadic : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
 #guard obs case_special__multiVariadic == "ok raw=L[1, 2, 3] n=1"
 
--- special__multiVariadicCount: F(...a) = a \n count(F(1, 2, 3))
+-- special__multiVariadicCount: F(a...) = a \n count(F(1, 2, 3))
 def case_special__multiVariadicCount : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "count") (alg [] [] [] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])])
 #guard obs case_special__multiVariadicCount == "ok raw=3 n=1"
 
--- special__variadicEmptyCall: F(...a) = a \n F()
+-- special__variadicEmptyCall: F(a...) = a \n F()
 def case_special__variadicEmptyCall : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [])])
 #guard obs case_special__variadicEmptyCall == "ok raw=L[] n=1"
 
--- special__variadicFwdSum: F(...a) = sum(a) \n F(1, 2, 3)
+-- special__variadicFwdSum: F(a...) = sum(a) \n F(1, 2, 3)
 def case_special__variadicFwdSum : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.call (.resolve "sum") (alg [] [] [] [.param "a"])])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
 #guard obs case_special__variadicFwdSum == "ok raw=6 n=1"
 
--- special__variadicFwdSpread: F(...a) = G(a...) \n G(...b) = b \n F(1, 2, 3)
+-- special__variadicFwdSpread: F(a...) = G(a.spread) \n G(b...) = b \n F(1, 2, 3)
 def case_special__variadicFwdSpread : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.call (.resolve "G") (alg [] [] [] [.sequenceSpread (.param "a")])]), privateProp "G" (algWithParameters [{ name := "b", kind := .variadic }] [] [] [.param "b"])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
 #guard obs case_special__variadicFwdSpread == "ok raw=L[1, 2, 3] n=1"
 
--- special__variadicJoin: F(...a) = a \n F((1, 2)..., (3, 4)...)
+-- special__variadicJoin: F(a...) = a \n F((1, 2).spread, (3, 4).spread)
 def case_special__variadicJoin : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [.num 1, .num 2])), .sequenceSpread (.block (alg [] [] [] [.num 3, .num 4]))])])
 #guard obs case_special__variadicJoin == "ok raw=L[1, 2, 3, 4] n=1"
@@ -6798,7 +6798,7 @@ def case_special__rootEmptySlots : Expr :=
   .block (alg [] [] [] [.emptySequence 0, .num 99])
 #guard obs case_special__rootEmptySlots == "ok raw=S[S[], 99] n=2"
 
--- special__seqOfSpreadEmpty: ((()...), 1)
+-- special__seqOfSpreadEmpty: ((().spread), 1)
 def case_special__seqOfSpreadEmpty : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.emptySequence 0)]), .num 1])])
 #guard obs case_special__seqOfSpreadEmpty == "ok raw=S[S[], 1] n=1"
@@ -6848,7 +6848,7 @@ def case_special__writtenSlotArity : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [.binary .add (.param "a") (.param "b")])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))])])
 #guard obs case_special__writtenSlotArity == "err arity"
 
--- special__mixedSingleGrouped: F(x, ...y, z) = y \n A = (1, 2, 3, 4) \n F(A)
+-- special__mixedSingleGrouped: F(x, y..., z) = y \n A = (1, 2, 3, 4) \n F(A)
 def case_special__mixedSingleGrouped : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "y", kind := .variadic }, { name := "z" }] [] [] [.param "y"]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]))])] [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])
 #guard obs case_special__mixedSingleGrouped == "err arity"
@@ -6858,32 +6858,32 @@ def case_special__sumEmpty : Expr :=
   .block (alg [] [] [] [.call (.resolve "sum") (alg [] [] [] [.emptySequence 0])])
 #guard obs case_special__sumEmpty == "ok raw=0 n=1"
 
--- special__spreadWithSiblingSeqLiteral: x = (1, 2) \n (x..., 99)
+-- special__spreadWithSiblingSeqLiteral: x = (1, 2) \n (x.spread, 99)
 def case_special__spreadWithSiblingSeqLiteral : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.block (alg [] [] [] [.sequenceSpread (.resolve "x"), .num 99])])
 #guard obs case_special__spreadWithSiblingSeqLiteral == "ok raw=S[1, 2, 99] n=1"
 
--- special__spreadEmptyBetween: (1..., (), 2...)
+-- special__spreadEmptyBetween: (1.spread, (), 2.spread)
 def case_special__spreadEmptyBetween : Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.num 1), .emptySequence 0, .sequenceSpread (.num 2)])])
 #guard obs case_special__spreadEmptyBetween == "ok raw=S[1, S[], 2] n=1"
 
--- special__rootSpreadExtra: A = (1, 2) \n A..., 99
+-- special__rootSpreadExtra: A = (1, 2) \n A.spread, 99
 def case_special__rootSpreadExtra : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.sequenceSpread (.resolve "A"), .num 99])
 #guard obs case_special__rootSpreadExtra == "ok raw=S[1, 2, 99] n=3"
 
--- special__spreadOfSpreadSeqLiteral: A = (1, 2) \n ((A..., 99))...
+-- special__spreadOfSpreadSeqLiteral: A = (1, 2) \n ((A.spread, 99)).spread
 def case_special__spreadOfSpreadSeqLiteral : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.resolve "A"), .num 99]))]))])
 #guard obs case_special__spreadOfSpreadSeqLiteral == "ok raw=S[1, 2, 99] n=3"
 
--- special__eqSpreadSeqLiteral: P = (1, 2) \n (P..., 99) == (1, 2, 99)
+-- special__eqSpreadSeqLiteral: P = (1, 2) \n (P.spread, 99) == (1, 2, 99)
 def case_special__eqSpreadSeqLiteral : Expr :=
   .block (alg [] [] [privateProp "P" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.binary .eq (.block (alg [] [] [] [.sequenceSpread (.resolve "P"), .num 99])) (.block (alg [] [] [] [.num 1, .num 2, .num 99]))])
 #guard obs case_special__eqSpreadSeqLiteral == "ok raw=1 n=1"
 
--- special__loopSpreadHistoryFlat: Step((...history), previous) = (history..., previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2):0
+-- special__loopSpreadHistoryFlat: Step((history...), previous) = (history.spread, previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2):0
 def case_special__loopSpreadHistoryFlat : Expr :=
   .block (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .variadic }], .capture { name := "previous" }] [] [] [.block (alg [] [] [] [.sequenceSpread (.param "history"), .binary .add (.param "previous") (.num 1)]), .binary .add (.param "previous") (.num 1)])] [.index (.dotCall (.resolve "Step") "repeat" (some (alg [] [] [] [.num 2, (.block (alg [] [] [] [.num 1, .num 2])), .num 2]))) (.num 0)])
 #guard obs case_special__loopSpreadHistoryFlat == "ok raw=S[1, 2, 3, 4] n=4"
@@ -6918,12 +6918,12 @@ def case_special__strCapture : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.stringLiteral "ab")])] [.resolve "x"])
 #guard obs case_special__strCapture == "ok raw='ab' n=1"
 
--- special__listSpreadOfSeqProp: A = 1, 2, 3 \n [A...]
+-- special__listSpreadOfSeqProp: A = 1, 2, 3 \n [A.spread]
 def case_special__listSpreadOfSeqProp : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.listLiteral [.sequenceSpread (.resolve "A")]])
 #guard obs case_special__listSpreadOfSeqProp == "ok raw=L[1, 2, 3] n=1"
 
--- special__listSpreadBetween: A = 1, 2, 3 \n [0, A..., 4]
+-- special__listSpreadBetween: A = 1, 2, 3 \n [0, A.spread, 4]
 def case_special__listSpreadBetween : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.listLiteral [.num 0, .sequenceSpread (.resolve "A"), .num 4]])
 #guard obs case_special__listSpreadBetween == "ok raw=L[0, 1, 2, 3, 4] n=1"
@@ -6933,22 +6933,22 @@ def case_special__listOfLists : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.resolve "A", .resolve "B"]])
 #guard obs case_special__listOfLists == "ok raw=L[L[1, 2], L[3, 4]] n=1"
 
--- special__listSpreadConcat: A = [1, 2] \n B = [3, 4] \n [A..., B...]
+-- special__listSpreadConcat: A = [1, 2] \n B = [3, 4] \n [A.spread, B.spread]
 def case_special__listSpreadConcat : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")]])
 #guard obs case_special__listSpreadConcat == "ok raw=L[1, 2, 3, 4] n=1"
 
--- special__listMixedSpread: A = [1, 2] \n B = [3, 4] \n [A, B...]
+-- special__listMixedSpread: A = [1, 2] \n B = [3, 4] \n [A, B.spread]
 def case_special__listMixedSpread : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.resolve "A", .sequenceSpread (.resolve "B")]])
 #guard obs case_special__listMixedSpread == "ok raw=L[L[1, 2], 3, 4] n=1"
 
--- special__listEmptyListSpreadBetween: [1, []..., 2]
+-- special__listEmptyListSpreadBetween: [1, [].spread, 2]
 def case_special__listEmptyListSpreadBetween : Expr :=
   .block (alg [] [] [] [.listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2]])
 #guard obs case_special__listEmptyListSpreadBetween == "ok raw=L[1, 2] n=1"
 
--- special__listEmptySeqSpreadBetween: [1, ()..., 2]
+-- special__listEmptySeqSpreadBetween: [1, ().spread, 2]
 def case_special__listEmptySeqSpreadBetween : Expr :=
   .block (alg [] [] [] [.listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]])
 #guard obs case_special__listEmptySeqSpreadBetween == "ok raw=L[1, 2] n=1"
@@ -6973,37 +6973,37 @@ def case_special__listWrapCanonicalizes : Expr :=
   .block (alg [] [] [] [.binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])])
 #guard obs case_special__listWrapCanonicalizes == "ok raw=1 n=1"
 
--- special__listSpreadCaptureRoundTrip: A = [1, 2, 3] \n B = A... \n B == (1, 2, 3)
+-- special__listSpreadCaptureRoundTrip: A = [1, 2, 3] \n B = A.spread \n B == (1, 2, 3)
 def case_special__listSpreadCaptureRoundTrip : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "B" (alg [] [] [] [.sequenceSpread (.resolve "A")])] [.binary .eq (.resolve "B") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))])
 #guard obs case_special__listSpreadCaptureRoundTrip == "ok raw=1 n=1"
 
--- special__listCollectingNotSequenceKind: x, ...rest = [1, 2, 3] \n rest == (2, 3)
+-- special__listCollectingNotSequenceKind: x, rest... = [1, 2, 3] \n rest == (2, 3)
 def case_special__listCollectingNotSequenceKind : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.binary .eq (.resolve "rest") (.block (alg [] [] [] [.num 2, .num 3]))])
 #guard obs case_special__listCollectingNotSequenceKind == "ok raw=0 n=1"
 
--- special__listCollectingCollectsExactList: x, ...rest = [1, 2, 3] \n rest == [2, 3]
+-- special__listCollectingCollectsExactList: x, rest... = [1, 2, 3] \n rest == [2, 3]
 def case_special__listCollectingCollectsExactList : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.binary .eq (.resolve "rest") (.listLiteral [.num 2, .num 3])])
 #guard obs case_special__listCollectingCollectsExactList == "ok raw=1 n=1"
 
--- special__implicitForwardOrdinarySource: Target(...items) = items \n Use(items) = Target \n Use([1, 2])
+-- special__implicitForwardOrdinarySource: Target(items...) = items \n Use(items) = Target \n Use([1, 2])
 def case_special__implicitForwardOrdinarySource : Expr :=
   .block (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [.call (.resolve "Target") (alg [] [] [] [.param "items"])])] [.call (.resolve "Use") (alg [] [] [] [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_special__implicitForwardOrdinarySource == "ok raw=L[L[1, 2]] n=1"
 
--- special__callbackSingleVariadicMap: Collect(...items) = items \n [7].map(Collect)
+-- special__callbackSingleVariadicMap: Collect(items...) = items \n [7].map(Collect)
 def case_special__callbackSingleVariadicMap : Expr :=
   .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"])] [.dotCall (.listLiteral [.num 7]) "map" (some (alg [] [] [] [.resolve "Collect"]))])
 #guard obs case_special__callbackSingleVariadicMap == "ok raw=L[L[7]] n=1"
 
--- special__callbackMixedVariadicRow: F(first, ...middle, last) = middle \n [(1, 2, 3, 4)].map(F)
+-- special__callbackMixedVariadicRow: F(first, middle..., last) = middle \n [(1, 2, 3, 4)].map(F)
 def case_special__callbackMixedVariadicRow : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .variadic }, { name := "last" }] [] [] [.param "middle"])] [.dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]) "map" (some (alg [] [] [] [.resolve "F"]))])
 #guard obs case_special__callbackMixedVariadicRow == "ok raw=L[L[2, 3]] n=1"
 
--- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9)...
+-- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9).spread
 def case_special__listInSeqSpreadKeepsList : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [.sequenceSpread (.block (alg [] [] [] [.resolve "A", .num 9]))])
 #guard obs case_special__listInSeqSpreadKeepsList == "ok raw=S[L[1, 2], 9] n=2"
@@ -7013,12 +7013,12 @@ def case_special__listFixedCallBoundary : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.listLiteral [.num 1, .num 2]), .num 3])])
 #guard obs case_special__listFixedCallBoundary == "ok raw=L[1, 2] n=1"
 
--- special__listVariadicSpreadCall: F(...a) = a \n A = [1, 2] \n F(A..., 9)
+-- special__listVariadicSpreadCall: F(a...) = a \n A = [1, 2] \n F(A.spread, 9)
 def case_special__listVariadicSpreadCall : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A"), .num 9])])
 #guard obs case_special__listVariadicSpreadCall == "ok raw=L[1, 2, 9] n=1"
 
--- special__listLoneCollectingAssignment: ...items = [1, 2, 3]
+-- special__listLoneCollectingAssignment: items... = [1, 2, 3]
 def case_special__listLoneCollectingAssignment : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .variadic }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [])
 #guard obs case_special__listLoneCollectingAssignment == "err missingOutput"
@@ -8463,7 +8463,7 @@ def case_internal__sc_p12_p34 : Expr :=
   .block (alg [] [] [] [.sequenceConstruct (.block (alg [] [] [] [.num 1, .num 2])) (.block (alg [] [] [] [.num 3, .num 4]))])
 #guard obs case_internal__sc_p12_p34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
 
--- internal__sc_spread_3: SequenceConstruct[(1,2)..., 3] splices the spread leaf
+-- internal__sc_spread_3: SequenceConstruct[(1,2).spread, 3] splices the spread leaf
 def case_internal__sc_spread_3 : Expr :=
   .block (alg [] [] [] [.sequenceConstruct (.sequenceSpread (.block (alg [] [] [] [.num 1, .num 2]))) (.num 3)])
 #guard obs case_internal__sc_spread_3 == "ok raw=S[1, 2, 3] n=1"

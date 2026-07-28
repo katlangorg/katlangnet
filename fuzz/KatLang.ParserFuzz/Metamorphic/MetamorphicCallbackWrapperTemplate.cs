@@ -20,7 +20,7 @@ namespace KatLang.ParserFuzz;
 /// positionally sees the same per-invocation values as the direct builtin. Two projections are
 /// therefore always REJECTED, not compared:</para>
 /// <list type="bullet">
-///   <item><b>Variadic</b> — <c>MmWrap(...xs)</c> COLLECTS the supplied slots into an exact list, so
+///   <item><b>Variadic</b> — <c>MmWrap(xs...)</c> COLLECTS the supplied slots into an exact list, so
 ///   the wrapper sees <c>[element]</c> where the builtin sees <c>element</c>. Measured:
 ///   <c>[[1, 2], [3]].map(count)</c> is <c>[2, 1]</c> while the variadic wrapper gives
 ///   <c>[1, 1]</c>. That is correct language behaviour and a false equivalence, not a defect.</item>
@@ -160,7 +160,7 @@ internal static class MetamorphicCallbackWrapperTemplate
                 break;
 
             case MetamorphicWrapperProjection.Variadic:
-                text.Append(Wrap).Append("(...xs) = ").Append(callback.Name).Append("(xs)");
+                text.Append(Wrap).Append("(xs...) = ").Append(callback.Name).Append("(xs)");
                 break;
 
             default:   // ArityMismatched: deliberately the wrong arity for this consumer.

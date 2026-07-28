@@ -58,6 +58,7 @@ public static class SemanticModelBuilder
         private static readonly Algorithm.User PreludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
         private static readonly SymbolDefinition StringIntrinsicSymbol = CreateBuiltinSymbol("string", algorithm: null, isPublic: true);
+        private static readonly SymbolDefinition SpreadIntrinsicSymbol = CreateBuiltinSymbol("spread", algorithm: null, isPublic: true);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
@@ -394,8 +395,9 @@ public static class SemanticModelBuilder
                     break;
                 }
 
-                case Expr.SequenceSpread(var operand):
-                    VisitOpenExpression(operand, scope);
+                case Expr.SequenceSpread spread:
+                    AddSpreadIntrinsicReference(spread);
+                    VisitOpenExpression(spread.Operand, scope);
                     break;
 
                 case Expr.SequenceConstruct(var left, var right):
@@ -463,8 +465,9 @@ public static class SemanticModelBuilder
                     VisitExpr(selector, scope);
                     break;
 
-                case Expr.SequenceSpread(var operand):
-                    VisitExpr(operand, scope);
+                case Expr.SequenceSpread spread:
+                    AddSpreadIntrinsicReference(spread);
+                    VisitExpr(spread.Operand, scope);
                     break;
 
                 case Expr.SequenceConstruct(var left, var right):
@@ -509,6 +512,35 @@ public static class SemanticModelBuilder
                 case Expr.StringLiteral:
                     break;
             }
+        }
+
+        /// <summary>
+        /// Records the source-backed `spread` intrinsic token of a spread
+        /// expression as a Builtin-classified occurrence. Both surface
+        /// spellings lower to the same <see cref="Expr.SequenceSpread"/> node
+        /// and resolve to the one spread intrinsic symbol — never to an
+        /// ordinary property — so the meaning is scope-independent. The
+        /// occurrence kind mirrors the source spelling: the call form
+        /// `spread(operand)` starts at the intrinsic token (a resolve-style
+        /// reference), while the extension-property form `operand.spread`
+        /// records a dot-member reference. Synthetic spreads have no
+        /// intrinsic-name span and produce no occurrence.
+        /// </summary>
+        private void AddSpreadIntrinsicReference(Expr.SequenceSpread spread)
+        {
+            if (spread.IntrinsicNameSpan is not { } nameSpan)
+                return;
+
+            var isCallForm = spread.Span is { } span
+                && span.StartLineNumber == nameSpan.StartLineNumber
+                && span.StartColumn == nameSpan.StartColumn;
+            AddReference(
+                "spread",
+                nameSpan,
+                isCallForm ? OccurrenceKind.ResolveReference : OccurrenceKind.DotMemberReference,
+                IdentifierClassification.Builtin,
+                declaration: null,
+                SpreadIntrinsicSymbol.PropertyInfo);
         }
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)

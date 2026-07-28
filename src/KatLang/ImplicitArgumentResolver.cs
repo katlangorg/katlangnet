@@ -41,7 +41,7 @@ public static class ImplicitArgumentResolver
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, ...y, z = RHS`) is a fully-elaborated
+        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
         // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
         // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
         // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
@@ -246,7 +246,11 @@ public static class ImplicitArgumentResolver
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    ProcessOpenExpr(operand)) { Span = expr.Span };
+                    ProcessOpenExpr(operand))
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
@@ -414,7 +418,7 @@ public static class ImplicitArgumentResolver
 
         // A variadic DESTINATION re-spreads the forwarded value only when the
         // SOURCE binding is itself a collecting binding's exact list: then
-        // `callee(rest...)` re-supplies exactly the collected items
+        // `callee(spread(rest))` re-supplies exactly the collected items
         // (spread(collect(xs)) = xs). An ordinary source binding always
         // forwards as ONE argument, even into a variadic destination. A name
         // absent from the caller's bindings is about to be lifted as a copy
@@ -635,7 +639,11 @@ public static class ImplicitArgumentResolver
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames)) { Span = expr.Span };
+                    RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames))
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
@@ -773,7 +781,11 @@ public static class ImplicitArgumentResolver
                 ProcessExprNested(t, paramMap),
                 ProcessExprNested(s, paramMap)) { Span = expr.Span },
             Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(
-                ProcessExprNested(operand, paramMap)) { Span = expr.Span },
+                ProcessExprNested(operand, paramMap))
+            {
+                Span = expr.Span,
+                IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+            },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExprNested(l, paramMap),
                 ProcessExprNested(r, paramMap)) { Span = expr.Span },

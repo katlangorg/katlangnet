@@ -11,7 +11,7 @@
 #   0 relation family        [dotted-collection-call, dotted-collection-builtin,
 #                             user-extension-call, dotted-chain, builtin-callback-wrapper,
 #                             optimizer-generic-parity, cached-property-reuse,
-#                             entry-point-parity, budget-law]
+#                             entry-point-parity, budget-law, spread-spelling-parity]
 #   1 legacy range stop      [1, 0, 2, 3, 5, 8, -1, -3, 16, 33, 64, 100]  (Phase 1 family only)
 #   2 limit mode             Phase 1 family: [Default, CumulativeItems, PerCollectionItems, Both]
 #                            Phase 2:        + [CumulativeStrings, PerStringLength, Generous]
@@ -30,6 +30,7 @@
 #   cached-property-reuse:     6 value/use template, 7 reuse count, 8 execution order
 #   entry-point-parity:        6 source template, 7 surface pair, 8 execution order
 #   budget-law:                6 source template, 7 law, 8 resource dimension, 9 isolation mode
+#   spread-spelling-parity:    6 spread-slot context, 7 operand shape
 #
 # BACKWARD COMPATIBILITY: a payload of six bytes or fewer is a version-zero payload and always
 # decodes to the Phase 1 family with the Phase 1 tables, exactly as it did before Phase 2.
@@ -180,3 +181,15 @@ family=budget-law bytes=08 00 00 00 01 00 00 04 03 00 desc=equivalent forms cros
 family=budget-law bytes=08 00 00 01 01 00 00 04 03 00 desc=equivalent forms both succeed exactly at the boundary
 family=budget-law bytes=08 00 00 01 01 00 04 04 01 00 desc=user-extension forms share the step boundary too
 family=budget-law bytes=08 00 00 01 01 00 05 04 00 00 desc=REJECTED: builtin-callback forms do not share a work boundary
+
+# ── Group E: spread(X) against X.spread ──────────────────────
+family=spread-spelling-parity bytes=09 00 00 01 01 00 00 03 desc=root output rows from a sequence operand
+family=spread-spelling-parity bytes=09 00 00 01 01 00 01 06 desc=collecting-binding call collects the spread list items
+family=spread-spelling-parity bytes=09 00 00 01 01 00 01 02 desc=empty sequence operand contributes zero collected items
+family=spread-spelling-parity bytes=09 00 00 01 01 00 02 07 desc=list-literal element splice of a nested list
+family=spread-spelling-parity bytes=09 00 00 01 01 00 03 00 desc=single capture of an atom operand (total item view)
+family=spread-spelling-parity bytes=09 00 00 01 01 00 04 01 desc=grouped sequence join with a string operand
+family=spread-spelling-parity bytes=09 00 00 01 01 00 05 05 desc=chained spread opens one singleton-list boundary per layer
+family=spread-spelling-parity bytes=09 00 00 01 01 00 05 03 desc=chained spread over a sequence is a fixed point
+family=spread-spelling-parity bytes=09 00 00 01 01 01 00 06 desc=optimizers off: both spellings still charge identical work
+family=spread-spelling-parity bytes=09 00 02 01 01 00 01 06 desc=per-collection item limit classifies both spellings identically

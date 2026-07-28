@@ -23,7 +23,7 @@ internal enum MetamorphicFamily
     DottedCollectionCall,
 
     /// <summary>
-    /// Phase 2 Group A: <c>F(receiver, suffix...)</c> against <c>receiver.F(suffix...)</c> over
+    /// Phase 2 Group A: <c>F(receiver, suffix.spread)</c> against <c>receiver.F(suffix.spread)</c> over
     /// the trusted collection builtins and every receiver value kind.
     /// </summary>
     DottedCollectionBuiltin,
@@ -70,6 +70,15 @@ internal enum MetamorphicFamily
     /// failed-reservation stability, and sequential/parallel run isolation.
     /// </summary>
     BudgetLaw,
+
+    /// <summary>
+    /// Phase 2 Group E: the CALL spelling of the spread intrinsic against its
+    /// extension-property spelling — <c>spread(X)</c> versus <c>X.spread</c> — over every
+    /// trusted operand shape and spread-slot context. Both spellings lower to the same
+    /// <c>SequenceSpread</c> node, so semantic AND exact observed-work equality are both
+    /// justified.
+    /// </summary>
+    SpreadSpellingParity,
 }
 
 /// <summary>The declared LANGUAGE-SEMANTIC relation between the two members of a pair.</summary>

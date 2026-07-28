@@ -188,7 +188,10 @@ public sealed class ModuleLoader
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
                     ProcessExpr(operand, context))
-                { Span = expr.Span };
+                {
+                    Span = expr.Span,
+                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                };
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(

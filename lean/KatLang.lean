@@ -45,7 +45,7 @@
 --       when the group contains exactly one clause and that sole head is a
 --       recursive parameter pattern made only of captures and structural sequence-value patterns
 --       (for example `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
---       `CountSequenceValue((...values)) = values.count`)
+--       `CountSequenceValue((values...)) = values.count`)
 --     - multi-clause families and clause heads that require literal or
 --       whole-argument conditional matching elaborate to `Algorithm.conditional`
 --
@@ -749,8 +749,8 @@ mutual
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
     -- * sequenceConstruct: INTERNAL sequence-join node retained for semantic
-    --   AST compatibility (the encoding of the removed binary spread-join,
-    --   before surface `A...B` became the expression-list slots `A..., B`).
+    --   AST compatibility (surface spreading is the named `spread` intrinsic,
+    --   `sequenceSpread`, and never builds this node).
     --   It is NOT the representation of written sequence-value syntax: the
     --   C# surface parser and production transformations have zero origin
     --   sites for it — parenthesized lists parse to zero-parameter blocks
@@ -766,19 +766,25 @@ mutual
     --   parentheses around the empty sequence are useful-structure canonicalized
     --   back to `()` rather than exposing higher-order empty sequence values.
     | emptySequence : Nat -> Expr
-    -- * spread: UNARY representation over its single operand. KatLang's
-    --   `...` is POSTFIX-only source syntax that never consumes a right operand,
-    --   so `sequenceSpread expr` spreads the top-level output items of `expr`.
-    --   A following expression is a separate expression-list item; semicolon is
-    --   not surface expression syntax. Source `A...B` is `A..., B`. Nested spread
-    --   such as `A......` is `sequenceSpread (sequenceSpread A)`; evaluation
-    --   unwraps the chain iteratively (`peelSequenceSpreadLayers`, stack-safe)
-    --   and applies each written layer compositionally — every layer opens one
-    --   boundary of the value the previous layer's supply would re-capture —
-    --   so `A......` agrees with `(A...)...` (a fixed point for sequence
-    --   values; a singleton-list chain such as `[[7]]......` opens one list
-    --   boundary per layer, while a multi-element list re-captures as a
-    --   sequence after the first layer and then stays fixed).
+    -- * spread: UNARY representation over its single operand. The surface
+    --   spelling is the named `spread` intrinsic — the call form `spread(A)`
+    --   and the extension-property form `A.spread` BOTH lower to this one
+    --   node, so `sequenceSpread expr` spreads the top-level output items of
+    --   `expr` and contributes them to the surrounding supply (conceptually
+    --   `spread : Value -> Supply`; the receiver decides what the items
+    --   become). A spread never consumes a right operand — a following
+    --   expression is a separate expression-list item (`spread(A) B` is
+    --   `spread(A), B`); semicolon is not surface expression syntax. Nested
+    --   spread such as `spread(spread(A))` / `A.spread.spread` is
+    --   `sequenceSpread (sequenceSpread A)`; evaluation unwraps the chain
+    --   iteratively (`peelSequenceSpreadLayers`, stack-safe) and applies each
+    --   written layer compositionally — every layer opens one boundary of the
+    --   value the previous layer's supply would re-capture — so
+    --   `spread(spread(A))` agrees with `spread((spread(A)))` (a fixed point
+    --   for sequence values; a singleton-list chain such as
+    --   `[[7]].spread.spread` opens one list boundary per layer, while a
+    --   multi-element list re-captures as a sequence after the first layer
+    --   and then stays fixed).
     | sequenceSpread : Expr -> Expr
     -- * listLiteral: surface list literal `[e1, ..., en]`. Evaluates to exactly
     --   ONE exact immutable list value (`Result.listValue`). Element slots follow
@@ -873,7 +879,7 @@ mutual
         elaborates to `Algorithm.mk` only when it contains exactly one clause
         and that sole head is a recursive capture/sequence-value parameter pattern such
         as `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
-        `CountSequenceValue((...values)) = values.count`. Multi-clause families and
+        `CountSequenceValue((values...)) = values.count`. Multi-clause families and
         literal/mixed heads such as
 
           F(0) = 0
@@ -1043,7 +1049,7 @@ namespace Result
       Atom/string -> singleton list; sequence value -> its items.
       A list value stays OPAQUE here: it is one item, so non-spread consumers
       (boundary re-counting, call binding) treat a list as a single exact
-      value. Only postfix spread (`spreadItems`), deconstruction binding
+      value. Only the spread intrinsic (`spreadItems`), deconstruction binding
       (`structureItems?`), the indexing `:` projection target view
       (`projectionItems`), and the post-binding builtin collection view
       (`builtinCollectionItems`, applied to the bound `collection` argument)
@@ -1054,7 +1060,7 @@ namespace Result
     | sequenceValue rs => rs
     | listValue rs => [listValue rs]
 
-  /-- Item view used by postfix spread `...`: spread opens exactly ONE
+  /-- Item view used by the spread intrinsic (`spread(expr)` / `expr.spread`): spread opens exactly ONE
       structure boundary. Sequence values and exact list values open to their
       immediate items; atoms and strings supply themselves as one item.
       C#: `Result.SpreadItems`. -/
@@ -1407,7 +1413,7 @@ namespace Algorithm
 
   /-- A callable whose top-level parameter list consumes the supplied call
       argument stream: any top-level variadic capture, whether a lone variadic
-      `...name` or a comma shape such as `x, ...y, z`. A plain sequence-valued
+      `name...` or a comma shape such as `x, y..., z`. A plain sequence-valued
       argument stays one supplied argument; only explicit spread opens it first. -/
   def usesItemSupplyBinding (a : Algorithm) : Bool :=
     (variadicParam? a).isSome
@@ -1869,7 +1875,8 @@ def mergePatternAlgEnv (leftValues rightValues : ValEnv)
     a sequence value is unpacked into its elements.  This is the canonical ABI for
     translating an evaluated Result into positional arguments for bindParams.
     Exact list values are NOT unpacked: call-argument binding preserves a list
-    as one argument; only explicit caller-site `...` opens it. -/
+    as one argument; only explicit caller-site `spread(value)` / `value.spread`
+    opens it. -/
 def unpackArgs (r : Result) : List Result :=
   match r with
   | .atom _ => [r]
@@ -2117,7 +2124,7 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     - `collect : Supply -> ListValue` — THIS operation: a collecting binding (variadic parameter)
       materializes exactly the assigned items as one exact immutable list
       (`collectSegment [] = []`, `collectSegment [v] = [v]`, never erased);
-    - `spread : Value -> Supply` — postfix spread (`Result.spreadItems`), which
+    - `spread : Value -> Supply` — the spread intrinsic (`Result.spreadItems`), which
       opens one sequence OR list boundary.
 
     Every collecting binding — deconstruction collecting bindings, single variadic parameters,
@@ -2126,7 +2133,7 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     preparation (call binding preserves argument slots; deconstruction may
     open one lone sequence or list). The round trip
     `Result.spreadItems (collectSegment xs) = xs` makes variadic forwarding
-    ordinary list spread: `Forward(...items) = Target(items...)` re-supplies
+    ordinary list spread: `Forward(items...) = Target(items.spread)` re-supplies
     exactly the collected items with no hidden raw-supply metadata. A collecting
     value is one visible value, so its emitted count is always 1 (including
     `[]`). C#: `CollectSegment` (inside `CreateVariadicCapture`). -/
@@ -2139,7 +2146,7 @@ def collectSegment (items : List Result) : Result :=
     produce an item supply of count 0, 1, or many, but the caller observes the
     same structural value with emitted count `Result.valueCount value` (0 for the
     empty sequence value, otherwise 1). A multi-output body therefore becomes one
-    sequence value at the boundary; only an explicit caller-site postfix `...`
+    sequence value at the boundary; only an explicit caller-site `spread`
     re-spreads it (via `Result.spreadItems`, which reads the value, not this count).
 
     This re-counts without normalizing or rebuilding the value; ordinary value
@@ -2179,12 +2186,12 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
 
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
     Used by evaluation together with `peelSequenceSpreadLayers`: each written
-    `...` layer opens exactly one structure boundary, applied compositionally
-    and iteratively (stack-safe for deep `A......` chains, matching the C#
+    `.sequenceSpread` layer opens exactly one structure boundary, applied compositionally
+    and iteratively (stack-safe for deep `A.spread.spread` chains, matching the C#
     evaluator). For sequence values the extra layers are fixed points (the
     re-captured sequence re-spreads to the same items), so stacked spread is
     value-equivalent to one spread; for exact LIST values each layer opens one
-    more list boundary (`[[7]]......` is `7`, like `([[7]]...)...`). This is
+    more list boundary (`[[7]].spread.spread` is `7`, like `([[7]].spread).spread`). This is
     NOT binary spine flattening: there is no right operand, it only unwraps
     the single-operand chain. -/
 partial def peelSequenceSpread : Expr -> Expr
@@ -2192,7 +2199,7 @@ partial def peelSequenceSpread : Expr -> Expr
   | e => e
 
 /-- Peel directly-nested spreads while counting the written layers.
-    Returns the innermost non-spread operand and the number of `...` layers
+    Returns the innermost non-spread operand and the number of `.sequenceSpread` layers
     (at least 1 when called on a spread node). -/
 partial def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
   | .sequenceSpread operand, n => peelSequenceSpreadLayers operand (n + 1)
@@ -2438,8 +2445,10 @@ def negativeIntPow (base exponent : Int) : EvalM Result :=
     (`open A, B, C`) and validates each target as an individual
     Lean-compatible form before evaluation; `;`/adjacency are not open
     separators.  Spread is not a valid open target: the C# parser
-    rejects `open A...` and `open A...B` with a targeted parse diagnostic,
-    so no SequenceSpread ever reaches open resolution. -/
+    rejects an ellipsis attached to an open target as a parse error and
+    rejects named spread targets
+    (`open spread(A)`, `open A.spread`) through open-form validation,
+    so no accepted SequenceSpread ever reaches open resolution. -/
 inductive OpenForm where
   | block   : Algorithm -> OpenForm
   | resolve : Ident -> OpenForm
@@ -2534,8 +2543,8 @@ def openExprName (e : Expr) : String :=
   -- SequenceConstruct is an internal value node; ';' is not surface syntax,
   -- so render it as one sequence value, never with ';'.
   | .sequenceConstruct a b => "(" ++ openExprName a ++ ", " ++ openExprName b ++ ")"
-  -- Postfix spread renders as `a...` over its single operand.
-  | .sequenceSpread a => openExprName a ++ "..."
+  -- A spread expression renders in the canonical named-intrinsic form.
+  | .sequenceSpread a => "spread(" ++ openExprName a ++ ")"
   -- Empty sequence core nodes render by depth for diagnostics.
   | .emptySequence depth => emptySequenceText depth
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
@@ -2565,8 +2574,8 @@ partial def exprDiagnosticName : Expr -> String
   | .sequenceConstruct left right => "(" ++ exprDiagnosticName left ++ ", " ++ exprDiagnosticName right ++ ")"
   -- Empty sequence value `()` and its nested forms.
   | .emptySequence depth => emptySequenceText depth
-  -- Postfix spread renders as `operand...` over its single operand.
-  | .sequenceSpread operand => exprDiagnosticName operand ++ "..."
+  -- A spread expression renders in the canonical named-intrinsic form.
+  | .sequenceSpread operand => "spread(" ++ exprDiagnosticName operand ++ ")"
   -- Exact list literal `[a, b, c]`.
   | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
@@ -3243,7 +3252,7 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-/-- Recognize a parenthesized spread receiver such as `(Arg...)`:
+/-- Recognize a parenthesized spread receiver such as `(Arg.spread)`:
     a bare zero-parameter block whose single output is a `sequenceSpread`.
     This explicit spread form is the only receiver shape that may feed its
     top-level items into a leading flat variadic parameter. -/
@@ -3256,7 +3265,7 @@ def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
   | _ => none
 
 /-- True when the callee's parameter list is flat (no sequence-value patterns)
-    and starts with a variadic parameter, e.g. `F(...values, last)`.
+    and starts with a variadic parameter, e.g. `F(values..., last)`.
     Flat-binder core conditionals are classified through their ordinary
     user-call equivalent. -/
 def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
@@ -3270,7 +3279,7 @@ def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
   | _ => false
 
 /-- Assemble the argument algorithm for ordinary lexical dot-call fallback:
-    `receiver.F(args...)` evaluates as `F(receiver, args...)`.
+    `receiver.F(C, D)` evaluates as `F(receiver, C, D)`.
 
     The injected receiver is always ONE leading argument segment for slot
     allocation, so suffix parameters bind from the back exactly as in the
@@ -3278,11 +3287,11 @@ def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
     that segment's emitted-count metadata may expand within the variadic
     capture after slot allocation, but the receiver is never pre-expanded.
 
-    A parenthesized spread receiver, as in `(Arg...).F`, is the
+    A parenthesized spread receiver, as in `(Arg.spread).F`, is the
     explicit opt-in: only when the callee has a leading flat variadic does
     the inner spread replace the receiver segment and pre-expand into the
     receiver's top-level items before slot allocation, matching the
-    canonical `F(Arg..., args...)`. Fixed receiver parameters keep even a
+    canonical `F(Arg.spread, C, D)`. Fixed receiver parameters keep even a
     spread receiver as one argument boundary. -/
 def prepareLexicalDotCallArgs
     (callee : Algorithm) (receiver : Expr) (extraArgs : Option Algorithm)
@@ -3645,7 +3654,7 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorith
         .error err
 
 /-- Resolve argument expressions to algorithms for builtin dispatch, tagging
-    each argument with whether it spreads a sequence (`...`).
+    each argument with whether it is a named spread expression.
     Unlike a strict `mapM resolveAlg`, this wraps *liftable* non-resolvable
     expressions (`notAnAlgorithm`, `illegalInEval`) in trivial
     `Algorithm.ofExpr` wrappers wired to the caller scope (see
@@ -3755,7 +3764,7 @@ mutual
             -- A received sequence value or exact list value opens to its
             -- immediate items (`Result.structureItems?`): the deconstruction
             -- receiver opens ONE lone structure boundary of either kind, so
-            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]...`.
+            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3].spread`.
             -- A non-grouped scalar is a one-item supply for the
             -- prefix/collecting/suffix matcher (the same normalization the function
             -- deconstruction path applies).
@@ -3931,12 +3940,12 @@ mutual
       evaluators can never disagree on an output value. Each NON-spread output
       expression contributes exactly one visible slot, even when it evaluates to
       the empty sequence value `()` (counted output `0`); an explicit spread
-      `expr...` contributes its expanded items, so a spread of `()` contributes
-      zero items and `(A..., 99)` splices `A`'s items before `99`. The slots are
+      `expr.spread` contributes its expanded items, so a spread of `()` contributes
+      zero items and `(A.spread, 99)` splices `A`'s items before `99`. The slots are
       combined with `combineOutputSlots`, which preserves singleton slot
       structure and deliberately does NOT apply the general `Result.normalize`,
       which would recursively erase useful one-item sequence structure.
-      (Loop-step state, which must keep a variadic `...history` structured, goes
+      (Loop-step state, which must keep a variadic `history...` structured, goes
       through `evalAlgOutputSlots` with its explicit preserve flag, not here.)
 
       A user-defined algorithm value may exist structurally without output, but
@@ -4157,7 +4166,7 @@ mutual
               (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
           -- A flat callee with a top-level variadic parameter (`Rows.map(F)` with
-          -- `F(x, ...y, z)` or a single-variadic `Collect(...items)`) binds through
+          -- `F(x, y..., z)` or a single-variadic `Collect(items...)`) binds through
           -- the shared prefix/collecting/suffix binder so the variadic parameter
           -- COLLECTS an exact immutable list, after the same final-argument
           -- row expansion the fixed-only flat path uses below. Single-variadic
@@ -4277,7 +4286,7 @@ mutual
     -- argument at this call boundary, exactly like at every other call
     -- boundary; only explicit caller-site spread alters argument boundaries,
     -- and the spread items obey the same fixed arity
-    -- (`count([1, 2, 3]...)` supplies three arguments and is an arity error).
+    -- (`count([1, 2, 3].spread)` supplies three arguments and is an arity error).
     -- Nothing is opened before binding.
     let expectedArgCount := 1 + metadata.suffixArgs.length
     if items.length != expectedArgCount then
@@ -4851,7 +4860,8 @@ mutual
       evaluation are unchanged, but the public result preserves the structural
       value while re-counting the emitted arity to `Result.valueCount` (via
       `reCountValueBoundary`). A multi-output body therefore becomes one sequence
-      value (count 1); only caller-site `...` re-spreads it. -/
+      value (count 1); only caller-site `spread(value)` / `value.spread`
+      re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM CountedResult := do
@@ -5023,7 +5033,8 @@ mutual
       structural zero-arg property access and collection builtins re-count to
       `Result.valueCount`, and user/lexical member calls re-count via
       `evalUserCallCounted`, so a multi-output member becomes one sequence value
-      (count 1) and only caller-site `...` re-spreads it. This is the single owner
+      (count 1) and only caller-site `spread(value)` / `value.spread` re-spreads
+      it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
       Smart dispatch:
       - "string" value intrinsic → evaluate target, convert numeric result to string
@@ -5114,16 +5125,16 @@ mutual
 
     /-- Evaluate a unary `sequenceSpread` node by evaluating its single operand
       once and spreading immediate top-level items. Nested sequence-value
-      members are not recursively flattened. Directly-nested spreads (`A......`)
+      members are not recursively flattened. Directly-nested spreads (`A.spread.spread`)
       are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
       nesting) and then each written layer is applied COMPOSITIONALLY: every
-      `...` opens exactly one boundary of the value the previous layer would
-      have captured, so `A......` agrees with `(A...)...`. For sequence values
+      each written `sequenceSpread` layer opens exactly one boundary of the value the previous layer would
+      have captured, so `A.spread.spread` agrees with `(A.spread).spread`. For sequence values
       the extra layers are fixed points (value-equivalent to a single spread);
       a singleton-list chain opens one list boundary per layer
-      (`[[7]]......` supplies `7`), while a multi-element list re-captures as
+      (`[[7]].spread.spread` supplies `7`), while a multi-element list re-captures as
       a sequence after the first layer and then stays fixed
-      (`[[1, 2], [3, 4]]......` supplies the two inner lists unchanged). -/
+      (`[[1, 2], [3, 4]].spread.spread` supplies the two inner lists unchanged). -/
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let (operand, layers) := peelSequenceSpreadLayers e 0
@@ -5192,7 +5203,7 @@ mutual
       Calls, name resolution, and collection builtins are value boundaries: they
       emit `Result.valueCount` of the result value (one value for a non-empty
       result), so a multi-output body/collection is observed as one sequence
-      value and only caller-site `...` re-spreads it.
+      value and only caller-site `spread(value)` / `value.spread` re-spreads it.
       Block expressions count as one sequence value when non-empty. `sequenceConstruct`
       emits one constructed sequence value. `sequenceSpread`
       emits the immediate spread items of its operand. All other value expressions emit either zero values (empty
@@ -5600,7 +5611,7 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
 
    Recursive parameter patterns are preserved by this surface pass: lifting
-   `...items`, `(...items)`, or `((...history), previous)` keeps that shape
+   `items...`, `(items...)`, or `((history...), previous)` keeps that shape
    instead of reconstructing ordinary capture parameters from flattened names.
    A narrow forwarding rule also permits a bare helper reference with one
    forwardable variadic supply to use a containing algorithm's single
@@ -5922,8 +5933,8 @@ structure LoadCtx where
 /-- Positions where load is allowed (compile-time only).
     load is a directive, not a runtime expression. -/
 inductive LoadPosition where
-  | propertyDef : LoadPosition   -- RHS of Name = load('...')
-  | openList    : LoadPosition   -- inside open load('...') or open target1, target2
+  | propertyDef : LoadPosition   -- RHS of Name = load('url')
+  | openList    : LoadPosition   -- inside open load('url') or open target1, target2
   deriving Repr, BEq
 
 /- **load elaboration judgment**

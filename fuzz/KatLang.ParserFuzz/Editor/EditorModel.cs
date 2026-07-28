@@ -46,6 +46,7 @@ internal static class EditorModel
         foreach (var name in BuiltinRegistry.MathMemberNames) names.Add(name);
         names.Add("Math");
         names.Add("string");
+        names.Add("spread");
         names.Add("load");
         return names;
     }

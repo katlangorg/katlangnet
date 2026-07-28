@@ -5,7 +5,7 @@ namespace KatLang.Tests;
 ///
 /// Provenance (July 2026 audit, docs/design/sequence-boundary-audit-2026-07.md §7):
 /// the node is the retained encoding of the removed binary spread-join
-/// (`A...B` before it became the expression-list slots `A..., B`). The parser
+/// (`A.spread B` before it became the expression-list slots `A.spread, B`). The parser
 /// and all current production transformations have ZERO ORIGIN SITES for it —
 /// written parentheses parse to <see cref="Expr.Block"/> /
 /// <see cref="Expr.EmptySequence"/>, and the elaboration visitors only
@@ -62,18 +62,18 @@ public class SequenceConstructContainmentTests
         "((), 1)",
         "(1, ())",
         "((1, 2), 3)",
-        "A = (1, 2)\n(A...)",
-        "A = (1, 2)\n(A..., 99)",
-        "A = (1, 2)\nA...99",
-        "A = (1, 2)\nA..., 99",
+        "A = (1, 2)\n(A.spread)",
+        "A = (1, 2)\n(A.spread, 99)",
+        "A = (1, 2)\nA.spread 99",
+        "A = (1, 2)\nA.spread, 99",
         "1, 2",
         "1 2 3",
         "P = (), 99\nP",
         "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",
-        "x, y = (1, 2)...\nx",
-        "F(...a) = a\nF((1, 2)..., 3)",
-        "(1..., (), 2...)",
+        "x, y = (1, 2).spread\nx",
+        "F(a...) = a\nF((1, 2).spread, 3)",
+        "(1.spread, (), 2.spread)",
         // Exact list literals are a genuine surface node (Expr.ListLiteral),
         // never a route into the internal join node.
         "[]",
@@ -81,10 +81,10 @@ public class SequenceConstructContainmentTests
         "[1, 2, 3]",
         "[[1, 2], [3, 4]]",
         "[()]",
-        "A = (1, 2)\n[A..., 99]",
-        "A = [1, 2]\n(A..., 99)",
+        "A = (1, 2)\n[A.spread, 99]",
+        "A = [1, 2]\n(A.spread, 99)",
         "x, y = [1, 2]\nx",
-        "F(...a) = a\nF([1, 2]..., 3)",
+        "F(a...) = a\nF([1, 2].spread, 3)",
     };
 
     [Theory]
@@ -161,7 +161,7 @@ public class SequenceConstructContainmentTests
             item => Assert.Equal(1m, Assert.IsType<Expr.Num>(item).Value));
 
         // A spread item inside parentheses is a SequenceSpread slot in the block.
-        var spread = Assert.IsType<Expr.Block>(SingleRootOutput("A = (1, 2)\n(A..., 99)"));
+        var spread = Assert.IsType<Expr.Block>(SingleRootOutput("A = (1, 2)\n(A.spread, 99)"));
         var spreadAlg = Assert.IsType<Algorithm.User>(spread.Algorithm);
         Assert.Collection(spreadAlg.Output,
             item => Assert.IsType<Expr.SequenceSpread>(item),
