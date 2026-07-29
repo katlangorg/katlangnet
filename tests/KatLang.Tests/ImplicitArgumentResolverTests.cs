@@ -202,23 +202,23 @@ public class ImplicitArgumentResolverTests
     public void Resolve_VariadicImplicitCall_NameMismatchForwardsCallerStreamAsSpreadWithoutLiftingCalleeName()
     {
         var source = """
-            CountItems(items...) = items.count
-            Use(values...) = CountItems
+            CountItems(*items) = items.count
+            Use(*values) = CountItems
             """;
         var root = Resolve(source);
 
         var use = root.Properties.Single(p => p.Name == "Use").Value;
         Assert.Equal(["values"], use.Params);
-        Assert.Equal(["values..."], use.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["*values"], use.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
         Assert.DoesNotContain("items", use.Params);
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(use.Output));
         var function = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("CountItems", function.Name);
 
-        // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values.spread)`):
-        // the caller's variadic parameter holds one exact list, and the spread re-supplies its
-        // collected items so the callee's variadic parameter re-collects exactly them.
+        // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values*)`):
+        // the caller's collecting parameter holds one exact list, and the spread re-supplies its
+        // collected items so the callee's collecting parameter re-collects exactly them.
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
         var param = Assert.IsType<Expr.Param>(spread.Operand);
         Assert.Equal("values", param.Name);
@@ -228,7 +228,7 @@ public class ImplicitArgumentResolverTests
     public void Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper()
     {
         var source = """
-            CountItems(items...) = items.count
+            CountItems(*items) = items.count
             Use(value) = CountItems
             """;
         var root = Resolve(source);
@@ -446,25 +446,25 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_SameNameTopLevelVariadic_ForwardsCallerStream()
+    public void Eval_VariadicImplicitCall_SameNameTopLevelCollectingParameter_ForwardsCallerStream()
     {
         // The root spread supplies the three items, and the synthesized spread
         // forwarding re-supplies them to the callee's collecting binding.
         var source = """
-            CountValues(values...) = values.count
-            Use(values...) = CountValues
-            Use((1, 2, 3).spread)
+            CountValues(*values) = values.count
+            Use(*values) = CountValues
+            Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_NameMismatchTopLevelVariadic_ForwardsCallerStream()
+    public void Eval_VariadicImplicitCall_NameMismatchTopLevelCollectingParameter_ForwardsCallerStream()
     {
         var source = """
-            CountItems(items...) = items.count
-            Use(values...) = CountItems
-            Use((1, 2, 3).spread)
+            CountItems(*items) = items.count
+            Use(*values) = CountItems
+            Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
     }
@@ -473,9 +473,9 @@ public class ImplicitArgumentResolverTests
     public void Eval_SequenceValueVariadicImplicitCall_SameNameCalleePattern_ForwardsCallerStream()
     {
         var source = """
-            CountSequenceValue((values...)) = values.count
-            Use(values...) = CountSequenceValue
-            Use((1, 2, 3).spread)
+            CountSequenceValue((*values)) = values.count
+            Use(*values) = CountSequenceValue
+            Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
     }
@@ -484,9 +484,9 @@ public class ImplicitArgumentResolverTests
     public void Eval_SequenceValueVariadicImplicitCall_NameMismatchCalleePattern_ForwardsCallerStream()
     {
         var source = """
-            CountSequenceValue((items...)) = items.count
-            Use(values...) = CountSequenceValue
-            Use((1, 2, 3).spread)
+            CountSequenceValue((*items)) = items.count
+            Use(*values) = CountSequenceValue
+            Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
     }
@@ -496,10 +496,10 @@ public class ImplicitArgumentResolverTests
     {
         // The implicit spread decision is made from the SOURCE binding kind:
         // `Use.items` is an ordinary fixed parameter, so the synthesized call
-        // is `Target(items)` — one argument — and the callee's variadic parameter collects
-        // exactly one slot. The destination being variadic must not open it.
+        // is `Target(items)` — one argument — and the callee's collecting parameter collects
+        // exactly one slot. The destination being collecting must not open it.
         var source = """
-            Target(items...) = items
+            Target(*items) = items
             Use(items) = Target
             Use([1, 2])
             """;
@@ -509,7 +509,7 @@ public class ImplicitArgumentResolverTests
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], element.Items, Result.ValueComparer);
 
         var sequenceSource = """
-            Target(items...) = items
+            Target(*items) = items
             Use(items) = Target
             Use((1, 2))
             """;
@@ -518,7 +518,7 @@ public class ImplicitArgumentResolverTests
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], sequenceElement.Items, Result.ValueComparer);
 
         var scalarSource = """
-            Target(items...) = items
+            Target(*items) = items
             Use(items) = Target
             Use(7)
             """;
@@ -532,7 +532,7 @@ public class ImplicitArgumentResolverTests
         // The synthesized implicit call passes the ordinary source parameter
         // as a bare Expr.Param — never wrapped in Expr.SequenceSpread.
         var root = Resolve("""
-            Target(items...) = items
+            Target(*items) = items
             Use(items) = Target
             """);
 
@@ -543,22 +543,22 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_VariadicSourceParameter_ForwardsCollectedItemsAsSpread()
+    public void Eval_CollectingSourceParameter_ForwardsCollectedItemsAsSpread()
     {
         // Genuine variadic forwarding: the caller's own collected list is the source, so
-        // the synthesized call is `Target(items.spread)` and the collected items
+        // the synthesized call is `Target(items*)` and the collected items
         // round-trip exactly (spread(collect(xs)) = xs).
         var source = """
-            Target(items...) = items
-            Use(items...) = Target
+            Target(*items) = items
+            Use(*items) = Target
             Use(1, 2)
             """;
         var list = Assert.IsType<Result.ListValue>(EvalValue(source));
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], list.Items, Result.ValueComparer);
 
         var listArgSource = """
-            Target(items...) = items
-            Use(items...) = Target
+            Target(*items) = items
+            Use(*items) = Target
             Use([1, 2])
             """;
         var outerList = Assert.IsType<Result.ListValue>(EvalValue(listArgSource));
@@ -574,7 +574,7 @@ public class ImplicitArgumentResolverTests
         // silently spreading the ordinary sequence-value parameter.
         var result = Eval(
             """
-            CountValues(values...) = values.count
+            CountValues(*values) = values.count
             Use(sequenceValue) = CountValues
             Use((1, 2, 3))
             """);

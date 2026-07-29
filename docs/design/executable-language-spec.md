@@ -159,7 +159,7 @@ identities), `git diff --check`, and all Lean targets including
 Case `take-single-survivor` (`LanguageSpecCorpus.cs`):
 source `take(((1, 2), (3, 4)), 1)`, canonical display `[(1, 2)]`, canonical
 neutral `ok raw=L[S[1, 2]] n=1`, probes for `count(...)` = 1, non-equality
-with `(1, 2)`, and re-spreading the result (`take(...).spread` is the kept pair).
+with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
 
 1. **C#**: `LanguageSpecRunnerTests.Case_MatchesCanonicalExpectations`
    parses and evaluates the source, asserting the neutral observation and

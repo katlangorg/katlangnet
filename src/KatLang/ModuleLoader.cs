@@ -190,7 +190,7 @@ public sealed class ModuleLoader
                     ProcessExpr(operand, context))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):

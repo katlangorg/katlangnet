@@ -173,7 +173,7 @@ public class EditorFuzzHarnessTests
     [Fact]
     public void SyntheticDeconstructionHelpers_NeverSurface()
     {
-        const string source = "A = 1, 2, 3\nx, y..., z = A\nx + y.sum + z";
+        const string source = "A = 1, 2, 3\nx, *y, z = A\nx + y.sum + z";
         var result = EditorModel.Run(source, EditorExecutionMode.Elaborated);
         var model = Assert.IsType<SemanticModel>(result.Model);
 

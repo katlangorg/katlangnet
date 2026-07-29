@@ -94,7 +94,7 @@ public enum InternalNodeRelation
 
 /// <summary>
 /// Bounded small-state corpus: structurally rich values crossed with receiver
-/// templates covering every boundary operation (capture, calls, variadic and
+/// templates covering every boundary operation (capture, calls, collecting and
 /// mixed collecting binding, deconstruction, spread, indexing, equality, count,
 /// dot access, collection builtins, and re-entry), plus targeted specials.
 /// </summary>
@@ -150,16 +150,16 @@ public static class SemanticExplorerCorpus
 
     private const string LIdentity = "privateProp \"I\" (alg [\"a\"] [] [] [.param \"a\"])";
     private const string LFixed = "privateProp \"F\" (alg [\"a\"] [] [] [.param \"a\"])";
-    private const string LVariadicF =
-        "privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .variadic }] [] [] [.param \"a\"])";
-    private const string LVariadicG =
-        "privateProp \"G\" (algWithParameters [{ name := \"a\", kind := .variadic }] [] [] [.param \"a\"])";
+    private const string LCollectingF =
+        "privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.param \"a\"])";
+    private const string LCollectingG =
+        "privateProp \"G\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.param \"a\"])";
 
     private static string LMixedFront(string bodyParam) =>
-        $"privateProp \"F\" (algWithParameters [{{ name := \"h\" }}, {{ name := \"t\", kind := .variadic }}] [] [] [.param \"{bodyParam}\"])";
+        $"privateProp \"F\" (algWithParameters [{{ name := \"h\" }}, {{ name := \"t\", kind := .collecting }}] [] [] [.param \"{bodyParam}\"])";
 
     private static string LMixedBack(string bodyParam) =>
-        $"privateProp \"F\" (algWithParameters [{{ name := \"t\", kind := .variadic }}, {{ name := \"z\" }}] [] [] [.param \"{bodyParam}\"])";
+        $"privateProp \"F\" (algWithParameters [{{ name := \"t\", kind := .collecting }}, {{ name := \"z\" }}] [] [] [.param \"{bodyParam}\"])";
 
     private static string LContainer(string leanExpr) =>
         $"privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [{leanExpr}])] [])";
@@ -172,10 +172,10 @@ public static class SemanticExplorerCorpus
     /// shared property, each target bound through an inline sequence-value
     /// parameter pattern that opens the shared value (Lean: T:9300-style).
     /// </summary>
-    private static string LDecon(string rhsLeanExpr, string[] targets, int variadicIndex, string observed)
+    private static string LDecon(string rhsLeanExpr, string[] targets, int collectingIndex, string observed)
     {
-        var captures = targets.Select((t, i) => i == variadicIndex
-            ? $".capture {{ name := \"{t}\", kind := .variadic }}"
+        var captures = targets.Select((t, i) => i == collectingIndex
+            ? $".capture {{ name := \"{t}\", kind := .collecting }}"
             : $".capture {{ name := \"{t}\" }}");
         var pattern = $".sequenceValue [{string.Join(", ", captures)}]";
         var helper = $".block (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
@@ -212,28 +212,28 @@ public static class SemanticExplorerCorpus
             v => $"F(a) = a\nF({v.Source})",
             v => LProg([LFixed], [LCall("F", v.LeanExpr)])),
         new("fixedSpread",
-            v => $"F(a) = a\nF(spread({v.Source}))",
+            v => $"F(a) = a\nF({v.Source}*)",
             v => LProg([LFixed], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
-        new("variadic",
-            v => $"F(a...) = a\nF({v.Source})",
-            v => LProg([LVariadicF], [LCall("F", v.LeanExpr)])),
-        new("variadicSpread",
-            v => $"F(a...) = a\nF(spread({v.Source}))",
-            v => LProg([LVariadicF], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
-        new("variadicViaProp",
-            v => $"F(a...) = a\nx = {v.Source}\nF(x)",
-            v => LProg([LVariadicF, LVal("x", v.LeanExpr)], [LCall("F", ".resolve \"x\"")])),
+        new("collecting",
+            v => $"F(*a) = a\nF({v.Source})",
+            v => LProg([LCollectingF], [LCall("F", v.LeanExpr)])),
+        new("collectingSpread",
+            v => $"F(*a) = a\nF({v.Source}*)",
+            v => LProg([LCollectingF], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
+        new("collectingViaProp",
+            v => $"F(*a) = a\nx = {v.Source}\nF(x)",
+            v => LProg([LCollectingF, LVal("x", v.LeanExpr)], [LCall("F", ".resolve \"x\"")])),
         new("mixed_h",
-            v => $"F(h, t...) = h\nF(spread({v.Source}))",
+            v => $"F(h, *t) = h\nF({v.Source}*)",
             v => LProg([LMixedFront("h")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
         new("mixed_t",
-            v => $"F(h, t...) = t\nF(spread({v.Source}))",
+            v => $"F(h, *t) = t\nF({v.Source}*)",
             v => LProg([LMixedFront("t")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
         new("mixedBack_t",
-            v => $"F(t..., z) = t\nF(spread({v.Source}))",
+            v => $"F(*t, z) = t\nF({v.Source}*)",
             v => LProg([LMixedBack("t")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
         new("mixedBack_z",
-            v => $"F(t..., z) = z\nF(spread({v.Source}))",
+            v => $"F(*t, z) = z\nF({v.Source}*)",
             v => LProg([LMixedBack("z")], [LCall("F", $".sequenceSpread {v.LeanExpr}")])),
         new("deconPair_x",
             v => $"x, y = {v.Source}\nx",
@@ -242,19 +242,19 @@ public static class SemanticExplorerCorpus
             v => $"x, y = {v.Source}\ny",
             v => LProg([LDecon(v.LeanExpr, ["x", "y"], -1, "y")], [".resolve \"y\""])),
         new("deconPairSpread_x",
-            v => $"x, y = spread({v.Source})\nx",
+            v => $"x, y = {v.Source}*\nx",
             v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["x", "y"], -1, "x")], [".resolve \"x\""])),
         new("deconCollect_t",
-            v => $"h, t... = {v.Source}\nt",
+            v => $"h, *t = {v.Source}\nt",
             v => LProg([LDecon(v.LeanExpr, ["h", "t"], 1, "t")], [".resolve \"t\""])),
         new("deconCollectSpread_t",
-            v => $"h, t... = spread({v.Source})\nt",
+            v => $"h, *t = {v.Source}*\nt",
             v => LProg([LDecon($".sequenceSpread {v.LeanExpr}", ["h", "t"], 1, "t")], [".resolve \"t\""])),
         new("deconPrefix_p",
-            v => $"p..., z = {v.Source}\np",
+            v => $"*p, z = {v.Source}\np",
             v => LProg([LDecon(v.LeanExpr, ["p", "z"], 0, "p")], [".resolve \"p\""])),
         new("deconPrefix_z",
-            v => $"p..., z = {v.Source}\nz",
+            v => $"*p, z = {v.Source}\nz",
             v => LProg([LDecon(v.LeanExpr, ["p", "z"], 0, "z")], [".resolve \"z\""])),
         new("seqWrapPair",
             v => $"({v.Source}, 99)",
@@ -263,16 +263,16 @@ public static class SemanticExplorerCorpus
             v => $"({v.Source})",
             v => LProg([], [$".block (alg [] [] [] [{v.LeanExpr}])"])),
         new("spreadRoot",
-            v => $"spread({v.Source})",
+            v => $"{v.Source}*",
             v => LProg([], [$".sequenceSpread {v.LeanExpr}"])),
         new("spreadInSeq",
-            v => $"(spread({v.Source}), 99)",
+            v => $"({v.Source}*, 99)",
             v => LProg([], [$".block (alg [] [] [] [.sequenceSpread {v.LeanExpr}, .num 99])"])),
         new("count",
             v => $"count({v.Source})",
             v => LProg([], [LCall("count", v.LeanExpr)])),
         new("countSpread",
-            v => $"count(spread({v.Source}))",
+            v => $"count({v.Source}*)",
             v => LProg([], [LCall("count", $".sequenceSpread {v.LeanExpr}")])),
         new("dotCount",
             v => $"x = {v.Source}\nx.count",
@@ -351,9 +351,9 @@ public static class SemanticExplorerCorpus
         new("takeCount",
             v => $"count(take({v.Source}, 1))",
             v => LProg([], [LCall("count", LCall("take", v.LeanExpr, ".num 1"))])),
-        new("takeVariadic",
-            v => $"G(a...) = a\nG(take({v.Source}, 1))",
-            v => LProg([LVariadicG], [LCall("G", LCall("take", v.LeanExpr, ".num 1"))])),
+        new("takeCollecting",
+            v => $"G(*a) = a\nG(take({v.Source}, 1))",
+            v => LProg([LCollectingG], [LCall("G", LCall("take", v.LeanExpr, ".num 1"))])),
     ];
 
     // ----- Specials -----------------------------------------------------------
@@ -376,22 +376,22 @@ public static class SemanticExplorerCorpus
         ("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
                 [".binary .eq (.resolve \"P\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
-        ("multiVariadic", "F(a...) = a\nF(1, 2, 3)",
-            LProg([LVariadicF], [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("multiVariadicCount", "F(a...) = a\ncount(F(1, 2, 3))",
-            LProg([LVariadicF], [LCall("count", LCall("F", ".num 1", ".num 2", ".num 3"))])),
-        ("variadicEmptyCall", "F(a...) = a\nF()",
-            LProg([LVariadicF], [".call (.resolve \"F\") (alg [] [] [] [])"])),
-        ("variadicFwdSum", "F(a...) = sum(a)\nF(1, 2, 3)",
-            LProg(["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .variadic }] [] [] [.call (.resolve \"sum\") (alg [] [] [] [.param \"a\"])])"],
+        ("multiCollecting", "F(*a) = a\nF(1, 2, 3)",
+            LProg([LCollectingF], [LCall("F", ".num 1", ".num 2", ".num 3")])),
+        ("multiCollectingCount", "F(*a) = a\ncount(F(1, 2, 3))",
+            LProg([LCollectingF], [LCall("count", LCall("F", ".num 1", ".num 2", ".num 3"))])),
+        ("collectingEmptyCall", "F(*a) = a\nF()",
+            LProg([LCollectingF], [".call (.resolve \"F\") (alg [] [] [] [])"])),
+        ("collectingFwdSum", "F(*a) = sum(a)\nF(1, 2, 3)",
+            LProg(["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"sum\") (alg [] [] [] [.param \"a\"])])"],
                 [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("variadicFwdSpread", "F(a...) = G(a.spread)\nG(b...) = b\nF(1, 2, 3)",
+        ("collectingFwdSpread", "F(*a) = G(a*)\nG(*b) = b\nF(1, 2, 3)",
             LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .variadic }] [] [] [.call (.resolve \"G\") (alg [] [] [] [.sequenceSpread (.param \"a\")])])",
-                 "privateProp \"G\" (algWithParameters [{ name := \"b\", kind := .variadic }] [] [] [.param \"b\"])"],
+                ["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"G\") (alg [] [] [] [.sequenceSpread (.param \"a\")])])",
+                 "privateProp \"G\" (algWithParameters [{ name := \"b\", kind := .collecting }] [] [] [.param \"b\"])"],
                 [LCall("F", ".num 1", ".num 2", ".num 3")])),
-        ("variadicJoin", "F(a...) = a\nF((1, 2).spread, (3, 4).spread)",
-            LProg([LVariadicF],
+        ("collectingJoin", "F(*a) = a\nF((1, 2)*, (3, 4)*)",
+            LProg([LCollectingF],
                 [LCall("F",
                     ".sequenceSpread (.block (alg [] [] [] [.num 1, .num 2]))",
                     ".sequenceSpread (.block (alg [] [] [] [.num 3, .num 4]))")])),
@@ -446,7 +446,7 @@ public static class SemanticExplorerCorpus
         ("propBodyEmptySlot", "P = (), 99\nP",
             LProg(["privateProp \"P\" (alg [] [] [] [.emptySequence 0, .num 99])"], [".resolve \"P\""])),
         ("rootEmptySlots", "(), 99", LProg([], [".emptySequence 0", ".num 99"])),
-        ("seqOfSpreadEmpty", "((().spread), 1)",
+        ("seqOfSpreadEmpty", "((()*), 1)",
             LProg([], [".block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.emptySequence 0)]), .num 1])"])),
         ("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x:0, 99)",
             LProg([LVal("x", PairOfPairs)], [".block (alg [] [] [] [.index (.resolve \"x\") (.num 0), .num 99])"])),
@@ -478,9 +478,9 @@ public static class SemanticExplorerCorpus
         ("writtenSlotArity", "F(a, b) = a + b\nF(((1, 2)))",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.binary .add (.param \"a\") (.param \"b\")])"],
                 [LCall("F", "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))")])),
-        ("mixedSingleGrouped", "F(x, y..., z) = y\nA = (1, 2, 3, 4)\nF(A)",
+        ("mixedSingleGrouped", "F(x, *y, z) = y\nA = (1, 2, 3, 4)\nF(A)",
             LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"x\" }, { name := \"y\", kind := .variadic }, { name := \"z\" }] [] [] [.param \"y\"])",
+                ["privateProp \"F\" (algWithParameters [{ name := \"x\" }, { name := \"y\", kind := .collecting }, { name := \"z\" }] [] [] [.param \"y\"])",
                  LVal("A", "(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]))")],
                 [LCall("F", ".resolve \"A\"")])),
         ("sumEmpty", "sum(())", LProg([], [LCall("sum", ".emptySequence 0")])),
@@ -489,23 +489,23 @@ public static class SemanticExplorerCorpus
         // position of ==, spread operand, root rows). These pin the July 2026
         // fix that made Lean's evalAlgOutputCore the value projection of the
         // counted core (spread slots splice; a written `()` slot stays visible).
-        ("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x.spread, 99)",
+        ("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x*, 99)",
             LProg([LVal("x", Pair12)],
                 [".block (alg [] [] [] [.sequenceSpread (.resolve \"x\"), .num 99])"])),
-        ("spreadEmptyBetween", "(1.spread, (), 2.spread)",
+        ("spreadEmptyBetween", "(1*, (), 2*)",
             LProg([], [".block (alg [] [] [] [.sequenceSpread (.num 1), .emptySequence 0, .sequenceSpread (.num 2)])"])),
-        ("rootSpreadExtra", "A = (1, 2)\nA.spread, 99",
+        ("rootSpreadExtra", "A = (1, 2)\nA*, 99",
             LProg([LVal("A", Pair12)], [".sequenceSpread (.resolve \"A\")", ".num 99"])),
-        ("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A.spread, 99)).spread",
+        ("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*",
             LProg([LVal("A", Pair12)],
                 [".sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.resolve \"A\"), .num 99]))]))"])),
-        ("eqSpreadSeqLiteral", "P = (1, 2)\n(P.spread, 99) == (1, 2, 99)",
+        ("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)",
             LProg([LVal("P", Pair12)],
                 [".binary .eq (.block (alg [] [] [] [.sequenceSpread (.resolve \"P\"), .num 99])) (.block (alg [] [] [] [.num 1, .num 2, .num 99]))"])),
         ("loopSpreadHistoryFlat",
-            "Step((history...), previous) = (history.spread, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0",
+            "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0",
             LProg(
-                ["privateProp \"Step\" (algWithParameterPatterns [.sequenceValue [.capture { name := \"history\", kind := .variadic }], .capture { name := \"previous\" }] [] [] [.block (alg [] [] [] [.sequenceSpread (.param \"history\"), .binary .add (.param \"previous\") (.num 1)]), .binary .add (.param \"previous\") (.num 1)])"],
+                ["privateProp \"Step\" (algWithParameterPatterns [.sequenceValue [.capture { name := \"history\", kind := .collecting }], .capture { name := \"previous\" }] [] [] [.block (alg [] [] [] [.sequenceSpread (.param \"history\"), .binary .add (.param \"previous\") (.num 1)]), .binary .add (.param \"previous\") (.num 1)])"],
                 [".index (.dotCall (.resolve \"Step\") \"repeat\" (some (alg [] [] [] [.num 2, " + Pair12 + ", .num 2]))) (.num 0)"])),
         ("ifBranchSeq", "if(1, (1, 2), 3)",
             LProg([], [LCall("if", ".num 1", "(.block (alg [] [] [] [.num 1, .num 2]))", ".num 3")])),
@@ -517,24 +517,24 @@ public static class SemanticExplorerCorpus
         // Exact list values: spread inside list literals, list/sequence kind
         // distinctions, empty-list-spread neutrality, and list arguments at
         // call boundaries. These pin the July 2026 list-value semantics.
-        ("listSpreadOfSeqProp", "A = 1, 2, 3\n[A.spread]",
+        ("listSpreadOfSeqProp", "A = 1, 2, 3\n[A*]",
             LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
                 [".listLiteral [.sequenceSpread (.resolve \"A\")]"])),
-        ("listSpreadBetween", "A = 1, 2, 3\n[0, A.spread, 4]",
+        ("listSpreadBetween", "A = 1, 2, 3\n[0, A*, 4]",
             LProg(["privateProp \"A\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
                 [".listLiteral [.num 0, .sequenceSpread (.resolve \"A\"), .num 4]"])),
         ("listOfLists", "A = [1, 2]\nB = [3, 4]\n[A, B]",
             LProg([LVal("A", List12), LVal("B", List34)],
                 [".listLiteral [.resolve \"A\", .resolve \"B\"]"])),
-        ("listSpreadConcat", "A = [1, 2]\nB = [3, 4]\n[A.spread, B.spread]",
+        ("listSpreadConcat", "A = [1, 2]\nB = [3, 4]\n[A*, B*]",
             LProg([LVal("A", List12), LVal("B", List34)],
                 [".listLiteral [.sequenceSpread (.resolve \"A\"), .sequenceSpread (.resolve \"B\")]"])),
-        ("listMixedSpread", "A = [1, 2]\nB = [3, 4]\n[A, B.spread]",
+        ("listMixedSpread", "A = [1, 2]\nB = [3, 4]\n[A, B*]",
             LProg([LVal("A", List12), LVal("B", List34)],
                 [".listLiteral [.resolve \"A\", .sequenceSpread (.resolve \"B\")]"])),
-        ("listEmptyListSpreadBetween", "[1, [].spread, 2]",
+        ("listEmptyListSpreadBetween", "[1, []*, 2]",
             LProg([], [".listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2]"])),
-        ("listEmptySeqSpreadBetween", "[1, ().spread, 2]",
+        ("listEmptySeqSpreadBetween", "[1, ()*, 2]",
             LProg([], [".listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]"])),
         ("listNeSeq", "[1, 2] == (1, 2)",
             LProg([], [".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"])),
@@ -544,48 +544,48 @@ public static class SemanticExplorerCorpus
             LProg([], [".binary .eq (.listLiteral [.num 7]) (.num 7)"])),
         ("listWrapCanonicalizes", "([1, 2]) == [1, 2]",
             LProg([], [".binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])"])),
-        ("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A.spread\nB == (1, 2, 3)",
+        ("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A*\nB == (1, 2, 3)",
             LProg(
                 [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
                  "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
                 [".binary .eq (.resolve \"B\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
-        ("listCollectingNotSequenceKind", "x, rest... = [1, 2, 3]\nrest == (2, 3)",
+        ("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
                 [".binary .eq (.resolve \"rest\") (.block (alg [] [] [] [.num 2, .num 3]))"])),
-        ("listCollectingCollectsExactList", "x, rest... = [1, 2, 3]\nrest == [2, 3]",
+        ("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
                 [".binary .eq (.resolve \"rest\") (.listLiteral [.num 2, .num 3])"])),
-        ("implicitForwardOrdinarySource", "Target(items...) = items\nUse(items) = Target\nUse([1, 2])",
+        ("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])",
             LProg(
-                ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])",
+                ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])",
                  "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") (alg [] [] [] [.param \"items\"])])"],
                 [LCall("Use", "(.listLiteral [.num 1, .num 2])")])),
-        ("callbackSingleVariadicMap", "Collect(items...) = items\n[7].map(Collect)",
+        ("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)",
             LProg(
-                ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .variadic }] [] [] [.param \"items\"])"],
+                ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])"],
                 [".dotCall (.listLiteral [.num 7]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"])),
-        ("callbackMixedVariadicRow", "F(first, middle..., last) = middle\n[(1, 2, 3, 4)].map(F)",
+        ("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)",
             LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .variadic }, { name := \"last\" }] [] [] [.param \"middle\"])"],
+                ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .collecting }, { name := \"last\" }] [] [] [.param \"middle\"])"],
                 [".dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]) \"map\" (some (alg [] [] [] [.resolve \"F\"]))"])),
-        ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9).spread",
+        ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*",
             LProg([LVal("A", List12)],
                 [".sequenceSpread (.block (alg [] [] [] [.resolve \"A\", .num 9]))"])),
         ("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
                 [LCall("F", List12, ".num 3")])),
-        ("listVariadicSpreadCall", "F(a...) = a\nA = [1, 2]\nF(A.spread, 9)",
-            LProg([LVariadicF, LVal("A", List12)],
+        ("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)",
+            LProg([LCollectingF, LVal("A", List12)],
                 [LCall("F", ".sequenceSpread (.resolve \"A\")", ".num 9")])),
         // C#-only parse-level cases (no comparable Lean program).
         ("trailingComma", "(3,)", null),
-        ("spreadAsBinaryOperand", "A = (1, 2)\nA.spread == A.spread", null),
+        ("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*", null),
         ("semicolonSeparator", "1 ; 2", null),
         ("listUnterminated", "[1, 2", null),
         ("listDefinitionInside", "[x = 1]", null),
-        ("listLoneCollectingAssignment", "items... = [1, 2, 3]",
+        ("listLoneCollectingAssignment", "*items = [1, 2, 3]",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["items"], 0, "items")],
                 [])),
@@ -655,10 +655,10 @@ public static class SemanticExplorerCorpus
             () => Sc(ScBlock(ScNum(1), ScNum(2)), ScBlock(ScNum(3), ScNum(4))),
             $".sequenceConstruct {LScPair12} (.block (alg [] [] [] [.num 3, .num 4]))",
             "((1, 2), (3, 4))", InternalNodeRelation.IntentionallyEqual),
-        new("sc_spread_3", "SequenceConstruct[(1,2).spread, 3] splices the spread leaf",
+        new("sc_spread_3", "SequenceConstruct[(1,2)*, 3] splices the spread leaf",
             () => Sc(new Expr.SequenceSpread(ScBlock(ScNum(1), ScNum(2))), ScNum(3)),
             $".sequenceConstruct (.sequenceSpread {LScPair12}) (.num 3)",
-            "((1, 2).spread, 3)", InternalNodeRelation.IntentionallyEqual),
+            "((1, 2)*, 3)", InternalNodeRelation.IntentionallyEqual),
         new("sc_count_arg", "count of the internal node observes the ()-dropped value",
             () => ScCall("count", Sc(ScEmpty(), ScNum(1))),
             ".call (.resolve \"count\") (alg [] [] [] [.sequenceConstruct (.emptySequence 0) (.num 1)])",

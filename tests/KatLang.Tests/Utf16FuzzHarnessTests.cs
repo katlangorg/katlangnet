@@ -89,7 +89,7 @@ public class Utf16FuzzHarnessTests
     }
 
     [Fact]
-    public void CollectingBindingTemplate_GeneratesCanonicalPostfixMarker()
+    public void CollectingBindingTemplate_GeneratesCanonicalPrefixMarker()
     {
         var parameters = new Utf16Parameters(
             Utf16TemplateKind.CollectingBinding,
@@ -102,18 +102,22 @@ public class Utf16FuzzHarnessTests
             Filler: 0,
             RawUnits: []);
 
+        // The insertion ('z') lands directly after the prefix collect marker, so the benign
+        // case is the DIRECTLY ATTACHED `*zz` collecting binding — never a detached `* z`
+        // and never the removed postfix `zz*` spelling.
         var source = Utf16SourceBuilder.Build(parameters).Source;
-        Assert.Contains("F(a, z...)", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("...z", source, StringComparison.Ordinal);
+        Assert.Contains("F(a, *zz)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("* z", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("zz*", source, StringComparison.Ordinal);
 
         var parsed = Parser.ParseSyntax(source);
         Assert.False(
             parsed.HasErrors,
             string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
         var function = Assert.Single(parsed.Root.Properties, static property => property.Name == "F").Value;
-        var variadic = Assert.IsType<CaptureParameterPattern>(function.ParameterPatterns[1]);
-        Assert.Equal(ParameterKind.Variadic, variadic.Kind);
-        Assert.Equal("z", variadic.Name);
+        var collecting = Assert.IsType<CaptureParameterPattern>(function.ParameterPatterns[1]);
+        Assert.Equal(ParameterKind.Collecting, collecting.Kind);
+        Assert.Equal("zz", collecting.Name);
     }
 
     [Fact]
@@ -507,8 +511,8 @@ public class Utf16FuzzHarnessTests
         Assert.Equal(Enum.GetValues<Utf16SurrogateClass>().Length, surrogateClasses.Count);
 
         foreach (var group in Enum.GetValues<Utf16CodeUnitGroup>())
-        for (var member = 0; member < Utf16Tables.MembersOf(group).Length; member++)
-            Assert.Contains((group, member), members);
+            for (var member = 0; member < Utf16Tables.MembersOf(group).Length; member++)
+                Assert.Contains((group, member), members);
     }
 
     [Fact]

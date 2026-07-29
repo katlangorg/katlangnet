@@ -111,17 +111,17 @@ public class KatLangEngineTests
     public void Run_EmptyCollectedListOutputSlot_StaysVisibleUnlessSpread()
     {
         // The empty collected list is the exact list [] and stays a visible slot.
-        AssertDisplay("x, rest... = 1\nrest", "[]");
-        AssertDisplay("x, rest... = 1\nrest\nx", "[]\n1");
+        AssertDisplay("x, *rest = 1\nrest", "[]");
+        AssertDisplay("x, *rest = 1\nrest\nx", "[]\n1");
         // Spreading the empty list opens it and contributes zero items.
-        AssertDisplay("x, rest... = 1\nrest.spread\nx", "1");
+        AssertDisplay("x, *rest = 1\nrest*\nx", "1");
     }
 
     [Fact]
     public void Run_EmptyAndNestedEmptySpread_Canonicalize()
     {
-        AssertDisplay("1, ().spread, 2", "1\n2");
-        AssertDisplay("1, (()).spread, 2", "1\n2");
+        AssertDisplay("1, ()*, 2", "1\n2");
+        AssertDisplay("1, (())*, 2", "1\n2");
     }
 
     [Fact]
@@ -136,19 +136,19 @@ public class KatLangEngineTests
         AssertDisplay("X = 1, 2, 3\nif(1, X, X)", "(1, 2, 3)");
         AssertDisplay("X = 1, 2, 3\nif(0, X, X)", "(1, 2, 3)");
         // Explicit spread opens it back into separate rows.
-        AssertDisplay("X = 1, 2, 3\nif(1, X, X).spread", "1\n2\n3");
+        AssertDisplay("X = 1, 2, 3\nif(1, X, X)*", "1\n2\n3");
     }
 
     [Fact]
     public void Run_IfSpreadArgument_OpensIntoThreeArguments()
     {
         // Issue #131: explicit spread in call-argument position supplies the value's items
-        // into the three `if` argument slots, so `if(X.spread)` ≡ `if(1, 2, 3)` → 2.
-        AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult.spread)", "2");
-        AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult.spread)", "2");
-        AssertDisplay("Pair = 2, 3\nif(1, Pair.spread)", "2");
+        // into the three `if` argument slots, so `if(X*)` ≡ `if(1, 2, 3)` → 2.
+        AssertDisplay("TrueResult = 1, 2, 3\nif(TrueResult*)", "2");
+        AssertDisplay("TrueResult = (1, 2, 3)\nif(TrueResult*)", "2");
+        AssertDisplay("Pair = 2, 3\nif(1, Pair*)", "2");
         // Direct builtin `if` now matches the user-defined wrapper.
-        AssertDisplay("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult.spread)", "2");
+        AssertDisplay("TrueResult = 1, 2, 3\nMyIF(a, b, c) = if(a, b, c)\nMyIF(TrueResult*)", "2");
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public class KatLangEngineTests
     {
         // The spread now parses; a wrong expanded count surfaces as an evaluation
         // arity error, not a parser arity error.
-        var result = KatLangEngine.Run("Two = 1, 2\nif(Two.spread)");
+        var result = KatLangEngine.Run("Two = 1, 2\nif(Two*)");
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         Assert.Contains(failure.Errors, e => e.Message.Contains("3 arguments"));
     }
@@ -456,7 +456,7 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
+        Assert.Contains("filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
         Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
     }
 
@@ -722,32 +722,33 @@ public class KatLangEngineTests
     }
 
     [Theory]
-    [InlineData("open A...")]
-    [InlineData("open A...B")]
-    [InlineData("open 'url'...")]
-    [InlineData("open A, 'url'...")]
-    public void Run_OpenEllipsisTarget_ReportsParseFailure(string source)
+    [InlineData("open A...", "Expected property name after '.'.")]
+    [InlineData("open A...B", "Expected property name after '.'.")]
+    [InlineData("open 'url'...", "Expected ',' between open targets")]
+    [InlineData("open A, 'url'...", "Expected ',' between open targets")]
+    public void Run_OpenEllipsisRemnant_ReportsOrdinaryParseFailure(string source, string expectedMessage)
     {
-        // `...` is not open-target syntax (it is the collecting-binding
-        // marker); the rejection happens at parse time, before any evaluation.
+        // `...` is not a token: it lexes as three dots, so a legacy
+        // ellipsis-marked open target fails through the ordinary dotted-target
+        // and open-separator diagnostics; the rejection happens at parse time,
+        // before any evaluation.
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         Assert.Contains(
             failure.Errors,
-            static error => error.Message.Contains(
-                "`...` is not valid in open targets",
-                StringComparison.Ordinal));
+            error => error.Message.Contains(expectedMessage, StringComparison.Ordinal));
     }
 
     [Theory]
-    [InlineData("open spread(A)")]
-    [InlineData("open A.spread")]
-    [InlineData("open A, B.spread")]
+    [InlineData("open A*")]
+    [InlineData("open A**")]
+    [InlineData("open A, B*")]
     public void Run_OpenSpreadExpressionTarget_ReportsParseFailure(string source)
     {
-        // A named spread expression is not an open form; the rejection
-        // happens at parse time, before any evaluation.
+        // A spread-marked target parses to a spread expression, which is not
+        // an open form; the rejection happens at parse time, before any
+        // evaluation.
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
@@ -874,7 +875,7 @@ public class KatLangEngineTests
         // [(10, 20, 30)], displayed as a single row.
         var result = KatLangEngine.Run(
             """
-            Collect(list...) = list
+            Collect(*list) = list
             Output = (10, 20, 30).Collect
             """);
 
@@ -889,8 +890,8 @@ public class KatLangEngineTests
         // list into the surrounding item supply, displaying separate rows.
         var result = KatLangEngine.Run(
             """
-            Collect(list...) = list
-            Output = ((10, 20, 30).spread).Collect.spread
+            Collect(*list) = list
+            Output = ((10, 20, 30)*).Collect*
             """);
 
         Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());

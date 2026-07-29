@@ -31,10 +31,10 @@ public class CollectionBuiltinBindingTests
     [Theory]
     [InlineData("count()", "count(collection)", 1, 0, 1)]
     [InlineData("count(1, 2, 3)", "count(collection)", 1, 3, 1)]
-    [InlineData("count([1, 2, 3].spread)", "count(collection)", 1, 3, 1)]
+    [InlineData("count([1, 2, 3]*)", "count(collection)", 1, 3, 1)]
     [InlineData("take([1, 2, 3])", "take(collection, count)", 2, 1, 1)]
     [InlineData("take((1, 2, 3))", "take(collection, count)", 2, 1, 1)]
-    [InlineData("take([1, 2, 3].spread, 2)", "take(collection, count)", 2, 4, 1)]
+    [InlineData("take([1, 2, 3]*, 2)", "take(collection, count)", 2, 4, 1)]
     [InlineData("F(x) = x\nmap(1, 2, 3, F)", "map(collection, mapper)", 2, 4, 2)]
     [InlineData("P(x) = x\nfilter(1, 2, 3, P)", "filter(collection, predicate)", 2, 4, 2)]
     [InlineData("contains(1, 2, 3, 2)", "contains(collection, item)", 2, 4, 1)]
@@ -112,7 +112,7 @@ public class CollectionBuiltinBindingTests
         // list value, so forwarding it (`values.sum`) binds the single
         // `collection` parameter. The builtin itself has no variadic shape:
         // the equivalent inline call is an arity error.
-        AssertAtoms("G(values...) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);
+        AssertAtoms("G(*values) = values.sum\nG(3, 4, 2, 1, 3, 3)", 16);
         AssertArityError("sum(3, 4, 2, 1, 3, 3)", "sum(collection)");
     }
 
@@ -126,12 +126,12 @@ public class CollectionBuiltinBindingTests
     [Fact]
     public void SpreadArguments_CountAsOrdinarySlots_GroupedSpreadConcatenates()
     {
-        // Spread has only its ordinary meaning: `sum(A.spread, B.spread)` supplies
+        // Spread has only its ordinary meaning: `sum(A*, B*)` supplies
         // four argument slots, an arity error.
-        AssertArityError("A = 1, 2\nB = 3, 4\nsum(A.spread, B.spread)", "sum(collection)");
+        AssertArityError("A = 1, 2\nB = 3, 4\nsum(A*, B*)", "sum(collection)");
         // The concatenation rewrite groups the spreads into ONE
         // sequence-value collection argument.
-        AssertAtoms("A = 1, 2\nB = 3, 4\nsum((A.spread, B.spread))", 10);
+        AssertAtoms("A = 1, 2\nB = 3, 4\nsum((A*, B*))", 10);
     }
 
     // ───────────────────────── Control-parameter builtins ───────────────────────
@@ -144,7 +144,7 @@ public class CollectionBuiltinBindingTests
         AssertAtoms("Data = 1, 2, 3\ncontains(Data, 2)", 1);
         // Spreading the stored collection supplies its items as ordinary
         // argument slots, overflowing the two-argument signature.
-        AssertArityError("Data = 1, 2, 3\ncontains(Data.spread, 2)", "contains(collection, item)");
+        AssertArityError("Data = 1, 2, 3\ncontains(Data*, 2)", "contains(collection, item)");
         AssertAtoms("contains((1, 2, 3), 9)", 0);
     }
 
@@ -202,9 +202,9 @@ public class CollectionBuiltinBindingTests
             "Add = x + total\nA = 1, 2\nB = 3, 4\nreduce(A, B, Add, 0)",
             "reduce(collection, reducer, initial)");
         AssertArityError(
-            "Add = x + total\nA = 1, 2\nB = 3, 4\nreduce(A.spread, B.spread, Add, 0)",
+            "Add = x + total\nA = 1, 2\nB = 3, 4\nreduce(A*, B*, Add, 0)",
             "reduce(collection, reducer, initial)");
         // and... the concatenation rewrite groups them into one collection.
-        AssertAtoms("Add = x + total\nA = 1, 2\nB = 3, 4\nreduce((A.spread, B.spread), Add, 0)", 10);
+        AssertAtoms("Add = x + total\nA = 1, 2\nB = 3, 4\nreduce((A*, B*), Add, 0)", 10);
     }
 }

@@ -46,7 +46,8 @@ internal static class EditorModel
         foreach (var name in BuiltinRegistry.MathMemberNames) names.Add(name);
         names.Add("Math");
         names.Add("string");
-        names.Add("spread");
+        // `spread` is deliberately NOT here: since the star syntax landed it is an ordinary
+        // identifier, so the tooling classifying it as a builtin would be an invented symbol.
         names.Add("load");
         return names;
     }

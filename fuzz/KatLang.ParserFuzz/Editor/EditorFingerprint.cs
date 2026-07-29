@@ -80,7 +80,7 @@ internal static class EditorFingerprint
     {
         EditorTemplateKind.ListLiteral or EditorTemplateKind.IncompleteList or EditorTemplateKind.DottedAfterList => "list",
         EditorTemplateKind.SequenceLiteral or EditorTemplateKind.IncompleteSequence or EditorTemplateKind.DottedAfterSequence => "sequence",
-        EditorTemplateKind.Spread or EditorTemplateKind.PartialSpread => "spread",
+        EditorTemplateKind.Spread or EditorTemplateKind.SpreadAtEndOfFile => "spread",
         EditorTemplateKind.CollectingBinding or EditorTemplateKind.IncompleteCollecting => "collecting",
         EditorTemplateKind.Deconstruction => "deconstruction",
         _ => "none",

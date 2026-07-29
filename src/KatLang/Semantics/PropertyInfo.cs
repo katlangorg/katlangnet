@@ -37,13 +37,13 @@ public enum PropertyParameterKind
 /// </summary>
 public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Kind, SourceSpan? Span)
 {
-    public bool IsVariadic { get; init; }
+    public bool IsCollecting { get; init; }
 
     public string? DisplayNameOverride { get; init; }
 
     public string DisplayName => DisplayNameOverride
-        ?? (IsVariadic
-            ? $"{Name}..."
+        ?? (IsCollecting
+            ? $"*{Name}"
             : Name);
 }
 
@@ -136,8 +136,8 @@ internal static class ConditionalBranchHeadFormatter
     private static string FormatPattern(Pattern pattern, bool nested)
         => pattern switch
         {
-            Pattern.Bind bind => bind.ParameterKind == ParameterKind.Variadic
-                ? $"{bind.Name}..."
+            Pattern.Bind bind => bind.ParameterKind == ParameterKind.Collecting
+                ? $"*{bind.Name}"
                 : bind.Name,
             Pattern.LitInt litInt => litInt.Value.ToString(CultureInfo.InvariantCulture),
             Pattern.LitString litString => $"'{litString.Value}'",

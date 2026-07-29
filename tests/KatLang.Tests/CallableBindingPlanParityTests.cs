@@ -118,8 +118,8 @@ public class CallableBindingPlanParityTests
     {
         Assert.Equal(min, plan.TopLevelPatternList.MinSlotCount);
         Assert.Equal(max, plan.TopLevelPatternList.MaxSlotCount);
-        Assert.Equal(hasTopLevelVariadic, plan.TopLevelPatternList.HasVariadicAtThisLevel);
-        Assert.Equal(hasTopLevelVariadic ? 1 : 0, plan.TopLevelPatternList.VariadicCountAtThisLevel);
+        Assert.Equal(hasTopLevelVariadic, plan.TopLevelPatternList.HasCollectingAtThisLevel);
+        Assert.Equal(hasTopLevelVariadic ? 1 : 0, plan.TopLevelPatternList.CollectingCountAtThisLevel);
         Assert.Equal(CallableSignatureDiagnostics.GetArityFacts(plan.Signature), plan.ArityFacts);
     }
 
@@ -127,7 +127,7 @@ public class CallableBindingPlanParityTests
         => node switch
         {
             CaptureBindingNode capture => $"Capture({capture.Name}:{capture.Source})",
-            VariadicCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
+            CollectingCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
             SequenceValueBindingNode group => $"SequenceValue({DescribePatternList(group.Children)})",
             _ => throw new InvalidOperationException("Unknown binding node."),
         };
@@ -200,23 +200,23 @@ public class CallableBindingPlanParityTests
     }
 
     [Fact]
-    public void TopLevelVariadicShape_MatchesRuntimeVariadicCapture()
+    public void TopLevelVariadicShape_MatchesRuntimeCollectingCapture()
     {
-        var plan = PlanFor("CountValues(values...) = values.count", "CountValues");
+        var plan = PlanFor("CountValues(*values) = values.count", "CountValues");
 
-        AssertPlanDisplay(plan, "CountValues(values...)");
+        AssertPlanDisplay(plan, "CountValues(*values)");
         AssertTopLevelNodes(plan, "Variadic(values:Explicit:top)");
-        AssertCaptures(plan, "values...:Explicit");
-        // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
+        AssertCaptures(plan, "*values:Explicit");
+        // Lone-collecting item supply: no fixed bindings, so min 0 and unbounded max.
         AssertArity(plan, min: 0, max: null, hasTopLevelVariadic: true);
-        Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
-        Assert.True(plan.TopLevelPatternList.VariadicCapture.IsTopLevel);
+        Assert.NotNull(plan.TopLevelPatternList.CollectingCapture);
+        Assert.True(plan.TopLevelPatternList.CollectingCapture.IsTopLevel);
 
         // Three inline argument slots are collected as the exact list [1, 2, 3];
         // a single grouped `(1, 2, 3)` argument would be one collected item.
         AssertEval(
             """
-            CountValues(values...) = values.count
+            CountValues(*values) = values.count
             CountValues(1, 2, 3)
             """,
             3);
@@ -225,23 +225,23 @@ public class CallableBindingPlanParityTests
     [Fact]
     public void VariadicSuffixShape_MatchesRuntimePrefixVariadicSuffixBinding()
     {
-        var plan = PlanFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
+        var plan = PlanFor("Scale(*items, factor) = items.map{n * factor}", "Scale");
 
-        AssertPlanDisplay(plan, "Scale(items..., factor)");
+        AssertPlanDisplay(plan, "Scale(*items, factor)");
         AssertTopLevelNodes(plan, "Variadic(items:Explicit:top)", "Capture(factor:Explicit)");
         Assert.Empty(plan.TopLevelPatternList.Prefix);
-        Assert.NotNull(plan.TopLevelPatternList.VariadicCapture);
-        Assert.Equal("items", plan.TopLevelPatternList.VariadicCapture.Name);
+        Assert.NotNull(plan.TopLevelPatternList.CollectingCapture);
+        Assert.Equal("items", plan.TopLevelPatternList.CollectingCapture.Name);
         Assert.Equal(["Capture(factor:Explicit)"], plan.TopLevelPatternList.Suffix.Select(DescribeNode).ToArray());
-        AssertCaptures(plan, "items...:Explicit", "factor:Explicit");
+        AssertCaptures(plan, "*items:Explicit", "factor:Explicit");
         // Deconstruction-shaped: the fixed `factor` is the only required slot and
-        // the variadic parameter collects any number of prefix items as one exact list.
+        // the collecting parameter collects any number of prefix items as one exact list.
         AssertArity(plan, min: 1, max: null, hasTopLevelVariadic: true);
 
         AssertEval(
             """
-            Scale(items..., factor) = items.map{n * factor}
-            Scale((1, 2, 3).spread, 10)
+            Scale(*items, factor) = items.map{n * factor}
+            Scale((1, 2, 3)*, 10)
             """,
             10, 20, 30);
     }
@@ -249,44 +249,44 @@ public class CallableBindingPlanParityTests
     [Fact]
     public void SequenceValueVariadicShape_IsNestedAndRuntimeDoesNotTreatItAsTopLevelVariadic()
     {
-        var plan = PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
+        var plan = PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue");
 
-        AssertPlanDisplay(plan, "CountSequenceValue((values...))");
+        AssertPlanDisplay(plan, "CountSequenceValue((*values))");
         AssertTopLevelNodes(plan, "SequenceValue(Variadic(values:Explicit:nested))");
-        AssertCaptures(plan, "values...:Explicit");
+        AssertCaptures(plan, "*values:Explicit");
         AssertArity(plan, min: 1, max: 1, hasTopLevelVariadic: false);
-        Assert.False(plan.TopLevelPatternList.HasVariadicAtThisLevel);
-        Assert.True(plan.TopLevelPatternList.HasVariadicInDescendants);
+        Assert.False(plan.TopLevelPatternList.HasCollectingAtThisLevel);
+        Assert.True(plan.TopLevelPatternList.HasCollectingInDescendants);
 
         AssertEval(
             """
-            CountSequenceValue((values...)) = values.count
+            CountSequenceValue((*values)) = values.count
             CountSequenceValue((1, 2, 3))
             """,
             3);
 
         var message = AssertEvalFails(
             """
-            CountSequenceValue((values...)) = values.count
+            CountSequenceValue((*values)) = values.count
             CountSequenceValue(1, 2, 3)
             """);
-        Assert.Contains("CountSequenceValue((values...))", message, StringComparison.Ordinal);
+        Assert.Contains("CountSequenceValue((*values))", message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void NestedSequenceValueRecursiveShape_PreservesNestedSequenceValuesAndMatchesRuntimeShape()
     {
-        var plan = PlanFor("G(((history...), previous)) = history.count + previous", "G");
+        var plan = PlanFor("G(((*history), previous)) = history.count + previous", "G");
 
-        AssertPlanDisplay(plan, "G(((history...), previous))");
+        AssertPlanDisplay(plan, "G(((*history), previous))");
         AssertTopLevelNodes(plan, "SequenceValue(SequenceValue(Variadic(history:Explicit:nested)), Capture(previous:Explicit))");
-        AssertCaptures(plan, "history...:Explicit", "previous:Explicit");
+        AssertCaptures(plan, "*history:Explicit", "previous:Explicit");
         AssertArity(plan, min: 1, max: 1, hasTopLevelVariadic: false);
-        Assert.True(plan.TopLevelPatternList.HasVariadicInDescendants);
+        Assert.True(plan.TopLevelPatternList.HasCollectingInDescendants);
 
         AssertEval(
             """
-            G(((history...), previous)) = history.count + previous
+            G(((*history), previous)) = history.count + previous
             G(((1, 2, 3), 4))
             """,
             7);
@@ -327,16 +327,17 @@ public class CallableBindingPlanParityTests
         // (fixed parameter: the receiver binds untouched and the collection
         // view opens the lone sequence — count 3)
 
-        var variadicPlan = PlanFor("Collect(list...) = list.count", "Collect");
+        var variadicPlan = PlanFor("Collect(*list) = list.count", "Collect");
         AssertTopLevelNodes(variadicPlan, "Variadic(list:Explicit:top)");
         AssertArity(variadicPlan, min: 0, max: null, hasTopLevelVariadic: true);
 
         // The parenthesized-spread receiver supplies the items to the leading
-        // flat variadic; an ordinary receiver would be one collected item.
+        // flat collecting parameter; an ordinary receiver would be one
+        // collected item.
         AssertEval(
             """
-            Collect(list...) = list.count
-            Output = ((10, 20, 30).spread).Collect
+            Collect(*list) = list.count
+            Output = ((10, 20, 30)*).Collect
             """,
             3);
     }
@@ -358,7 +359,7 @@ public class CallableBindingPlanParityTests
         AssertTopLevelNodes(flat, "Capture(a:Explicit)", "Capture(b:Explicit)");
         AssertArity(flat, min: 2, max: 2, hasTopLevelVariadic: false);
 
-        var variadic = PlanFor("Step(values...) = values.spread 1", "Step");
+        var variadic = PlanFor("Step(*values) = values*, 1", "Step");
         AssertTopLevelNodes(variadic, "Variadic(values:Explicit:top)");
         AssertArity(variadic, min: 0, max: null, hasTopLevelVariadic: true);
 
@@ -368,7 +369,7 @@ public class CallableBindingPlanParityTests
 
         AssertEval(
             """
-            Step(first, rest...) = first.spread rest
+            Step(first, *rest) = first*, rest
             Step.repeat(1, 1, 2, 3)
             """,
             1, 2, 3);
@@ -384,12 +385,12 @@ public class CallableBindingPlanParityTests
         AssertUserCallAndLoopStepParity(
             userSource:
             """
-            Shape(first, middle..., last) = first, middle.count, last
+            Shape(first, *middle, last) = first, middle.count, last
             Shape(10, (20, 30), 40)
             """,
             loopSource:
             """
-            Step(first, middle..., last) = first, middle.count, last
+            Step(first, *middle, last) = first, middle.count, last
             Step.repeat(1, 10, (20, 30), 40)
             """,
             expected: ResultFromAtoms(10, 1, 40));
@@ -403,12 +404,12 @@ public class CallableBindingPlanParityTests
         AssertUserCallAndLoopStepParity(
             userSource:
             """
-            CountValues(values...) = values.count
-            CountValues((7, 8, 9).spread)
+            CountValues(*values) = values.count
+            CountValues((7, 8, 9)*)
             """,
             loopSource:
             """
-            Step(values...) = values.count
+            Step(*values) = values.count
             Step.repeat(1, 7, 8, 9)
             """,
             expected: ResultFromAtoms(3));
@@ -419,7 +420,7 @@ public class CallableBindingPlanParityTests
     {
         var (result, stats) = EvalResultWithLoopDiagnostics(
             """
-            Step(values...) = values
+            Step(*values) = values
             Step.repeat(1, 1, 2, 3)
             """,
             enableLoopOptimization: true);
@@ -510,10 +511,10 @@ public class CallableBindingPlanParityTests
         AssertPlanDisplay(plan, display);
         // Fixed collection-object model: one ordinary `collection` capture
         // plus fixed control captures — a flat fixed layout, no variadic.
-        Assert.Null(plan.TopLevelPatternList.VariadicCapture);
+        Assert.Null(plan.TopLevelPatternList.CollectingCapture);
         var parameterCount = controlName is null ? 1 : 2;
         AssertArity(plan, min: parameterCount, max: parameterCount, hasTopLevelVariadic: false);
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
         Assert.True(plan.TryGetFlatFixedLayout(out var captures));
         Assert.Equal(parameterCount, captures.Count);
         Assert.Equal("collection", captures[0].Name);

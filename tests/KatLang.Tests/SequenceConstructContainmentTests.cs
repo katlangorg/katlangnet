@@ -4,8 +4,9 @@ namespace KatLang.Tests;
 /// Containment guards for the internal AST node <see cref="Expr.SequenceConstruct"/>.
 ///
 /// Provenance (July 2026 audit, docs/design/sequence-boundary-audit-2026-07.md §7):
-/// the node is the retained encoding of the removed binary spread-join
-/// (`A.spread B` before it became the expression-list slots `A.spread, B`). The parser
+/// the node is the retained encoding of the removed binary spread-join (a
+/// spread directly joined to a right operand, from the era before a spread
+/// expression became its own expression-list slot — today `A*, B`). The parser
 /// and all current production transformations have ZERO ORIGIN SITES for it —
 /// written parentheses parse to <see cref="Expr.Block"/> /
 /// <see cref="Expr.EmptySequence"/>, and the elaboration visitors only
@@ -62,18 +63,18 @@ public class SequenceConstructContainmentTests
         "((), 1)",
         "(1, ())",
         "((1, 2), 3)",
-        "A = (1, 2)\n(A.spread)",
-        "A = (1, 2)\n(A.spread, 99)",
-        "A = (1, 2)\nA.spread 99",
-        "A = (1, 2)\nA.spread, 99",
+        "A = (1, 2)\n(A*)",
+        "A = (1, 2)\n(A*, 99)",
+        "A = (1, 2)\nA* 99",
+        "A = (1, 2)\nA*, 99",
         "1, 2",
         "1 2 3",
         "P = (), 99\nP",
         "take(((), ()), 2)",
         "f(a, b) = a\nf(1, 2)",
-        "x, y = (1, 2).spread\nx",
-        "F(a...) = a\nF((1, 2).spread, 3)",
-        "(1.spread, (), 2.spread)",
+        "x, y = (1, 2)*\nx",
+        "F(*a) = a\nF((1, 2)*, 3)",
+        "(1*, (), 2*)",
         // Exact list literals are a genuine surface node (Expr.ListLiteral),
         // never a route into the internal join node.
         "[]",
@@ -81,10 +82,10 @@ public class SequenceConstructContainmentTests
         "[1, 2, 3]",
         "[[1, 2], [3, 4]]",
         "[()]",
-        "A = (1, 2)\n[A.spread, 99]",
-        "A = [1, 2]\n(A.spread, 99)",
+        "A = (1, 2)\n[A*, 99]",
+        "A = [1, 2]\n(A*, 99)",
         "x, y = [1, 2]\nx",
-        "F(a...) = a\nF([1, 2].spread, 3)",
+        "F(*a) = a\nF([1, 2]*, 3)",
     };
 
     [Theory]
@@ -161,7 +162,7 @@ public class SequenceConstructContainmentTests
             item => Assert.Equal(1m, Assert.IsType<Expr.Num>(item).Value));
 
         // A spread item inside parentheses is a SequenceSpread slot in the block.
-        var spread = Assert.IsType<Expr.Block>(SingleRootOutput("A = (1, 2)\n(A.spread, 99)"));
+        var spread = Assert.IsType<Expr.Block>(SingleRootOutput("A = (1, 2)\n(A*, 99)"));
         var spreadAlg = Assert.IsType<Algorithm.User>(spread.Algorithm);
         Assert.Collection(spreadAlg.Output,
             item => Assert.IsType<Expr.SequenceSpread>(item),
@@ -193,7 +194,7 @@ public class SequenceConstructContainmentTests
         { "sc[(), (1,2)]", "ok raw=S[1, 2] n=1" },
         { "sc[1, 2]", "ok raw=S[1, 2] n=1" },   // agrees with surface (1, 2)
         { "sc[(1,2), (3,4)]", "ok raw=S[S[1, 2], S[3, 4]] n=1" },
-        { "sc[spread(1,2), 3]", "ok raw=S[1, 2, 3] n=1" },
+        { "sc[(1,2)*, 3]", "ok raw=S[1, 2, 3] n=1" },
     };
 
     private static readonly IReadOnlyDictionary<string, Func<Expr>> DirectNodeBuilders =
@@ -206,7 +207,7 @@ public class SequenceConstructContainmentTests
             ["sc[(), (1,2)]"] = () => Sc(E(), Blk(N(1), N(2))),
             ["sc[1, 2]"] = () => Sc(N(1), N(2)),
             ["sc[(1,2), (3,4)]"] = () => Sc(Blk(N(1), N(2)), Blk(N(3), N(4))),
-            ["sc[spread(1,2), 3]"] = () => Sc(new Expr.SequenceSpread(Blk(N(1), N(2))), N(3)),
+            ["sc[(1,2)*, 3]"] = () => Sc(new Expr.SequenceSpread(Blk(N(1), N(2))), N(3)),
         };
 
     [Theory]

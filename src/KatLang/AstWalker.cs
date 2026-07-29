@@ -49,8 +49,8 @@ public abstract class AstWalker
             foreach (var parameter in algorithm.ExplicitParameters)
             {
                 VisitExplicitParameterDeclaration(algorithm, parameter);
-                if (parameter.CollectingMarkerSpan is { } collectingMarkerSpan)
-                    VisitCollectingBindingMarker(collectingMarkerSpan);
+                if (parameter.CollectMarkerSpan is { } collectMarkerSpan)
+                    VisitCollectMarker(collectMarkerSpan);
             }
         }
 
@@ -218,8 +218,8 @@ public abstract class AstWalker
     {
         if (pattern.NameSpan is { } span)
             VisitConditionalBinderDeclaration(pattern, span);
-        if (pattern.CollectingMarkerSpan is { } collectingMarkerSpan)
-            VisitCollectingBindingMarker(collectingMarkerSpan);
+        if (pattern.CollectMarkerSpan is { } collectMarkerSpan)
+            VisitCollectMarker(collectMarkerSpan);
     }
 
     /// <summary>
@@ -230,9 +230,9 @@ public abstract class AstWalker
     }
 
     /// <summary>
-    /// Visits a source-backed collecting-binding postfix <c>...</c> marker.
+    /// Visits a source-backed prefix <c>*</c> collect marker of a collecting binding.
     /// </summary>
-    protected virtual void VisitCollectingBindingMarker(SourceSpan span)
+    protected virtual void VisitCollectMarker(SourceSpan span)
     {
     }
 

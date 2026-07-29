@@ -105,31 +105,38 @@ public class LexerTests
     }
 
     [Fact]
-    public void Tokenize_Ellipsis_ReturnsEllipsisToken()
+    public void Tokenize_TripleDots_AreThreeOrdinaryDotTokens()
     {
+        // The language has no ellipsis token: `...` lexes as three Dot tokens
+        // and fails through ordinary parser handling.
         var (tokens, diagnostics) = Lexer.Tokenize("A...B");
 
         Assert.Empty(diagnostics);
         Assert.Equal(TokenKind.Identifier, tokens[0].Kind);
-        Assert.Equal(TokenKind.Ellipsis, tokens[1].Kind);
-        Assert.Equal(TokenKind.Identifier, tokens[2].Kind);
+        Assert.Equal(TokenKind.Dot, tokens[1].Kind);
+        Assert.Equal(TokenKind.Dot, tokens[2].Kind);
+        Assert.Equal(TokenKind.Dot, tokens[3].Kind);
+        Assert.Equal(TokenKind.Identifier, tokens[4].Kind);
     }
 
     [Theory]
-    [InlineData("...items", 0, 3, 3, 5)]
-    [InlineData("... items", 0, 3, 4, 5)]
-    [InlineData("...\nitems", 0, 3, 4, 5)]
-    public void Tokenize_PrefixEllipsisAndIdentifier_RemainDistinctTokens(
+    [InlineData("*items", 0, 1, 1, 5)]
+    [InlineData("* items", 0, 1, 2, 5)]
+    [InlineData("*\nitems", 0, 1, 2, 5)]
+    public void Tokenize_StarAndIdentifier_RemainDistinctTokensWithExactOffsets(
         string source,
         int markerPosition,
         int markerLength,
         int namePosition,
         int nameLength)
     {
+        // The collect marker is a plain Star token; attachment is decided by
+        // the parser from exact source offsets (Position/Length), so the
+        // lexer must record them precisely for all three spacing shapes.
         var (tokens, diagnostics) = Lexer.Tokenize(source);
 
         Assert.Empty(diagnostics);
-        Assert.Equal(TokenKind.Ellipsis, tokens[0].Kind);
+        Assert.Equal(TokenKind.Star, tokens[0].Kind);
         Assert.Equal(markerPosition, tokens[0].Position);
         Assert.Equal(markerLength, tokens[0].Length);
         Assert.Equal(TokenKind.Identifier, tokens[1].Kind);

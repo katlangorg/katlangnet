@@ -1,0 +1,2 @@
+F(*items) = items
+F(1, 2)

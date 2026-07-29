@@ -281,12 +281,14 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_PostfixSpreadThenAdjacentExpression_ParamsFromBothSlots()
+    public void Detect_PostfixSpreadThenCommaSeparatedExpression_ParamsFromBothSlots()
     {
-        // `a.spread b` is the expression list `a.spread, b`.
-        // Parameter detection still finds both `a` (the spread operand) and
-        // `b` (the adjacent expression-list slot).
-        var ast = ParseAndDetect("a.spread b");
+        // `a*, b` is the expression list of a spread slot and an ordinary slot.
+        // (`a* b` would be the multiplication `a * b`: a star with a same-line
+        // expression start after it is the operator, so the spread slot needs
+        // the comma.) Parameter detection finds both `a` (the spread operand)
+        // and `b` (the following expression-list slot).
+        var ast = ParseAndDetect("a*, b");
 
         Assert.Equal(2, ast.Params.Count);
         Assert.Equal(2, ast.Output.Count);
@@ -491,10 +493,15 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_OpenSequenceSpread_DoesNotCollectProperties()
     {
+        // `open A*` parses to a SequenceSpread target that open-form validation
+        // rejects (spread is not an open form), so the open exposes nothing and
+        // foo/bar/z all stay free. (`open A* B` would be the multiplication
+        // `A * B` under the star law, and `open A*, B` would make B a real
+        // second target — each would exercise something else.)
         var source = """
             A = (public foo = 1)
             B = (public bar = 2)
-            open A.spread B
+            open A*
             foo + bar + z
             """;
         var ast = ParseAndDetect(source);

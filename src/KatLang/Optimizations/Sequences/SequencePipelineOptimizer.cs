@@ -178,7 +178,7 @@ internal static class SequencePipelineOptimizer
         // Under fixed collection-object arity the valid plain composition is
         // the BARE one-argument form — `count(filter(src, pred))` or
         // `count(src.filter(pred))` — where the filter result is count's one
-        // collection argument. A spread form such as `count(spread(filter(...)))`
+        // collection argument. A spread form such as `count(filter(...)*)`
         // supplies the spread items as separate arguments and is an ordinary
         // arity error, so it must NOT be recognized: it falls back to the
         // generic evaluator, which reports the arity mismatch.
@@ -262,7 +262,7 @@ internal static class SequencePipelineOptimizer
     // Returns the innermost operand of a (possibly nested) unary spread, or the
     // expression unchanged when it is not a spread. This is a recognition
     // helper, not a general semantic rewrite: chained spread can open more than
-    // one list boundary (`[[7]].spread.spread` differs from one layer).
+    // one list boundary (`[[7]]**` differs from one layer).
     // Callers either use the peeled form only to identify an unsupported
     // filter/count candidate, or to identify a builtin range source whose flat
     // scalar result is unchanged by additional spread layers.

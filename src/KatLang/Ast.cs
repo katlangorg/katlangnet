@@ -105,23 +105,23 @@ public sealed record SourceSpan(
 public enum ParameterKind
 {
     Normal,
-    Variadic,
+    Collecting,
 }
 
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
-    /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
-    public SourceSpan? CollectingMarkerSpan { get; init; }
+    /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
+    public SourceSpan? CollectMarkerSpan { get; init; }
 
     public string DisplayName => Kind switch
     {
-        ParameterKind.Variadic => $"{Name}...",
+        ParameterKind.Collecting => $"*{Name}",
         _ => Name,
     };
 
     public CaptureParameterPattern ToPattern() => new(Name, Span, Kind)
     {
-        CollectingMarkerSpan = CollectingMarkerSpan,
+        CollectMarkerSpan = CollectMarkerSpan,
     };
 }
 
@@ -138,7 +138,7 @@ public abstract record ParameterPattern
 
     public abstract IReadOnlyList<ParameterDeclaration> Captures { get; }
 
-    public bool ContainsVariadicCapture => Captures.Any(static capture => capture.Kind == ParameterKind.Variadic);
+    public bool ContainsCollectingCapture => Captures.Any(static capture => capture.Kind == ParameterKind.Collecting);
 
     public static IReadOnlyList<ParameterPattern> FromDeclarations(IEnumerable<ParameterDeclaration> parameters)
         => parameters.Select(static parameter => parameter.ToPattern()).ToList();
@@ -146,17 +146,17 @@ public abstract record ParameterPattern
     public static IReadOnlyList<ParameterDeclaration> FlattenCaptures(IEnumerable<ParameterPattern> patterns)
         => patterns.SelectMany(static pattern => pattern.Captures).ToList();
 
-    public static bool HasVariadicCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
-        => patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Variadic }) > 0;
+    public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
+        => patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
 
-    public static bool HasMultipleVariadicCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
+    public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
     {
-        if (patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Variadic }) > 1)
+        if (patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 1)
             return true;
 
         return patterns
             .OfType<SequenceValueParameterPattern>()
-            .Any(static group => HasMultipleVariadicCapturesAtAnyLevel(group.Items));
+            .Any(static group => HasMultipleCollectingCapturesAtAnyLevel(group.Items));
     }
 
     public static bool HasRepeatedCaptureNames(IEnumerable<ParameterPattern> patterns)
@@ -165,26 +165,26 @@ public abstract record ParameterPattern
         return FlattenCaptures(patterns).Any(capture => !seen.Add(capture.Name));
     }
 
-    public static bool HasRepeatedCaptureNameIncludingVariadic(IEnumerable<ParameterPattern> patterns)
+    public static bool HasRepeatedCaptureNameIncludingCollecting(IEnumerable<ParameterPattern> patterns)
         => FlattenCaptures(patterns)
             .GroupBy(static capture => capture.Name, StringComparer.Ordinal)
             .Any(static captures => captures.Count() > 1
-                && captures.Any(static capture => capture.Kind == ParameterKind.Variadic));
+                && captures.Any(static capture => capture.Kind == ParameterKind.Collecting));
 }
 
 public sealed record CaptureParameterPattern(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
     : ParameterPattern
 {
-    /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
-    public SourceSpan? CollectingMarkerSpan { get; init; }
+    /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
+    public SourceSpan? CollectMarkerSpan { get; init; }
 
-    public override string DisplayName => Kind == ParameterKind.Variadic ? $"{Name}..." : Name;
+    public override string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
 
     public override IReadOnlyList<ParameterDeclaration> Captures =>
     [
         new(Name, Span, Kind)
         {
-            CollectingMarkerSpan = CollectingMarkerSpan,
+            CollectMarkerSpan = CollectMarkerSpan,
         }
     ];
 }
@@ -232,9 +232,9 @@ public abstract record Expr
 
     /// <summary>
     /// INTERNAL sequence-join node retained for semantic AST compatibility
-    /// with the Lean model. Surface spreading is the named
-    /// <c>spread(expr)</c> / <c>expr.spread</c> intrinsic forms
-    /// (<see cref="SequenceSpread"/>), never this node.
+    /// with the Lean model. Surface spreading is the attached postfix
+    /// spread marker <c>expr*</c> (<see cref="SequenceSpread"/>), never
+    /// this node.
     ///
     /// This is NOT the AST representation of written sequence-value syntax:
     /// the parser and all production transformations have ZERO ORIGIN SITES
@@ -262,28 +262,28 @@ public abstract record Expr
     public sealed record EmptySequence(int Depth) : Expr;
 
     /// <summary>
-    /// Spread expression. Both surface spellings — the named intrinsic call
-    /// <c>spread(operand)</c> and its extension-property equivalent
-    /// <c>operand.spread</c> — lower to this ONE node at parse time, so there
-    /// is a single evaluation path and neither spelling crosses an ordinary
+    /// Spread expression. The one surface spelling — the postfix spread
+    /// marker <c>operand*</c>, a star directly attached to a completed
+    /// expression — lowers to this ONE node at parse time, so there is a
+    /// single evaluation path and the spelling never crosses an ordinary
     /// call/property value boundary. <c>SequenceSpread(operand)</c> evaluates
     /// its operand exactly once and contributes the operand's item view to the
     /// surrounding item supply; it does not return or materialize a sequence
     /// or list itself (the receiver decides what the supplied items become).
-    /// <c>spread</c> is a reserved intrinsic name: the parser rejects it as a
-    /// declaration, binding, or bare value, so the meaning of
-    /// <c>expr.spread</c> is never scope-dependent.
+    /// The fluent dot continuation <c>operand*.Target(...)</c> lowers to the
+    /// ordinary lexical call <c>Target(operand*, ...)</c> at parse time, so a
+    /// spread node itself never appears as a dot-call target.
     /// Lean: <c>sequenceSpread : Expr → Expr</c>.
     /// </summary>
     public sealed record SequenceSpread(Expr Operand) : Expr
     {
         /// <summary>
-        /// Exact span of the source <c>spread</c> intrinsic token (the callee
-        /// identifier in <c>spread(operand)</c>, or the member identifier in
-        /// <c>operand.spread</c>) when the parser has source information for
-        /// it. Synthetic spreads (e.g. variadic forwarding) stay spanless.
+        /// Exact span of the source postfix <c>*</c> spread-marker token when
+        /// the parser has source information for it. Chained spreads carry
+        /// one distinct marker span per written star. Synthetic spreads
+        /// (e.g. collecting-parameter forwarding) stay spanless.
         /// </summary>
-        public SourceSpan? IntrinsicNameSpan { get; init; }
+        public SourceSpan? SpreadMarkerSpan { get; init; }
     }
 
     /// <summary>
@@ -362,8 +362,8 @@ public abstract record Pattern
         /// <summary>Parameter binding kind when this binder elaborates to an ordinary explicit parameter.</summary>
         public ParameterKind ParameterKind { get; init; } = ParameterKind.Normal;
 
-        /// <summary>Exact span of the source postfix <c>...</c> marker, when source-backed.</summary>
-        public SourceSpan? CollectingMarkerSpan { get; init; }
+        /// <summary>Exact span of the source prefix <c>*</c> collect marker, when source-backed.</summary>
+        public SourceSpan? CollectMarkerSpan { get; init; }
     }
 
     /// <summary>Matches only <c>Result.Atom(n)</c> where n equals <see cref="Value"/>.</summary>
@@ -448,7 +448,7 @@ public abstract record Pattern
     /// <list type="bullet">
     ///   <item><c>Bind(x)</c>, corresponding to <c>F(x) = ...</c></item>
     ///   <item><c>SequenceValue [Bind(x), Bind(y), ...]</c></item>
-    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, tail...))</c></item>
+    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, *tail))</c></item>
     /// </list>
     ///
     /// Rejected on purpose:
@@ -474,7 +474,7 @@ public abstract record Pattern
         {
             parameterPattern = new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
             {
-                CollectingMarkerSpan = binder.CollectingMarkerSpan,
+                CollectMarkerSpan = binder.CollectMarkerSpan,
             };
             return true;
         }
@@ -512,7 +512,7 @@ public abstract record Pattern
             [
                 new CaptureParameterPattern(binder.Name, binder.NameSpan, binder.ParameterKind)
                 {
-                    CollectingMarkerSpan = binder.CollectingMarkerSpan,
+                    CollectMarkerSpan = binder.CollectMarkerSpan,
                 }
             ];
 
@@ -988,7 +988,7 @@ public abstract record Algorithm
     /// Parser elaboration may also predeclare parameters here for recursive
     /// capture/sequence-value clause syntax such as <c>Apply(f) = f(4)</c>,
     /// <c>PairSum((x, y)) = x + y</c>, or
-    /// <c>CountSequenceValue((values...)) = values.count</c>.
+    /// <c>CountSequenceValue((*values)) = values.count</c>.
     /// </summary>
     public sealed record User : Algorithm
     {
@@ -1018,7 +1018,7 @@ public abstract record Algorithm
 
         /// <summary>
         /// True for the synthetic inline helper the parser elaborates an
-        /// assignment deconstruction (<c>x, y..., z = RHS</c>) into.
+        /// assignment deconstruction (<c>x, *y, z = RHS</c>) into.
         /// Diagnostics-only metadata: binding failures are phrased against the
         /// written assignment pattern instead of the anonymous helper call.
         /// Never encoded to the Lean model (wording-only, the structured error

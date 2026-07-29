@@ -1,1 +1,1 @@
-r = f(spread(a))
+r = f(a*)

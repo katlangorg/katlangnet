@@ -128,20 +128,20 @@ def callableSignatureValidates (signature : KatLang.CallableSignature) : Bool :=
   | .ok () => true
   | .error _ => false
 
-def callableSignatureValidationRejectsMultipleVariadic : Bool :=
+def callableSignatureValidationRejectsMultipleCollecting : Bool :=
   let signature : KatLang.CallableSignature := {
     name := "Bad"
     parameters := [
-      { name := "a", kind := KatLang.ParameterKind.variadic },
-      { name := "b", kind := KatLang.ParameterKind.variadic }
+      { name := "a", kind := KatLang.ParameterKind.collecting },
+      { name := "b", kind := KatLang.ParameterKind.collecting }
     ]
   }
   match KatLang.CallableSignature.validate signature with
   | .error (.illegalInEval message) =>
-      message = "Callable signature `Bad` cannot contain more than one variadic parameter."
+      message = "Callable signature `Bad` cannot contain more than one collecting parameter."
   | _ => false
 
-#guard callableSignatureValidationRejectsMultipleVariadic
+#guard callableSignatureValidationRejectsMultipleCollecting
 
 def callableSignatureValidationRejectsInvalidParameterName : Bool :=
   let signature : KatLang.CallableSignature := {
@@ -187,15 +187,15 @@ def builtinSequenceSignaturesValidate : Bool :=
 
 def algorithmParametersPreserveNameAndKindTogether : Bool :=
   let algorithm := algWithParameters [
-    { name := "values", kind := .variadic },
+    { name := "values", kind := .collecting },
     { name := "factor", kind := .normal }
   ] [] [] [.param "values"]
   Algorithm.parameters algorithm == [
-    { name := "values", kind := .variadic },
+    { name := "values", kind := .collecting },
     { name := "factor", kind := .normal }
   ]
   && Algorithm.params algorithm == ["values", "factor"]
-  && Algorithm.paramKinds algorithm == [.variadic, .normal]
+  && Algorithm.paramKinds algorithm == [.collecting, .normal]
 
 #guard algorithmParametersPreserveNameAndKindTogether
 
@@ -897,11 +897,11 @@ def missingOutputValid10 : Bool :=
 
 def explicitEmptyExpr : KatLang.Expr := .emptySequence 0
 
--- Spread. Surface spreading is the named `spread` intrinsic (`spread(expr)`
--- and `expr.spread` are equivalent spellings); both lower to the unary node
+-- Spread. Surface spreading is the named `spread` intrinsic (`expr*`
+-- and `expr*` are equivalent spellings); both lower to the unary node
 -- `sequenceSpread expr`, which never takes a right operand. This helper
--- builds that node. The C# surface parser parses source `A.spread B` as the
--- expression-list slots `A.spread`, `B`. The `sequenceConstruct` form here is
+-- builds that node. The C# surface parser parses source `A* B` as the
+-- expression-list slots `A*`, `B`. The `sequenceConstruct` form here is
 -- only an internal/test semantic value and is NOT produced from any surface
 -- spread spelling.
 def sequenceSpread (expr : KatLang.Expr) : KatLang.Expr :=
@@ -986,7 +986,7 @@ def spreadEmptyJoinContributesNoItems : Bool :=
 
 #guard spreadEmptyJoinContributesNoItems
 
--- `().spread` spreads the empty sequence value, contributing zero items.
+-- `()*` spreads the empty sequence value, contributing zero items.
 def spreadOfEmptyContributesNoItems : Bool :=
   match runFlat (sequenceSpread explicitEmptyExpr) with
   | Except.ok [] => true
@@ -995,7 +995,7 @@ def spreadOfEmptyContributesNoItems : Bool :=
 #guard spreadOfEmptyContributesNoItems
 
 -- A written sequence value with a spread beside a sibling slot splices the
--- spread items: source `A = 1, 2` then `(A.spread, 99)` is `(1, 2, 99)`, never the
+-- spread items: source `A = 1, 2` then `(A*, 99)` is `(1, 2, 99)`, never the
 -- grouped `((1, 2), 99)`. This pins `evalAlgOutputCore` as the value
 -- projection of `evalAlgOutputCountedCore` (July 2026 fix): the plain and
 -- counted evaluators must agree on value-position block output.
@@ -1009,7 +1009,7 @@ def valuePositionSpreadWithSiblingSplices : Bool :=
 #guard valuePositionSpreadWithSiblingSplices
 
 -- The same splicing holds for the root program output observed through the
--- plain `runResult` path: `A.spread, 99` is three root slots `1, 2, 99`.
+-- plain `runResult` path: `A*, 99` is three root slots `1, 2, 99`.
 def rootSpreadWithSiblingSplices : Bool :=
   match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
     sequenceSpread (.resolve "A"), .num 99
@@ -1020,7 +1020,7 @@ def rootSpreadWithSiblingSplices : Bool :=
 #guard rootSpreadWithSiblingSplices
 
 -- Splicing spreads never erases a written non-spread `()` slot between them:
--- `(1.spread, (), 2.spread)` keeps the empty sequence value as a visible item.
+-- `(1*, (), 2*)` keeps the empty sequence value as a visible item.
 def spreadSiblingsKeepWrittenEmptySlot : Bool :=
   match runResult (.block (alg [] [] [] [
     .block (alg [] [] [] [sequenceSpread (.num 1), explicitEmptyExpr, sequenceSpread (.num 2)])
@@ -1189,7 +1189,7 @@ def blockOutputCanonicalizesNestedEmptyDepth : Bool :=
 #guard blockOutputCanonicalizesNestedEmptyDepth
 
 -- Mixed output: a normal non-spread `()` output is a VISIBLE slot, not dropped, so it sits
--- beside other outputs. (Only an explicit spread `().spread` contributes zero items.) These would
+-- beside other outputs. (Only an explicit spread `()*` contributes zero items.) These would
 -- fail if evalAlgOutputCore dropped count-0 non-spread slots.
 def mixedOutputKeepsLeadingEmptySlot : Bool :=
   match runResult (.block (alg [] [] [] [.emptySequence 0, .num 1])) with
@@ -1206,7 +1206,7 @@ def mixedOutputKeepsMiddleEmptySlot : Bool :=
 #guard mixedOutputKeepsMiddleEmptySlot
 
 -- An explicit spread of `()` still contributes zero items, so it does NOT add a slot:
--- `(().spread, 1)` is just `1`.
+-- `(()*, 1)` is just `1`.
 def mixedOutputSpreadOfEmptyContributesNoSlot : Bool :=
   match runResult (.block (alg [] [] [] [sequenceSpread (.emptySequence 0), .num 1])) with
   | Except.ok (.atom 1) => true
@@ -1283,7 +1283,7 @@ def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
 
 -- An internal `sequenceConstruct (sequenceSpread A) B` is ONE sequence-value argument in
 -- fixed-arity call-argument position and therefore fails to bind a two-parameter
--- call. Surface `A.spread B` is an expression list, not this constructed value.
+-- call. Surface `A* B` is an expression list, not this constructed value.
 def spreadThenJoinIsOneSequenceValueArgument : Bool :=
   let useTwo := alg ["a", "b"] [] [] [.binary .add (.param "a") (.param "b")]
   let joined := algPrivate [] [] [("A", alg [] [] [] [.num 1]), ("F", useTwo)] [
@@ -1295,7 +1295,7 @@ def spreadThenJoinIsOneSequenceValueArgument : Bool :=
 
 #guard spreadThenJoinIsOneSequenceValueArgument
 
--- Source `1` followed by `depth` `.spread` continuations is the unary chain
+-- Source `1` followed by `depth` attached spread markers is the unary chain
 -- `sequenceSpread (sequenceSpread (... (num 1)))`. Built tail-recursively to
 -- avoid overflow while constructing the term.
 partial def buildNestedSpread (depth : Nat) (acc : KatLang.Expr) : KatLang.Expr :=
@@ -1403,13 +1403,13 @@ def sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm : Bool :=
 
 #guard sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm
 
--- Single-variadic `X(values...)` collects the supplied argument slots as one exact
--- list: the explicit-spread form `X((1, b).spread)` supplies two items
+-- Single-collecting `X(*values)` collects the supplied argument slots as one exact
+-- list: the explicit-spread form `X((1, b)*)` supplies two items
 -- (`values = [1, (2, 3)]`, count 2), while the constructed sequence-value form
 -- `X((1, b))` supplies ONE grouped argument (`values = [(1, (2, 3))]`,
 -- count 1). Exact segment collection removed the old grouped/spread coincidence.
 def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :=
-  let countValues := algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+  let countValues := algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "count" none
   ]
   let multiB := alg [] [] [] [.num 2, .num 3]
@@ -1545,241 +1545,241 @@ def test3 : Bool :=
 -- EXPECTED: Except.ok [10]
 #eval runFlat (.block outer3)
 
-def userVariadicDotCallCountItemsAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [
+def userCollectingDotCallCountItemsAlg : Algorithm :=
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [
     .dotCall (.param "items") "count" none
   ]
 
-def userVariadicDotCallCountItemsRoot : Algorithm :=
-  algPrivate [] [] [("CountItems", userVariadicDotCallCountItemsAlg)] [
+def userCollectingDotCallCountItemsRoot : Algorithm :=
+  algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
     .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "CountItems" none
   ]
 
 -- Ordinary dot-call receiver injection: `(1, 2).CountItems` is
 -- `CountItems((1, 2))` — the receiver occupies ONE captured argument slot, so
--- the variadic parameter collects `items = [(1, 2)]` and `items.count` is 1. To count the
--- receiver's items, spread them: `((1, 2).spread).CountItems`.
-def userVariadicDotCallReceiverIsOneCapturedSlot : Bool :=
-  match runFlat (.block userVariadicDotCallCountItemsRoot) with
+-- the collecting parameter collects `items = [(1, 2)]` and `items.count` is 1. To count the
+-- receiver's items, spread them: `((1, 2)*).CountItems`.
+def userCollectingDotCallReceiverIsOneCapturedSlot : Bool :=
+  match runFlat (.block userCollectingDotCallCountItemsRoot) with
   | Except.ok [1] => true
   | _ => false
 
-#guard userVariadicDotCallReceiverIsOneCapturedSlot
+#guard userCollectingDotCallReceiverIsOneCapturedSlot
 
-def userVariadicDotCallMeanAlg : Algorithm :=
-  algWithParameters [{ name := "vector", kind := .variadic }] [] [] [
+def userCollectingDotCallMeanAlg : Algorithm :=
+  algWithParameters [{ name := "vector", kind := .collecting }] [] [] [
     .dotCall (.param "vector") "sum" none
   ]
 
-def userVariadicDotCallMeanRoot : Algorithm :=
-  algPrivate [] [] [("Mean", userVariadicDotCallMeanAlg)] [
+def userCollectingDotCallMeanRoot : Algorithm :=
+  algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
     .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "Mean" none
   ]
 
 -- `(1, 2).Mean` binds `vector = [(1, 2)]` — one captured sequence element —
 -- so `vector.sum` hits the numeric element constraint. Summing the receiver's
--- items requires an explicit spread (`((1, 2).spread).Mean`).
-def userVariadicDotCallReceiverGroupedSumIsNumericConstraintError : Bool :=
-  match runResult (.block userVariadicDotCallMeanRoot) with
+-- items requires an explicit spread (`((1, 2)*).Mean`).
+def userCollectingDotCallReceiverGroupedSumIsNumericConstraintError : Bool :=
+  match runResult (.block userCollectingDotCallMeanRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard userVariadicDotCallReceiverGroupedSumIsNumericConstraintError
+#guard userCollectingDotCallReceiverGroupedSumIsNumericConstraintError
 
-def userNonVariadicDotCallCountOneAlg : Algorithm :=
+def userNonCollectingDotCallCountOneAlg : Algorithm :=
   alg ["value"] [] [] [
     .dotCall (.param "value") "count" none
   ]
 
-def userNonVariadicDotCallCountOneRoot : Algorithm :=
-  algPrivate [] [] [("CountOne", userNonVariadicDotCallCountOneAlg)] [
+def userNonCollectingDotCallCountOneRoot : Algorithm :=
+  algPrivate [] [] [("CountOne", userNonCollectingDotCallCountOneAlg)] [
     .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "CountOne" none
   ]
 
-def userNonVariadicDotCallReceiverIsOneSequenceArgument : Bool :=
-  match runFlat (.block userNonVariadicDotCallCountOneRoot) with
+def userNonCollectingDotCallReceiverIsOneSequenceArgument : Bool :=
+  match runFlat (.block userNonCollectingDotCallCountOneRoot) with
   | Except.ok [2] => true
   | _ => false
 
-#guard userNonVariadicDotCallReceiverIsOneSequenceArgument
+#guard userNonCollectingDotCallReceiverIsOneSequenceArgument
 
-def flatVariadicSlotQmeanAlg : Algorithm :=
-  algWithParameters [{ name := "args", kind := .variadic }] [] [] [
+def flatCollectingSlotQmeanAlg : Algorithm :=
+  algWithParameters [{ name := "args", kind := .collecting }] [] [] [
     .binary .div
       (.dotCall (.param "args") "sum" none)
       (.dotCall (.param "args") "count" none)
   ]
 
-def flatVariadicSlotVectorAlg : Algorithm :=
+def flatCollectingSlotVectorAlg : Algorithm :=
   alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])]
 
-def flatVariadicSlotQmeanNormalRoot : Algorithm :=
-  algPrivate [] [] [("Vector", flatVariadicSlotVectorAlg), ("Qmean", flatVariadicSlotQmeanAlg)] [
+def flatCollectingSlotQmeanNormalRoot : Algorithm :=
+  algPrivate [] [] [("Vector", flatCollectingSlotVectorAlg), ("Qmean", flatCollectingSlotQmeanAlg)] [
     .call (.resolve "Qmean") (alg [] [] [] [.resolve "Vector"])
   ]
 
--- `Qmean(Vector)` supplies ONE grouped argument, so the variadic parameter collects
+-- `Qmean(Vector)` supplies ONE grouped argument, so the collecting parameter collects
 -- `args = [Vector]` and `args.sum` hits the numeric element constraint.
--- Supplying the items is the explicit-spread call `Qmean(Vector.spread)` below.
-def flatVariadicSlotQmeanSingleGroupedArgumentIsNumericConstraintError : Bool :=
-  match runResult (.block flatVariadicSlotQmeanNormalRoot) with
+-- Supplying the items is the explicit-spread call `Qmean(Vector*)` below.
+def flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError : Bool :=
+  match runResult (.block flatCollectingSlotQmeanNormalRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard flatVariadicSlotQmeanSingleGroupedArgumentIsNumericConstraintError
+#guard flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError
 
-def flatVariadicSlotQmeanExplicitRoot : Algorithm :=
-  algPrivate [] [] [("Vector", flatVariadicSlotVectorAlg), ("Qmean", flatVariadicSlotQmeanAlg)] [
+def flatCollectingSlotQmeanExplicitRoot : Algorithm :=
+  algPrivate [] [] [("Vector", flatCollectingSlotVectorAlg), ("Qmean", flatCollectingSlotQmeanAlg)] [
     .call (.resolve "Qmean") (alg [] [] [] [sequenceSpread (.resolve "Vector")])
   ]
 
--- The explicit-spread call `Qmean(Vector.spread)` supplies Vector's items as
+-- The explicit-spread call `Qmean(Vector*)` supplies Vector's items as
 -- separate argument slots, so `args = [1, 2, 3]` and the mean is 2.
-def flatVariadicSlotQmeanExplicitSpreadSuppliesItems : Bool :=
-  match runFlat (.block flatVariadicSlotQmeanExplicitRoot) with
+def flatCollectingSlotQmeanExplicitSpreadSuppliesItems : Bool :=
+  match runFlat (.block flatCollectingSlotQmeanExplicitRoot) with
   | Except.ok [2] => true
   | _ => false
 
-#guard flatVariadicSlotQmeanExplicitSpreadSuppliesItems
+#guard flatCollectingSlotQmeanExplicitSpreadSuppliesItems
 
-def flatVariadicSlotQmeanDotRoot : Algorithm :=
-  algPrivate [] [] [("Vector", flatVariadicSlotVectorAlg), ("Qmean", flatVariadicSlotQmeanAlg)] [
+def flatCollectingSlotQmeanDotRoot : Algorithm :=
+  algPrivate [] [] [("Vector", flatCollectingSlotVectorAlg), ("Qmean", flatCollectingSlotQmeanAlg)] [
     .dotCall (.resolve "Vector") "Qmean" none
   ]
 
 -- `Vector.Qmean` is `Qmean(Vector)`: the receiver is one leading argument
 -- slot, so the grouped-argument numeric-constraint error matches the plain
 -- call above.
-def flatVariadicSlotQmeanDotCallMatchesGroupedCall : Bool :=
-  match runResult (.block flatVariadicSlotQmeanDotRoot) with
+def flatCollectingSlotQmeanDotCallMatchesGroupedCall : Bool :=
+  match runResult (.block flatCollectingSlotQmeanDotRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard flatVariadicSlotQmeanDotCallMatchesGroupedCall
+#guard flatCollectingSlotQmeanDotCallMatchesGroupedCall
 
-def flatVariadicSlotCountAlg : Algorithm :=
-  algWithParameters [{ name := "args", kind := .variadic }] [] [] [
+def flatCollectingSlotCountAlg : Algorithm :=
+  algWithParameters [{ name := "args", kind := .collecting }] [] [] [
     .dotCall (.param "args") "count" none
   ]
 
-def flatVariadicSlotValuesAlg : Algorithm :=
+def flatCollectingSlotValuesAlg : Algorithm :=
   alg [] [] [] [.num 10, .num 20]
 
-def flatVariadicSlotCountValuesRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Count", flatVariadicSlotCountAlg)] [
+def flatCollectingSlotCountValuesRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Count", flatCollectingSlotCountAlg)] [
     .call (.resolve "Count") (alg [] [] [] [.resolve "Values"])
   ]
 
 -- `Count(Values)` with a multi-output property supplies ONE argument boundary
--- (a property reference is a value boundary), so the variadic parameter collects
--- `args = [(10, 20)]` and the count is 1; `Count(Values.spread)` supplies 2 items.
-def flatVariadicSlotMultiOutputPropertyIsOneCapturedSlot : Bool :=
-  match runFlat (.block flatVariadicSlotCountValuesRoot) with
+-- (a property reference is a value boundary), so the collecting parameter collects
+-- `args = [(10, 20)]` and the count is 1; `Count(Values*)` supplies 2 items.
+def flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot : Bool :=
+  match runFlat (.block flatCollectingSlotCountValuesRoot) with
   | Except.ok [1] => true
   | _ => false
 
-#guard flatVariadicSlotMultiOutputPropertyIsOneCapturedSlot
+#guard flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot
 
-def flatVariadicSlotSequenceValuePairAlg : Algorithm :=
+def flatCollectingSlotSequenceValuePairAlg : Algorithm :=
   alg [] [] [] [.block (alg [] [] [] [.num 10, .num 20])]
 
-def flatVariadicSlotCountSequenceValuePairRoot : Algorithm :=
-  algPrivate [] [] [("Pair", flatVariadicSlotSequenceValuePairAlg), ("Count", flatVariadicSlotCountAlg)] [
+def flatCollectingSlotCountSequenceValuePairRoot : Algorithm :=
+  algPrivate [] [] [("Pair", flatCollectingSlotSequenceValuePairAlg), ("Count", flatCollectingSlotCountAlg)] [
     .call (.resolve "Count") (alg [] [] [] [.resolve "Pair"])
   ]
 
 -- A visible sequence-value property is likewise ONE captured argument slot:
 -- `Count(Pair)` collects `args = [(10, 20)]`, so the count is 1.
-def flatVariadicSlotVisibleSequenceValueIsOneCapturedSlot : Bool :=
-  match runFlat (.block flatVariadicSlotCountSequenceValuePairRoot) with
+def flatCollectingSlotVisibleSequenceValueIsOneCapturedSlot : Bool :=
+  match runFlat (.block flatCollectingSlotCountSequenceValuePairRoot) with
   | Except.ok [1] => true
   | _ => false
 
-#guard flatVariadicSlotVisibleSequenceValueIsOneCapturedSlot
+#guard flatCollectingSlotVisibleSequenceValueIsOneCapturedSlot
 
-def flatVariadicSlotSumAlg : Algorithm :=
+def flatCollectingSlotSumAlg : Algorithm :=
   algWithParameters [
-    { name := "values", kind := .variadic },
+    { name := "values", kind := .collecting },
     { name := "last", kind := .normal }
   ] [] [] [
     .binary .add (.dotCall (.param "values") "sum" none) (.param "last")
   ]
 
-def flatVariadicSlotSumNormalRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Sum", flatVariadicSlotSumAlg)] [
+def flatCollectingSlotSumNormalRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
     .call (.resolve "Sum") (alg [] [] [] [.resolve "Values", .num 7])
   ]
 
--- `Sum(Values, 7)`: the suffix takes `last = 7` and the variadic parameter collects the one
+-- `Sum(Values, 7)`: the suffix takes `last = 7` and the collecting parameter collects the one
 -- grouped argument (`values = [(10, 20)]`), so `values.sum` hits the numeric
--- element constraint. `Sum(Values.spread, 7)` below is the item-supplying form.
-def flatVariadicSlotGroupedMiddleArgumentIsNumericConstraintError : Bool :=
-  match runResult (.block flatVariadicSlotSumNormalRoot) with
+-- element constraint. `Sum(Values*, 7)` below is the item-supplying form.
+def flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError : Bool :=
+  match runResult (.block flatCollectingSlotSumNormalRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard flatVariadicSlotGroupedMiddleArgumentIsNumericConstraintError
+#guard flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError
 
-def flatVariadicSlotSumExplicitRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Sum", flatVariadicSlotSumAlg)] [
+def flatCollectingSlotSumExplicitRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
     .call (.resolve "Sum") (alg [] [] [] [sequenceSpread (.resolve "Values")])
   ]
 
-def flatVariadicSlotExplicitSpreadCanSatisfySuffix : Bool :=
-  match runFlat (.block flatVariadicSlotSumExplicitRoot) with
+def flatCollectingSlotExplicitSpreadCanSatisfySuffix : Bool :=
+  match runFlat (.block flatCollectingSlotSumExplicitRoot) with
   | Except.ok [30] => true
   | _ => false
 
-#guard flatVariadicSlotExplicitSpreadCanSatisfySuffix
+#guard flatCollectingSlotExplicitSpreadCanSatisfySuffix
 
-def flatVariadicSlotSumSingleNormalRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Sum", flatVariadicSlotSumAlg)] [
+def flatCollectingSlotSumSingleNormalRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
     .call (.resolve "Sum") (alg [] [] [] [.resolve "Values"])
   ]
 
--- Sum(values..., last) receives one sequence-valued argument. Function-call
+-- Sum(*values, last) receives one sequence-valued argument. Function-call
 -- binding does not implicitly open it, so `last` receives the sequence value and
 -- the old numeric body no longer succeeds.
-def flatVariadicSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=
-  match runResult (.block flatVariadicSlotSumSingleNormalRoot) with
+def flatCollectingSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=
+  match runResult (.block flatCollectingSlotSumSingleNormalRoot) with
   | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
-#guard flatVariadicSlotNormalSegmentDoesNotSatisfySuffixBySpreading
+#guard flatCollectingSlotNormalSegmentDoesNotSatisfySuffixBySpreading
 
-def flatVariadicSlotSumDotMissingSuffixRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Sum", flatVariadicSlotSumAlg)] [
+def flatCollectingSlotSumDotMissingSuffixRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
     .dotCall (.resolve "Values") "Sum" none
   ]
 
 -- Same boundary through a dot-call receiver: Values.Sum passes the receiver as
 -- one leading argument unless explicit spread is used.
-def flatVariadicSlotDotReceiverDoesNotSatisfySuffixBySpreading : Bool :=
-  match runResult (.block flatVariadicSlotSumDotMissingSuffixRoot) with
+def flatCollectingSlotDotReceiverDoesNotSatisfySuffixBySpreading : Bool :=
+  match runResult (.block flatCollectingSlotSumDotMissingSuffixRoot) with
   | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
-#guard flatVariadicSlotDotReceiverDoesNotSatisfySuffixBySpreading
+#guard flatCollectingSlotDotReceiverDoesNotSatisfySuffixBySpreading
 
-def flatVariadicSlotSumDotSuffixRoot : Algorithm :=
-  algPrivate [] [] [("Values", flatVariadicSlotValuesAlg), ("Sum", flatVariadicSlotSumAlg)] [
+def flatCollectingSlotSumDotSuffixRoot : Algorithm :=
+  algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
     .dotCall (.resolve "Values") "Sum" (some (alg [] [] [] [.num 7]))
   ]
 
 -- `Values.Sum(7)` is `Sum(Values, 7)`: the receiver is one leading argument
 -- slot, so the grouped-middle numeric-constraint error matches the plain call.
-def flatVariadicSlotDotReceiverWithSuffixMatchesGroupedCall : Bool :=
-  match runResult (.block flatVariadicSlotSumDotSuffixRoot) with
+def flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall : Bool :=
+  match runResult (.block flatCollectingSlotSumDotSuffixRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard flatVariadicSlotDotReceiverWithSuffixMatchesGroupedCall
+#guard flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall
 
 def flatFixedSlotAddAlg : Algorithm :=
   alg ["x", "y"] [] [] [.binary .add (.param "x") (.param "y")]
 
 def flatFixedSlotAddPairRoot : Algorithm :=
-  algPrivate [] [] [("Pair", flatVariadicSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
+  algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
     .call (.resolve "Add") (alg [] [] [] [.resolve "Pair"])
   ]
 
@@ -1791,7 +1791,7 @@ def flatFixedCallStillDoesNotAutoSpread : Bool :=
 #guard flatFixedCallStillDoesNotAutoSpread
 
 def flatFixedSlotAddPairExplicitRoot : Algorithm :=
-  algPrivate [] [] [("Pair", flatVariadicSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
+  algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
     .call (.resolve "Add") (alg [] [] [] [sequenceSpread (.resolve "Pair")])
   ]
 
@@ -1802,89 +1802,89 @@ def flatFixedCallExplicitSpreadStillWorks : Bool :=
 
 #guard flatFixedCallExplicitSpreadStillWorks
 
-def variadicForwardingCountItemsAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [
+def collectingForwardingCountItemsAlg : Algorithm :=
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [
     .dotCall (.param "items") "count" none
   ]
 
--- Variadic forwarding is ordinary list spread: `Use(values...) =
--- CountItems(values...)` re-supplies exactly the collected items
+-- Collecting-parameter forwarding is ordinary list spread: `Use(*values) =
+-- CountItems(values*)` re-supplies exactly the collected items
 -- (spread(collect(xs)) = xs). The root call spreads its grouped sequence so the
--- variadic parameter collects the three items.
-def variadicForwardingUseValuesAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+-- collecting parameter collects the three items.
+def collectingForwardingUseValuesAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .call (.resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "values")])
   ]
 
-def variadicForwardingTopLevelRoot : Algorithm :=
-  algPrivate [] [] [("CountItems", variadicForwardingCountItemsAlg), ("Use", variadicForwardingUseValuesAlg)] [
+def collectingForwardingTopLevelRoot : Algorithm :=
+  algPrivate [] [] [("CountItems", collectingForwardingCountItemsAlg), ("Use", collectingForwardingUseValuesAlg)] [
     .call (.resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 2, .num 3])])
   ]
 
-def variadicForwardingTopLevelCaptureStillWorks : Bool :=
-  match runFlat (.block variadicForwardingTopLevelRoot) with
+def collectingForwardingTopLevelCaptureStillWorks : Bool :=
+  match runFlat (.block collectingForwardingTopLevelRoot) with
   | Except.ok [3] => true
   | _ => false
 
-#guard variadicForwardingTopLevelCaptureStillWorks
+#guard collectingForwardingTopLevelCaptureStillWorks
 
 -- The bare-name forward `CountItems(values)` passes the collected list as ONE
--- list argument, so the callee's variadic parameter holds one element (the list): forwarding
+-- list argument, so the callee's collecting parameter holds one element (the list): forwarding
 -- items requires the explicit spread above.
-def variadicForwardingBareNameUseValuesAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+def collectingForwardingBareNameUseValuesAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .call (.resolve "CountItems") (alg [] [] [] [.param "values"])
   ]
 
-def variadicForwardingBareNamePassesOneListArgument : Bool :=
+def collectingForwardingBareNamePassesOneListArgument : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountItems", variadicForwardingCountItemsAlg),
-    ("Use", variadicForwardingBareNameUseValuesAlg)
+    ("CountItems", collectingForwardingCountItemsAlg),
+    ("Use", collectingForwardingBareNameUseValuesAlg)
   ] [
     .call (.resolve "Use") (alg [] [] [] [.num 1, .num 2, .num 3])
   ])) with
   | Except.ok [1] => true
   | _ => false
 
-#guard variadicForwardingBareNamePassesOneListArgument
+#guard collectingForwardingBareNamePassesOneListArgument
 
-def variadicForwardingUseSequenceValueHistoryAlg : Algorithm :=
+def collectingForwardingUseSequenceValueHistoryAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }]
+    .sequenceValue [.capture { name := "history", kind := .collecting }]
   ] [] [] [
     .call (.resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "history")])
   ]
 
-def variadicForwardingSequenceValueRoot : Algorithm :=
-  algPrivate [] [] [("CountItems", variadicForwardingCountItemsAlg), ("Use", variadicForwardingUseSequenceValueHistoryAlg)] [
+def collectingForwardingSequenceValueRoot : Algorithm :=
+  algPrivate [] [] [("CountItems", collectingForwardingCountItemsAlg), ("Use", collectingForwardingUseSequenceValueHistoryAlg)] [
     .call (.resolve "Use") (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])
   ]
 
-def variadicForwardingSequenceValueCaptureStillWorks : Bool :=
-  match runFlat (.block variadicForwardingSequenceValueRoot) with
+def collectingForwardingSequenceValueCaptureStillWorks : Bool :=
+  match runFlat (.block collectingForwardingSequenceValueRoot) with
   | Except.ok [3] => true
   | _ => false
 
-#guard variadicForwardingSequenceValueCaptureStillWorks
+#guard collectingForwardingSequenceValueCaptureStillWorks
 
-def sequenceValueVariadicBoundaryCountSequenceValueAlg : Algorithm :=
+def sequenceValueCollectingBoundaryCountSequenceValueAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "items", kind := .variadic }]
+    .sequenceValue [.capture { name := "items", kind := .collecting }]
   ] [] [] [
     .dotCall (.param "items") "count" none
   ]
 
-def sequenceValueVariadicBoundaryRoot : Algorithm :=
-  algPrivate [] [] [("Pair", flatVariadicSlotValuesAlg), ("CountSequenceValue", sequenceValueVariadicBoundaryCountSequenceValueAlg)] [
+def sequenceValueCollectingBoundaryRoot : Algorithm :=
+  algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("CountSequenceValue", sequenceValueCollectingBoundaryCountSequenceValueAlg)] [
     .call (.resolve "CountSequenceValue") (alg [] [] [] [.resolve "Pair"])
   ]
 
-def sequenceValueVariadicBoundaryDoesNotUseFlatSlotSpread : Bool :=
-  match runFlat (.block sequenceValueVariadicBoundaryRoot) with
+def sequenceValueCollectingBoundaryDoesNotUseFlatSlotSpread : Bool :=
+  match runFlat (.block sequenceValueCollectingBoundaryRoot) with
   | Except.ok [2] => true
   | _ => false
 
-#guard sequenceValueVariadicBoundaryDoesNotUseFlatSlotSpread
+#guard sequenceValueCollectingBoundaryDoesNotUseFlatSlotSpread
 
 def explicitCallSiteSequenceValue123 : Nat -> KatLang.Expr
   | 0 => .block (alg [] [] [] [.num 1, .num 2, .num 3])
@@ -1898,21 +1898,21 @@ def explicitCallSiteSequenceValueRightNested : KatLang.Expr :=
 
 def explicitCallSiteSequenceValueCountSequenceValue1Alg : Algorithm :=
   algWithParameterPatterns [
-    .capture { name := "values", kind := .variadic }
+    .capture { name := "values", kind := .collecting }
   ] [] [] [
     .dotCall (.param "values") "count" none
   ]
 
 def explicitCallSiteSequenceValueCountSequenceValue2Alg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "values", kind := .variadic }]
+    .sequenceValue [.capture { name := "values", kind := .collecting }]
   ] [] [] [
     .dotCall (.param "values") "count" none
   ]
 
 def explicitCallSiteSequenceValueCountSequenceValue3Alg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.sequenceValue [.capture { name := "values", kind := .variadic }]]
+    .sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]
   ] [] [] [
     .dotCall (.param "values") "count" none
   ]
@@ -1934,19 +1934,19 @@ def explicitCallSiteSequenceValueMatrixRoot : Algorithm :=
     .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValueRightNested])
   ]
 
--- CountSequenceValue1 (flat variadic) collects the ONE grouped argument, so both
+-- CountSequenceValue1 (flat collecting) collects the ONE grouped argument, so both
 -- written depths count 1. CountSequenceValue2/3 (sequence-value patterns) open
 -- exactly as many written grouping levels as they declare: at matching depth
 -- the spread items collect to a three-element collected list (count 3), while one
 -- EXTRA written level leaves a single grouped item in the collected list (count 1).
-def sequenceValueVariadicParameterRespectsExplicitCallSiteSequenceValueDepth : Bool :=
+def sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth : Bool :=
   match runFlat (.block explicitCallSiteSequenceValueMatrixRoot) with
   | Except.ok [1, 1, 3, 1, 1, 3, 3, 2, 2] => true
   | _ => false
 
-#guard sequenceValueVariadicParameterRespectsExplicitCallSiteSequenceValueDepth
+#guard sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth
 
-def nestedSequenceValueVariadicParameterRejectsTooShallowExplicitSequenceValue : Bool :=
+def nestedSequenceValueCollectingParameterRejectsTooShallowExplicitSequenceValue : Bool :=
   match runResult (.block (algPrivate [] [] [
     ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
   ] [
@@ -1955,7 +1955,7 @@ def nestedSequenceValueVariadicParameterRejectsTooShallowExplicitSequenceValue :
   | Except.error err => innermostIsArityMismatch 1 3 err
   | _ => false
 
-#guard nestedSequenceValueVariadicParameterRejectsTooShallowExplicitSequenceValue
+#guard nestedSequenceValueCollectingParameterRejectsTooShallowExplicitSequenceValue
 
 def explicitPropertyReferenceSequenceValueRoot : Algorithm :=
   algPrivate [] [] [
@@ -2447,7 +2447,7 @@ def test12 : Bool :=
 -- but builtin argument preparation must use the current parameter value when it
 -- exists. Otherwise atoms(values) re-enters list.skip(1) while list is computing.
 -- `atoms` now traverses list values directly (issue #136); the explicit spread
--- (`rest = list.skip(1).spread`) is kept because a sequence-shaped recursion
+-- (`rest = list.skip(1)*`) is kept because a sequence-shaped recursion
 -- argument is what exercises the current-value binding — mirroring the C#
 -- regression test.
 def recursiveDotCallListAlg : Algorithm :=
@@ -2590,8 +2590,8 @@ def test16SequenceValueArgDoesNotUnpack : Bool :=
 
 #guard test16SequenceValueArgDoesNotUnpack
 
--- Source: `UsePair(Inc, Pair.spread)` where Pair = 10, 20. The spread
--- `Pair.spread` spreads the pair's two values into the x and y argument slots:
+-- Source: `UsePair(Inc, Pair*)` where Pair = 10, 20. The spread
+-- `Pair*` spreads the pair's two values into the x and y argument slots:
 -- Inc(10) + 20 = 31.
 def test16SpreadSpreadsValues : Bool :=
   match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("UsePair", usePairAlg16)] [
@@ -2779,7 +2779,7 @@ def flatFixedIssue101MixedPrefixDoesNotUnpack : Bool :=
 
 #guard flatFixedIssue101MixedPrefixDoesNotUnpack
 
--- Source `Use(1, Tail.spread)`: a plain leading argument `1` followed by `Tail.spread`
+-- Source `Use(1, Tail*)`: a plain leading argument `1` followed by `Tail*`
 -- which spreads Tail's items 2, 3. Three call arguments → 1 + 2 + 3 = 6.
 def flatFixedIssue101SequenceSpreadSpreadsArgs : Bool :=
   match runFlat (.block (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
@@ -2790,9 +2790,9 @@ def flatFixedIssue101SequenceSpreadSpreadsArgs : Bool :=
 
 #guard flatFixedIssue101SequenceSpreadSpreadsArgs
 
-def variadicParameterForwardingCountItemAlg : Algorithm :=
+def collectingParameterForwardingCountItemAlg : Algorithm :=
   algWithParameters [
-    { name := "values", kind := .variadic },
+    { name := "values", kind := .collecting },
     { name := "item", kind := .normal }
   ] [] [] [
     .dotCall
@@ -2805,10 +2805,10 @@ def variadicParameterForwardingCountItemAlg : Algorithm :=
       none
   ]
 
--- Forwarding a collected list into another variadic callable is explicit list
--- spread (`CountItem(values..., candidate)`): spread(collect(xs)) = xs, so the
+-- Forwarding a collected list into another collecting callable is explicit list
+-- spread (`CountItem(values*, candidate)`): spread(collect(xs)) = xs, so the
 -- callee re-collects exactly the caller's items.
-def variadicParameterForwardingModeFreqsExpr : KatLang.Expr :=
+def collectingParameterForwardingModeFreqsExpr : KatLang.Expr :=
   .dotCall
     (.dotCall (.param "values") "distinct" none)
     "map"
@@ -2818,43 +2818,43 @@ def variadicParameterForwardingModeFreqsExpr : KatLang.Expr :=
       ])
     ]))
 
-def variadicParameterForwardingDirectUseAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+def collectingParameterForwardingDirectUseAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .call (resolve "CountItem") (alg [] [] [] [sequenceSpread (.param "values"), .num 1])
   ]
 
-def variadicParameterForwardingDirectCall : Bool :=
+def collectingParameterForwardingDirectCall : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountItem", variadicParameterForwardingCountItemAlg),
-    ("Use", variadicParameterForwardingDirectUseAlg)
+    ("CountItem", collectingParameterForwardingCountItemAlg),
+    ("Use", collectingParameterForwardingDirectUseAlg)
   ] [
     .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
   ])) with
   | Except.ok [2] => true
   | _ => false
 
-#guard variadicParameterForwardingDirectCall
+#guard collectingParameterForwardingDirectCall
 
-def variadicParameterForwardingFreqsAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
-    variadicParameterForwardingModeFreqsExpr
+def collectingParameterForwardingFreqsAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
+    collectingParameterForwardingModeFreqsExpr
   ]
 
-def variadicParameterForwardingCallbackBody : Bool :=
+def collectingParameterForwardingCallbackBody : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountItem", variadicParameterForwardingCountItemAlg),
-    ("Mode", variadicParameterForwardingFreqsAlg)
+    ("CountItem", collectingParameterForwardingCountItemAlg),
+    ("Mode", collectingParameterForwardingFreqsAlg)
   ] [
     .call (resolve "Mode") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
   ])) with
   | Except.ok [2, 1, 2] => true
   | _ => false
 
-#guard variadicParameterForwardingCallbackBody
+#guard collectingParameterForwardingCallbackBody
 
-def variadicParameterForwardingModeAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [
-    privateProp "Freqs" (alg [] [] [] [variadicParameterForwardingModeFreqsExpr]),
+def collectingParameterForwardingModeAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [
+    privateProp "Freqs" (alg [] [] [] [collectingParameterForwardingModeFreqsExpr]),
     privateProp "MaxFreq" (alg [] [] [] [.dotCall (resolve "Freqs") "max" none])
   ] [
     .dotCall
@@ -2869,72 +2869,72 @@ def variadicParameterForwardingModeAlg : Algorithm :=
       ]))
   ]
 
-def variadicParameterForwardingFullMode : Bool :=
+def collectingParameterForwardingFullMode : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountItem", variadicParameterForwardingCountItemAlg),
-    ("Mode", variadicParameterForwardingModeAlg)
+    ("CountItem", collectingParameterForwardingCountItemAlg),
+    ("Mode", collectingParameterForwardingModeAlg)
   ] [
     .call (resolve "Mode") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
   ])) with
   | Except.ok [1, 4] => true
   | _ => false
 
-#guard variadicParameterForwardingFullMode
+#guard collectingParameterForwardingFullMode
 
-def variadicParameterForwardingNonVariadicCollectAlg : Algorithm :=
+def collectingParameterForwardingNonVariadicCollectAlg : Algorithm :=
   alg ["list"] [] [] [.dotCall (.param "list") "count" none]
 
-def variadicParameterForwardingNonVariadicUseAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+def collectingParameterForwardingNonVariadicUseAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .call (resolve "Collect") (alg [] [] [] [.param "values"])
   ]
 
 -- Passing the collected list WITHOUT spread passes one list argument: `Collect(values)`
 -- binds the fixed parameter to the collected list, and `list.count` opens it
 -- (the ForwardAsOne shape).
-def variadicParameterForwardingNonVariadicCalleeConsumesCollectedList : Bool :=
+def collectingParameterForwardingNonVariadicCalleeConsumesCollectedList : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("Collect", variadicParameterForwardingNonVariadicCollectAlg),
-    ("Use", variadicParameterForwardingNonVariadicUseAlg)
+    ("Collect", collectingParameterForwardingNonVariadicCollectAlg),
+    ("Use", collectingParameterForwardingNonVariadicUseAlg)
   ] [
     .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])])
   ])) with
   | Except.ok [3] => true
   | _ => false
 
-#guard variadicParameterForwardingNonVariadicCalleeConsumesCollectedList
+#guard collectingParameterForwardingNonVariadicCalleeConsumesCollectedList
 
-def variadicParameterForwardingCountSequenceValueAlg : Algorithm :=
+def collectingParameterForwardingCountSequenceValueAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "values", kind := .variadic }]
+    .sequenceValue [.capture { name := "values", kind := .collecting }]
   ] [] [] [.dotCall (.param "values") "count" none]
 
-def variadicParameterForwardingSequenceValueUseAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+def collectingParameterForwardingSequenceValueUseAlg : Algorithm :=
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .call (resolve "CountSequenceValue") (alg [] [] [] [.param "values"])
   ]
 
--- A deconstruction-shaped callee (`CountSequenceValue((values...))`) opens a
+-- A deconstruction-shaped callee (`CountSequenceValue((*values))`) opens a
 -- bare-forwarded collected LIST through its lone-structure rule, so the unspread
 -- forward still reaches the items.
-def variadicParameterForwardingSequenceValueVariadicPatternPreservesBehavior : Bool :=
+def collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountSequenceValue", variadicParameterForwardingCountSequenceValueAlg),
-    ("Use", variadicParameterForwardingSequenceValueUseAlg)
+    ("CountSequenceValue", collectingParameterForwardingCountSequenceValueAlg),
+    ("Use", collectingParameterForwardingSequenceValueUseAlg)
   ] [
     .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])])
   ])) with
   | Except.ok [3] => true
   | _ => false
 
-#guard variadicParameterForwardingSequenceValueVariadicPatternPreservesBehavior
+#guard collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior
 
-def variadicParameterForwardingSequenceValueHistoryArg : KatLang.Expr :=
+def collectingParameterForwardingSequenceValueHistoryArg : KatLang.Expr :=
   .block (alg [] [] [] [.num 1, .num 2, .num 3])
 
-def variadicParameterForwardingFindNextAlg : Algorithm :=
+def collectingParameterForwardingFindNextAlg : Algorithm :=
   algWithParameters [
-    { name := "history", kind := .variadic },
+    { name := "history", kind := .collecting },
     { name := "pre1", kind := .normal },
     { name := "pre2", kind := .normal }
   ] [] [] [
@@ -2943,108 +2943,108 @@ def variadicParameterForwardingFindNextAlg : Algorithm :=
       (.param "pre2")
   ]
 
-def variadicParameterForwardingSequenceValueStepAlg : Algorithm :=
+def collectingParameterForwardingSequenceValueStepAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "pre2", kind := .normal },
     .capture { name := "pre1", kind := .normal }
   ] [] [] [
     .call (resolve "FindNext") (alg [] [] [] [sequenceSpread (.param "history"), .param "pre1", .param "pre2"])
   ]
 
-def variadicParameterForwardingSequenceValueVariadicCaptureSpreadsCompatibleSlot : Bool :=
+def collectingParameterForwardingSequenceValueVariadicCaptureSpreadsCompatibleSlot : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("FindNext", variadicParameterForwardingFindNextAlg),
-    ("YSStep", variadicParameterForwardingSequenceValueStepAlg)
+    ("FindNext", collectingParameterForwardingFindNextAlg),
+    ("YSStep", collectingParameterForwardingSequenceValueStepAlg)
   ] [
-    .call (resolve "YSStep") (alg [] [] [] [variadicParameterForwardingSequenceValueHistoryArg, .num 2, .num 3])
+    .call (resolve "YSStep") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3])
   ])) with
   | Except.ok [8] => true
   | _ => false
 
-#guard variadicParameterForwardingSequenceValueVariadicCaptureSpreadsCompatibleSlot
+#guard collectingParameterForwardingSequenceValueVariadicCaptureSpreadsCompatibleSlot
 
-def variadicParameterForwardingCountItemsByOtherNameAlg : Algorithm :=
+def collectingParameterForwardingCountItemsByOtherNameAlg : Algorithm :=
   algWithParameters [
-    { name := "items", kind := .variadic },
+    { name := "items", kind := .collecting },
     { name := "last", kind := .normal }
   ] [] [] [
     .binary .add (.dotCall (.param "items") "count" none) (.param "last")
   ]
 
-def variadicParameterForwardingSequenceValueHistoryUseOtherNameAlg : Algorithm :=
+def collectingParameterForwardingSequenceValueHistoryUseOtherNameAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "last", kind := .normal }
   ] [] [] [
     .call (resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "history"), .param "last"])
   ]
 
--- Spread forwarding is pure value semantics: the callee's variadic parameter may use any
+-- Spread forwarding is pure value semantics: the callee's collecting parameter may use any
 -- parameter name — there is no name-based or provenance-based special path.
-def variadicParameterForwardingSequenceValueCaptureSpreadForwardsUnderAnyName : Bool :=
+def collectingParameterForwardingSequenceValueCaptureSpreadForwardsUnderAnyName : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("CountItems", variadicParameterForwardingCountItemsByOtherNameAlg),
-    ("Use", variadicParameterForwardingSequenceValueHistoryUseOtherNameAlg)
+    ("CountItems", collectingParameterForwardingCountItemsByOtherNameAlg),
+    ("Use", collectingParameterForwardingSequenceValueHistoryUseOtherNameAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [variadicParameterForwardingSequenceValueHistoryArg, .num 7])
+    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 7])
   ])) with
   | Except.ok [10] => true
   | _ => false
 
-#guard variadicParameterForwardingSequenceValueCaptureSpreadForwardsUnderAnyName
+#guard collectingParameterForwardingSequenceValueCaptureSpreadForwardsUnderAnyName
 
-def variadicParameterForwardingSequenceValueHistoryNonVariadicUseAlg : Algorithm :=
+def collectingParameterForwardingSequenceValueHistoryNonVariadicUseAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "marker", kind := .normal }
   ] [] [] [
     .call (resolve "Collect") (alg [] [] [] [.param "history"])
   ]
 
-def variadicParameterForwardingSequenceValueCaptureForwardsSequenceValue : Bool :=
+def collectingParameterForwardingSequenceValueCaptureForwardsSequenceValue : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("Collect", variadicParameterForwardingNonVariadicCollectAlg),
-    ("Use", variadicParameterForwardingSequenceValueHistoryNonVariadicUseAlg)
+    ("Collect", collectingParameterForwardingNonVariadicCollectAlg),
+    ("Use", collectingParameterForwardingSequenceValueHistoryNonVariadicUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [variadicParameterForwardingSequenceValueHistoryArg, .num 99])
+    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 99])
   ])) with
   | Except.ok [3] => true
   | _ => false
 
-#guard variadicParameterForwardingSequenceValueCaptureForwardsSequenceValue
+#guard collectingParameterForwardingSequenceValueCaptureForwardsSequenceValue
 
-def variadicParameterForwardingTakeLastAlg : Algorithm :=
+def collectingParameterForwardingTakeLastAlg : Algorithm :=
   algWithParameters [
-    { name := "first", kind := .variadic },
+    { name := "first", kind := .collecting },
     { name := "last", kind := .normal }
   ] [] [] [
     .dotCall (.param "first") "count" none
   ]
 
-def variadicParameterForwardingSequenceValueHistoryTakeLastUseAlg : Algorithm :=
+def collectingParameterForwardingSequenceValueHistoryTakeLastUseAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "marker", kind := .normal }
   ] [] [] [
     .call (resolve "TakeLast") (alg [] [] [] [.num 0, .param "history"])
   ]
 
-def variadicParameterForwardingSequenceValueCaptureOnlyExpandsInTargetVariadicSlot : Bool :=
+def collectingParameterForwardingSequenceValueCaptureOnlyExpandsInTargetVariadicSlot : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("TakeLast", variadicParameterForwardingTakeLastAlg),
-    ("Use", variadicParameterForwardingSequenceValueHistoryTakeLastUseAlg)
+    ("TakeLast", collectingParameterForwardingTakeLastAlg),
+    ("Use", collectingParameterForwardingSequenceValueHistoryTakeLastUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [variadicParameterForwardingSequenceValueHistoryArg, .num 99])
+    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 99])
   ])) with
   | Except.ok [1] => true
   | _ => false
 
-#guard variadicParameterForwardingSequenceValueCaptureOnlyExpandsInTargetVariadicSlot
+#guard collectingParameterForwardingSequenceValueCaptureOnlyExpandsInTargetVariadicSlot
 
-def variadicParameterForwardingSequenceValueLoopStepAlg : Algorithm :=
+def collectingParameterForwardingSequenceValueLoopStepAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "pre2", kind := .normal },
     .capture { name := "pre1", kind := .normal }
   ] [] [] [
@@ -3053,21 +3053,21 @@ def variadicParameterForwardingSequenceValueLoopStepAlg : Algorithm :=
     .param "pre2"
   ]
 
-def variadicParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot : Bool :=
+def collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot : Bool :=
   match runFlat (.block (algPrivate [] [] [
-    ("FindNext", variadicParameterForwardingFindNextAlg),
-    ("YSStep", variadicParameterForwardingSequenceValueLoopStepAlg)
+    ("FindNext", collectingParameterForwardingFindNextAlg),
+    ("YSStep", collectingParameterForwardingSequenceValueLoopStepAlg)
   ] [
     .index
       (.dotCall (resolve "YSStep") "repeat" (some (alg [] [] [] [
-        .num 1, variadicParameterForwardingSequenceValueHistoryArg, .num 2, .num 3
+        .num 1, collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3
       ])))
       (.num 0)
   ])) with
   | Except.ok [8] => true
   | _ => false
 
-#guard variadicParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot
+#guard collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot
 
 def flatFixedIssue101NestedBlockBoundaryPreserved : Bool :=
   match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])] [
@@ -3087,7 +3087,7 @@ def flatFixedIssue101ExplicitOuterBodyBlockEquivalent : Bool :=
 
 #guard flatFixedIssue101ExplicitOuterBodyBlockEquivalent
 
--- Internal value shaped like sequence-value source `(1, (2, 3).spread)`: a leading `1`
+-- Internal value shaped like sequence-value source `(1, (2, 3)*)`: a leading `1`
 -- combined with a spread of the sequenceValue block (2, 3), whose items 2 and
 -- 3 are flattened by the spread.
 def flatFixedIssue101SequenceSpreadFlattensNestedBlock : Bool :=
@@ -3934,7 +3934,7 @@ def test24 : Bool :=
   .num 1
 ])))
 
--- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3).spread` with a
+-- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3)*` with a
 -- 3-arg if that selects the else branch → [1, 9, 3]
 def test25 : Bool :=
   match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9]))) (.num 3))) with
@@ -3944,7 +3944,7 @@ def test25 : Bool :=
 #guard test25
 #eval runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9]))) (.num 3)))
 
--- Internal sequence `(1, 2, 3, 4).spread`: spread over the constructed sequence value.
+-- Internal sequence `(1, 2, 3, 4)*`: spread over the constructed sequence value.
 def sequenceSpread1234 : KatLang.Expr :=
   sequenceSpread (.sequenceConstruct (.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3)) (.num 4))
 
@@ -3962,8 +3962,8 @@ def test25a : Bool :=
 #guard test25a
 
 def test25b : Bool :=
-  -- Internal constructed-sequence variants of `count(((1, 2).spread, 3))` and
-  -- `count((1, (2, 3).spread))`: a flattening spread contributes inside the one
+  -- Internal constructed-sequence variants of `count(((1, 2)*, 3))` and
+  -- `count((1, (2, 3)*))`: a flattening spread contributes inside the one
   -- sequence-valued argument.
   match runFlat (.block (alg [] [] [] [
     .call (resolve "count") (alg [] [] [] [
@@ -4016,7 +4016,7 @@ def test25bCommaSimilarity : Bool :=
 #guard test25bCommaSimilarity
 
 def test25c : Bool :=
-  -- Internal sequence `(P.spread, 3, 4, 5)` where P = 1, 2 is ONE collection argument,
+  -- Internal sequence `(P*, 3, 4, 5)` where P = 1, 2 is ONE collection argument,
   -- opened by the post-binding one-level collection view; sum 15.
   let pThenMore := sequenceItems [sequenceSpread (resolve "P"), .num 3, .num 4, .num 5]
   match runFlat (.block (algPrivate [] [] [
@@ -4086,7 +4086,7 @@ def test25g : Bool :=
 #guard test25g
 
 -- A spread of a no-output operand fails with the spread
--- missing-output diagnostic: source `bad.spread` is `sequenceSpread bad`, whose
+-- missing-output diagnostic: source `bad*` is `sequenceSpread bad`, whose
 -- single operand produces no output.
 def test25h : Bool :=
   let bad := .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
@@ -4096,8 +4096,8 @@ def test25h : Bool :=
 
 #guard test25h
 
--- A spread is not a valid open target. Source `open A.spread` / `open spread(A)`
--- is the spread node `sequenceSpread (resolve "A")`, rendered `spread(A)`.
+-- A spread is not a valid open target. Source `open A*`
+-- is the spread node `sequenceSpread (resolve "A")`, rendered `A*`.
 def test25j : Bool :=
   let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []
   let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] []
@@ -4107,7 +4107,7 @@ def test25j : Bool :=
   ] [
     .binary .add (resolve "X") (resolve "Y")
   ])) with
-  | Except.error err => innermostIsBadOpenForm "spread: spread(A)" err
+  | Except.error err => innermostIsBadOpenForm "spread: A*" err
   | _ => false
 
 #guard test25j
@@ -4769,7 +4769,7 @@ def sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary : Bool :=
 
 #guard sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary
 
--- A single grouped argument `(range(3, 6).spread, 8)` is ONE collection value; the post-binding
+-- A single grouped argument `(range(3, 6)*, 8)` is ONE collection value; the post-binding
 -- one-level collection view opens it, so filter's collection is [3, 4, 5, 6, 8] and keeps
 -- the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
@@ -4834,7 +4834,7 @@ def sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary : Bool :=
 
 #guard sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary
 
--- A single grouped argument `(Data.spread, 8)` is ONE collection value opened by the
+-- A single grouped argument `(Data*, 8)` is ONE collection value opened by the
 -- post-binding one-level collection view, so filter's collection is [3, 4, 5, 6, 8]
 -- and keeps the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadNamedSourceExpands : Bool :=
@@ -4968,7 +4968,7 @@ def test75 : Bool :=
     "filter"
     (some (alg [] [] [] [.num 1]))) with
   | Except.error err =>
-      hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
+      hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
       innermostIsArityMismatch 0 1 err
   | _ => false
 
@@ -5819,9 +5819,9 @@ def builtinSumTakesOneCollectionArgument : Bool :=
 #guard builtinSumTakesOneCollectionArgument
 
 -- Multiple sibling arguments are never flattened into one collection: sum(A, B) with
--- A = (1, 2) and B = (3, 4) is a two-argument arity error, and sum(A.spread, B.spread) opens the
+-- A = (1, 2) and B = (3, 4) is a two-argument arity error, and sum(A*, B*) opens the
 -- spreads into FOUR ordinary argument slots (also an arity error). The concatenation
--- rewrite groups the spreads into ONE collection argument: sum((A..., B...)) = 10.
+-- rewrite groups the spreads into ONE collection argument: sum((*A, *B)) = 10.
 def builtinSumSiblingsNotFlattened : Bool :=
   let siblingsErr :=
     match runResult (.block (algPrivate [] [] [
@@ -5869,7 +5869,7 @@ def builtinContainsTakesCollectionAndItem : Bool :=
 #guard builtinContainsTakesCollectionAndItem
 
 -- A collection builtin is NOT a user variadic: sum(3, 4, 2, 1, 3, 3) is an arity error
--- under `sum(collection)`, while a user variadic G(values...) = values.sum captures the
+-- under `sum(collection)`, while a user variadic G(*values) = values.sum captures the
 -- same inline items and sums them; the grouped call sum((3, 4, 2, 1, 3, 3)) is the
 -- builtin twin.
 def builtinFixedArityDiffersFromUserVariadic : Bool :=
@@ -5886,7 +5886,7 @@ def builtinFixedArityDiffersFromUserVariadic : Bool :=
     | Except.ok [16] => true
     | _ => false
   let userSumAlg : Algorithm :=
-    algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+    algWithParameters [{ name := "values", kind := .collecting }] [] [] [
       .dotCall (.param "values") "sum" none
     ]
   let viaUser :=
@@ -6780,7 +6780,7 @@ def test151o : Bool :=
 
 #guard test151o
 
--- SequenceValue source `map((1, range(2, 4).spread), MarkThreeSequenceValue)`: spread
+-- SequenceValue source `map((1, range(2, 4)*), MarkThreeSequenceValue)`: spread
 -- contributes inside the single grouped value, opened by the collection view.
 def test151ob : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
@@ -6794,7 +6794,7 @@ def test151ob : Bool :=
 
 #guard test151ob
 
--- SequenceValue source `filter((1, range(2, 4).spread), MarkThreeSequenceValue)`: spread
+-- SequenceValue source `filter((1, range(2, 4)*), MarkThreeSequenceValue)`: spread
 -- contributes inside the single grouped value, opened by the collection view.
 def test151oc : Bool :=
   match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
@@ -6863,8 +6863,8 @@ def test151pb : Bool :=
 
 #guard test151pb
 
--- SequenceValue source `reduce((1, range(2, 4).spread), AddSequenceValueRange, 0)`:
--- the spread intrinsic contributes inside the single grouped value, opened by the collection view.
+-- SequenceValue source `reduce((1, range(2, 4)*), AddSequenceValueRange, 0)`:
+-- the spread marker contributes inside the single grouped value, opened by the collection view.
 def test151pc : Bool :=
   match runFlat (.block (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
     .call (resolve "reduce") (alg [] [] [] [
@@ -8546,7 +8546,7 @@ def test238 : Bool :=
 #guard test238
 
 def reduceVariadicAppendAlg239 : Algorithm :=
-  algWithParameters [{ name := "item" }, { name := "history", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "item" }, { name := "history", kind := .collecting }] [] [] [
     .block (alg [] [] [] [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")])
   ]
 
@@ -9101,16 +9101,16 @@ def sequenceBuiltinDotCallReduceSweep : Bool :=
 #guard sequenceBuiltinDotCallReduceSweep
 
 --------------------------------------------------------------------------------
--- variadic user-parameter tests
+-- collecting user-parameter tests
 --------------------------------------------------------------------------------
 
 def variadicCollectAlg : Algorithm :=
-  algWithParameters [{ name := "list", kind := .variadic }] [] [] [.param "list"]
+  algWithParameters [{ name := "list", kind := .collecting }] [] [] [.param "list"]
 
 def normalCollectAlg : Algorithm :=
   alg ["list"] [] [] [.param "list"]
 
--- Internal sequence `(10, 20, 30).spread`: spread over the constructed sequence value.
+-- Internal sequence `(10, 20, 30)*`: spread over the constructed sequence value.
 def sequenceSpread1230 : KatLang.Expr :=
   sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 10) (.num 20)) (.num 30))
 
@@ -9123,7 +9123,7 @@ def variadicSimpleRoot : Algorithm :=
   ]
 
 -- `Arg.Collect` is `Collect(Arg)`: the receiver is ONE captured argument
--- slot, so the variadic parameter collects `list = [(1, 2, 3)]` and its count is 1.
+-- slot, so the collecting parameter collects `list = [(1, 2, 3)]` and its count is 1.
 def variadicDotCallReceiverIsOneCapturedSlot : Bool :=
   match runFlat (.block variadicSimpleRoot) with
   | Except.ok [1] => true
@@ -9165,33 +9165,33 @@ def variadicPreservesNestedSequenceValues : Bool :=
 #guard variadicPreservesNestedSequenceValues
 
 def variadicScaleAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }, { name := "factor" }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }, { name := "factor" }] [] [] [
     .dotCall (.param "values") "map" (some (alg [] [] [] [
       .block (alg ["n"] [] [] [.binary .mul (.param "n") (.param "factor")])
     ]))
   ]
 
 def variadicTotalWithFeeAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }, { name := "fee" }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }, { name := "fee" }] [] [] [
     .binary .add
       (.dotCall (.param "values") "sum" none)
       (.param "fee")
   ]
 
 def variadicMeanAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .binary .div
       (.dotCall (.param "values") "sum" none)
       (.dotCall (.param "values") "count" none)
   ]
 
 def variadicCountAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "count" none
   ]
 
 def variadicAtomsCountAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.call (resolve "atoms") (alg [] [] [] [.param "values"])) "count" none
   ]
 
@@ -9201,7 +9201,7 @@ def ordinaryCountAlg : Algorithm :=
   ]
 
 -- Supplying Arg's items to the variadic mean requires the explicit spread
--- call `Mean(Arg.spread)` / the parenthesized-spread receiver `(Arg.spread).Mean`;
+-- call `Mean(Arg*)` / the parenthesized-spread receiver `(Arg*).Mean`;
 -- both then agree with the builtin sum/count pipeline.
 def variadicMeanMatchesBuiltinSumCount : Bool :=
   match runFlat (.block (algPrivate [] [] [
@@ -9223,7 +9223,7 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
 #guard variadicMeanMatchesBuiltinSumCount
 
 -- `CountViaVariadic(Arg)` and `Arg.CountViaVariadic` supply ONE argument, so
--- the variadic parameter collects `values = [Arg]` (count 1); the fixed-collection builtin
+-- the collecting parameter collects `values = [Arg]` (count 1); the fixed-collection builtin
 -- `Arg.count` opens the bound value (count 2); `atoms` recursively reaches
 -- all four numeric leaves through the collected list.
 def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
@@ -9246,7 +9246,7 @@ def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
 #guard variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms
 
 -- A fixed parameter binds the receiver value itself, so the collection
--- builtin opens it (count 3); a variadic parameter collects the receiver as one
+-- builtin opens it (count 3); a collecting parameter collects the receiver as one
 -- list element (count 1). The two shapes are observably different.
 def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
   match runFlat (.block (algPrivate [] [] [
@@ -9263,7 +9263,7 @@ def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
 #guard ordinaryAndVariadicCountStayStructurallyDifferent
 
 -- Scaling the receiver's ITEMS uses the parenthesized-spread receiver
--- `(Arg.spread).Scale(10)`: the explicit spread feeds the leading variadic parameter,
+-- `(Arg*).Scale(10)`: the explicit spread feeds the leading collecting parameter,
 -- while the suffix binds the factor.
 def variadicBeforeSuffixSupportsDotCall : Bool :=
   match runFlat (.block (algPrivate [] [] [
@@ -9278,7 +9278,7 @@ def variadicBeforeSuffixSupportsDotCall : Bool :=
 
 #guard variadicBeforeSuffixSupportsDotCall
 
--- TotalWithFee(values..., fee) is a deconstruction parameter list. The inline
+-- TotalWithFee(*values, fee) is a deconstruction parameter list. The inline
 -- block receiver exposes its three top-level items (10, 20, 30), so with the
 -- suffix the call supplies four items; the variadic captures [10, 20, 30] and
 -- `fee` binds 5, giving sum 60 + 5 = 65.
@@ -9295,10 +9295,10 @@ def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
 #guard variadicInlineTupleDotCallWithSuffixCapturesReceiverItems
 
 -- `Data.TotalWithFee(5)` keeps the named multi-output receiver as ONE grouped
--- argument, so the variadic parameter collects `values = [(10, 20, 30)]` and `values.sum`
+-- argument, so the collecting parameter collects `values = [(10, 20, 30)]` and `values.sum`
 -- hits the numeric element constraint — unlike the pre-expanding
 -- parenthesized-spread receiver above.
-def variadicNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
+def collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
   match runResult (.block (algPrivate [] [] [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
     ("TotalWithFee", variadicTotalWithFeeAlg)
@@ -9308,10 +9308,10 @@ def variadicNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
   | Except.error err => innermostIsBadArity err
   | _ => false
 
-#guard variadicNamedMultiOutputDotCallWithSuffixIsGroupedArgument
+#guard collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument
 
 -- The named receiver stays one grouped argument (numeric-constraint error),
--- while the explicit parenthesized-spread receiver `(Data.spread)` supplies three
+-- while the explicit parenthesized-spread receiver `(Data*)` supplies three
 -- items and evaluates: the two receiver shapes are distinct argument streams.
 def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
   let named :=
@@ -9383,7 +9383,7 @@ def sequenceBuiltinInlineTupleDotCallBehaviorUnchanged : Bool :=
 
 #guard sequenceBuiltinInlineTupleDotCallBehaviorUnchanged
 
--- `((Arg.spread).Scale(10), Arg.map{n * 10}).spread`: a spread over the
+-- `((Arg*).Scale(10), Arg.map{n * 10})*`: a spread over the
 -- constructed pair of the spread-receiver variadic scale and the builtin map;
 -- both produce the same scaled items.
 def variadicScaleMatchesBuiltinMap : Bool :=
@@ -9405,38 +9405,38 @@ def variadicScaleMatchesBuiltinMap : Bool :=
 
 #guard variadicScaleMatchesBuiltinMap
 
-def variadicBindingErrorRoot : Algorithm :=
+def collectingBindingErrorRoot : Algorithm :=
   algPrivate [] [] [
-    ("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] [] [] [
+    ("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] [] [] [
       .param "first", .param "rest", .param "last"
     ])
   ] [
     .call (resolve "F") (alg [] [] [] [.num 1])
   ]
 
-def variadicBindingErrorWhenNormalParamsCannotBind : Bool :=
-  -- F(first, rest..., last) is a deconstruction parameter list. F(1) supplies one
+def collectingBindingErrorWhenNormalParamsCannotBind : Bool :=
+  -- F(first, *rest, last) is a deconstruction parameter list. F(1) supplies one
   -- scalar item, which is not opened (rule 5); the matcher needs at least the two
   -- fixed bindings (first, last), so it reports arityMismatch 2 1.
-  match runResult (.block variadicBindingErrorRoot) with
+  match runResult (.block collectingBindingErrorRoot) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
-#guard variadicBindingErrorWhenNormalParamsCannotBind
+#guard collectingBindingErrorWhenNormalParamsCannotBind
 
-def sequenceValueVariadicCountAlg : Algorithm :=
-  algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .variadic }]] [] [] [
+def sequenceValueCollectingCountAlg : Algorithm :=
+  algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [
     .dotCall (.param "xs") "count" none
   ]
 
-def sequenceValueVariadicFirstAlg : Algorithm :=
-  algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .variadic }]] [] [] [
+def sequenceValueCollectingFirstAlg : Algorithm :=
+  algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [
     .index (.param "xs") (.num 0)
   ]
 
-def sequenceValueVariadicMixedAlg : Algorithm :=
+def sequenceValueCollectingMixedAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "xs", kind := .variadic }],
+    .sequenceValue [.capture { name := "xs", kind := .collecting }],
     .capture { name := "a" },
     .capture { name := "b" }
   ] [] [] [
@@ -9445,8 +9445,8 @@ def sequenceValueVariadicMixedAlg : Algorithm :=
     .param "b"
   ]
 
-def sequenceValueVariadicCapturesImmediateSequenceValueItems : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueVariadicCountAlg)] [
+def sequenceValueCollectingCapturesImmediateSequenceValueItems : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [.num 1, .num 2, .num 3])
     ])
@@ -9454,10 +9454,10 @@ def sequenceValueVariadicCapturesImmediateSequenceValueItems : Bool :=
   | Except.ok [3] => true
   | _ => false
 
-#guard sequenceValueVariadicCapturesImmediateSequenceValueItems
+#guard sequenceValueCollectingCapturesImmediateSequenceValueItems
 
-def sequenceValueVariadicRemovesOnlyOneSequenceValueBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueVariadicCountAlg)] [
+def sequenceValueCollectingRemovesOnlyOneSequenceValueBoundary : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [
         .block (alg [] [] [] [.num 1, .num 2]),
@@ -9468,10 +9468,10 @@ def sequenceValueVariadicRemovesOnlyOneSequenceValueBoundary : Bool :=
   | Except.ok [2] => true
   | _ => false
 
-#guard sequenceValueVariadicRemovesOnlyOneSequenceValueBoundary
+#guard sequenceValueCollectingRemovesOnlyOneSequenceValueBoundary
 
-def sequenceValueVariadicPreservesNestedSequenceValueItem : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueVariadicFirstAlg)] [
+def sequenceValueCollectingPreservesNestedSequenceValueItem : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingFirstAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [
         .block (alg [] [] [] [.num 1, .num 2]),
@@ -9482,19 +9482,19 @@ def sequenceValueVariadicPreservesNestedSequenceValueItem : Bool :=
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
 
-#guard sequenceValueVariadicPreservesNestedSequenceValueItem
+#guard sequenceValueCollectingPreservesNestedSequenceValueItem
 
-def sequenceValueVariadicRequiresSequenceValueSlot : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueVariadicCountAlg)] [
+def sequenceValueCollectingRequiresSequenceValueSlot : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
     .call (resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])
   ])) with
   | Except.error err => innermostIsArityMismatch 1 3 err
   | Except.ok _ => false
 
-#guard sequenceValueVariadicRequiresSequenceValueSlot
+#guard sequenceValueCollectingRequiresSequenceValueSlot
 
-def sequenceValueVariadicWithMixedTopLevelParameters : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueVariadicMixedAlg)] [
+def sequenceValueCollectingWithMixedTopLevelParameters : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingMixedAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [.num 1, .num 2, .num 3]),
       .num 4,
@@ -9504,12 +9504,12 @@ def sequenceValueVariadicWithMixedTopLevelParameters : Bool :=
   | Except.ok [3, 4, 5] => true
   | _ => false
 
-#guard sequenceValueVariadicWithMixedTopLevelParameters
+#guard sequenceValueCollectingWithMixedTopLevelParameters
 
 def sequenceValueSeparateVariadicsDifferentLevelsAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "inner", kind := .variadic }],
-    .capture { name := "outer", kind := .variadic }
+    .sequenceValue [.capture { name := "inner", kind := .collecting }],
+    .capture { name := "outer", kind := .collecting }
   ] [] [] [
     .dotCall (.param "inner") "count" none,
     .dotCall (.param "outer") "count" none
@@ -9532,7 +9532,7 @@ def sequenceValueHeadTailAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [
       .capture { name := "head" },
-      .capture { name := "tail", kind := .variadic }
+      .capture { name := "tail", kind := .collecting }
     ]
   ] [] [] [
     .param "head",
@@ -9554,7 +9554,7 @@ def sequenceValueFirstMiddleLastAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [
       .capture { name := "first" },
-      .capture { name := "middle", kind := .variadic },
+      .capture { name := "middle", kind := .collecting },
       .capture { name := "last" }
     ]
   ] [] [] [
@@ -9574,10 +9574,10 @@ def sequenceValueFirstMiddleLastPatternBindsWithinOneSlot : Bool :=
 
 #guard sequenceValueFirstMiddleLastPatternBindsWithinOneSlot
 
-def sequenceValueVariadicWithSuffixInsideSequenceValueAlg : Algorithm :=
+def sequenceValueCollectingWithSuffixInsideSequenceValueAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [
-      .capture { name := "history", kind := .variadic },
+      .capture { name := "history", kind := .collecting },
       .capture { name := "pre2" }
     ],
     .capture { name := "pre1" }
@@ -9587,8 +9587,8 @@ def sequenceValueVariadicWithSuffixInsideSequenceValueAlg : Algorithm :=
     .param "pre1"
   ]
 
-def sequenceValueVariadicWithSuffixInsideSequenceValueBindsWithinOneSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueVariadicWithSuffixInsideSequenceValueAlg)] [
+def sequenceValueCollectingWithSuffixInsideSequenceValueBindsWithinOneSlot : Bool :=
+  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [.num 1, .num 2, .num 3]),
       .num 4
@@ -9597,10 +9597,10 @@ def sequenceValueVariadicWithSuffixInsideSequenceValueBindsWithinOneSlot : Bool 
   | Except.ok [2, 3, 4] => true
   | _ => false
 
-#guard sequenceValueVariadicWithSuffixInsideSequenceValueBindsWithinOneSlot
+#guard sequenceValueCollectingWithSuffixInsideSequenceValueBindsWithinOneSlot
 
-def sequenceValueVariadicWithSuffixInsideSequenceValueRequiresSuffixValue : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueVariadicWithSuffixInsideSequenceValueAlg)] [
+def sequenceValueCollectingWithSuffixInsideSequenceValueRequiresSuffixValue : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] []),
       .num 4
@@ -9609,7 +9609,7 @@ def sequenceValueVariadicWithSuffixInsideSequenceValueRequiresSuffixValue : Bool
   | Except.error _ => true
   | Except.ok _ => false
 
-#guard sequenceValueVariadicWithSuffixInsideSequenceValueRequiresSuffixValue
+#guard sequenceValueCollectingWithSuffixInsideSequenceValueRequiresSuffixValue
 
 def sequenceValuePairFirstAlg : Algorithm :=
   algWithParameterPatterns [
@@ -9674,13 +9674,13 @@ def sequenceValuePatternEmptySequenceSiblingItemIsPreserved : Bool :=
 
 #guard sequenceValuePatternEmptySequenceSiblingItemIsPreserved
 
-/-- Regression: only an explicit spread contributes zero items. `F((E.spread, 6))`
+/-- Regression: only an explicit spread contributes zero items. `F((E*, 6))`
     with `E = ()` spreads away the empty value, so the pattern sees the single
     item `6`. -/
 def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
   match runFlat (.block (algPrivate [] [] [
     ("E", alg [] [] [] [.emptySequence 0]),
-    ("F", sequenceValueVariadicCountAlg)
+    ("F", sequenceValueCollectingCountAlg)
   ] [
     .call (resolve "F") (alg [] [] [] [
       .block (alg [] [] [] [
@@ -9828,10 +9828,10 @@ def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
 
 #guard sequenceValuePatternTwoEmptySiblingItemsBindPositionally
 
-def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
+def sequenceValueCollectingIsNotTopLevelVariadic : Bool :=
   let sequenceValueCall :=
     runFlat (.block (algPrivate [] [] [("F", algWithParameterPatterns [
-      .sequenceValue [.capture { name := "xs", kind := .variadic }], .capture { name := "y" }
+      .sequenceValue [.capture { name := "xs", kind := .collecting }], .capture { name := "y" }
     ] [] [] [
       .dotCall (.param "xs") "count" none,
       .param "y"
@@ -9843,7 +9843,7 @@ def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
     ]))
   let flatCall :=
     runResult (.block (algPrivate [] [] [("F", algWithParameterPatterns [
-      .sequenceValue [.capture { name := "xs", kind := .variadic }], .capture { name := "y" }
+      .sequenceValue [.capture { name := "xs", kind := .collecting }], .capture { name := "y" }
     ] [] [] [
       .dotCall (.param "xs") "count" none,
       .param "y"
@@ -9854,14 +9854,14 @@ def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
   | Except.ok [2, 3], Except.error err => innermostIsArityMismatch 2 3 err
   | _, _ => false
 
-#guard sequenceValueVariadicIsNotTopLevelVariadic
+#guard sequenceValueCollectingIsNotTopLevelVariadic
 
--- Source `Step((history...), previous) = (history.spread, previous + 1), previous + 1`,
+-- Source `Step((*history), previous) = (history*, previous + 1), previous + 1`,
 -- matching the C# regression `Eval_LoopStep_SequenceValueCommaHistorySlotUsesExplicitSpreadAcrossRepeat`.
--- The first output slot is the written sequence value `(history.spread, previous + 1)`:
--- a block whose comma outputs are `history.spread` (an explicit spread opening the
+-- The first output slot is the written sequence value `(history*, previous + 1)`:
+-- a block whose comma outputs are `history*` (an explicit spread opening the
 -- captured history one level) and `previous + 1`. The written spread splices its
--- items before the sibling slot — the same `(A.spread, 99)` = `(1, 2, 99)` rule as
+-- items before the sibling slot — the same `(A*, 99)` = `(1, 2, 99)` rule as
 -- every written sequence value — so the history slot GROWS FLAT by one item per
 -- step. Starting from `(1, 2)` and stepping twice, `:0` selects the flat
 -- `(1, 2, 3, 4)`. To deepen instead of flattening, write the history as a
@@ -9871,9 +9871,9 @@ def sequenceValueVariadicIsNotTopLevelVariadic : Bool :=
 -- `(((1, 2), 3), 4)` — diverging from `evalAlgOutputCountedCore`, from the C#
 -- evaluator, and from written-sequence spread semantics. This guard pins the
 -- aligned flat behavior at the exact structural level.)
-def sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat : Bool :=
+def sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat : Bool :=
   let step := algWithParameterPatterns [
-    .sequenceValue [.capture { name := "history", kind := .variadic }],
+    .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "previous" }
   ] [] [] [
     .block (alg [] [] [] [sequenceSpread (.param "history"), .binary .add (.param "previous") (.num 1)]),
@@ -9891,17 +9891,17 @@ def sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat : Bool :=
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
   | _ => false
 
-#guard sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat
+#guard sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat
 
--- Source `Step((history..., previous), current) = (history.spread, current), current`.
--- Same shape as `sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat`: the first output
--- slot is the sequence-value pair `(history.spread, current)` — a block whose comma outputs are
--- `history.spread` (sequence-spread) and `current` — so it is one next-state slot.
+-- Source `Step((*history, previous), current) = (history*, current), current`.
+-- Same shape as `sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat`: the first output
+-- slot is the sequence-value pair `(history*, current)` — a block whose comma outputs are
+-- `history*` (sequence-spread) and `current` — so it is one next-state slot.
 -- (Contrast a spread over `sequenceConstruct history current`, which is a different shape.)
-def sequenceValueVariadicLoopStepWithSuffixInsideSequenceValuePreservesStateShape : Bool :=
+def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateShape : Bool :=
   let step := algWithParameterPatterns [
     .sequenceValue [
-      .capture { name := "history", kind := .variadic },
+      .capture { name := "history", kind := .collecting },
       .capture { name := "previous" }
     ],
     .capture { name := "current" }
@@ -9909,13 +9909,13 @@ def sequenceValueVariadicLoopStepWithSuffixInsideSequenceValuePreservesStateShap
     .block (alg [] [] [] [sequenceSpread (.param "history"), .param "current"]),
     .param "current"
   ]
-  -- Exact structural check. Here the sequence-value pattern `(history..., previous)`
+  -- Exact structural check. Here the sequence-value pattern `(*history, previous)`
   -- DESTRUCTURES the slot `(1, 2)` into atoms — history captures the leading atom
-  -- `1` and `previous` the trailing `2` — so `history.spread` spreads a bare atom, not
+  -- `1` and `previous` the trailing `2` — so `history*` spreads a bare atom, not
   -- a nested sequence value. The next slot is therefore the FLAT pair `(1, 3)`, and it stays
   -- flat across iterations (dropping the previous `previous`, unlike the
-  -- variadic-only `(history...)` capture in
-  -- `sequenceValueVariadicLoopStepSpreadGrowsHistoryFlat`, which accumulates).
+  -- variadic-only `(*history)` capture in
+  -- `sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat`, which accumulates).
   -- Asserting the exact `Result` pins this flat shape.
   match runResult (.block (algPrivate [] [] [("Step", step)] [
     .index
@@ -9929,7 +9929,7 @@ def sequenceValueVariadicLoopStepWithSuffixInsideSequenceValuePreservesStateShap
   | Except.ok (.sequenceValue [.atom 1, .atom 3]) => true
   | _ => false
 
-#guard sequenceValueVariadicLoopStepWithSuffixInsideSequenceValuePreservesStateShape
+#guard sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateShape
 
 def loopVariadicHistoryLastExpr : KatLang.Expr :=
   .dotCall (.call (resolve "atoms") (alg [] [] [] [.param "history"])) "last" none
@@ -9938,7 +9938,7 @@ def loopVariadicNextExpr : KatLang.Expr :=
   .binary .add loopVariadicHistoryLastExpr (.num 1)
 
 def loopVariadicAppendNextAlg : Algorithm :=
-  algWithParameters [{ name := "history", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "history", kind := .collecting }] [] [] [
     .sequenceConstruct (sequenceSpread (.param "history")) loopVariadicNextExpr
   ]
 
@@ -9950,7 +9950,7 @@ def loopVariadicContinueFlagExpr : KatLang.Expr :=
   ])
 
 def loopVariadicWhileAppendNextAlg : Algorithm :=
-  algWithParameters [{ name := "history", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "history", kind := .collecting }] [] [] [
     .sequenceConstruct
       (.sequenceConstruct (sequenceSpread (.param "history")) loopVariadicNextExpr)
       loopVariadicContinueFlagExpr
@@ -10011,14 +10011,14 @@ def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :
 
 -- Aspect 2 loop-state variadic binding (mirrors C# EvaluatorTests.Eval_VariadicLoopStep_*).
 -- A top-level variadic loop interface binds state as an item supply: the fixed prefix
--- and suffix bind from the ends, and the variadic parameter collects the matched middle state slots
+-- and suffix bind from the ends, and the collecting parameter collects the matched middle state slots
 -- as one exact immutable list. The minimum is the FIXED (non-variadic) parameter count —
--- the variadic parameter may collect ZERO slots (empty collected list = `[]`), the same rule as every other collecting-binding
+-- the collecting parameter may collect ZERO slots (empty collected list = `[]`), the same rule as every other collecting-binding
 -- receiver — and the max is unbounded (extra middle slots are accepted).
 def loopVariadicPrefixMiddleSuffixAlg : Algorithm :=
   algWithParameters [
     { name := "first" },
-    { name := "middle", kind := .variadic },
+    { name := "middle", kind := .collecting },
     { name := "last" }
   ] [] [] [
     .param "first",
@@ -10029,7 +10029,7 @@ def loopVariadicPrefixMiddleSuffixAlg : Algorithm :=
 def loopVariadicPrefixMiddleSuffixIncrementAlg : Algorithm :=
   algWithParameters [
     { name := "first" },
-    { name := "middle", kind := .variadic },
+    { name := "middle", kind := .collecting },
     { name := "last" }
   ] [] [] [
     .binary .add (.param "first") (.num 1),
@@ -10058,7 +10058,7 @@ def variadicLoopStepExactStructuralCountBinds : Bool :=
 
 #guard variadicLoopStepExactStructuralCountBinds
 
--- Empty collected segment: 2 state slots bind first=10/last=20 from the ends and the variadic parameter
+-- Empty collected segment: 2 state slots bind first=10/last=20 from the ends and the collecting parameter
 -- collects ZERO middle slots (middle = [], count 0) — the same empty-segment rule
 -- as every other collecting binding.
 def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
@@ -10081,7 +10081,7 @@ def variadicLoopStepBelowFixedMinimumFails : Bool :=
 
 #guard variadicLoopStepBelowFixedMinimumFails
 
--- The exact reviewed case: Step(first, middle..., last) = first + 1, middle.spread, last + 1
+-- The exact reviewed case: Step(first, *middle, last) = first + 1, middle*, last + 1
 -- with Step.repeat(2, 0, 5, 5, 10) binds first=0, middle=[5, 5] (the collected exact
 -- list), last=10 and, after two iterations (the body re-spreads middle with
 -- `.sequenceSpread (.param "middle")`),
@@ -10230,7 +10230,7 @@ def loopBoundaryIdentityAlg : Algorithm :=
   alg ["history"] [] [] [.param "history"]
 
 def loopBoundaryVariadicIdentityAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [.param "values"]
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [.param "values"]
 
 def loopBoundarySequenceValueHistoryStepAlg : Algorithm :=
   alg ["history"] [] [] [
@@ -10253,8 +10253,8 @@ def loopInitialManyExplicitArgsCreateManySlots : Bool :=
 
 #guard loopInitialManyExplicitArgsCreateManySlots
 
--- A single-variadic loop step binds many separate init slots as its item supply
--- (Aspect 2: matches C#). Step(values...) = values with repeat(1, 1, 2, 3) collects
+-- A single-collecting loop step binds many separate init slots as its item supply
+-- (Aspect 2: matches C#). Step(*values) = values with repeat(1, 1, 2, 3) collects
 -- values = [1, 2, 3] (one exact list) rather than rejecting the extra slots as the
 -- old strict path did.
 def loopInitialExplicitVariadicStepCapturesManySlots : Bool :=
@@ -10343,7 +10343,7 @@ def loopInitialMultiOutputPropertyArgIsOneSlot : Bool :=
 #guard loopInitialMultiOutputPropertyArgIsOneSlot
 
 -- Explicit selections that split a multi-output property into separate init slots are
--- bound by the single-variadic step as its item supply (Aspect 2: matches C#), so the
+-- bound by the single-collecting step as its item supply (Aspect 2: matches C#), so the
 -- three split slots are collected as values = [1, 2, 4] instead of being rejected.
 def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
   match runResult (.block (algPrivate [] [] [
@@ -10550,7 +10550,7 @@ def multiMemberSequenceValuePatternStillRejectsScalars : Bool :=
 -- The ordinary dot-call receiver is ONE leading argument slot, and dot-call
 -- matches the equivalent canonical call:
 --   receiver.F(C, D)            == F(receiver, C, D)
---   (receiver.spread).F(C, D)   == F(receiver.spread, C, D)
+--   (receiver*).F(C, D)   == F(receiver*, C, D)
 -- Explicit receiver spread spreads the receiver's emitted top-level values.
 -- A sequence-valued property such as `Pair = (10, 20)` emits ONE sequence value, so
 -- even its spread spreads one sequence value (spread preserves named
@@ -10573,19 +10573,19 @@ def expectInnermostArityMismatch (expected actual : Nat) (result : Except Error 
   | Except.error err => innermostIsArityMismatch expected actual err
   | _ => false
 
--- NItems(values...) = values.count
+-- NItems(*values) = values.count
 def receiverSymmetryNItemsAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] []
+  algWithParameters [{ name := "values", kind := .collecting }] [] []
     [.dotCall (.param "values") "count" none]
 
--- BeforeLastCount(values..., last) = values.count
+-- BeforeLastCount(*values, last) = values.count
 def receiverSymmetryBeforeLastCountAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }, { name := "last" }] [] []
+  algWithParameters [{ name := "values", kind := .collecting }, { name := "last" }] [] []
     [.dotCall (.param "values") "count" none]
 
--- SumPlusLast(values..., last) = values.sum + last
+-- SumPlusLast(*values, last) = values.sum + last
 def receiverSymmetrySumAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }, { name := "last" }] [] []
+  algWithParameters [{ name := "values", kind := .collecting }, { name := "last" }] [] []
     [.binary .add (.dotCall (.param "values") "sum" none) (.param "last")]
 
 -- Pair = (10, 20): one sequence value.
@@ -10601,7 +10601,7 @@ def runReceiverSymmetryCase (receiverProp calleeProp : Prod String Algorithm)
   runFlat (.block (algPrivate [] [] [receiverProp, calleeProp] [out]))
 
 -- Pair normalizes to the two-item sequence it contains; ordinary receiver and
--- canonical call agree on that ONE sequence-valued slot, which the variadic parameter
+-- canonical call agree on that ONE sequence-valued slot, which the collecting parameter
 -- collects as a one-element list (count 1).
 def sequenceValueReceiverLeadingVariadicIsOneSlot : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
@@ -10612,7 +10612,7 @@ def sequenceValueReceiverLeadingVariadicIsOneSlot : Bool :=
 
 #guard sequenceValueReceiverLeadingVariadicIsOneSlot
 
--- Pair.spread spreads two slots; single-variadic `NItems(values...)` collects those two
+-- Pair* spreads two slots; single-collecting `NItems(*values)` collects those two
 -- slots into one exact list of count 2.
 def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
@@ -10623,7 +10623,7 @@ def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
 
 #guard sequenceValueReceiverSpreadFeedsItemSupply
 
--- BeforeLastCount(values..., last) binds the supplied item supply:
+-- BeforeLastCount(*values, last) binds the supplied item supply:
 -- Pair.BeforeLastCount(99) and the canonical call pass ONE sequence-valued slot
 -- plus the suffix (collected count 1), while the spread forms open Pair before
 -- suffix allocation (collected count 2). Grouped and spread supplies are
@@ -10658,7 +10658,7 @@ def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
 
 #guard multiOutputReceiverCountsMatchCanonicalCalls
 
--- BeforeLastCount(values..., last) binds the supplied item supply. The ordinary
+-- BeforeLastCount(*values, last) binds the supplied item supply. The ordinary
 -- and canonical forms pass ONE sequence-valued slot plus the suffix (collected
 -- count 1); the spread forms open Values before suffix allocation (collected
 -- count 2). Dot-call and canonical call agree within each shape.
@@ -10676,7 +10676,7 @@ def multiOutputReceiverWithSuffixMatchesCanonicalCalls : Bool :=
 
 #guard multiOutputReceiverWithSuffixMatchesCanonicalCalls
 
--- SumPlusLast(values..., last) with no extra argument receives exactly one
+-- SumPlusLast(*values, last) with no extra argument receives exactly one
 -- grouped sequence value, so `last` gets that value and the numeric body fails.
 -- Explicit spread below is the successful path.
 def ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation : Bool :=
@@ -10688,7 +10688,7 @@ def ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation : Bool :=
 
 #guard ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation
 
--- Explicit spread pre-expands before slot allocation: (Values.spread).SumPlusLast
+-- Explicit spread pre-expands before slot allocation: (Values*).SumPlusLast
 -- spreads 10 and 20 as separate items, so `last` binds 20 and the variadic
 -- captures [10]. The canonical call agrees.
 def spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation : Bool :=
@@ -10701,8 +10701,8 @@ def spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation : Bool :=
 #guard spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation
 
 -- A direct inline block receiver is one written grouping level — ONE captured
--- argument slot for the leading variadic parameter (count 1). Only the parenthesized-spread
--- receiver `(...).spread` pre-expands into separate items.
+-- argument slot for the leading collecting parameter (count 1). Only the parenthesized-spread
+-- receiver `(...)*` pre-expands into separate items.
 def inlineBlockReceiverIsOneCapturedSlotForLeadingVariadic : Bool :=
   expectFlat (runFlat (.block (algPrivate [] [] [
     ("NItems", receiverSymmetryNItemsAlg)
@@ -10715,13 +10715,13 @@ def inlineBlockReceiverIsOneCapturedSlotForLeadingVariadic : Bool :=
 --------------------------------------------------------------------------------
 -- User-call parameter binding (movable collecting binding, preserved argument boundaries)
 --------------------------------------------------------------------------------
--- F(x, y..., z) is a mixed fixed/variadic parameter list. The supplied call slots
+-- F(x, *y, z) is a mixed fixed/collecting parameter list. The supplied call slots
 -- are matched prefix/collecting/suffix without implicitly opening a grouped argument;
--- the variadic parameter collects its assigned middle slots as one exact immutable list.
+-- the collecting parameter collects its assigned middle slots as one exact immutable list.
 
 def deconstructSumAlg : Algorithm :=
   algWithParameters [
-    { name := "x" }, { name := "y", kind := .variadic }, { name := "z" }
+    { name := "x" }, { name := "y", kind := .collecting }, { name := "z" }
   ] [] [] [
     .binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z")
   ]
@@ -10751,7 +10751,7 @@ def deconstructionSingleGroupedArgumentRequiresSpread : Bool :=
 
 #guard deconstructionSingleGroupedArgumentRequiresSpread
 
--- F(A.spread): explicit spread supplies five slots.
+-- F(A*): explicit spread supplies five slots.
 def deconstructionSpreadArgument : Bool :=
   match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
     .call (resolve "F") (alg [] [] [] [sequenceSpread (resolve "A")])
@@ -10761,7 +10761,7 @@ def deconstructionSpreadArgument : Bool :=
 
 #guard deconstructionSpreadArgument
 
--- F(1, 2): the variadic parameter collects zero items, so x = 1, y = [], z = 2 and y.sum = 0.
+-- F(1, 2): the collecting parameter collects zero items, so x = 1, y = [], z = 2 and y.sum = 0.
 def deconstructionEmptyRest : Bool :=
   match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
     .call (resolve "F") (alg [] [] [] [.num 1, .num 2])
@@ -10771,10 +10771,10 @@ def deconstructionEmptyRest : Bool :=
 
 #guard deconstructionEmptyRest
 
--- p1, p2, rest..., q1, q2 against seven items binds the middle three to rest.
+-- p1, p2, *rest, q1, q2 against seven items binds the middle three to rest.
 def deconstructionMatchAlg : Algorithm :=
   algWithParameters [
-    { name := "p1" }, { name := "p2" }, { name := "rest", kind := .variadic },
+    { name := "p1" }, { name := "p2" }, { name := "rest", kind := .collecting },
     { name := "q1" }, { name := "q2" }
   ] [] [] [
     .param "p1", .param "p2", .dotCall (.param "rest") "count" none, .param "q1", .param "q2"
@@ -10789,10 +10789,10 @@ def deconstructionMatchingAlgorithm : Bool :=
 
 #guard deconstructionMatchingAlgorithm
 
--- A single scalar argument is a one-item supply: F(first, tail...) with 1 binds
--- first = 1 and the variadic parameter collects [] (tail.count = 0).
+-- A single scalar argument is a one-item supply: F(first, *tail) with 1 binds
+-- first = 1 and the collecting parameter collects [] (tail.count = 0).
 def deconstructFirstTailAlg : Algorithm :=
-  algWithParameters [{ name := "first" }, { name := "tail", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "first" }, { name := "tail", kind := .collecting }] [] [] [
     .param "first", .dotCall (.param "tail") "count" none
   ]
 
@@ -10806,10 +10806,10 @@ def deconstructionScalarArgument : Bool :=
 #guard deconstructionScalarArgument
 
 -- A sequence-value parameter pattern also normalizes a scalar to a one-item
--- supply: F((first, tail...)) with the scalar 1 binds first = 1, tail = [].
+-- supply: F((first, *tail)) with the scalar 1 binds first = 1, tail = [].
 def deconstructSequenceValueFirstTailAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .variadic }]
+    .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .collecting }]
   ] [] [] [
     .param "first", .dotCall (.param "tail") "count" none
   ]
@@ -10843,8 +10843,8 @@ def sequenceValueDeconstructionCallbackOnScalarFails : Bool :=
 
 -- Aspect 2 callback boundary (positive parity, mirrors C#
 -- DeconstructionBindingTests.CallbackDeconstruction_OnSequenceValueRows_BindsPerRow):
--- a deconstruction-shaped callback applied per sequence-value row binds x/y.../z
--- within each row. With Rows = (1, 2, 3), (4, 5, 6) and F(x, y..., z) = x + y.sum + z,
+-- a deconstruction-shaped callback applied per sequence-value row binds x/*y/z
+-- within each row. With Rows = (1, 2, 3), (4, 5, 6) and F(x, *y, z) = x + y.sum + z,
 -- Rows.map(F) is 6 and 15. Row callbacks work while scalar-element deconstruction
 -- stays strict (see sequenceValueDeconstructionCallbackOnScalarFails above).
 def deconstructionRowsAlg : Algorithm :=
@@ -10865,12 +10865,12 @@ def deconstructionCallbackOnSequenceValueRows : Bool :=
 
 #guard deconstructionCallbackOnSequenceValueRows
 
--- A single variadic parameter collects the supplied call argument slots as one
+-- A single collecting parameter collects the supplied call argument slots as one
 -- exact list. One grouped argument is one collected element (`Sum(A)` binds
 -- `values = [A]`, so the numeric `sum` constraint rejects the sequence
 -- element), while separate slots collect their items.
 def restOnlyCollectAlg : Algorithm :=
-  algWithParameters [{ name := "values", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "sum" none
   ]
 
@@ -10894,16 +10894,16 @@ def restOnlyConsumesItemSupply : Bool :=
 -- A FUNCTION-shaped argument (a builtin here) reaching a collecting binding reports
 -- the targeted typeMismatch: a collecting binding collects VALUES and has no dual
 -- algorithm channel. C#: `BindParameterPatternList` (same kind; the C#
--- message additionally names the variadic parameter).
+-- message additionally names the collecting parameter).
 def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
   match runResult (.block (algPrivate [] [] [
-    ("G", algWithParameters [{ name := "fs", kind := .variadic }] [] [] [.param "fs"])
+    ("G", algWithParameters [{ name := "fs", kind := .collecting }] [] [] [.param "fs"])
   ] [
     .call (resolve "G") (alg [] [] [] [resolve "sum"])
   ])) with
   | Except.error err =>
       innermostIsTypeMismatch
-        "A variadic parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected."
+        "A collecting parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected."
         err
   | _ => false
 
@@ -10915,7 +10915,7 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
 def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
   match runResult (.block (algPrivate [] [] [
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
-    ("G", algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"])
+    ("G", algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])
   ] [
     .call (resolve "G") (alg [] [] [] [resolve "Bad"])
   ])) with
@@ -10925,7 +10925,7 @@ def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
 #guard restErroredValuePropertyArgumentSurfacesRealError
 
 def mixedVariadicBoundaryAlg : Algorithm :=
-  algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [
     .dotCall (.param "first") "count" none,
     .dotCall (.param "rest") "count" none
   ]
@@ -10949,13 +10949,13 @@ def mixedVariadicExplicitSpreadOpensSequenceArgument : Bool :=
 #guard mixedVariadicExplicitSpreadOpensSequenceArgument
 
 def itemSupplySumAlg : Algorithm :=
-  algWithParameters [{ name := "x", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "x", kind := .collecting }] [] [] [
     .dotCall (.param "x") "sum" none
   ]
 
--- Single-variadic `G(x...)` distinguishes grouped from spread supplies: `G(A)` and
+-- Single-collecting `G(*x)` distinguishes grouped from spread supplies: `G(A)` and
 -- the written-tuple call bind ONE collected sequence element (numeric `sum`
--- constraint error), while `G(A.spread)` and separate slots supply the items and
+-- constraint error), while `G(A*)` and separate slots supply the items and
 -- sum to 15.
 def restOnlyItemSupplyDistinguishesGroupedFromSpread : Bool :=
   let sumsTo15 (args : Algorithm) : Bool :=
@@ -10988,13 +10988,13 @@ def restOnlyEmptyCallSumsToZero : Bool :=
 #guard restOnlyEmptyCallSumsToZero
 
 def itemSupplyCountAlg : Algorithm :=
-  algWithParameters [{ name := "x", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "x", kind := .collecting }] [] [] [
     .dotCall (.param "x") "count" none
   ]
 
 -- Multiple sibling grouped values are preserved (G(A, B) binds
 -- x = [(1, 2), (3, 4)], count 2), not auto-flattened; only explicit spread
--- opens them into one item supply (G(A.spread, B.spread) binds x = [1, 2, 3, 4], count 4).
+-- opens them into one item supply (G(A*, B*) binds x = [1, 2, 3, 4], count 4).
 def restOnlyPreservesSiblingGroupedValues : Bool :=
   let twoItemRoot (argExprs : List KatLang.Expr) : Algorithm :=
     algPrivate [] [] [
@@ -11015,7 +11015,7 @@ def restOnlyPreservesSiblingGroupedValues : Bool :=
 #guard restOnlyPreservesSiblingGroupedValues
 
 def restPrefixSumAlg : Algorithm :=
-  algWithParameters [{ name := "x", kind := .variadic }, { name := "y" }] [] [] [
+  algWithParameters [{ name := "x", kind := .collecting }, { name := "y" }] [] [] [
     .binary .add (.dotCall (.param "x") "sum" none) (.param "y")
   ]
 
@@ -11025,8 +11025,8 @@ def nestedSingletonFive : KatLang.Expr :=
   .block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
 
 -- Repeated singleton grouping is useful-structure canonicalized as a value, but
--- a function call still receives one argument unless `spread(value)` /
--- `value.spread` is written.
+-- a function call still receives one argument unless `value*` /
+-- `value*` is written.
 def repeatedSingletonBoundaryDoesNotImplicitlyOpenCallArgument : Bool :=
   let plainMixed :=
     match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
@@ -11461,7 +11461,7 @@ def ifCountedParenthesizedBranchStaysOneValue : Bool :=
 --------------------------------------------------------------------------------
 -- issue #131: explicit spread opens a value into `if`'s three argument slots
 --------------------------------------------------------------------------------
--- An explicit spread argument (`if(X.spread)`) has a runtime-only count. The C#
+-- An explicit spread argument (`if(X*)`) has a runtime-only count. The C#
 -- parser is the only layer that gated `if` arity statically; the shared
 -- evaluator already expands spread before applying counted `if`, via
 -- `applyBuiltinCountedResolved -> expandSequenceSpreadBuiltinArguments`. So a
@@ -11469,7 +11469,7 @@ def ifCountedParenthesizedBranchStaysOneValue : Bool :=
 -- (2) as one value, matching the user wrapper `MyIF(a, b, c) = if(a, b, c)`.
 -- This guard witnesses that no Lean evaluator change was needed for #131.
 
-/-- One spread argument whose value opens to three top-level items (`X.spread`). -/
+/-- One spread argument whose value opens to three top-level items (`X*`). -/
 def ifSpreadThreeItemsArg : KatLang.ResolvedArgumentAlgorithm :=
   { algorithm := ifBranchThreeOutputs, spreadsSequence := true }
 
@@ -11489,7 +11489,7 @@ def ifSpreadArgumentOpensIntoThreeArguments : Bool :=
 #guard ifSpreadArgumentOpensIntoThreeArguments
 
 -- The same holds when the spread operand is an already-grouped (count-1) value
--- `(1, 2, 3).spread`: the spread supplies its items, so the argument still expands to
+-- `(1, 2, 3)*`: the spread supplies its items, so the argument still expands to
 -- three slots. This mirrors the C# engine test for `TrueResult = (1, 2, 3)`.
 def ifSpreadGroupedOperandArg : KatLang.ResolvedArgumentAlgorithm :=
   { algorithm := alg [] [] [] [.sequenceSpread (.block ifBranchThreeOutputs)],
@@ -11508,7 +11508,7 @@ def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
 -- A property/call/builtin RESULT boundary always returns ONE value: a body or
 -- collection that internally produces an item supply is observed by the caller
 -- as one sequence value (emitted count 1). Only an explicit caller-site
--- `spread(value)` / `value.spread` slot re-spreads it. Root output is NOT a call
+-- `value*` slot re-spreads it. Root output is NOT a call
 -- boundary and keeps its slot count;
 -- `while`/`repeat` loop state and the strict map/reduce callback paths are also
 -- unchanged. These guards pin the emitted count exactly. Lean: reCountValueBoundary.
@@ -11528,12 +11528,12 @@ def runCountedProgram (e : KatLang.Expr) : Except KatLang.Error KatLang.CountedR
            .error (KatLang.Error.unresolvedImplicitParams (KatLang.Algorithm.params wired))
      | _ => KatLang.evalCounted e ctx [])
 
-/-- `F(a...) = a` then `F(5, 9)`. -/
+/-- `F(*a) = a` then `F(5, 9)`. -/
 def boundaryVariadicReturnAlg : Algorithm :=
-  algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"]
+  algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"]
 
 def boundaryVariadicReturnRoot (body : List KatLang.Expr) : Algorithm :=
-  algPrivate [] [] [("F", algWithParameters [{ name := "a", kind := .variadic }] [] [] body)]
+  algPrivate [] [] [("F", algWithParameters [{ name := "a", kind := .collecting }] [] [] body)]
     [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9])]
 
 def boundaryVariadicReturnIsOneValue : Bool :=
@@ -11543,7 +11543,7 @@ def boundaryVariadicReturnIsOneValue : Bool :=
 
 #guard boundaryVariadicReturnIsOneValue
 
-/-- `F(a...) = a.spread` then `F(5, 9)` -- the body spread opens the capture, but the
+/-- `F(*a) = a*` then `F(5, 9)` -- the body spread opens the capture, but the
     call boundary still returns one value. -/
 def boundaryVariadicBodySpreadIsOneValue : Bool :=
   match runCountedProgram (.block (boundaryVariadicReturnRoot [sequenceSpread (.param "a")])) with
@@ -11552,7 +11552,7 @@ def boundaryVariadicBodySpreadIsOneValue : Bool :=
 
 #guard boundaryVariadicBodySpreadIsOneValue
 
-/-- `F(a...) = a, 0` then `F(5, 9)` -- the collected list stays one nested list value. -/
+/-- `F(*a) = a, 0` then `F(5, 9)` -- the collected list stays one nested list value. -/
 def boundaryVariadicCommaSlotGroupsCapture : Bool :=
   match runCountedProgram (.block (boundaryVariadicReturnRoot [.param "a", .num 0])) with
   | .ok (Result.sequenceValue [Result.listValue [Result.atom 5, Result.atom 9], Result.atom 0], 1) => true
@@ -11560,7 +11560,7 @@ def boundaryVariadicCommaSlotGroupsCapture : Bool :=
 
 #guard boundaryVariadicCommaSlotGroupsCapture
 
-/-- `F(a...) = a.spread, 0` then `F(5, 9)` -- body spread flattens, boundary still one value. -/
+/-- `F(*a) = a*, 0` then `F(5, 9)` -- body spread flattens, boundary still one value. -/
 def boundaryVariadicBodySpreadThenSlotIsOneFlatValue : Bool :=
   match runCountedProgram (.block (boundaryVariadicReturnRoot [sequenceSpread (.param "a"), .num 0])) with
   | .ok (Result.sequenceValue [Result.atom 5, Result.atom 9, Result.atom 0], 1) => true
@@ -11568,7 +11568,7 @@ def boundaryVariadicBodySpreadThenSlotIsOneFlatValue : Bool :=
 
 #guard boundaryVariadicBodySpreadThenSlotIsOneFlatValue
 
-/-- `F(a...) = a` then `F(5, 9).spread` -- caller-site spread turns the returned value back into an item supply. -/
+/-- `F(*a) = a` then `F(5, 9)*` -- caller-site spread turns the returned value back into an item supply. -/
 def boundaryCallerSpreadOpensReturnedValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("F", boundaryVariadicReturnAlg)]
       [sequenceSpread (.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]))])) with
@@ -11636,11 +11636,11 @@ def boundaryRangeIsOneValue : Bool :=
 
 #guard boundaryRangeIsOneValue
 
-/-- `F(a...) = a.sum` sums the exact collected list through the builtin's
+/-- `F(*a) = a.sum` sums the exact collected list through the builtin's
     post-binding collection view. -/
 def boundaryVariadicForwardingUsesCollectedListView : Bool :=
   match runCountedProgram (.block (algPrivate [] []
-      [("F", algWithParameters [{ name := "a", kind := .variadic }] [] []
+      [("F", algWithParameters [{ name := "a", kind := .collecting }] [] []
         [.dotCall (.param "a") "sum" none])]
       [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9])])) with
   | .ok (Result.atom 14, 1) => true
@@ -11666,14 +11666,14 @@ def boundaryCanonicalizesNestedEmptySequence : Bool :=
 #guard boundaryCanonicalizesNestedEmptySequence
 
 -- Collection-producing builtin parity: each returns one exact list value (count 1)
--- at the call/property boundary; caller-site `spread(value)` / `value.spread`
+-- at the call/property boundary; caller-site `value*`
 -- opens it into an item supply.
 -- (`order` and `range` are covered by the guards above.)
 
 def boundaryDesc312 : Algorithm := alg [] [] [] [.num 3, .num 1, .num 2]
 def boundary123 : Algorithm := alg [] [] [] [.num 1, .num 2, .num 3]
 
-/-- `X.orderDesc` is one value; `X.orderDesc.spread` opens it. -/
+/-- `X.orderDesc` is one value; `X.orderDesc*` opens it. -/
 def boundaryOrderDescIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", boundaryDesc312)]
       [.dotCall (.resolve "X") "orderDesc" none])) with
@@ -11690,7 +11690,7 @@ def boundaryOrderDescSpreadOpensItems : Bool :=
 
 #guard boundaryOrderDescSpreadOpensItems
 
-/-- `X.distinct` is one value; `X.distinct.spread` opens it. -/
+/-- `X.distinct` is one value; `X.distinct*` opens it. -/
 def boundaryDistinctIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
       [.dotCall (.resolve "X") "distinct" none])) with
@@ -11716,7 +11716,7 @@ def boundaryTakeIsOneValue : Bool :=
 
 #guard boundaryTakeIsOneValue
 
-/-- `X.skip(1)` is one value; `X.skip(1).spread` opens it. -/
+/-- `X.skip(1)` is one value; `X.skip(1)*` opens it. -/
 def boundarySkipIsOneValue : Bool :=
   match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
       [.dotCall (.resolve "X") "skip" (some (alg [] [] [] [.num 1]))])) with
@@ -11772,7 +11772,7 @@ def boundaryMapSpreadOpensItems : Bool :=
 #guard boundaryMapSpreadOpensItems
 
 /-- `atoms((1, (2, 3)))` is ONE exact list value `[1, 2, 3]`;
-    `atoms(...).spread` opens the one list boundary into three items. -/
+    `atoms(...)*` opens the one list boundary into three items. -/
 def boundaryAtomsArg : Algorithm := alg [] [] [] [sequenceItems [.num 1, sequenceItems [.num 2, .num 3]]]
 
 def boundaryAtomsIsOneValue : Bool :=
@@ -12059,13 +12059,13 @@ def dotCallParityCases : List DotCallParityCase :=
     { label := "B/sequenceValue-receiver-one-slot", target := resolve "Pair", name := "NItems",
       expectedAtoms := some [1] },
     -- C: explicit spread of a multi-output property spreads its emitted top-level
-    -- values into the single-variadic `NItems(values...)` item supply: (Values.spread).NItems
+    -- values into the single-collecting `NItems(*values)` item supply: (Values*).NItems
     -- binds the two values, count 2.
     { label := "C/spread-multi-output-receiver",
       target := sequenceSpreadReceiver (resolve "Values"), name := "NItems",
       expectedAtoms := some [2] },
     -- D: explicit spread of a sequence-valued property opens it into the item
-    -- supply the same way: (Pair.spread).NItems binds the two elements, count 2.
+    -- supply the same way: (Pair*).NItems binds the two elements, count 2.
     { label := "D/spread-sequenceValue-receiver-stays-sequenceValue",
       target := sequenceSpreadReceiver (resolve "Pair"), name := "NItems",
       expectedAtoms := some [2] },
@@ -12075,7 +12075,7 @@ def dotCallParityCases : List DotCallParityCase :=
       name := "BeforeLastCount", argsOpt := dotCallArgs [.num 99],
       expectedAtoms := some [1] },
     -- F/G: spread receivers pre-expand only for leading-flat-variadic callees
-    -- (`hasLeadingFlatVariadicParameter`; the C# evaluator gates identically),
+    -- (`hasLeadingFlatCollectingParameter`; the C# evaluator gates identically),
     -- so a fixed-arity callee receives the spread receiver as ONE slot and
     -- under-binds — for the multi-output and the sequence-valued property alike.
     { label := "F/spread-fixed-arity-multi-output",
@@ -12217,8 +12217,8 @@ def spreadCaptureConvertsListToSequence : Bool :=
 
 #guard spreadCaptureConvertsListToSequence
 
--- Spread edge cases: `[].spread` supplies zero items (captures as `()`),
--- `[7].spread` supplies the item, `[[7]].spread` supplies the inner list intact.
+-- Spread edge cases: `[]*` supplies zero items (captures as `()`),
+-- `[7]*` supplies the item, `[[7]]*` supplies the inner list intact.
 def listSpreadEdgeCasesOpenOneBoundary : Bool :=
   (match runResult (.block (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral []])] [sequenceSpread (.resolve "A")])) with
@@ -12296,7 +12296,7 @@ def callDoesNotImplicitlyOpenList : Bool :=
 -- the entire list, `rest` captures nothing.
 def mixedVariadicCallKeepsLoneListWhole : Bool :=
   match runResult (.block (algPrivate [] []
-    [("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] []
+    [("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] []
         [.param "first"]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
     [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])) with
@@ -12318,10 +12318,10 @@ def deconstructionOpensLoneList : Bool :=
 #guard deconstructionOpensLoneList
 
 -- Collecting binding in deconstruction COLLECTS the remaining items as one exact
--- immutable list: `x, rest... = [1, 2, 3]` binds `rest = [2, 3]`.
+-- immutable list: `x, *rest = [1, 2, 3]` binds `rest = [2, 3]`.
 def listCollectingCaptureCollectsExactList : Bool :=
   let helper := KatLang.Expr.block (algWithParameterPatterns
-    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]]
+    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
     [] [] [.param "rest"])
   match runResult (.block (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
@@ -12379,10 +12379,10 @@ def builtinNestedListStaysOneItem : Bool :=
 
 #guard builtinNestedListStaysOneItem
 
--- Spread keeps only its ordinary meaning at builtin calls: `count([1, 2, 3].spread)`
+-- Spread keeps only its ordinary meaning at builtin calls: `count([1, 2, 3]*)`
 -- opens the list into THREE ordinary argument slots, an arity error under
 -- `count(collection)` (same for sum). Grouping the spread back into one
--- argument is the rewrite idiom: `count(([1, 2, 3].spread))` is 3, and the
+-- argument is the rewrite idiom: `count(([1, 2, 3]*))` is 3, and the
 -- unspread `count([1, 2, 3])` stays the direct form (see
 -- builtinLoneListCollectionOpens above).
 def builtinSpreadListFollowsFixedArity : Bool :=
@@ -12548,6 +12548,17 @@ def indexDiagnosticNameParenthesizesRebindingOperands : Bool :=
 
 #guard indexDiagnosticNameParenthesizesRebindingOperands
 
+-- C#: `Eval_Spread_DiagnosticName_ParenthesizesOperandsThatWouldRebind`.
+def spreadDiagnosticNameParenthesizesRebindingOperands : Bool :=
+  (KatLang.exprDiagnosticName
+      (.sequenceSpread (.unary .minus (.resolve "A"))) == "(-A)*") &&
+  (KatLang.exprDiagnosticName
+      (.sequenceSpread (.binary .add (.resolve "A") (.resolve "B"))) == "(A + B)*") &&
+  (KatLang.exprDiagnosticName
+      (.sequenceSpread (.sequenceSpread (.resolve "A"))) == "A**")
+
+#guard spreadDiagnosticNameParenthesizesRebindingOperands
+
 -- `openExprName` renders an index with source-faithful `:` rather than falling
 -- back to the generic `(index)` kind word. Leaf kinds this minimal renderer
 -- does not model still print as `(kind)` — a PRE-EXISTING divergence from C#'s
@@ -12589,8 +12600,8 @@ def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
 #guard listIndexingBuiltinResultsDirectlyIndexable
 
 -- Each written spread layer opens exactly one boundary: stacked spread on a
--- nested list agrees with the value-boundary-separated form (`A.spread.spread` is
--- `(A.spread).spread`), and extra layers on sequence values stay fixed points.
+-- nested list agrees with the value-boundary-separated form (`A**` is
+-- `(A*)*`), and extra layers on sequence values stay fixed points.
 def stackedSpreadOpensOneListBoundaryPerLayer : Bool :=
   (match runResult (.block (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])]
@@ -12624,7 +12635,7 @@ def collectFix (name : String) : KatLang.ParameterPattern :=
   .capture { name := name }
 
 def collectVar (name : String) : KatLang.ParameterPattern :=
-  .capture { name := name, kind := .variadic }
+  .capture { name := name, kind := .collecting }
 
 def runCollectDecon (targets : List KatLang.ParameterPattern) (observed : String)
     (rhs : List KatLang.Expr) : Except KatLang.Error Result :=
@@ -12633,7 +12644,7 @@ def runCollectDecon (targets : List KatLang.ParameterPattern) (observed : String
   runResult (.block (algPrivate [] [] [("sharedRhs", alg [] [] [] rhs)]
     [.call (collectDeconHelper targets observed) (alg [] [] [] [resolve "sharedRhs"])]))
 
--- Empty, singleton, and multi-item collection: `head, rest... = [1] / [1, 2] / [1, 2, 3]`.
+-- Empty, singleton, and multi-item collection: `head, *rest = [1] / [1, 2] / [1, 2, 3]`.
 def deconCollectingCollectsEmptySingletonMultiple : Bool :=
   (match runCollectDecon [collectFix "head", collectVar "rest"] "rest"
       [.listLiteral [.num 1]] with
@@ -12647,7 +12658,7 @@ def deconCollectingCollectsEmptySingletonMultiple : Bool :=
 
 #guard deconCollectingCollectsEmptySingletonMultiple
 
--- Collecting-binding positions: leading `rest..., last` and middle `first, middle..., last`.
+-- Collecting-binding positions: leading `*rest, last` and middle `first, *middle, last`.
 def deconCollectingPositionsCollectLists : Bool :=
   (match runCollectDecon [collectVar "rest", collectFix "last"] "rest"
       [.listLiteral [.num 1, .num 2, .num 3]] with
@@ -12665,26 +12676,26 @@ def deconCollectingPositionsCollectLists : Bool :=
 -- item is a one-element list holding that structure, never the structure
 -- itself, and zero items stay distinguishable from one empty structure.
 def deconCollectingPreservesStructuredSingletons : Bool :=
-  -- first, rest... = [[1, 2], [3, 4]]  =>  rest = [[3, 4]]
+  -- first, *rest = [[1, 2], [3, 4]]  =>  rest = [[3, 4]]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 3, Result.atom 4]]) => true
    | _ => false) &&
-  -- first, rest... = 1, [2, 3]  =>  rest = [[2, 3]]
+  -- first, *rest = 1, [2, 3]  =>  rest = [[2, 3]]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.num 1, .listLiteral [.num 2, .num 3]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
-  -- first, rest... = 1, (2, 3)  =>  rest = [(2, 3)]
+  -- first, *rest = 1, (2, 3)  =>  rest = [(2, 3)]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.num 1, .block (alg [] [] [] [.num 2, .num 3])] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
-  -- first, rest... = 1, []  =>  rest = [[]]
+  -- first, *rest = 1, []  =>  rest = [[]]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.num 1, .listLiteral []] with
    | Except.ok (Result.listValue [Result.listValue []]) => true | _ => false) &&
-  -- first, rest... = 1, ()  =>  rest = [()]
+  -- first, *rest = 1, ()  =>  rest = [()]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.num 1, .emptySequence 0] with
    | Except.ok (Result.listValue [Result.sequenceValue []]) => true | _ => false)
@@ -12692,7 +12703,7 @@ def deconCollectingPreservesStructuredSingletons : Bool :=
 #guard deconCollectingPreservesStructuredSingletons
 
 -- Deconstruction implicit opening agrees with explicit spread:
--- `first, rest... = [1, 2, 3]` and `first, rest... = [1, 2, 3].spread`.
+-- `first, *rest = [1, 2, 3]` and `first, *rest = [1, 2, 3]*`.
 def deconCollectingImplicitOpeningMatchesSpread : Bool :=
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.listLiteral [.num 1, .num 2, .num 3]] with
@@ -12707,7 +12718,7 @@ def deconCollectingImplicitOpeningMatchesSpread : Bool :=
 -- a written deconstruction RHS spread first passes through the shared
 -- property's ordinary capture boundary. Bare `x, y = [(1, 2)]` opens the
 -- outer list once and has only one row for two targets (arity mismatch 2/1),
--- while `x, y = [(1, 2)].spread` captures that one row as `(1, 2)` and the
+-- while `x, y = [(1, 2)]*` captures that one row as `(1, 2)` and the
 -- deconstruction receiver then opens the row into `x = 1`, `y = 2`.
 def deconSpreadCaptureCanOpenSingletonStructuredElementFurther : Bool :=
   (match runCollectDecon [collectFix "x", collectFix "y"] "x"
@@ -12721,7 +12732,7 @@ def deconSpreadCaptureCanOpenSingletonStructuredElementFurther : Bool :=
 
 #guard deconSpreadCaptureCanOpenSingletonStructuredElementFurther
 
--- Provenance independence: `first, rest... = 1, [2, 3].spread, (4, 5).spread` collects
+-- Provenance independence: `first, *rest = 1, [2, 3]*, (4, 5)*` collects
 -- exactly the assembled item supply, regardless of the spread sources.
 def deconCollectingProvenanceIndependent : Bool :=
   match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
@@ -12735,13 +12746,13 @@ def deconCollectingProvenanceIndependent : Bool :=
 #guard deconCollectingProvenanceIndependent
 
 def collectInspectAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]
 
 def runCollectInspect (args : List KatLang.Expr) : Except KatLang.Error Result :=
   runResult (.block (algPrivate [] [] [("Inspect", collectInspectAlg)]
     [.call (resolve "Inspect") (alg [] [] [] args)]))
 
--- Variadic capture matrix: Inspect(items...) = items.
+-- Variadic capture matrix: Inspect(*items) = items.
 def variadicCaptureCollectsExactList : Bool :=
   (match runCollectInspect [] with
    | Except.ok (Result.listValue []) => true | _ => false) &&
@@ -12750,13 +12761,13 @@ def variadicCaptureCollectsExactList : Bool :=
   (match runCollectInspect [.num 1, .num 2, .num 3] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
    | _ => false) &&
-  -- Inspect([1, 2]) => [[1, 2]]; Inspect([1, 2].spread) => [1, 2]
+  -- Inspect([1, 2]) => [[1, 2]]; Inspect([1, 2]*) => [1, 2]
   (match runCollectInspect [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.listLiteral [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  -- Inspect((1, 2)) => [(1, 2)]; Inspect((1, 2).spread) => [1, 2]
+  -- Inspect((1, 2)) => [(1, 2)]; Inspect((1, 2)*) => [1, 2]
   (match runCollectInspect [.block (alg [] [] [] [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
@@ -12767,7 +12778,7 @@ def variadicCaptureCollectsExactList : Bool :=
 
 -- Empty-structure arguments: an unspread `()` or `[]` is ONE visible argument
 -- slot (`Inspect(())` collects `[()]`, `Inspect([])` collects `[[]]`), while
--- the spreads contribute zero items (`Inspect(().spread)` and `Inspect([].spread)`
+-- the spreads contribute zero items (`Inspect(()*)` and `Inspect([]*)`
 -- both collect `[]`) — zero-item-spread neutrality at the collect boundary.
 def variadicCaptureEmptyStructureArguments : Bool :=
   (match runCollectInspect [.emptySequence 0] with
@@ -12781,14 +12792,14 @@ def variadicCaptureEmptyStructureArguments : Bool :=
 
 #guard variadicCaptureEmptyStructureArguments
 
--- Middle variadic parameter, direct user call: `Middle(first, middle..., last) = middle`.
+-- Middle collecting parameter, direct user call: `Middle(first, *middle, last) = middle`.
 -- A grouped middle argument stays ONE collected slot with its boundary
 -- (`Middle(10, (20, 30), 40)` collects `[(20, 30)]`), while the explicit
--- spread supplies the operand's items (`Middle(10, (20, 30).spread, 40)` collects
+-- spread supplies the operand's items (`Middle(10, (20, 30)*, 40)` collects
 -- `[20, 30]`).
 def collectMiddleAlg : Algorithm :=
   algWithParameters
-    [{ name := "first" }, { name := "middle", kind := .variadic }, { name := "last" }]
+    [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }]
     [] [] [.param "middle"]
 
 def runCollectMiddle (args : List KatLang.Expr) : Except KatLang.Error Result :=
@@ -12808,12 +12819,12 @@ def middleVariadicGroupedAndSpreadDirectCall : Bool :=
 #guard middleVariadicGroupedAndSpreadDirectCall
 
 -- Variadic forwarding through ordinary list spread:
--- Target(items...) = items; Forward(items...) = Target(items.spread).
+-- Target(*items) = items; Forward(*items) = Target(items*).
 def collectTargetAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]
 
 def collectForwardAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [
     .call (resolve "Target") (alg [] [] [] [sequenceSpread (.param "items")])
   ]
 
@@ -12822,7 +12833,7 @@ def runCollectForward (args : List KatLang.Expr) : Except KatLang.Error Result :
     [("Target", collectTargetAlg), ("Forward", collectForwardAlg)]
     [.call (resolve "Forward") (alg [] [] [] args)]))
 
-def variadicForwardingRoundTripsExactList : Bool :=
+def collectingForwardingRoundTripsExactList : Bool :=
   (match runCollectForward [] with
    | Except.ok (Result.listValue []) => true | _ => false) &&
   (match runCollectForward [.num 7] with
@@ -12835,14 +12846,14 @@ def variadicForwardingRoundTripsExactList : Bool :=
   (match runCollectForward [.sequenceSpread (.listLiteral [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false)
 
-#guard variadicForwardingRoundTripsExactList
+#guard collectingForwardingRoundTripsExactList
 
 -- Forwarding the collected list WITHOUT spread passes one list argument:
--- TargetOne(item) = item; ForwardAsOne(items...) = TargetOne(items).
+-- TargetOne(item) = item; ForwardAsOne(*items) = TargetOne(items).
 def variadicForwardAsOnePassesWholeList : Bool :=
   match runResult (.block (algPrivate [] []
     [("TargetOne", alg ["item"] [] [] [.param "item"]),
-     ("ForwardAsOne", algWithParameters [{ name := "items", kind := .variadic }] [] [] [
+     ("ForwardAsOne", algWithParameters [{ name := "items", kind := .collecting }] [] [] [
        .call (resolve "TargetOne") (alg [] [] [] [.param "items"])
      ])]
     [.call (resolve "ForwardAsOne") (alg [] [] [] [.num 1, .num 2])])) with
@@ -12932,7 +12943,7 @@ def collectedSegmentComposesWithCollectionBuiltins : Bool :=
 
 #guard collectedSegmentComposesWithCollectionBuiltins
 
--- Scalar right-hand side: `first, rest... = 1` binds the empty list.
+-- Scalar right-hand side: `first, *rest = 1` binds the empty list.
 def deconCollectingScalarRhsCollectsEmptyList : Bool :=
   match runCollectDecon [collectFix "first", collectVar "rest"] "rest" [.num 1] with
   | Except.ok (Result.listValue []) => true
@@ -12941,7 +12952,7 @@ def deconCollectingScalarRhsCollectsEmptyList : Bool :=
 #guard deconCollectingScalarRhsCollectsEmptyList
 
 -- Ordinary capture is unchanged: `x = 1, 2, 3` captures a canonical sequence
--- value, and `x = [1, 2, 3].spread` re-captures the spread items as a sequence —
+-- value, and `x = [1, 2, 3]*` re-captures the spread items as a sequence —
 -- capture and collect stay distinct operations.
 def ordinaryCaptureStaysCanonicalSequence : Bool :=
   (match runResult (.block (algPrivate [] []
@@ -12957,18 +12968,18 @@ def ordinaryCaptureStaysCanonicalSequence : Bool :=
 #guard ordinaryCaptureStaysCanonicalSequence
 
 --------------------------------------------------------------------------------
--- Flat callbacks with variadic parameters bind through the shared binder
+-- Flat callbacks with collecting parameters bind through the shared binder
 --------------------------------------------------------------------------------
--- A flat callee with a top-level variadic parameter routes through
+-- A flat callee with a top-level collecting parameter routes through
 -- bindCountedCallbackParameterPatternList: the callback supply keeps the
 -- flat-callback row convention (a lone under-supplied final argument opens
 -- into its items), then the shared prefix/collecting/suffix binder COLLECTS the
--- matched segment as one exact immutable list. A single-variadic callee keeps the whole
+-- matched segment as one exact immutable list. A single-collecting callee keeps the whole
 -- iterated element as one collected slot.
 -- C# parity: EvaluatorTests callback sections and CollectingBindingTests.
 
 def callbackCollectAlg : Algorithm :=
-  algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]
+  algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]
 
 def runCallbackMap (props : List (String × Algorithm)) (collection : KatLang.Expr)
     (callbackName : String) : Except KatLang.Error Result :=
@@ -13026,33 +13037,33 @@ def restOnlyMapCallbackDottedReceiverAgrees : Bool :=
 -- front/collecting/back — agreeing with the structured-pattern form.
 def mixedVariadicMapCallbackBindsRowSlots : Bool :=
   let middleFlat : Algorithm := algWithParameters
-    [{ name := "first" }, { name := "middle", kind := .variadic }, { name := "last" }]
+    [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }]
     [] [] [.param "middle"]
   let middleStructured : Algorithm := algWithParameterPatterns
     [.sequenceValue [collectFix "first", collectVar "middle", collectFix "last"]]
     [] [] [.param "middle"]
   let headFlat : Algorithm := algWithParameters
-    [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [.param "rest"]
+    [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]
   let initFlat : Algorithm := algWithParameters
-    [{ name := "init", kind := .variadic }, { name := "last" }] [] [] [.param "init"]
+    [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]
   let row4 : KatLang.Expr := .listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]
   let row3 : KatLang.Expr := .listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3])]
-  -- [(1, 2, 3, 4)].map(F) with F(first, middle..., last) = middle => [[2, 3]]
+  -- [(1, 2, 3, 4)].map(F) with F(first, *middle, last) = middle => [[2, 3]]
   (match runCallbackMap [("F", middleFlat)] row4 "F" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
-  -- ... and the structured form F((first, middle..., last)) agrees.
+  -- ... and the structured form F((first, *middle, last)) agrees.
   (match runCallbackMap [("F", middleStructured)] row4 "F" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
-  -- [(1, 2, 3)].map(Head) with Head(first, rest...) = rest => [[2, 3]]
+  -- [(1, 2, 3)].map(Head) with Head(first, *rest) = rest => [[2, 3]]
   (match runCallbackMap [("Head", headFlat)] row3 "Head" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
   -- [7].map(Head): the scalar row opens to one slot, the rest is empty => [[]]
   (match runCallbackMap [("Head", headFlat)] (.listLiteral [.num 7]) "Head" with
    | Except.ok (Result.listValue [Result.listValue []]) => true | _ => false) &&
-  -- [(1, 2, 3)].map(Init) with Init(init..., last) = init => [[1, 2]]
+  -- [(1, 2, 3)].map(Init) with Init(*init, last) = init => [[1, 2]]
   (match runCallbackMap [("Init", initFlat)] row3 "Init" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false)
@@ -13060,13 +13071,13 @@ def mixedVariadicMapCallbackBindsRowSlots : Bool :=
 #guard mixedVariadicMapCallbackBindsRowSlots
 
 -- Filter predicates observe the collected list kind: items == [7] holds only
--- when the variadic parameter collected exactly [7] — scalar 7 vs [7] is distinguishable.
+-- when the collecting parameter collected exactly [7] — scalar 7 vs [7] is distinguishable.
 def restOnlyFilterCallbackIsKindSensitive : Bool :=
   let isSingleSeven : Algorithm := algWithParameters
-    [{ name := "items", kind := .variadic }] [] []
+    [{ name := "items", kind := .collecting }] [] []
     [.binary .eq (.param "items") (.listLiteral [.num 7])]
   let isSingleSevenList : Algorithm := algWithParameters
-    [{ name := "items", kind := .variadic }] [] []
+    [{ name := "items", kind := .collecting }] [] []
     [.binary .eq (.param "items") (.listLiteral [.listLiteral [.num 7]])]
   (match runResult (.block (algPrivate [] [] [("IsSingleSeven", isSingleSeven)]
       [.call (resolve "filter") (alg [] [] []
@@ -13079,21 +13090,21 @@ def restOnlyFilterCallbackIsKindSensitive : Bool :=
 
 #guard restOnlyFilterCallbackIsKindSensitive
 
--- Reducer with the variadic parameter in ELEMENT position (before the accumulator boundary):
--- R(items..., acc) collects the projected element as [element] each step.
+-- Reducer with the collecting parameter in ELEMENT position (before the accumulator boundary):
+-- R(*items, acc) collects the projected element as [element] each step.
 def reducerElementSideVariadicCollects : Bool :=
   let eqTen : Algorithm := algWithParameters
-    [{ name := "items", kind := .variadic }, { name := "acc" }] [] []
+    [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
     [.binary .eq (.param "items") (.listLiteral [.num 10])]
   let track : Algorithm := algWithParameters
-    [{ name := "items", kind := .variadic }, { name := "acc" }] [] []
+    [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
     [.block (alg [] [] [] [.sequenceSpread (.param "acc"), .param "items"])]
   -- reduce([10], R, 99) => 1: the single step observes items = [10], not 10.
   (match runResult (.block (algPrivate [] [] [("R", eqTen)]
       [.call (resolve "reduce") (alg [] [] []
         [.listLiteral [.num 10], resolve "R", .num 99])])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
-  -- reduce((10, 20), R, ()) with R(items..., acc) = (acc.spread, items)
+  -- reduce((10, 20), R, ()) with R(*items, acc) = (acc*, items)
   -- => (10, [20]): each step appends the collected [element].
   (match runResult (.block (algPrivate [] [] [("R", track)]
       [.call (resolve "reduce") (alg [] [] []
@@ -13103,7 +13114,7 @@ def reducerElementSideVariadicCollects : Bool :=
 
 #guard reducerElementSideVariadicCollects
 
--- A genuine single-variadic reducer receives the callback's two ordinary slots,
+-- A genuine single-collecting reducer receives the callback's two ordinary slots,
 -- element and accumulator, and collects both through the same shared binder.
 -- This intentional widening follows the ordinary variadic call rule.
 def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
@@ -13123,9 +13134,9 @@ def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
 
 -- Explicit-argument semantics behind implicit forwarding elaboration: an
 -- ordinary parameter passed UNSPREAD into a variadic callee stays one
--- argument boundary (`Use(items) = Target(items)`), while a variadic parameter
+-- argument boundary (`Use(items) = Target(items)`), while a collecting parameter
 -- forwarded WITH spread re-supplies its collected items
--- (`Use(items...) = Target(items.spread)`). The front-end resolver synthesizes
+-- (`Use(*items) = Target(items*)`). The front-end resolver synthesizes
 -- exactly these two elaborated forms from the source binding kind.
 def forwardingElaborationKindsObservable : Bool :=
   let useOrdinary : Algorithm := alg ["items"] [] [] [
@@ -13144,7 +13155,7 @@ def forwardingElaborationKindsObservable : Bool :=
    | _ => false) &&
   (match run useOrdinary [.num 7] with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
-  -- Use(items...) = Target(items.spread): Use([1, 2]) => [[1, 2]] (round trip).
+  -- Use(*items) = Target(items*): Use([1, 2]) => [[1, 2]] (round trip).
   (match run collectForwardAlg [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false)

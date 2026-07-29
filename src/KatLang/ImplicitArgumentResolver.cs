@@ -41,7 +41,7 @@ public static class ImplicitArgumentResolver
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is a fully-elaborated
+        // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
         // properties or opens, and its explicit N-capture pattern lifts nothing. The general path
         // would still build an O(N) existing-parameter set and source-binding-kind map per helper —
@@ -170,7 +170,7 @@ public static class ImplicitArgumentResolver
         var newPatterns = new List<ParameterPattern>(alg.ParameterPatterns);
         foreach (var (_, signature) in deps)
         {
-            if (CanForwardSingleVariadicStream(alg.ParameterPatterns, signature.ParameterPatterns))
+            if (CanForwardSingleCollectingStream(alg.ParameterPatterns, signature.ParameterPatterns))
                 continue;
 
             foreach (var pattern in signature.ParameterPatterns)
@@ -249,7 +249,7 @@ public static class ImplicitArgumentResolver
                     ProcessOpenExpr(operand))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):
@@ -309,14 +309,14 @@ public static class ImplicitArgumentResolver
         }
     }
 
-    private static bool TryGetSingleTopLevelVariadicCapture(
+    private static bool TryGetSingleTopLevelCollectingCapture(
         IReadOnlyList<ParameterPattern> patterns,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CaptureParameterPattern? capture)
     {
         if (patterns.Count == 1
-            && patterns[0] is CaptureParameterPattern { Kind: ParameterKind.Variadic } variadic)
+            && patterns[0] is CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting)
         {
-            capture = variadic;
+            capture = collecting;
             return true;
         }
 
@@ -328,14 +328,14 @@ public static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> patterns,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CaptureParameterPattern? capture)
     {
-        if (TryGetSingleTopLevelVariadicCapture(patterns, out capture))
+        if (TryGetSingleTopLevelCollectingCapture(patterns, out capture))
             return true;
 
         if (patterns.Count == 1
             && patterns[0] is SequenceValueParameterPattern { Items.Count: 1 } group
-            && group.Items[0] is CaptureParameterPattern { Kind: ParameterKind.Variadic } groupedVariadic)
+            && group.Items[0] is CaptureParameterPattern { Kind: ParameterKind.Collecting } groupedCollecting)
         {
-            capture = groupedVariadic;
+            capture = groupedCollecting;
             return true;
         }
 
@@ -343,13 +343,13 @@ public static class ImplicitArgumentResolver
         return false;
     }
 
-    private static bool TryGetSingleVariadicForwarding(
+    private static bool TryGetSingleCollectingForwarding(
         IReadOnlyList<ParameterPattern> callerPatterns,
         IReadOnlyList<ParameterPattern> calleePatterns,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? calleeName,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? callerName)
     {
-        if (TryGetSingleTopLevelVariadicCapture(callerPatterns, out var callerCapture)
+        if (TryGetSingleTopLevelCollectingCapture(callerPatterns, out var callerCapture)
             && TryGetSingleForwardableCalleeStream(calleePatterns, out var calleeCapture))
         {
             calleeName = calleeCapture.Name;
@@ -362,17 +362,17 @@ public static class ImplicitArgumentResolver
         return false;
     }
 
-    private static bool CanForwardSingleVariadicStream(
+    private static bool CanForwardSingleCollectingStream(
         IReadOnlyList<ParameterPattern> callerPatterns,
         IReadOnlyList<ParameterPattern> calleePatterns)
-        => TryGetSingleVariadicForwarding(callerPatterns, calleePatterns, out _, out _);
+        => TryGetSingleCollectingForwarding(callerPatterns, calleePatterns, out _, out _);
 
     private static bool CanBuildImplicitCallArgumentsFromExistingParameters(
         IReadOnlyList<ParameterPattern> calleePatterns,
         IReadOnlyList<ParameterPattern> callerPatterns,
         IReadOnlySet<string> existingParameterNames)
     {
-        if (CanForwardSingleVariadicStream(callerPatterns, calleePatterns))
+        if (CanForwardSingleCollectingStream(callerPatterns, calleePatterns))
             return true;
 
         foreach (var capture in ParameterPattern.FlattenCaptures(calleePatterns))
@@ -404,7 +404,7 @@ public static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> callerPatterns,
         IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds)
     {
-        TryGetSingleVariadicForwarding(
+        TryGetSingleCollectingForwarding(
             callerPatterns,
             calleePatterns,
             out var forwardedCalleeName,
@@ -416,17 +416,17 @@ public static class ImplicitArgumentResolver
                 ? forwardedCallerName!
                 : capture.Name;
 
-        // A variadic DESTINATION re-spreads the forwarded value only when the
+        // A collecting DESTINATION re-spreads the forwarded value only when the
         // SOURCE binding is itself a collecting binding's exact list: then
-        // `callee(spread(rest))` re-supplies exactly the collected items
+        // `callee(rest*)` re-supplies exactly the collected items
         // (spread(collect(xs)) = xs). An ordinary source binding always
-        // forwards as ONE argument, even into a variadic destination. A name
+        // forwards as ONE argument, even into a collecting destination. A name
         // absent from the caller's bindings is about to be lifted as a copy
         // of the callee's own pattern, so its source kind IS the callee kind.
         bool ForwardAsSpread(CaptureParameterPattern calleeCapture)
             => sourceBindingKinds.TryGetValue(MapCaptureName(calleeCapture), out var sourceKind)
-                ? sourceKind == ParameterKind.Variadic
-                : calleeCapture.Kind == ParameterKind.Variadic;
+                ? sourceKind == ParameterKind.Collecting
+                : calleeCapture.Kind == ParameterKind.Collecting;
 
         return calleePatterns
             .Select(pattern => BuildPatternArgument(pattern, MapCaptureName, ForwardAsSpread))
@@ -440,13 +440,13 @@ public static class ImplicitArgumentResolver
     {
         return pattern switch
         {
-            // A variadic destination whose source binding is a collecting binding's
-            // exact list forwards through explicit spread so the callee's variadic
+            // A collecting destination whose source binding is a collecting binding's
+            // exact list forwards through explicit spread so the callee's collecting
             // parameter re-collects exactly the caller's items; every other
             // capture forwards as one argument slot.
-            CaptureParameterPattern { Kind: ParameterKind.Variadic } variadic
-                when forwardAsSpread(variadic) =>
-                new Expr.SequenceSpread(new Expr.Param(mapCaptureName(variadic))),
+            CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting
+                when forwardAsSpread(collecting) =>
+                new Expr.SequenceSpread(new Expr.Param(mapCaptureName(collecting))),
             CaptureParameterPattern capture => new Expr.Param(mapCaptureName(capture)),
             SequenceValueParameterPattern group => new Expr.Block(new Algorithm.User(
                 Parent: null,
@@ -642,7 +642,7 @@ public static class ImplicitArgumentResolver
                     RewriteImplicitCalls(operand, paramMap, callerParameterPatterns, sourceBindingKinds, false, requireExistingParameters, existingParameterNames))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):
@@ -784,7 +784,7 @@ public static class ImplicitArgumentResolver
                 ProcessExprNested(operand, paramMap))
             {
                 Span = expr.Span,
-                IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
             },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExprNested(l, paramMap),

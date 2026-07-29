@@ -16,7 +16,7 @@ public sealed record CallableParameter(
 {
     public string DisplayName => Kind switch
     {
-        ParameterKind.Variadic => $"{Name}...",
+        ParameterKind.Collecting => $"*{Name}",
         _ => Name,
     };
 }
@@ -76,13 +76,13 @@ public sealed record CallableSignature
     [Obsolete("Use TopLevelParameterCount for structural shape or ArityFacts.MinTopLevelArgumentCount for callable minimum arity.")]
     public int RequiredNormalParameterCount => ParameterPatterns.Count;
 
-    public int VariadicParameterCount => ArityFacts.TopLevelVariadicCount;
+    public int CollectingParameterCount => ArityFacts.TopLevelCollectingCount;
 
-    public bool HasAtMostOneVariadic => !ArityFacts.HasMultipleTopLevelVariadics;
+    public bool HasAtMostOneCollectingParameter => !ArityFacts.HasMultipleTopLevelCollectingCaptures;
 
-    public int VariadicParameterIndex => CallableSignatureDiagnostics.TopLevelVariadicIndex(this);
+    public int CollectingParameterIndex => CallableSignatureDiagnostics.TopLevelCollectingIndex(this);
 
-    public bool HasVariadicParameter => VariadicParameterIndex >= 0;
+    public bool HasCollectingParameter => CollectingParameterIndex >= 0;
 
     public bool AcceptsItemCount(int itemCount)
         => ArityFacts.AcceptsArgumentCount(itemCount);
@@ -143,8 +143,8 @@ public sealed record CallableSignature
 
     public string? ValidateMessage()
     {
-        if (!HasAtMostOneVariadic)
-            return CallableSignatureDiagnostics.FormatMultipleTopLevelVariadics(this);
+        if (!HasAtMostOneCollectingParameter)
+            return CallableSignatureDiagnostics.FormatMultipleTopLevelCollectingCaptures(this);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var parameter in Parameters)

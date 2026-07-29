@@ -99,7 +99,7 @@ family=builtin-callback-wrapper bytes=04 00 00 01 01 00 02 0d 07 00 desc=reduce 
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 01 desc=wrapper spelled as an ordinary call rather than dotted
 family=builtin-callback-wrapper bytes=04 00 01 00 01 00 00 00 00 00 desc=cumulative item budget one below the measured total
 family=builtin-callback-wrapper bytes=04 00 04 00 01 00 00 00 03 00 desc=cumulative string budget one below the measured total
-family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: variadic projection collects a list, not the supplied value
+family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 02 desc=REJECTED: collecting projection collects a list, not the supplied value
 family=builtin-callback-wrapper bytes=04 00 00 01 01 00 00 00 00 03 desc=REJECTED: wrapper arity does not match the callback projection
 
 # ── Phase 3 Group A: one source, optimizations ON (left) against OFF (right) ───────────────
@@ -182,7 +182,7 @@ family=budget-law bytes=08 00 00 01 01 00 00 04 03 00 desc=equivalent forms both
 family=budget-law bytes=08 00 00 01 01 00 04 04 01 00 desc=user-extension forms share the step boundary too
 family=budget-law bytes=08 00 00 01 01 00 05 04 00 00 desc=REJECTED: builtin-callback forms do not share a work boundary
 
-# ── Group E: spread(X) against X.spread ──────────────────────
+# ── Group E: fluent chain X*.C against explicit call C(X*) ───
 family=spread-spelling-parity bytes=09 00 00 01 01 00 00 03 desc=root output rows from a sequence operand
 family=spread-spelling-parity bytes=09 00 00 01 01 00 01 06 desc=collecting-binding call collects the spread list items
 family=spread-spelling-parity bytes=09 00 00 01 01 00 01 02 desc=empty sequence operand contributes zero collected items

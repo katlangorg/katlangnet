@@ -58,7 +58,7 @@ public sealed record VariadicLoopStateBindingContext(
 
 /// <summary>
 /// Binding failure of a parser-elaborated assignment deconstruction
-/// (<c>x, y..., z = RHS</c>). Diagnostics phrase the failure against the
+/// (<c>x, *y, z = RHS</c>). Diagnostics phrase the failure against the
 /// WRITTEN pattern instead of exposing the synthetic inline helper the parser
 /// elaborates the assignment into.
 /// </summary>

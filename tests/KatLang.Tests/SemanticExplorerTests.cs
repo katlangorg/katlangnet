@@ -169,7 +169,7 @@ public class SemanticExplorerTests
         if (observation.Emitted == 0)
         {
             // A zero-item output displays as no rows. The empty display is not
-            // a parseable program (documented `().spread` edge); require exactly
+            // a parseable program (documented `()*` edge); require exactly
             // the empty display so the exemption stays as narrow as written.
             if (observation.Display != "")
             {
@@ -241,12 +241,12 @@ public class SemanticExplorerTests
         AssertSame(findings, "LexicalDotMismatch", valueId, captured, "dotAccess", "dotAccessCall", "captureCall");
         AssertSame(findings, "BoundaryReentryChange", valueId, captured, "identity", "identityTwice", "propChain", "fixed", "root", "seqWrapSolo");
 
-        // Collecting binding COLLECTS: a single-variadic callee binds its ONE grouped
+        // Collecting binding COLLECTS: a single-collecting callee binds its ONE grouped
         // argument as the one-element exact list holding the value
-        // (`F(x...) = x` with `F(V)` observes `[V]`), never the value itself —
+        // (`F(*x) = x` with `F(V)` observes `[V]`), never the value itself —
         // the old grouped/singleton coincidence is gone for every value kind.
         var expectedCollectedOne = new Result.ListValue([capturedValue]);
-        foreach (var template in new[] { "variadic", "variadicViaProp" })
+        foreach (var template in new[] { "collecting", "collectingViaProp" })
         {
             var observation = Obs(template, valueId);
             if (observation.Outcome != "ok"
@@ -255,22 +255,22 @@ public class SemanticExplorerTests
             {
                 findings.Add(new Finding(
                     "BoundaryReentryChange", observation.CaseId,
-                    $"expected the variadic parameter to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
+                    $"expected the collecting parameter to collect {SemanticExplorerHarness.Neutral(expectedCollectedOne)} n=1, observed {observation.Neutral}"));
             }
         }
 
-        // The spread call `F(V.spread)` collects the spread items as an
+        // The spread call `F(V*)` collects the spread items as an
         // exact list, uniformly for sequences and lists (open/collect round
         // trip: spreading a list re-collects the same list).
-        var variadicSpread = Obs("variadicSpread", valueId);
+        var collectingSpread = Obs("collectingSpread", valueId);
         var expectedCollectedSpread = new Result.ListValue(spreadItems);
-        if (variadicSpread.Outcome != "ok"
-            || !Result.ValueComparer.Equals(variadicSpread.Value, expectedCollectedSpread)
-            || variadicSpread.Emitted != 1)
+        if (collectingSpread.Outcome != "ok"
+            || !Result.ValueComparer.Equals(collectingSpread.Value, expectedCollectedSpread)
+            || collectingSpread.Emitted != 1)
         {
             findings.Add(new Finding(
-                "BoundaryReentryChange", variadicSpread.CaseId,
-                $"expected spread supply to collect as {SemanticExplorerHarness.Neutral(expectedCollectedSpread)} n=1, observed {variadicSpread.Neutral}"));
+                "BoundaryReentryChange", collectingSpread.CaseId,
+                $"expected spread supply to collect as {SemanticExplorerHarness.Neutral(expectedCollectedSpread)} n=1, observed {collectingSpread.Neutral}"));
         }
 
         // count(...) vs .count observe the bound collection through the shared
@@ -287,7 +287,7 @@ public class SemanticExplorerTests
             }
         }
 
-        // `count(x.spread)` supplies the spread items as ORDINARY argument
+        // `count(x*)` supplies the spread items as ORDINARY argument
         // slots that obey count's fixed one-parameter arity: exactly one
         // opened item binds the collection parameter (and is then interpreted
         // through the post-binding one-level collection view), while zero or
@@ -452,24 +452,24 @@ public class SemanticExplorerTests
         var take1 = Obs("take1", valueId);
         AssertSame(findings, "BuiltinBoundaryMismatch", valueId, take1,
             "takeCapture", "takeIdentity");
-        var takeVariadic = Obs("takeVariadic", valueId);
+        var takeCollecting = Obs("takeCollecting", valueId);
         if (take1.Outcome == "ok")
         {
             var expectedTakeCollected = new Result.ListValue([take1.Value!]);
-            if (takeVariadic.Outcome != "ok"
-                || !Result.ValueComparer.Equals(takeVariadic.Value, expectedTakeCollected)
-                || takeVariadic.Emitted != 1)
+            if (takeCollecting.Outcome != "ok"
+                || !Result.ValueComparer.Equals(takeCollecting.Value, expectedTakeCollected)
+                || takeCollecting.Emitted != 1)
             {
                 findings.Add(new Finding(
-                    "BuiltinBoundaryMismatch", takeVariadic.CaseId,
-                    $"expected the variadic parameter to collect {SemanticExplorerHarness.Neutral(expectedTakeCollected)} n=1, observed {takeVariadic.Neutral}"));
+                    "BuiltinBoundaryMismatch", takeCollecting.CaseId,
+                    $"expected the collecting parameter to collect {SemanticExplorerHarness.Neutral(expectedTakeCollected)} n=1, observed {takeCollecting.Neutral}"));
             }
         }
-        else if (takeVariadic.Outcome != take1.Outcome)
+        else if (takeCollecting.Outcome != take1.Outcome)
         {
             findings.Add(new Finding(
-                "BuiltinBoundaryMismatch", takeVariadic.CaseId,
-                $"observed {takeVariadic.Neutral}, but {take1.CaseId} observed {take1.Neutral}"));
+                "BuiltinBoundaryMismatch", takeCollecting.CaseId,
+                $"observed {takeCollecting.Neutral}, but {take1.CaseId} observed {take1.Neutral}"));
         }
 
         // count() of a take(x, 1) result opens exactly the one list boundary
@@ -648,9 +648,9 @@ public class SemanticExplorerTests
         { "((), 1)", "ok raw=S[S[], 1] n=1" },
         { "((1, 2), ())", "ok raw=S[S[1, 2], S[]] n=1" },
         { "1, 2", "ok raw=S[1, 2] n=2" },
-        { "(1, 2).spread", "ok raw=S[1, 2] n=2" },
-        { "().spread", "ok raw=S[] n=0" },
-        { "(().spread, 99)", "ok raw=99 n=1" },
+        { "(1, 2)*", "ok raw=S[1, 2] n=2" },
+        { "()*", "ok raw=S[] n=0" },
+        { "(()*, 99)", "ok raw=99 n=1" },
         { "((), 99)", "ok raw=S[S[], 99] n=1" },
         { "take(((1, 2), (3, 4)), 1)", "ok raw=L[S[1, 2]] n=1" },
         { "distinct(((), ()))", "ok raw=L[S[]] n=1" },
@@ -660,19 +660,21 @@ public class SemanticExplorerTests
         { "count([1, 2, 3])", "ok raw=3 n=1" },
         { "count(1, 2, 3)", "err arity" },
         { "count()", "err arity" },
-        { "count([1, 2, 3].spread)", "err arity" },
+        { "count([1, 2, 3]*)", "err arity" },
         { "take([1, 2, 3])", "err arity" },
         { "take([1, 2, 3], 0)", "ok raw=L[] n=1" },
         { "take([[1, 2], [3, 4]], 1)", "ok raw=L[L[1, 2]] n=1" },
         { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=2" },
         { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
         { "P = (), 99\nP", "ok raw=S[S[], 99] n=1" },
-        { "F(a...) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
+        { "F(*a) = a\nF(1, 2, 3)", "ok raw=L[1, 2, 3] n=1" },
         { "() > 1", "ok raw=1 n=1" },
         { "() == (())", "ok raw=1 n=1" },
-        { "x = (1, 2)\n(x.spread, 99)", "ok raw=S[1, 2, 99] n=1" },
-        { "(1.spread, (), 2.spread)", "ok raw=S[1, S[], 2] n=1" },
-        { "A = (1, 2)\nA.spread, 99", "ok raw=S[1, 2, 99] n=3" },
+        { "x = (1, 2)\n(x*, 99)", "ok raw=S[1, 2, 99] n=1" },
+        { "(1*, (), 2*)", "ok raw=S[1, S[], 2] n=1" },
+        { "A = (1, 2)\nA*, 99", "ok raw=S[1, 2, 99] n=3" },
+        { "a = 6\nb = 7\na* b", "ok raw=42 n=1" },
+        { "a = (1, 2)\na*\n9", "ok raw=S[1, 2, 9] n=3" },
     };
 
     [Theory]

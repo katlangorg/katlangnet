@@ -1,5 +1,7 @@
 # Sequence-Boundary Audit and Semantic Explorer (July 2026)
 
+> **Syntax note (2026-07-29):** the collection/spreading surface syntax was later redesigned: prefix `*name` is now the collect marker (collecting binding / collecting parameter), postfix `value*` is the spread marker, and the former spellings `name...`, `spread(x)`, and `x.spread` are no longer KatLang syntax (`spread` is an ordinary identifier). Spellings in the historical text below are the spellings of their time; the semantics they describe are unchanged.
+
 Status: completed audit + durable validator. This document is the Phase-1
 receiver/boundary review deliverable for the small-state arity-semantics
 validator, and the reference for the invariants that validator enforces.

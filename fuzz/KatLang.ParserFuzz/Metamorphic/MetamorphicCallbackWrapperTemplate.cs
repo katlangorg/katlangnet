@@ -20,9 +20,9 @@ namespace KatLang.ParserFuzz;
 /// positionally sees the same per-invocation values as the direct builtin. Two projections are
 /// therefore always REJECTED, not compared:</para>
 /// <list type="bullet">
-///   <item><b>Variadic</b> — <c>MmWrap(xs...)</c> COLLECTS the supplied slots into an exact list, so
+///   <item><b>Collecting</b> — <c>MmWrap(*xs)</c> COLLECTS the supplied slots into an exact list, so
 ///   the wrapper sees <c>[element]</c> where the builtin sees <c>element</c>. Measured:
-///   <c>[[1, 2], [3]].map(count)</c> is <c>[2, 1]</c> while the variadic wrapper gives
+///   <c>[[1, 2], [3]].map(count)</c> is <c>[2, 1]</c> while the collecting wrapper gives
 ///   <c>[1, 1]</c>. That is correct language behaviour and a false equivalence, not a defect.</item>
 ///   <item><b>ArityMismatched</b> — a flat multi-parameter callee first opens a lone
 ///   SEQUENCE-valued element into row slots and arity-errors on other kinds, so it neither
@@ -101,10 +101,10 @@ internal static class MetamorphicCallbackWrapperTemplate
 
         return ProjectionOf(parameters) switch
         {
-            // A variadic parameter COLLECTS the supplied slots into a list, so the wrapper receives
+            // A collecting parameter COLLECTS the supplied slots into a list, so the wrapper receives
             // [element] where the direct builtin receives element. Never equivalent.
-            MetamorphicWrapperProjection.Variadic =>
-                MetamorphicPrecondition.Rejected("variadic-projection-collects-a-list-not-the-supplied-value"),
+            MetamorphicWrapperProjection.Collecting =>
+                MetamorphicPrecondition.Rejected("collecting-projection-collects-a-list-not-the-supplied-value"),
 
             // A flat multi-parameter callee opens a lone sequence element into rows and
             // arity-errors otherwise, so it is a different callback contract.
@@ -159,8 +159,8 @@ internal static class MetamorphicCallbackWrapperTemplate
                 if (arity > 1) text.Append('(').Append(Arguments(arity, skipFirst: true)).Append(')');
                 break;
 
-            case MetamorphicWrapperProjection.Variadic:
-                text.Append(Wrap).Append("(xs...) = ").Append(callback.Name).Append("(xs)");
+            case MetamorphicWrapperProjection.Collecting:
+                text.Append(Wrap).Append("(*xs) = ").Append(callback.Name).Append("(xs)");
                 break;
 
             default:   // ArityMismatched: deliberately the wrong arity for this consumer.

@@ -82,7 +82,7 @@ theorem structureItems?_getD_eq_items (v : Val) :
 theorem items_seq (xs : Supply) : items (Val.seq xs) = xs := rfl
 
 /-- Spread opens one LIST boundary exactly like one sequence boundary
-(`[1, 2, 3].spread` supplies the items). -/
+(`[1, 2, 3]*` supplies the items). -/
 theorem items_list (xs : Supply) : items (Val.list xs) = xs := rfl
 
 /-- Spreading the empty sequence contributes no items. -/
@@ -114,7 +114,7 @@ theorem spread_empty_neutral (before after : Supply) :
     before ++ items (Val.seq []) ++ after = before ++ after :=
   open_zero_items_neutral items_empty before after
 
-/-- The list twin: `[].spread` contributes nothing to a surrounding item supply. -/
+/-- The list twin: `[]*` contributes nothing to a surrounding item supply. -/
 theorem spread_empty_list_neutral (before after : Supply) :
     before ++ items (Val.list []) ++ after = before ++ after :=
   open_zero_items_neutral items_empty_list before after
@@ -187,11 +187,11 @@ theorem sequenceItems?_capture_singleton_atom :
     sequenceItems? (capture [Val.atom 1]) = none := by
   decide
 
-/-! ## Zero-item-spread neutrality (`().spread` and `[].spread`)
+/-! ## Zero-item-spread neutrality (`()*` and `[]*`)
 
 `Val.seq []` is the empty sequence value `()` and `Val.list []` is the empty
 list value `[]`; their item views are the supplies of the explicit spreads
-`().spread` and `[].spread`, and both contribute zero items (`items_empty`,
+`()*` and `[]*`, and both contribute zero items (`items_empty`,
 `items_empty_list` — by `items_eq_nil_iff` they are the only such values).
 The theorems below lift that neutrality to the two receiver-purpose
 materializations: `capture`, the canonical written-construction boundary, and
@@ -209,14 +209,14 @@ theorem capture_zero_item_spread_neutral {v : Val} (h : items v = [])
 
 /-- Generic neutral open at the segment-collection boundary: any zero-item
 spread leaves the collected list unchanged wherever it is inserted
-(`first, rest... = 1, 2, ().spread` collects `rest = [2]`). -/
+(`first, *rest = 1, 2, ()*` collects `rest = [2]`). -/
 theorem collect_zero_item_spread_neutral {v : Val} (h : items v = [])
     (before after : Supply) :
     collect (before ++ items v ++ after) = collect (before ++ after) :=
   congrArg collect (open_zero_items_neutral h before after)
 
 /-- An empty spread is neutral at a canonical capture or written-construction
-boundary: `().spread` contributes no items to the surrounding supply, so the
+boundary: `()*` contributes no items to the surrounding supply, so the
 captured value is unchanged wherever the empty spread is inserted. -/
 theorem capture_empty_spread_neutral
     (before after : Supply) :
@@ -224,7 +224,7 @@ theorem capture_empty_spread_neutral
       capture (before ++ after) :=
   capture_zero_item_spread_neutral items_empty before after
 
-/-- The list twin: the empty-list spread `[].spread` is equally neutral at the
+/-- The list twin: the empty-list spread `[]*` is equally neutral at the
 capture boundary. -/
 theorem capture_empty_list_spread_neutral
     (before after : Supply) :
@@ -232,8 +232,8 @@ theorem capture_empty_list_spread_neutral
       capture (before ++ after) :=
   capture_zero_item_spread_neutral items_empty_list before after
 
-/-- `(n, ().spread) == n`. `Val.seq []` is the empty sequence value `()`,
-`items (Val.seq [])` is its explicit spread `().spread`, and the surrounding
+/-- `(n, ()*) == n`. `Val.seq []` is the empty sequence value `()`,
+`items (Val.seq [])` is its explicit spread `()*`, and the surrounding
 `capture` is the canonical written-construction boundary. The spread
 contributes zero items, so the boundary captures the one-item supply
 `[Val.atom n]`, and singleton normalization returns the number itself
@@ -248,7 +248,7 @@ theorem capture_atom_empty_spread (n : Int) :
           simpa using capture_empty_spread_neutral [Val.atom n] []
     _ = Val.atom n := capture_singleton_atom n
 
-/-- `(n, [].spread) == n`: the list twin of `capture_atom_empty_spread` — the
+/-- `(n, []*) == n`: the list twin of `capture_atom_empty_spread` — the
 empty-list spread is just as invisible to the captured value, even though the
 unspread `[]` itself is a visible one-item value. -/
 theorem capture_atom_empty_list_spread (n : Int) :
@@ -389,12 +389,12 @@ list `[v]`, for every value kind. -/
 theorem collect_singleton (v : Val) : collect [v] = Val.list [v] := rfl
 
 /-- Singleton preservation for a grouped sequence value of ANY payload:
-`first, rest... = 1, (…)` collects `rest = [(…)]`. -/
+`first, *rest = 1, (…)` collects `rest = [(…)]`. -/
 theorem collect_singleton_seq (ys : Supply) :
     collect [Val.seq ys] = Val.list [Val.seq ys] := rfl
 
 /-- Singleton preservation for an exact list value of ANY payload:
-`first, rest... = 1, […]` collects `rest = [[…]]`. -/
+`first, *rest = 1, […]` collects `rest = [[…]]`. -/
 theorem collect_singleton_list (ys : Supply) :
     collect [Val.list ys] = Val.list [Val.list ys] := rfl
 
@@ -453,7 +453,7 @@ its own domain:
 
 /-- Open/collect round trip: surface spread (`items`, the `open` operation)
 re-supplies EXACTLY the collected items, so variadic forwarding
-(`Forward(items...) = Target(items.spread)`) is ordinary list spread. -/
+(`Forward(*items) = Target(items*)`) is ordinary list spread. -/
 theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
 
 /-- Collect/open round trip on the list side: re-collecting a spread list's
@@ -466,7 +466,7 @@ theorem collect_items_list (xs : Supply) :
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it. Collecting the
 concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, rest... = 1, [2, 3].spread, (4, 5).spread` gives
+whatever `a` and `b` were (`first, *rest = 1, [2, 3]*, (4, 5)*` gives
 `rest = [2, 3, 4, 5]`). -/
 theorem collect_spread_concat_exact (a b : Val) :
     collect (items a ++ items b) = Val.list (items a ++ items b) := rfl
@@ -588,7 +588,7 @@ theorem deconstruct_fixed_single_list_opens :
       = some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
-/-- `x, y = A.spread`: the explicit spread supplies `A`'s items directly, which bind the
+/-- `x, y = A*`: the explicit spread supplies `A`'s items directly, which bind the
 two fixed targets — the same result as the bare unpack. (`items` is the
 named-spread view.) -/
 theorem deconstruct_fixed_explicit_spread_succeeds :
@@ -597,7 +597,7 @@ theorem deconstruct_fixed_explicit_spread_succeeds :
       = some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
-/-- `first, rest... = A`: deconstruction opens `A`, so `first = 1` and the collecting binding
+/-- `first, *rest = A`: deconstruction opens `A`, so `first = 1` and the collecting binding
 COLLECTS the remaining items as the exact list `[2, 3]`. -/
 theorem deconstruct_collecting_single_sequence_opens :
     bindDeconstruct [Pat.name "first", Pat.collecting "rest"]
@@ -606,7 +606,7 @@ theorem deconstruct_collecting_single_sequence_opens :
               ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
-/-- `first, rest... = [1, 2, 3]`: the lone-list right-hand side opens the same
+/-- `first, *rest = [1, 2, 3]`: the lone-list right-hand side opens the same
 way, and the collecting binding collects `[2, 3]`. -/
 theorem deconstruct_collecting_single_list_opens :
     bindDeconstruct [Pat.name "first", Pat.collecting "rest"]
@@ -615,7 +615,7 @@ theorem deconstruct_collecting_single_list_opens :
               ("rest", Val.list [Val.atom 2, Val.atom 3])] := by
   decide
 
-/-- `first, rest... = A.spread`: the explicit spread supplies the same spread items as
+/-- `first, *rest = A*`: the explicit spread supplies the same spread items as
 the bare unpack above. -/
 theorem deconstruct_collecting_explicit_spread :
     bindDeconstruct [Pat.name "first", Pat.collecting "rest"]
@@ -644,8 +644,8 @@ theorem two_collecting_bindings_rejected :
   decide
 
 /--
-The lone collecting pattern models both the single variadic parameter
-`F(items...)` and the lone-collecting assignment `x... = 1, 2, 3`, which
+The lone collecting pattern models both the single collecting parameter
+`F(*items)` and the lone-collecting assignment `*x = 1, 2, 3`, which
 reaches this binder through the deconstruction receiver.
 -/
 theorem variadic_is_lone_collecting (xs : Supply) :
@@ -765,7 +765,7 @@ theorem bindPats_collect_exact (front back : List Pat) (r : String)
   rw [bindPats_collecting_split front back r _ hf hb hlen, htake, hdropf, hmidlen,
     take_length_append, hbacklen, drop_length_append]
 
-/-- Trailing collecting binding (`Tail(first, rest...)`), for every middle supply. -/
+/-- Trailing collecting binding (`Tail(first, *rest)`), for every middle supply. -/
 theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : Supply) :
     bindPats [Pat.name a, Pat.collecting r] (x :: mid)
       = some [(a, x), (r, collect mid)] := by
@@ -775,7 +775,7 @@ theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : 
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Leading collecting binding (`Init(init..., last)`), for every middle supply. -/
+/-- Leading collecting binding (`Init(*init, last)`), for every middle supply. -/
 theorem bindPats_leading_collecting (r : String) (mid : Supply) (z : String) (y : Val) :
     bindPats [Pat.collecting r, Pat.name z] (mid ++ [y])
       = some [(r, collect mid), (z, y)] := by
@@ -785,7 +785,7 @@ theorem bindPats_leading_collecting (r : String) (mid : Supply) (z : String) (y 
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Middle collecting binding (`F(x, y..., z)`), for every middle supply. -/
+/-- Middle collecting binding (`F(x, *y, z)`), for every middle supply. -/
 theorem bindPats_middle_collecting (a : String) (x : Val) (r : String) (mid : Supply)
     (z : String) (y : Val) :
     bindPats [Pat.name a, Pat.collecting r, Pat.name z] (x :: (mid ++ [y]))
@@ -796,7 +796,7 @@ theorem bindPats_middle_collecting (a : String) (x : Val) (r : String) (mid : Su
     rfl rfl
   simpa [bindFixed] using h
 
-/-- Lone collecting binding (`F(items...)`), re-derived as the degenerate split instance —
+/-- Lone collecting binding (`F(*items)`), re-derived as the degenerate split instance —
 agrees with the directly proved `variadic_is_lone_collecting`/`bindArgs_lone_collecting`. -/
 theorem bindPats_lone_collecting (r : String) (xs : Supply) :
     bindPats [Pat.collecting r] xs = some [(r, collect xs)] := by
@@ -841,7 +841,7 @@ on the `loneStructure` predicate:
 -/
 
 /-- The deconstruction receiver's implicit opening of a single-value supply is
-the total item view `items` — the same item supply the named spread intrinsic
+the total item view `items` — the same item supply the spread marker
 provides (`structureItems?` with the one-item scalar fallback). -/
 theorem openLoneStructure_singleton (v : Val) : openLoneStructure [v] = items v :=
   structureItems?_getD_eq_items v
@@ -867,7 +867,7 @@ theorem deconstruct_singleton_eq_args_items (ps : List Pat) (v : Val) :
 
 /-- Surface-capture boundary counterexample. Let `A = [(1, 2)]`. Bare
 deconstruction of `A` opens the outer list once and leaves the sequence row as
-one item, so two fixed targets fail. A written `A.spread` first supplies that row
+one item, so two fixed targets fail. A written `A*` first supplies that row
 to the assignment's ordinary capture boundary; singleton capture returns the
 row itself, after which deconstruction opens it and the two targets succeed.
 The core intentionally exposes the operations needed to state this boundary
@@ -887,9 +887,9 @@ theorem bindArgs_lone_collecting (r : String) (xs : Supply) :
   unfold bindArgs
   simp [bindPats, bindFixed, Pat.isCollecting, Pat.key, List.take_length, List.drop_length]
 
-/-- Grouped/spread DISTINCTION for a single variadic parameter: `F(A)` with
+/-- Grouped/spread DISTINCTION for a single collecting parameter: `F(A)` with
 a stored sequence `A` binds `rest = [A]` (one collected argument), while
-`F(A.spread)` binds `rest = [a1, …, an]` (the collected spread items) — always
+`F(A*)` binds `rest = [a1, …, an]` (the collected spread items) — always
 different bindings. Supersedes the obsolete paper theorem
 `variadic_capture_unchanged_by_spread`. -/
 theorem variadic_collect_distinguishes_spread (r : String) (ys : Supply) :
@@ -911,7 +911,7 @@ theorem variadic_collect_value_grouped (r : String) (ys : Supply) :
       = some [(r, Val.list [Val.seq ys])] :=
   bindArgs_lone_collecting r [Val.seq ys]
 
-/-- Exact bound value, spread side: `F(A.spread)` binds `r` to `collect ys` — the
+/-- Exact bound value, spread side: `F(A*)` binds `r` to `collect ys` — the
 exact list of `A`'s stored items. -/
 theorem variadic_collect_value_spread (r : String) (ys : Supply) :
     bindArgs [Pat.collecting r] (items (Val.seq ys))
@@ -1319,7 +1319,7 @@ theorem capture_orphanFree (xs : Supply) : orphanFree (capture xs) = true :=
 
 /-- Spread/capture round-trip, restricted to non-list values: on a canonical
 value that is not an exact list, re-capturing the item view (the supply an
-explicit named spread provides) reproduces the value exactly. -/
+explicit spread expression provides) reproduces the value exactly. -/
 theorem capture_items_of_canonical (v : Val) (h : normalize v = v)
     (hl : ∀ xs, v ≠ Val.list xs) :
     capture (items v) = v := by
@@ -1329,7 +1329,7 @@ theorem capture_items_of_canonical (v : Val) (h : normalize v = v)
   | list xs => exact absurd rfl (hl xs)
 
 /-- Spread-then-CAPTURE on a list yields the canonical capture of its
-elements — never the same list back: `x = A.spread` re-groups list items into
+elements — never the same list back: `x = A*` re-groups list items into
 the sequence world. (Spread-then-COLLECT, by contrast, reproduces the list:
 `items_collect`.) -/
 theorem capture_items_of_list (xs : Supply) :

@@ -46,7 +46,6 @@ public enum TokenKind
     Equals,
     Colon,
     Dot,
-    Ellipsis,
     Tilde,
 
     // Ignored / meta

@@ -30,7 +30,7 @@ public class CallableBindingPlanQueryTests
         string[] expectedSuffixNames,
         CallableParameterSource suffixSource)
     {
-        Assert.True(plan.TryGetFlatVariadicLayout(out var prefix, out var variadic, out var suffix));
+        Assert.True(plan.TryGetFlatCollectingLayout(out var prefix, out var variadic, out var suffix));
         Assert.Equal(expectedPrefixNames, prefix.Select(static capture => capture.Name).ToArray());
         Assert.Equal(variadicName, variadic.Name);
         Assert.Equal(variadicSource, variadic.Source);
@@ -49,7 +49,7 @@ public class CallableBindingPlanQueryTests
         => node switch
         {
             CaptureBindingNode capture => $"Capture({capture.Name}:{capture.Source})",
-            VariadicCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
+            CollectingCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
             SequenceValueBindingNode group => $"SequenceValue({DescribePatternList(group.Children)})",
             _ => throw new InvalidOperationException("Unknown binding node."),
         };
@@ -70,9 +70,9 @@ public class CallableBindingPlanQueryTests
         Assert.Equal(requiresPatternedBinding, plan.RequiresPatternedBinding);
         Assert.Equal(hasOnlyFlatTopLevelCaptures, plan.HasOnlyFlatTopLevelCaptures);
         Assert.Equal(hasOnlyFlatFixedTopLevelCaptures, plan.HasOnlyFlatFixedTopLevelCaptures);
-        Assert.Equal(hasTopLevelVariadic, plan.HasTopLevelVariadic);
-        Assert.Equal(hasNestedVariadic, plan.HasNestedVariadic);
-        Assert.Equal(hasTopLevelVariadic, plan.TopLevelVariadicCapture is not null);
+        Assert.Equal(hasTopLevelVariadic, plan.HasTopLevelCollecting);
+        Assert.Equal(hasNestedVariadic, plan.HasNestedCollecting);
+        Assert.Equal(hasTopLevelVariadic, plan.TopLevelCollectingCapture is not null);
         Assert.Equal(min, plan.ArityFacts.MinTopLevelArgumentCount);
         Assert.Equal(max, plan.ArityFacts.MaxTopLevelArgumentCount);
     }
@@ -92,7 +92,7 @@ public class CallableBindingPlanQueryTests
             min: 2,
             max: 2);
         AssertFlatFixedLayout(plan, ("x", CallableParameterSource.Explicit), ("y", CallableParameterSource.Explicit));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
@@ -127,13 +127,13 @@ public class CallableBindingPlanQueryTests
             min: 1,
             max: 1);
         Assert.False(plan.TryGetFlatFixedLayout(out _));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
     public void TopLevelVariadicLayout_SucceedsAsFlatVariadic()
     {
-        var plan = PlanFor("CountValues(values...) = values.count", "CountValues");
+        var plan = PlanFor("CountValues(*values) = values.count", "CountValues");
 
         AssertQueryFacts(
             plan,
@@ -142,11 +142,11 @@ public class CallableBindingPlanQueryTests
             hasOnlyFlatFixedTopLevelCaptures: false,
             hasTopLevelVariadic: true,
             hasNestedVariadic: false,
-            // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
+            // Lone-collecting item supply: no fixed bindings, so min 0 and unbounded max.
             min: 0,
             max: null);
-        Assert.NotNull(plan.TopLevelVariadicCapture);
-        Assert.Equal("values", plan.TopLevelVariadicCapture.Name);
+        Assert.NotNull(plan.TopLevelCollectingCapture);
+        Assert.Equal("values", plan.TopLevelCollectingCapture.Name);
         Assert.False(plan.TryGetFlatFixedLayout(out _));
         AssertFlatVariadicLayout(plan, [], "values", CallableParameterSource.Explicit, [], CallableParameterSource.Explicit);
     }
@@ -154,7 +154,7 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void VariadicSuffixLayout_ReturnsFlatSuffixCaptures()
     {
-        var plan = PlanFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
+        var plan = PlanFor("Scale(*items, factor) = items.map{n * factor}", "Scale");
 
         AssertQueryFacts(
             plan,
@@ -171,11 +171,11 @@ public class CallableBindingPlanQueryTests
     [Fact]
     public void FlatVariadicLayout_OrderMatchesSignatureParameterOrder()
     {
-        // Body is incidental to this plan-shape test; comma slots avoid the
-        // confusing tight `A.spread B` adjacency.
-        var plan = PlanFor("F(first, middle..., last) = first, middle.spread, last", "F");
+        // Body is incidental to this plan-shape test; the body slots need
+        // commas because `middle* last` would be multiplication.
+        var plan = PlanFor("F(first, *middle, last) = first, middle*, last", "F");
 
-        Assert.True(plan.TryGetFlatVariadicLayout(out var prefix, out var variadic, out var suffix));
+        Assert.True(plan.TryGetFlatCollectingLayout(out var prefix, out var variadic, out var suffix));
         var layoutNames = prefix
             .Select(static capture => capture.Name)
             .Concat([variadic.Name])
@@ -184,13 +184,13 @@ public class CallableBindingPlanQueryTests
 
         Assert.Equal(["first", "middle", "last"], layoutNames);
         Assert.Equal(plan.Signature.Parameters.Select(static parameter => parameter.Name).ToArray(), layoutNames);
-        Assert.Equal(["first", "middle...", "last"], plan.Signature.Parameters.Select(static parameter => parameter.DisplayName).ToArray());
+        Assert.Equal(["first", "*middle", "last"], plan.Signature.Parameters.Select(static parameter => parameter.DisplayName).ToArray());
     }
 
     [Fact]
     public void SequenceValueVariadicLayout_IsNestedNotTopLevel()
     {
-        var plan = PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
+        var plan = PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue");
 
         AssertQueryFacts(
             plan,
@@ -201,15 +201,15 @@ public class CallableBindingPlanQueryTests
             hasNestedVariadic: true,
             min: 1,
             max: 1);
-        Assert.Null(plan.TopLevelVariadicCapture);
+        Assert.Null(plan.TopLevelCollectingCapture);
         Assert.False(plan.TryGetFlatFixedLayout(out _));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
     public void MixedPatternedAndTopLevelVariadicLayout_RequiresPatternedBindingFirst()
     {
-        var plan = PlanFor("F((inner...), outer...) = inner.spread, outer", "F");
+        var plan = PlanFor("F((*inner), *outer) = inner*, outer", "F");
 
         AssertQueryFacts(
             plan,
@@ -220,16 +220,16 @@ public class CallableBindingPlanQueryTests
             hasNestedVariadic: true,
             min: 2,
             max: 2);
-        Assert.NotNull(plan.TopLevelVariadicCapture);
-        Assert.Equal("outer", plan.TopLevelVariadicCapture.Name);
+        Assert.NotNull(plan.TopLevelCollectingCapture);
+        Assert.Equal("outer", plan.TopLevelCollectingCapture.Name);
         Assert.False(plan.TryGetFlatFixedLayout(out _));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
     public void NestedSequenceValueRecursiveLayout_PreservesNestedVariadicFacts()
     {
-        var plan = PlanFor("G(((history...), previous)) = history.count + previous", "G");
+        var plan = PlanFor("G(((*history), previous)) = history.count + previous", "G");
 
         AssertQueryFacts(
             plan,
@@ -242,7 +242,7 @@ public class CallableBindingPlanQueryTests
             max: 1);
         Assert.Equal(["history", "previous"], plan.Captures.Select(static capture => capture.Name).ToArray());
         Assert.False(plan.TryGetFlatFixedLayout(out _));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
@@ -262,7 +262,7 @@ public class CallableBindingPlanQueryTests
             min: 2,
             max: 2);
         AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin), ("mapper", CallableParameterSource.Builtin));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Theory]
@@ -285,7 +285,7 @@ public class CallableBindingPlanQueryTests
             min: 2,
             max: 2);
         AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin), (controlName, CallableParameterSource.Builtin));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Theory]
@@ -305,16 +305,16 @@ public class CallableBindingPlanQueryTests
             min: 1,
             max: 1);
         AssertFlatFixedLayout(plan, ("collection", CallableParameterSource.Builtin));
-        Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]
     public void LoopStepShapeQueries_IncludePrefixSuffixAndSequenceValueVariadic()
     {
         // These plans inspect only the parameter pattern; the bodies are
-        // incidental, so they use comma slots (not tight `A.spread B` adjacency,
-        // which reads like a non-existent binary spread) for clarity.
-        var flat = PlanFor("Step(first, middle..., last) = first, middle.spread, last, 0", "Step");
+        // incidental, and their slots need commas because a star with a
+        // same-line right operand (`middle* last`) would be multiplication.
+        var flat = PlanFor("Step(first, *middle, last) = first, middle*, last, 0", "Step");
         AssertQueryFacts(
             flat,
             requiresPatternedBinding: false,
@@ -323,13 +323,13 @@ public class CallableBindingPlanQueryTests
             hasTopLevelVariadic: true,
             hasNestedVariadic: false,
             // Deconstruction-shaped: `first` and `last` are the fixed bindings,
-            // `middle...` captures any number of middle items.
+            // `*middle` collects any number of middle items.
             min: 2,
             max: null);
         AssertTopLevelNodes(flat, "Capture(first:Explicit)", "Variadic(middle:Explicit:top)", "Capture(last:Explicit)");
         AssertFlatVariadicLayout(flat, ["first"], "middle", CallableParameterSource.Explicit, ["last"], CallableParameterSource.Explicit);
 
-        var sequenceValuePlan = PlanFor("Step((history...), previous) = history.spread, previous, 0", "Step");
+        var sequenceValuePlan = PlanFor("Step((*history), previous) = history*, previous, 0", "Step");
         AssertQueryFacts(
             sequenceValuePlan,
             requiresPatternedBinding: true,
@@ -342,9 +342,9 @@ public class CallableBindingPlanQueryTests
         AssertTopLevelNodes(sequenceValuePlan, "SequenceValue(Variadic(history:Explicit:nested))", "Capture(previous:Explicit)");
         AssertCaptureNames(sequenceValuePlan, "history", "previous");
         Assert.False(sequenceValuePlan.TryGetFlatFixedLayout(out _));
-        Assert.False(sequenceValuePlan.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(sequenceValuePlan.TryGetFlatCollectingLayout(out _, out _, out _));
 
-        var nested = PlanFor("Step((history..., previous), current) = history.spread, previous, current, 0", "Step");
+        var nested = PlanFor("Step((*history, previous), current) = history*, previous, current, 0", "Step");
         AssertQueryFacts(
             nested,
             requiresPatternedBinding: true,
@@ -357,7 +357,7 @@ public class CallableBindingPlanQueryTests
         AssertTopLevelNodes(nested, "SequenceValue(Variadic(history:Explicit:nested), Capture(previous:Explicit))", "Capture(current:Explicit)");
         AssertCaptureNames(nested, "history", "previous", "current");
         Assert.False(nested.TryGetFlatFixedLayout(out _));
-        Assert.False(nested.TryGetFlatVariadicLayout(out _, out _, out _));
+        Assert.False(nested.TryGetFlatCollectingLayout(out _, out _, out _));
     }
 
     [Fact]

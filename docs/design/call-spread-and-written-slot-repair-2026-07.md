@@ -1,5 +1,7 @@
 # Call-spread and written-slot repair (July 2026)
 
+> **Syntax note (2026-07-29):** the collection/spreading surface syntax was later redesigned: prefix `*name` is now the collect marker (collecting binding / collecting parameter), postfix `value*` is the spread marker, and the former spellings `name...`, `spread(x)`, and `x.spread` are no longer KatLang syntax (`spread` is an ordinary identifier). Spellings in the historical text below are the spellings of their time; the semantics they describe are unchanged.
+
 Repairs the confirmed defects of the July 2026 adversarial semantic audit
 (findings F01, F02, F03, F05, F09, F10, F20, F22) while preserving the
 verified exact-list and collected-list migrations. This note is the

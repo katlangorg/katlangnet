@@ -40,7 +40,7 @@ public static class ParameterDetector
         if (alg is Algorithm.Builtin)
             return alg;
 
-        // A synthetic assignment-deconstruction helper (`x, y..., z = RHS`) is already a
+        // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
         // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
         // opens, no properties, and an output that is exactly the single bound target name.
         // Its only required elaboration is rewriting that bound Resolve to a Param. Running
@@ -210,7 +210,7 @@ public static class ParameterDetector
                     ProcessOpenExpr(operand, openParentScope, diagnostics))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):
@@ -388,7 +388,7 @@ public static class ParameterDetector
                     RewriteBinderRefs(operand, binderNames, scope, capturedParamNames))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):
@@ -694,7 +694,7 @@ public static class ParameterDetector
                     RewriteParams(operand, paramNames, scope, capturedParamNames))
                 {
                     Span = expr.Span,
-                    IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
                 };
 
             case Expr.SequenceConstruct(var left, var right):
@@ -818,7 +818,7 @@ public static class ParameterDetector
                 ProcessExpr(operand, scope, capturedParamNames))
             {
                 Span = expr.Span,
-                IntrinsicNameSpan = ((Expr.SequenceSpread)expr).IntrinsicNameSpan,
+                SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
             },
             Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(
                 ProcessExpr(l, scope, capturedParamNames),

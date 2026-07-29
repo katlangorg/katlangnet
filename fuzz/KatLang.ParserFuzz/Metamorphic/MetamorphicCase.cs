@@ -23,7 +23,7 @@ internal enum MetamorphicFamily
     DottedCollectionCall,
 
     /// <summary>
-    /// Phase 2 Group A: <c>F(receiver, suffix.spread)</c> against <c>receiver.F(suffix.spread)</c> over
+    /// Phase 2 Group A: <c>F(receiver, suffix)</c> against <c>receiver.F(suffix)</c> over
     /// the trusted collection builtins and every receiver value kind.
     /// </summary>
     DottedCollectionBuiltin,
@@ -72,11 +72,10 @@ internal enum MetamorphicFamily
     BudgetLaw,
 
     /// <summary>
-    /// Phase 2 Group E: the CALL spelling of the spread intrinsic against its
-    /// extension-property spelling — <c>spread(X)</c> versus <c>X.spread</c> — over every
-    /// trusted operand shape and spread-slot context. Both spellings lower to the same
-    /// <c>SequenceSpread</c> node, so semantic AND exact observed-work equality are both
-    /// justified.
+    /// Phase 2 Group E: two still-equivalent spellings of one spread program — chiefly the
+    /// fluent chain <c>X*.C</c> versus the explicit call <c>C(X*)</c>, which lower to the
+    /// same <c>Call(SequenceSpread)</c> AST, plus the redundant-grouping pair
+    /// <c>(X*)</c> versus <c>((X*))</c> — over every trusted operand shape.
     /// </summary>
     SpreadSpellingParity,
 }
@@ -156,9 +155,10 @@ internal enum MetamorphicOperationalRelation
     /// <summary>
     /// Everything <see cref="ExactMaterializationEqual"/> requires PLUS exact equality of
     /// evaluation steps and peak dynamic depth. Declared only where the repository already
-    /// establishes that contract — currently the user-defined extension call, whose two
-    /// spellings resolve to one and the same user invocation
-    /// (<c>OperationalMetamorphicTests.UserExtensionCall_ChargesTheSameInBothForms</c>).
+    /// establishes that contract — the user-defined extension call, whose two spellings
+    /// resolve to one and the same user invocation
+    /// (<c>OperationalMetamorphicTests.UserExtensionCall_ChargesTheSameInBothForms</c>), and
+    /// the fluent-chain spread contexts, whose two spellings lower to the identical AST.
     /// </summary>
     ExactObservedWorkEqual,
 

@@ -72,25 +72,39 @@ public class LanguageSpecArtifactsGeneratorPromptTests
     {
         var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
 
-        // Collecting bindings: postfix `name...` is the one canonical spelling.
-        Assert.Contains(
-            "Postfix `name...` is the ONLY collecting-binding syntax",
-            content,
-            StringComparison.Ordinal);
+        // Collecting bindings: prefix `*name` is the one canonical spelling.
+        Assert.Contains("*items", content, StringComparison.Ordinal);
+        Assert.Contains("collecting parameter", content, StringComparison.OrdinalIgnoreCase);
 
-        // Spreading: the named intrinsic, in both spellings, producing a SUPPLY.
-        Assert.Contains("spread(items)", content, StringComparison.Ordinal);
-        Assert.Contains("items.spread", content, StringComparison.Ordinal);
-        Assert.Contains(
-            "produces an item supply and does not return a list or sequence",
-            content,
-            StringComparison.Ordinal);
+        // Spreading: the attached postfix star marker producing a SUPPLY.
+        Assert.Contains("items*", content, StringComparison.Ordinal);
 
-        // The canonical forwarding example must be present.
+        // The central multiplication-disambiguation rule must be stated.
+        Assert.Contains("a*, b", content, StringComparison.Ordinal);
+
+        // The canonical forwarding example must be present (fluent form).
         Assert.Contains(
-            "Forward(items...) = Target(spread(items))",
+            "Forward(*items) = items*.Target",
             content,
             StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(PromptFilePaths))]
+    public void PromptFile_RejectsStaleCanonicalSyntax(string relativePath)
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+
+        // The removed spellings must not be taught anywhere in the prompts:
+        // no ellipsis collecting bindings and no reserved call/property spread form.
+        Assert.DoesNotContain("items...", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("...items", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("spread(items)", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("items.spread", content, StringComparison.Ordinal);
+        Assert.DoesNotContain(".spread", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("rest parameter", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("rest binding", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("variadic parameter", content, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReplaceOrAppendBlock(string content, string block)

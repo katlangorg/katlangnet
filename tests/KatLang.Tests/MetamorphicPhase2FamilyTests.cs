@@ -426,18 +426,20 @@ public class MetamorphicPhase2FamilyTests
             var testCase = MetamorphicTemplates.Build(parameters);
 
             // The rewrite lives in the CALL, so that is where the spread rule applies:
-            // `A.F(B, C)` is `F(A, B, C)`, never `F(A.spread, B, C)`, so the dotted call may not add
-            // or drop a spread relative to the ordinary call. (A rejected variadic-projection
-            // wrapper legitimately writes a variadic parameter in its DEFINITION; that is the very
-            // thing its precondition rejects, and it is never compared.)
+            // `A.F(B, C)` is `F(A, B, C)`, never `F(A*, B, C)`, so the dotted call may not add
+            // or drop a spread marker relative to the ordinary call. (A rejected
+            // collecting-projection wrapper legitimately writes a collecting parameter in its
+            // DEFINITION; that is the very thing its precondition rejects, and it is never
+            // compared.) These families never write a multiplication in an output expression,
+            // so every `*` counted here is the postfix spread marker.
             if (testCase.Family is MetamorphicFamily.DottedCollectionBuiltin
                 or MetamorphicFamily.UserExtensionCall
                 or MetamorphicFamily.DottedChain
                 or MetamorphicFamily.DottedCollectionCall)
             {
                 Assert.Equal(
-                    CountOccurrences(OutputExpression(testCase.LeftSource), "..."),
-                    CountOccurrences(OutputExpression(testCase.RightSource), "..."));
+                    CountOccurrences(OutputExpression(testCase.LeftSource), "*"),
+                    CountOccurrences(OutputExpression(testCase.RightSource), "*"));
             }
 
             // Both members write the receiver expression exactly once.
@@ -573,7 +575,7 @@ public class MetamorphicPhase2FamilyTests
             var chain = MetamorphicChainTemplate.ChainOf(parameters);
             Assert.InRange(chain.Length, 2, MetamorphicChainTemplate.MaxChainLength);
 
-            // The dotted form applies the links left to right.spread
+            // The dotted form applies the links left to right,
             var expectedDotted = MetamorphicTables.ReceiverProperty + string.Concat(chain.Select(link => link.Dotted));
             Assert.Equal(expectedDotted, OutputExpression(testCase.RightSource));
 
@@ -601,10 +603,10 @@ public class MetamorphicPhase2FamilyTests
             {
                 // The spread sits in the SUFFIX on BOTH sides — never on the receiver, which has
                 // no dotted spelling at all.
-                Assert.Contains("MmS.spread", left, StringComparison.Ordinal);
-                Assert.Contains("MmS.spread", right, StringComparison.Ordinal);
-                Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}...", left, StringComparison.Ordinal);
-                Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}...", right, StringComparison.Ordinal);
+                Assert.Contains("MmS*", left, StringComparison.Ordinal);
+                Assert.Contains("MmS*", right, StringComparison.Ordinal);
+                Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}*", left, StringComparison.Ordinal);
+                Assert.DoesNotContain($"{MetamorphicTables.ReceiverProperty}*", right, StringComparison.Ordinal);
             }
 
             if (body.SuffixArity == 0)
@@ -622,7 +624,7 @@ public class MetamorphicPhase2FamilyTests
 
     /// <summary>
     /// A dimension the selected body IGNORES must collapse to one canonical index. The
-    /// spread-suffix body writes the same generated <c>MmS.spread</c> whatever the suffix variant
+    /// spread-suffix body writes the same generated <c>MmS*</c> whatever the suffix variant
     /// says, so all six variants are one case — not six payloads building byte-identical pairs
     /// under six distinct fingerprints.
     /// </summary>
@@ -676,34 +678,34 @@ public class MetamorphicPhase2FamilyTests
             var features = new Dictionary<string, MetamorphicParameters>(StringComparer.Ordinal);
 
             foreach (var extras in CrossDimensions(definition.ExtraDimensionSizes.ToArray()))
-            for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
-            for (var primary = 0; primary < MetamorphicDecoder.OffsetTable.Length; primary++)
-            for (var secondary = 0; secondary < MetamorphicDecoder.OffsetTable.Length; secondary++)
-            for (var optimize = 0; optimize < 2; optimize++)
-            {
-                var payload = new byte[MetamorphicParameters.CommonPayloadLength + extras.Length];
-                payload[0] = (byte)familyIndex;
-                payload[2] = (byte)mode;
-                payload[3] = (byte)primary;
-                payload[4] = (byte)secondary;
-                payload[5] = (byte)optimize;
-                for (var i = 0; i < extras.Length; i++)
-                    payload[MetamorphicParameters.CommonPayloadLength + i] = (byte)extras[i];
+                for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
+                    for (var primary = 0; primary < MetamorphicDecoder.OffsetTable.Length; primary++)
+                        for (var secondary = 0; secondary < MetamorphicDecoder.OffsetTable.Length; secondary++)
+                            for (var optimize = 0; optimize < 2; optimize++)
+                            {
+                                var payload = new byte[MetamorphicParameters.CommonPayloadLength + extras.Length];
+                                payload[0] = (byte)familyIndex;
+                                payload[2] = (byte)mode;
+                                payload[3] = (byte)primary;
+                                payload[4] = (byte)secondary;
+                                payload[5] = (byte)optimize;
+                                for (var i = 0; i < extras.Length; i++)
+                                    payload[MetamorphicParameters.CommonPayloadLength + i] = (byte)extras[i];
 
-                var parameters = MetamorphicDecoder.Decode(payload);
-                if (!canonical.Add(parameters)) continue;
+                                var parameters = MetamorphicDecoder.Decode(payload);
+                                if (!canonical.Add(parameters)) continue;
 
-                Assert.Equal(parameters, MetamorphicDecoder.Decode(parameters.Encode()));
+                                Assert.Equal(parameters, MetamorphicDecoder.Decode(parameters.Encode()));
 
-                // The parameter-derived half of the fingerprint must separate distinct points.
-                var feature = $"{definition.Id}|{definition.DescribeVariant(parameters)}|{parameters.LimitMode}|" +
-                              $"{parameters.PrimaryOffset}|{parameters.SecondaryOffset}|{parameters.EnableOptimizations}";
-                if (!features.TryAdd(feature, parameters))
-                {
-                    Assert.Fail(
-                        $"two canonical points share fingerprint features:\n  {parameters}\n  {features[feature]}");
-                }
-            }
+                                // The parameter-derived half of the fingerprint must separate distinct points.
+                                var feature = $"{definition.Id}|{definition.DescribeVariant(parameters)}|{parameters.LimitMode}|" +
+                                              $"{parameters.PrimaryOffset}|{parameters.SecondaryOffset}|{parameters.EnableOptimizations}";
+                                if (!features.TryAdd(feature, parameters))
+                                {
+                                    Assert.Fail(
+                                        $"two canonical points share fingerprint features:\n  {parameters}\n  {features[feature]}");
+                                }
+                            }
 
             Assert.NotEmpty(canonical);
         }
@@ -770,27 +772,27 @@ public class MetamorphicPhase2FamilyTests
 
         Assert.Contains(MetamorphicWrapperProjection.DottedFixed, acceptedProjections);
         Assert.Contains(MetamorphicWrapperProjection.OrdinaryFixed, acceptedProjections);
-        Assert.DoesNotContain(MetamorphicWrapperProjection.Variadic, acceptedProjections);
+        Assert.DoesNotContain(MetamorphicWrapperProjection.Collecting, acceptedProjections);
         Assert.DoesNotContain(MetamorphicWrapperProjection.ArityMismatched, acceptedProjections);
 
         Assert.Equal(
-            "variadic-projection-collects-a-list-not-the-supplied-value",
-            rejectedReasons[MetamorphicWrapperProjection.Variadic]);
+            "collecting-projection-collects-a-list-not-the-supplied-value",
+            rejectedReasons[MetamorphicWrapperProjection.Collecting]);
         Assert.Equal(
             "wrapper-arity-does-not-match-callback-projection",
             rejectedReasons[MetamorphicWrapperProjection.ArityMismatched]);
     }
 
     [Fact]
-    public void VariadicProjection_IsGenuinelyNotEquivalent_WhichIsWhyItIsRejected()
+    public void CollectingProjection_IsGenuinelyNotEquivalent_WhichIsWhyItIsRejected()
     {
-        // Evidence for the precondition: a variadic parameter COLLECTS the supplied slot into a
-        // list, so the wrapper sees [element] where the direct builtin sees element.
+        // Evidence for the precondition: a collecting parameter COLLECTS the supplied
+        // slot into a list, so the wrapper sees [element] where the direct builtin sees element.
         const string direct = "MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)";
-        const string variadicWrapper = "MmWrap(xs...) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
+        const string collectingWrapper = "MmWrap(*xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
-        Assert.True(MetamorphicExecutor.TryObserve(variadicWrapper, null, true, out var b, out _));
+        Assert.True(MetamorphicExecutor.TryObserve(collectingWrapper, null, true, out var b, out _));
         Assert.Equal("L[2, 1]", a.Semantic.Structure);
         Assert.Equal("L[1, 1]", b.Semantic.Structure);
         Assert.NotEqual(a.Semantic, b.Semantic);
@@ -822,7 +824,7 @@ public class MetamorphicPhase2FamilyTests
     ///
     /// <para>The semantic reason is then discharged per (projection x callback arity), by RUNNING
     /// the direct form against the wrapper form. Note what the sweep shows and a single example
-    /// would hide: these projections are not observably different at EVERY point. A variadic wrapper
+    /// would hide: these projections are not observably different at EVERY point. A collecting wrapper
     /// binds <c>[element]</c> where the builtin binds <c>element</c>, and for several
     /// builtin/element combinations the two are indistinguishable (<c>count</c> of a scalar and
     /// of a one-element list are both 1); an empty input never invokes the callback at all, so
@@ -835,7 +837,7 @@ public class MetamorphicPhase2FamilyTests
     {
         var expected = new Dictionary<MetamorphicWrapperProjection, string>
         {
-            [MetamorphicWrapperProjection.Variadic] = "variadic-projection-collects-a-list-not-the-supplied-value",
+            [MetamorphicWrapperProjection.Collecting] = "collecting-projection-collects-a-list-not-the-supplied-value",
             [MetamorphicWrapperProjection.ArityMismatched] = "wrapper-arity-does-not-match-callback-projection",
         };
 
@@ -848,89 +850,89 @@ public class MetamorphicPhase2FamilyTests
         var rejectedPoints = 0;
 
         for (var consumer = 0; consumer < MetamorphicTables.CallbackConsumers.Length; consumer++)
-        for (var callback = 0; callback < MetamorphicTables.Builtins.Length; callback++)
-        for (var input = 0; input < MetamorphicTables.CallbackInputShapes.Length; input++)
-        for (var projection = 0; projection < MetamorphicTables.WrapperProjections.Length; projection++)
-        {
-            var parameters = MetamorphicDecoder.Decode(
-                [0x04, 0, 0, 1, 1, 0, (byte)consumer, (byte)callback, (byte)input, (byte)projection]);
-            var kind = MetamorphicCallbackWrapperTemplate.ProjectionOf(parameters);
-            if (!expected.TryGetValue(kind, out var reason)) continue;
-            if (!visited.Add(parameters)) continue;
+            for (var callback = 0; callback < MetamorphicTables.Builtins.Length; callback++)
+                for (var input = 0; input < MetamorphicTables.CallbackInputShapes.Length; input++)
+                    for (var projection = 0; projection < MetamorphicTables.WrapperProjections.Length; projection++)
+                    {
+                        var parameters = MetamorphicDecoder.Decode(
+                            [0x04, 0, 0, 1, 1, 0, (byte)consumer, (byte)callback, (byte)input, (byte)projection]);
+                        var kind = MetamorphicCallbackWrapperTemplate.ProjectionOf(parameters);
+                        if (!expected.TryGetValue(kind, out var reason)) continue;
+                        if (!visited.Add(parameters)) continue;
 
-            var testCase = MetamorphicTemplates.Build(parameters);
-            var consumerName = MetamorphicCallbackWrapperTemplate.ConsumerOf(parameters);
-            var arity = MetamorphicTables.CallbackArityOf(consumerName);
-            var callbackName = MetamorphicCallbackWrapperTemplate.CallbackOf(parameters).Name;
-            var inputShape = MetamorphicCallbackWrapperTemplate.InputOf(parameters);
+                        var testCase = MetamorphicTemplates.Build(parameters);
+                        var consumerName = MetamorphicCallbackWrapperTemplate.ConsumerOf(parameters);
+                        var arity = MetamorphicTables.CallbackArityOf(consumerName);
+                        var callbackName = MetamorphicCallbackWrapperTemplate.CallbackOf(parameters).Name;
+                        var inputShape = MetamorphicCallbackWrapperTemplate.InputOf(parameters);
 
-            // Normalize maps the callback dimension onto the builtins this consumer's arity can
-            // accept, so a decoded point never names an impossible callback.
-            Assert.True(
-                MetamorphicCallbackWrapperTemplate.CallbackOf(parameters).IsCallbackOfArity(arity),
-                $"decoded point names a callback the consumer cannot supply: {parameters}");
+                        // Normalize maps the callback dimension onto the builtins this consumer's arity can
+                        // accept, so a decoded point never names an impossible callback.
+                        Assert.True(
+                            MetamorphicCallbackWrapperTemplate.CallbackOf(parameters).IsCallbackOfArity(arity),
+                            $"decoded point names a callback the consumer cannot supply: {parameters}");
 
-            rejectedPoints++;
-            coveredConsumers.Add(consumerName);
-            coveredCallbacks.Add((kind, arity, callbackName));
-            coveredInputs.Add((kind, arity, inputShape.Id));
+                        rejectedPoints++;
+                        coveredConsumers.Add(consumerName);
+                        coveredCallbacks.Add((kind, arity, callbackName));
+                        coveredInputs.Add((kind, arity, inputShape.Id));
 
-            // Rejected by NAME, and never compared: execution stops at the precondition.
-            Assert.False(testCase.Precondition.Satisfied);
-            Assert.Equal(reason, testCase.Precondition.Reason);
+                        // Rejected by NAME, and never compared: execution stops at the precondition.
+                        Assert.False(testCase.Precondition.Satisfied);
+                        Assert.Equal(reason, testCase.Precondition.Reason);
 
-            var execution = MetamorphicExecutor.Execute(testCase);
-            Assert.False(execution.Accepted);
-            Assert.Equal(reason, execution.RejectionReason);
-            Assert.Null(execution.Left);
-            Assert.Null(execution.Right);
+                        var execution = MetamorphicExecutor.Execute(testCase);
+                        Assert.False(execution.Accepted);
+                        Assert.Equal(reason, execution.RejectionReason);
+                        Assert.Null(execution.Left);
+                        Assert.Null(execution.Right);
 
-            var report = MetamorphicInvariants.Run(parameters.Encode());
-            Assert.False(report.Accepted);
-            Assert.Null(report.Mismatch);
+                        var report = MetamorphicInvariants.Run(parameters.Encode());
+                        Assert.False(report.Accepted);
+                        Assert.Null(report.Mismatch);
 
-            // The wrapper really is written in the shape its rejection reason names.
-            var wrapperLine = testCase.RightSource.Split('\n')[0];
-            var expectedWrapper = kind == MetamorphicWrapperProjection.Variadic
-                ? $"{MetamorphicTables.WrapperFunction}(xs...) = "
-                : $"{MetamorphicTables.WrapperFunction}({(arity == 1 ? "a, b" : "a")}) = ";
-            Assert.StartsWith(expectedWrapper, wrapperLine, StringComparison.Ordinal);
+                        // The wrapper really is written in the shape its rejection reason names.
+                        var wrapperLine = testCase.RightSource.Split('\n')[0];
+                        var expectedWrapper = kind == MetamorphicWrapperProjection.Collecting
+                            ? $"{MetamorphicTables.WrapperFunction}(*xs) = "
+                            : $"{MetamorphicTables.WrapperFunction}({(arity == 1 ? "a, b" : "a")}) = ";
+                        Assert.StartsWith(expectedWrapper, wrapperLine, StringComparison.Ordinal);
 
-            // Evidence: run both forms and record where they genuinely disagree.
-            Assert.True(MetamorphicExecutor.TryObserve(testCase.LeftSource, null, true, out var direct, out _));
-            Assert.True(MetamorphicExecutor.TryObserve(testCase.RightSource, null, true, out var wrapped, out _));
+                        // Evidence: run both forms and record where they genuinely disagree.
+                        Assert.True(MetamorphicExecutor.TryObserve(testCase.LeftSource, null, true, out var direct, out _));
+                        Assert.True(MetamorphicExecutor.TryObserve(testCase.RightSource, null, true, out var wrapped, out _));
 
-            if (!Equals(direct.Semantic, wrapped.Semantic)) disagreements.Add((kind, arity));
+                        if (!Equals(direct.Semantic, wrapped.Semantic)) disagreements.Add((kind, arity));
 
-            // An EMPTY input never invokes the callback, so no projection can be distinguished
-            // there. That is a positive, falsifiable claim — and the clearest demonstration that
-            // the precondition has to be structural: measuring these points would report a
-            // rejected projection as equivalent.
-            if (inputShape.CollectionItemCount == 0)
-            {
-                Assert.Equal(direct.Semantic, wrapped.Semantic);
-                emptyInputAgreements++;
-            }
-        }
+                        // An EMPTY input never invokes the callback, so no projection can be distinguished
+                        // there. That is a positive, falsifiable claim — and the clearest demonstration that
+                        // the precondition has to be structural: measuring these points would report a
+                        // rejected projection as equivalent.
+                        if (inputShape.CollectionItemCount == 0)
+                        {
+                            Assert.Equal(direct.Semantic, wrapped.Semantic);
+                            emptyInputAgreements++;
+                        }
+                    }
 
         // The complete space really was covered: both consumer arities, all three consumers,
         // every eligible callback builtin, and every input shape, for BOTH rejected projections.
         Assert.True(rejectedPoints > 0, "no rejected callback-projection point was generated");
         Assert.Equal(MetamorphicTables.CallbackConsumers.Length, coveredConsumers.Count);
         foreach (var kind in expected.Keys)
-        foreach (var arity in new[] { 1, 2 })
-        {
-            var callbacks = MetamorphicTables.Builtins.Where(b => b.IsCallbackOfArity(arity)).Select(b => b.Name);
-            Assert.Equal(
-                callbacks.Order().ToArray(),
-                coveredCallbacks.Where(e => e.Item1 == kind && e.Item2 == arity).Select(e => e.Item3).Order().ToArray());
-            Assert.Equal(
-                MetamorphicTables.CallbackInputShapes.Select(s => s.Id).Order().ToArray(),
-                coveredInputs.Where(e => e.Item1 == kind && e.Item2 == arity).Select(e => e.Item3).Order().ToArray());
+            foreach (var arity in new[] { 1, 2 })
+            {
+                var callbacks = MetamorphicTables.Builtins.Where(b => b.IsCallbackOfArity(arity)).Select(b => b.Name);
+                Assert.Equal(
+                    callbacks.Order().ToArray(),
+                    coveredCallbacks.Where(e => e.Item1 == kind && e.Item2 == arity).Select(e => e.Item3).Order().ToArray());
+                Assert.Equal(
+                    MetamorphicTables.CallbackInputShapes.Select(s => s.Id).Order().ToArray(),
+                    coveredInputs.Where(e => e.Item1 == kind && e.Item2 == arity).Select(e => e.Item3).Order().ToArray());
 
-            // And each (projection, arity) has at least one point where the difference IS visible.
-            Assert.Contains((kind, arity), disagreements);
-        }
+                // And each (projection, arity) has at least one point where the difference IS visible.
+                Assert.Contains((kind, arity), disagreements);
+            }
 
         Assert.True(emptyInputAgreements > 0, "the empty-input coincidence was never exercised");
     }
@@ -993,7 +995,7 @@ public class MetamorphicPhase2FamilyTests
         string[] expectedRejections =
         [
             // Callback projections that are provably NOT equivalent (see the template docs).
-            "builtin-callback-wrapper/variadic-projection-collects-a-list-not-the-supplied-value",
+            "builtin-callback-wrapper/collecting-projection-collects-a-list-not-the-supplied-value",
             "builtin-callback-wrapper/wrapper-arity-does-not-match-callback-projection",
             // A fused dotted chain is documented not to consume the cumulative item budget.
             "dotted-chain/fused-chain-does-not-share-the-cumulative-item-budget",
@@ -1159,7 +1161,7 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, false, out var left, out _));
         Assert.True(MetamorphicExecutor.TryObserve(dotted, limits, false, out var right, out _));
 
-        // The structured resource outcome IS still compared.spread
+        // The structured resource outcome IS still compared
         Assert.Equal(left.Semantic, right.Semantic);
         Assert.True(left.Semantic.IsResourceLimit);
         Assert.Equal("StringMaterializationLimitExceeded", left.Semantic.ErrorCategory);
@@ -1198,20 +1200,20 @@ public class MetamorphicPhase2FamilyTests
             .ToList();
 
         foreach (var receiver in new[] { "'ab'", "['ab', 'cd']", "[1, 2, 3]", "7", "()" })
-        foreach (var (ordinary, dotted) in builtins)
-        {
-            var left = $"MmR = {receiver}\nOutput = {ordinary}";
-            var right = $"MmR = {receiver}\nOutput = {dotted}";
-
-            for (var strings = 0L; strings <= 3; strings++)
-            for (var items = 1L; items <= 5; items++)
+            foreach (var (ordinary, dotted) in builtins)
             {
-                var limits = new EvaluationLimits { MaxMaterializedStringChars = strings, MaxMaterializedItems = items };
-                Assert.True(MetamorphicExecutor.TryObserve(left, limits, false, out var a, out _));
-                Assert.True(MetamorphicExecutor.TryObserve(right, limits, false, out var b, out _));
-                Assert.Equal(a.Semantic, b.Semantic);
+                var left = $"MmR = {receiver}\nOutput = {ordinary}";
+                var right = $"MmR = {receiver}\nOutput = {dotted}";
+
+                for (var strings = 0L; strings <= 3; strings++)
+                    for (var items = 1L; items <= 5; items++)
+                    {
+                        var limits = new EvaluationLimits { MaxMaterializedStringChars = strings, MaxMaterializedItems = items };
+                        Assert.True(MetamorphicExecutor.TryObserve(left, limits, false, out var a, out _));
+                        Assert.True(MetamorphicExecutor.TryObserve(right, limits, false, out var b, out _));
+                        Assert.Equal(a.Semantic, b.Semantic);
+                    }
             }
-        }
     }
 
     [Fact]
@@ -1304,40 +1306,40 @@ public class MetamorphicPhase2FamilyTests
         var exactUnderOptimizerOff = 0;
 
         for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
-        for (var optimize = 0; optimize < 2; optimize++)
-        {
-            // The one chain measured to fuse (filter > count) on an exact-list receiver.
-            var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
-                [0x03, 0, (byte)mode, 0, 0, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
-            if (!testCase.Precondition.Satisfied) continue;
-
-            var fusionCanApply = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(
-                testCase.EnableOptimizations, testCase.Limits);
-
-            Assert.Equal(
-                fusionCanApply
-                    ? MetamorphicOperationalRelation.MaterializationNeverIncreases
-                    : MetamorphicOperationalRelation.ExactMaterializationEqual,
-                testCase.OperationalRelation);
-
-            var execution = MetamorphicExecutor.Execute(testCase);
-            Assert.True(execution.Accepted);
-            Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
-
-            if (fusionCanApply)
+            for (var optimize = 0; optimize < 2; optimize++)
             {
-                // The dotted spelling really does less work here; the left one is not fusible.
-                Assert.True(execution.Right!.MaterializedItems < execution.Left!.MaterializedItems);
-                directionalWitnesses++;
-                continue;
-            }
+                // The one chain measured to fuse (filter > count) on an exact-list receiver.
+                var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
+                    [0x03, 0, (byte)mode, 0, 0, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
+                if (!testCase.Precondition.Satisfied) continue;
 
-            Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
-            if (testCase.Limits is { } limits && (limits.MaxStringLength is not null || limits.MaxMaterializedStringChars is not null))
-                exactUnderStringLimits++;
-            else if (!testCase.EnableOptimizations)
-                exactUnderOptimizerOff++;
-        }
+                var fusionCanApply = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(
+                    testCase.EnableOptimizations, testCase.Limits);
+
+                Assert.Equal(
+                    fusionCanApply
+                        ? MetamorphicOperationalRelation.MaterializationNeverIncreases
+                        : MetamorphicOperationalRelation.ExactMaterializationEqual,
+                    testCase.OperationalRelation);
+
+                var execution = MetamorphicExecutor.Execute(testCase);
+                Assert.True(execution.Accepted);
+                Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
+
+                if (fusionCanApply)
+                {
+                    // The dotted spelling really does less work here; the left one is not fusible.
+                    Assert.True(execution.Right!.MaterializedItems < execution.Left!.MaterializedItems);
+                    directionalWitnesses++;
+                    continue;
+                }
+
+                Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
+                if (testCase.Limits is { } limits && (limits.MaxStringLength is not null || limits.MaxMaterializedStringChars is not null))
+                    exactUnderStringLimits++;
+                else if (!testCase.EnableOptimizations)
+                    exactUnderOptimizerOff++;
+            }
 
         // All three regimes must actually be exercised, so the test fails if the chain stops
         // fusing, if the string-limit modes stop reaching the exact relation, or if the
@@ -1358,29 +1360,29 @@ public class MetamorphicPhase2FamilyTests
         var accepted = 0;
 
         for (var chain = 0; chain < MetamorphicChainTemplate.ChainCount; chain++)
-        for (var receiver = 0; receiver < MetamorphicTables.ReceiverShapes.Length; receiver++)
-        for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
-        for (var optimize = 0; optimize < 2; optimize++)
-        {
-            var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
-                [0x03, 0, (byte)mode, 1, 1, (byte)optimize, (byte)chain, (byte)receiver]));
-            if (!testCase.Precondition.Satisfied) continue;
+            for (var receiver = 0; receiver < MetamorphicTables.ReceiverShapes.Length; receiver++)
+                for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
+                    for (var optimize = 0; optimize < 2; optimize++)
+                    {
+                        var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
+                            [0x03, 0, (byte)mode, 1, 1, (byte)optimize, (byte)chain, (byte)receiver]));
+                        if (!testCase.Precondition.Satisfied) continue;
 
-            var execution = MetamorphicExecutor.Execute(testCase);
-            if (!execution.Accepted) continue;
-            accepted++;
+                        var execution = MetamorphicExecutor.Execute(testCase);
+                        if (!execution.Accepted) continue;
+                        accepted++;
 
-            Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
+                        Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
 
-            // Where the exact relation was selected it must genuinely hold, not merely pass the
-            // weaker inequality the directional relation would have applied.
-            if (testCase.OperationalRelation == MetamorphicOperationalRelation.ExactMaterializationEqual
-                && MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
-            {
-                Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
-                Assert.Equal(execution.Left.MaterializedStringChars, execution.Right.MaterializedStringChars);
-            }
-        }
+                        // Where the exact relation was selected it must genuinely hold, not merely pass the
+                        // weaker inequality the directional relation would have applied.
+                        if (testCase.OperationalRelation == MetamorphicOperationalRelation.ExactMaterializationEqual
+                            && MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
+                        {
+                            Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
+                            Assert.Equal(execution.Left.MaterializedStringChars, execution.Right.MaterializedStringChars);
+                        }
+                    }
 
         Assert.True(accepted > 0, "the chain family produced no accepted case");
     }
@@ -1396,27 +1398,27 @@ public class MetamorphicPhase2FamilyTests
         var rejections = 0;
 
         for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
-        for (var optimize = 0; optimize < 2; optimize++)
-        {
-            var cumulative = definition.SupportedLimitModes[mode]
-                is MetamorphicLimitMode.CumulativeItems or MetamorphicLimitMode.Both;
-
-            var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
-                [0x03, 0, (byte)mode, 1, 1, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
-
-            var rejected = !testCase.Precondition.Satisfied;
-            if (rejected)
+            for (var optimize = 0; optimize < 2; optimize++)
             {
-                Assert.Equal("fused-chain-does-not-share-the-cumulative-item-budget", testCase.Precondition.Reason);
-                rejections++;
-            }
+                var cumulative = definition.SupportedLimitModes[mode]
+                    is MetamorphicLimitMode.CumulativeItems or MetamorphicLimitMode.Both;
 
-            // For the two cumulative-item modes the rejection IS the effective fusion condition;
-            // no other mode is ever rejected for this reason.
-            Assert.Equal(
-                cumulative && MetamorphicLimitPolicy.SequencePipelineFusionCanApply(testCase.EnableOptimizations, testCase.Limits),
-                rejected);
-        }
+                var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
+                    [0x03, 0, (byte)mode, 1, 1, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
+
+                var rejected = !testCase.Precondition.Satisfied;
+                if (rejected)
+                {
+                    Assert.Equal("fused-chain-does-not-share-the-cumulative-item-budget", testCase.Precondition.Reason);
+                    rejections++;
+                }
+
+                // For the two cumulative-item modes the rejection IS the effective fusion condition;
+                // no other mode is ever rejected for this reason.
+                Assert.Equal(
+                    cumulative && MetamorphicLimitPolicy.SequencePipelineFusionCanApply(testCase.EnableOptimizations, testCase.Limits),
+                    rejected);
+            }
 
         Assert.Equal(2, rejections);   // CumulativeItems and Both, optimizations on
     }
@@ -1446,6 +1448,42 @@ public class MetamorphicPhase2FamilyTests
         }
 
         Assert.True(accepted > 0, "the user-extension family produced no accepted case");
+    }
+
+    /// <summary>
+    /// The fluent spread form lowers to the same call AST as its explicit
+    /// counterpart, so every accepted stratified point must agree on value or
+    /// structured error, resource classification, evaluation steps,
+    /// materialization, and peak call depth.
+    /// </summary>
+    [Fact]
+    public void SpreadSpellingParity_AgreesOnSemanticsAndDeclaredWorkAtEveryParameterPoint()
+    {
+        var accepted = 0;
+        var exactWork = 0;
+        foreach (var parameters in OfFamily(MetamorphicFamily.SpreadSpellingParity))
+        {
+            var testCase = MetamorphicTemplates.Build(parameters);
+            var execution = MetamorphicExecutor.Execute(testCase);
+            if (!execution.Accepted) continue;
+            accepted++;
+
+            Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
+            if (testCase.OperationalRelation != MetamorphicOperationalRelation.ExactObservedWorkEqual
+                || !MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
+            {
+                continue;
+            }
+
+            exactWork++;
+            Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
+            Assert.Equal(execution.Left.MaterializedStringChars, execution.Right.MaterializedStringChars);
+            Assert.Equal(execution.Left.EvaluationSteps, execution.Right.EvaluationSteps);
+            Assert.Equal(execution.Left.PeakDynamicDepth, execution.Right.PeakDynamicDepth);
+        }
+
+        Assert.True(accepted > 0, "the spread-spelling family produced no accepted case");
+        Assert.True(exactWork > 0, "the fluent spread contexts produced no exact-work witness");
     }
 
     // ── Comparator ───────────────────────────────────────────────────────────
@@ -1520,8 +1558,8 @@ public class MetamorphicPhase2FamilyTests
         ];
 
         foreach (var fingerprint in seen.Keys)
-        foreach (var field in fields)
-            Assert.Contains(field, fingerprint, StringComparison.Ordinal);
+            foreach (var field in fields)
+                Assert.Contains(field, fingerprint, StringComparison.Ordinal);
     }
 
     /// <summary>

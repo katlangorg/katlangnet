@@ -1,2 +1,0 @@
-h(a, mid..., z) = mid.count
-Output = h(1, 2, 3, 4)

@@ -1,4 +1,4 @@
--- KatLang v0.8.134 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.146 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init boundaries).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -45,7 +45,7 @@
 --       when the group contains exactly one clause and that sole head is a
 --       recursive parameter pattern made only of captures and structural sequence-value patterns
 --       (for example `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
---       `CountSequenceValue((values...)) = values.count`)
+--       `CountSequenceValue((*values)) = values.count`)
 --     - multi-clause families and clause heads that require literal or
 --       whole-argument conditional matching elaborate to `Algorithm.conditional`
 --
@@ -117,7 +117,7 @@ abbrev Assoc (K V : Type) := List (Prod K V)  -- association list
 
 inductive ParameterKind where
   | normal
-  | variadic
+  | collecting
   deriving Repr, BEq, DecidableEq
 
 structure CallableParameter where
@@ -138,7 +138,7 @@ structure CallableSignature where
 def CallableParameter.displayName (parameter : CallableParameter) : String :=
   match parameter.kind with
   | .normal => parameter.name
-  | .variadic => parameter.name ++ "..."
+  | .collecting => "*" ++ parameter.name
 
 namespace ParameterPattern
   partial def captures : ParameterPattern -> List CallableParameter
@@ -158,10 +158,10 @@ namespace ParameterPattern
 
   /-- True when the pattern list itself contains a collecting binding (nested
       captures inside sequence-value patterns do not count).
-      C#: `ParameterPattern.HasVariadicCaptureAtCurrentLevel`. -/
-  def hasVariadicCaptureAtCurrentLevel (patterns : List ParameterPattern) : Bool :=
+      C#: `ParameterPattern.HasCollectingCaptureAtCurrentLevel`. -/
+  def hasCollectingCaptureAtCurrentLevel (patterns : List ParameterPattern) : Bool :=
     patterns.any (fun
-      | .capture parameter => parameter.kind == ParameterKind.variadic
+      | .capture parameter => parameter.kind == ParameterKind.collecting
       | _ => false)
 
   def hasRepeatedCaptureNames (patterns : List ParameterPattern) : Bool :=
@@ -191,11 +191,11 @@ def callableParameterNameIsIdentifierLike (name : Ident) : Bool :=
   | first :: rest =>
       callableParameterNameStartChar first && rest.all callableParameterNameRestChar
 
-def CallableSignature.variadicCount (signature : CallableSignature) : Nat :=
-  (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.variadic)).length
+def CallableSignature.collectingCount (signature : CallableSignature) : Nat :=
+  (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.collecting)).length
 
-def CallableSignature.hasAtMostOneVariadic (signature : CallableSignature) : Bool :=
-  signature.variadicCount <= 1
+def CallableSignature.hasAtMostOneCollecting (signature : CallableSignature) : Bool :=
+  signature.collectingCount <= 1
 
 def CallableSignature.emptyParameterName? (signature : CallableSignature) : Bool :=
   signature.parameters.any (fun parameter => parameter.name == "")
@@ -215,8 +215,8 @@ def CallableSignature.duplicateParameterName? (signature : CallableSignature) : 
   go [] signature.parameters
 
 def CallableSignature.validationError? (signature : CallableSignature) : Option String :=
-  if !signature.hasAtMostOneVariadic then
-    some s!"Callable signature `{signature.name}` cannot contain more than one variadic parameter."
+  if !signature.hasAtMostOneCollecting then
+    some s!"Callable signature `{signature.name}` cannot contain more than one collecting parameter."
   else if signature.emptyParameterName? then
     some s!"Callable signature `{signature.name}` contains an empty parameter name."
   else
@@ -229,12 +229,12 @@ def CallableSignature.validationError? (signature : CallableSignature) : Option 
             some s!"Callable signature `{signature.name}` contains duplicate parameter name `{parameterName}`."
         | none => none
 
-def CallableSignature.variadicIndex? (signature : CallableSignature) : Option Nat :=
+def CallableSignature.collectingIndex? (signature : CallableSignature) : Option Nat :=
   let rec go : Nat -> List CallableParameter -> Option Nat
     | _, [] => none
     | index, parameter :: rest =>
         match parameter.kind with
-        | .variadic => some index
+        | .collecting => some index
         | .normal => go (index + 1) rest
   go 0 signature.parameters
 
@@ -242,17 +242,17 @@ def CallableSignature.requiredNormalParameterCount (signature : CallableSignatur
   (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.normal)).length
 
 def CallableSignature.acceptsItemCount (signature : CallableSignature) (count : Nat) : Bool :=
-  -- A variadic user signature consumes an item supply: it accepts at least
-  -- the fixed (non-variadic) count. Fixed signatures, including collection
+  -- A collecting user signature consumes an item supply: it accepts at least
+  -- the fixed (non-collecting) count. Fixed signatures, including collection
   -- builtins, stay exact.
-  match signature.variadicIndex? with
+  match signature.collectingIndex? with
   | some _ => count >= signature.requiredNormalParameterCount
   | none => count == signature.parameters.length
 
 structure CallableArgumentBindings (α : Type) where
   normalBindings : List (Prod Ident α)
-  variadicName? : Option Ident := none
-  variadicItems : List α := []
+  collectingName? : Option Ident := none
+  collectingItems : List α := []
   deriving Repr
 
 inductive PropExposure where
@@ -314,10 +314,10 @@ def CallableSignature.validate (signature : CallableSignature) : Except Error Un
   | some message => .error (Error.illegalInEval message)
   | none => .ok ()
 
-/-- Variable-middle variadic-parameter binding (mirrors C# `BindCallableArguments`). The fixed
-    prefix binds from the front, the fixed suffix from the back, and the variadic
+/-- Variable-middle collecting-parameter binding (mirrors C# `BindCallableArguments`). The fixed
+    prefix binds from the front, the fixed suffix from the back, and the collecting
     captures the remaining middle items (zero or more). The minimum is the FIXED
-    (non-variadic) parameter count: like every other collecting binding, the variadic parameter may
+    (non-collecting) parameter count: like every other collecting binding, the collecting parameter may
     collect ZERO items (an empty collected segment is the exact list `[]`) — the same rule the
     shared pattern binder applies (`bindParameterPatternList`: required =
     patterns - 1).
@@ -329,7 +329,7 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
   match signature.validate with
   | .error err => .error err
   | .ok () =>
-      match signature.variadicIndex? with
+      match signature.collectingIndex? with
       | none =>
           if items.length == signature.parameters.length then
             .ok {
@@ -337,27 +337,27 @@ def bindCallableArguments (signature : CallableSignature) (items : List α)
             }
           else
             .error (arityMismatch signature.parameters.length items.length)
-      | some variadicIndex =>
-          -- Minimum = fixed (non-variadic) parameter count, so the collecting binding may
+      | some collectingIndex =>
+          -- Minimum = fixed (non-collecting) parameter count, so the collecting binding may
           -- collect zero items (empty collected segment = `[]`) at every receiver,
           -- including loop-state binding.
           let minimum := signature.parameters.length - 1
           if items.length < minimum then
             .error (arityMismatch minimum items.length)
           else
-            let suffixParameters := signature.parameters.drop (variadicIndex + 1)
+            let suffixParameters := signature.parameters.drop (collectingIndex + 1)
             let suffixCount := suffixParameters.length
             let suffixStart := items.length - suffixCount
-            let prefixParameters := signature.parameters.take variadicIndex
-            let prefixItems := items.take variadicIndex
+            let prefixParameters := signature.parameters.take collectingIndex
+            let prefixItems := items.take collectingIndex
             let suffixItems := items.drop suffixStart
-            let middleItems := (items.drop variadicIndex).take (suffixStart - variadicIndex)
+            let middleItems := (items.drop collectingIndex).take (suffixStart - collectingIndex)
             .ok {
               normalBindings :=
                 (List.zip (prefixParameters.map (fun parameter => parameter.name)) prefixItems) ++
                 (List.zip (suffixParameters.map (fun parameter => parameter.name)) suffixItems)
-              variadicName? := (signature.parameters.drop variadicIndex).head?.map (fun parameter => parameter.name)
-              variadicItems := middleItems
+              collectingName? := (signature.parameters.drop collectingIndex).head?.map (fun parameter => parameter.name)
+              collectingItems := middleItems
             }
 
 --------------------------------------------------------------------------------
@@ -495,7 +495,7 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
 
 private def sequenceBuiltinTotalArgCountDesc
     (signature : CallableSignature) : String :=
-  if signature.variadicIndex?.isSome then
+  if signature.collectingIndex?.isSome then
     let minimum := signature.requiredNormalParameterCount
     if minimum = 0 then "any number of" else s!"at least {minimum}"
   else
@@ -749,7 +749,7 @@ mutual
     | binary  : BinaryOp -> Expr -> Expr -> Expr
     | index   : Expr -> Expr -> Expr
     -- * sequenceConstruct: INTERNAL sequence-join node retained for semantic
-    --   AST compatibility (surface spreading is the named `spread` intrinsic,
+    --   AST compatibility (surface spreading is the attached postfix spread marker `expr*`,
     --   `sequenceSpread`, and never builds this node).
     --   It is NOT the representation of written sequence-value syntax: the
     --   C# surface parser and production transformations have zero origin
@@ -767,22 +767,21 @@ mutual
     --   back to `()` rather than exposing higher-order empty sequence values.
     | emptySequence : Nat -> Expr
     -- * spread: UNARY representation over its single operand. The surface
-    --   spelling is the named `spread` intrinsic — the call form `spread(A)`
-    --   and the extension-property form `A.spread` BOTH lower to this one
-    --   node, so `sequenceSpread expr` spreads the top-level output items of
-    --   `expr` and contributes them to the surrounding supply (conceptually
-    --   `spread : Value -> Supply`; the receiver decides what the items
-    --   become). A spread never consumes a right operand — a following
-    --   expression is a separate expression-list item (`spread(A) B` is
-    --   `spread(A), B`); semicolon is not surface expression syntax. Nested
-    --   spread such as `spread(spread(A))` / `A.spread.spread` is
-    --   `sequenceSpread (sequenceSpread A)`; evaluation unwraps the chain
-    --   iteratively (`peelSequenceSpreadLayers`, stack-safe) and applies each
-    --   written layer compositionally — every layer opens one boundary of the
-    --   value the previous layer's supply would re-capture — so
-    --   `spread(spread(A))` agrees with `spread((spread(A)))` (a fixed point
-    --   for sequence values; a singleton-list chain such as
-    --   `[[7]].spread.spread` opens one list boundary per layer, while a
+    --   spelling is the attached postfix spread marker — `A*` lowers to this
+    --   one node — so `sequenceSpread expr` spreads the top-level output
+    --   items of `expr` and contributes them to the surrounding supply
+    --   (conceptually `spread : Value -> Supply`; the receiver decides what
+    --   the items become). A star with a same-line right operand is
+    --   MULTIPLICATION in surface syntax, so spreading before another
+    --   same-line supplied item requires a comma (`A*, B`; `A* B` is
+    --   `A * B`); semicolon is not surface expression syntax. Nested
+    --   spread such as `A**` is `sequenceSpread (sequenceSpread A)`;
+    --   evaluation unwraps the chain iteratively
+    --   (`peelSequenceSpreadLayers`, stack-safe) and applies each written
+    --   layer compositionally — every layer opens one boundary of the value
+    --   the previous layer's supply would re-capture — so `A**` agrees with
+    --   `(A*)*` (a fixed point for sequence values; a singleton-list chain
+    --   such as `[[7]]**` opens one list boundary per layer, while a
     --   multi-element list re-captures as a sequence after the first layer
     --   and then stays fixed).
     | sequenceSpread : Expr -> Expr
@@ -879,7 +878,7 @@ mutual
         elaborates to `Algorithm.mk` only when it contains exactly one clause
         and that sole head is a recursive capture/sequence-value parameter pattern such
         as `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
-        `CountSequenceValue((values...)) = values.count`. Multi-clause families and
+        `CountSequenceValue((*values)) = values.count`. Multi-clause families and
         literal/mixed heads such as
 
           F(0) = 0
@@ -1049,7 +1048,7 @@ namespace Result
       Atom/string -> singleton list; sequence value -> its items.
       A list value stays OPAQUE here: it is one item, so non-spread consumers
       (boundary re-counting, call binding) treat a list as a single exact
-      value. Only the spread intrinsic (`spreadItems`), deconstruction binding
+      value. Only the spread marker (`spreadItems`), deconstruction binding
       (`structureItems?`), the indexing `:` projection target view
       (`projectionItems`), and the post-binding builtin collection view
       (`builtinCollectionItems`, applied to the bound `collection` argument)
@@ -1060,7 +1059,7 @@ namespace Result
     | sequenceValue rs => rs
     | listValue rs => [listValue rs]
 
-  /-- Item view used by the spread intrinsic (`spread(expr)` / `expr.spread`): spread opens exactly ONE
+  /-- Item view used by the spread expression (`expr*`): spread opens exactly ONE
       structure boundary. Sequence values and exact list values open to their
       immediate items; atoms and strings supply themselves as one item.
       C#: `Result.SpreadItems`. -/
@@ -1399,7 +1398,7 @@ namespace Algorithm
   def declaresParameterName (a : Algorithm) (name : Ident) : Bool :=
     (parameterPatterns a).any (ParameterPattern.containsCaptureName name)
 
-  def variadicParam? (a : Algorithm) : Option (Nat × Ident) :=
+  def collectingParam? (a : Algorithm) : Option (Nat × Ident) :=
     if hasStructuredParameterPattern a then
       none
     else
@@ -1407,16 +1406,16 @@ namespace Algorithm
         | _, [] => none
         | index, parameter :: parameters =>
             match parameter.kind with
-            | .variadic => some (index, parameter.name)
+            | .collecting => some (index, parameter.name)
             | .normal => go (index + 1) parameters
       go 0 (parameters a)
 
   /-- A callable whose top-level parameter list consumes the supplied call
-      argument stream: any top-level variadic capture, whether a lone variadic
-      `name...` or a comma shape such as `x, y..., z`. A plain sequence-valued
+      argument stream: any top-level collecting capture, whether a lone collecting binding
+      `*name` or a comma shape such as `x, *y, z`. A plain sequence-valued
       argument stays one supplied argument; only explicit spread opens it first. -/
   def usesItemSupplyBinding (a : Algorithm) : Bool :=
-    (variadicParam? a).isSome
+    (collectingParam? a).isSome
 
   /-- Classify a same-name clause family after all of its clauses are known.
       This is the real ordinary-vs-conditional decision boundary.
@@ -1875,8 +1874,7 @@ def mergePatternAlgEnv (leftValues rightValues : ValEnv)
     a sequence value is unpacked into its elements.  This is the canonical ABI for
     translating an evaluated Result into positional arguments for bindParams.
     Exact list values are NOT unpacked: call-argument binding preserves a list
-    as one argument; only explicit caller-site `spread(value)` / `value.spread`
-    opens it. -/
+    as one argument; only an explicit caller-site spread `value*` opens it. -/
 def unpackArgs (r : Result) : List Result :=
   match r with
   | .atom _ => [r]
@@ -2105,7 +2103,7 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     FUNCTION-shaped — a builtin, a conditional clause family, or an algorithm
     declaring parameters/patterns — as opposed to a zero-parameter VALUE
     property that merely resolved through the dual algorithm channel. Used to
-    decide whether a valueless argument bound by a variadic parameter gets the targeted
+    decide whether a valueless argument bound by a collecting parameter gets the targeted
     "collects values, but ... is a function" diagnostic or surfaces its
     genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
 def Algorithm.isFunctionShaped : Algorithm -> Bool
@@ -2121,22 +2119,22 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
       canonicalizing boundary `Result.normalize (Result.sequenceValue xs)`
       (singleton erasure applies: `x = 1, 2, 3` is `(1, 2, 3)`, one supplied
       item is itself);
-    - `collect : Supply -> ListValue` — THIS operation: a collecting binding (variadic parameter)
+    - `collect : Supply -> ListValue` — THIS operation: a collecting binding (collecting parameter)
       materializes exactly the assigned items as one exact immutable list
       (`collectSegment [] = []`, `collectSegment [v] = [v]`, never erased);
-    - `spread : Value -> Supply` — the spread intrinsic (`Result.spreadItems`), which
+    - `spread : Value -> Supply` — the spread marker (`Result.spreadItems`), which
       opens one sequence OR list boundary.
 
-    Every collecting binding — deconstruction collecting bindings, single variadic parameters,
+    Every collecting binding — deconstruction collecting bindings, single collecting parameters,
     and mixed prefix/collecting/suffix parameter lists — binds its assigned middle
     supply through this single helper, after the receiver-specific supply
     preparation (call binding preserves argument slots; deconstruction may
     open one lone sequence or list). The round trip
-    `Result.spreadItems (collectSegment xs) = xs` makes variadic forwarding
-    ordinary list spread: `Forward(items...) = Target(items.spread)` re-supplies
+    `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter forwarding
+    ordinary list spread: `Forward(*items) = Target(items*)` re-supplies
     exactly the collected items with no hidden raw-supply metadata. A collecting
     value is one visible value, so its emitted count is always 1 (including
-    `[]`). C#: `CollectSegment` (inside `CreateVariadicCapture`). -/
+    `[]`). C#: `CollectSegment` (inside `CreateCollectingCapture`). -/
 def collectSegment (items : List Result) : Result :=
   Result.listValue items
 
@@ -2146,14 +2144,14 @@ def collectSegment (items : List Result) : Result :=
     produce an item supply of count 0, 1, or many, but the caller observes the
     same structural value with emitted count `Result.valueCount value` (0 for the
     empty sequence value, otherwise 1). A multi-output body therefore becomes one
-    sequence value at the boundary; only an explicit caller-site `spread`
+    sequence value at the boundary; only an explicit caller-site spread `value*`
     re-spreads it (via `Result.spreadItems`, which reads the value, not this count).
 
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already canonicalized redundant unary empty structure. It is
     applied only to public result boundaries, never to internal
     body/root output accumulation (`evalAlgOutputCountedCore`), which must keep
-    its multi-item counts. (Variadic parameter storage needs no re-count:
+    its multi-item counts. (Collecting parameter storage needs no re-count:
     collecting binding collects one exact list value, so its stored count is already
     1.) Lexical zero-arg property access (`evalCounted .resolve`) and the `if`
     builtin already perform this same re-count inline; this helper generalizes
@@ -2187,11 +2185,11 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
     Used by evaluation together with `peelSequenceSpreadLayers`: each written
     `.sequenceSpread` layer opens exactly one structure boundary, applied compositionally
-    and iteratively (stack-safe for deep `A.spread.spread` chains, matching the C#
+    and iteratively (stack-safe for deep `A**` chains, matching the C#
     evaluator). For sequence values the extra layers are fixed points (the
     re-captured sequence re-spreads to the same items), so stacked spread is
     value-equivalent to one spread; for exact LIST values each layer opens one
-    more list boundary (`[[7]].spread.spread` is `7`, like `([[7]].spread).spread`). This is
+    more list boundary (`[[7]]**` is `7`, like `([[7]]*)*`). This is
     NOT binary spine flattening: there is no right operand, it only unwraps
     the single-operand chain. -/
 partial def peelSequenceSpread : Expr -> Expr
@@ -2259,7 +2257,7 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
   | .capture parameter =>
       match parameter.kind with
       | .normal => pure { countedParamEnv := [(parameter.name, input)] }
-      | .variadic => .error Error.badArity
+      | .collecting => .error Error.badArity
   | .sequenceValue items =>
       let sequenceValueItems? :=
         -- A received sequence value or exact list value opens to its
@@ -2283,13 +2281,13 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
 
 partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
   (inputs : List CountedResult) : EvalM CountedParameterPatternBindings := do
-  let rec findVariadic : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
+  let rec findCollecting : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
     | [], _ => none
     | (.capture parameter) :: rest, index =>
         match parameter.kind with
-        | .variadic => some (index, parameter)
-        | .normal => findVariadic rest (index + 1)
-    | (.sequenceValue _) :: rest, index => findVariadic rest (index + 1)
+        | .collecting => some (index, parameter)
+        | .normal => findCollecting rest (index + 1)
+    | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
   let merge (left right : CountedParameterPatternBindings)
       : EvalM CountedParameterPatternBindings := do
     let countedParamEnv <- mergeEqualCountedParamEnv left.countedParamEnv right.countedParamEnv
@@ -2301,43 +2299,43 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let rest <- bindPairs patterns' inputs'
         merge current rest
     | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
-  match findVariadic patterns 0 with
+  match findCollecting patterns 0 with
   | none =>
       if patterns.length != inputs.length then
         .error (Error.arityMismatch patterns.length inputs.length)
       else
         bindPairs patterns inputs
-  | some (variadicIndex, variadicParameter) =>
+  | some (collectingIndex, collectingParameter) =>
       let required := patterns.length - 1
       if inputs.length < required then
         .error (Error.arityMismatch required inputs.length)
       else
-        let prefixPatterns := patterns.take variadicIndex
-        let prefixInputs := inputs.take variadicIndex
-        let suffixCount := patterns.length - variadicIndex - 1
-        let suffixPatterns := patterns.drop (variadicIndex + 1)
+        let prefixPatterns := patterns.take collectingIndex
+        let prefixInputs := inputs.take collectingIndex
+        let suffixCount := patterns.length - collectingIndex - 1
+        let suffixPatterns := patterns.drop (collectingIndex + 1)
         let suffixInputs := inputs.drop (inputs.length - suffixCount)
-        let capturedInputs := (inputs.drop variadicIndex).take (inputs.length - suffixCount - variadicIndex)
+        let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
         let prefixBindings <- bindPairs prefixPatterns prefixInputs
         let suffixBindings <- bindPairs suffixPatterns suffixInputs
         let capturedValues := capturedInputs.map Prod.fst
         -- Collecting binding COLLECTS: the assigned supply becomes one exact
         -- immutable list value, emitted count 1 (a list is one visible value).
         let captured := collectSegment capturedValues
-        let capturedBinding := (variadicParameter.name, (captured, 1))
-        let variadicBindings : CountedParameterPatternBindings :=
+        let capturedBinding := (collectingParameter.name, (captured, 1))
+        let collectingBindings : CountedParameterPatternBindings :=
           { countedParamEnv := [capturedBinding] }
-        let withVariadic <- merge prefixBindings variadicBindings
-        merge withVariadic suffixBindings
+        let withCollecting <- merge prefixBindings collectingBindings
+        merge withCollecting suffixBindings
       end
 
 /-- Callback binding for a flat callee whose top-level parameters include a
-    variadic parameter. The callback argument supply keeps the established
+    collecting parameter. The callback argument supply keeps the established
     flat-callback row convention: when fewer argument slots are supplied than
     top-level parameters, the final supplied argument opens into its items
     (matching `callee(S:i)`; exact lists stay opaque), exactly as
     `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
-    slots then bind through the shared prefix/collecting/suffix binder, so the variadic
+    slots then bind through the shared prefix/collecting/suffix binder, so the collecting
     parameter COLLECTS its allocated slots as one exact immutable list.
     C#: `BindCountedCallbackParameterPatternList`. -/
 def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
@@ -2444,11 +2442,10 @@ def negativeIntPow (base exponent : Int) : EvalM Result :=
     source-level open declaration as one comma-separated target list
     (`open A, B, C`) and validates each target as an individual
     Lean-compatible form before evaluation; `;`/adjacency are not open
-    separators.  Spread is not a valid open target: the C# parser
-    rejects an ellipsis attached to an open target as a parse error and
-    rejects named spread targets
-    (`open spread(A)`, `open A.spread`) through open-form validation,
-    so no accepted SequenceSpread ever reaches open resolution. -/
+    separators.  Spread is not a valid open target: a spread-marked
+    target (`open A*`) parses to a spread expression and is rejected by
+    open-form validation, so no accepted SequenceSpread ever reaches open
+    resolution. -/
 inductive OpenForm where
   | block   : Algorithm -> OpenForm
   | resolve : Ident -> OpenForm
@@ -2543,8 +2540,8 @@ def openExprName (e : Expr) : String :=
   -- SequenceConstruct is an internal value node; ';' is not surface syntax,
   -- so render it as one sequence value, never with ';'.
   | .sequenceConstruct a b => "(" ++ openExprName a ++ ", " ++ openExprName b ++ ")"
-  -- A spread expression renders in the canonical named-intrinsic form.
-  | .sequenceSpread a => "spread(" ++ openExprName a ++ ")"
+  -- A spread expression renders in the canonical postfix-marker form.
+  | .sequenceSpread a => openExprName a ++ "*"
   -- Empty sequence core nodes render by depth for diagnostics.
   | .emptySequence depth => emptySequenceText depth
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
@@ -2574,8 +2571,13 @@ partial def exprDiagnosticName : Expr -> String
   | .sequenceConstruct left right => "(" ++ exprDiagnosticName left ++ ", " ++ exprDiagnosticName right ++ ")"
   -- Empty sequence value `()` and its nested forms.
   | .emptySequence depth => emptySequenceText depth
-  -- A spread expression renders in the canonical named-intrinsic form.
-  | .sequenceSpread operand => "spread(" ++ exprDiagnosticName operand ++ ")"
+  -- Postfix spread binds to the completed operand. Unary and binary operands
+  -- need parentheses so the diagnostic text reads back with the same AST.
+  | .sequenceSpread operand =>
+      let operandName := exprDiagnosticName operand
+      (match operand with
+       | .unary _ _ | .binary _ _ _ => "(" ++ operandName ++ ")"
+       | _ => operandName) ++ "*"
   -- Exact list literal `[a, b, c]`.
   | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
@@ -2809,7 +2811,7 @@ def isLiftableArgResolutionError : Error → Bool
 
 def bindLoopStepValueEnv (parameters : List CallableParameter)
     (normalBindings : List (Prod Ident Result))
-    (variadicName : Ident) (captured : Result) : EvalM ValEnv :=
+    (collectingName : Ident) (captured : Result) : EvalM ValEnv :=
   match parameters with
   | [] =>
       match normalBindings with
@@ -2817,14 +2819,14 @@ def bindLoopStepValueEnv (parameters : List CallableParameter)
       | _ => .error Error.badArity
   | parameter :: rest =>
       match parameter.kind with
-      | .variadic => do
-          let vals <- bindLoopStepValueEnv rest normalBindings variadicName captured
-          pure ((variadicName, captured) :: vals)
+      | .collecting => do
+          let vals <- bindLoopStepValueEnv rest normalBindings collectingName captured
+          pure ((collectingName, captured) :: vals)
       | .normal =>
           match normalBindings with
           | [] => .error Error.badArity
           | binding :: bindings' => do
-              let vals <- bindLoopStepValueEnv rest bindings' variadicName captured
+              let vals <- bindLoopStepValueEnv rest bindings' collectingName captured
               pure ((binding.fst, binding.snd) :: vals)
 
 def loopStateResult (stateSlots : List Result) : Result :=
@@ -2868,13 +2870,13 @@ def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
     countedParamEnv := reprStr ctx.countedParamEnv
   }
 
-def reducerAccumulatorSideHasTopLevelVariadic : Algorithm -> Bool
+def reducerAccumulatorSideHasTopLevelCollecting : Algorithm -> Bool
   | .mk _ patterns _ _ _ =>
       match patterns with
       | [] => false
       | _ :: accumulatorPatterns =>
           accumulatorPatterns.any (fun
-            | .capture parameter => parameter.kind == .variadic
+            | .capture parameter => parameter.kind == .collecting
             | _ => false)
   | _ => false
 
@@ -3252,10 +3254,10 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-/-- Recognize a parenthesized spread receiver such as `(Arg.spread)`:
+/-- Recognize a parenthesized spread receiver such as `(Arg*)`:
     a bare zero-parameter block whose single output is a `sequenceSpread`.
     This explicit spread form is the only receiver shape that may feed its
-    top-level items into a leading flat variadic parameter. -/
+    top-level items into a leading flat collecting parameter. -/
 def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
   match receiver with
   | .block (.mk none [] [] [] [supplied]) =>
@@ -3265,17 +3267,17 @@ def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
   | _ => none
 
 /-- True when the callee's parameter list is flat (no sequence-value patterns)
-    and starts with a variadic parameter, e.g. `F(values..., last)`.
+    and starts with a collecting parameter, e.g. `F(*values, last)`.
     Flat-binder core conditionals are classified through their ordinary
     user-call equivalent. -/
-def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
+def hasLeadingFlatCollectingParameter (callee : Algorithm) : Bool :=
   let effectiveCallee := (flatBinderUserEquivalent? callee).getD callee
   let rec allFlatCaptures : List ParameterPattern -> Bool
     | [] => true
     | .capture _ :: rest => allFlatCaptures rest
     | .sequenceValue _ :: _ => false
   match Algorithm.parameterPatterns effectiveCallee with
-  | .capture { kind := .variadic, .. } :: rest => allFlatCaptures rest
+  | .capture { kind := .collecting, .. } :: rest => allFlatCaptures rest
   | _ => false
 
 /-- Assemble the argument algorithm for ordinary lexical dot-call fallback:
@@ -3283,15 +3285,15 @@ def hasLeadingFlatVariadicParameter (callee : Algorithm) : Bool :=
 
     The injected receiver is always ONE leading argument segment for slot
     allocation, so suffix parameters bind from the back exactly as in the
-    canonical call. When the callee has a leading flat variadic parameter,
-    that segment's emitted-count metadata may expand within the variadic
+    canonical call. When the callee has a leading flat collecting parameter,
+    that segment's emitted-count metadata may expand within the collecting segment
     capture after slot allocation, but the receiver is never pre-expanded.
 
-    A parenthesized spread receiver, as in `(Arg.spread).F`, is the
-    explicit opt-in: only when the callee has a leading flat variadic does
+    A parenthesized spread receiver, as in `(Arg*).F`, is the
+    explicit opt-in: only when the callee has a leading flat collecting parameter does
     the inner spread replace the receiver segment and pre-expand into the
     receiver's top-level items before slot allocation, matching the
-    canonical `F(Arg.spread, C, D)`. Fixed receiver parameters keep even a
+    canonical `F(Arg*, C, D)`. Fixed receiver parameters keep even a
     spread receiver as one argument boundary. -/
 def prepareLexicalDotCallArgs
     (callee : Algorithm) (receiver : Expr) (extraArgs : Option Algorithm)
@@ -3299,15 +3301,15 @@ def prepareLexicalDotCallArgs
   let explicitArgs := match extraArgs with
     | some args => Algorithm.output args
     | none => []
-  let receiverHasLeadingFlatVariadic := hasLeadingFlatVariadicParameter callee
+  let receiverHasLeadingFlatCollecting := hasLeadingFlatCollectingParameter callee
   let (receiverExpr, preserveReceiverBoundary) :=
     match parenthesizedSequenceSpreadReceiver? receiver with
     | some supplied =>
-        if receiverHasLeadingFlatVariadic then
+        if receiverHasLeadingFlatCollecting then
           (supplied, false)
         else
           (receiver, true)
-    | none => (receiver, !receiverHasLeadingFlatVariadic)
+    | none => (receiver, !receiverHasLeadingFlatCollecting)
   let outputExprs := [receiverExpr] ++ explicitArgs
   let preserveBoundaries := [preserveReceiverBoundary] ++ explicitArgs.map (fun _ => false)
   (Algorithm.mk none [] [] [] outputExprs, preserveBoundaries)
@@ -3654,7 +3656,7 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorith
         .error err
 
 /-- Resolve argument expressions to algorithms for builtin dispatch, tagging
-    each argument with whether it is a named spread expression.
+    each argument with whether it is a spread expression.
     Unlike a strict `mapM resolveAlg`, this wraps *liftable* non-resolvable
     expressions (`notAnAlgorithm`, `illegalInEval`) in trivial
     `Algorithm.ofExpr` wrappers wired to the caller scope (see
@@ -3754,7 +3756,7 @@ mutual
               .error (input.error?.getD Error.badArity)
             else
               pure { argEnv := argEnv, countedParamEnv := [], algEnv := algEnv }
-        | .variadic => .error Error.badArity
+        | .collecting => .error Error.badArity
     | .sequenceValue items => do
         let sequenceValueItems? :=
           match input.explicitSequenceValueItems? with
@@ -3764,7 +3766,7 @@ mutual
             -- A received sequence value or exact list value opens to its
             -- immediate items (`Result.structureItems?`): the deconstruction
             -- receiver opens ONE lone structure boundary of either kind, so
-            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3].spread`.
+            -- `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]*`.
             -- A non-grouped scalar is a one-item supply for the
             -- prefix/collecting/suffix matcher (the same normalization the function
             -- deconstruction path applies).
@@ -3785,13 +3787,13 @@ mutual
   def bindParameterPatternList (patterns : List ParameterPattern)
       (inputs : List ParameterPatternInput) (allowAlgorithmBindings : Bool)
       : EvalM ParameterPatternBindings := do
-    let rec findVariadic : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
+    let rec findCollecting : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
       | [], _ => none
       | (.capture parameter) :: rest, index =>
           match parameter.kind with
-          | .variadic => some (index, parameter)
-          | .normal => findVariadic rest (index + 1)
-      | (.sequenceValue _) :: rest, index => findVariadic rest (index + 1)
+          | .collecting => some (index, parameter)
+          | .normal => findCollecting rest (index + 1)
+      | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
     let merge (left right : ParameterPatternBindings)
         : EvalM ParameterPatternBindings := do
       let argEnv <- mergeEqualValEnv left.argEnv right.argEnv
@@ -3814,23 +3816,23 @@ mutual
       decreasing_by
         all_goals simp_wf
         all_goals omega
-    match findVariadic patterns 0 with
+    match findCollecting patterns 0 with
     | none =>
         if patterns.length != inputs.length then
           .error (Error.arityMismatch patterns.length inputs.length)
         else
           bindPairs patterns inputs
-    | some (variadicIndex, variadicParameter) =>
+    | some (collectingIndex, collectingParameter) =>
         let required := patterns.length - 1
         if inputs.length < required then
           .error (Error.arityMismatch required inputs.length)
         else
-          let prefixPatterns := patterns.take variadicIndex
-          let prefixInputs := inputs.take variadicIndex
-          let suffixCount := patterns.length - variadicIndex - 1
-          let suffixPatterns := patterns.drop (variadicIndex + 1)
+          let prefixPatterns := patterns.take collectingIndex
+          let prefixInputs := inputs.take collectingIndex
+          let suffixCount := patterns.length - collectingIndex - 1
+          let suffixPatterns := patterns.drop (collectingIndex + 1)
           let suffixInputs := inputs.drop (inputs.length - suffixCount)
-          let capturedInputs := (inputs.drop variadicIndex).take (inputs.length - suffixCount - variadicIndex)
+          let capturedInputs := (inputs.drop collectingIndex).take (inputs.length - suffixCount - collectingIndex)
           let prefixBindings <- bindPairs prefixPatterns prefixInputs
           let suffixBindings <- bindPairs suffixPatterns suffixInputs
           let rec collectValues : List ParameterPatternInput -> EvalM (List Result)
@@ -3850,12 +3852,12 @@ mutual
                     -- VALUE property whose body failed is NOT a function: its
                     -- genuine evaluation error surfaces.
                     -- C#: `BindParameterPatternList` (whose message also
-                    -- names the variadic parameter).
+                    -- names the collecting parameter).
                     match input.algorithm? with
                     | some alg =>
                         if alg.isFunctionShaped then
                           .error (Error.typeMismatch
-                            "A variadic parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
+                            "A collecting parameter collects values, but a supplied argument is a function. Pass a value, or call the function so its result is collected.")
                         else
                           .error (input.error?.getD Error.badArity)
                     | none => .error (input.error?.getD Error.badArity)
@@ -3863,20 +3865,20 @@ mutual
           -- Collecting binding COLLECTS: the assigned supply becomes one exact
           -- immutable list value, emitted count 1 (a list is one visible value).
           let captured := collectSegment capturedValues
-          let variadicBindings : ParameterPatternBindings :=
-            { argEnv := [(variadicParameter.name, captured)],
-              countedParamEnv := [(variadicParameter.name, (captured, 1))],
+          let collectingBindings : ParameterPatternBindings :=
+            { argEnv := [(collectingParameter.name, captured)],
+              countedParamEnv := [(collectingParameter.name, (captured, 1))],
               algEnv := [] }
-          let withVariadic <- merge prefixBindings variadicBindings
-          merge withVariadic suffixBindings
+          let withCollecting <- merge prefixBindings collectingBindings
+          merge withCollecting suffixBindings
   termination_by 2 * sizeOf patterns + 1
   decreasing_by
     all_goals simp_wf
     all_goals first
       | omega
-      | (have take_le := list_take_sizeOf_le variadicIndex patterns
+      | (have take_le := list_take_sizeOf_le collectingIndex patterns
          omega)
-      | (have drop_le := list_drop_sizeOf_le (variadicIndex + 1) patterns
+      | (have drop_le := list_drop_sizeOf_le (collectingIndex + 1) patterns
          omega)
 end
 
@@ -3891,7 +3893,7 @@ def bindLoopStepState (step : Algorithm) (stateValues : List Result)
   if Algorithm.requiresPatternBinding step then
     bindStructuredLoopState step stateValues
   else
-    match Algorithm.variadicParam? step with
+    match Algorithm.collectingParam? step with
     | none => do
         let argEnv <- bindParams (Algorithm.params step) stateValues
         pure (argEnv, [])
@@ -3901,15 +3903,15 @@ def bindLoopStepState (step : Algorithm) (stateValues : List Result)
           match bindCallableArguments signature stateValues (fun required actual => Error.arityMismatch required actual) with
           | .ok value => pure value
           | .error err => .error err
-        match bindings.variadicName? with
+        match bindings.collectingName? with
         | none => .error Error.badArity
-        | some variadicName =>
+        | some collectingName =>
             -- Collecting binding COLLECTS (same rule as the pattern binders): the
             -- assigned state slots become one exact immutable list value.
-            let captured := collectSegment bindings.variadicItems
-            let argEnv <- bindLoopStepValueEnv signature.parameters bindings.normalBindings variadicName captured
-            let variadicBinding := (variadicName, (captured, 1))
-            pure (argEnv, [variadicBinding])
+            let captured := collectSegment bindings.collectingItems
+            let argEnv <- bindLoopStepValueEnv signature.parameters bindings.normalBindings collectingName captured
+            let collectingBinding := (collectingName, (captured, 1))
+            pure (argEnv, [collectingBinding])
 
 /-
 Evaluator recursion core.
@@ -3940,12 +3942,12 @@ mutual
       evaluators can never disagree on an output value. Each NON-spread output
       expression contributes exactly one visible slot, even when it evaluates to
       the empty sequence value `()` (counted output `0`); an explicit spread
-      `expr.spread` contributes its expanded items, so a spread of `()` contributes
-      zero items and `(A.spread, 99)` splices `A`'s items before `99`. The slots are
+      `expr*` contributes its expanded items, so a spread of `()` contributes
+      zero items and `(A*, 99)` splices `A`'s items before `99`. The slots are
       combined with `combineOutputSlots`, which preserves singleton slot
       structure and deliberately does NOT apply the general `Result.normalize`,
       which would recursively erase useful one-item sequence structure.
-      (Loop-step state, which must keep a variadic `history...` structured, goes
+      (Loop-step state, which must keep a collecting `*history` structured, goes
       through `evalAlgOutputSlots` with its explicit preserve flag, not here.)
 
       A user-defined algorithm value may exist structurally without output, but
@@ -4165,13 +4167,13 @@ mutual
             let newCtx := ctx.withCountedParamEnv
               (bindings.countedParamEnv ++ CountedParamEnv.shadow ctx.countedParamEnv names)
             evalAlgOutputCounted callee newCtx env
-          -- A flat callee with a top-level variadic parameter (`Rows.map(F)` with
-          -- `F(x, y..., z)` or a single-variadic `Collect(items...)`) binds through
-          -- the shared prefix/collecting/suffix binder so the variadic parameter
+          -- A flat callee with a top-level collecting parameter (`Rows.map(F)` with
+          -- `F(x, *y, z)` or a single-collecting `Collect(*items)`) binds through
+          -- the shared prefix/collecting/suffix binder so the collecting parameter
           -- COLLECTS an exact immutable list, after the same final-argument
           -- row expansion the fixed-only flat path uses below. Single-variadic
           -- callees keep the whole iterated element as one collected slot.
-          else if ParameterPattern.hasVariadicCaptureAtCurrentLevel
+          else if ParameterPattern.hasCollectingCaptureAtCurrentLevel
               (Algorithm.parameterPatterns callee) then do
             let bindings <- bindCountedCallbackParameterPatternList
               (Algorithm.parameterPatterns callee) args
@@ -4227,7 +4229,7 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
     let elementArg := countedSequenceCallbackItem element
-    if reducerAccumulatorSideHasTopLevelVariadic callee then
+    if reducerAccumulatorSideHasTopLevelCollecting callee then
       let accumulatorArgs :=
         (Result.toItems accumulator).map (fun value => (value, Result.valueCount value))
       evalReducerAccumulatorVariadicCallbackCallCounted callee
@@ -4286,7 +4288,7 @@ mutual
     -- argument at this call boundary, exactly like at every other call
     -- boundary; only explicit caller-site spread alters argument boundaries,
     -- and the spread items obey the same fixed arity
-    -- (`count([1, 2, 3].spread)` supplies three arguments and is an arity error).
+    -- (`count([1, 2, 3]*)` supplies three arguments and is an arity error).
     -- Nothing is opened before binding.
     let expectedArgCount := 1 + metadata.suffixArgs.length
     if items.length != expectedArgCount then
@@ -4357,7 +4359,7 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level collecting accumulator parameters receive state slots)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
@@ -4381,7 +4383,7 @@ mutual
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
       | _, [] => pure []
       | index, item :: rest => do
-        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
+        match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
           evalSequenceCallbackCall predicateAlg item ctx env "filter predicate") with
           | .error err =>
               .error err
@@ -4418,7 +4420,7 @@ mutual
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
-            "while evaluating map transform (map passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
+            "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
             evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
@@ -4860,7 +4862,7 @@ mutual
       evaluation are unchanged, but the public result preserves the structural
       value while re-counting the emitted arity to `Result.valueCount` (via
       `reCountValueBoundary`). A multi-output body therefore becomes one sequence
-      value (count 1); only caller-site `spread(value)` / `value.spread`
+      value (count 1); only a caller-site spread `value*`
       re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
@@ -4876,7 +4878,7 @@ mutual
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
               (countedParamEnv ++ shadowedCountedParamEnv)
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
-    else match Algorithm.variadicParam? callee with
+    else match Algorithm.collectingParam? callee with
       | some _ =>
           -- Any top-level variadic binds the supplied call argument stream.
           let (argEnv, countedParamEnv, algBindings) <-
@@ -5033,7 +5035,7 @@ mutual
       structural zero-arg property access and collection builtins re-count to
       `Result.valueCount`, and user/lexical member calls re-count via
       `evalUserCallCounted`, so a multi-output member becomes one sequence value
-      (count 1) and only caller-site `spread(value)` / `value.spread` re-spreads
+      (count 1) and only a caller-site spread `value*` re-spreads
       it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
       Smart dispatch:
@@ -5125,16 +5127,16 @@ mutual
 
     /-- Evaluate a unary `sequenceSpread` node by evaluating its single operand
       once and spreading immediate top-level items. Nested sequence-value
-      members are not recursively flattened. Directly-nested spreads (`A.spread.spread`)
+      members are not recursively flattened. Directly-nested spreads (`A**`)
       are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
       nesting) and then each written layer is applied COMPOSITIONALLY: every
       each written `sequenceSpread` layer opens exactly one boundary of the value the previous layer would
-      have captured, so `A.spread.spread` agrees with `(A.spread).spread`. For sequence values
+      have captured, so `A**` agrees with `(A*)*`. For sequence values
       the extra layers are fixed points (value-equivalent to a single spread);
       a singleton-list chain opens one list boundary per layer
-      (`[[7]].spread.spread` supplies `7`), while a multi-element list re-captures as
+      (`[[7]]**` supplies `7`), while a multi-element list re-captures as
       a sequence after the first layer and then stays fixed
-      (`[[1, 2], [3, 4]].spread.spread` supplies the two inner lists unchanged). -/
+      (`[[1, 2], [3, 4]]**` supplies the two inner lists unchanged). -/
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let (operand, layers) := peelSequenceSpreadLayers e 0
@@ -5203,7 +5205,7 @@ mutual
       Calls, name resolution, and collection builtins are value boundaries: they
       emit `Result.valueCount` of the result value (one value for a non-empty
       result), so a multi-output body/collection is observed as one sequence
-      value and only caller-site `spread(value)` / `value.spread` re-spreads it.
+      value and only a caller-site spread `value*` re-spreads it.
       Block expressions count as one sequence value when non-empty. `sequenceConstruct`
       emits one constructed sequence value. `sequenceSpread`
       emits the immediate spread items of its operand. All other value expressions emit either zero values (empty
@@ -5309,9 +5311,9 @@ mutual
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
               (countedParamEnv ++ shadowedCountedParamEnv)
           evalAlgOutput callee newCtx (argEnv ++ env)
-    else match Algorithm.variadicParam? callee with
+    else match Algorithm.collectingParam? callee with
       | some _ =>
-          -- Any top-level variadic (lone variadic or comma deconstruction) binds
+          -- Any top-level collecting parameter (lone collecting binding or comma deconstruction) binds
           -- through the shared item-supply matcher.
           let (argEnv, countedParamEnv, algBindings) <-
             bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries
@@ -5611,7 +5613,7 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
 
    Recursive parameter patterns are preserved by this surface pass: lifting
-   `items...`, `(items...)`, or `((history...), previous)` keeps that shape
+   `*items`, `(*items)`, or `((*history), previous)` keeps that shape
    instead of reconstructing ordinary capture parameters from flattened names.
    A narrow forwarding rule also permits a bare helper reference with one
    forwardable variadic supply to use a containing algorithm's single

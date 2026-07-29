@@ -1,2 +1,0 @@
-g(vals...) = vals.count
-Output = g(spread((1, 2, 3)))

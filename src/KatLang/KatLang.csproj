@@ -7,7 +7,7 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.145</Version>
+		<Version>0.8.146</Version>
 		<Authors>katlangorg</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA and contributors</Copyright>
@@ -27,7 +27,7 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes>Core formalized in Lean 4. Algorithms separated from Results domain. Shifted to ownership-first resolution. Redesigned algorithm opening mechanism and other improvements. Compatibility note for semantic-AST consumers: an undocumented C#-only strict-variadic suffix reshape of manually constructed lone Expr.SequenceConstruct builtin arguments was removed; KatLang source programs are unaffected, and externally constructed nodes now follow the ordinary grouped-value argument path, aligned with the Lean model (see docs/design/sequence-boundary-audit-2026-07.md section 7).</PackageReleaseNotes>
+		<PackageReleaseNotes>Breaking syntax and terminology redesign for collection and spreading. Source migration: `items...` becomes `*items`, and both `spread(items)` and `items.spread` become `items*`. There are no compatibility aliases, and `spread` is an ordinary identifier with no reserved meaning. The star now has three purely syntactic roles: prefix `*` is the collect marker in binding patterns (`*items` declares a collecting binding; in a parameter list it is a collecting parameter), postfix `*` directly attached to a completed expression is the spread marker (`value*` contributes the value's items to the surrounding item supply), and every other star is multiplication. A star with a same-line right operand multiplies regardless of spacing, so `a* b` is `a * b` — write `a*, b` to spread before another same-line item. Chained spread is `value**`, and the fluent chain `x.Calculate*.Target` lowers to `Target(x.Calculate*)`. Canonical terminology: "collecting parameter" is the construct name; "variadic" now only describes a callable that accepts a variable number of argument items. Public API: ParameterKind.Variadic→Collecting, CollectingMarkerSpan→CollectMarkerSpan, SequenceSpread.IntrinsicNameSpan→SpreadMarkerSpan, PropertyParameterInfo.IsVariadic→IsCollecting, AstWalker.VisitCollectingBindingMarker→VisitCollectMarker, the ParameterPattern/CallableSignature/CallableBindingPlan variadic members→Collecting*, and TokenKind.Ellipsis was removed. Semantics (capture/collect/spread, exact lists, one-boundary spread) are unchanged and remain Lean-aligned.</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>

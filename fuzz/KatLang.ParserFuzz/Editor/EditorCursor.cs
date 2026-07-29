@@ -30,7 +30,7 @@ internal static class EditorCursor
             EditorCursorKind.AfterFirstIdentifier => AfterFirstToken(tokens, TokenKind.Identifier),
             EditorCursorKind.BetweenIdentifierAndDot => IndexOf(source, '.', bias),
             EditorCursorKind.AfterDot => IndexOf(source, '.', bias) + 1,
-            EditorCursorKind.InsideSpread => InsideSpread(source, bias),
+            EditorCursorKind.AtSpreadMarker => AtSpreadMarker(source, bias),
             EditorCursorKind.InsideArgumentList => IndexOf(source, '(', bias) + 1,
             EditorCursorKind.AfterComma => IndexOf(source, ',', bias) + 1,
             EditorCursorKind.InsideString => InsideFirstToken(tokens, TokenKind.StringLiteral, bias + 1),
@@ -132,10 +132,17 @@ internal static class EditorCursor
         return index;
     }
 
-    private static int InsideSpread(string source, int bias)
+    /// <summary>
+    /// Lands on a star's ATTACHMENT boundary — immediately before the star or immediately
+    /// after it. That boundary is where the spread-versus-multiplication decision flips
+    /// (a star directly attached to the preceding token with no same-line right operand is
+    /// the spread marker; anything else multiplies), so it is the cursor position where
+    /// editor tooling is most likely to disagree with the parser.
+    /// </summary>
+    private static int AtSpreadMarker(string source, int bias)
     {
-        var dots = source.IndexOf("..", StringComparison.Ordinal);
-        return dots < 0 ? -1 : dots + 1 + (bias % 2 == 0 ? 0 : 1);
+        var star = source.IndexOf('*');
+        return star < 0 ? -1 : star + (bias % 2 == 0 ? 0 : 1);
     }
 
     private static int BetweenCrLf(string source)

@@ -389,8 +389,8 @@ public static class Evaluator
         // SequenceConstruct is an internal value node; ';' is not surface
         // syntax, so render it as one sequence value, never with ';'.
         Expr.SequenceConstruct(var a, var b) => "(" + OpenExprName(a) + ", " + OpenExprName(b) + ")",
-        // A spread expression renders in the canonical named-intrinsic form.
-        Expr.SequenceSpread(var a) => "spread(" + OpenExprName(a) + ")",
+        // A spread expression renders in the canonical postfix-marker form.
+        Expr.SequenceSpread(var a) => OpenExprSpreadOperandName(a) + "*",
         // Exact list literal `[a, b, c]`.
         Expr.ListLiteral(var items) => "[" + string.Join(", ", items.Select(OpenExprName)) + "]",
         // Empty sequence core nodes render by depth for diagnostics; evaluation
@@ -404,6 +404,16 @@ public static class Evaluator
         Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.DotCall or Expr.Index
             => OpenExprName(expr),
         _ => $"({OpenExprName(expr)})",
+    };
+
+    // Postfix spread binds to the completed operand. A unary operand therefore
+    // needs parentheses: `-A*` parses as unary minus applied to a spread, while
+    // `(-A)*` is the spread of the unary expression. Binary names already
+    // include their own parentheses in OpenExprName.
+    private static string OpenExprSpreadOperandName(Expr expr) => expr switch
+    {
+        Expr.Unary => $"({OpenExprName(expr)})",
+        _ => OpenExprName(expr),
     };
 
     /// <summary>
@@ -426,7 +436,7 @@ public static class Evaluator
     /// selector is a primary in source syntax, so any form that would continue
     /// the postfix chain rebinds to the target instead: <c>A:B.C</c> reads as
     /// <c>(A:B).C</c>, <c>A:B:C</c> as <c>(A:B):C</c>, <c>A:f(0)</c> as
-    /// adjacency, and <c>A:B.spread</c> as a spread of the whole index. A bare
+    /// adjacency, and <c>A:B*</c> as a spread of the whole index. A bare
     /// negative literal (<c>A:-1</c>) is not selector syntax at all. A binary
     /// selector is already self-parenthesized by <see cref="OpenExprName"/>.
     /// Lean: indexSelectorNeedsParens.
@@ -535,10 +545,10 @@ public static class Evaluator
     /// <summary>Lean: lookupInParentsDirect (Option).</summary>
     private static Algorithm? LookupInParentsDirect(ScopeCtx sc, string name)
     {
-            foreach (var prop in sc.Properties)
-            {
-                if (prop.Name == name)
-                    return WithParent(prop.Value, sc);
+        foreach (var prop in sc.Properties)
+        {
+            if (prop.Name == name)
+                return WithParent(prop.Value, sc);
         }
 
         return sc.Parent is { } parent ? LookupInParentsDirect(parent, name) : null;
@@ -550,9 +560,9 @@ public static class Evaluator
     /// </summary>
     private static Algorithm? LookupLexicalDirect(Algorithm alg, string name)
     {
-            var local = LookupProp(alg, name);
-            if (local is not null)
-                return ChildOf(alg, local);
+        var local = LookupProp(alg, name);
+        if (local is not null)
+            return ChildOf(alg, local);
 
         return alg.Parent is { } sc ? LookupInParentsDirect(sc, name) : null;
     }
@@ -1108,7 +1118,7 @@ public static class Evaluator
         Legacy,
         Patterned,
         FlatFixed,
-        FlatVariadic,
+        FlatCollecting,
     }
 
     private readonly record struct GenericLoopStepBindingSelection(
@@ -1117,14 +1127,14 @@ public static class Evaluator
 
     private readonly record struct CallableArgumentBindings<T>(
         IReadOnlyList<(string ParameterName, T Item)> NormalBindings,
-        string? VariadicParameterName,
-        IReadOnlyList<T> VariadicItems);
+        string? CollectingParameterName,
+        IReadOnlyList<T> CollectingItems);
 
-    private readonly record struct FlatVariadicBindingLayout(
+    private readonly record struct FlatCollectingBindingLayout(
         CallableSignature Signature,
-        string VariadicName);
+        string CollectingName);
 
-    private readonly record struct VariadicCapture(
+    private readonly record struct CollectingCapture(
         string Name,
         Result Value,
         CountedResult CountedValue);
@@ -1172,7 +1182,7 @@ public static class Evaluator
             return true;
         }
 
-        if (plan.RequiresPatternedBinding || plan.HasTopLevelVariadic)
+        if (plan.RequiresPatternedBinding || plan.HasTopLevelCollecting)
         {
             fallbackReason = "variadic loop step";
             return false;
@@ -1191,8 +1201,8 @@ public static class Evaluator
         if (plan.RequiresPatternedBinding)
             return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.Patterned, plan);
 
-        if (plan.TryGetFlatVariadicLayout(out _, out _, out _))
-            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.FlatVariadic, plan);
+        if (plan.TryGetFlatCollectingLayout(out _, out _, out _))
+            return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.FlatCollecting, plan);
 
         if (plan.TryGetFlatFixedLayout(out _))
             return new GenericLoopStepBindingSelection(GenericLoopStepBindingShape.FlatFixed, plan);
@@ -1210,32 +1220,32 @@ public static class Evaluator
             _ => false,
         };
 
-    private static bool TryGetFlatVariadicBindingLayout(
+    private static bool TryGetFlatCollectingBindingLayout(
         CallableBindingPlan plan,
-        out FlatVariadicBindingLayout layout)
+        out FlatCollectingBindingLayout layout)
     {
-        if (!plan.TryGetFlatVariadicLayout(out var prefix, out var variadic, out var suffix))
+        if (!plan.TryGetFlatCollectingLayout(out var prefix, out var collecting, out var suffix))
         {
             layout = default;
             return false;
         }
 
-        layout = new FlatVariadicBindingLayout(
+        layout = new FlatCollectingBindingLayout(
             plan.Signature,
-            variadic.Name);
+            collecting.Name);
         return true;
     }
 
-    private static bool TryGetLegacyFlatVariadicBindingLayout(
+    private static bool TryGetLegacyFlatCollectingBindingLayout(
         Algorithm algorithm,
         string callableName,
-        out FlatVariadicBindingLayout layout)
+        out FlatCollectingBindingLayout layout)
     {
         var parameters = algorithm.Parameters;
         for (var index = 0; index < parameters.Count; index++)
         {
             var parameter = parameters[index];
-            if (parameter.Kind != ParameterKind.Variadic)
+            if (parameter.Kind != ParameterKind.Collecting)
                 continue;
 
             var signature = new CallableSignature(
@@ -1243,7 +1253,7 @@ public static class Evaluator
                 parameters
                     .Select(static parameter => new CallableParameter(parameter.Name, parameter.Kind))
                     .ToArray());
-            layout = new FlatVariadicBindingLayout(
+            layout = new FlatCollectingBindingLayout(
                 signature,
                 parameter.Name);
             return true;
@@ -1275,20 +1285,20 @@ public static class Evaluator
         if (signature.Validate() is { } validationError)
             return validationError;
 
-        var variadicIndex = signature.VariadicParameterIndex;
-        if (variadicIndex < 0)
+        var collectingIndex = signature.CollectingParameterIndex;
+        if (collectingIndex < 0)
         {
             if (items.Count != signature.Parameters.Count)
                 return arityMismatch(signature.Parameters.Count, items.Count);
 
             return EvalResult<CallableArgumentBindings<T>>.Ok(new CallableArgumentBindings<T>(
                 signature.Parameters.Zip(items, static (parameter, item) => (parameter.Name, item)).ToList(),
-                VariadicParameterName: null,
-                VariadicItems: []));
+                CollectingParameterName: null,
+                CollectingItems: []));
         }
 
-        // The minimum is the FIXED (non-variadic) parameter count: like every
-        // other collecting binding, the variadic parameter may collect ZERO items
+        // The minimum is the FIXED (non-collecting) parameter count: like every
+        // other collecting binding, the collecting parameter may collect ZERO items
         // (an empty collected segment is the exact list `[]`). This is the same rule the shared pattern
         // binder applies (BindParameterPatternList: required = patterns - 1).
         // (Collection builtins no longer bind here: they are ordinary
@@ -1297,33 +1307,33 @@ public static class Evaluator
         if (items.Count < requiredNormalItemCount)
             return arityMismatch(requiredNormalItemCount, items.Count);
 
-        var suffixCount = signature.Parameters.Count - variadicIndex - 1;
+        var suffixCount = signature.Parameters.Count - collectingIndex - 1;
         var suffixStart = items.Count - suffixCount;
         var normalBindings = new List<(string ParameterName, T Item)>(requiredNormalItemCount);
 
-        for (var index = 0; index < variadicIndex; index++)
+        for (var index = 0; index < collectingIndex; index++)
             normalBindings.Add((signature.Parameters[index].Name, items[index]));
 
         for (var suffixIndex = 0; suffixIndex < suffixCount; suffixIndex++)
         {
-            var parameterIndex = variadicIndex + 1 + suffixIndex;
+            var parameterIndex = collectingIndex + 1 + suffixIndex;
             var itemIndex = suffixStart + suffixIndex;
             normalBindings.Add((signature.Parameters[parameterIndex].Name, items[itemIndex]));
         }
 
-        var variadicItems = items
-            .Skip(variadicIndex)
-            .Take(suffixStart - variadicIndex)
+        var collectingItems = items
+            .Skip(collectingIndex)
+            .Take(suffixStart - collectingIndex)
             .ToList();
 
         return EvalResult<CallableArgumentBindings<T>>.Ok(new CallableArgumentBindings<T>(
             normalBindings,
-            signature.Parameters[variadicIndex].Name,
-            variadicItems));
+            signature.Parameters[collectingIndex].Name,
+            collectingItems));
     }
 
-    private static EvalResult<CallableArgumentBindings<BindingInputSlot>> BindItemsToFlatVariadicLayout(
-        FlatVariadicBindingLayout layout,
+    private static EvalResult<CallableArgumentBindings<BindingInputSlot>> BindItemsToFlatCollectingLayout(
+        FlatCollectingBindingLayout layout,
         IReadOnlyList<BindingInputSlot> items,
         Func<int, int, EvalError> arityMismatch)
         => BindCallableArguments(layout.Signature, items, arityMismatch);
@@ -1334,13 +1344,13 @@ public static class Evaluator
     /// KatLang distinguishes three item-supply operations by receiver purpose:
     /// <c>capture</c> — ordinary value/output capture, the canonicalizing
     /// boundary (<see cref="Result.FromItems"/>, singleton erasure applies);
-    /// <c>collect</c> — THIS operation: a collecting binding (variadic parameter) materializes
+    /// <c>collect</c> — THIS operation: a collecting binding (collecting parameter) materializes
     /// exactly the assigned items as one exact immutable list
     /// (<c>CollectSegment([]) == []</c>, <c>CollectSegment([v]) == [v]</c>, never
-    /// erased); and <c>spread</c> — the named spread intrinsic
+    /// erased); and <c>spread</c> — the postfix spread marker
     /// (<see cref="Result.SpreadItems"/>), which opens one sequence OR list
     /// boundary. The round trip <c>SpreadItems(CollectSegment(xs)) == xs</c>
-    /// makes variadic forwarding ordinary list spread with no hidden
+    /// makes collecting-parameter forwarding ordinary list spread with no hidden
     /// raw-supply metadata. Snapshot construction: the public
     /// <see cref="Result.ListValue"/> constructor copies the supplied items,
     /// so no caller-retained buffer can mutate the collected value.
@@ -1364,7 +1374,7 @@ public static class Evaluator
     /// algorithm declaring parameters/patterns — as opposed to a
     /// zero-parameter VALUE property that merely resolved through the dual
     /// algorithm channel. Used to decide whether a valueless argument
-    /// bound by a variadic parameter gets the targeted "collects values, but ... is a function"
+    /// bound by a collecting parameter gets the targeted "collects values, but ... is a function"
     /// diagnostic or surfaces its genuine value-evaluation error.
     /// Lean: <c>Algorithm.isFunctionShaped</c>.
     /// </summary>
@@ -1376,7 +1386,7 @@ public static class Evaluator
             _ => algorithm.Params.Count > 0 || algorithm.ParameterPatterns.Count > 0,
         };
 
-    private static EvalResult<VariadicCapture> CreateVariadicCapture(
+    private static EvalResult<CollectingCapture> CreateCollectingCapture(
         EvalCtx ctx,
         string name,
         IReadOnlyList<Result> capturedValues,
@@ -1387,7 +1397,7 @@ public static class Evaluator
         var capturedResult = capturedResultR.Value;
         // A list value is one visible value, so a collecting binding always carries
         // emitted count 1 (including the empty collected list `[]`).
-        return EvalResult<VariadicCapture>.Ok(new VariadicCapture(
+        return EvalResult<CollectingCapture>.Ok(new CollectingCapture(
             name,
             capturedResult,
             new CountedResult(capturedResult, 1)));
@@ -1491,7 +1501,7 @@ public static class Evaluator
         // A received sequence value or exact list value opens to its immediate
         // items (Lean: Result.structureItems?): the deconstruction receiver
         // opens ONE lone structure boundary of either kind, so
-        // `x, y, z = [1, 2, 3]` binds like `x, y, z = spread([1, 2, 3])`.
+        // `x, y, z = [1, 2, 3]` binds like `x, y, z = [1, 2, 3]*`.
         if (input.Value?.StructureItems() is { } structureItems)
             return EvalResult<IReadOnlyList<Result>>.Ok(structureItems);
 
@@ -1507,51 +1517,51 @@ public static class Evaluator
         switch (pattern)
         {
             case CaptureParameterPattern { Kind: ParameterKind.Normal } capture:
-            {
-                var valueBindings = new List<(string, Result)>(1);
-                var algorithmBindings = new List<(string, Algorithm)>(1);
+                {
+                    var valueBindings = new List<(string, Result)>(1);
+                    var algorithmBindings = new List<(string, Algorithm)>(1);
 
-                if (input.Value is not null)
-                    valueBindings.Add((capture.Name, input.Value));
+                    if (input.Value is not null)
+                        valueBindings.Add((capture.Name, input.Value));
 
-                if (allowAlgorithmBindings && input.Algorithm is not null)
-                    algorithmBindings.Add((capture.Name, input.Algorithm));
+                    if (allowAlgorithmBindings && input.Algorithm is not null)
+                        algorithmBindings.Add((capture.Name, input.Algorithm));
 
-                if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
-                    return input.ValueError ?? new EvalError.BadArity();
+                    if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
+                        return input.ValueError ?? new EvalError.BadArity();
 
-                return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], algorithmBindings));
-            }
+                    return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], algorithmBindings));
+                }
 
-            case CaptureParameterPattern { Kind: ParameterKind.Variadic }:
+            case CaptureParameterPattern { Kind: ParameterKind.Collecting }:
                 return new EvalError.BadArity();
 
             case SequenceValueParameterPattern group:
-            {
-                var itemsR = GetSequenceValuePatternItems(input);
-                // A non-grouped scalar value is a one-item supply for the
-                // prefix/collecting/suffix matcher (the same normalization the function
-                // deconstruction path applies via rule 4). This lets a scalar
-                // right-hand side bind a collecting pattern that captures zero items,
-                // e.g. `first, tail... = 1` (first = 1, tail = []), instead of being
-                // rejected before the matcher runs.
-                if (itemsR.IsError && input.Value is not null)
                 {
-                    itemsR = EvalResult<IReadOnlyList<Result>>.Ok([input.Value]);
+                    var itemsR = GetSequenceValuePatternItems(input);
+                    // A non-grouped scalar value is a one-item supply for the
+                    // prefix/collecting/suffix matcher (the same normalization the function
+                    // deconstruction path applies via rule 4). This lets a scalar
+                    // right-hand side bind a collecting pattern that captures zero items,
+                    // e.g. `first, *tail = 1` (first = 1, tail = []), instead of being
+                    // rejected before the matcher runs.
+                    if (itemsR.IsError && input.Value is not null)
+                    {
+                        itemsR = EvalResult<IReadOnlyList<Result>>.Ok([input.Value]);
+                    }
+
+                    if (itemsR.IsError) return itemsR.Error;
+
+                    var nestedInputs = itemsR.Value
+                        .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null))
+                        .ToList();
+                    return BindParameterPatternList(
+                        group.Items,
+                        nestedInputs,
+                        ctx,
+                        allowAlgorithmBindings: false,
+                        (required, actual) => new EvalError.ArityMismatch(required, actual));
                 }
-
-                if (itemsR.IsError) return itemsR.Error;
-
-                var nestedInputs = itemsR.Value
-                    .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null, ExplicitSequenceValueItems: null))
-                    .ToList();
-                return BindParameterPatternList(
-                    group.Items,
-                    nestedInputs,
-                    ctx,
-                    allowAlgorithmBindings: false,
-                    (required, actual) => new EvalError.ArityMismatch(required, actual));
-            }
 
             default:
                 return new EvalError.BadArity();
@@ -1565,16 +1575,16 @@ public static class Evaluator
         bool allowAlgorithmBindings,
         Func<int, int, EvalError> arityMismatch)
     {
-        var variadicIndex = -1;
+        var collectingIndex = -1;
         for (var index = 0; index < patterns.Count; index++)
         {
-            if (patterns[index] is not CaptureParameterPattern { Kind: ParameterKind.Variadic })
+            if (patterns[index] is not CaptureParameterPattern { Kind: ParameterKind.Collecting })
                 continue;
 
-            if (variadicIndex >= 0)
+            if (collectingIndex >= 0)
                 return new EvalError.BadArity();
 
-            variadicIndex = index;
+            collectingIndex = index;
         }
 
         var valueBindings = new List<(string, Result)>();
@@ -1658,7 +1668,7 @@ public static class Evaluator
             return AddBindings(boundR.Value);
         }
 
-        if (variadicIndex < 0)
+        if (collectingIndex < 0)
         {
             if (patterns.Count != inputs.Count)
                 return arityMismatch(patterns.Count, inputs.Count);
@@ -1676,23 +1686,23 @@ public static class Evaluator
         if (inputs.Count < requiredCount)
             return arityMismatch(requiredCount, inputs.Count);
 
-        for (var index = 0; index < variadicIndex; index++)
+        for (var index = 0; index < collectingIndex; index++)
         {
             var boundR = BindOne(index, index);
             if (boundR.IsError) return boundR.Error;
         }
 
-        var suffixCount = patterns.Count - variadicIndex - 1;
+        var suffixCount = patterns.Count - collectingIndex - 1;
         var suffixInputStart = inputs.Count - suffixCount;
         for (var suffixIndex = 0; suffixIndex < suffixCount; suffixIndex++)
         {
-            var boundR = BindOne(variadicIndex + 1 + suffixIndex, suffixInputStart + suffixIndex);
+            var boundR = BindOne(collectingIndex + 1 + suffixIndex, suffixInputStart + suffixIndex);
             if (boundR.IsError) return boundR.Error;
         }
 
-        var variadicCapture = (CaptureParameterPattern)patterns[variadicIndex];
-        var capturedValues = new List<Result>(suffixInputStart - variadicIndex);
-        for (var inputIndex = variadicIndex; inputIndex < suffixInputStart; inputIndex++)
+        var collectingCapture = (CaptureParameterPattern)patterns[collectingIndex];
+        var capturedValues = new List<Result>(suffixInputStart - collectingIndex);
+        for (var inputIndex = collectingIndex; inputIndex < suffixInputStart; inputIndex++)
         {
             var input = inputs[inputIndex];
             if (input.Value is null)
@@ -1707,7 +1717,7 @@ public static class Evaluator
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {
                     return new EvalError.TypeMismatch(
-                        $"Variadic parameter `{variadicCapture.Name}...` collects values, but a supplied argument is a function. " +
+                        $"Collecting parameter `*{collectingCapture.Name}` collects values, but a supplied argument is a function. " +
                         "Pass a value, or call the function so its result is collected.");
                 }
 
@@ -1717,7 +1727,7 @@ public static class Evaluator
             capturedValues.Add(input.Value);
         }
 
-        var captureR = CreateVariadicCapture(ctx, variadicCapture.Name, capturedValues, variadicCapture.Span);
+        var captureR = CreateCollectingCapture(ctx, collectingCapture.Name, capturedValues, collectingCapture.Span);
         if (captureR.IsError) return captureR.Error;
         var capture = captureR.Value;
         var captureBindingsR = AddBindings(new UserCallBindings(
@@ -1780,7 +1790,7 @@ public static class Evaluator
             return new EvalError.WithContext(
                 new DeconstructionBindingContext(
                     callee.Parameters.Select(static parameter => parameter.DisplayName).ToList(),
-                    callee.Parameters.Any(static parameter => parameter.Kind == ParameterKind.Variadic)),
+                    callee.Parameters.Any(static parameter => parameter.Kind == ParameterKind.Collecting)),
                 deconstructionMismatch);
         }
 
@@ -1984,14 +1994,15 @@ public static class Evaluator
 
     /// <summary>
     /// True when a callable's top-level parameter list captures the supplied call
-    /// argument stream: any top-level variadic capture, including a lone variadic
-    /// <c>name...</c> and mixed fixed/variadic shapes such as <c>x, y..., z</c>.
+    /// argument stream: any top-level collecting capture, including a lone
+    /// collecting binding <c>*name</c> and mixed fixed/collecting shapes such
+    /// as <c>x, *y, z</c>.
     /// Checked only after patterned (sequence-value / repeated-name) binding has
     /// been ruled out.
     /// Lean: <c>Algorithm.usesItemSupplyBinding</c>.
     /// </summary>
     private static bool IsDeconstructionUserCallShape(CallableSignature signature)
-        => signature.HasVariadicParameter;
+        => signature.HasCollectingParameter;
 
     /// <summary>
     /// Builtin collection-item view of the bound collection argument: opens
@@ -2010,7 +2021,7 @@ public static class Evaluator
         => value is Result.ListValue(var listItems) ? listItems : value.ToItems();
 
     /// <summary>
-    /// Binds a call to an item-supply parameter list (any top-level variadic).
+    /// Binds a call to an item-supply parameter list (any top-level collecting parameter).
     /// The call argument stream is already the receiver for parameter binding:
     /// a plain sequence-valued argument contributes one item, while explicit
     /// spread contributes the operand's items.
@@ -2350,14 +2361,14 @@ public static class Evaluator
         switch (pattern)
         {
             case Pattern.Bind(var name):
-            {
-                var existing = LookupVal(bindings, name);
-                if (existing is not null)
-                    return Result.ValueComparer.Equals(existing, result);
+                {
+                    var existing = LookupVal(bindings, name);
+                    if (existing is not null)
+                        return Result.ValueComparer.Equals(existing, result);
 
-                bindings.Add((name, result));
-                return true;
-            }
+                    bindings.Add((name, result));
+                    return true;
+                }
 
             case Pattern.LitInt(var n):
                 return result is Result.Atom(var v) && v == n;
@@ -2455,14 +2466,14 @@ public static class Evaluator
         switch (pattern)
         {
             case Pattern.Bind(var name):
-            {
-                var existing = LookupCountedParam(bindings, name);
-                if (existing is not null)
-                    return Result.ValueComparer.Equals(existing.Value.Value, result.Value);
+                {
+                    var existing = LookupCountedParam(bindings, name);
+                    if (existing is not null)
+                        return Result.ValueComparer.Equals(existing.Value.Value, result.Value);
 
-                bindings.Add((name, result));
-                return true;
-            }
+                    bindings.Add((name, result));
+                    return true;
+                }
 
             case Pattern.LitInt(var n):
                 return result.Value is Result.Atom(var v) && v == n;
@@ -2662,13 +2673,13 @@ public static class Evaluator
 
     /// <summary>
     /// Callback binding for a flat callee whose top-level parameters include a
-    /// variadic parameter. The callback argument supply keeps the established
+    /// collecting parameter. The callback argument supply keeps the established
     /// flat-callback row convention: when fewer argument slots are supplied
     /// than top-level parameters, the final supplied argument opens into its
     /// items (matching <c>callee(S:i)</c>; exact lists stay opaque), exactly
     /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
     /// callees. The resulting slots then bind through the shared
-    /// prefix/collecting/suffix binder, so the variadic parameter COLLECTS its allocated
+    /// prefix/collecting/suffix binder, so the collecting parameter COLLECTS its allocated
     /// slots as one exact immutable list. Lean:
     /// <c>bindCountedCallbackParameterPatternList</c>.
     /// </summary>
@@ -2705,33 +2716,33 @@ public static class Evaluator
                 return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(
                     [(capture.Name, input)]));
 
-            case CaptureParameterPattern { Kind: ParameterKind.Variadic }:
+            case CaptureParameterPattern { Kind: ParameterKind.Collecting }:
                 return new EvalError.BadArity();
 
             case SequenceValueParameterPattern group:
-            {
-                // A received sequence value or exact list value opens to its
-                // immediate items (Lean: Result.structureItems?); the counted
-                // callback path keeps its stricter singleton-only scalar
-                // fallback (sequence-value-pattern callback deconstruction of
-                // scalar elements stays deferred; flat top-level variadic
-                // callbacks bind via BindCountedCallbackParameterPatternList).
-                var items = input.Value.StructureItems();
-                if (items is null && group.Items.Count == 1)
-                    items = [input.Value];
+                {
+                    // A received sequence value or exact list value opens to its
+                    // immediate items (Lean: Result.structureItems?); the counted
+                    // callback path keeps its stricter singleton-only scalar
+                    // fallback (sequence-value-pattern callback deconstruction of
+                    // scalar elements stays deferred; flat top-level collecting
+                    // callbacks bind via BindCountedCallbackParameterPatternList).
+                    var items = input.Value.StructureItems();
+                    if (items is null && group.Items.Count == 1)
+                        items = [input.Value];
 
-                if (items is null)
-                    return new EvalError.BadArity();
+                    if (items is null)
+                        return new EvalError.BadArity();
 
-                var nestedInputs = items
-                    .Select(static item => new CountedResult(item, item.ValueCount()))
-                    .ToList();
-                return BindCountedParameterPatternList(
-                    group.Items,
-                    nestedInputs,
-                    ctx,
-                    (required, actual) => new EvalError.ArityMismatch(required, actual));
-            }
+                    var nestedInputs = items
+                        .Select(static item => new CountedResult(item, item.ValueCount()))
+                        .ToList();
+                    return BindCountedParameterPatternList(
+                        group.Items,
+                        nestedInputs,
+                        ctx,
+                        (required, actual) => new EvalError.ArityMismatch(required, actual));
+                }
 
             default:
                 return new EvalError.BadArity();
@@ -2744,16 +2755,16 @@ public static class Evaluator
         EvalCtx ctx,
         Func<int, int, EvalError> arityMismatch)
     {
-        var variadicIndex = -1;
+        var collectingIndex = -1;
         for (var index = 0; index < patterns.Count; index++)
         {
-            if (patterns[index] is not CaptureParameterPattern { Kind: ParameterKind.Variadic })
+            if (patterns[index] is not CaptureParameterPattern { Kind: ParameterKind.Collecting })
                 continue;
 
-            if (variadicIndex >= 0)
+            if (collectingIndex >= 0)
                 return new EvalError.BadArity();
 
-            variadicIndex = index;
+            collectingIndex = index;
         }
 
         var bindings = new List<(string, CountedResult)>();
@@ -2784,7 +2795,7 @@ public static class Evaluator
             return AddBindings(boundR.Value);
         }
 
-        if (variadicIndex < 0)
+        if (collectingIndex < 0)
         {
             if (patterns.Count != inputs.Count)
                 return arityMismatch(patterns.Count, inputs.Count);
@@ -2802,34 +2813,34 @@ public static class Evaluator
         if (inputs.Count < requiredCount)
             return arityMismatch(requiredCount, inputs.Count);
 
-        for (var index = 0; index < variadicIndex; index++)
+        for (var index = 0; index < collectingIndex; index++)
         {
             var boundR = BindOne(index, index);
             if (boundR.IsError) return boundR.Error;
         }
 
-        var suffixCount = patterns.Count - variadicIndex - 1;
+        var suffixCount = patterns.Count - collectingIndex - 1;
         var suffixInputStart = inputs.Count - suffixCount;
         for (var suffixIndex = 0; suffixIndex < suffixCount; suffixIndex++)
         {
-            var boundR = BindOne(variadicIndex + 1 + suffixIndex, suffixInputStart + suffixIndex);
+            var boundR = BindOne(collectingIndex + 1 + suffixIndex, suffixInputStart + suffixIndex);
             if (boundR.IsError) return boundR.Error;
         }
 
-        var variadicCapture = (CaptureParameterPattern)patterns[variadicIndex];
+        var collectingCapture = (CaptureParameterPattern)patterns[collectingIndex];
         var capturedValues = inputs
-            .Skip(variadicIndex)
-            .Take(suffixInputStart - variadicIndex)
+            .Skip(collectingIndex)
+            .Take(suffixInputStart - collectingIndex)
             .Select(static input => input.Value)
             .ToList();
         // Collecting binding COLLECTS: the assigned supply becomes one exact
         // immutable list value, emitted count 1 (a list is one visible value).
-        var capturedResultR = CollectSegment(ctx, capturedValues, variadicCapture.Span);
+        var capturedResultR = CollectSegment(ctx, capturedValues, collectingCapture.Span);
         if (capturedResultR.IsError) return capturedResultR.Error;
         var capturedResult = capturedResultR.Value;
         var captured = new CountedResult(capturedResult, 1);
         var captureBindingsR = AddBindings(new CountedParameterPatternBindings(
-            [(variadicCapture.Name, captured)]));
+            [(collectingCapture.Name, captured)]));
         if (captureBindingsR.IsError) return captureBindingsR.Error;
 
         return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(bindings));
@@ -2912,60 +2923,60 @@ public static class Evaluator
                 return EvalConditionalCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
 
             default:
-            {
-                if (callee.Output.Count == 0)
-                    return new EvalError.MissingOutput();
-
-                if (UsesPatternBinding(callee))
                 {
-                    var countedPatternEnvR = BindCountedParameterPatternList(
-                        callee.ParameterPatterns,
-                        args,
-                        ctx,
-                        (required, actual) => new EvalError.ArityMismatch(required, actual));
-                    if (countedPatternEnvR.IsError) return countedPatternEnvR.Error;
+                    if (callee.Output.Count == 0)
+                        return new EvalError.MissingOutput();
 
-                    var patternBindings = countedPatternEnvR.Value;
-                    var patternCtx = WithCountedParameterEnvironments(
-                        ctx,
-                        patternBindings.CountedBindings,
-                        patternBindings.CountedBindings.Select(static binding => binding.Item1));
-                    return EvalAlgOutputCounted(callee, patternCtx, valEnv);
+                    if (UsesPatternBinding(callee))
+                    {
+                        var countedPatternEnvR = BindCountedParameterPatternList(
+                            callee.ParameterPatterns,
+                            args,
+                            ctx,
+                            (required, actual) => new EvalError.ArityMismatch(required, actual));
+                        if (countedPatternEnvR.IsError) return countedPatternEnvR.Error;
+
+                        var patternBindings = countedPatternEnvR.Value;
+                        var patternCtx = WithCountedParameterEnvironments(
+                            ctx,
+                            patternBindings.CountedBindings,
+                            patternBindings.CountedBindings.Select(static binding => binding.Item1));
+                        return EvalAlgOutputCounted(callee, patternCtx, valEnv);
+                    }
+
+                    // A flat callee with a top-level collecting parameter (`Rows.map(F)`
+                    // with `F(x, *y, z)` or a single-collecting `Collect(*items)`)
+                    // binds through the shared prefix/collecting/suffix binder so the
+                    // collecting parameter COLLECTS an exact immutable list, after the
+                    // same final-argument row expansion the fixed-only flat path
+                    // uses below. Single-collecting callees keep the whole iterated
+                    // element as one collected slot.
+                    if (ParameterPattern.HasCollectingCaptureAtCurrentLevel(callee.ParameterPatterns))
+                    {
+                        var collectingPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
+                        if (collectingPatternEnvR.IsError) return collectingPatternEnvR.Error;
+
+                        var collectingBindings = collectingPatternEnvR.Value;
+                        var collectingCtx = WithCountedParameterEnvironments(
+                            ctx,
+                            collectingBindings.CountedBindings,
+                            collectingBindings.CountedBindings.Select(static binding => binding.Item1));
+                        return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
+                    }
+
+                    // Fixed-only flat callback binding projects each callback item
+                    // into slots and binds those slots to the algorithm's flat
+                    // parameter names (the final item is unpacked across any
+                    // remaining names); it does not apply item-supply
+                    // singleton-boundary normalization. Scalar callback
+                    // deconstruction stays deferred so the counted callback path
+                    // keeps Lean/C# parity.
+                    var countedEnvR = BindCountedCallbackParams(callee.Params, args);
+                    if (countedEnvR.IsError) return countedEnvR.Error;
+
+                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, callee.Params);
+                    return EvalAlgOutputCounted(callee, newCtx, valEnv);
                 }
-
-                // A flat callee with a top-level variadic parameter (`Rows.map(F)`
-                // with `F(x, y..., z)` or a single-variadic `Collect(items...)`)
-                // binds through the shared prefix/collecting/suffix binder so the
-                // variadic parameter COLLECTS an exact immutable list, after the
-                // same final-argument row expansion the fixed-only flat path
-                // uses below. Single-variadic callees keep the whole iterated
-                // element as one collected slot.
-                if (ParameterPattern.HasVariadicCaptureAtCurrentLevel(callee.ParameterPatterns))
-                {
-                    var collectingPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
-                    if (collectingPatternEnvR.IsError) return collectingPatternEnvR.Error;
-
-                    var collectingBindings = collectingPatternEnvR.Value;
-                    var collectingCtx = WithCountedParameterEnvironments(
-                        ctx,
-                        collectingBindings.CountedBindings,
-                        collectingBindings.CountedBindings.Select(static binding => binding.Item1));
-                    return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
-                }
-
-                // Fixed-only flat callback binding projects each callback item
-                // into slots and binds those slots to the algorithm's flat
-                // parameter names (the final item is unpacked across any
-                // remaining names); it does not apply item-supply
-                // singleton-boundary normalization. Scalar callback
-                // deconstruction stays deferred so the counted callback path
-                // keeps Lean/C# parity.
-                var countedEnvR = BindCountedCallbackParams(callee.Params, args);
-                if (countedEnvR.IsError) return countedEnvR.Error;
-
-                var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, callee.Params);
-                return EvalAlgOutputCounted(callee, newCtx, valEnv);
-            }
         }
     }
 
@@ -3058,7 +3069,7 @@ public static class Evaluator
         }
 
         // Output-slot capture is a persistent collection: spread can expand it well beyond
-        // any single input (`(spread(A), spread(A))` doubles), so the reservation happens
+        // any single input (`(A*, A*)` doubles), so the reservation happens
         // here, before the sequence value is built.
         if (ReserveSequenceCapture(ctx, results.Count, FirstSpan(alg.Output)) is { } capturedLimitError)
             return capturedLimitError;
@@ -3361,7 +3372,7 @@ public static class Evaluator
         return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
     }
 
-    private static bool ReducerAccumulatorSideHasTopLevelVariadic(Algorithm.User reducer)
+    private static bool ReducerAccumulatorSideHasTopLevelCollecting(Algorithm.User reducer)
     {
         try
         {
@@ -3369,7 +3380,7 @@ public static class Evaluator
             var plan = CallableBindingPlan.FromSignature(signature);
             return plan.TopLevelPatternList.Nodes
                 .Skip(1)
-                .Any(static node => node is VariadicCaptureBindingNode { IsTopLevel: true });
+                .Any(static node => node is CollectingCaptureBindingNode { IsTopLevel: true });
         }
         catch (InvalidOperationException)
         {
@@ -3377,7 +3388,7 @@ public static class Evaluator
         }
     }
 
-    private static EvalResult<CountedResult> EvalReducerAccumulatorVariadicCallbackCallCounted(
+    private static EvalResult<CountedResult> EvalReducerAccumulatorCollectingCallbackCallCounted(
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
@@ -3391,7 +3402,7 @@ public static class Evaluator
 
         try
         {
-            return EvalReducerAccumulatorVariadicCallbackCallCountedCore(callee, args, ctx, valEnv);
+            return EvalReducerAccumulatorCollectingCallbackCallCountedCore(callee, args, ctx, valEnv);
         }
         finally
         {
@@ -3399,7 +3410,7 @@ public static class Evaluator
         }
     }
 
-    private static EvalResult<CountedResult> EvalReducerAccumulatorVariadicCallbackCallCountedCore(
+    private static EvalResult<CountedResult> EvalReducerAccumulatorCollectingCallbackCallCountedCore(
         Algorithm.User callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
@@ -3425,7 +3436,7 @@ public static class Evaluator
 
     /// <summary>
     /// Evaluate a <c>reduce</c> step on one collected iteration item. Reducers
-    /// with a top-level variadic accumulator parameter bind accumulator state
+    /// with a top-level collecting accumulator parameter bind accumulator state
     /// slots like loop state; other reducers keep ordinary structural
     /// accumulator binding.
     /// </summary>
@@ -3438,14 +3449,14 @@ public static class Evaluator
         string calleeName = "conditional")
     {
         var elementArg = CountedSequenceCallbackItem(element);
-        if (callee is Algorithm.User userReducer && ReducerAccumulatorSideHasTopLevelVariadic(userReducer))
+        if (callee is Algorithm.User userReducer && ReducerAccumulatorSideHasTopLevelCollecting(userReducer))
         {
             var accumulatorSlots = accumulator.ToItems();
             var args = new List<CountedResult>(1 + accumulatorSlots.Count) { elementArg };
             foreach (var slot in accumulatorSlots)
                 args.Add(new CountedResult(slot, slot.ValueCount()));
 
-            return EvalReducerAccumulatorVariadicCallbackCallCounted(userReducer, args, ctx, valEnv);
+            return EvalReducerAccumulatorCollectingCallbackCallCounted(userReducer, args, ctx, valEnv);
         }
 
         return EvalResolvedCallbackCallCounted(
@@ -3594,16 +3605,15 @@ public static class Evaluator
 
     // Evaluate a unary `sequenceSpread` node by evaluating its single operand
     // once and spreading immediate top-level items. Directly-nested spreads
-    // (`spread(spread(A))`, equally `A.spread.spread`) are unwrapped
-    // iteratively (stack-safe for deep nesting) and then each written layer
-    // is applied COMPOSITIONALLY: every spread layer opens exactly one
-    // boundary of the value the previous layer would have captured, so
-    // `spread(spread(A))` agrees with `spread((spread(A)))`. For sequence
-    // values the extra layers are fixed points (value-equivalent to a single
-    // spread); a singleton-list chain opens one list boundary per layer
-    // (`[[7]].spread.spread` supplies `7`), while a multi-element list
-    // re-captures as a sequence after the first layer and then stays fixed
-    // (`[[1, 2], [3, 4]].spread.spread` supplies the two inner lists unchanged).
+    // (`A**`) are unwrapped iteratively (stack-safe for deep nesting) and
+    // then each written layer is applied COMPOSITIONALLY: every spread layer
+    // opens exactly one boundary of the value the previous layer would have
+    // captured, so `A**` agrees with `(A*)*`. For sequence values the extra
+    // layers are fixed points (value-equivalent to a single spread); a
+    // singleton-list chain opens one list boundary per layer (`[[7]]**`
+    // supplies `7`), while a multi-element list re-captures as a sequence
+    // after the first layer and then stays fixed (`[[1, 2], [3, 4]]**`
+    // supplies the two inner lists unchanged).
     // Lean: evalSequenceSpreadCounted.
     private static EvalResult<CountedResult> EvalSequenceSpreadCounted(
         Expr expr,
@@ -3761,22 +3771,22 @@ public static class Evaluator
         switch (descriptor.Kind)
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
-            {
-                var algorithm = item.Algorithm
-                    ?? (item.PreparedValue is { } prepared
-                        ? CountedArgAlgorithm(prepared)
-                        : null);
-                if (algorithm is not null)
                 {
-                    return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(
-                            NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx)));
-                }
+                    var algorithm = item.Algorithm
+                        ?? (item.PreparedValue is { } prepared
+                            ? CountedArgAlgorithm(prepared)
+                            : null);
+                    if (algorithm is not null)
+                    {
+                        return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
+                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(
+                                NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx)));
+                    }
 
-                return item.ValueError ?? new EvalError.WithContext(
-                    SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                    new EvalError.BadArity());
-            }
+                    return item.ValueError ?? new EvalError.WithContext(
+                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
+                        new EvalError.BadArity());
+                }
 
             case SequenceBuiltinSuffixArgKind.Value:
                 if (item.Value is not null)
@@ -3790,23 +3800,23 @@ public static class Evaluator
                     new EvalError.BadArity());
 
             case SequenceBuiltinSuffixArgKind.WholeNumber:
-            {
-                if (item.Value is null)
-                    return item.ValueError ?? new EvalError.WithContext(
-                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                        new EvalError.BadArity());
-
-                var numeric = item.Value.SingleAtomicNumber();
-                if (numeric is null || numeric.Value != Math.Truncate(numeric.Value))
                 {
-                    return new EvalError.WithContext(
-                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                        new EvalError.BadArity());
-                }
+                    if (item.Value is null)
+                        return item.ValueError ?? new EvalError.WithContext(
+                            SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
+                            new EvalError.BadArity());
 
-                return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                    new PreparedSequenceBuiltinSuffixArg.WholeNumberArg(numeric.Value));
-            }
+                    var numeric = item.Value.SingleAtomicNumber();
+                    if (numeric is null || numeric.Value != Math.Truncate(numeric.Value))
+                    {
+                        return new EvalError.WithContext(
+                            SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
+                            new EvalError.BadArity());
+                    }
+
+                    return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
+                        new PreparedSequenceBuiltinSuffixArg.WholeNumberArg(numeric.Value));
+                }
 
             default:
                 return InternalSequenceBuiltinSuffixArgMetadataError<PreparedSequenceBuiltinSuffixArg>(
@@ -3921,7 +3931,7 @@ public static class Evaluator
     /// The current item is passed to the reducer exactly as collected;
     /// nested sequence values stay intact.
     /// Normal accumulator parameters keep ordinary structural semantics; a
-    /// top-level variadic accumulator parameter receives accumulator state
+    /// top-level collecting accumulator parameter receives accumulator state
     /// slots.
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
@@ -3950,7 +3960,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level variadic accumulator parameters receive state slots)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level collecting accumulator parameters receive state slots)",
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 
@@ -4006,7 +4016,7 @@ public static class Evaluator
         IReadOnlyList<(string, Result)> valEnv)
     {
         var predicateR = WithCtx(
-            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
+            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
             EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
         if (predicateR.IsError)
             return predicateR.Error;
@@ -4042,7 +4052,7 @@ public static class Evaluator
         foreach (var item in items)
         {
             var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; a variadic parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
+                "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
             if (transformR.IsError) return transformR.Error;
 
@@ -4099,12 +4109,12 @@ public static class Evaluator
                 break;
 
             case SequenceBuiltinItemShapeConstraint.SingleNumeric:
-            {
-                var numbersR = CollectSingleAtomicNumbers(builtin, validatedItemsR.Value.FlattenedItems);
-                if (numbersR.IsError) return numbersR.Error;
-                numericItems = numbersR.Value;
-                break;
-            }
+                {
+                    var numbersR = CollectSingleAtomicNumbers(builtin, validatedItemsR.Value.FlattenedItems);
+                    if (numbersR.IsError) return numbersR.Error;
+                    numericItems = numbersR.Value;
+                    break;
+                }
         }
 
         return EvalResult<PreparedSequenceBuiltinInput>.Ok(
@@ -4162,7 +4172,7 @@ public static class Evaluator
         // argument at this call boundary, exactly like at every other call
         // boundary; only explicit caller-site spread alters argument
         // boundaries, and the spread items obey the same fixed arity
-        // (`count(spread([1, 2, 3]))` supplies three arguments and is an arity
+        // (`count([1, 2, 3]*)` supplies three arguments and is an arity
         // error). Nothing is opened before binding.
         var items = itemsR.Value;
         var expectedArgCount = 1 + metadata.SuffixArgs.Count;
@@ -4778,74 +4788,74 @@ public static class Evaluator
         switch (builtin, args.Count)
         {
             case (BuiltinId.@if, 3):
-            {
-                var condR = EvalResolvedArgument(args[0], ctx, valEnv);
-                if (condR.IsError) return condR.Error;
-                var truth = condR.Value.TruthValue();
-                if (truth is null) return new EvalError.BadArity();
+                {
+                    var condR = EvalResolvedArgument(args[0], ctx, valEnv);
+                    if (condR.IsError) return condR.Error;
+                    var truth = condR.Value.TruthValue();
+                    if (truth is null) return new EvalError.BadArity();
 
-                // The selected branch is one argument expression, so `if` observes
-                // it as a single value boundary — exactly like value-position
-                // property access. A multi-output branch property such as
-                // `X = 1, 2, 3` therefore yields the grouped sequence value
-                // `(1, 2, 3)` with emitted count 1, not three separate outputs.
-                // Explicit spread (`spread(if(1, X, X))`) is the way to open it.
-                // Unlike `while`/`repeat`, which intentionally preserve multi-slot
-                // loop state, `if` re-counts the chosen branch value here.
-                var branchR = truth.Value
-                    ? EvalResolvedArgumentCounted(args[1], ctx, valEnv)
-                    : EvalResolvedArgumentCounted(args[2], ctx, valEnv);
-                if (branchR.IsError) return branchR.Error;
-                return EvalResult<CountedResult>.Ok(
-                    new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
-            }
+                    // The selected branch is one argument expression, so `if` observes
+                    // it as a single value boundary — exactly like value-position
+                    // property access. A multi-output branch property such as
+                    // `X = 1, 2, 3` therefore yields the grouped sequence value
+                    // `(1, 2, 3)` with emitted count 1, not three separate outputs.
+                    // Explicit spread (`if(1, X, X)*`) is the way to open it.
+                    // Unlike `while`/`repeat`, which intentionally preserve multi-slot
+                    // loop state, `if` re-counts the chosen branch value here.
+                    var branchR = truth.Value
+                        ? EvalResolvedArgumentCounted(args[1], ctx, valEnv)
+                        : EvalResolvedArgumentCounted(args[2], ctx, valEnv);
+                    if (branchR.IsError) return branchR.Error;
+                    return EvalResult<CountedResult>.Ok(
+                        new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
+                }
 
             case (BuiltinId.@while, _) when args.Count >= 2:
-            {
-                var stepR = ResolveArgumentAlgorithm(args[0]);
-                if (stepR.IsError) return stepR.Error;
-                var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
-                if (initialStateR.IsError) return initialStateR.Error;
-                return WhileLoopCounted(stepR.Value, initialStateR.Value, ctx, valEnv);
-            }
+                {
+                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    if (stepR.IsError) return stepR.Error;
+                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
+                    if (initialStateR.IsError) return initialStateR.Error;
+                    return WhileLoopCounted(stepR.Value, initialStateR.Value, ctx, valEnv);
+                }
 
             case (BuiltinId.@repeat, _) when args.Count >= 3:
-            {
-                var stepR = ResolveArgumentAlgorithm(args[0]);
-                if (stepR.IsError) return stepR.Error;
-                var countR = EvalResolvedArgument(args[1], ctx, valEnv);
-                if (countR.IsError) return countR.Error;
-                var nR = ExpectWholeInt(countR.Value, "Repeat count");
-                if (nR.IsError) return nR.Error;
-                var n = (long)nR.Value;
-                if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                {
+                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    if (stepR.IsError) return stepR.Error;
+                    var countR = EvalResolvedArgument(args[1], ctx, valEnv);
+                    if (countR.IsError) return countR.Error;
+                    var nR = ExpectWholeInt(countR.Value, "Repeat count");
+                    if (nR.IsError) return nR.Error;
+                    var n = (long)nR.Value;
+                    if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
 
-                var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
-                if (initialStateR.IsError) return initialStateR.Error;
-                return RepeatLoopCounted(stepR.Value, n, initialStateR.Value, ctx, valEnv);
-            }
+                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
+                    if (initialStateR.IsError) return initialStateR.Error;
+                    return RepeatLoopCounted(stepR.Value, n, initialStateR.Value, ctx, valEnv);
+                }
 
             case (BuiltinId.@atoms, 1):
-            {
-                var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
-                if (atomsR.IsError) return atomsR.Error;
-                // `atoms` materializes a collection: one exact immutable list
-                // of the recursively collected numeric atoms (sequence AND
-                // list boundaries open; truth testing stays list-opaque).
-                return MakeLanguageAtomsResult(ctx, atomsR.Value);
-            }
+                {
+                    var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
+                    if (atomsR.IsError) return atomsR.Error;
+                    // `atoms` materializes a collection: one exact immutable list
+                    // of the recursively collected numeric atoms (sequence AND
+                    // list boundaries open; truth testing stays list-opaque).
+                    return MakeLanguageAtomsResult(ctx, atomsR.Value);
+                }
 
             case (BuiltinId.@range, 2):
-            {
-                var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
-                if (rangeR.IsError) return rangeR.Error;
+                {
+                    var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
+                    if (rangeR.IsError) return rangeR.Error;
 
-                // A list value is always one visible value, including `[]`.
-                var rangeValueR = BuildInclusiveRangeChecked(ctx, rangeR.Value);
-                return rangeValueR.IsError
-                    ? rangeValueR.Error
-                    : EvalResult<CountedResult>.Ok(new CountedResult(rangeValueR.Value, 1));
-            }
+                    // A list value is always one visible value, including `[]`.
+                    var rangeValueR = BuildInclusiveRangeChecked(ctx, rangeR.Value);
+                    return rangeValueR.IsError
+                        ? rangeValueR.Error
+                        : EvalResult<CountedResult>.Ok(new CountedResult(rangeValueR.Value, 1));
+                }
 
             default:
                 return WrongBuiltinArity(builtin, args.Count);
@@ -4944,36 +4954,36 @@ public static class Evaluator
         switch (expr)
         {
             case Expr.SequenceConstruct(var e1, var e2):
-            {
-                _ = e1;
-                _ = e2;
-                return new EvalError.BadOpenForm("sequence construction expressions cannot be opened") { Span = expr.Span };
-            }
+                {
+                    _ = e1;
+                    _ = e2;
+                    return new EvalError.BadOpenForm("sequence construction expressions cannot be opened") { Span = expr.Span };
+                }
 
             case Expr.SequenceSpread(var operand):
-            {
-                _ = operand;
-                return new EvalError.BadOpenForm("spread expressions cannot be opened") { Span = expr.Span };
-            }
+                {
+                    _ = operand;
+                    return new EvalError.BadOpenForm("spread expressions cannot be opened") { Span = expr.Span };
+                }
 
             case Expr.Block(var alg):
                 return EvalResult<Algorithm>.Ok(WireOpenBlockToGlobalScope(alg, ctx));
 
             case Expr.Resolve(var name):
-            {
-                // open never requires the opened algorithm itself to be public.
-                // It only requires the algorithm to be available in the current context.
-                // open imports only public members (enforced later by LookupOpens).
-                if (ctx.CallStack.Count > 0)
                 {
-                    var found = LookupLexicalDirect(ctx.CallStack[0], name);
-                    if (found is not null)
-                        return found is Algorithm.Builtin
-                            ? new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span }
-                            : EvalResult<Algorithm>.Ok(found);
+                    // open never requires the opened algorithm itself to be public.
+                    // It only requires the algorithm to be available in the current context.
+                    // open imports only public members (enforced later by LookupOpens).
+                    if (ctx.CallStack.Count > 0)
+                    {
+                        var found = LookupLexicalDirect(ctx.CallStack[0], name);
+                        if (found is not null)
+                            return found is Algorithm.Builtin
+                                ? new EvalError.IllegalInOpen($"builtin '{name}'") { Span = expr.Span }
+                                : EvalResult<Algorithm>.Ok(found);
+                    }
+                    return new EvalError.UnknownName(name) { Span = expr.Span };
                 }
-                return new EvalError.UnknownName(name) { Span = expr.Span };
-            }
 
             case Expr.DotCall(var target, var propName, null):
                 return WithSpan(expr.Span, ResolveOpenPropAccess(target, propName, ctx));
@@ -5026,17 +5036,17 @@ public static class Evaluator
         switch (expr)
         {
             case Expr.SequenceConstruct(var e1, var e2):
-            {
-                _ = e1;
-                _ = e2;
-                return new EvalError.NotAnAlgorithm("sequence construction expression") { Span = expr.Span };
-            }
+                {
+                    _ = e1;
+                    _ = e2;
+                    return new EvalError.NotAnAlgorithm("sequence construction expression") { Span = expr.Span };
+                }
 
             case Expr.SequenceSpread(var operand):
-            {
-                _ = operand;
-                return new EvalError.NotAnAlgorithm("spread expression") { Span = expr.Span };
-            }
+                {
+                    _ = operand;
+                    return new EvalError.NotAnAlgorithm("spread expression") { Span = expr.Span };
+                }
 
             case Expr.Block(var alg):
                 return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
@@ -5045,25 +5055,25 @@ public static class Evaluator
                 return ResolveNamedAlgorithm(name, expr.Span, ctx);
 
             case Expr.DotCall:
-            {
-                // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
-                // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
-                var wrapper = new Algorithm.User(
-                    Parent: null, Parameters: [], Opens: [],
-                    Properties: [], Output: [expr]);
-                return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
-            }
+                {
+                    // Lean: resolveAlg (.dotCall o n args) — lift to wrapper algorithm;
+                    // evalDotCall handles all semantics (builtin property special cases, structural lookup, lexical fallback)
+                    var wrapper = new Algorithm.User(
+                        Parent: null, Parameters: [], Opens: [],
+                        Properties: [], Output: [expr]);
+                    return EvalResult<Algorithm>.Ok(WireToCaller(ctx, wrapper));
+                }
 
             // Algorithm resolution for parameters (Lean: resolveAlg Param(x)):
             // Check AlgEnv first — if x is bound to an algorithm, return it.
             // Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
             case Expr.Param(var x):
-            {
-                var algBound = LookupAlg(ctx.AlgEnv, x);
-                if (algBound is not null)
-                    return EvalResult<Algorithm>.Ok(algBound);
-                return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
-            }
+                {
+                    var algBound = LookupAlg(ctx.AlgEnv, x);
+                    if (algBound is not null)
+                        return EvalResult<Algorithm>.Ok(algBound);
+                    return new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span };
+                }
             case Expr.Num(var n):
                 return new EvalError.NotAnAlgorithm($"num({n.ToString(System.Globalization.CultureInfo.InvariantCulture)})") { Span = expr.Span };
             case Expr.EmptySequence:
@@ -5209,7 +5219,7 @@ public static class Evaluator
             new VariadicLoopStateBindingContext(
                 loopName,
                 step.Parameters
-                    .Where(static parameter => parameter.Kind != ParameterKind.Variadic)
+                    .Where(static parameter => parameter.Kind != ParameterKind.Collecting)
                     .Select(static parameter => parameter.DisplayName)
                     .ToList(),
                 expectedMinimumStateValueCount,
@@ -5217,18 +5227,18 @@ public static class Evaluator
             new EvalError.ArityMismatch(expectedMinimumStateValueCount, actualStateValueCount));
 
     private static EvalResult<IReadOnlyList<(string Name, Result Value)>> BindEvaluatedSlotValueBindings(
-        FlatVariadicBindingLayout layout,
+        FlatCollectingBindingLayout layout,
         IReadOnlyList<(string ParameterName, BindingInputSlot Item)> normalBindings,
-        VariadicCapture variadicCapture)
+        CollectingCapture collectingCapture)
     {
         var valueBindings = new List<(string Name, Result Value)>(layout.Signature.Parameters.Count);
         var normalBindingIndex = 0;
 
         foreach (var parameter in layout.Signature.Parameters)
         {
-            if (parameter.Kind == ParameterKind.Variadic)
+            if (parameter.Kind == ParameterKind.Collecting)
             {
-                valueBindings.Add((variadicCapture.Name, variadicCapture.Value));
+                valueBindings.Add((collectingCapture.Name, collectingCapture.Value));
                 continue;
             }
 
@@ -5289,21 +5299,21 @@ public static class Evaluator
             return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(boundR.Value, []));
         }
 
-        EvalResult<EvaluatedSlotBindings> BindFlatVariadicSlots(FlatVariadicBindingLayout layout)
+        EvalResult<EvaluatedSlotBindings> BindFlatCollectingSlots(FlatCollectingBindingLayout layout)
         {
             var inputSlots = evaluatedSlots
                 .Select(BindingInputSlot.FromEvaluatedValue)
                 .ToArray();
 
-            var boundItemsR = BindItemsToFlatVariadicLayout(
+            var boundItemsR = BindItemsToFlatCollectingLayout(
                 layout,
                 inputSlots,
                 variadicArityMismatch);
             if (boundItemsR.IsError) return boundItemsR.Error;
 
             var boundItems = boundItemsR.Value;
-            var capturedValues = new List<Result>(boundItems.VariadicItems.Count);
-            foreach (var item in boundItems.VariadicItems)
+            var capturedValues = new List<Result>(boundItems.CollectingItems.Count);
+            foreach (var item in boundItems.CollectingItems)
             {
                 if (item.Value is null)
                     return new EvalError.BadArity();
@@ -5311,24 +5321,24 @@ public static class Evaluator
                 capturedValues.Add(item.Value);
             }
 
-            var variadicName = boundItems.VariadicParameterName
-                ?? layout.VariadicName;
-            if (variadicName is null)
+            var collectingName = boundItems.CollectingParameterName
+                ?? layout.CollectingName;
+            if (collectingName is null)
                 return new EvalError.BadArity();
 
-            var variadicCaptureR = CreateVariadicCapture(ctx, variadicName, capturedValues);
-            if (variadicCaptureR.IsError) return variadicCaptureR.Error;
-            var variadicCapture = variadicCaptureR.Value;
+            var collectingCaptureR = CreateCollectingCapture(ctx, collectingName, capturedValues);
+            if (collectingCaptureR.IsError) return collectingCaptureR.Error;
+            var collectingCapture = collectingCaptureR.Value;
 
             var valueBindingsR = BindEvaluatedSlotValueBindings(
                 layout,
                 boundItems.NormalBindings,
-                variadicCapture);
+                collectingCapture);
             if (valueBindingsR.IsError) return valueBindingsR.Error;
 
             return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(
                 valueBindingsR.Value,
-                [(variadicCapture.Name, variadicCapture.CountedValue)]));
+                [(collectingCapture.Name, collectingCapture.CountedValue)]));
         }
 
         EvalResult<EvaluatedSlotBindings> BindLegacyShape()
@@ -5336,16 +5346,16 @@ public static class Evaluator
             if (UsesPatternBinding(algorithm))
                 return BindPatternedSlots();
 
-            return TryGetLegacyFlatVariadicBindingLayout(algorithm, callableName, out var legacyLayout)
-                ? BindFlatVariadicSlots(legacyLayout)
+            return TryGetLegacyFlatCollectingBindingLayout(algorithm, callableName, out var legacyLayout)
+                ? BindFlatCollectingSlots(legacyLayout)
                 : BindFlatFixedSlots();
         }
 
-        EvalResult<EvaluatedSlotBindings> BindSelectedFlatVariadicShape()
+        EvalResult<EvaluatedSlotBindings> BindSelectedFlatCollectingShape()
         {
             return bindingSelection.Plan is not null
-                && TryGetFlatVariadicBindingLayout(bindingSelection.Plan, out var layout)
-                ? BindFlatVariadicSlots(layout)
+                && TryGetFlatCollectingBindingLayout(bindingSelection.Plan, out var layout)
+                ? BindFlatCollectingSlots(layout)
                 : BindLegacyShape();
         }
 
@@ -5353,7 +5363,7 @@ public static class Evaluator
         {
             GenericLoopStepBindingShape.Patterned => BindPatternedSlots(),
             GenericLoopStepBindingShape.FlatFixed => BindFlatFixedSlots(),
-            GenericLoopStepBindingShape.FlatVariadic => BindSelectedFlatVariadicShape(),
+            GenericLoopStepBindingShape.FlatCollecting => BindSelectedFlatCollectingShape(),
             _ => BindLegacyShape(),
         };
     }
@@ -5557,64 +5567,64 @@ public static class Evaluator
         {
             // if(cond, thenBranch, elseBranch): standard 3-arg conditional.
             case (BuiltinId.@if, 3):
-            {
-                var condR = EvalResolvedArgument(args[0], ctx, valEnv);
-                if (condR.IsError) return condR.Error;
-                var truth = condR.Value.TruthValue();
-                if (truth is null) return new EvalError.BadArity();
-                return truth.Value
-                    ? EvalResolvedArgument(args[1], ctx, valEnv)
-                    : EvalResolvedArgument(args[2], ctx, valEnv);
-            }
+                {
+                    var condR = EvalResolvedArgument(args[0], ctx, valEnv);
+                    if (condR.IsError) return condR.Error;
+                    var truth = condR.Value.TruthValue();
+                    if (truth is null) return new EvalError.BadArity();
+                    return truth.Value
+                        ? EvalResolvedArgument(args[1], ctx, valEnv)
+                        : EvalResolvedArgument(args[2], ctx, valEnv);
+                }
 
-            // while(step, init...)
+            // while(step, init1, init2, ...)
             case (BuiltinId.@while, _) when args.Count >= 2:
-            {
-                var stepR = ResolveArgumentAlgorithm(args[0]);
-                if (stepR.IsError) return stepR.Error;
-                var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
-                if (initialStateR.IsError) return initialStateR.Error;
-                return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
-            }
+                {
+                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    if (stepR.IsError) return stepR.Error;
+                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
+                    if (initialStateR.IsError) return initialStateR.Error;
+                    return WhileLoop(stepR.Value, initialStateR.Value, ctx, valEnv);
+                }
 
-            // repeat(step, count, init...)
+            // repeat(step, count, init1, init2, ...)
             case (BuiltinId.@repeat, _) when args.Count >= 3:
-            {
-                var stepR = ResolveArgumentAlgorithm(args[0]);
-                if (stepR.IsError) return stepR.Error;
-                var countR = EvalResolvedArgument(args[1], ctx, valEnv);
-                if (countR.IsError) return countR.Error;
-                var nR = ExpectWholeInt(countR.Value, "Repeat count");
-                if (nR.IsError) return nR.Error;
-                var n = (long)nR.Value;
-                if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
-                if (initialStateR.IsError) return initialStateR.Error;
-                return RepeatLoop(stepR.Value, n, initialStateR.Value, ctx, valEnv);
-            }
+                {
+                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    if (stepR.IsError) return stepR.Error;
+                    var countR = EvalResolvedArgument(args[1], ctx, valEnv);
+                    if (countR.IsError) return countR.Error;
+                    var nR = ExpectWholeInt(countR.Value, "Repeat count");
+                    if (nR.IsError) return nR.Error;
+                    var n = (long)nR.Value;
+                    if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
+                    if (initialStateR.IsError) return initialStateR.Error;
+                    return RepeatLoop(stepR.Value, n, initialStateR.Value, ctx, valEnv);
+                }
 
             // atoms(value) — recursively collect numeric atoms into one exact list
             case (BuiltinId.@atoms, 1):
-            {
-                var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
-                if (atomsR.IsError) return atomsR.Error;
-                var atomsListR = MakeLanguageAtomsResult(ctx, atomsR.Value);
-                return atomsListR.IsError ? atomsListR.Error : EvalResult<Result>.Ok(atomsListR.Value.Value);
-            }
+                {
+                    var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
+                    if (atomsR.IsError) return atomsR.Error;
+                    var atomsListR = MakeLanguageAtomsResult(ctx, atomsR.Value);
+                    return atomsListR.IsError ? atomsListR.Error : EvalResult<Result>.Ok(atomsListR.Value.Value);
+                }
 
             // range(start, stop) — inclusive integers materialized as one exact list.
             case (BuiltinId.@range, 2):
-            {
-                var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
-                if (rangeR.IsError) return rangeR.Error;
+                {
+                    var rangeR = EvalBuiltinRangeArguments(args, ctx, valEnv);
+                    if (rangeR.IsError) return rangeR.Error;
 
-                return BuildInclusiveRangeChecked(ctx, rangeR.Value);
-            }
+                    return BuildInclusiveRangeChecked(ctx, rangeR.Value);
+                }
 
             default:
-            {
-                return WrongBuiltinArity(builtin, args.Count);
-            }
+                {
+                    return WrongBuiltinArity(builtin, args.Count);
+                }
         }
     }
 
@@ -5808,123 +5818,123 @@ public static class Evaluator
                 return MakeStringResult(ctx, s, expr.Span);
 
             case Expr.Param(var name):
-            {
-                // Dual-view parameter evaluation (Lean: eval Param(x)):
-                // 1. Counted callback-param env (projected higher-order item meaning)
-                // 2. ValEnv (ordinary value meaning)
-                // 3. AlgEnv fallback (algorithm meaning):
-                //    - 0-param algorithm → auto-evaluate (thunk semantics)
-                //    - multi-param algorithm → arityMismatch (needs explicit call)
-                var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-                if (counted is not null) return EvalResult<Result>.Ok(counted.Value.Value);
-
-                var val = LookupVal(valEnv, name);
-                if (val is not null) return EvalResult<Result>.Ok(val);
-                var algBound = LookupAlg(ctx.AlgEnv, name);
-                if (algBound is not null)
                 {
-                    if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                        return conditionalError with { Span = expr.Span };
-                    if (algBound.Params.Count == 0)
-                        return WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
-                    return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
+                    // Dual-view parameter evaluation (Lean: eval Param(x)):
+                    // 1. Counted callback-param env (projected higher-order item meaning)
+                    // 2. ValEnv (ordinary value meaning)
+                    // 3. AlgEnv fallback (algorithm meaning):
+                    //    - 0-param algorithm → auto-evaluate (thunk semantics)
+                    //    - multi-param algorithm → arityMismatch (needs explicit call)
+                    var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+                    if (counted is not null) return EvalResult<Result>.Ok(counted.Value.Value);
+
+                    var val = LookupVal(valEnv, name);
+                    if (val is not null) return EvalResult<Result>.Ok(val);
+                    var algBound = LookupAlg(ctx.AlgEnv, name);
+                    if (algBound is not null)
+                    {
+                        if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
+                            return conditionalError with { Span = expr.Span };
+                        if (algBound.Params.Count == 0)
+                            return WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
+                        return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
+                    }
+                    return new EvalError.UnknownName(name) { Span = expr.Span };
                 }
-                return new EvalError.UnknownName(name) { Span = expr.Span };
-            }
 
             case Expr.Unary(var unaryOp, var operand):
-            {
-                // Empty result propagation through unary operators.
-                var operandR = Eval(operand, ctx, valEnv);
-                if (operandR.IsError) return operandR.Error;
-                if (operandR.Value is Result.SequenceValue(var uItems) && uItems.Count == 0)
-                    return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
-                if (operandR.Value is Result.Str)
-                    return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = expr.Span };
-                var vR = ExpectInt(operandR.Value);
-                if (vR.IsError) return vR.Error;
-                var unaryResult = unaryOp switch
                 {
-                    UnaryOp.Minus => -vR.Value,
-                    UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
-                    _ => 0m,
-                };
-                return EvalResult<Result>.Ok(new Result.Atom(unaryResult));
-            }
+                    // Empty result propagation through unary operators.
+                    var operandR = Eval(operand, ctx, valEnv);
+                    if (operandR.IsError) return operandR.Error;
+                    if (operandR.Value is Result.SequenceValue(var uItems) && uItems.Count == 0)
+                        return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
+                    if (operandR.Value is Result.Str)
+                        return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = expr.Span };
+                    var vR = ExpectInt(operandR.Value);
+                    if (vR.IsError) return vR.Error;
+                    var unaryResult = unaryOp switch
+                    {
+                        UnaryOp.Minus => -vR.Value,
+                        UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
+                        _ => 0m,
+                    };
+                    return EvalResult<Result>.Ok(new Result.Atom(unaryResult));
+                }
 
             case Expr.Binary(var op, var left, var right):
-            {
-                // Evaluate both sides as Result first so empty results can propagate.
-                var lR = Eval(left, ctx, valEnv);
-                if (lR.IsError) return lR.Error;
-                var rR = Eval(right, ctx, valEnv);
-                if (rR.IsError) return rR.Error;
-                return ApplyBinaryOperator(op, left, right, lR.Value, rR.Value, expr.Span);
-            }
+                {
+                    // Evaluate both sides as Result first so empty results can propagate.
+                    var lR = Eval(left, ctx, valEnv);
+                    if (lR.IsError) return lR.Error;
+                    var rR = Eval(right, ctx, valEnv);
+                    if (rR.IsError) return rR.Error;
+                    return ApplyBinaryOperator(op, left, right, lR.Value, rR.Value, expr.Span);
+                }
 
             case Expr.SequenceConstruct:
-            {
-                var sequenceConstructR = EvalSequenceConstructCounted(expr, ctx, valEnv);
-                return sequenceConstructR.IsError
-                    ? sequenceConstructR.Error
-                    : EvalResult<Result>.Ok(sequenceConstructR.Value.Value);
-            }
+                {
+                    var sequenceConstructR = EvalSequenceConstructCounted(expr, ctx, valEnv);
+                    return sequenceConstructR.IsError
+                        ? sequenceConstructR.Error
+                        : EvalResult<Result>.Ok(sequenceConstructR.Value.Value);
+                }
 
             case Expr.EmptySequence(var depth):
                 return EvalResult<Result>.Ok(BuildEmptySequenceValue(depth));
 
             case Expr.SequenceSpread:
-            {
-                var sequenceSpreadR = EvalSequenceSpreadCounted(expr, ctx, valEnv);
-                return sequenceSpreadR.IsError
-                    ? sequenceSpreadR.Error
-                    : EvalResult<Result>.Ok(sequenceSpreadR.Value.Value);
-            }
+                {
+                    var sequenceSpreadR = EvalSequenceSpreadCounted(expr, ctx, valEnv);
+                    return sequenceSpreadR.IsError
+                        ? sequenceSpreadR.Error
+                        : EvalResult<Result>.Ok(sequenceSpreadR.Value.Value);
+                }
 
             case Expr.ListLiteral(var listItems):
-            {
-                var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
-                return listLiteralR.IsError
-                    ? listLiteralR.Error
-                    : EvalResult<Result>.Ok(listLiteralR.Value.Value);
-            }
+                {
+                    var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
+                    return listLiteralR.IsError
+                        ? listLiteralR.Error
+                        : EvalResult<Result>.Ok(listLiteralR.Value.Value);
+                }
 
             case Expr.Block(var alg):
-            {
-                var wired = WireToCaller(ctx, alg);
-                if (wired.Params.Count == 0)
-                    return WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
-                var blockSpan = expr.Span ?? FirstSpan(wired.Output);
-                return MissingImplicitArguments<Result>(wired.Params, blockSpan);
-            }
+                {
+                    var wired = WireToCaller(ctx, alg);
+                    if (wired.Params.Count == 0)
+                        return WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
+                    var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                    return MissingImplicitArguments<Result>(wired.Params, blockSpan);
+                }
 
             case Expr.Resolve(var name):
-            {
-                if (ctx.CallStack.Count == 0)
-                    return new EvalError.UnknownName(name) { Span = expr.Span };
-
-                var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
-                if (resolvedR.IsError)
                 {
-                    var err = resolvedR.Error;
-                    return err.Span is null ? err with { Span = expr.Span } : err;
+                    if (ctx.CallStack.Count == 0)
+                        return new EvalError.UnknownName(name) { Span = expr.Span };
+
+                    var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+                    if (resolvedR.IsError)
+                    {
+                        var err = resolvedR.Error;
+                        return err.Span is null ? err with { Span = expr.Span } : err;
+                    }
+
+                    if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
+                        return conditionalError with { Span = expr.Span };
+
+                    if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
+                    {
+                        return WithSpan<Result>(
+                            expr.Span,
+                            new EvalError.WithContext(
+                                CtxProperty(name),
+                                new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
+                    }
+
+                    return WithPropertyContextOnMissingOutput(name, expr.Span,
+                        EvalZeroArgPropertyAccess(resolvedR.Value, ctx, valEnv));
                 }
-
-                if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-                    return conditionalError with { Span = expr.Span };
-
-                if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-                {
-                    return WithSpan<Result>(
-                        expr.Span,
-                        new EvalError.WithContext(
-                            CtxProperty(name),
-                            new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
-                }
-
-                return WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalZeroArgPropertyAccess(resolvedR.Value, ctx, valEnv));
-            }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
                 // Lean: eval (.dotCall o n argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
@@ -5936,12 +5946,12 @@ public static class Evaluator
                     EvalCallExpr(func, argsAlg, ctx, valEnv));
 
             case Expr.Index(var target, var selector):
-            {
-                var selectionR = EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
-                return selectionR.IsError
-                    ? selectionR.Error
-                    : EvalResult<Result>.Ok(selectionR.Value.Value);
-            }
+                {
+                    var selectionR = EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
+                    return selectionR.IsError
+                        ? selectionR.Error
+                        : EvalResult<Result>.Ok(selectionR.Value.Value);
+                }
 
             case Expr.NativeCall(var fnName, var argNames):
                 return EvalNativeCall(fnName, argNames, valEnv);
@@ -5972,32 +5982,32 @@ public static class Evaluator
         switch (expr)
         {
             case Expr.Param(var name):
-            {
-                var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-                if (counted is not null)
-                    return EvalResult<CountedResult>.Ok(counted.Value);
-
-                var val = LookupVal(valEnv, name);
-                if (val is not null)
-                    return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
-
-                var algBound = LookupAlg(ctx.AlgEnv, name);
-                if (algBound is not null)
                 {
-                    if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
-                        return conditionalError with { Span = expr.Span };
-                    if (algBound.Params.Count == 0)
-                    {
-                        var valueR = WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
-                        return valueR.IsError
-                            ? valueR.Error
-                            : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-                    }
-                    return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
-                }
+                    var counted = LookupCountedParam(ctx.CountedParamEnv, name);
+                    if (counted is not null)
+                        return EvalResult<CountedResult>.Ok(counted.Value);
 
-                return new EvalError.UnknownName(name) { Span = expr.Span };
-            }
+                    var val = LookupVal(valEnv, name);
+                    if (val is not null)
+                        return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
+
+                    var algBound = LookupAlg(ctx.AlgEnv, name);
+                    if (algBound is not null)
+                    {
+                        if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
+                            return conditionalError with { Span = expr.Span };
+                        if (algBound.Params.Count == 0)
+                        {
+                            var valueR = WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
+                            return valueR.IsError
+                                ? valueR.Error
+                                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
+                        }
+                        return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
+                    }
+
+                    return new EvalError.UnknownName(name) { Span = expr.Span };
+                }
 
             case Expr.SequenceSpread:
                 return EvalSequenceSpreadCounted(expr, ctx, valEnv);
@@ -6009,57 +6019,57 @@ public static class Evaluator
                 return EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
 
             case Expr.EmptySequence(var depth):
-            {
-                var emptyValue = BuildEmptySequenceValue(depth);
-                return EvalResult<CountedResult>.Ok(new CountedResult(emptyValue, emptyValue.ValueCount()));
-            }
+                {
+                    var emptyValue = BuildEmptySequenceValue(depth);
+                    return EvalResult<CountedResult>.Ok(new CountedResult(emptyValue, emptyValue.ValueCount()));
+                }
 
             case Expr.Block(var alg):
-            {
-                var wired = WireToCaller(ctx, alg);
-                if (wired.Params.Count == 0)
                 {
-                    var blockR = WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
-                    if (blockR.IsError) return blockR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
-                }
+                    var wired = WireToCaller(ctx, alg);
+                    if (wired.Params.Count == 0)
+                    {
+                        var blockR = WithSpan(expr.Span ?? FirstSpan(wired.Output), EvalAlgOutput(wired, ctx, valEnv));
+                        if (blockR.IsError) return blockR.Error;
+                        return EvalResult<CountedResult>.Ok(new CountedResult(blockR.Value, blockR.Value.ValueCount()));
+                    }
 
-                var blockSpan = expr.Span ?? FirstSpan(wired.Output);
-                return MissingImplicitArguments<CountedResult>(wired.Params, blockSpan);
-            }
+                    var blockSpan = expr.Span ?? FirstSpan(wired.Output);
+                    return MissingImplicitArguments<CountedResult>(wired.Params, blockSpan);
+                }
 
             case Expr.Resolve(var name):
-            {
-                if (ctx.CallStack.Count == 0)
-                    return new EvalError.UnknownName(name) { Span = expr.Span };
-
-                var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
-                if (resolvedR.IsError)
                 {
-                    var err = resolvedR.Error;
-                    return err.Span is null ? err with { Span = expr.Span } : err;
+                    if (ctx.CallStack.Count == 0)
+                        return new EvalError.UnknownName(name) { Span = expr.Span };
+
+                    var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+                    if (resolvedR.IsError)
+                    {
+                        var err = resolvedR.Error;
+                        return err.Span is null ? err with { Span = expr.Span } : err;
+                    }
+
+                    if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
+                        return conditionalError with { Span = expr.Span };
+
+                    if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
+                    {
+                        return WithSpan<CountedResult>(
+                            expr.Span,
+                            new EvalError.WithContext(
+                                CtxProperty(name),
+                                new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
+                    }
+
+                    var propertyR = WithPropertyContextOnMissingOutput(name, expr.Span,
+                        EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
+                    return propertyR.IsError
+                        ? propertyR.Error
+                        : EvalResult<CountedResult>.Ok(new CountedResult(
+                            propertyR.Value.Value,
+                            propertyR.Value.Value.ValueCount()));
                 }
-
-                if (ConditionalValueAccessError(name, resolvedR.Value.ResolvedAlgorithm) is { } conditionalError)
-                    return conditionalError with { Span = expr.Span };
-
-                if (resolvedR.Value.ResolvedAlgorithm.Params.Count != 0)
-                {
-                    return WithSpan<CountedResult>(
-                        expr.Span,
-                        new EvalError.WithContext(
-                            CtxProperty(name),
-                            new EvalError.ArityMismatch(resolvedR.Value.ResolvedAlgorithm.Params.Count, 0)));
-                }
-
-                var propertyR = WithPropertyContextOnMissingOutput(name, expr.Span,
-                    EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
-                return propertyR.IsError
-                    ? propertyR.Error
-                    : EvalResult<CountedResult>.Ok(new CountedResult(
-                        propertyR.Value.Value,
-                        propertyR.Value.Value.ValueCount()));
-            }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
                 return WithSpan(expr.Span, WithCtx(CtxDotCall(dotTarget, dotName),
@@ -6074,11 +6084,11 @@ public static class Evaluator
                 return EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
 
             default:
-            {
-                var resultR = Eval(expr, ctx, valEnv);
-                if (resultR.IsError) return resultR.Error;
-                return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
-            }
+                {
+                    var resultR = Eval(expr, ctx, valEnv);
+                    if (resultR.IsError) return resultR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(resultR.Value, resultR.Value.ValueCount()));
+                }
         }
     }
 
@@ -7092,7 +7102,7 @@ public static class Evaluator
         return false;
     }
 
-    private static bool HasLeadingFlatVariadicParameter(Algorithm callee, string name)
+    private static bool HasLeadingFlatCollectingParameter(Algorithm callee, string name)
     {
         var effectiveCallee = TryGetFlatBinderUserEquivalent(callee) ?? callee;
         if (effectiveCallee is not Algorithm.User)
@@ -7100,7 +7110,7 @@ public static class Evaluator
 
         var signature = CallableSignature.FromAlgorithm(name, effectiveCallee);
         var plan = CallableBindingPlan.FromSignature(signature);
-        return plan.TryGetFlatVariadicLayout(out var prefix, out _, out _)
+        return plan.TryGetFlatCollectingLayout(out var prefix, out _, out _)
             && prefix.Count == 0;
     }
 
@@ -7111,16 +7121,16 @@ public static class Evaluator
         Algorithm? extraArgs)
     {
         var receiverExpr = receiver;
-        var hasLeadingFlatVariadicParameter = HasLeadingFlatVariadicParameter(callee, name);
-        var preserveReceiverBoundary = !hasLeadingFlatVariadicParameter;
+        var hasLeadingFlatCollectingParameter = HasLeadingFlatCollectingParameter(callee, name);
+        var preserveReceiverBoundary = !hasLeadingFlatCollectingParameter;
         // The injected receiver is still one leading argument segment. When a
-        // leading flat variadic parameter exists, that segment may carry its
+        // leading flat collecting parameter exists, that segment may carry its
         // emitted-count metadata into the capture after slot allocation.
-        // Parenthesized receiver spread, as in (spread(Arg)).F, can feed the
-        // receiver's top-level items only to leading flat variadic receiver params.
+        // Parenthesized receiver spread, as in (Arg*).F, can feed the
+        // receiver's top-level items only to leading flat collecting receiver params.
         // Fixed receiver params keep the receiver as one argument boundary.
         if (TryGetParenthesizedSequenceSpreadReceiver(receiver, out var spreadReceiver)
-            && hasLeadingFlatVariadicParameter)
+            && hasLeadingFlatCollectingParameter)
         {
             receiverExpr = spreadReceiver;
         }

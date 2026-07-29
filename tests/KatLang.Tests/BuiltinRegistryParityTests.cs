@@ -148,17 +148,17 @@ public class BuiltinRegistryParityTests
     [Fact]
     public void CallableSignatureValidation_RejectsInvalidMetadata()
     {
-        var multipleVariadic = new CallableSignature(
+        var multipleCollecting = new CallableSignature(
             "Bad",
             [
-                new CallableParameter("a", ParameterKind.Variadic),
-                new CallableParameter("b", ParameterKind.Variadic),
+                new CallableParameter("a", ParameterKind.Collecting),
+                new CallableParameter("b", ParameterKind.Collecting),
             ]);
-        Assert.Equal(2, multipleVariadic.VariadicParameterCount);
-        Assert.False(multipleVariadic.HasAtMostOneVariadic);
+        Assert.Equal(2, multipleCollecting.CollectingParameterCount);
+        Assert.False(multipleCollecting.HasAtMostOneCollectingParameter);
         AssertValidationReason(
-            multipleVariadic,
-            "Callable signature `Bad(a..., b...)` cannot contain more than one variadic parameter.");
+            multipleCollecting,
+            "Callable signature `Bad(*a, *b)` cannot contain more than one collecting parameter.");
 
         AssertValidationReason(
             new CallableSignature("Bad", [new CallableParameter("")]),
@@ -227,7 +227,7 @@ public class BuiltinRegistryParityTests
 
             // Collection builtins bind like every other fixed callable: a flat
             // fixed layout (`collection` + controls), never a variadic one.
-            Assert.False(plan.TryGetFlatVariadicLayout(out _, out _, out _));
+            Assert.False(plan.TryGetFlatCollectingLayout(out _, out _, out _));
             Assert.True(plan.TryGetFlatFixedLayout(out var captures));
             Assert.Equal("collection", captures[0].Name);
 

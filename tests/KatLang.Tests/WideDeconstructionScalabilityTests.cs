@@ -92,7 +92,7 @@ public class WideDeconstructionScalabilityTests
         var sb = new StringBuilder();
         for (var i = 0; i < 100; i++)
             sb.Append(i == 0 ? "x0" : $", x{i}");
-        sb.Append(", rest..., y, z = range(1, 150)\nx0, x99, rest.count, y, z");
+        sb.Append(", *rest, y, z = range(1, 150)\nx0, x99, rest.count, y, z");
         Assert.Equal([1m, 100m, 48m, 149m, 150m], Atoms(sb.ToString()));
     }
 

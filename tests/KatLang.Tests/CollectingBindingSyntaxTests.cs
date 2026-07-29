@@ -1,12 +1,15 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Surface-syntax coverage for the collecting-binding marker: postfix
-/// <c>name...</c> is the ONLY collecting-binding spelling and is valid only in
-/// binding positions. The ellipsis token is not an expression operator, and a
-/// prefix ellipsis never declares a collecting binding. Expression spreading
-/// is the named intrinsic (<c>spread(expr)</c> / <c>expr.spread</c>), covered
-/// in depth by <see cref="SpreadIntrinsicSyntaxTests"/>.
+/// Surface-syntax rules for collecting bindings. Prefix <c>*name</c> —
+/// the collect marker directly attached to its binding name — is the ONLY
+/// collecting-binding spelling, valid only in binding positions: explicit
+/// parameter lists, nested sequence-value parameter patterns, and
+/// assignment deconstruction targets. The marker requires exact
+/// source-offset attachment (no whitespace, comment, or newline between the
+/// star and the name), and exactly one marker forms a binding. Malformed
+/// shapes report targeted diagnostics and never create a collecting binding
+/// in the recovered tree.
 /// </summary>
 public class CollectingBindingSyntaxTests
 {
@@ -14,301 +17,263 @@ public class CollectingBindingSyntaxTests
     {
         var result = KatLangEngine.Run(source);
         Assert.True(result is RunResult.Success, $"Expected success but got: {result.ToDisplayString()}");
-        return result.ToDisplayString();
+        return result.ToDisplayString().Replace("\r\n", "\n");
     }
 
+    private static ParseResult Parse(string source) => Parser.Parse(source);
+
+    // ── Canonical orientation and spans ─────────────────────────────────────
+
     [Fact]
-    public void PostfixCollectingBinding_CollectsEmptySingletonAndMultipleArgumentsAsExactLists()
+    public void PrefixCollectingBinding_ParsesCanonicalOrientationWithExactSpans()
     {
-        Assert.Equal("[]", Display("F(items...) = items\nF()"));
-        Assert.Equal("[1]", Display("F(items...) = items\nF(1)"));
-        Assert.Equal("[1, 2, 3]", Display("F(items...) = items\nF(1, 2, 3)"));
-    }
-
-    [Fact]
-    public void PostfixCollectingBinding_SupportsSumAndMovableMiddle()
-    {
-        Assert.Equal("6", Display("Sum(items...) = items.sum\nSum(1, 2, 3)"));
-        Assert.Equal(
-            "[2, 3, 4]",
-            Display("Middle(first, middle..., last) = middle\nMiddle(1, 2, 3, 4, 5)"));
-    }
-
-    [Fact]
-    public void PostfixCollectingBinding_SupportsFrontMiddleAndFinalPositions()
-    {
-        Assert.Equal("[1, 2]", Display("F(prefix..., last) = prefix\nF(1, 2, 3)"));
-        Assert.Equal("[2, 3]", Display("F(first, middle..., last) = middle\nF(1, 2, 3, 4)"));
-        Assert.Equal("[2, 3]", Display("F(first, suffix...) = suffix\nF(1, 2, 3)"));
-    }
-
-    [Fact]
-    public void PostfixCollectingDeconstruction_CollectsMovableMiddleAsExactList()
-        => Assert.Equal(
-            "(1, [2, 3, 4], 5)",
-            Display(
-                """
-                first, middle..., last = 1, 2, 3, 4, 5
-                (first, middle, last)
-                """));
-
-    [Theory]
-    [InlineData("Forward(items...) = Target(spread(items))")]
-    [InlineData("Forward(items...) = Target(items.spread)")]
-    public void Forwarding_UsesCollectingBindingAndNamedSpreadAsOppositeOperations(string forward)
-        => Assert.Equal(
-            "[1, 2, 3]",
-            Display(
-                $$"""
-                Target(items...) = items
-                {{forward}}
-                Forward(1, 2, 3)
-                """));
-
-    [Theory]
-    [InlineData("F([1, 2])", "[[1, 2]]")]
-    [InlineData("F(spread([1, 2]))", "[1, 2]")]
-    [InlineData("F([1, 2].spread)", "[1, 2]")]
-    [InlineData("F((1, 2))", "[(1, 2)]")]
-    [InlineData("F(spread((1, 2)))", "[1, 2]")]
-    [InlineData("F((1, 2).spread)", "[1, 2]")]
-    [InlineData("F([])", "[[]]")]
-    [InlineData("F(spread([]))", "[]")]
-    [InlineData("F([].spread)", "[]")]
-    [InlineData("F(())", "[()]")]
-    [InlineData("F(spread(()))", "[]")]
-    [InlineData("F(().spread)", "[]")]
-    public void PostfixCollectingBinding_PreservesExistingListAndSequenceArgumentBoundaries(
-        string call,
-        string expected)
-        => Assert.Equal(expected, Display($"F(items...) = items\n{call}"));
-
-    /// <summary>
-    /// The central orientation test: ONE source containing both the postfix
-    /// collecting marker and a named spread, proving the marker elaborates to
-    /// a collecting binding and the named form to a spread expression, and
-    /// that neither is mistaken for the other.
-    /// </summary>
-    [Fact]
-    public void PostfixIsACollectingBindingAndNamedSpreadIsASpread_InTheSameDeclaration()
-    {
-        const string source =
-            """
-            Target(items...) = items
-            Forward(items...) = Target(spread(items))
-            Forward(1, 2, 3)
-            """;
-
-        var parse = Parser.Parse(source);
+        var parse = Parse("Collect(*items) = items\nCollect(1, 2)");
         Assert.Empty(parse.Diagnostics);
 
-        var forward = Assert.Single(parse.Root.Properties, property => property.Name == "Forward").Value;
-
-        // Left `items...`: a collecting binding carrying the source-backed marker span.
-        var parameter = Assert.Single(forward.Parameters);
-        Assert.Equal(ParameterKind.Variadic, parameter.Kind);
-        Assert.Equal("items...", parameter.DisplayName);
-        Assert.Equal(new SourceSpan(2, 14, 2, 16), parameter.CollectingMarkerSpan);
-
-        // Right `spread(items)`: a spread expression over the bound variadic parameter, not a binding.
-        var call = Assert.IsType<Expr.Call>(Assert.Single(forward.Output));
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
-        Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
-
-        Assert.Equal("[1, 2, 3]", Display(source));
+        var collect = Assert.Single(parse.Root.Properties, static p => p.Name == "Collect");
+        var parameter = Assert.Single(collect.Value.ExplicitParameters);
+        Assert.Equal(ParameterKind.Collecting, parameter.Kind);
+        Assert.Equal(new SourceSpan(1, 9, 1, 9), parameter.CollectMarkerSpan);
+        Assert.Equal(new SourceSpan(1, 10, 1, 14), parameter.Span);
+        Assert.Equal("*items", parameter.DisplayName);
     }
 
-    [Theory]
-    [InlineData("F(...items) = items", "items", 3, 10)]
-    [InlineData("F(first, ...middle, last) = middle", "middle", 10, 18)]
-    [InlineData("F(...items, last) = items", "items", 3, 10)]
-    [InlineData("F(first, ...items) = items", "items", 10, 17)]
-    public void PrefixSpellingInParameterPattern_IsRejectedAndStaysAFixedBinding(
-        string source,
-        string name,
-        int startColumn,
-        int endColumn)
+    [Fact]
+    public void MixedParameterList_MarkerSitsOnTheMiddleBinding()
     {
-        var syntax = Parser.ParseSyntax(source);
-        var parse = Parser.Parse(source);
+        var parse = Parse("Middle(first, *middle, last) = middle\nMiddle(1, 2, 3)");
+        Assert.Empty(parse.Diagnostics);
 
-        Assert.True(syntax.HasErrors);
+        var middle = Assert.Single(parse.Root.Properties, static p => p.Name == "Middle");
+        var parameters = middle.Value.ExplicitParameters;
+        Assert.Equal(3, parameters.Count);
+        Assert.Equal(ParameterKind.Normal, parameters[0].Kind);
+        Assert.Equal(ParameterKind.Collecting, parameters[1].Kind);
+        Assert.Equal(ParameterKind.Normal, parameters[2].Kind);
+        Assert.Equal(new SourceSpan(1, 15, 1, 15), parameters[1].CollectMarkerSpan);
+    }
+
+    [Fact]
+    public void NestedSequenceValuePattern_SupportsThePrefixMarker()
+    {
+        var parse = Parse("F((head, *tail)) = tail\nF((1, 2, 3))");
+        Assert.Empty(parse.Diagnostics);
+        Assert.Equal("[2, 3]", Display("F((head, *tail)) = tail\nF((1, 2, 3))"));
+    }
+
+    [Fact]
+    public void DeconstructionTargets_SupportThePrefixMarkerInEveryPosition()
+    {
+        Assert.Equal("[1, 2, 3]", Display("*all = 1, 2, 3\nall"));
+        Assert.Equal("[2]", Display("a, *mid, z = 1, 2, 3\nmid"));
+        Assert.Equal("[1, 2]", Display("*init, z = 1, 2, 3\ninit"));
+        Assert.Equal("[2, 3]", Display("a, *rest = 1, 2, 3\nrest"));
+    }
+
+    // ── Attachment: no whitespace, comment, or newline ──────────────────────
+
+    [Theory]
+    [InlineData("F(* items) = items\nF(1)")]
+    [InlineData("F(a, * mid, z) = mid\nF(1, 2, 3)")]
+    public void DetachedMarker_InParameterList_ReportsAttachmentDiagnostic(string source)
+    {
+        var parse = Parse(source);
         Assert.True(parse.HasErrors);
         var error = Assert.Single(parse.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
-        Assert.Equal(
-            $"Prefix `...` cannot declare a collecting binding. Write `{name}...` instead of `...{name}`.",
-            error.Message);
-        Assert.Equal(new SourceSpan(1, startColumn, 1, endColumn), error.Span);
-
-        // A clean break: nothing is accepted with a warning.
-        Assert.DoesNotContain(parse.Diagnostics, static diagnostic =>
-            diagnostic.Severity == DiagnosticSeverity.Warning);
-
-        AssertNoVariadicBindings(syntax.Root);
-        AssertNoVariadicBindings(parse.Root);
-    }
-
-    [Theory]
-    [InlineData("...items = values")]
-    [InlineData("first, ...middle, last = values")]
-    [InlineData("...items, last = values")]
-    [InlineData("first, ...items = values")]
-    [InlineData("first, middle......, last = 1, 2, 3")]
-    public void InvalidEllipsisShapesInDeconstructionPosition_FailAsOrdinaryInvalidSyntax(
-        string source)
-    {
-        // Only valid binding shapes (identifier with at most one same-line
-        // postfix marker) are recognized as deconstruction targets. Anything
-        // else is never claimed as a binding pattern and fails through
-        // ordinary unexpected-token handling — with no warning and no
-        // collecting binding in the recovered tree.
-        var syntax = Parser.ParseSyntax(source);
-        var parse = Parser.Parse(source);
-
-        Assert.True(syntax.HasErrors);
-        Assert.True(parse.HasErrors);
-        Assert.Contains(parse.Diagnostics, static diagnostic =>
-            diagnostic.Message.Contains("Unexpected token: 'Ellipsis'", StringComparison.Ordinal));
-        Assert.All(parse.Diagnostics, static diagnostic =>
-            Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity));
-
-        AssertNoVariadicBindings(syntax.Root);
-        AssertNoVariadicBindings(parse.Root);
+        Assert.Contains("must be directly attached to its binding name", error.Message);
     }
 
     [Fact]
-    public void StrayEllipsisBeforeAValidDeconstruction_RecoversTheValidRemainder()
+    public void DetachedMarker_ReportsExactSourceSpan()
     {
-        // The stray prefix `...` fails as an ordinary unexpected token and is
-        // never itself a binding; the remainder `middle..., last = values` is
-        // ordinary valid syntax and still parses as a collecting
-        // deconstruction — recovery reaches later valid declarations.
-        var parse = Parser.Parse("first, ...middle..., last = values");
-
-        Assert.True(parse.HasErrors);
-        Assert.Contains(parse.Diagnostics, static diagnostic =>
-            diagnostic.Message.Contains("Unexpected token: 'Ellipsis'", StringComparison.Ordinal));
-        Assert.Contains(parse.Root.Properties, static property => property.Name == "middle");
-        Assert.Contains(parse.Root.Properties, static property => property.Name == "last");
-    }
-
-    [Theory]
-    [InlineData("F(items...) = items\nA = 1, 2\nF(spread(A))")]
-    [InlineData("F(items...) = items\nF(spread([1, 2]))")]
-    [InlineData("F(items...) = items\nF([1, 2].spread)")]
-    [InlineData("Values = 1, 2, 3\nfirst, middle..., last = spread(Values)\nmiddle")]
-    [InlineData("Values = 1, 2, 3\nfirst, middle..., last = Values.spread\nmiddle")]
-    public void NamedSpread_RemainsValidBesideCollectingBindings(string source)
-        => Assert.Empty(Parser.Parse(source).Diagnostics);
-
-    [Theory]
-    [InlineData("F(a..., b...) = a", "Only one collecting binding")]
-    [InlineData("a..., b... = 1, 2", "at most one collecting binding")]
-    [InlineData("F(items......) = items", "Malformed collecting binding")]
-    [InlineData("first, middle......, last = 1, 2, 3", "Unexpected token: 'Ellipsis'")]
-    [InlineData("F(...a, b...) = a", "cannot declare a collecting binding")]
-    [InlineData("F(a..., ...b) = b", "cannot declare a collecting binding")]
-    [InlineData("F(...items...) = items", "Malformed collecting binding")]
-    public void MalformedCollectingForms_FailSafelyWithAnErrorDiagnostic(
-        string source,
-        string expectedFragment)
-    {
-        var parse = Parser.Parse(source);
-
-        Assert.True(parse.HasErrors);
-        Assert.Contains(
-            parse.Diagnostics,
-            diagnostic => diagnostic.Message.Contains(expectedFragment, StringComparison.Ordinal));
-        Assert.DoesNotContain(parse.Diagnostics, static diagnostic =>
-            diagnostic.Severity == DiagnosticSeverity.Warning);
-    }
-
-    [Theory]
-    [InlineData("F(...) = 0")]
-    [InlineData("F(...1) = 0")]
-    [InlineData("F(...items...) = items")]
-    [InlineData("F(items......) = items")]
-    [InlineData("first, middle......, last = 1, 2, 3")]
-    public void MalformedCollectingForms_DoNotCreateRecoveredCollectingBindings(string source)
-    {
-        var syntax = Parser.ParseSyntax(source);
-        var parse = Parser.Parse(source);
-
-        Assert.True(syntax.HasErrors);
-        Assert.True(parse.HasErrors);
-        AssertNoVariadicBindings(syntax.Root);
-        AssertNoVariadicBindings(parse.Root);
-    }
-
-    [Fact]
-    public void CombinedPrefixAndPostfixMarkers_InParameterPattern_ReportOneMalformedError()
-    {
-        var parse = Parser.Parse("F(first, ...middle..., last) = middle");
-
+        var parse = Parse("F(* items) = items\nF(1)");
         var error = Assert.Single(parse.Diagnostics);
-        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
-        Assert.Equal(
-            "Malformed collecting binding; write `middle...` with exactly one postfix `...` marker.",
-            error.Message);
-        AssertNoVariadicBindings(parse.Root);
+        // Span covers the star through the detached name: columns 3..9.
+        Assert.Equal(new SourceSpan(1, 3, 1, 9), error.Span);
     }
+
+    [Fact]
+    public void MarkerSeparatedByNewline_IsAnAttachmentError()
+    {
+        var parse = Parse("F(*\nitems) = items\nF(1)");
+        Assert.True(parse.HasErrors);
+        Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("directly attached")
+            || d.Message.Contains("followed by a binding name"));
+    }
+
+    [Fact]
+    public void DetachedMarker_RecoversWithAFixedBinding_NeverCollecting()
+    {
+        var parse = Parse("F(* items) = items\nF(1)");
+        var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
+        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        Assert.Equal(ParameterKind.Normal, parameter.Kind);
+        Assert.Null(parameter.CollectMarkerSpan);
+        AssertNoCollectingBindings(parse.Root);
+    }
+
+    // ── Exactly one marker ──────────────────────────────────────────────────
 
     [Theory]
-    [InlineData(
-        "Broken(...items) = items\nGood(values...) = values\nGood(1, 2)")]
-    [InlineData(
-        "first, ...middle, last = values\nGood(values...) = values\nGood(1, 2)")]
-    public void PrefixBindingSpelling_RecoversSoFollowingDeclarationsStillParse(string source)
+    [InlineData("F(**items) = items\nF(1)")]
+    [InlineData("F(***items) = items\nF(1)")]
+    public void RepeatedMarker_InParameterList_ReportsOneDiagnostic_NoCollectingBinding(string source)
     {
-        var parse = Parser.Parse(source);
+        var parse = Parse(source);
+        var error = Assert.Single(parse.Diagnostics);
+        Assert.Contains("exactly one collect marker", error.Message);
+        AssertNoCollectingBindings(parse.Root);
+    }
 
+    [Fact]
+    public void RepeatedMarker_InDeconstruction_ReportsOneDiagnostic_NoCollectingBinding()
+    {
+        var parse = Parse("a, **mid, z = 1, 2, 3\na");
+        Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("exactly one collect marker"));
+        AssertNoCollectingBindings(parse.Root);
+    }
+
+    [Fact]
+    public void TwoCollectingBindings_PerPatternLevel_AreRejected()
+    {
+        var parse = Parse("F(*a, *b) = a\nF(1, 2)");
+        Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("Only one collecting binding is allowed per pattern level."));
+    }
+
+    [Fact]
+    public void TwoCollectingTargets_InDeconstruction_AreRejected()
+    {
+        var parse = Parse("*a, *b = 1, 2, 3\na");
+        Assert.Contains(parse.Diagnostics, static d =>
+            d.Message.Contains("at most one collecting binding (`*name`)"));
+    }
+
+    // ── Marker without a name ───────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("F(*) = 0")]
+    [InlineData("F(*, x) = x")]
+    [InlineData("F(*1) = 0")]
+    public void MarkerWithoutABindingName_ReportsMissingNameDiagnostic(string source)
+    {
+        var parse = Parse(source);
         Assert.True(parse.HasErrors);
-        var good = Assert.Single(parse.Root.Properties, property => property.Name == "Good").Value;
-        var parameter = Assert.Single(good.Parameters);
-        Assert.Equal(ParameterKind.Variadic, parameter.Kind);
-        Assert.Equal("values...", parameter.DisplayName);
+        Assert.Contains(parse.Diagnostics, static d =>
+            d.Message.Contains("must be followed by a binding name"));
+        AssertNoCollectingBindings(parse.Root);
+    }
+
+    // ── Postfix star is never binding syntax ────────────────────────────────
+
+    [Theory]
+    [InlineData("F(items*) = items\nF(1)")]
+    [InlineData("F(a, rest*) = rest\nF(1, 2)")]
+    public void PostfixStar_InBindingPattern_ReportsSpreadMarkerDiagnostic(string source)
+    {
+        var parse = Parse(source);
+        Assert.True(parse.HasErrors);
+        Assert.Contains(parse.Diagnostics, static d =>
+            d.Message.Contains("Postfix `*` is the spread marker and is not valid in a binding pattern"));
+        AssertNoCollectingBindings(parse.Root);
+    }
+
+    // ── Prefix star outside binding positions ───────────────────────────────
+
+    [Theory]
+    [InlineData("x = *values\nvalues = 1, 2\nx")]
+    [InlineData("A = (1, 2)\nF(x) = x\nF(*A)")]
+    [InlineData("A = (1, 2)\n[*A]")]
+    public void PrefixStar_InExpressionPosition_ReportsCollectMarkerDiagnostic(string source)
+    {
+        var parse = Parse(source);
+        Assert.True(parse.HasErrors);
+        Assert.Contains(parse.Diagnostics, static d =>
+            d.Message.Contains("Prefix `*` is the collect marker and is valid only in binding patterns"));
     }
 
     [Fact]
-    public void PostfixCollectingBinding_MarkerAllowsSameLineWhitespaceButNotANewline()
+    public void PrefixStar_InExpressionPosition_RecoversToTheOperand()
     {
-        // Same-line whitespace between the binding name and its marker stays a
-        // collecting binding; a marker on the NEXT line never continues it.
-        Assert.Equal("[1, 2]", Display("F(items ...) = items\nF(1, 2)"));
-        Assert.True(Parser.Parse("F(items\n...) = items\nF(1)").HasErrors);
+        // `x = *values` degrades to `x = values` after the targeted error.
+        var parse = Parse("values = (1, 2)\nx = *values\nx");
+        Assert.True(parse.HasErrors);
+        var x = Assert.Single(parse.Root.Properties, static p => p.Name == "x");
+        Assert.IsType<Expr.Resolve>(Assert.Single(x.Value.Output));
+    }
+
+    // ── Grace interactions ──────────────────────────────────────────────────
+
+    [Fact]
+    public void GraceAfterTheCollectingName_ReportsGraceError_KeepsTheCollectingBinding()
+    {
+        var parse = Parse("F(*items~) = items\nF(1)");
+        Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("Collecting bindings cannot use `~` reordering."));
+
+        var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
+        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        Assert.Equal(ParameterKind.Collecting, parameter.Kind);
     }
 
     [Fact]
-    public void PostfixCollectingBinding_DotReceiverRemainsOneSlotUnlessExplicitlySpread()
+    public void GraceBeforeTheMarker_ReportsGraceError_KeepsTheCollectingBinding()
     {
-        Assert.Equal("[[1, 2]]", Display("F(items...) = items\nA = [1, 2]\nA.F"));
-        Assert.Equal("[1, 2]", Display("F(items...) = items\nA = [1, 2]\n(spread(A)).F"));
+        var parse = Parse("F(~*items) = items\nF(1)");
+        Assert.Contains(parse.Diagnostics, static d => d.Message.Contains("Grace is not allowed in clause-head patterns."));
+
+        var f = Assert.Single(parse.Root.Properties, static p => p.Name == "F");
+        var parameter = Assert.Single(f.Value.ExplicitParameters);
+        Assert.Equal(ParameterKind.Collecting, parameter.Kind);
     }
 
-    private sealed class CollectingBindingFinder : AstWalker
+    // ── Recovery keeps later declarations intact ────────────────────────────
+
+    [Theory]
+    [InlineData("F(* items) = items\nG = 5\nG")]
+    [InlineData("F(**items) = items\nG = 5\nG")]
+    [InlineData("F(items*) = items\nG = 5\nG")]
+    public void MalformedMarkerForms_LaterDeclarationsStillParse(string source)
     {
-        public List<string> VariadicBindings { get; } = [];
-
-        protected override void VisitExplicitParameterDeclaration(
-            Algorithm algorithm,
-            ParameterDeclaration declaration)
-        {
-            if (declaration.Kind == ParameterKind.Variadic)
-                VariadicBindings.Add(declaration.Name);
-        }
-
-        protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span)
-        {
-            if (pattern.ParameterKind == ParameterKind.Variadic)
-                VariadicBindings.Add(pattern.Name);
-        }
+        var parse = Parse(source);
+        Assert.True(parse.HasErrors);
+        Assert.Contains(parse.Root.Properties, static p => p.Name == "G");
     }
 
-    private static void AssertNoVariadicBindings(Algorithm root)
+    // ── Old ellipsis spellings fail through ordinary parsing ────────────────
+
+    [Theory]
+    [InlineData("F(items...) = items\nF(1)")]
+    [InlineData("F(...items) = items\nF(1)")]
+    [InlineData("items... = 1, 2\nitems")]
+    [InlineData("...items = 1, 2\nitems")]
+    [InlineData("x, y..., z = 1, 2, 3\ny")]
+    [InlineData("F((a, b...)) = b\nF((1, 2))")]
+    public void OldEllipsisSpellings_FailThroughOrdinaryParsing_NoCollectingBinding(string source)
     {
-        var collectingFinder = new CollectingBindingFinder();
-        collectingFinder.VisitAlgorithm(root);
-        Assert.Empty(collectingFinder.VariadicBindings);
+        var parse = Parse(source);
+        Assert.True(parse.HasErrors, $"expected errors for: {source}");
+        // No ellipsis-specific diagnostic exists anymore: the dots fail as
+        // ordinary unexpected/dot-member tokens.
+        Assert.DoesNotContain(parse.Diagnostics, static d => d.Message.Contains("..."));
+        AssertNoCollectingBindings(parse.Root);
+    }
+
+    // ── Helper: assert the recovered tree contains no collecting binding ────
+
+    private static void AssertNoCollectingBindings(Algorithm root)
+    {
+        var detector = new CollectingBindingDetector();
+        detector.VisitAlgorithm(root);
+        Assert.False(detector.Found, "recovered tree must not contain a collecting binding");
+    }
+
+    private sealed class CollectingBindingDetector : AstWalker
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration parameter)
+        {
+            if (parameter.Kind == ParameterKind.Collecting)
+                Found = true;
+        }
     }
 }

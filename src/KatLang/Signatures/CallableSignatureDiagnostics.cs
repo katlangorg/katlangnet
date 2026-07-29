@@ -3,10 +3,10 @@ namespace KatLang;
 public sealed record CallableArityFacts(
     int MinTopLevelArgumentCount,
     int? MaxTopLevelArgumentCount,
-    bool HasTopLevelVariadic,
-    int TopLevelVariadicCount)
+    bool HasTopLevelCollecting,
+    int TopLevelCollectingCount)
 {
-    public bool HasMultipleTopLevelVariadics => TopLevelVariadicCount > 1;
+    public bool HasMultipleTopLevelCollectingCaptures => TopLevelCollectingCount > 1;
 
     public bool AcceptsArgumentCount(int argumentCount)
         => argumentCount >= MinTopLevelArgumentCount
@@ -17,47 +17,48 @@ public static class CallableSignatureDiagnostics
 {
     public static CallableArityFacts GetArityFacts(CallableSignature signature)
     {
-        var topLevelVariadicCount = signature.ParameterPatterns.Count(IsTopLevelVariadicCapture);
+        var topLevelCollectingCount = signature.ParameterPatterns.Count(IsTopLevelCollectingCapture);
         var slotCount = signature.ParameterPatterns.Count;
 
         // A user item-supply signature — plain top-level captures containing one
-        // collecting binding (a lone variadic or a comma deconstruction) — binds the fixed captures and
-        // lets the collecting binding capture any number of items, so it accepts at least the
-        // fixed-binding count and has no upper bound. A single variadic `G(x...)` is the
-        // degenerate case with min 0. Fixed-only, sequence-value, and builtin sequence
-        // signatures keep their exact top-level slot count.
-        if (IsItemSupplySignature(signature, topLevelVariadicCount))
+        // collecting binding — binds the fixed captures and lets the
+        // collecting binding capture any number of items, so it accepts at
+        // least the fixed-binding count and has no upper bound. A single
+        // collecting parameter `G(*x)` is the degenerate case with min 0.
+        // Fixed-only, sequence-value, and builtin sequence signatures keep
+        // their exact top-level slot count.
+        if (IsItemSupplySignature(signature, topLevelCollectingCount))
         {
             return new CallableArityFacts(
                 slotCount - 1,
                 MaxTopLevelArgumentCount: null,
-                HasTopLevelVariadic: true,
-                TopLevelVariadicCount: topLevelVariadicCount);
+                HasTopLevelCollecting: true,
+                TopLevelCollectingCount: topLevelCollectingCount);
         }
 
         return new CallableArityFacts(
             slotCount,
             slotCount,
-            topLevelVariadicCount > 0,
-            topLevelVariadicCount);
+            topLevelCollectingCount > 0,
+            topLevelCollectingCount);
     }
 
-    // A top-level variadic signature consumes an item supply (a user-defined
-    // shape such as `Inspect(items...)` or `Scale(values..., factor)`): the
-    // fixed captures bind and the variadic parameter accepts any number of argument slots
-    // (collected as one exact immutable list at binding time), so
-    // min = fixed count and max is unbounded. Collection builtins are NOT
+    // A top-level collecting signature consumes an item supply (a user-defined
+    // shape such as `Inspect(*items)` or `Scale(*values, factor)`): the
+    // fixed captures bind and the collecting parameter accepts any number of
+    // argument slots (collected as one exact immutable list at binding time),
+    // so min = fixed count and max is unbounded. Collection builtins are NOT
     // item-supply signatures — they use one fixed `collection` parameter.
-    private static bool IsItemSupplySignature(CallableSignature signature, int topLevelVariadicCount)
-        => topLevelVariadicCount == 1
+    private static bool IsItemSupplySignature(CallableSignature signature, int topLevelCollectingCount)
+        => topLevelCollectingCount == 1
             && signature.ParameterPatterns.Count >= 1
             && !signature.HasSequenceValueParameterPattern;
 
-    public static int TopLevelVariadicIndex(CallableSignature signature)
+    public static int TopLevelCollectingIndex(CallableSignature signature)
     {
         for (var index = 0; index < signature.ParameterPatterns.Count; index++)
         {
-            if (IsTopLevelVariadicCapture(signature.ParameterPatterns[index]))
+            if (IsTopLevelCollectingCapture(signature.ParameterPatterns[index]))
                 return index;
         }
 
@@ -70,8 +71,8 @@ public static class CallableSignatureDiagnostics
     public static string FormatBadArity(CallableSignature signature, int actualArgumentCount)
         => $"Callable `{signature.DisplayText}` expects {FormatExpectedArgumentCount(GetArityFacts(signature))}, but was called with {FormatCount(actualArgumentCount, "argument")}.";
 
-    public static string FormatMultipleTopLevelVariadics(CallableSignature signature)
-        => $"Callable signature `{signature.DisplayText}` cannot contain more than one variadic parameter.";
+    public static string FormatMultipleTopLevelCollectingCaptures(CallableSignature signature)
+        => $"Callable signature `{signature.DisplayText}` cannot contain more than one collecting parameter.";
 
     public static string FormatExpectedArgumentCount(CallableArityFacts facts)
     {
@@ -106,6 +107,6 @@ public static class CallableSignatureDiagnostics
     private static string FormatCount(int count, string singularNoun)
         => count == 1 ? $"1 {singularNoun}" : $"{count.ToString(System.Globalization.CultureInfo.InvariantCulture)} {singularNoun}s";
 
-    private static bool IsTopLevelVariadicCapture(ParameterPattern parameterPattern)
-        => parameterPattern is CaptureParameterPattern { Kind: ParameterKind.Variadic };
+    private static bool IsTopLevelCollectingCapture(ParameterPattern parameterPattern)
+        => parameterPattern is CaptureParameterPattern { Kind: ParameterKind.Collecting };
 }

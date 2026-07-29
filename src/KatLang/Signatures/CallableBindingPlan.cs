@@ -32,16 +32,16 @@ public sealed record CallableBindingPlan
             .Any(static captures => captures.Skip(1).Any());
 
     public bool HasOnlyFlatTopLevelCaptures
-        => TopLevelPatternList.Nodes.All(static node => node is CaptureBindingNode or VariadicCaptureBindingNode { IsTopLevel: true });
+        => TopLevelPatternList.Nodes.All(static node => node is CaptureBindingNode or CollectingCaptureBindingNode { IsTopLevel: true });
 
     public bool HasOnlyFlatFixedTopLevelCaptures
         => TopLevelPatternList.Nodes.All(static node => node is CaptureBindingNode);
 
-    public bool HasTopLevelVariadic => TopLevelPatternList.HasVariadicAtThisLevel;
+    public bool HasTopLevelCollecting => TopLevelPatternList.HasCollectingAtThisLevel;
 
-    public bool HasNestedVariadic => TopLevelPatternList.HasVariadicInDescendants;
+    public bool HasNestedCollecting => TopLevelPatternList.HasCollectingInDescendants;
 
-    public VariadicCaptureBindingNode? TopLevelVariadicCapture => TopLevelPatternList.VariadicCapture;
+    public CollectingCaptureBindingNode? TopLevelCollectingCapture => TopLevelPatternList.CollectingCapture;
 
     public bool TryGetFlatFixedLayout(out IReadOnlyList<CaptureBindingNode> captures)
     {
@@ -55,16 +55,16 @@ public sealed record CallableBindingPlan
         return true;
     }
 
-    public bool TryGetFlatVariadicLayout(
+    public bool TryGetFlatCollectingLayout(
         out IReadOnlyList<CaptureBindingNode> prefix,
-        out VariadicCaptureBindingNode variadic,
+        out CollectingCaptureBindingNode collecting,
         out IReadOnlyList<CaptureBindingNode> suffix)
     {
         prefix = [];
-        variadic = null!;
+        collecting = null!;
         suffix = [];
 
-        if (RequiresPatternedBinding || !HasOnlyFlatTopLevelCaptures || TopLevelVariadicCapture is not { } topLevelVariadic)
+        if (RequiresPatternedBinding || !HasOnlyFlatTopLevelCaptures || TopLevelCollectingCapture is not { } topLevelCollecting)
             return false;
 
         if (!TryCastCaptures(TopLevelPatternList.Prefix, out var prefixCaptures)
@@ -74,7 +74,7 @@ public sealed record CallableBindingPlan
         }
 
         prefix = prefixCaptures;
-        variadic = topLevelVariadic;
+        collecting = topLevelCollecting;
         suffix = suffixCaptures;
         return true;
     }
@@ -129,29 +129,29 @@ public sealed record PatternListBindingPlan
     private PatternListBindingPlan(
         IReadOnlyList<CallableBindingNode> nodes,
         IReadOnlyList<CallableBindingNode> prefix,
-        VariadicCaptureBindingNode? variadicCapture,
+        CollectingCaptureBindingNode? collectingCapture,
         IReadOnlyList<CallableBindingNode> suffix,
         int minSlotCount,
         int? maxSlotCount,
-        int variadicCountAtThisLevel)
+        int collectingCountAtThisLevel)
     {
         Nodes = nodes.ToArray();
         Prefix = prefix.ToArray();
-        VariadicCapture = variadicCapture;
+        CollectingCapture = collectingCapture;
         Suffix = suffix.ToArray();
         MinSlotCount = minSlotCount;
         MaxSlotCount = maxSlotCount;
-        VariadicCountAtThisLevel = variadicCountAtThisLevel;
+        CollectingCountAtThisLevel = collectingCountAtThisLevel;
         Captures = Nodes.SelectMany(static node => node.Captures).ToArray();
-        HasVariadicInDescendants = Nodes.OfType<SequenceValueBindingNode>()
-            .Any(static group => group.Children.HasVariadicAtThisLevel || group.Children.HasVariadicInDescendants);
+        HasCollectingInDescendants = Nodes.OfType<SequenceValueBindingNode>()
+            .Any(static group => group.Children.HasCollectingAtThisLevel || group.Children.HasCollectingInDescendants);
     }
 
     public IReadOnlyList<CallableBindingNode> Nodes { get; }
 
     public IReadOnlyList<CallableBindingNode> Prefix { get; }
 
-    public VariadicCaptureBindingNode? VariadicCapture { get; }
+    public CollectingCaptureBindingNode? CollectingCapture { get; }
 
     public IReadOnlyList<CallableBindingNode> Suffix { get; }
 
@@ -159,11 +159,11 @@ public sealed record PatternListBindingPlan
 
     public int? MaxSlotCount { get; }
 
-    public bool HasVariadicAtThisLevel => VariadicCapture is not null;
+    public bool HasCollectingAtThisLevel => CollectingCapture is not null;
 
-    public int VariadicCountAtThisLevel { get; }
+    public int CollectingCountAtThisLevel { get; }
 
-    public bool HasVariadicInDescendants { get; }
+    public bool HasCollectingInDescendants { get; }
 
     public IReadOnlyList<CallableBindingCapture> Captures { get; }
 
@@ -173,50 +173,50 @@ public sealed record PatternListBindingPlan
         bool isTopLevel)
     {
         var nodes = new List<CallableBindingNode>(parameterPatterns.Count);
-        var variadicIndex = -1;
-        var variadicCount = 0;
+        var collectingIndex = -1;
+        var collectingCount = 0;
 
         for (var index = 0; index < parameterPatterns.Count; index++)
         {
             var node = CreateNode(parameterPatterns[index], parameters, isTopLevel);
             nodes.Add(node);
 
-            if (node is not VariadicCaptureBindingNode)
+            if (node is not CollectingCaptureBindingNode)
                 continue;
 
-            variadicCount++;
-            if (variadicIndex >= 0)
-                throw new InvalidOperationException("Callable binding plans cannot contain more than one variadic capture at the same pattern-list level.");
+            collectingCount++;
+            if (collectingIndex >= 0)
+                throw new InvalidOperationException("Callable binding plans cannot contain more than one collecting capture at the same pattern-list level.");
 
-            variadicIndex = index;
+            collectingIndex = index;
         }
 
         IReadOnlyList<CallableBindingNode> prefix;
-        VariadicCaptureBindingNode? variadicCapture;
+        CollectingCaptureBindingNode? collectingCapture;
         IReadOnlyList<CallableBindingNode> suffix;
 
-        if (variadicIndex >= 0)
+        if (collectingIndex >= 0)
         {
-            prefix = nodes.Take(variadicIndex).ToArray();
-            variadicCapture = (VariadicCaptureBindingNode)nodes[variadicIndex];
-            suffix = nodes.Skip(variadicIndex + 1).ToArray();
+            prefix = nodes.Take(collectingIndex).ToArray();
+            collectingCapture = (CollectingCaptureBindingNode)nodes[collectingIndex];
+            suffix = nodes.Skip(collectingIndex + 1).ToArray();
         }
         else
         {
             prefix = nodes.ToArray();
-            variadicCapture = null;
+            collectingCapture = null;
             suffix = [];
         }
 
         // Mirror CallableSignatureDiagnostics.GetArityFacts: a top-level list with one or
-        // more plain captures and one collecting binding (lone variadic or comma deconstruction) accepts the
-        // fixed captures plus any number of collected items, so it has a fixed-count minimum
+        // more plain captures and one collecting binding accepts the fixed
+        // captures plus any number of collected items, so it has a fixed-count minimum
         // and an unbounded maximum. Collection builtins have fixed signatures and do not
         // enter this pattern-list branch.
         var isItemSupplyShape = isTopLevel
-            && variadicCount == 1
+            && collectingCount == 1
             && nodes.Count >= 1
-            && nodes.All(static node => node is CaptureBindingNode or VariadicCaptureBindingNode);
+            && nodes.All(static node => node is CaptureBindingNode or CollectingCaptureBindingNode);
 
         var minSlotCount = isItemSupplyShape ? nodes.Count - 1 : nodes.Count;
         int? maxSlotCount = isItemSupplyShape ? null : nodes.Count;
@@ -224,19 +224,19 @@ public sealed record PatternListBindingPlan
         return new PatternListBindingPlan(
             nodes,
             prefix,
-            variadicCapture,
+            collectingCapture,
             suffix,
             minSlotCount,
             maxSlotCount,
-            variadicCount);
+            collectingCount);
     }
 
     internal CallableArityFacts ToTopLevelArityFacts()
         => new(
             MinSlotCount,
             MaxSlotCount,
-            HasVariadicAtThisLevel,
-            VariadicCountAtThisLevel);
+            HasCollectingAtThisLevel,
+            CollectingCountAtThisLevel);
 
     private static CallableBindingNode CreateNode(
         ParameterPattern parameterPattern,
@@ -265,8 +265,8 @@ public sealed record PatternListBindingPlan
             capture.Kind,
             parameter.Source);
 
-        return capture.Kind == ParameterKind.Variadic
-            ? new VariadicCaptureBindingNode(bindingCapture, isTopLevel)
+        return capture.Kind == ParameterKind.Collecting
+            ? new CollectingCaptureBindingNode(bindingCapture, isTopLevel)
             : new CaptureBindingNode(bindingCapture);
     }
 }
@@ -276,7 +276,7 @@ public sealed record CallableBindingCapture(
     ParameterKind Kind,
     CallableParameterSource Source)
 {
-    public string DisplayName => Kind == ParameterKind.Variadic ? $"{Name}..." : Name;
+    public string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
 }
 
 public abstract record CallableBindingNode
@@ -297,7 +297,7 @@ public sealed record CaptureBindingNode(CallableBindingCapture Capture) : Callab
     public override IReadOnlyList<CallableBindingCapture> Captures { get; } = [Capture];
 }
 
-public sealed record VariadicCaptureBindingNode(CallableBindingCapture Capture, bool IsTopLevel) : CallableBindingNode
+public sealed record CollectingCaptureBindingNode(CallableBindingCapture Capture, bool IsTopLevel) : CallableBindingNode
 {
     public string Name => Capture.Name;
 

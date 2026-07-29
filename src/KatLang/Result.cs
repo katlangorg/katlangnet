@@ -387,7 +387,7 @@ public abstract record Result
     /// Atom/string -> singleton list; sequence value -> its items.
     /// A list value stays OPAQUE here: it is one item, so non-spread consumers
     /// (boundary re-counting, call binding) treat a list as a single exact
-    /// value. Only the named spread intrinsic (<see cref="SpreadItems"/>), deconstruction
+    /// value. Only the spread marker (<see cref="SpreadItems"/>), deconstruction
     /// binding, the indexing <c>:</c> projection target view
     /// (<see cref="ProjectionItems"/>), and the builtin collection-item view
     /// (the bound collection argument after ordinary fixed binding) open a
@@ -406,8 +406,8 @@ public abstract record Result
     }
 
     /// <summary>
-    /// Item view used by the spread intrinsic (<c>spread(expr)</c> /
-    /// <c>expr.spread</c>): spread opens exactly ONE structure boundary.
+    /// Item view used by the spread expression (<c>expr*</c>): spread opens
+    /// exactly ONE structure boundary.
     /// Sequence values and exact list values open to their immediate items;
     /// atoms and strings supply themselves as one item.
     /// Lean: <c>Result.spreadItems</c>.

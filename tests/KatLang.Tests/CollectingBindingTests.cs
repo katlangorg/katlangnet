@@ -4,12 +4,12 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// Focused coverage for the collecting-binding model: every collecting binding —
-/// deconstruction collecting bindings, single variadic parameters, and mixed
+/// deconstruction collecting bindings, single collecting parameters, and mixed
 /// prefix/collecting/suffix parameter lists — COLLECTS the item slots assigned to it
 /// into ONE exact immutable list (<c>CollectSegment</c>; Lean <c>collectSegment</c>).
 /// The three item-supply operations stay distinct: <c>capture</c> (ordinary
 /// canonicalizing value capture), <c>collect</c> (collecting binding), and
-/// <c>open</c> (the named spread intrinsic), with the round trip
+/// <c>spread</c> (the postfix spread marker <c>*</c>), with the round trip
 /// <c>spread(collect(xs)) = xs</c> making variadic forwarding ordinary spread.
 /// Lean twins: the "Collecting bindings collect exact immutable lists" section of
 /// <c>lean/CoreTests.lean</c> and the collect laws in
@@ -68,14 +68,14 @@ public class CollectingBindingTests
     // ── Deconstruction collecting binding: empty, singleton, multiple ─────────────────────
 
     [Theory]
-    [InlineData("head, rest... = [1]\nrest", "[]")]
-    [InlineData("head, rest... = [1, 2]\nrest", "[2]")]
-    [InlineData("head, rest... = [1, 2, 3]\nrest", "[2, 3]")]
-    [InlineData("rest..., last = [1, 2, 3]\nrest", "[1, 2]")]
-    [InlineData("first, middle..., last = [1, 2, 3, 4]\nmiddle", "[2, 3]")]
-    [InlineData("first, middle..., last = [1, 2]\nmiddle", "[]")]
-    [InlineData("first, middle..., last = [1, 2, 3, 4, 5]\nmiddle", "[2, 3, 4]")]
-    [InlineData("first, rest... = 1\nrest", "[]")]
+    [InlineData("head, *rest = [1]\nrest", "[]")]
+    [InlineData("head, *rest = [1, 2]\nrest", "[2]")]
+    [InlineData("head, *rest = [1, 2, 3]\nrest", "[2, 3]")]
+    [InlineData("*rest, last = [1, 2, 3]\nrest", "[1, 2]")]
+    [InlineData("first, *middle, last = [1, 2, 3, 4]\nmiddle", "[2, 3]")]
+    [InlineData("first, *middle, last = [1, 2]\nmiddle", "[]")]
+    [InlineData("first, *middle, last = [1, 2, 3, 4, 5]\nmiddle", "[2, 3, 4]")]
+    [InlineData("first, *rest = 1\nrest", "[]")]
     public void DeconstructionCollectingBinding_CollectsExactList(string source, string expectedDisplay)
     {
         var value = EvaluateAllModes(source);
@@ -90,28 +90,28 @@ public class CollectingBindingTests
     public void DeconstructionCollectingBinding_PreservesStructuredSingletonRow()
     {
         AssertCollects(
-            "Rows = [[1, 2], [3, 4]]\nfirst, rest... = Rows\nrest",
+            "Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest",
             List(List(Atom(3), Atom(4))));
         AssertCollects(
-            "Rows = [[1, 2], [3, 4]]\nfirst, rest... = Rows\nrest.count",
+            "Rows = [[1, 2], [3, 4]]\nfirst, *rest = Rows\nrest.count",
             Atom(1));
     }
 
     [Fact]
     public void DeconstructionCollectingBinding_SingletonStructurePreservesExactKind()
     {
-        AssertCollects("first, rest... = 1, [2, 3]\nrest", List(List(Atom(2), Atom(3))));
-        AssertCollects("first, rest... = 1, (2, 3)\nrest", List(Seq(Atom(2), Atom(3))));
-        AssertCollects("first, rest... = 1, []\nrest", List(List()));
-        AssertCollects("first, rest... = 1, ()\nrest", List(Seq()));
+        AssertCollects("first, *rest = 1, [2, 3]\nrest", List(List(Atom(2), Atom(3))));
+        AssertCollects("first, *rest = 1, (2, 3)\nrest", List(Seq(Atom(2), Atom(3))));
+        AssertCollects("first, *rest = 1, []\nrest", List(List()));
+        AssertCollects("first, *rest = 1, ()\nrest", List(Seq()));
     }
 
     [Fact]
     public void DeconstructionCollectingBinding_EmptySegmentStaysDistinctFromEmptyStructureElement()
     {
-        AssertCollects("first, rest... = 1, []\nrest == []", Atom(0));
-        AssertCollects("first, rest... = 1, ()\nrest == []", Atom(0));
-        AssertCollects("first, rest... = 1\nrest == []", Atom(1));
+        AssertCollects("first, *rest = 1, []\nrest == []", Atom(0));
+        AssertCollects("first, *rest = 1, ()\nrest == []", Atom(0));
+        AssertCollects("first, *rest = 1\nrest == []", Atom(1));
     }
 
     // ── Deconstruction implicit opening matches explicit spread ─────────────
@@ -119,8 +119,8 @@ public class CollectingBindingTests
     [Fact]
     public void DeconstructionCollectingBinding_ImplicitOpeningMatchesSpread()
     {
-        AssertCollects("first, rest... = [1, 2, 3]\nrest", List(Atom(2), Atom(3)));
-        AssertCollects("first, rest... = [1, 2, 3].spread\nrest", List(Atom(2), Atom(3)));
+        AssertCollects("first, *rest = [1, 2, 3]\nrest", List(Atom(2), Atom(3)));
+        AssertCollects("first, *rest = [1, 2, 3]*\nrest", List(Atom(2), Atom(3)));
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class CollectingBindingTests
         Assert.IsType<RunResult.EvalFailure>(
             KatLangEngine.Run("x, y = [(1, 2)]\nx, y"));
         AssertCollects(
-            "x, y = [(1, 2)].spread\nx, y",
+            "x, y = [(1, 2)]*\nx, y",
             Seq(Atom(1), Atom(2)));
     }
 
@@ -144,26 +144,26 @@ public class CollectingBindingTests
     public void DeconstructionCollectingBinding_CollectsAssembledSupplyRegardlessOfSpreadSources()
     {
         AssertCollects(
-            "first, rest... = 1, [2, 3].spread, (4, 5).spread\nfirst",
+            "first, *rest = 1, [2, 3]*, (4, 5)*\nfirst",
             Atom(1));
         AssertCollects(
-            "first, rest... = 1, [2, 3].spread, (4, 5).spread\nrest",
+            "first, *rest = 1, [2, 3]*, (4, 5)*\nrest",
             List(Atom(2), Atom(3), Atom(4), Atom(5)));
     }
 
-    // ── Variadic capture matrix ─────────────────────────────────────────────
+    // ── Collecting capture matrix ───────────────────────────────────────────
 
     [Fact]
-    public void VariadicCapture_CollectsExactList()
+    public void CollectingCapture_CollectsExactList()
     {
-        const string inspect = "Inspect(items...) = items\n";
+        const string inspect = "Inspect(*items) = items\n";
         AssertCollects(inspect + "Inspect()", List());
         AssertCollects(inspect + "Inspect(7)", List(Atom(7)));
         AssertCollects(inspect + "Inspect(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(inspect + "Inspect([1, 2])", List(List(Atom(1), Atom(2))));
-        AssertCollects(inspect + "Inspect([1, 2].spread)", List(Atom(1), Atom(2)));
+        AssertCollects(inspect + "Inspect([1, 2]*)", List(Atom(1), Atom(2)));
         AssertCollects(inspect + "Inspect((1, 2))", List(Seq(Atom(1), Atom(2))));
-        AssertCollects(inspect + "Inspect((1, 2).spread)", List(Atom(1), Atom(2)));
+        AssertCollects(inspect + "Inspect((1, 2)*)", List(Atom(1), Atom(2)));
     }
 
     [Theory]
@@ -171,22 +171,22 @@ public class CollectingBindingTests
     [InlineData("CountArgs(7)", 1)]
     [InlineData("CountArgs(1, 2)", 2)]
     [InlineData("CountArgs([10, 20])", 1)]
-    [InlineData("CountArgs([10, 20].spread)", 2)]
+    [InlineData("CountArgs([10, 20]*)", 2)]
     [InlineData("CountArgs((10, 20))", 1)]
-    [InlineData("CountArgs((10, 20).spread)", 2)]
+    [InlineData("CountArgs((10, 20)*)", 2)]
     public void VariadicCounting_ObservesSuppliedSlots(string call, decimal expected)
-        => AssertCollects("CountArgs(items...) = items.count\n" + call, Atom(expected));
+        => AssertCollects("CountArgs(*items) = items.count\n" + call, Atom(expected));
 
     // ── Empty-structure arguments: unspread stays a visible slot, spread vanishes ─
 
     [Fact]
-    public void VariadicCapture_EmptyStructureArgumentsAreVisibleSlotsUntilSpread()
+    public void CollectingCapture_EmptyStructureArgumentsAreVisibleSlotsUntilSpread()
     {
-        const string inspect = "Inspect(items...) = items\n";
+        const string inspect = "Inspect(*items) = items\n";
         AssertCollects(inspect + "Inspect(())", List(Seq()));
-        AssertCollects(inspect + "Inspect(().spread)", List());
+        AssertCollects(inspect + "Inspect(()*)", List());
         AssertCollects(inspect + "Inspect([])", List(List()));
-        AssertCollects(inspect + "Inspect([].spread)", List());
+        AssertCollects(inspect + "Inspect([]*)", List());
     }
 
     // ── Mixed parameter patterns ────────────────────────────────────────────
@@ -194,10 +194,10 @@ public class CollectingBindingTests
     [Fact]
     public void MixedPatterns_CollectingBindingCollectsMiddleSupply()
     {
-        AssertCollects("F(first, middle..., last) = middle\nF(1, 2, 3, 4)", List(Atom(2), Atom(3)));
-        AssertCollects("F(first, middle..., last) = middle\nF(1, 2)", List());
-        AssertCollects("F(prefix..., last) = prefix\nF(1, 2, 3)", List(Atom(1), Atom(2)));
-        AssertCollects("F(first, suffix...) = suffix\nF(1, [2, 3])", List(List(Atom(2), Atom(3))));
+        AssertCollects("F(first, *middle, last) = middle\nF(1, 2, 3, 4)", List(Atom(2), Atom(3)));
+        AssertCollects("F(first, *middle, last) = middle\nF(1, 2)", List());
+        AssertCollects("F(*prefix, last) = prefix\nF(1, 2, 3)", List(Atom(1), Atom(2)));
+        AssertCollects("F(first, *suffix) = suffix\nF(1, [2, 3])", List(List(Atom(2), Atom(3))));
     }
 
     [Fact]
@@ -206,16 +206,16 @@ public class CollectingBindingTests
         // Direct user call: the grouped middle argument is ONE collected slot
         // preserving its boundary; explicit spread supplies the operand's items.
         AssertCollects(
-            "Middle(first, middle..., last) = middle\nMiddle(10, (20, 30), 40)",
+            "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30), 40)",
             List(Seq(Atom(20), Atom(30))));
         AssertCollects(
-            "Middle(first, middle..., last) = middle\nMiddle(10, (20, 30).spread, 40)",
+            "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30)*, 40)",
             List(Atom(20), Atom(30)));
         AssertCollects(
-            "Middle(first, middle..., last) = middle\nMiddle(10, [20, 30], 40)",
+            "Middle(first, *middle, last) = middle\nMiddle(10, [20, 30], 40)",
             List(List(Atom(20), Atom(30))));
         AssertCollects(
-            "Middle(first, middle..., last) = middle\nMiddle(10, [20, 30].spread, 40)",
+            "Middle(first, *middle, last) = middle\nMiddle(10, [20, 30]*, 40)",
             List(Atom(20), Atom(30)));
     }
 
@@ -224,34 +224,34 @@ public class CollectingBindingTests
     [Fact]
     public void VariadicForwarding_SpreadRoundTripsCollectedItems()
     {
-        const string defs = "Target(items...) = items\nForward(items...) = Target(items.spread)\n";
+        const string defs = "Target(*items) = items\nForward(*items) = Target(items*)\n";
         AssertCollects(defs + "Forward()", List());
         AssertCollects(defs + "Forward(7)", List(Atom(7)));
         AssertCollects(defs + "Forward(1, 2)", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward([1, 2])", List(List(Atom(1), Atom(2))));
-        AssertCollects(defs + "Forward([1, 2].spread)", List(Atom(1), Atom(2)));
+        AssertCollects(defs + "Forward([1, 2]*)", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward((1, 2))", List(Seq(Atom(1), Atom(2))));
-        AssertCollects(defs + "Forward((1, 2).spread)", List(Atom(1), Atom(2)));
+        AssertCollects(defs + "Forward((1, 2)*)", List(Atom(1), Atom(2)));
     }
 
     [Fact]
     public void VariadicForwarding_UnspreadCollectedListIsOneArgument()
     {
         AssertCollects(
-            "TargetOne(item) = item\nForwardAsOne(items...) = TargetOne(items)\nForwardAsOne(1, 2)",
+            "TargetOne(item) = item\nForwardAsOne(*items) = TargetOne(items)\nForwardAsOne(1, 2)",
             List(Atom(1), Atom(2)));
     }
 
     // ── Implicit forwarding: spread decided by the SOURCE binding kind ──────
     // The implicit-argument resolver re-spreads a forwarded value only when the
     // caller-side binding is itself a collecting binding's exact list. An ordinary source
-    // parameter always forwards as ONE argument, even into a variadic
+    // parameter always forwards as ONE argument, even into a collecting
     // destination.
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceParameterIsOneArgument()
     {
-        const string defs = "Target(items...) = items\nUse(items) = Target\n";
+        const string defs = "Target(*items) = items\nUse(items) = Target\n";
         AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(defs + "Use((1, 2))", List(Seq(Atom(1), Atom(2))));
         AssertCollects(defs + "Use(7)", List(Atom(7)));
@@ -260,8 +260,8 @@ public class CollectingBindingTests
     [Fact]
     public void ImplicitForwarding_OrdinarySourceAgreesWithExplicitForm()
     {
-        const string implicitForm = "Target(items...) = items\nUse(items) = Target\n";
-        const string explicitForm = "Target(items...) = items\nUse(items) = Target(items)\n";
+        const string implicitForm = "Target(*items) = items\nUse(items) = Target\n";
+        const string explicitForm = "Target(*items) = items\nUse(items) = Target(items)\n";
         foreach (var call in new[] { "Use([1, 2])", "Use((1, 2))", "Use(7)" })
         {
             AssertSemanticallyEqual(
@@ -271,10 +271,10 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void ImplicitForwarding_VariadicSourceSpreadsAndAgreesWithExplicitForm()
+    public void ImplicitForwarding_CollectingSourceSpreadsAndAgreesWithExplicitForm()
     {
-        const string implicitForm = "Target(items...) = items\nUse(items...) = Target\n";
-        const string explicitForm = "Target(items...) = items\nUse(items...) = Target(items.spread)\n";
+        const string implicitForm = "Target(*items) = items\nUse(*items) = Target\n";
+        const string explicitForm = "Target(*items) = items\nUse(*items) = Target(items*)\n";
 
         AssertCollects(implicitForm + "Use()", List());
         AssertCollects(implicitForm + "Use(7)", List(Atom(7)));
@@ -290,60 +290,60 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void ImplicitForwarding_LiftedVariadicForwardsAsSpread()
+    public void ImplicitForwarding_LiftedCollectingParameterForwardsAsSpread()
     {
-        // With no explicit caller parameters, the callee's variadic parameter is lifted as a
-        // caller variadic parameter, so the lifted source legitimately forwards as spread.
-        const string defs = "Target(items...) = items\nUse = Target\n";
+        // With no explicit caller parameters, the callee's collecting parameter is lifted as a
+        // caller collecting parameter, so the lifted source legitimately forwards as spread.
+        const string defs = "Target(*items) = items\nUse = Target\n";
         AssertCollects(defs + "Use(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
     }
 
     [Fact]
-    public void ImplicitForwarding_MixedSignatureSpreadsOnlyTheVariadicSource()
+    public void ImplicitForwarding_MixedSignatureSpreadsOnlyTheCollectingSource()
     {
         AssertCollects(
-            "Target(first, middle..., last) = middle\n"
-            + "Use(first, middle..., last) = Target\n"
+            "Target(first, *middle, last) = middle\n"
+            + "Use(first, *middle, last) = Target\n"
             + "Use(1, 2, 3, 4)",
             List(Atom(2), Atom(3)));
     }
 
     [Fact]
-    public void ImplicitForwarding_NestedFixedNameMatchingVariadicDestinationStaysOneValue()
+    public void ImplicitForwarding_NestedFixedNameMatchingCollectingDestinationStaysOneValue()
     {
-        // Caller `a` is a nested FIXED pattern name; destination `a...` is a
-        // rest. The list-valued source must remain one argument.
+        // Caller `a` is a nested FIXED pattern name; destination `*a` is a
+        // collecting binding. The list-valued source must remain one argument.
         AssertCollects(
-            "Target(a...) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))",
+            "Target(*a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))",
             List(List(Atom(1), Atom(2))));
     }
 
     [Fact]
-    public void ImplicitForwarding_NestedVariadicSourceForwardsItsCollectedItems()
+    public void ImplicitForwarding_NestedCollectingSourceForwardsItsCollectedItems()
     {
         AssertCollects(
-            "Target(r...) = r\nUse((first, r...)) = Target\nUse((1, 2, 3))",
+            "Target(*r) = r\nUse((first, *r)) = Target\nUse((1, 2, 3))",
             List(Atom(2), Atom(3)));
     }
 
     [Fact]
     public void ImplicitForwarding_CrossedNamesFollowEachSourceKind()
     {
-        // Caller: a is fixed, b is variadic. Callee: b is fixed, a is variadic.
+        // Caller: a is fixed, b collecting. Callee: b is fixed, a collecting.
         // The fixed destination b receives the caller's collected list as one
-        // value; the variadic destination a receives the ordinary source a as one
+        // value; the collecting destination a receives the ordinary source a as one
         // collected slot (never spread).
         AssertCollects(
-            "T2(b, a...) = (b, a)\nUse(a, b...) = T2\nUse([5, 6], 2, 3)",
+            "T2(b, *a) = (b, a)\nUse(a, *b) = T2\nUse([5, 6], 2, 3)",
             Seq(List(Atom(2), Atom(3)), List(List(Atom(5), Atom(6)))));
     }
 
     [Fact]
-    public void ImplicitForwarding_VariadicSourceIntoFixedDestinationIsOneListArgument()
+    public void ImplicitForwarding_CollectingSourceIntoFixedDestinationIsOneListArgument()
     {
         AssertCollects(
-            "TargetOne(items) = items\nUse(items...) = TargetOne\nUse(1, 2)",
+            "TargetOne(items) = items\nUse(*items) = TargetOne\nUse(1, 2)",
             List(Atom(1), Atom(2)));
     }
 
@@ -354,17 +354,17 @@ public class CollectingBindingTests
         // Every later dependency forwards from that source kind; destination
         // kinds never overwrite it or make dictionary order observable.
         AssertCollects(
-            "Fixed(items) = items\nVariadic(items...) = items\nUse = Fixed, Variadic\nUse([1, 2])",
+            "Fixed(items) = items\nVariadic(*items) = items\nUse = Fixed, Variadic\nUse([1, 2])",
             Seq(List(Atom(1), Atom(2)), List(List(Atom(1), Atom(2)))));
         AssertCollects(
-            "Variadic(items...) = items\nFixed(items) = items\nUse = Variadic, Fixed\nUse([1, 2])",
+            "Variadic(*items) = items\nFixed(items) = items\nUse = Variadic, Fixed\nUse([1, 2])",
             Seq(
                 List(List(Atom(1), Atom(2))),
                 List(List(Atom(1), Atom(2)))));
     }
 
     // ── Callback collecting binding: flat callees route through the shared binder ─
-    // map/filter/reduce callbacks with a top-level variadic parameter collect
+    // map/filter/reduce callbacks with a top-level collecting parameter collect
     // exactly like ordinary calls: a single-variadic callee keeps the iterated
     // element as ONE collected slot, and a multi-parameter flat callee opens
     // the lone element into row slots first (the established flat-callback
@@ -373,7 +373,7 @@ public class CollectingBindingTests
     [Fact]
     public void SingleVariadicMapCallback_CollectsOneElementSlot()
     {
-        const string defs = "Collect(items...) = items\n";
+        const string defs = "Collect(*items) = items\n";
         AssertCollects(defs + "[7].map(Collect)", List(List(Atom(7))));
         AssertCollects(defs + "[7, 8].map(Collect)", List(List(Atom(7)), List(Atom(8))));
         AssertCollects(defs + "map((7, 8), Collect)", List(List(Atom(7)), List(Atom(8))));
@@ -382,7 +382,7 @@ public class CollectingBindingTests
     [Fact]
     public void SingleVariadicMapCallback_PreservesElementKindExactly()
     {
-        const string defs = "Collect(items...) = items\n";
+        const string defs = "Collect(*items) = items\n";
         AssertCollects(defs + "[[1, 2]].map(Collect)", List(List(List(Atom(1), Atom(2)))));
         AssertCollects(defs + "[(1, 2)].map(Collect)", List(List(Seq(Atom(1), Atom(2)))));
         AssertCollects(defs + "[[]].map(Collect)", List(List(List())));
@@ -393,19 +393,19 @@ public class CollectingBindingTests
     public void MixedVariadicMapCallback_OpensRowSlotsThenCollects()
     {
         AssertCollects(
-            "F(first, middle..., last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
+            "F(first, *middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
             List(List(Atom(2), Atom(3))));
         AssertCollects(
-            "F((first, middle..., last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
+            "F((first, *middle, last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
             List(List(Atom(2), Atom(3))));
         AssertCollects(
-            "F(first, rest...) = rest\n[(1, 2, 3)].map(F)",
+            "F(first, *rest) = rest\n[(1, 2, 3)].map(F)",
             List(List(Atom(2), Atom(3))));
         AssertCollects(
-            "F(first, rest...) = rest\n[7].map(F)",
+            "F(first, *rest) = rest\n[7].map(F)",
             List(List()));
         AssertCollects(
-            "F(init..., last) = init\n[(1, 2, 3)].map(F)",
+            "F(*init, last) = init\n[(1, 2, 3)].map(F)",
             List(List(Atom(1), Atom(2))));
     }
 
@@ -415,30 +415,30 @@ public class CollectingBindingTests
         // `items == [7]` distinguishes the collected list [7] from scalar 7;
         // a `.count == 1` style predicate could not.
         AssertCollects(
-            "IsSingleSeven(items...) = items == [7]\n[7, 8].filter(IsSingleSeven)",
+            "IsSingleSeven(*items) = items == [7]\n[7, 8].filter(IsSingleSeven)",
             List(Atom(7)));
         AssertCollects(
-            "P(items...) = items == [[7]]\n[[7], [8]].filter(P)",
+            "P(*items) = items == [[7]]\n[[7], [8]].filter(P)",
             List(List(Atom(7))));
     }
 
     [Fact]
-    public void ReducerElementSideVariadic_CollectsProjectedElement()
+    public void ReducerElementSideCollectingParameter_CollectsProjectedElement()
     {
-        // The variadic parameter sits BEFORE the accumulator boundary: each step observes
+        // The collecting parameter sits BEFORE the accumulator boundary: each step observes
         // items = [element], never the bare scalar element.
         AssertCollects(
-            "R(items..., acc) = items == [10]\nreduce([10], R, 99)",
+            "R(*items, acc) = items == [10]\nreduce([10], R, 99)",
             Atom(1));
         AssertCollects(
-            "R(items..., acc) = (acc.spread, items)\nreduce((10, 20), R, ())",
+            "R(*items, acc) = (acc*, items)\nreduce((10, 20), R, ())",
             Seq(Atom(10), List(Atom(20))));
     }
 
     [Fact]
     public void SingleVariadicReducer_CollectsElementAndAccumulatorSlotsExactly()
     {
-        const string reducer = "R(items...) = items\n";
+        const string reducer = "R(*items) = items\n";
         AssertCollects(reducer + "reduce([10], R, 99)", List(Atom(10), Atom(99)));
         AssertCollects(
             reducer + "reduce([[1, 2]], R, [])",
@@ -451,13 +451,13 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void ReducerAccumulatorSideVariadic_KeepsSharedPatternBinding()
+    public void ReducerAccumulatorSideCollectingParameter_KeepsSharedPatternBinding()
     {
         AssertCollects(
-            "Append(item, history...) = (history.spread, item)\nreduce((2, 3, 4), Append, 1)",
+            "Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
             Seq(Atom(1), Atom(2), Atom(3), Atom(4)));
         AssertCollects(
-            "R(el, acc, extra...) = (acc, el, extra)\nreduce((5), R, 0)",
+            "R(el, acc, *extra) = (acc, el, extra)\nreduce((5), R, 0)",
             Seq(Atom(0), Atom(5), List()));
     }
 
@@ -477,18 +477,18 @@ public class CollectingBindingTests
     [Fact]
     public void CallReceiver_PreservesArgumentBoundaries()
     {
-        const string defs = "Inspect(items...) = items\nA = [1, 2, 3]\nB = (1, 2, 3)\n";
+        const string defs = "Inspect(*items) = items\nA = [1, 2, 3]\nB = (1, 2, 3)\n";
         AssertCollects(defs + "Inspect(A)", List(List(Atom(1), Atom(2), Atom(3))));
-        AssertCollects(defs + "Inspect(A.spread)", List(Atom(1), Atom(2), Atom(3)));
+        AssertCollects(defs + "Inspect(A*)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Inspect(B)", List(Seq(Atom(1), Atom(2), Atom(3))));
-        AssertCollects(defs + "Inspect(B.spread)", List(Atom(1), Atom(2), Atom(3)));
+        AssertCollects(defs + "Inspect(B*)", List(Atom(1), Atom(2), Atom(3)));
     }
 
     [Fact]
     public void DottedReceiver_IsOneCollectedSlot()
     {
         AssertCollects(
-            "Inspect(items...) = items\nA = [1, 2]\nA.Inspect",
+            "Inspect(*items) = items\nA = [1, 2]\nA.Inspect",
             List(List(Atom(1), Atom(2))));
     }
 
@@ -496,15 +496,15 @@ public class CollectingBindingTests
     public void LoopStep_GroupedMiddleRemainsOneCollectedSequenceSlot()
     {
         const string source =
-            "Step(first, middle..., last) = middle\nStep.repeat(1, 10, (20, 30), 40)";
+            "Step(first, *middle, last) = middle\nStep.repeat(1, 10, (20, 30), 40)";
         AssertCollects(source, List(Seq(Atom(20), Atom(30))));
         AssertCollects(
-            "Step(first, middle..., last) = middle.count\nStep.repeat(1, 10, (20, 30), 40)",
+            "Step(first, *middle, last) = middle.count\nStep.repeat(1, 10, (20, 30), 40)",
             Atom(1));
     }
 
     [Fact]
-    public void WhileLoopStep_VariadicCollectsExactList_EmptySingletonAndMulti()
+    public void WhileLoopStep_CollectingParameterCollectsExactList_EmptySingletonAndMulti()
     {
         // While twin of LoopStep_GroupedMiddleRemainsOneCollectedSequenceSlot:
         // the while state-binding path collects its middle segment through the same
@@ -512,17 +512,17 @@ public class CollectingBindingTests
         // `middle == [...]` comparison pins the collected KIND (an exact
         // immutable list), not just the flattened atoms.
         AssertCollects(
-            "Step(n, middle..., last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
+            "Step(n, *middle, last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
 
         // Empty collected segment: `[]`, never `()` and never an arity error.
         AssertCollects(
-            "Step(n, middle..., last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
+            "Step(n, *middle, last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
 
         // Multi-item collected segment.
         AssertCollects(
-            "Step(n, middle..., last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
+            "Step(n, *middle, last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
             Seq(Atom(11), Atom(1), Atom(40)));
     }
 
@@ -536,19 +536,19 @@ public class CollectingBindingTests
     [InlineData("Inspect([1, 2]) == [1, 2]", 0)]
     [InlineData("Inspect(1, 2) == (1, 2)", 0)]
     public void CollectedSegment_EqualityIsKindExact(string comparison, decimal expected)
-        => AssertCollects("Inspect(items...) = items\n" + comparison, Atom(expected));
+        => AssertCollects("Inspect(*items) = items\n" + comparison, Atom(expected));
 
     // ── Collection composition ──────────────────────────────────────────────
 
     [Fact]
     public void CollectedSegment_ComposesWithCollectionBuiltins()
     {
-        const string tail = "Tail(source) = {\n    first, rest... = source\n    rest\n}\n";
+        const string tail = "Tail(source) = {\n    first, *rest = source\n    rest\n}\n";
         AssertCollects(tail + "Tail([[1, 2], [3, 4]])", List(List(Atom(3), Atom(4))));
         AssertCollects(tail + "Tail([[1, 2], [3, 4]]).count", Atom(1));
         AssertCollects("skip([[1, 2], [3, 4]], 1)", List(List(Atom(3), Atom(4))));
         AssertCollects(
-            "first, rest... = [1, 2, 3]\nrest == skip([1, 2, 3], 1)",
+            "first, *rest = [1, 2, 3]\nrest == skip([1, 2, 3], 1)",
             Atom(1));
     }
 
@@ -559,7 +559,7 @@ public class CollectingBindingTests
     {
         AssertCollects("x = 1, 2, 3\nx", Seq(Atom(1), Atom(2), Atom(3)));
         AssertCollects("x = [1, 2, 3]\nx", List(Atom(1), Atom(2), Atom(3)));
-        AssertCollects("x = [1, 2, 3].spread\nx", Seq(Atom(1), Atom(2), Atom(3)));
+        AssertCollects("x = [1, 2, 3]*\nx", Seq(Atom(1), Atom(2), Atom(3)));
     }
 
     // ── Immutability of collected lists ─────────────────────────────────
@@ -597,13 +597,13 @@ public class CollectingBindingTests
     public static TheoryData<string, string> ImmutableCollectedResults => new()
     {
         // source producing a collected list                             expected display
-        { "Inspect(items...) = items\nInspect()", "[]" },
-        { "Inspect(items...) = items\nInspect(7)", "[7]" },
-        { "Inspect(items...) = items\nInspect([1, 2])", "[[1, 2]]" },
-        { "Inspect(items...) = items\nInspect((1, 2))", "[(1, 2)]" },
-        { "first, rest... = [1, 2, 3]\nrest", "[2, 3]" },
+        { "Inspect(*items) = items\nInspect()", "[]" },
+        { "Inspect(*items) = items\nInspect(7)", "[7]" },
+        { "Inspect(*items) = items\nInspect([1, 2])", "[[1, 2]]" },
+        { "Inspect(*items) = items\nInspect((1, 2))", "[(1, 2)]" },
+        { "first, *rest = [1, 2, 3]\nrest", "[2, 3]" },
         // forwarding path: the re-collected list must be just as protected
-        { "Target(items...) = items\nForward(items...) = Target(items.spread)\nForward([1, 2])", "[[1, 2]]" },
+        { "Target(*items) = items\nForward(*items) = Target(items*)\nForward([1, 2])", "[[1, 2]]" },
     };
 
     [Theory]
@@ -649,7 +649,7 @@ public class CollectingBindingTests
     public void CollectedList_IsStableAsDictionaryAndHashSetKey()
     {
         var run = Assert.IsType<RunResult.Success>(
-            KatLangEngine.Run("Inspect(items...) = items\nInspect(1, [2, 3])"));
+            KatLangEngine.Run("Inspect(*items) = items\nInspect(1, [2, 3])"));
         var value = Assert.IsType<Result.ListValue>(run.Value);
 
         var dictionary = new Dictionary<Result, string>(Result.ValueComparer) { [value] = "rest" };

@@ -29,15 +29,15 @@ public class CallableBindingPlanTests
         return capture;
     }
 
-    private static VariadicCaptureBindingNode AssertVariadic(
+    private static CollectingCaptureBindingNode AssertVariadic(
         CallableBindingNode node,
         string name,
         CallableParameterSource source,
         bool isTopLevel)
     {
-        var capture = Assert.IsType<VariadicCaptureBindingNode>(node);
+        var capture = Assert.IsType<CollectingCaptureBindingNode>(node);
         Assert.Equal(name, capture.Name);
-        Assert.Equal(ParameterKind.Variadic, capture.Kind);
+        Assert.Equal(ParameterKind.Collecting, capture.Kind);
         Assert.Equal(source, capture.Source);
         Assert.Equal(isTopLevel, capture.IsTopLevel);
         return capture;
@@ -55,7 +55,7 @@ public class CallableBindingPlanTests
         AssertCapture(topLevel.Nodes[1], "y", CallableParameterSource.Explicit);
         Assert.Equal(2, topLevel.MinSlotCount);
         Assert.Equal(2, topLevel.MaxSlotCount);
-        Assert.False(topLevel.HasVariadicAtThisLevel);
+        Assert.False(topLevel.HasCollectingAtThisLevel);
         Assert.Equal(["x", "y"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
     }
 
@@ -84,66 +84,66 @@ public class CallableBindingPlanTests
         AssertCapture(group.Children.Nodes[1], "y", CallableParameterSource.Explicit);
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Equal(1, topLevel.MaxSlotCount);
-        Assert.False(topLevel.HasVariadicAtThisLevel);
+        Assert.False(topLevel.HasCollectingAtThisLevel);
         Assert.Equal(["x", "y"], plan.Captures.Select(static capture => capture.Name).ToArray());
     }
 
     [Fact]
     public void FromSignature_TopLevelVariadicPlan_HasZeroMinimumAndUnboundedMaximum()
     {
-        var plan = PlanFor("CountValues(values...) = values.count", "CountValues");
+        var plan = PlanFor("CountValues(*values) = values.count", "CountValues");
         var topLevel = plan.TopLevelPatternList;
 
         var values = AssertVariadic(Assert.Single(topLevel.Nodes), "values", CallableParameterSource.Explicit, isTopLevel: true);
-        Assert.Same(values, topLevel.VariadicCapture);
+        Assert.Same(values, topLevel.CollectingCapture);
         Assert.Empty(topLevel.Prefix);
         Assert.Empty(topLevel.Suffix);
-        // Lone-variadic item supply: no fixed bindings, so min 0 and unbounded max.
+        // Lone-collecting item supply: no fixed bindings, so min 0 and unbounded max.
         Assert.Equal(0, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
-        Assert.True(topLevel.HasVariadicAtThisLevel);
-        Assert.Equal(["values..."], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
+        Assert.True(topLevel.HasCollectingAtThisLevel);
+        Assert.Equal(["*values"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
     }
 
     [Fact]
     public void FromSignature_TopLevelVariadicWithSuffixPlan_BindsSuffixFromBack()
     {
-        var plan = PlanFor("Scale(items..., factor) = items.map{n * factor}", "Scale");
+        var plan = PlanFor("Scale(*items, factor) = items.map{n * factor}", "Scale");
         var topLevel = plan.TopLevelPatternList;
 
         Assert.Empty(topLevel.Prefix);
-        Assert.NotNull(topLevel.VariadicCapture);
-        Assert.Equal("items", topLevel.VariadicCapture.Name);
-        Assert.True(topLevel.VariadicCapture.IsTopLevel);
+        Assert.NotNull(topLevel.CollectingCapture);
+        Assert.Equal("items", topLevel.CollectingCapture.Name);
+        Assert.True(topLevel.CollectingCapture.IsTopLevel);
         var suffix = Assert.Single(topLevel.Suffix);
         AssertCapture(suffix, "factor", CallableParameterSource.Explicit);
         // Deconstruction-shaped: the fixed suffix `factor` is the only required
-        // slot, and the variadic parameter `items...` may collect any number of prefix items.
+        // slot, and the collecting parameter `*items` may collect any number of prefix items.
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Null(topLevel.MaxSlotCount);
-        Assert.True(topLevel.HasVariadicAtThisLevel);
+        Assert.True(topLevel.HasCollectingAtThisLevel);
     }
 
     [Fact]
     public void FromSignature_SequenceValueVariadicPlan_IsNestedNotTopLevel()
     {
-        var plan = PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue");
+        var plan = PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue");
         var topLevel = plan.TopLevelPatternList;
 
         var group = Assert.IsType<SequenceValueBindingNode>(Assert.Single(topLevel.Nodes));
         var values = AssertVariadic(Assert.Single(group.Children.Nodes), "values", CallableParameterSource.Explicit, isTopLevel: false);
-        Assert.Same(values, group.Children.VariadicCapture);
-        Assert.False(topLevel.HasVariadicAtThisLevel);
-        Assert.True(topLevel.HasVariadicInDescendants);
+        Assert.Same(values, group.Children.CollectingCapture);
+        Assert.False(topLevel.HasCollectingAtThisLevel);
+        Assert.True(topLevel.HasCollectingInDescendants);
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Equal(1, topLevel.MaxSlotCount);
-        Assert.Equal(0, plan.ArityFacts.TopLevelVariadicCount);
+        Assert.Equal(0, plan.ArityFacts.TopLevelCollectingCount);
     }
 
     [Fact]
     public void FromSignature_NestedSequenceValueRecursivePlan_PreservesNestedStructure()
     {
-        var plan = PlanFor("G(((history...), previous)) = history.count + previous", "G");
+        var plan = PlanFor("G(((*history), previous)) = history.count + previous", "G");
         var topLevel = plan.TopLevelPatternList;
 
         var outerGroup = Assert.IsType<SequenceValueBindingNode>(Assert.Single(topLevel.Nodes));
@@ -151,11 +151,11 @@ public class CallableBindingPlanTests
         var historyGroup = Assert.IsType<SequenceValueBindingNode>(outerGroup.Children.Nodes[0]);
         AssertVariadic(Assert.Single(historyGroup.Children.Nodes), "history", CallableParameterSource.Explicit, isTopLevel: false);
         AssertCapture(outerGroup.Children.Nodes[1], "previous", CallableParameterSource.Explicit);
-        Assert.False(topLevel.HasVariadicAtThisLevel);
-        Assert.True(topLevel.HasVariadicInDescendants);
+        Assert.False(topLevel.HasCollectingAtThisLevel);
+        Assert.True(topLevel.HasCollectingInDescendants);
         Assert.Equal(1, topLevel.MinSlotCount);
         Assert.Equal(1, topLevel.MaxSlotCount);
-        Assert.Equal(["history...", "previous"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
+        Assert.Equal(["*history", "previous"], plan.Captures.Select(static capture => capture.DisplayName).ToArray());
     }
 
     [Fact]
@@ -178,17 +178,17 @@ public class CallableBindingPlanTests
         // Collection builtins are ordinary fixed-arity callables: one fixed
         // `collection` capture plus fixed control captures, no variadic.
         Assert.Equal("map(collection, mapper)", map.DisplayText);
-        Assert.Null(map.TopLevelPatternList.VariadicCapture);
+        Assert.Null(map.TopLevelPatternList.CollectingCapture);
         Assert.Equal(2, map.TopLevelPatternList.Nodes.Count);
         AssertCapture(map.TopLevelPatternList.Nodes[0], "collection", CallableParameterSource.Builtin);
         AssertCapture(map.TopLevelPatternList.Nodes[1], "mapper", CallableParameterSource.Builtin);
         Assert.Equal(2, map.TopLevelPatternList.MinSlotCount);
         Assert.Equal(2, map.TopLevelPatternList.MaxSlotCount);
-        Assert.False(map.TopLevelPatternList.HasVariadicAtThisLevel);
+        Assert.False(map.TopLevelPatternList.HasCollectingAtThisLevel);
         Assert.True(map.TryGetFlatFixedLayout(out _));
 
         Assert.Equal("take(collection, count)", take.DisplayText);
-        Assert.Null(take.TopLevelPatternList.VariadicCapture);
+        Assert.Null(take.TopLevelPatternList.CollectingCapture);
         Assert.Equal(2, take.TopLevelPatternList.Nodes.Count);
         AssertCapture(take.TopLevelPatternList.Nodes[0], "collection", CallableParameterSource.Builtin);
         AssertCapture(take.TopLevelPatternList.Nodes[1], "count", CallableParameterSource.Builtin);
@@ -200,7 +200,7 @@ public class CallableBindingPlanTests
         AssertCapture(Assert.Single(count.TopLevelPatternList.Nodes), "collection", CallableParameterSource.Builtin);
         Assert.Equal(1, count.TopLevelPatternList.MinSlotCount);
         Assert.Equal(1, count.TopLevelPatternList.MaxSlotCount);
-        Assert.False(count.TopLevelPatternList.HasVariadicAtThisLevel);
+        Assert.False(count.TopLevelPatternList.HasCollectingAtThisLevel);
         Assert.True(count.TryGetFlatFixedLayout(out _));
     }
 
@@ -211,8 +211,8 @@ public class CallableBindingPlanTests
         {
             PlanFor("Add(x, y) = x + y", "Add").Signature,
             PlanFor("PairSum((x, y)) = x + y", "PairSum").Signature,
-            PlanFor("CountValues(values...) = values.count", "CountValues").Signature,
-            PlanFor("CountSequenceValue((values...)) = values.count", "CountSequenceValue").Signature,
+            PlanFor("CountValues(*values) = values.count", "CountValues").Signature,
+            PlanFor("CountSequenceValue((*values)) = values.count", "CountSequenceValue").Signature,
             CallableSignature.FromBuiltin(BuiltinId.map),
             CallableSignature.FromBuiltin(BuiltinId.count),
         };
@@ -224,8 +224,8 @@ public class CallableBindingPlanTests
             Assert.Equal(CallableSignatureDiagnostics.GetArityFacts(signature), plan.ArityFacts);
             Assert.Equal(plan.ArityFacts.MinTopLevelArgumentCount, plan.TopLevelPatternList.MinSlotCount);
             Assert.Equal(plan.ArityFacts.MaxTopLevelArgumentCount, plan.TopLevelPatternList.MaxSlotCount);
-            Assert.Equal(plan.ArityFacts.HasTopLevelVariadic, plan.TopLevelPatternList.HasVariadicAtThisLevel);
-            Assert.Equal(plan.ArityFacts.TopLevelVariadicCount, plan.TopLevelPatternList.VariadicCountAtThisLevel);
+            Assert.Equal(plan.ArityFacts.HasTopLevelCollecting, plan.TopLevelPatternList.HasCollectingAtThisLevel);
+            Assert.Equal(plan.ArityFacts.TopLevelCollectingCount, plan.TopLevelPatternList.CollectingCountAtThisLevel);
         }
     }
 }

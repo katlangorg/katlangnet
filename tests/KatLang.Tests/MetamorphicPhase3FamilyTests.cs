@@ -167,7 +167,7 @@ public class MetamorphicPhase3FamilyTests
         }
 
         // Frozen Phase 1/2 families + the Phase 3 families + the appended Group E
-        // spread-spelling-parity family (spread(X) vs X.spread).
+        // spread-spelling-parity family (the fluent chain X*.C vs the explicit call C(X*)).
         Assert.Equal(frozen.Length + Phase3Families.Length + 1, MetamorphicFamilyRegistry.All.Length);
     }
 

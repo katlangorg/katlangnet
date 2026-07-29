@@ -14,6 +14,7 @@ internal static class EditorEdit
     private const ushort Space = 0x0020;
     private const ushort Quote = 0x0027;
     private const ushort Dot = 0x002E;
+    private const ushort Star = 0x002A;
     private const ushort Comma = 0x002C;
     private const ushort Lf = 0x000A;
     private const ushort Cr = 0x000D;
@@ -51,8 +52,8 @@ internal static class EditorEdit
             EditorEditKind.AddNewline => Insert(baseUnits, at, [Lf]),
             EditorEditKind.LineFeedToCarriageReturnLineFeed => ReplaceSequence(baseUnits, [Lf], [Cr, Lf]),
             EditorEditKind.CarriageReturnLineFeedToLineFeed => ReplaceSequence(baseUnits, [Cr, Lf], [Lf]),
-            EditorEditKind.AddSpreadDot => AddSpreadDot(baseUnits, at),
-            EditorEditKind.RemoveSpreadDot => RemoveSpreadDot(baseUnits, at),
+            EditorEditKind.AddSpreadMarker => AddSpreadMarker(baseUnits, at),
+            EditorEditKind.RemoveSpreadMarker => RemoveSpreadMarker(baseUnits, at),
             EditorEditKind.CompleteString => Insert(baseUnits, baseUnits.Length, [Quote]),
             EditorEditKind.BreakString => Insert(baseUnits, at, [Quote]),
             EditorEditKind.RenameLocalSymbol => Rename(baseUnits, toDuplicate: false, bias),
@@ -128,20 +129,31 @@ internal static class EditorEdit
         return true;
     }
 
-    private static ImmutableArray<ushort>? AddSpreadDot(ImmutableArray<ushort> units, int at)
+    /// <summary>
+    /// Adds one star to the supply marker: an existing star grows into the chained-spread
+    /// run (`value*` becomes `value**`), otherwise a star is inserted at the cursor, which
+    /// turns a completed expression into a spread — or into a multiplication, depending on
+    /// attachment and what follows on the line. Both outcomes are intended: the star rule
+    /// is exactly what this edit probes.
+    /// </summary>
+    private static ImmutableArray<ushort>? AddSpreadMarker(ImmutableArray<ushort> units, int at)
     {
-        for (var i = 0; i + 1 < units.Length; i++)
-            if (units[i] == Dot && units[i + 1] == Dot)
-                return Insert(units, i + 2, [Dot]);
-        return Insert(units, at, [Dot, Dot, Dot]);
+        for (var i = 0; i < units.Length; i++)
+            if (units[i] == Star)
+                return Insert(units, i + 1, [Star]);
+        return Insert(units, at, [Star]);
     }
 
-    private static ImmutableArray<ushort>? RemoveSpreadDot(ImmutableArray<ushort> units, int at)
+    /// <summary>
+    /// Removes one star, collapsing a chained spread by one layer, demoting `value*` back
+    /// to `value`, or breaking a multiplication into adjacency.
+    /// </summary>
+    private static ImmutableArray<ushort>? RemoveSpreadMarker(ImmutableArray<ushort> units, int at)
     {
-        for (var i = 0; i + 2 < units.Length; i++)
-            if (units[i] == Dot && units[i + 1] == Dot && units[i + 2] == Dot)
+        for (var i = 0; i < units.Length; i++)
+            if (units[i] == Star)
                 return Delete(units, i, 1);
-        return RemoveFirst(units, at, u => u == Dot);
+        return RemoveFirst(units, at, u => u == Star);
     }
 
     private static bool IsDelimiter(ushort unit)

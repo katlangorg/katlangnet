@@ -112,7 +112,7 @@ internal static class MetamorphicFamilyRegistry
             SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
             OperationalRelation: MetamorphicOperationalRelation.ExactMaterializationEqual,
             LeanRepresentable: true,
-            Description: "F(receiver, suffix.spread) against receiver.F(suffix.spread) for a trusted collection builtin",
+            Description: "F(receiver, suffix) against receiver.F(suffix) for a trusted collection builtin",
             Normalize: MetamorphicDottedBuiltinTemplate.Normalize,
             ValidatePreconditions: MetamorphicDottedBuiltinTemplate.Validate,
             Build: MetamorphicDottedBuiltinTemplate.Build,
@@ -136,7 +136,7 @@ internal static class MetamorphicFamilyRegistry
             // MetamorphicPhase2FamilyTests.UserExtensionCall_AgreesOnExactWorkAtEveryParameterPoint.
             OperationalRelation: MetamorphicOperationalRelation.ExactObservedWorkEqual,
             LeanRepresentable: true,
-            Description: "F(receiver, suffix.spread) against receiver.F(suffix.spread) for a user-defined function",
+            Description: "F(receiver, suffix) against receiver.F(suffix) for a user-defined function",
             Normalize: MetamorphicUserExtensionTemplate.Normalize,
             ValidatePreconditions: MetamorphicUserExtensionTemplate.Validate,
             Build: MetamorphicUserExtensionTemplate.Build,
@@ -300,24 +300,28 @@ internal static class MetamorphicFamilyRegistry
             SupportedLimitModes: AllLimitModes,
             SupportsOptimizerPolicy: true,
             UsesLegacyRangeStop: false,
-            // spread-slot context, operand shape
+            // spelling-pair context, operand shape
             ExtraDimensionSizes:
             [
                 MetamorphicSpreadSpellingTemplate.ContextCount,
                 MetamorphicTables.ReceiverShapes.Length,
             ],
             SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
-            // `spread(X)` and `X.spread` lower to the SAME SequenceSpread node at parse
-            // time, so the two members are the same program modulo source spans: parse
-            // eligibility, values, structured errors, limit classifications, AND charged
-            // evaluation work must all agree exactly.
+            // The fluent chain `X*.C` lowers to the SAME Call(SequenceSpread) AST as the
+            // explicit `C(X*)` at parse time, so those contexts are the same program modulo
+            // source spans: parse eligibility, values, structured errors, limit
+            // classifications, AND charged evaluation work must all agree exactly. The
+            // headline relation is refined per context below: the redundant-grouping pair
+            // `(X*)` vs `((X*))` is semantically equal by canonicalization but carries a
+            // real extra block layer, so it makes no operational claim.
             OperationalRelation: MetamorphicOperationalRelation.ExactObservedWorkEqual,
             LeanRepresentable: true,
-            Description: "spread(X) against X.spread: both spellings of the spread intrinsic lower to one node",
+            Description: "the fluent chain X*.C against the explicit call C(X*), plus grouped spread equivalences",
             Normalize: MetamorphicSpreadSpellingTemplate.Normalize,
             ValidatePreconditions: MetamorphicSpreadSpellingTemplate.Validate,
             Build: MetamorphicSpreadSpellingTemplate.Build,
-            DescribeVariantCore: MetamorphicSpreadSpellingTemplate.DescribeVariant),
+            DescribeVariantCore: MetamorphicSpreadSpellingTemplate.DescribeVariant,
+            SelectOperationalRelation: MetamorphicSpreadSpellingTemplate.SelectOperationalRelation),
     ];
 
     static MetamorphicFamilyRegistry()

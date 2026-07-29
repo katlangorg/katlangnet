@@ -21,7 +21,7 @@ ORDINARY captured item supplies: `Result.normalize (Result.sequenceValue xs)`.
 This is `capture : Supply -> Value` — the canonicalizing value/output capture
 boundary (`x = 1, 2, 3`). It is NOT the collecting-binding operation: collecting binding
 uses `collect : Supply -> ListValue` (`collectSegment`, exact immutable list),
-and the spread intrinsic is `spread : Value -> Supply` (`Result.spreadItems`). The
+and the spread marker is `spread : Value -> Supply` (`Result.spreadItems`). The
 binder-path theorems below pin which operation each receiver applies.
 -/
 def captureForArityLaw (xs : List Result) : Result :=
@@ -29,7 +29,7 @@ def captureForArityLaw (xs : List Result) : Result :=
 
 /-- Single-variadic signature used to expose the non-opaque variadic splitter. -/
 def singleVariadicSignatureForArityLaw : CallableSignature :=
-  { name := "F", parameters := [{ name := "x", kind := .variadic }] }
+  { name := "F", parameters := [{ name := "x", kind := .collecting }] }
 
 theorem empty_sequence_is_sequenceValue_empty :
     buildEmptySequenceValue 0 = Result.sequenceValue [] := by
@@ -147,7 +147,7 @@ private theorem bindPairs_nil_nil
 ## Segment collection laws (`collect : Supply -> ListValue`)
 
 `collectSegment` is the single collecting-binding materialization operation: every collecting binding
-— deconstruction collecting bindings, single variadic parameters, and mixed
+— deconstruction collecting bindings, single collecting parameters, and mixed
 prefix/collecting/suffix parameter lists — binds its assigned middle supply through
 it, after receiver-specific supply preparation. The laws below establish the
 required exactness properties.
@@ -206,7 +206,7 @@ theorem collectSegment_singleton_ne_item (v : Result) :
 
 /-- Open/collect round trip: spread (`open`, `Result.spreadItems`)
 re-supplies EXACTLY the collected items, so variadic forwarding
-(`Forward(items...) = Target(items.spread)`) is ordinary list spread with no
+(`Forward(*items) = Target(items*)`) is ordinary list spread with no
 hidden raw-supply metadata. -/
 theorem spreadItems_collectSegment (xs : List Result) :
     (collectSegment xs).spreadItems = xs := rfl
@@ -219,7 +219,7 @@ theorem valueCount_collectSegment (xs : List Result) :
 /-- Provenance independence: `collect` depends only on the assembled item
 supply, never on which structures were spread to produce it — collecting the
 concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, rest... = 1, [2, 3].spread, (4, 5).spread` gives
+whatever `a` and `b` were (`first, *rest = 1, [2, 3]*, (4, 5)*` gives
 `rest = [2, 3, 4, 5]`). -/
 theorem collectSegment_spread_concat_exact (a b : Result) :
     collectSegment (a.spreadItems ++ b.spreadItems)
@@ -269,13 +269,13 @@ items, with emitted count 1.
 theorem bindParameterPatternList_single_collecting_binds_collect
     (xs : List Result) (allowAlgorithmBindings : Bool) :
     runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .variadic }]
+      [.capture { name := "x", kind := .collecting }]
       (xs.map (fun value => { value? := some value : ParameterPatternInput }))
       allowAlgorithmBindings)
       = .ok { argEnv := [("x", Result.listValue xs)],
               countedParamEnv := [("x", (Result.listValue xs, 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindPairs_nil_nil, collectValues_valueInputs, drop_length_valueInputs, take_length_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
@@ -283,7 +283,7 @@ theorem bindParameterPatternList_single_collecting_binds_collect
 
 theorem variadic_single_collecting_binds_collect (xs : List Result) :
     runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .variadic }]
+      [.capture { name := "x", kind := .collecting }]
       (xs.map (fun value => { value? := some value : ParameterPatternInput }))
       false)
       = .ok { argEnv := [("x", collectSegment xs)],
@@ -297,21 +297,21 @@ theorem bindCallableArguments_single_variadic_items (xs : List Result) :
       singleVariadicSignatureForArityLaw
       xs
       (fun required actual => Error.arityMismatch required actual)
-      = .ok { normalBindings := [], variadicName? := some "x", variadicItems := xs } := by
+      = .ok { normalBindings := [], collectingName? := some "x", collectingItems := xs } := by
   unfold singleVariadicSignatureForArityLaw
   have hvalid :
       CallableSignature.validationError?
-        { name := "F", parameters := [{ name := "x", kind := .variadic }] } = none := by
+        { name := "F", parameters := [{ name := "x", kind := .collecting }] } = none := by
     decide
   simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
+    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
 
 theorem bindCallableArguments_variadic_items_then_collect (xs : List Result) :
     (match bindCallableArguments
         singleVariadicSignatureForArityLaw
         xs
         (fun required actual => Error.arityMismatch required actual) with
-    | .ok bindings => Except.ok (collectSegment bindings.variadicItems)
+    | .ok bindings => Except.ok (collectSegment bindings.collectingItems)
     | .error err => Except.error err)
       = Except.ok (collectSegment xs) := by
   simp [bindCallableArguments_single_variadic_items]
@@ -321,14 +321,14 @@ empty-segment rule. -/
 def mixedVariadicSignatureForArityLaw : CallableSignature :=
   { name := "F",
     parameters :=
-      [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] }
+      [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] }
 
 /-- EMPTY LOOP-STATE SEGMENT over the real flat-variadic binder: supplying exactly
-the fixed parameters binds them from the ends and the variadic parameter is assigned ZERO
+the fixed parameters binds them from the ends and the collecting parameter is assigned ZERO
 middle items — the same `collectSegment [] = []` rule as every other collecting-binding
 receiver (`bindParameterPatternList`: required = patterns - 1). This pins the
 uniform minimum (fixed parameter count), replacing the old loop-only
-"the variadic parameter collects at least one slot" restriction. -/
+"the collecting parameter collects at least one slot" restriction. -/
 theorem bindCallableArguments_mixed_fixed_only_empty_segment (a b : Result) :
     bindCallableArguments
       mixedVariadicSignatureForArityLaw
@@ -336,17 +336,17 @@ theorem bindCallableArguments_mixed_fixed_only_empty_segment (a b : Result) :
       (fun required actual => Error.arityMismatch required actual)
       = .ok {
           normalBindings := [("first", a), ("last", b)],
-          variadicName? := some "rest",
-          variadicItems := [] } := by
+          collectingName? := some "rest",
+          collectingItems := [] } := by
   unfold mixedVariadicSignatureForArityLaw
   have hvalid :
       CallableSignature.validationError?
         { name := "F",
           parameters :=
-            [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] } = none := by
+            [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] } = none := by
     decide
   simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
+    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
 
 /-- Below the fixed minimum the mixed binder fails with the fixed parameter
 count — one state slot cannot bind `first` and `last`. -/
@@ -361,21 +361,21 @@ theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
       CallableSignature.validationError?
         { name := "F",
           parameters :=
-            [{ name := "first" }, { name := "rest", kind := .variadic }, { name := "last" }] } = none := by
+            [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] } = none := by
     decide
   simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.variadicIndex?, CallableSignature.variadicIndex?.go.eq_2]
+    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
 
 /-
 ## Generic mixed-pattern bridge theorems
 
-For every supported flat variadic shape — leading variadic (`Init(init..., last)`),
-middle variadic (`F(x, y..., z)`), trailing variadic (`Tail(first, rest...)`); the
+For every supported flat variadic shape — leading variadic (`Init(*init, last)`),
+middle variadic (`F(x, *y, z)`), trailing variadic (`Tail(first, *rest)`); the
 lone-variadic shape is `bindParameterPatternList_single_collecting_binds_collect` above —
-a successful bind through the REAL shared binder records the variadic parameter's name as
+a successful bind through the REAL shared binder records the collecting parameter's name as
 `collectSegment` of exactly the allocated middle supply. The middle supply `mid`
 is universally quantified, so each theorem covers the empty, singleton, and
-multiple-item segments uniformly, and the fixed captures around the variadic parameter keep
+multiple-item segments uniformly, and the fixed captures around the collecting parameter keep
 their front/back argument boundaries unchanged.
 
 Honest limitation: the front/back capture lists are one fixed capture per
@@ -386,20 +386,20 @@ wider-arity content is carried by the executable matrices in `CoreTests.lean`
 and the generated differential corpora.
 -/
 
-/-- Trailing variadic (`Tail(first, rest...)`): for EVERY middle supply — empty,
-singleton, or multiple — the variadic parameter binds `collectSegment mid` and the leading
+/-- Trailing variadic (`Tail(first, *rest)`): for EVERY middle supply — empty,
+singleton, or multiple — the collecting parameter binds `collectSegment mid` and the leading
 fixed capture keeps the front argument boundary. -/
 theorem bindParameterPatternList_trailing_collecting_binds_collect
     (x : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "a", kind := .normal },
-       .capture { name := "r", kind := .variadic }]
+       .capture { name := "r", kind := .collecting }]
       ((x :: mid).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
       = .ok { argEnv := [("a", x), ("r", collectSegment mid)],
               countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs,
     take_length_valueInputs, drop_length_valueInputs,
@@ -408,20 +408,20 @@ theorem bindParameterPatternList_trailing_collecting_binds_collect
     collectSegment]
   rfl
 
-/-- Leading variadic (`Init(init..., last)`): for EVERY middle supply the variadic
+/-- Leading variadic (`Init(*init, last)`): for EVERY middle supply the variadic
 parameter binds `collectSegment mid` and the trailing fixed capture keeps the back
 argument boundary. -/
 theorem bindParameterPatternList_leading_collecting_binds_collect
     (y : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .variadic },
+      [.capture { name := "r", kind := .collecting },
        .capture { name := "z", kind := .normal }]
       ((mid ++ [y]).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
       = .ok { argEnv := [("r", collectSegment mid), ("z", y)],
               countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
@@ -429,13 +429,13 @@ theorem bindParameterPatternList_leading_collecting_binds_collect
     collectSegment]
   rfl
 
-/-- Middle variadic (`F(x, y..., z)`): for EVERY middle supply the variadic parameter binds
+/-- Middle variadic (`F(x, *y, z)`): for EVERY middle supply the collecting parameter binds
 `collectSegment mid` between the preserved front and back fixed boundaries. -/
 theorem bindParameterPatternList_middle_collecting_binds_collect
     (x y : Result) (mid : List Result) :
     runEvalM (bindParameterPatternList
       [.capture { name := "a", kind := .normal },
-       .capture { name := "r", kind := .variadic },
+       .capture { name := "r", kind := .collecting },
        .capture { name := "z", kind := .normal }]
       ((x :: (mid ++ [y])).map (fun value => { value? := some value : ParameterPatternInput }))
       false)
@@ -443,7 +443,7 @@ theorem bindParameterPatternList_middle_collecting_binds_collect
               countedParamEnv := [("r", (collectSegment mid, 1))],
               algEnv := [] } := by
   have hlen : ¬ (mid.length + 1 + 1 < 2) := by omega
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern,
     bindPairs_nil_nil, collectValues_valueInputs,
     runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
@@ -454,7 +454,7 @@ theorem bindParameterPatternList_middle_collecting_binds_collect
 /-
 ## Deconstruction bridge laws (unpacking receiver)
 
-Assignment deconstruction (`x, y..., z = RHS`) is parser-elaborated into a helper
+Assignment deconstruction (`x, *y, z = RHS`) is parser-elaborated into a helper
 whose single parameter is a sequence-value pattern (`.sequenceValue [captures]`)
 applied to the right-hand side value as one argument. Binding through the real
 `bindParameterPatternList`, that pattern OPENS its single received value into items
@@ -480,7 +480,7 @@ theorem call_fixed_single_sequence_rejected :
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .error (Error.arityMismatch 2 1) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
   rfl
 
 /-- `G(A)` mixed fixed/variadic call: one supplied item, so `first` receives the whole
@@ -488,14 +488,14 @@ stored sequence value and `rest` collects the empty list `[]` — calls never
 implicitly open. -/
 theorem call_variadic_single_sequence_preserved :
     runEvalM (bindParameterPatternList
-        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
+        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("first", Result.sequenceValue [Result.atom 1, Result.atom 2]),
                          ("rest", Result.listValue [])],
               countedParamEnv := [("rest", (Result.listValue [], 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
@@ -514,26 +514,26 @@ theorem deconstruct_fixed_single_sequence_opens :
         true)
       = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
               countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
     Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
   rfl
 
-/-- `first, rest... = A`: the deconstruction sequence-value pattern opens `A`, so
+/-- `first, *rest = A`: the deconstruction sequence-value pattern opens `A`, so
 `first = 1` and `rest` COLLECTS the matched items as one exact immutable
 list `[2, 3]`. -/
 theorem deconstruct_collecting_single_sequence_opens :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "first", kind := .normal },
-                         .capture { name := "rest", kind := .variadic }]]
+                         .capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
         true)
       = .ok { argEnv := [("first", Result.atom 1),
                          ("rest", Result.listValue [Result.atom 2, Result.atom 3])],
               countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
@@ -545,18 +545,18 @@ theorem deconstruct_collecting_single_sequence_opens :
 
 Exact list values (`Result.listValue`) join the deconstruction opening rule but
 remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
-list as one item, while the spread intrinsic (`Result.spreadItems`), the
+list as one item, while the spread marker (`Result.spreadItems`), the
 deconstruction pattern (`Result.structureItems?`), the indexing `:` projection
 target view (`Result.projectionItems`), and the post-binding builtin collection
 view open one list boundary in their documented contexts. The laws below pin
 each decision over the real model, mirroring the sequence laws above.
 -/
 
-/-- Spread opens exactly one list boundary: `[1, 2, 3].spread` supplies the items. -/
+/-- Spread opens exactly one list boundary: `[1, 2, 3]*` supplies the items. -/
 theorem spreadItems_listValue (xs : List Result) :
     (Result.listValue xs).spreadItems = xs := rfl
 
-/-- Spreading the empty list supplies zero items (`[].spread` is neutral). -/
+/-- Spreading the empty list supplies zero items (`[]*` is neutral). -/
 theorem spreadItems_empty_list : (Result.listValue []).spreadItems = [] := rfl
 
 /-- Spread on sequence values is unchanged by the list extension. -/
@@ -665,7 +665,7 @@ items just as `count((1, 2, 3))` does. Opening is never recursive — nested
 lists stay intact as single items (`count((1, [2], 3))` is 3, and a
 collection element `[..]` inside the bound collection is one item). The view
 applies only AFTER ordinary fixed binding: `count(1, 2, 3)` and
-`count([1, 2, 3].spread)` are ordinary arity errors, never collections. -/
+`count([1, 2, 3]*)` are ordinary arity errors, never collections. -/
 theorem builtinCollectionItems_list (xs : List Result) :
     builtinCollectionItems (Result.listValue xs) = xs := rfl
 
@@ -698,8 +698,8 @@ theorem normalize_singleton_sequence_of_list (xs : List Result) :
 
 /-- Ordinary capture and segment collection stay distinct operations on the same
 supply: `capture` canonicalizes to a sequence value while `collect` preserves
-the exact list — `x = A.spread` re-groups list items as `(…)`, while
-`x, rest... = A` collects them as `[…]`. -/
+the exact list — `x = A*` re-groups list items as `(…)`, while
+`x, *rest = A` collects them as `[…]`. -/
 theorem capture_and_collect_differ_on_pairs (a b : Result) :
     captureForArityLaw [a, b] =
         Result.sequenceValue [Result.normalize a, Result.normalize b]
@@ -716,7 +716,7 @@ theorem call_fixed_single_list_rejected :
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .error (Error.arityMismatch 2 1) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic, runEvalM]
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
   rfl
 
 /-- `G(A)` mixed fixed/variadic call with a stored LIST `A`: `first` receives the
@@ -724,14 +724,14 @@ whole list value and `rest` collects the empty list `[]` — calls never
 implicitly open. -/
 theorem call_variadic_single_list_preserved :
     runEvalM (bindParameterPatternList
-        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .variadic }]
+        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("first", Result.listValue [Result.atom 1, Result.atom 2]),
                          ("rest", Result.listValue [])],
               countedParamEnv := [("rest", (Result.listValue [], 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
@@ -742,7 +742,7 @@ theorem call_variadic_single_list_preserved :
 -- lone sequence value.
 
 /-- `x, y = [1, 2]`: the deconstruction pattern opens the lone list, binding
-`x = 1`, `y = 2` — identical bindings to `x, y = [1, 2].spread`. -/
+`x = 1`, `y = 2` — identical bindings to `x, y = [1, 2]*`. -/
 theorem deconstruct_fixed_single_list_opens :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "x", kind := .normal },
@@ -751,26 +751,26 @@ theorem deconstruct_fixed_single_list_opens :
         true)
       = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
               countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
     Result.structureItems?, mergeEqualValEnv, mergeEqualCountedParamEnv,
     mergePatternAlgEnv, lookupAssoc, ValEnv.lookup]
   rfl
 
-/-- `first, rest... = [1, 2, 3]`: the deconstruction pattern opens the lone
+/-- `first, *rest = [1, 2, 3]`: the deconstruction pattern opens the lone
 list; `first = 1` and `rest` COLLECTS the matched items as the exact list
 `[2, 3]`. -/
 theorem deconstruct_collecting_single_list_opens :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "first", kind := .normal },
-                         .capture { name := "rest", kind := .variadic }]]
+                         .capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
         true)
       = .ok { argEnv := [("first", Result.atom 1),
                          ("rest", Result.listValue [Result.atom 2, Result.atom 3])],
               countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
               algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
     bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
     mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
@@ -784,42 +784,42 @@ deconstruction opens the lone list first and collects its items as
 argument. -/
 theorem lone_collecting_list_call_and_deconstruct_differ :
     runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .variadic }]
+        [.capture { name := "rest", kind := .collecting }]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]])],
               countedParamEnv := [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
               algEnv := [] }
     ∧ runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "rest", kind := .variadic }]]
+        [.sequenceValue [.capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
               countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
               algEnv := [] } := by
   constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
       collectSegment]
     rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       bindParameterPattern, runEvalM, Result.structureItems?, mergeEqualValEnv,
       mergeEqualCountedParamEnv, mergePatternAlgEnv, lookupAssoc,
       CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
     rfl
 
-/-- The single-variadic grouped/spread COINCIDENCE is gone: `F(A)` with a stored
+/-- The single-collecting grouped/spread COINCIDENCE is gone: `F(A)` with a stored
 sequence `A` collects the one grouped argument (`items = [(1, 2)]`), while
-`F(A.spread)` collects the spread items (`items = [1, 2]`). The old claim that a
-single variadic parameter receives the same canonical value for both calls is
+`F(A*)` collects the spread items (`items = [1, 2]`). The old claim that a
+single collecting parameter receives the same canonical value for both calls is
 obsolete under exact list collection — supplying one grouped argument and
 supplying its items are observably different calls. -/
 theorem lone_collecting_seq_call_grouped_and_spread_differ :
     runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .variadic }]
+        [.capture { name := "rest", kind := .collecting }]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]])],
@@ -827,7 +827,7 @@ theorem lone_collecting_seq_call_grouped_and_spread_differ :
                 [("rest", (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]], 1))],
               algEnv := [] }
     ∧ runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .variadic }]
+        [.capture { name := "rest", kind := .collecting }]
         ((Result.sequenceValue [Result.atom 1, Result.atom 2]).spreadItems.map
           (fun value => { value? := some value : ParameterPatternInput }))
         true)
@@ -835,13 +835,13 @@ theorem lone_collecting_seq_call_grouped_and_spread_differ :
               countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
               algEnv := [] } := by
   constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
       collectSegment]
     rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findVariadic,
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
       runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
       mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup,
@@ -1054,7 +1054,7 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
 /-- The SPREAD/capture round-trip is sequence-specific: it holds exactly on
 canonical values that are not lists. Spreading a list opens its boundary, and
 re-capturing the spread items groups them as a sequence value — spread-then-
-capture converts a list to a sequence (`x = A.spread` with `A = [1, 2, 3]` gives
+capture converts a list to a sequence (`x = A*` with `A = [1, 2, 3]` gives
 `x = (1, 2, 3)`), losslessly for every other value kind. -/
 theorem capture_spreadItems_of_canonical_non_list (r : Result)
     (h : r.normalize = r) (hl : ∀ xs, r ≠ Result.listValue xs) :
@@ -1076,7 +1076,7 @@ theorem capture_spreadItems_of_canonical_non_list (r : Result)
 
 /-- Spread-then-capture on a list yields the canonical capture of its
 ELEMENTS — never the same list back: the concrete conversion law behind
-`x = A.spread` re-grouping list items as `(1, 2, 3)`. Singleton normalization
+`x = A*` re-grouping list items as `(1, 2, 3)`. Singleton normalization
 applies to the re-capture as usual, so a one-element payload collapses to
 that lone element (`[7]` round-trips to `7`, and `[[7]]` to the inner
 `[7]`), while multi-element payloads become one sequence value. -/
@@ -1092,7 +1092,7 @@ theorem capture_toItems_capture (xs : List Result) :
 
 /-- Spreading the empty sequence value supplies zero items: spread opens
 a value via `Result.spreadItems`, which agrees with `Result.toItems` on
-sequence values, so `().spread` contributes nothing to the surrounding item
+sequence values, so `()*` contributes nothing to the surrounding item
 supply. This is the item-view statement of the visible-empty spread law (the
 empty instance of `toItems_sequenceValue` / `spreadItems_sequenceValue`;
 `spreadItems_empty_list` is the list twin). -/
@@ -1117,13 +1117,13 @@ theorem capture_zero_item_spread_neutral {r : Result}
   rw [h]
   simp
 
-/-- `().spread` is neutral at the capture boundary (`(n, ().spread) == n`-style). -/
+/-- `()*` is neutral at the capture boundary (`(n, ()*) == n`-style). -/
 theorem capture_empty_sequence_spread_neutral (before after : List Result) :
     captureForArityLaw (before ++ (Result.sequenceValue []).spreadItems ++ after)
       = captureForArityLaw (before ++ after) :=
   capture_zero_item_spread_neutral rfl before after
 
-/-- `[].spread` is neutral at the capture boundary (`(n, [].spread) == n`-style),
+/-- `[]*` is neutral at the capture boundary (`(n, []*) == n`-style),
 even though the unspread `[]` is a visible one-item value. -/
 theorem capture_empty_list_spread_neutral (before after : List Result) :
     captureForArityLaw (before ++ (Result.listValue []).spreadItems ++ after)

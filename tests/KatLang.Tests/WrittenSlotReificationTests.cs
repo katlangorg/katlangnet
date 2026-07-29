@@ -95,10 +95,10 @@ public class WrittenSlotReificationTests
     [Fact]
     public void ListLiteral_ExplicitSpread_OpensExactlyOneBoundary()
     {
-        // The contrast required by the spread rule: only a written spread intrinsic opens
-        // the projected value into the surrounding slots.
-        AssertEvaluates(PairSource + "[S:0.spread, 5]", List(Atom(1), Atom(2), Atom(5)));
-        AssertEvaluates(PairSource + "[S:0.spread, S:1.spread]", List(Atom(1), Atom(2), Atom(3), Atom(4)));
+        // The contrast required by the spread rule: only a written spread
+        // marker opens the projected value into the surrounding slots.
+        AssertEvaluates(PairSource + "[S:0*, 5]", List(Atom(1), Atom(2), Atom(5)));
+        AssertEvaluates(PairSource + "[S:0*, S:1*]", List(Atom(1), Atom(2), Atom(3), Atom(4)));
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public class WrittenSlotReificationTests
 
         // With an explicit spread the same written group supplies three items.
         AssertEvaluates(
-            PairSource + "F((x, y, z)) = x + y + z\nF((S:0.spread, 5))",
+            PairSource + "F((x, y, z)) = x + y + z\nF((S:0*, 5))",
             Atom(8));
     }
 
@@ -173,7 +173,7 @@ public class WrittenSlotReificationTests
         // Consistency between the empty and non-empty paths: the same initial
         // accumulator value enters the reducer as one value.
         AssertEvaluates(
-            "Append(item, history...) = (history.spread, item)\nInit = 1, 2\nreduce((9), Append, Init)",
+            "Append(item, *history) = (history*, item)\nInit = 1, 2\nreduce((9), Append, Init)",
             Seq(Atom(1), Atom(2), Atom(9)));
 
         // Dotted and ordinary forms agree.

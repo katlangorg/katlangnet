@@ -169,7 +169,7 @@ strings (incl. unterminated and Unicode), identifiers, operators and precedence,
 parentheses/braces/exact-list brackets and their empty/nested forms, comma vs adjacency,
 newline/CRLF/lone-CR boundaries, comments, property/`public`/`Output =` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
-leading-dot continuation, `open` declarations, `:` indexing, `~` grace, `name...` collecting markers, `spread(expr)`/`expr.spread` spreading,
+leading-dot continuation, `open` declarations, `:` indexing, `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,
 deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-
 character mixtures. Keep new seeds small and reviewable; do not commit generated corpora
 (they belong in `fuzz/artifacts/corpus`).
@@ -518,7 +518,7 @@ The five laws:
 ### The dotted rewrite contract, and structural-member exclusion
 
 `A.F(B, C)` means `F(A, B, C)`: the receiver is supplied as **one leading argument boundary**,
-never `F(spread(A), B, C)`. Templates therefore never introduce a spread when building the dotted
+never `F(A*, B, C)`. Templates therefore never introduce a spread when building the dotted
 form; the one spread body Group B generates places the spread identically in the **suffix** of
 both members, because a spread receiver has no dotted spelling at all.
 
@@ -535,9 +535,9 @@ argument binding. A consumer supplies a fixed number of values per invocation, a
 that binds exactly those values positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:
 
-* **Variadic** (`MmWrap(xs...)`) — a variadic parameter *collects* the supplied slots into an exact list,
+* **Collecting** (`MmWrap(*xs)`) — a collecting parameter *collects* the supplied slots into an exact list,
   so the wrapper receives `[element]` where the builtin receives `element`. Measured:
-  `[[1, 2], [3]].map(count)` is `[2, 1]` while the variadic wrapper gives `[1, 1]`. That is correct
+  `[[1, 2], [3]].map(count)` is `[2, 1]` while the collecting wrapper gives `[1, 1]`. That is correct
   language behaviour and a false equivalence, not a defect.
 * **Arity-mismatched** — a flat multi-parameter callee first opens a lone *sequence*-valued
   element into row slots and arity-errors on other kinds, so it matches neither a one-value nor a
@@ -840,8 +840,8 @@ shown invalid independently.
   qualification under *Declared relations*); those cases still compare their full semantic
   observation, including the structured resource-limit payload.
 * Group B's exact-work claim covers steps and peak depth only for the shapes in its body table.
-* Variadic-parameter and multi-parameter callback wrappers are represented as rejections, not as
-  trusted equivalences; establishing a trusted variadic-wrapper form is future work.
+* Collecting-parameter and multi-parameter callback wrappers are represented as rejections, not as
+  trusted equivalences; establishing a trusted collecting-wrapper form is future work.
 
 *Phase 3:*
 
@@ -1205,7 +1205,8 @@ a bounded edit. Nothing grows with an encoded integer; bytes past the prefix are
   through that one model; an out-of-range `PastEndOfFile` cursor deliberately queries past the last
   line, whose documented contract is a `null` resolution.
 * **Edits** transform the exact code units (insert/delete/replace, add/remove dot/comma/delimiter,
-  LF↔CRLF, complete/break string, token-based rename), and the tooling is re-run from a **fresh
+  add/remove one star of the supply marker, LF↔CRLF, complete/break string, token-based rename), and
+  the tooling is re-run from a **fresh
   request** on the edited source. There is no incremental editor API in the repository, so the target
   exercises full rebuild after each edit; a fresh request on the *original* source after the edited
   one is processed must reproduce the original result exactly (no stale-source leak).

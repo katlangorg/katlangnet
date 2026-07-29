@@ -164,7 +164,7 @@ def case_capture_supply : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.resolve "A"])
 #guard obs case_capture_supply == "ok raw=S[1, 2, 3] n=1"
 
--- capture-supply-spread [item-supply-vs-value]: A = 1, 2, 3 \n A.spread
+-- capture-supply-spread [item-supply-vs-value]: A = 1, 2, 3 \n A*
 def case_capture_supply_spread : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.sequenceSpread (.resolve "A")])
 #guard obs case_capture_supply_spread == "ok raw=S[1, 2, 3] n=3"
@@ -174,12 +174,12 @@ def case_call_reentry_identity : Expr :=
   .block (alg [] [] [privateProp "I" (alg ["a"] [] [] [.param "a"]), privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.call (.resolve "I") (alg [] [] [] [.call (.resolve "I") (alg [] [] [] [.resolve "A"])])])
 #guard obs case_call_reentry_identity == "ok raw=S[1, 2, 3] n=1"
 
--- call-value-boundary [item-supply-vs-value]: F(a...) = a \n F(5, 9) \n F(5, 9).spread
+-- call-value-boundary [item-supply-vs-value]: F(*a) = a \n F(5, 9) \n F(5, 9)*
 def case_call_value_boundary : Expr :=
-  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]), .sequenceSpread (.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]))])
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]), .sequenceSpread (.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]))])
 #guard obs case_call_value_boundary == "ok raw=S[L[5, 9], 5, 9] n=3"
 
--- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates.spread
+-- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates*
 def case_property_value_boundary : Expr :=
   .block (alg [] [] [privateProp "Coordinates" (alg [] [] [] [.num 10, .num 20])] [.resolve "Coordinates", .sequenceSpread (.resolve "Coordinates")])
 #guard obs case_property_value_boundary == "ok raw=S[S[10, 20], 10, 20] n=3"
@@ -189,7 +189,7 @@ def case_fixed_call_preserves_boundaries : Expr :=
   .block (alg [] [] [privateProp "Pair" (alg [] [] [] [.num 10, .num 20]), privateProp "Add" (alg ["x", "y"] [] [] [.binary .add (.param "x") (.param "y")])] [.call (.resolve "Add") (alg [] [] [] [.resolve "Pair"])])
 #guard obs case_fixed_call_preserves_boundaries == "err arity"
 
--- spread-fills-remaining-slots [item-supply-vs-value]: Tail = 2, 3 \n Use(a, b, c) = a + b + c \n  \n Use(1, Tail.spread)
+-- spread-fills-remaining-slots [item-supply-vs-value]: Tail = 2, 3 \n Use(a, b, c) = a + b + c \n  \n Use(1, Tail*)
 def case_spread_fills_remaining_slots : Expr :=
   .block (alg [] [] [privateProp "Tail" (alg [] [] [] [.num 2, .num 3]), privateProp "Use" (alg ["a", "b", "c"] [] [] [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")])] [.call (.resolve "Use") (alg [] [] [] [.num 1, .sequenceSpread (.resolve "Tail")])])
 #guard obs case_spread_fills_remaining_slots == "ok raw=6 n=1"
@@ -209,17 +209,17 @@ def case_fixed_empty_arg_visible : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [(.emptySequence 0)])])
 #guard obs case_fixed_empty_arg_visible == "ok raw=S[] n=1"
 
--- fixed-empty-spread-zero-items [empty-visible-vs-spread]: F(a) = a \n F(().spread)
+-- fixed-empty-spread-zero-items [empty-visible-vs-spread]: F(a) = a \n F(()*)
 def case_fixed_empty_spread_zero_items : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.emptySequence 0)])])
 #guard obs case_fixed_empty_spread_zero_items == "err arity"
 
--- variadic-empty-arg-vs-spread [empty-visible-vs-spread]: F(a...) = a.count \n F(())
+-- variadic-empty-arg-vs-spread [empty-visible-vs-spread]: F(*a) = a.count \n F(())
 def case_variadic_empty_arg_vs_spread : Expr :=
-  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .variadic }] [] [] [.dotCall (.param "a") "count" none])] [.call (.resolve "F") (alg [] [] [] [(.emptySequence 0)])])
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.dotCall (.param "a") "count" none])] [.call (.resolve "F") (alg [] [] [] [(.emptySequence 0)])])
 #guard obs case_variadic_empty_arg_vs_spread == "ok raw=1 n=1"
 
--- spread-empty-in-sequence [empty-visible-vs-spread]: (().spread, 99)
+-- spread-empty-in-sequence [empty-visible-vs-spread]: (()*, 99)
 def case_spread_empty_in_sequence : Expr :=
   .block (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.emptySequence 0), .num 99]))])
 #guard obs case_spread_empty_in_sequence == "ok raw=99 n=1"
@@ -239,24 +239,24 @@ def case_decon_pair : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y"])
 #guard obs case_decon_pair == "ok raw=S[1, 2] n=2"
 
--- decon-collecting-tail [deconstruction]: x, rest... = 1, 2, 3 \n rest
+-- decon-collecting-tail [deconstruction]: x, *rest = 1, 2, 3 \n rest
 def case_decon_collecting_tail : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "rest"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "rest"])
 #guard obs case_decon_collecting_tail == "ok raw=L[2, 3] n=1"
 
--- decon-collecting-head [deconstruction]: head..., last = 1, 2, 3 \n head \n last
+-- decon-collecting-head [deconstruction]: *head, last = 1, 2, 3 \n head \n last
 def case_decon_collecting_head : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "head" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .variadic }, .capture { name := "last" }]] [] [] [.param "head"])) (alg [] [] [] [.resolve "d"])]), privateProp "last" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .variadic }, .capture { name := "last" }]] [] [] [.param "last"])) (alg [] [] [] [.resolve "d"])])] [.resolve "head", .resolve "last"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "head" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "head"])) (alg [] [] [] [.resolve "d"])]), privateProp "last" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "last"])) (alg [] [] [] [.resolve "d"])])] [.resolve "head", .resolve "last"])
 #guard obs case_decon_collecting_head == "ok raw=S[L[1, 2], 3] n=2"
 
--- decon-collecting-middle [deconstruction]: x, middle..., z = 1, 2, 3, 4 \n middle
+-- decon-collecting-middle [deconstruction]: x, *middle, z = 1, 2, 3, 4 \n middle
 def case_decon_collecting_middle : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "middle" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "middle", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "middle"])) (alg [] [] [] [.resolve "d"])])] [.resolve "middle"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "middle" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "middle"])) (alg [] [] [] [.resolve "d"])])] [.resolve "middle"])
 #guard obs case_decon_collecting_middle == "ok raw=L[2, 3] n=1"
 
--- decon-empty-collecting [deconstruction]: x, rest... = 1 \n rest \n x
+-- decon-empty-collecting [deconstruction]: x, *rest = 1 \n rest \n x
 def case_decon_empty_collecting : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "rest", .resolve "x"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])])] [.resolve "rest", .resolve "x"])
 #guard obs case_decon_empty_collecting == "ok raw=S[L[], 1] n=2"
 
 -- decon-arity-under [deconstruction]: x, y = 1 \n x
@@ -274,87 +274,87 @@ def case_decon_unpacks_stored_value : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "d" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])])] [.resolve "y"])
 #guard obs case_decon_unpacks_stored_value == "ok raw=2 n=1"
 
--- decon-tutorial-full [deconstruction]: A = 1, 2, 3, 4, 5 \n  \n x, y..., z = A \n x \n y \n z
+-- decon-tutorial-full [deconstruction]: A = 1, 2, 3, 4, 5 \n  \n x, *y, z = A \n x \n y \n z
 def case_decon_tutorial_full : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "d" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .variadic }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y", .resolve "z"])
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "d" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])]), privateProp "z" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y", .resolve "z"])
 #guard obs case_decon_tutorial_full == "ok raw=S[1, L[2, 3, 4], 5] n=3"
 
--- decon-lone-collecting [deconstruction]: all... = 1, 2, 3 \n all
+-- decon-lone-collecting [deconstruction]: *all = 1, 2, 3 \n all
 def case_decon_lone_collecting : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "all" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "all", kind := .variadic }]] [] [] [.param "all"])) (alg [] [] [] [.resolve "d"])])] [.resolve "all"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "all" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "all", kind := .collecting }]] [] [] [.param "all"])) (alg [] [] [] [.resolve "d"])])] [.resolve "all"])
 #guard obs case_decon_lone_collecting == "ok raw=L[1, 2, 3] n=1"
 
--- variadic-grouped-and-spread [variadic-calls]: A = 1, 2, 3, 4, 5 \n  \n G(x...) = x.sum \n  \n G(A.spread) \n G(1, 2, 3, 4, 5)
+-- variadic-grouped-and-spread [variadic-calls]: A = 1, 2, 3, 4, 5 \n  \n G(*x) = x.sum \n  \n G(A*) \n G(1, 2, 3, 4, 5)
 def case_variadic_grouped_and_spread : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "G" (algWithParameters [{ name := "x", kind := .variadic }] [] [] [.dotCall (.param "x") "sum" none])] [.call (.resolve "G") (alg [] [] [] [.sequenceSpread (.resolve "A")]), .call (.resolve "G") (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "G" (algWithParameters [{ name := "x", kind := .collecting }] [] [] [.dotCall (.param "x") "sum" none])] [.call (.resolve "G") (alg [] [] [] [.sequenceSpread (.resolve "A")]), .call (.resolve "G") (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
 #guard obs case_variadic_grouped_and_spread == "ok raw=S[15, 15] n=2"
 
--- variadic-siblings-preserved [variadic-calls]: A = 1, 2 \n B = 3, 4 \n  \n G(x...) = x.count \n  \n G(A, B) \n G(A.spread, B.spread)
+-- variadic-siblings-preserved [variadic-calls]: A = 1, 2 \n B = 3, 4 \n  \n G(*x) = x.count \n  \n G(A, B) \n G(A*, B*)
 def case_variadic_siblings_preserved : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2]), privateProp "B" (alg [] [] [] [.num 3, .num 4]), privateProp "G" (algWithParameters [{ name := "x", kind := .variadic }] [] [] [.dotCall (.param "x") "count" none])] [.call (.resolve "G") (alg [] [] [] [.resolve "A", .resolve "B"]), .call (.resolve "G") (alg [] [] [] [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")])])
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2]), privateProp "B" (alg [] [] [] [.num 3, .num 4]), privateProp "G" (algWithParameters [{ name := "x", kind := .collecting }] [] [] [.dotCall (.param "x") "count" none])] [.call (.resolve "G") (alg [] [] [] [.resolve "A", .resolve "B"]), .call (.resolve "G") (alg [] [] [] [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")])])
 #guard obs case_variadic_siblings_preserved == "ok raw=S[2, 4] n=2"
 
--- variadic-capture-collects-list [variadic-calls]: F(x...) = x \n F(1, 2, 3)
+-- variadic-capture-collects-list [variadic-calls]: F(*x) = x \n F(1, 2, 3)
 def case_variadic_capture_collects_list : Expr :=
-  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x", kind := .variadic }] [] [] [.param "x"])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x", kind := .collecting }] [] [] [.param "x"])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
 #guard obs case_variadic_capture_collects_list == "ok raw=L[1, 2, 3] n=1"
 
--- variadic-forwarding-list-spread [variadic-calls]: Target(items...) = items \n Forward(items...) = Target(items.spread) \n  \n Forward(1, 2) \n Forward([1, 2])
+-- variadic-forwarding-list-spread [variadic-calls]: Target(*items) = items \n Forward(*items) = Target(items*) \n  \n Forward(1, 2) \n Forward([1, 2])
 def case_variadic_forwarding_list_spread : Expr :=
-  .block (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]), privateProp "Forward" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.call (.resolve "Target") (alg [] [] [] [.sequenceSpread (.param "items")])])] [.call (.resolve "Forward") (alg [] [] [] [.num 1, .num 2]), .call (.resolve "Forward") (alg [] [] [] [(.listLiteral [.num 1, .num 2])])])
+  .block (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Forward" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.call (.resolve "Target") (alg [] [] [] [.sequenceSpread (.param "items")])])] [.call (.resolve "Forward") (alg [] [] [] [.num 1, .num 2]), .call (.resolve "Forward") (alg [] [] [] [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_variadic_forwarding_list_spread == "ok raw=S[L[1, 2], L[L[1, 2]]] n=2"
 
--- implicit-forwarding-source-kind [variadic-calls]: Target(items...) = items \n Use(items) = Target \n UseVariadic(items...) = Target \n  \n Use([1, 2]) \n Use((1, 2)) \n UseVariadic(1, 2)
+-- implicit-forwarding-source-kind [variadic-calls]: Target(*items) = items \n Use(items) = Target \n UseVariadic(*items) = Target \n  \n Use([1, 2]) \n Use((1, 2)) \n UseVariadic(1, 2)
 def case_implicit_forwarding_source_kind : Expr :=
-  .block (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [.call (.resolve "Target") (alg [] [] [] [.param "items"])]), privateProp "UseVariadic" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.call (.resolve "Target") (alg [] [] [] [.sequenceSpread (.param "items")])])] [.call (.resolve "Use") (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), .call (.resolve "Use") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]), .call (.resolve "UseVariadic") (alg [] [] [] [.num 1, .num 2])])
+  .block (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [.call (.resolve "Target") (alg [] [] [] [.param "items"])]), privateProp "UseVariadic" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.call (.resolve "Target") (alg [] [] [] [.sequenceSpread (.param "items")])])] [.call (.resolve "Use") (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), .call (.resolve "Use") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]), .call (.resolve "UseVariadic") (alg [] [] [] [.num 1, .num 2])])
 #guard obs case_implicit_forwarding_source_kind == "ok raw=S[L[L[1, 2]], L[S[1, 2]], L[1, 2]] n=3"
 
--- variadic-receiver-distinction [variadic-calls]: Inspect(items...) = items \n A = [1, 2, 3] \n  \n Inspect(A) \n Inspect(A.spread)
+-- variadic-receiver-distinction [variadic-calls]: Inspect(*items) = items \n A = [1, 2, 3] \n  \n Inspect(A) \n Inspect(A*)
 def case_variadic_receiver_distinction : Expr :=
-  .block (alg [] [] [privateProp "Inspect" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.call (.resolve "Inspect") (alg [] [] [] [.resolve "A"]), .call (.resolve "Inspect") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
+  .block (alg [] [] [privateProp "Inspect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.call (.resolve "Inspect") (alg [] [] [] [.resolve "A"]), .call (.resolve "Inspect") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_variadic_receiver_distinction == "ok raw=S[L[L[1, 2, 3]], L[1, 2, 3]] n=2"
 
--- mixed-variadic-parameter [variadic-calls]: F(x, y..., z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
-def case_mixed_variadic_parameter : Expr :=
-  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "y", kind := .variadic }, { name := "z" }] [] [] [.binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z")])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
-#guard obs case_mixed_variadic_parameter == "ok raw=15 n=1"
+-- mixed-collecting-parameter [variadic-calls]: F(x, *y, z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
+def case_mixed_collecting_parameter : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "y", kind := .collecting }, { name := "z" }] [] [] [.binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z")])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
+#guard obs case_mixed_collecting_parameter == "ok raw=15 n=1"
 
--- mixed-front-back-family [variadic-calls]: Arg = 1, 2, 3 \n  \n Head(first, rest...) = first \n Tail(first, rest...) = rest \n Init(init..., last) = init \n Last(init..., last) = last \n  \n Head(1, (2, 3)) \n Tail(1, (2, 3)) \n Init((1, 2), 3) \n Last(Arg, 3)
+-- mixed-front-back-family [variadic-calls]: Arg = 1, 2, 3 \n  \n Head(first, *rest) = first \n Tail(first, *rest) = rest \n Init(*init, last) = init \n Last(*init, last) = last \n  \n Head(1, (2, 3)) \n Tail(1, (2, 3)) \n Init((1, 2), 3) \n Last(Arg, 3)
 def case_mixed_front_back_family : Expr :=
-  .block (alg [] [] [privateProp "Arg" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "Head" (algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [.param "first"]), privateProp "Tail" (algWithParameters [{ name := "first" }, { name := "rest", kind := .variadic }] [] [] [.param "rest"]), privateProp "Init" (algWithParameters [{ name := "init", kind := .variadic }, { name := "last" }] [] [] [.param "init"]), privateProp "Last" (algWithParameters [{ name := "init", kind := .variadic }, { name := "last" }] [] [] [.param "last"])] [.call (.resolve "Head") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Tail") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Init") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), .num 3]), .call (.resolve "Last") (alg [] [] [] [.resolve "Arg", .num 3])])
+  .block (alg [] [] [privateProp "Arg" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "Head" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "first"]), privateProp "Tail" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]), privateProp "Init" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]), privateProp "Last" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "last"])] [.call (.resolve "Head") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Tail") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Init") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), .num 3]), .call (.resolve "Last") (alg [] [] [] [.resolve "Arg", .num 3])])
 #guard obs case_mixed_front_back_family == "ok raw=S[1, L[S[2, 3]], L[S[1, 2]], 3] n=4"
 
--- variadic-grouped-vs-spread [variadic-calls]: H(h, t...) = t \n H((1, 2))
+-- variadic-grouped-vs-spread [variadic-calls]: H(h, *t) = t \n H((1, 2))
 def case_variadic_grouped_vs_spread : Expr :=
-  .block (alg [] [] [privateProp "H" (algWithParameters [{ name := "h" }, { name := "t", kind := .variadic }] [] [] [.param "t"])] [.call (.resolve "H") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])])
+  .block (alg [] [] [privateProp "H" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [.call (.resolve "H") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])])
 #guard obs case_variadic_grouped_vs_spread == "ok raw=L[] n=1"
 
--- variadic-nested-not-flattened [variadic-calls]: Arg = (1, 2), (3, 4) \n  \n Many(values...) = values.count \n Flattened = atoms(Arg).count \n  \n Many(Arg.spread) \n Flattened
+-- variadic-nested-not-flattened [variadic-calls]: Arg = (1, 2), (3, 4) \n  \n Many(*values) = values.count \n Flattened = atoms(Arg).count \n  \n Many(Arg*) \n Flattened
 def case_variadic_nested_not_flattened : Expr :=
-  .block (alg [] [] [privateProp "Arg" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]), privateProp "Many" (algWithParameters [{ name := "values", kind := .variadic }] [] [] [.dotCall (.param "values") "count" none]), privateProp "Flattened" (alg [] [] [] [.dotCall (.call (.resolve "atoms") (alg [] [] [] [.resolve "Arg"])) "count" none])] [.call (.resolve "Many") (alg [] [] [] [.sequenceSpread (.resolve "Arg")]), .resolve "Flattened"])
+  .block (alg [] [] [privateProp "Arg" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]), privateProp "Many" (algWithParameters [{ name := "values", kind := .collecting }] [] [] [.dotCall (.param "values") "count" none]), privateProp "Flattened" (alg [] [] [] [.dotCall (.call (.resolve "atoms") (alg [] [] [] [.resolve "Arg"])) "count" none])] [.call (.resolve "Many") (alg [] [] [] [.sequenceSpread (.resolve "Arg")]), .resolve "Flattened"])
 #guard obs case_variadic_nested_not_flattened == "ok raw=S[2, 4] n=2"
 
--- supply-vs-value-patterns [variadic-calls]: CountValues(values...) = values.count \n CountSequenceValue((values...)) = values.count \n  \n CountValues() \n CountValues(1, 2, 3) \n CountValues((1, 2, 3)) \n CountSequenceValue((1, 2, 3))
+-- supply-vs-value-patterns [variadic-calls]: CountValues(*values) = values.count \n CountSequenceValue((*values)) = values.count \n  \n CountValues() \n CountValues(1, 2, 3) \n CountValues((1, 2, 3)) \n CountSequenceValue((1, 2, 3))
 def case_supply_vs_value_patterns : Expr :=
-  .block (alg [] [] [privateProp "CountValues" (algWithParameters [{ name := "values", kind := .variadic }] [] [] [.dotCall (.param "values") "count" none]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .variadic }]] [] [] [.dotCall (.param "values") "count" none])] [.call (.resolve "CountValues") (alg [] [] [] []), .call (.resolve "CountValues") (alg [] [] [] [.num 1, .num 2, .num 3]), .call (.resolve "CountValues") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
+  .block (alg [] [] [privateProp "CountValues" (algWithParameters [{ name := "values", kind := .collecting }] [] [] [.dotCall (.param "values") "count" none]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [.dotCall (.param "values") "count" none])] [.call (.resolve "CountValues") (alg [] [] [] []), .call (.resolve "CountValues") (alg [] [] [] [.num 1, .num 2, .num 3]), .call (.resolve "CountValues") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
 #guard obs case_supply_vs_value_patterns == "ok raw=S[0, 3, 1, 3] n=4"
 
--- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((values...)) = values.count \n NestedCount(((values...))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount(((1, 2, 3))) \n NestedCount((((1, 2, 3))))
+-- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount(((1, 2, 3))) \n NestedCount((((1, 2, 3))))
 def case_redundant_call_parens_canonical : Expr :=
-  .block (alg [] [] [privateProp "Inner" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .variadic }]] [] [] [.dotCall (.param "values") "count" none]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .variadic }]]] [] [] [.dotCall (.param "values") "count" none])] [.call (.resolve "CountSequenceValue") (alg [] [] [] [.resolve "Inner"]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [.resolve "Inner"]))]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]))])])
+  .block (alg [] [] [privateProp "Inner" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [.dotCall (.param "values") "count" none]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [.dotCall (.param "values") "count" none])] [.call (.resolve "CountSequenceValue") (alg [] [] [] [.resolve "Inner"]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [.resolve "Inner"]))]), .call (.resolve "CountSequenceValue") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]), .call (.resolve "NestedCount") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))]))]))])])
 #guard obs case_redundant_call_parens_canonical == "ok raw=S[3, 1, 1, 3, 3] n=5"
 
--- call-spread-into-conditional-clauses [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (1, 2) \n F(A.spread)
+-- call-spread-into-conditional-clauses [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (1, 2) \n F(A*)
 def case_call_spread_into_conditional_clauses : Expr :=
   .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, ⟨.sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")]⟩]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_call_spread_into_conditional_clauses == "ok raw=3 n=1"
 
--- call-spread-dispatches-before-clause-selection [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (0, 0) \n F(A.spread)
+-- call-spread-dispatches-before-clause-selection [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (0, 0) \n F(A*)
 def case_call_spread_dispatches_before_clause_selection : Expr :=
   .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, ⟨.sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")]⟩]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 0, .num 0]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_call_spread_dispatches_before_clause_selection == "ok raw=100 n=1"
 
--- call-spread-into-patterned-callee [variadic-calls]: F(x, x) = x + 1 \n A = (7, 7) \n F(A.spread)
+-- call-spread-into-patterned-callee [variadic-calls]: F(x, x) = x + 1 \n A = (7, 7) \n F(A*)
 def case_call_spread_into_patterned_callee : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "x" }] [] [] [.binary .add (.param "x") (.num 1)]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 7, .num 7]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_call_spread_into_patterned_callee == "ok raw=8 n=1"
@@ -374,32 +374,32 @@ def case_pair_then_empty_preserved : Expr :=
   .block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.emptySequence 0)]))])
 #guard obs case_pair_then_empty_preserved == "ok raw=S[S[1, 2], S[]] n=1"
 
--- spread-splices-into-sequence [sequence-construction]: x = (1, 2) \n (x.spread, 99)
+-- spread-splices-into-sequence [sequence-construction]: x = (1, 2) \n (x*, 99)
 def case_spread_splices_into_sequence : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [(.block (alg [] [] [] [.sequenceSpread (.resolve "x"), .num 99]))])
 #guard obs case_spread_splices_into_sequence == "ok raw=S[1, 2, 99] n=1"
 
--- spread-empty-between-siblings [sequence-construction]: (1.spread, (), 2.spread)
+-- spread-empty-between-siblings [sequence-construction]: (1*, (), 2*)
 def case_spread_empty_between_siblings : Expr :=
   .block (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.num 1), (.emptySequence 0), .sequenceSpread (.num 2)]))])
 #guard obs case_spread_empty_between_siblings == "ok raw=S[1, S[], 2] n=1"
 
--- root-spread-beside-slot [sequence-construction]: A = (1, 2) \n A.spread, 99
+-- root-spread-beside-slot [sequence-construction]: A = (1, 2) \n A*, 99
 def case_root_spread_beside_slot : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.sequenceSpread (.resolve "A"), .num 99])
 #guard obs case_root_spread_beside_slot == "ok raw=S[1, 2, 99] n=3"
 
--- root-spread-then-value-slot [sequence-construction]: First = 1, 2 \n Second = 3, 4 \n  \n First.spread Second
+-- root-spread-then-value-slot [sequence-construction]: First = 1, 2 \n Second = 3, 4 \n  \n First*, Second
 def case_root_spread_then_value_slot : Expr :=
   .block (alg [] [] [privateProp "First" (alg [] [] [] [.num 1, .num 2]), privateProp "Second" (alg [] [] [] [.num 3, .num 4])] [.sequenceSpread (.resolve "First"), .resolve "Second"])
 #guard obs case_root_spread_then_value_slot == "ok raw=S[1, 2, S[3, 4]] n=3"
 
--- spread-slots-capture [sequence-construction]: A = 1, 2 \n B = 1.spread 2 \n  \n A.count \n B.count
+-- spread-slots-capture [sequence-construction]: A = 1, 2 \n B = 1*, 2 \n  \n A.count \n B.count
 def case_spread_slots_capture : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2]), privateProp "B" (alg [] [] [] [.sequenceSpread (.num 1), .num 2])] [.dotCall (.resolve "A") "count" none, .dotCall (.resolve "B") "count" none])
 #guard obs case_spread_slots_capture == "ok raw=S[2, 2] n=2"
 
--- spread-one-level-only [sequence-construction]: (1, (2, 3)).spread 4
+-- spread-one-level-only [sequence-construction]: (1, (2, 3))*, 4
 def case_spread_one_level_only : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))])), .num 4])
 #guard obs case_spread_one_level_only == "ok raw=S[1, S[2, 3], 4] n=3"
@@ -474,14 +474,14 @@ def case_map_pair_callback : Expr :=
   .block (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [(.block (alg [] [] [] [.param "b", .param "a"]))])] [.call (.resolve "map") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))])), .resolve "Swap"])])
 #guard obs case_map_pair_callback == "ok raw=L[S[2, 1], S[4, 3]] n=1"
 
--- callback-variadic-collects [collection-builtins]: Collect(items...) = items \n  \n [7].map(Collect) \n [(1, 2)].map(Collect) \n [[1, 2]].map(Collect)
+-- callback-variadic-collects [collection-builtins]: Collect(*items) = items \n  \n [7].map(Collect) \n [(1, 2)].map(Collect) \n [[1, 2]].map(Collect)
 def case_callback_variadic_collects : Expr :=
-  .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .variadic }] [] [] [.param "items"])] [.dotCall (.listLiteral [.num 7]) "map" (some (alg [] [] [] [.resolve "Collect"])), .dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]) "map" (some (alg [] [] [] [.resolve "Collect"])), .dotCall (.listLiteral [.listLiteral [.num 1, .num 2]]) "map" (some (alg [] [] [] [.resolve "Collect"]))])
+  .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [.dotCall (.listLiteral [.num 7]) "map" (some (alg [] [] [] [.resolve "Collect"])), .dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]) "map" (some (alg [] [] [] [.resolve "Collect"])), .dotCall (.listLiteral [.listLiteral [.num 1, .num 2]]) "map" (some (alg [] [] [] [.resolve "Collect"]))])
 #guard obs case_callback_variadic_collects == "ok raw=S[L[L[7]], L[L[S[1, 2]]], L[L[L[1, 2]]]] n=3"
 
--- callback-mixed-variadic-rows [collection-builtins]: F(first, middle..., last) = middle \n Rows = [(1, 2, 3, 4)] \n  \n Rows.map(F)
+-- callback-mixed-variadic-rows [collection-builtins]: F(first, *middle, last) = middle \n Rows = [(1, 2, 3, 4)] \n  \n Rows.map(F)
 def case_callback_mixed_variadic_rows : Expr :=
-  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .variadic }, { name := "last" }] [] [] [.param "middle"]), privateProp "Rows" (alg [] [] [] [(.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])])])] [.dotCall (.resolve "Rows") "map" (some (alg [] [] [] [.resolve "F"]))])
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }] [] [] [.param "middle"]), privateProp "Rows" (alg [] [] [] [(.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])])])] [.dotCall (.resolve "Rows") "map" (some (alg [] [] [] [.resolve "F"]))])
 #guard obs case_callback_mixed_variadic_rows == "ok raw=L[L[2, 3]] n=1"
 
 -- distinct-preserves-first [collection-builtins]: distinct((3, 1, 3, 2, 1, 2))
@@ -504,7 +504,7 @@ def case_distinct_family_tutorial : Expr :=
   .block (alg [] [] [privateProp "Values" (alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2])] [.call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2]))]), .call (.resolve "distinct") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))]), .dotCall (.resolve "Values") "distinct" none])
 #guard obs case_distinct_family_tutorial == "ok raw=S[L[3, 1, 2], L[S[1, 2], S[3, 4]], L[3, 1, 2]] n=3"
 
--- spread-one-level-family [sequence-construction]: (1, 2).spread 3 \n 1.spread, (2, 3) \n (1, (2, 3)).spread 4
+-- spread-one-level-family [sequence-construction]: (1, 2)*, 3 \n 1*, (2, 3) \n (1, (2, 3))*, 4
 def case_spread_one_level_family : Expr :=
   .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [.num 1, .num 2])), .num 3, .sequenceSpread (.num 1), (.block (alg [] [] [] [.num 2, .num 3])), .sequenceSpread (.block (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))])), .num 4])
 #guard obs case_spread_one_level_family == "ok raw=S[1, 2, 3, 1, S[2, 3], 1, S[2, 3], 4] n=8"
@@ -564,7 +564,7 @@ def case_sum_of_range_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "sum") (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])])
 #guard obs case_sum_of_range_collection == "ok raw=6 n=1"
 
--- count-family [collection-builtins]: count(()) \n count((())) \n  \n count(range(1, 5)) \n  \n count((10, 20, 30)) \n  \n count((3, 4, range(1, 5).spread, 7)) \n  \n count((range(1, 5).spread, 7)) \n  \n count(((1, 2), (3, 4))) \n  \n Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5) \n (Data:0).count
+-- count-family [collection-builtins]: count(()) \n count((())) \n  \n count(range(1, 5)) \n  \n count((10, 20, 30)) \n  \n count((3, 4, range(1, 5)*, 7)) \n  \n count((range(1, 5)*, 7)) \n  \n count(((1, 2), (3, 4))) \n  \n Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5) \n (Data:0).count
 def case_count_family : Expr :=
   .block (alg [] [] [privateProp "Data" (alg [] [] [] [(.block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1])), (.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]))])] [.call (.resolve "count") (alg [] [] [] [(.emptySequence 0)]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))]), .call (.resolve "count") (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 5])]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [.num 10, .num 20, .num 30]))]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 4, .sequenceSpread (.call (.resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7]))]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.call (.resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7]))]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))]), .dotCall (.index (.resolve "Data") (.num 0)) "count" none])
 #guard obs case_count_family == "ok raw=S[0, 0, 5, 3, 8, 6, 2, 5] n=8"
@@ -589,9 +589,9 @@ def case_builtin_fixed_collection_arity : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
 #guard obs case_builtin_fixed_collection_arity == "ok raw=3 n=1"
 
--- reduce-accumulates-value [collection-builtins]: Append(item, history...) = (history.spread, item) \n reduce((2, 3, 4), Append, 1)
+-- reduce-accumulates-value [collection-builtins]: Append(item, *history) = (history*, item) \n reduce((2, 3, 4), Append, 1)
 def case_reduce_accumulates_value : Expr :=
-  .block (alg [] [] [privateProp "Append" (algWithParameters [{ name := "item" }, { name := "history", kind := .variadic }] [] [] [(.block (alg [] [] [] [.sequenceSpread (.param "history"), .param "item"]))])] [.call (.resolve "reduce") (alg [] [] [] [(.block (alg [] [] [] [.num 2, .num 3, .num 4])), .resolve "Append", .num 1])])
+  .block (alg [] [] [privateProp "Append" (algWithParameters [{ name := "item" }, { name := "history", kind := .collecting }] [] [] [(.block (alg [] [] [] [.sequenceSpread (.param "history"), .param "item"]))])] [.call (.resolve "reduce") (alg [] [] [] [(.block (alg [] [] [] [.num 2, .num 3, .num 4])), .resolve "Append", .num 1])])
 #guard obs case_reduce_accumulates_value == "ok raw=S[1, 2, 3, 4] n=1"
 
 -- reduce-empty-initial-is-one-value [collection-builtins]: R(x, acc) = acc + x \n Init = 1, 2 \n reduce((), R, Init)
@@ -659,9 +659,9 @@ def case_comment_does_not_change_parse : Expr :=
   .block (alg [] [] [] [.binary .add (.num 1) (.num 1)])
 #guard obs case_comment_does_not_change_parse == "ok raw=2 n=1"
 
--- spread-binds-before-list [parser-layout]: X(vals...) = vals.count \n b = (1, 2) \n X(7 b.spread)
+-- spread-binds-before-list [parser-layout]: X(*vals) = vals.count \n b = (1, 2) \n X(7 b*)
 def case_spread_binds_before_list : Expr :=
-  .block (alg [] [] [privateProp "X" (algWithParameters [{ name := "vals", kind := .variadic }] [] [] [.dotCall (.param "vals") "count" none]), privateProp "b" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.call (.resolve "X") (alg [] [] [] [.num 7, .sequenceSpread (.resolve "b")])])
+  .block (alg [] [] [privateProp "X" (algWithParameters [{ name := "vals", kind := .collecting }] [] [] [.dotCall (.param "vals") "count" none]), privateProp "b" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.call (.resolve "X") (alg [] [] [] [.num 7, .sequenceSpread (.resolve "b")])])
 #guard obs case_spread_binds_before_list == "ok raw=3 n=1"
 
 -- dot-chain-continuation [parser-layout]: (1, 2, 3) \n .map { n * 2 } \n .sum
@@ -754,37 +754,37 @@ def case_list_redundant_parens_canonicalize : Expr :=
   .block (alg [] [] [] [.binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])])
 #guard obs case_list_redundant_parens_canonicalize == "ok raw=1 n=1"
 
--- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = A.spread \n  \n x \n y
+-- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = A* \n  \n x \n y
 def case_list_spread_capture : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [.sequenceSpread (.resolve "A")])] [.resolve "x", .resolve "y"])
 #guard obs case_list_spread_capture == "ok raw=S[L[1, 2, 3], S[1, 2, 3]] n=2"
 
--- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A.spread \n B.spread \n C.spread
+-- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A* \n B* \n C*
 def case_list_spread_edges : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "C" (alg [] [] [] [(.listLiteral [.listLiteral [.num 7]])])] [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B"), .sequenceSpread (.resolve "C")])
 #guard obs case_list_spread_edges == "ok raw=S[7, L[7]] n=2"
 
--- list-literal-spread-elements [lists]: A = 1, 2, 3 \n  \n [A.spread] \n [0, A.spread, 4]
+-- list-literal-spread-elements [lists]: A = 1, 2, 3 \n  \n [A*] \n [0, A*, 4]
 def case_list_literal_spread_elements : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.listLiteral [.sequenceSpread (.resolve "A")], .listLiteral [.num 0, .sequenceSpread (.resolve "A"), .num 4]])
 #guard obs case_list_literal_spread_elements == "ok raw=S[L[1, 2, 3], L[0, 1, 2, 3, 4]] n=2"
 
--- list-elements-preserve-boundaries [lists]: A = [1, 2] \n B = [3, 4] \n  \n [A, B] \n [A.spread, B.spread] \n [A, B.spread]
+-- list-elements-preserve-boundaries [lists]: A = [1, 2] \n B = [3, 4] \n  \n [A, B] \n [A*, B*] \n [A, B*]
 def case_list_elements_preserve_boundaries : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [.listLiteral [.resolve "A", .resolve "B"], .listLiteral [.sequenceSpread (.resolve "A"), .sequenceSpread (.resolve "B")], .listLiteral [.resolve "A", .sequenceSpread (.resolve "B")]])
 #guard obs case_list_elements_preserve_boundaries == "ok raw=S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]] n=3"
 
--- list-written-slot-reifies-projection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0.spread, 5]
+-- list-written-slot-reifies-projection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0*, 5]
 def case_list_written_slot_reifies_projection : Expr :=
   .block (alg [] [] [privateProp "S" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])] [.listLiteral [.index (.resolve "S") (.num 0), .num 5], .listLiteral [.sequenceSpread (.index (.resolve "S") (.num 0)), .num 5]])
 #guard obs case_list_written_slot_reifies_projection == "ok raw=S[L[S[1, 2], 5], L[1, 2, 5]] n=2"
 
--- list-empty-spread-neutral [lists]: [1, [].spread, 2] \n [1, ().spread, 2]
+-- list-empty-spread-neutral [lists]: [1, []*, 2] \n [1, ()*, 2]
 def case_list_empty_spread_neutral : Expr :=
   .block (alg [] [] [] [.listLiteral [.num 1, .sequenceSpread (.listLiteral []), .num 2], .listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]])
 #guard obs case_list_empty_spread_neutral == "ok raw=S[L[1, 2], L[1, 2]] n=2"
 
--- list-call-boundary [lists]: F(a, b, c) = a + b + c \n One(x) = 7 \n  \n A = [1, 2, 3] \n  \n One(A) \n F(A.spread)
+-- list-call-boundary [lists]: F(a, b, c) = a + b + c \n One(x) = 7 \n  \n A = [1, 2, 3] \n  \n One(A) \n F(A*)
 def case_list_call_boundary : Expr :=
   .block (alg [] [] [privateProp "F" (alg ["a", "b", "c"] [] [] [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]), privateProp "One" (alg ["x"] [] [] [.num 7]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.call (.resolve "One") (alg [] [] [] [.resolve "A"]), .call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_list_call_boundary == "ok raw=S[7, 6] n=2"
@@ -799,14 +799,14 @@ def case_list_deconstruction_not_recursive : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2], .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "y" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "y"])
 #guard obs case_list_deconstruction_not_recursive == "ok raw=S[L[1, 2], 3] n=2"
 
--- collecting-binding-exact-list [lists]: x, rest... = [1, 2, 3] \n  \n x \n rest
+-- collecting-binding-exact-list [lists]: x, *rest = [1, 2, 3] \n  \n x \n rest
 def case_collecting_binding_exact_list : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .variadic }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "rest"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) (alg [] [] [] [.resolve "d"])]), privateProp "rest" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) (alg [] [] [] [.resolve "d"])])] [.resolve "x", .resolve "rest"])
 #guard obs case_collecting_binding_exact_list == "ok raw=S[1, L[2, 3]] n=2"
 
--- list-lone-collecting-assignment [lists]: items... = [1, 2, 3] \n items
+-- list-lone-collecting-assignment [lists]: *items = [1, 2, 3] \n items
 def case_list_lone_collecting_assignment : Expr :=
-  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .variadic }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [.resolve "items"])
+  .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [.resolve "items"])
 #guard obs case_list_lone_collecting_assignment == "ok raw=L[1, 2, 3] n=1"
 
 -- list-builtin-collection [lists]: count([1, 2, 3])
@@ -865,7 +865,7 @@ def specCaseIds : List String := [
   "variadic-forwarding-list-spread",
   "implicit-forwarding-source-kind",
   "variadic-receiver-distinction",
-  "mixed-variadic-parameter",
+  "mixed-collecting-parameter",
   "mixed-front-back-family",
   "variadic-grouped-vs-spread",
   "variadic-nested-not-flattened",

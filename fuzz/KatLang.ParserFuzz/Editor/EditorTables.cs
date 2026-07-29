@@ -53,7 +53,7 @@ internal enum EditorTemplateKind
     DottedAfterSequence,
     DottedAfterList,
     Spread,
-    PartialSpread,
+    SpreadAtEndOfFile,
     ListLiteral,
     SequenceLiteral,
     IncompleteList,
@@ -112,16 +112,16 @@ internal static class EditorTables
         new(EditorTemplateIds.IncompleteDottedCall, "Data = (1, 2, 3)\nOutput = Data.", ""),
         new(EditorTemplateIds.DottedAfterSequence, "Output = (1, 2, 3).", "count", ClosedWhenBenign: true),
         new(EditorTemplateIds.DottedAfterList, "Output = [1, 2, 3].", "count", ClosedWhenBenign: true),
-        new(EditorTemplateIds.Spread, "Data = (1, 2)\nMore = (Data.spread, ", "3)\nOutput = More", ClosedWhenBenign: true),
-        new(EditorTemplateIds.PartialSpread, "Data = (1, 2)\nOutput = Data..", ""),
+        new(EditorTemplateIds.Spread, "Data = (1, 2)\nMore = (Data*, ", "3)\nOutput = More", ClosedWhenBenign: true),
+        new(EditorTemplateIds.SpreadAtEndOfFile, "Data = (1, 2)\nOutput = Data*", ""),
         new(EditorTemplateIds.ListLiteral, "Output = [1, ", "2, 3]", ClosedWhenBenign: true),
         new(EditorTemplateIds.SequenceLiteral, "Output = (1, ", "2, 3)", ClosedWhenBenign: true),
         new(EditorTemplateIds.IncompleteList, "Output = [1, 2, ", ""),
         new(EditorTemplateIds.IncompleteSequence, "Output = (1, 2, ", ""),
         new(EditorTemplateIds.Assignment, "Total = ", "\nOutput = Total", ClosedWhenBenign: true),
         new(EditorTemplateIds.Deconstruction, "x, y, ", " = (1, 2, 3)\nOutput = x + y"),
-        new(EditorTemplateIds.CollectingBinding, "First(head, rest...", ") = head\nOutput = First(1, 2, 3)"),
-        new(EditorTemplateIds.IncompleteCollecting, "First(head, ...", "\nOutput = 1"),
+        new(EditorTemplateIds.CollectingBinding, "First(head, *rest", ") = head\nOutput = First(1, 2, 3)"),
+        new(EditorTemplateIds.IncompleteCollecting, "First(head, *", "\nOutput = 1"),
         new(EditorTemplateIds.Callback, "Double(x) = x * ", "\nData = [1, 2, 3]\nOutput = Data.map(Double)", ClosedWhenBenign: true),
         new(EditorTemplateIds.IncompleteCallback, "Data = [1, 2, 3]\nOutput = Data.map(", ""),
         new(EditorTemplateIds.ConditionalClause, "F(0) = 'zero'\nF(", ") = 'other'\nOutput = F(0)"),
@@ -190,7 +190,7 @@ internal static class EditorTemplateIds
     public const string DottedAfterSequence = "dotted-after-sequence";
     public const string DottedAfterList = "dotted-after-list";
     public const string Spread = "spread";
-    public const string PartialSpread = "partial-spread";
+    public const string SpreadAtEndOfFile = "spread-at-eof";
     public const string ListLiteral = "list-literal";
     public const string SequenceLiteral = "sequence-literal";
     public const string IncompleteList = "incomplete-list";

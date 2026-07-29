@@ -236,7 +236,7 @@ public class ModuleLoaderTests
         // loaded single-variadic callable collects [(3, 4), (0, 0)].
         var source = """
             open 'https://katlang.org/demo/vec.kat'
-            Add((Vector(3, 4), Vector(0, 0)).spread)
+            Add((Vector(3, 4), Vector(0, 0))*)
             """;
 
         var remoteFiles = new Dictionary<string, string>
@@ -247,7 +247,7 @@ public class ModuleLoaderTests
                 GetX = v:_x
                 GetY = v:_y
                 public Vector = (x, y)
-                public Add(vectors...) = Vector(vectors.map(GetX).sum, vectors.map(GetY).sum)
+                public Add(*vectors) = Vector(vectors.map(GetX).sum, vectors.map(GetY).sum)
                 """
         };
 

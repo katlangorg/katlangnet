@@ -8,7 +8,7 @@ arity algebra used in the paper. It distinguishes:
   `Val.seq` as raw sequence construction and `Val.list` as the exact
   immutable list value;
 - the total item view `items`, the formal meaning of KatLang's surface
-  named spread intrinsic (`spread(expr)` / `expr.spread`,
+  spread marker (the one spelling `expr*`,
   with semantic direction `spread : Value -> Supply`);
 - persistent-value canonicalization `normalize`, with `capture` as the
   canonicalizing ordinary value-capture boundary
@@ -38,7 +38,7 @@ sequenceItems? / listItems?     artifact-local structural projections (the
 structureItems?                 Result.structureItems? (the shared
                                 deconstruction-openable structure view: a
                                 sequence or list value opens to its items)
-items                           Result.spreadItems (the named-spread view,
+items                           Result.spreadItems (the spread-marker view,
                                 which opens one sequence OR list boundary;
                                 the full model's non-spread `Result.toItems`
                                 keeps lists opaque and is not modeled here)
@@ -80,7 +80,7 @@ abbrev Supply := List Val
 Returns the stored items when the value is a sequence value.
 
 This is a partial structural projection, not the semantics of KatLang's
-surface spread intrinsic: surface spread is total and is modeled by `items`.
+surface spread marker: surface spread is total and is modeled by `items`.
 The projection observes raw sequence structure (`sequenceItems? (Val.seq [v])
 = some [v]` even where `normalize` would erase the boundary), which the
 proofs use to state section laws and to distinguish raw construction from
@@ -124,7 +124,7 @@ The total item view of a value: `spread : Value -> Supply`.
 
 An atom supplies itself as one item; a sequence value supplies its stored
 items; an exact list value supplies its stored elements. This operation gives
-the formal meaning of KatLang's surface spread intrinsic. It opens only
+the formal meaning of KatLang's surface spread marker. It opens only
 the outermost structure boundary: nested sequence and list values remain
 single items and are not recursively flattened.
 -/
@@ -195,7 +195,7 @@ def canonicalSupply (xs : Supply) : Prop := normalizeList xs = xs
 /--
 Exact segment collection: `collect : Supply -> ListValue`.
 
-Every collecting binding — deconstruction collecting bindings, single variadic parameters, and
+Every collecting binding — deconstruction collecting bindings, single collecting parameters, and
 mixed prefix/collecting/suffix parameter lists — materializes its assigned item
 supply as one EXACT immutable list value: `collect [] = []`,
 `collect [v] = [v]` (never erased to the item), `collect [v, w] = [v, w]`.
@@ -207,7 +207,7 @@ result is always `Val.list` with exactly the assigned items
 This supersedes the pre-list `captureVariadic := capture` model, under which
 collecting binding canonicalized to a sequence value and a singleton collected segment collapsed
 to its item. That coincidence-based model (grouped call `F(A)` agreeing with
-spread call `F(A.spread)` for a single variadic parameter) is intentionally obsolete:
+spread call `F(A*)` for a single collecting parameter) is intentionally obsolete:
 `collect` preserves the boundary around every assigned item, so the two calls
 are observably different.
 -/
@@ -292,7 +292,7 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
 
 A lone collecting pattern is valid here: it models the single variadic
 parameter, `bindArgs [Pat.collecting x] xs`. The lone-collecting surface
-assignment `x... = 1, 2, 3` is the deconstruction receiver's instance of the same shape (see `bindDeconstruct`).
+assignment `*x = 1, 2, 3` is the deconstruction receiver's instance of the same shape (see `bindDeconstruct`).
 -/
 def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps xs
@@ -303,12 +303,12 @@ fixed/collecting binder: a lone sequence- or list-valued right-hand side `A` is
 opened into its items and matched element-by-element, so `x, y, z = A` splits
 `A`. At this receiver boundary, `bindDeconstruct ps [A]` therefore binds the
 same immediate supply that `bindArgs ps (items A)` receives. This is not an
-unrestricted surface rewrite from `x, y = A` to `x, y = A.spread`: a written
+unrestricted surface rewrite from `x, y = A` to `x, y = A*`: a written
 deconstruction RHS is captured before this receiver runs, and that capture can
 erase a singleton sequence boundary before the receiver opens again (pinned by
 `deconstruct_spread_capture_can_open_further`). The opening remains
 deconstruction-specific: ordinary call binding (`bindArgs`) does not perform
-it, so `Add(A)` stays one argument while `Add(A.spread)` opens.
+it, so `Add(A)` stays one argument while `Add(A*)` opens.
 -/
 def bindDeconstruct (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps (openLoneStructure xs)

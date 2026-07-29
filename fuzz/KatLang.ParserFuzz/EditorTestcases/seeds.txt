@@ -43,8 +43,8 @@ template=extension-builtin-call bytes=25 01 00 00 00 00 00 06 00 00 00 00 00 des
 # ── Lists, sequences, spread, deconstruction, collecting ───────────────────────────
 template=list-literal bytes=14 00 00 00 00 00 00 00 00 00 00 00 00 desc=exact list literal
 template=sequence-literal bytes=15 00 00 00 00 00 00 00 00 00 00 00 00 desc=sequence literal
-template=spread bytes=12 01 00 00 00 00 00 07 00 00 00 00 00 desc=cursor inside a spread operator
-template=partial-spread bytes=13 01 00 00 00 00 00 07 00 00 00 00 00 desc=partial spread operator
+template=spread bytes=12 01 00 00 00 00 00 07 00 00 00 00 00 desc=cursor at a spread marker inside an argument list
+template=spread-at-eof bytes=13 01 00 00 00 00 00 07 00 00 00 00 00 desc=cursor at a spread marker that ends the source
 template=deconstruction bytes=19 00 00 00 00 00 00 00 00 00 00 00 00 desc=deconstruction targets, synthetic helper hidden
 template=collecting-binding bytes=1A 06 00 00 00 00 00 00 00 00 00 00 00 desc=collecting binding signature
 template=incomplete-collecting bytes=1B 00 00 00 00 00 00 00 00 00 00 00 00 desc=malformed lone collecting binding

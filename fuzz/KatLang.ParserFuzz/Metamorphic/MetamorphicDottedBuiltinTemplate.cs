@@ -8,12 +8,12 @@ namespace KatLang.ParserFuzz;
 ///
 /// <code>
 /// MmR = &lt;receiver&gt;                 MmR = &lt;receiver&gt;
-/// Output = F(MmR, suffix.spread)        Output = MmR.F(suffix.spread)
+/// Output = F(MmR, suffix)          Output = MmR.F(suffix)
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> KatLang DEFINES the dotted form as the ordinary
 /// receiver-first call: <c>A.F(B, C)</c> means <c>F(A, B, C)</c>, with the receiver supplied as
-/// ONE leading argument boundary — never <c>F(A.spread, B, C)</c>. Every builtin in
+/// ONE leading argument boundary — never <c>F(A*, B, C)</c>. Every builtin in
 /// <see cref="MetamorphicTables.Builtins"/> is a fixed-arity callable whose first parameter is
 /// the receiver, so the two spellings are the same call and the same argument boundaries.</para>
 ///

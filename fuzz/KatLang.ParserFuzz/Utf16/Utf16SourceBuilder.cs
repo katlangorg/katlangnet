@@ -19,6 +19,7 @@ internal static class Utf16SourceBuilder
     private const ushort Cr = 0x000D;
     private const ushort Space = 0x0020;
     private const ushort Dot = 0x002E;
+    private const ushort Star = 0x002A;
 
     public static Utf16Case Build(Utf16Parameters parameters)
     {
@@ -101,7 +102,7 @@ internal static class Utf16SourceBuilder
             Utf16PlacementKind.SplitByPunctuation =>
                 Concat(units.GetRange(0, half), [Dot], units.GetRange(half, units.Count - half)),
             Utf16PlacementKind.AfterDot => Concat([Dot], units),
-            Utf16PlacementKind.BeforeSpread => Concat(units, [Dot, Dot, Dot]),
+            Utf16PlacementKind.BeforeSpread => Concat(units, [Star]),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(parameters), parameters.Placement, "Unknown placement."),
         };

@@ -58,11 +58,11 @@ internal static class Utf16Tables
         new(Utf16TemplateIds.CommentAtEof, "Output = 1\n// ", "", ClosedWhenBenign: false),
         new(Utf16TemplateIds.DelimiterAdjacent, "Output = (1, ", "2)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.DottedCall, "A = (1, 2)\nOutput = A.", "count", ClosedWhenBenign: false),
-        new(Utf16TemplateIds.SpreadOperator, "A = (1, 2)\nOutput = A", ".spread", ClosedWhenBenign: false),
+        new(Utf16TemplateIds.SpreadOperator, "A = (1, 2)\nOutput = A", "*", ClosedWhenBenign: false),
         new(Utf16TemplateIds.ListLiteral, "Output = [1, ", "2]", ClosedWhenBenign: false),
         new(Utf16TemplateIds.SequenceLiteral, "Output = (1, ", "2)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.Deconstruction, "x, ", ", z = (1, 2, 3)\nOutput = x", ClosedWhenBenign: false),
-        new(Utf16TemplateIds.CollectingBinding, "F(a, ", "...) = a\nOutput = F(1, 2)", ClosedWhenBenign: false),
+        new(Utf16TemplateIds.CollectingBinding, "F(a, *", "z) = a\nOutput = F(1, 2)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.CallbackBody, "F(x) = x + ", "\nOutput = [1, 2].map(F)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.ConditionalClause, "F(0) = 1\nF(", ") = 2\nOutput = F(0)", ClosedWhenBenign: false),
         new(Utf16TemplateIds.MultilineBody, "A = 1 +\n", "\nOutput = A", ClosedWhenBenign: false),
@@ -166,7 +166,7 @@ internal static class Utf16Tables
         Utf16Member.Of("precomposed-a-macron", 0x0101),                         // ā as ONE unit
         Utf16Member.Of("decomposed-a-macron", 0x0061, 0x0304),                  // ā as TWO units
         Utf16Member.Of("mark-after-dot", 0x002E, 0x0301),
-        Utf16Member.Of("mark-before-spread", 0x0301, 0x002E, 0x002E, 0x002E),
+        Utf16Member.Of("mark-before-spread", 0x0301, 0x002A),
         Utf16Member.Of("mark-after-space", 0x0020, 0x0301),
         Utf16Member.Of("hangul-jamo", 0x1100, 0x1161),
         Utf16Member.Of("enclosing-mark", 0x0041, 0x20DD),                       // A + enclosing circle
