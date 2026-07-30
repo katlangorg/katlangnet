@@ -127,6 +127,12 @@ items; an exact list value supplies its stored elements. This operation gives
 the formal meaning of KatLang's surface spread marker. It opens only
 the outermost structure boundary: nested sequence and list values remain
 single items and are not recursively flattened.
+
+Because `items v` is a `Supply`, a further spread cannot apply to it
+directly: the second star of a repeated surface spread applies across an
+ordinary capture boundary, so the arity interpretation of both `value**` and
+`(value*)*` is `items (capture (items v))` — see the repeated-spread section
+of `CoreArityAlgebraProofs.lean` for its exact cardinality laws.
 -/
 def items : Val -> Supply
   | Val.atom n => [Val.atom n]
@@ -202,7 +208,8 @@ supply as one EXACT immutable list value: `collect [] = []`,
 The implementation type is `Supply -> Val`; the proofs establish that the
 result is always `Val.list` with exactly the assigned items
 (`collect_is_list`, `items_collect`). The round trip
-`items (collect xs) = xs` makes variadic forwarding ordinary list spread.
+`items (collect xs) = xs` makes collecting-parameter forwarding ordinary
+list spread.
 
 This supersedes the pre-list `captureVariadic := capture` model, under which
 collecting binding canonicalized to a sequence value and a singleton collected segment collapsed
@@ -290,7 +297,7 @@ def bindPats (ps : List Pat) (xs : Supply) : Option Env :=
 
 /-- Function-call binding consumes the call's item supply exactly as supplied.
 
-A lone collecting pattern is valid here: it models the single variadic
+A lone collecting pattern is valid here: it models the single collecting
 parameter, `bindArgs [Pat.collecting x] xs`. The lone-collecting surface
 assignment `*x = 1, 2, 3` is the deconstruction receiver's instance of the same shape (see `bindDeconstruct`).
 -/

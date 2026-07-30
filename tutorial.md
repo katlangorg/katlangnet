@@ -57,6 +57,9 @@
     - [Algorithm as Argument](#algorithm-as-argument)
     - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
 12. [Spread with the Postfix Star](#spread-with-the-postfix-star)
+    - [Capture Parentheses](#capture-parentheses)
+    - [Repeated Spread Is Composition](#repeated-spread-is-composition)
+    - [Value and Supply at a Glance](#value-and-supply-at-a-glance)
 13. [Lists](#lists)
     - [Lists versus Sequence Values](#lists-versus-sequence-values)
     - [Indexing Lists](#indexing-lists)
@@ -1389,6 +1392,24 @@ A collected segment of one grouped value is the one-element list holding it — 
 
 A parameter list with two or more captures and one collecting parameter matches the supplied item supply prefix/collecting/suffix. With `F(x, *y, z) = x + y.sum + z` and `A = 1, 2, 3, 4, 5`, `F(A)` supplies one argument and fails because `x` and `z` need two fixed arguments. `F(A*)` and `F(1, 2, 3, 4, 5)` bind `x = 1`, `y = [2, 3, 4]`, `z = 5` and return `15`; `F(1, 2)` binds `x = 1`, `y = []`, `z = 2` (the collecting parameter collects zero items) and returns `3`.
 
+The fixed bindings set a **minimum item count**: `F(first, *middle, last)` requires at least two supplied items, because `first` and `last` each bind one, while the movable collecting parameter collects the (possibly empty) middle as an exact list:
+
+<!-- spec:collecting-minimum-arity -->
+```
+F(first, *middle, last) = middle
+
+F(1, 2)
+F(1, 2, 3)
+```
+
+**Results:**
+```
+[]
+[2]
+```
+
+A call below the minimum reports a targeted arity error naming the signature and both counts — `F(1)` fails with: ``Callable `F(first, *middle, last)` expects at least 2 items, but received 1 item.``
+
 #### Deconstruction Assignment
 
 The same comma binding pattern works on the left of `=`, binding several names from one right-hand side. Assignment deconstruction is an **unpacking receiver**, like Python's `x, y = pair`: when the right-hand side is exactly one sequence value or one exact [list value](#lists), the pattern opens that lone value and matches its items to the targets. At most one collecting binding `*name` is allowed, and it may appear anywhere in the pattern:
@@ -2580,13 +2601,29 @@ With no contents, `()` is the empty sequence value (a real value, displayed as `
 
 ## Spread with the Postfix Star
 
-Expression spreading is written with the postfix star — the **spread marker**. A spread expression `value*` evaluates `value` exactly once and contributes the items of its evaluated value to the surrounding item supply (output rows, call argument slots, or list/sequence elements), opening exactly ONE item-producing boundary. Conceptually `spread : Value → Supply` — a spread expression does not return or create a sequence or list by itself; the RECEIVER decides what the supplied items become. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. The marker attaches to any completed expression — `items*`, `Calculate(x)*`, `(a + b)*`, `[1, 2]*`, `()*`, `[]*` — and each attached star opens one layer: `value**` spreads one boundary and then spreads the result again.
+Expression spreading is written with the postfix star — the **spread marker**. A spread expression `value*` evaluates `value` exactly once and contributes the items of its evaluated value to the surrounding item supply (output rows, call argument slots, or list/sequence elements), opening exactly ONE item-producing boundary. Conceptually `spread : Value → Supply` — a spread expression does not return or create a sequence or list by itself; the RECEIVER decides what the supplied items become. A sequence value or an exact [list value](#lists) supplies its contained items; an atom or string supplies itself as one item. The marker attaches to any completed expression — `items*`, `Calculate(x)*`, `(a + b)*`, `[1, 2]*`, `()*`, `[]*` — and repeated attached stars compose through an intermediate capture: `value**` means `(value*)*` (see [Repeated Spread Is Composition](#repeated-spread-is-composition)).
 
 The same star is the multiplication operator, and multiplication wins whenever it can: **a `*` with a valid same-line right operand is multiplication regardless of spacing** — `a*b`, `a* b`, `a *b`, and `a * b` are all the product `a * b`. A directly attached `*` is the spread marker only when nothing on the same line can serve as a right operand: before a comma, before a closing delimiter, or at the end of the line. To spread `a` and then supply another same-line item, the comma is REQUIRED: `a*, b` — because `a* b` multiplies. The line ending separates the two readings as well: `a*` at the end of a line is a completed spread and the next line is a separate slot, while a detached trailing `a *` is a binary operator awaiting its operand, continuing the multiplication `a * b` across the newline.
 
-A spread can also feed a dot-call directly — the **fluent supply chain**: `x.Calculate*.Target` evaluates `x.Calculate`, spreads the completed result, and supplies the items as the arguments of the lexical call `Target(...)` — exactly equivalent to `Target(x.Calculate*)`. This reads a multi-step calculation left to right instead of inside out: `Forward(*items) = items*.Target` forwards collected items and is the same call as `Forward(*items) = Target(items*)`.
+The most common receiver for a spread is a call. The explicit form to learn first is `Target(A*)`: it evaluates `A` once, spreads its items, and supplies them as separate argument slots of `Target`. The same call has a fluent left-to-right spelling — the **fluent supply chain**: a dot may chain directly after a spread, and `A*.Target` is exactly equivalent to `Target(A*)`. The spread receiver is an item supply, not a value, so the parser lowers the dotted form to that same lexical call with the spread items as the leading arguments — both spellings build one AST and evaluate the operand once. This reads a multi-step calculation left to right instead of inside out: `x.Calculate*.Target` evaluates `x.Calculate`, spreads the completed result, and supplies the items to `Target(...)`; `Forward(*items) = items*.Target` forwards collected items and is the same call as `Forward(*items) = Target(items*)`.
 
 To construct one sequence argument from a spread value and another expression, capture the pair explicitly with parentheses: `Use((1*, Tail))` passes one sequence-valued argument, while `Use(1*, Tail)` passes two argument slots.
+
+Spread is **total** — every value has an item view. A sequence or list value supplies its contained items; an atom or string contributes itself as a one-item supply, so spreading an atom is observationally neutral in a collecting context. (This is a fact about the item view, not a claim that atoms and collection values are the same kind of value.)
+
+<!-- spec:scalar-spread-neutral -->
+```
+Collect(*items) = items
+
+Collect(5)
+Collect(5*)
+```
+
+**Results:**
+```
+[5]
+[5]
+```
 
 A spread whose star closes the line does not continue onto the next line. In an algorithm body, the next complete expression is another expression-list item:
 
@@ -2744,6 +2781,129 @@ Spread projects only one immediate level. Each spread contributes its spread ite
 | `((1, 2))*, 3` | Redundant unary parentheses canonicalize during value construction, so `((1, 2))` is the value `(1, 2)`; the spread opens its items and `3` is a separate slot, producing `1, 2, 3` — same as `(1, 2)*, 3` |
 | `1, { 2, 3 }` | Preserves the nested block boundary, producing `1, (2, 3)` |
 | `1*, { 2, 3 }` | `1*` spreads `1`, then after the required comma the block `{ 2, 3 }` is a separate expression-list slot. Produces `1, (2, 3)` |
+
+### Capture Parentheses
+
+> **Parentheses around a supply-producing expression perform capture — they are not always redundant grouping.**
+
+Around an ordinary single value, parentheses are redundant grouping: `(7)` is `7` and `([1, 2])` is `[1, 2]`. Around a spread, they are the capture receiver (`capture : Supply → Value`): the supplied items materialize as ONE canonical sequence value. The pair below is the clearest picture of the Value/Supply distinction:
+
+<!-- spec:spread-capture-count -->
+```
+A = [1, 2, 3]
+
+(A*).count
+```
+
+**Result:** `3`
+
+`A*` produces a three-item supply; the parentheses capture it into the one sequence value `(1, 2, 3)`, and `.count` counts that value's items.
+
+The unparenthesized fluent form is a different program:
+
+```
+A = [1, 2, 3]
+A*.count
+```
+
+**Result:** error — `A*.count` is the fluent supply chain, exactly `count(A*)`: the three items become three separate argument slots, and the fixed `count(collection)` signature reports an arity error.
+
+Grouping only the operand changes nothing: `(A)*.count` groups `A` before the star, so the spread is still the fluent receiver — it is `count((A)*)`, the same arity error. What changes the meaning is capturing the **spread** (`(A*)`), not parenthesizing its operand.
+
+### Repeated Spread Is Composition
+
+A spread expression is itself a completed expression, so it can wear another attached star. There is no special depth operator — the second star is ordinary postfix composition:
+
+`value**` means exactly `(value*)*`.
+
+The first star produces a **supply**, not a value (`spread : Value → Supply`), and a spread marker needs a value to operate on. Between the two stars the ordinary expression boundary performs **capture** (`capture : Supply → Value`) — the same operation written parentheses perform. The full pipeline is:
+
+```
+Value ──spread──▶ Supply ──capture──▶ Value ──spread──▶ Supply
+```
+
+conceptually `value** = spread(capture(spread(value)))`. The intermediate capture is not an implementation accident; it follows from ordinary KatLang expression composition. Avoid reading `value**` as "spread the value, then spread the result again" — the first spread has no value result to re-spread; it is the capture step that turns the supply back into a value for the second star.
+
+Because capture canonicalizes, what a second star changes depends only on how many items the FIRST spread supplies:
+
+- **Zero items** — the capture is `()`, whose item view is also empty: `[]*` and `[]**` both contribute nothing.
+- **Exactly one item** — singleton capture collapses to that item. If it is a structured value, the second star opens one more boundary: `[[7]]*` contributes `[7]`, while `[[7]]**` contributes `7`. A scalar stays neutral: `[7]*` and `[7]**` both contribute `7`.
+- **Two or more items** — capture groups the items as one sequence whose spread restores exactly the same items: a fixed point. The second star does NOT open the individual items.
+
+<!-- spec:repeated-spread-singleton-opens -->
+```
+Collect(*items) = items
+
+Collect([[7]]*)
+Collect([[7]]**)
+Collect([7]*)
+Collect([7]**)
+```
+
+**Results:**
+```
+[[7]]
+[7]
+[7]
+[7]
+```
+
+The multi-item fixed point is the case to internalize — repeated spread is **not** recursive flattening:
+
+<!-- spec:repeated-spread-fixed-point -->
+```
+Collect(*items) = items
+A = [[1, 2], [3, 4]]
+
+Collect(A*)
+Collect(A**)
+Collect((A*)*)
+```
+
+**Results:**
+```
+[[1, 2], [3, 4]]
+[[1, 2], [3, 4]]
+[[1, 2], [3, 4]]
+```
+
+The first star supplies the two inner lists. The capture between the stars groups them as `([1, 2], [3, 4])`, and the second star re-spreads that captured sequence back into the same two items — never into `1, 2, 3, 4`. A second star changes the observable supply only when the first spread contributes exactly one structured value that exposes another item boundary.
+
+Repeated spread exists as a compositional consequence of the postfix syntax; it is rarely the clearest way to write anything. To dig into nested data, prefer selecting the level you mean (`A:0*`), and when recursive flattening to numeric atoms is genuinely intended, that is what [`atoms`](#atoms) is for.
+
+### Value and Supply at a Glance
+
+Every form below is decided purely syntactically; the receiver of the supply decides what the items become:
+
+| Form | Meaning |
+|---|---|
+| `A:0*` | Select `A:0` as one value, then spread the selected value — the star attaches to the completed index |
+| `(A:0)*` | The same select-then-spread, with explicit grouping |
+| `A*.F` | Supply `A*`'s items to `F` — exactly `F(A*)` |
+| `A*.F*` | Call `F(A*)`, then spread `F`'s one result value |
+| `A**.F` | Repeated (capture-law) spread supplies the arguments — exactly `F(A**)` |
+| `(A*).F` | Capture the spread supply as one sequence value, then dot-call `F` on that value |
+| `A*:0` | Invalid — selection cannot be applied directly to an item supply (targeted parse error) |
+| `(A*):0` | Capture the spread supply into one sequence value, then select from it |
+
+Select-then-spread and capture-then-select are different operations:
+
+<!-- spec:select-spread-vs-capture-select -->
+```
+A = [[1, 2], [3, 4]]
+
+(A:0)*
+(A*):0
+```
+
+**Results:**
+```
+1
+2
+[1, 2]
+```
+
+`(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows; `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. Writing `A*:0` directly is a targeted parse error: "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value," and the message names both rewrites so you can pick the intended one.
 
 ---
 

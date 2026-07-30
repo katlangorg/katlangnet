@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 149
+- specification surface cases: 155
 - excluded parse-level cases (Lean has no surface parser): 5
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 143
-- probe observations (C#-only by design): 196
+- Lean-guarded cases: 149
+- probe observations (C#-only by design): 205
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -184,6 +184,31 @@ def case_property_value_boundary : Expr :=
   .block (alg [] [] [privateProp "Coordinates" (alg [] [] [] [.num 10, .num 20])] [.resolve "Coordinates", .sequenceSpread (.resolve "Coordinates")])
 #guard obs case_property_value_boundary == "ok raw=S[S[10, 20], 10, 20] n=3"
 
+-- spread-capture-count [item-supply-vs-value]: A = [1, 2, 3] \n  \n (A*).count
+def case_spread_capture_count : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.dotCall (.block (alg [] [] [] [.sequenceSpread (.resolve "A")])) "count" none])
+#guard obs case_spread_capture_count == "ok raw=3 n=1"
+
+-- repeated-spread-fixed-point [item-supply-vs-value]: Collect(*items) = items \n A = [[1, 2], [3, 4]] \n  \n Collect(A*) \n Collect(A**) \n Collect((A*)*)
+def case_repeated_spread_fixed_point : Expr :=
+  .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "A" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])])] [.call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.resolve "A")]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.resolve "A"))]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [] [.sequenceSpread (.resolve "A")]))])])
+#guard obs case_repeated_spread_fixed_point == "ok raw=S[L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]]] n=3"
+
+-- repeated-spread-singleton-opens [item-supply-vs-value]: Collect(*items) = items \n  \n Collect([[7]]*) \n Collect([[7]]**) \n Collect([7]*) \n Collect([7]**)
+def case_repeated_spread_singleton_opens : Expr :=
+  .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [.call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.listLiteral [.listLiteral [.num 7]])]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [.listLiteral [.num 7]]))]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.listLiteral [.num 7])]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [.num 7]))])])
+#guard obs case_repeated_spread_singleton_opens == "ok raw=S[L[L[7]], L[7], L[7], L[7]] n=4"
+
+-- scalar-spread-neutral [item-supply-vs-value]: Collect(*items) = items \n  \n Collect(5) \n Collect(5*)
+def case_scalar_spread_neutral : Expr :=
+  .block (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [.call (.resolve "Collect") (alg [] [] [] [.num 5]), .call (.resolve "Collect") (alg [] [] [] [.sequenceSpread (.num 5)])])
+#guard obs case_scalar_spread_neutral == "ok raw=S[L[5], L[5]] n=2"
+
+-- select-spread-vs-capture-select [item-supply-vs-value]: A = [[1, 2], [3, 4]] \n  \n (A:0)* \n (A*):0
+def case_select_spread_vs_capture_select : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])])] [.sequenceSpread (.block (alg [] [] [] [.index (.resolve "A") (.num 0)])), .index (.block (alg [] [] [] [.sequenceSpread (.resolve "A")])) (.num 0)])
+#guard obs case_select_spread_vs_capture_select == "ok raw=S[1, 2, L[1, 2]] n=3"
+
 -- fixed-call-preserves-boundaries [item-supply-vs-value]: Pair = 10, 20 \n Add(x, y) = x + y \n  \n Add(Pair)
 def case_fixed_call_preserves_boundaries : Expr :=
   .block (alg [] [] [privateProp "Pair" (alg [] [] [] [.num 10, .num 20]), privateProp "Add" (alg ["x", "y"] [] [] [.binary .add (.param "x") (.param "y")])] [.call (.resolve "Add") (alg [] [] [] [.resolve "Pair"])])
@@ -323,6 +348,11 @@ def case_mixed_collecting_parameter : Expr :=
 def case_mixed_front_back_family : Expr :=
   .block (alg [] [] [privateProp "Arg" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "Head" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "first"]), privateProp "Tail" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]), privateProp "Init" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]), privateProp "Last" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "last"])] [.call (.resolve "Head") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Tail") (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), .call (.resolve "Init") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), .num 3]), .call (.resolve "Last") (alg [] [] [] [.resolve "Arg", .num 3])])
 #guard obs case_mixed_front_back_family == "ok raw=S[1, L[S[2, 3]], L[S[1, 2]], 3] n=4"
+
+-- collecting-minimum-arity [variadic-calls]: F(first, *middle, last) = middle \n  \n F(1, 2) \n F(1, 2, 3)
+def case_collecting_minimum_arity : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }] [] [] [.param "middle"])] [.call (.resolve "F") (alg [] [] [] [.num 1, .num 2]), .call (.resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])])
+#guard obs case_collecting_minimum_arity == "ok raw=S[L[], L[2]] n=2"
 
 -- variadic-grouped-vs-spread [variadic-calls]: H(h, *t) = t \n H((1, 2))
 def case_variadic_grouped_vs_spread : Expr :=
@@ -814,7 +844,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 143 canonical Lean-guarded specification cases.
+-- 149 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -839,6 +869,11 @@ def specCaseIds : List String := [
   "call-reentry-identity",
   "call-value-boundary",
   "property-value-boundary",
+  "spread-capture-count",
+  "repeated-spread-fixed-point",
+  "repeated-spread-singleton-opens",
+  "scalar-spread-neutral",
+  "select-spread-vs-capture-select",
   "fixed-call-preserves-boundaries",
   "spread-fills-remaining-slots",
   "empty-count-one-arg",
@@ -867,6 +902,7 @@ def specCaseIds : List String := [
   "variadic-receiver-distinction",
   "mixed-collecting-parameter",
   "mixed-front-back-family",
+  "collecting-minimum-arity",
   "variadic-grouped-vs-spread",
   "variadic-nested-not-flattened",
   "supply-vs-value-patterns",
@@ -966,6 +1002,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 143
+#guard specCaseIds.length == 149
 
 end LanguageSpecCases

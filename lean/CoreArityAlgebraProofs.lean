@@ -452,7 +452,7 @@ its own domain:
 -/
 
 /-- Open/collect round trip: surface spread (`items`, the `open` operation)
-re-supplies EXACTLY the collected items, so variadic forwarding
+re-supplies EXACTLY the collected items, so collecting-parameter forwarding
 (`Forward(*items) = Target(items*)`) is ordinary list spread. -/
 theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
 
@@ -590,7 +590,7 @@ theorem deconstruct_fixed_single_list_opens :
 
 /-- `x, y = A*`: the explicit spread supplies `A`'s items directly, which bind the
 two fixed targets — the same result as the bare unpack. (`items` is the
-named-spread view.) -/
+spread-marker view.) -/
 theorem deconstruct_fixed_explicit_spread_succeeds :
     bindDeconstruct [Pat.name "x", Pat.name "y"]
       (items (Val.seq [Val.atom 1, Val.atom 2]))
@@ -1496,5 +1496,323 @@ that collects the spread of a canonical stored value stores a canonical list
 theorem normalize_collect_items_of_canonical {v : Val} (h : normalize v = v) :
     normalize (collect (items v)) = collect (items v) :=
   normalize_collect_of_canonicalSupply (canonicalSupply_items_of_canonical h)
+
+/-! ## Repeated spread is capture-mediated composition
+
+The extracted model does not contain surface syntax. It represents BOTH
+surface spellings of repeated spread — the stacked marker `value**` and the
+grouped `(value*)*` — by the same composition
+
+  `items (capture (items value))`,
+
+because a spread expression produces a `Supply`, not a `Val`: the only way a
+further postfix spread can apply is across the ordinary expression capture
+boundary that turns the first spread's supply back into ONE value
+(conceptually `spread(capture(spread(value)))`). The surface equation
+`value** ≡ (value*)*` is therefore a semantic arity-interpretation law of
+this extraction, not a parser theorem — parse-time lowering of the stacked
+spelling is C#-side, and the authoritative evaluator guards
+(`stackedSpreadAgreesWithGroupedCompositionalForm`,
+`stackedSpreadMultiItemFixedPoint`, `stackedSpreadMixedSupplyStaysUnopened`
+in `CoreTests.lean`) pin the same behavior end to end through the full
+model's `Result.spreadItems` after `Result.normalize ∘ Result.sequenceValue`
+— exactly the composition `items ∘ capture` mirrors.
+
+The theorems below prove the exact behavior of that composition:
+
+1. `items_capture` — the general law over arbitrary raw supplies, honest
+   about normalization of noncanonical members;
+2. `items_capture_of_canonicalSupply` — the observable cardinality split
+   under the canonical-supply invariant;
+3. `repeated_spread_cardinality` — the value-level law interpreting
+   `value** ≡ (value*)*`;
+4. the zero-item, singleton, and non-singleton/multi fixed-point
+   corollaries, with `repeated_spread_fixed_iff` as the complete
+   characterization;
+5. executable examples with explicit anti-flattening checks.
+
+Repeated spread is ordinary composition through capture: only a LONE
+structured item can open one more boundary (through singleton capture); a
+canonical multi-item supply is a fixed point whose structured members are
+never opened. It is NEVER recursive flattening.
+-/
+
+/-- The general capture-then-spread law over ARBITRARY raw supplies. Capture
+groups the supply and normalizes (`capture = normalize ∘ Val.seq`), so
+re-spreading yields: nothing for the empty supply; the item view of the
+NORMALIZED lone item for a singleton (a raw noncanonical singleton is
+canonicalized before the second spread reads it); and the element-wise
+normalized supply for two or more items. Multi-item members are normalized
+in place rather than passed through `items`: canonical structure boundaries
+stay intact, while raw redundant singleton-sequence boundaries may collapse
+as part of ordinary normalization. -/
+theorem items_capture (xs : Supply) :
+    items (capture xs) =
+      match xs with
+      | [] => []
+      | [v] => items (normalize v)
+      | a :: b :: t => normalizeList (a :: b :: t) := by
+  cases xs with
+  | nil => rfl
+  | cons a t =>
+    cases t with
+    | nil => rfl
+    | cons b t2 => rfl
+
+/-- The observable-runtime simplification: on a CANONICAL supply the
+normalization inside `items_capture` is invisible, leaving the exact
+cardinality split of capture-then-spread — zero items re-supply zero items,
+a lone item `v` re-supplies `items v` (the one case where another boundary
+can open), and two or more items re-supply exactly themselves. -/
+theorem items_capture_of_canonicalSupply {xs : Supply} :
+    canonicalSupply xs →
+    items (capture xs) =
+      match xs with
+      | [v] => items v
+      | other => other := by
+  intro h
+  cases xs with
+  | nil => rfl
+  | cons a t =>
+    cases t with
+    | nil =>
+      have ha : normalize a = a :=
+        (canonicalSupply_iff_forall [a]).mp h a List.mem_cons_self
+      show items (normalize a) = items a
+      rw [ha]
+    | cons b t2 => exact h
+
+/-- The value-level repeated-spread law — the arity interpretation of the
+surface equation `value** ≡ (value*)*` (both spellings mean
+`items (capture (items v))`). For a canonical value the first spread's
+supply is canonical (`canonicalSupply_items_of_canonical`), so the
+cardinality split applies directly: a lone supplied item `x` re-opens as
+`items x`; every other first-spread supply — empty or multi-item — is
+re-supplied exactly. -/
+theorem repeated_spread_cardinality {v : Val} (hv : normalize v = v) :
+    items (capture (items v)) =
+      match items v with
+      | [x] => items x
+      | other => other :=
+  items_capture_of_canonicalSupply (canonicalSupply_items_of_canonical hv)
+
+/-- Zero-item fixed point: a value whose spread contributes no items — `()`
+or `[]`, and nothing else (`items_eq_nil_iff`) — re-spreads to no items: the
+empty supply captures as the empty sequence value, whose spread is empty.
+No canonicality premise is needed. -/
+theorem repeated_spread_zero {v : Val} (h : items v = []) :
+    items (capture (items v)) = [] := by
+  rw [h, capture_empty, items_empty]
+
+/-- The raw singleton bridge: capturing a one-item supply returns the
+normalized item (`capture_singleton`), so the re-spread is the NORMALIZED
+item's view. -/
+theorem items_capture_singleton (v : Val) :
+    items (capture [v]) = items (normalize v) := rfl
+
+/-- Singleton law at the supply level: capturing a canonical lone item and
+re-spreading opens exactly that item's own view — the ONE cardinality case
+in which the second spread can expose another boundary. Canonicality is
+needed for the lone supplied item itself. -/
+theorem items_capture_singleton_of_canonical {v : Val} (h : normalize v = v) :
+    items (capture [v]) = items v := by
+  rw [items_capture_singleton, h]
+
+/-- Value-level singleton law: when the first spread supplies exactly one
+item `x`, repeated spread supplies `items x`. The canonicality that matters
+is canonicality of `x`; it FOLLOWS from canonicality of `v`, because opening
+a canonical value yields a canonical supply
+(`canonicalSupply_items_of_canonical`). -/
+theorem repeated_spread_singleton {v x : Val} (hv : normalize v = v)
+    (h : items v = [x]) :
+    items (capture (items v)) = items x := by
+  have hx : normalize x = x := by
+    have hc := canonicalSupply_items_of_canonical hv
+    rw [h] at hc
+    exact (canonicalSupply_iff_forall [x]).mp hc x List.mem_cons_self
+  rw [h, items_capture_singleton, hx]
+
+/-- Atom capture-then-spread is neutral outright: `capture [Val.atom n]` is
+the atom itself, whose item view is the same singleton supply. -/
+theorem items_capture_singleton_atom (n : Int) :
+    items (capture [Val.atom n]) = [Val.atom n] := rfl
+
+/-- Singleton SCALAR neutrality: when the lone supplied item is an atom the
+second spread is invisible, so `[7]**` supplies `7` exactly like `[7]*`.
+No canonicality premise is needed — atom capture is unconditionally
+neutral (`items_capture_singleton_atom`). -/
+theorem repeated_spread_singleton_atom {v : Val} {n : Int}
+    (h : items v = [Val.atom n]) :
+    items (capture (items v)) = items v := by
+  rw [h, items_capture_singleton_atom]
+
+/-- Non-singleton fixed point at the supply level: a canonical supply that
+does not consist of exactly one item is re-supplied EXACTLY by
+capture-then-spread. The captured sequence boundary re-opens to the same
+items with every member intact — in particular, structured members are NOT
+opened, so this is the law a recursive-flattening implementation would
+violate. -/
+theorem items_capture_fixed_point_of_non_singleton {xs : Supply}
+    (hxs : canonicalSupply xs) (hlen : xs.length ≠ 1) :
+    items (capture xs) = xs := by
+  cases xs with
+  | nil => rfl
+  | cons a t =>
+    cases t with
+    | nil => exact absurd rfl hlen
+    | cons b t2 => exact hxs
+
+/-- Non-singleton fixed point at the value level: when the first spread
+contributes zero or two-or-more items, `value**` supplies exactly what
+`value*` supplies. -/
+theorem repeated_spread_fixed_point_of_non_singleton {v : Val}
+    (hv : normalize v = v) (hlen : (items v).length ≠ 1) :
+    items (capture (items v)) = items v :=
+  items_capture_fixed_point_of_non_singleton
+    (canonicalSupply_items_of_canonical hv) hlen
+
+/-- Multi-item specialization at the supply level: two or more canonical
+items are always a fixed point of capture-then-spread. -/
+theorem items_capture_fixed_point_of_multi {xs : Supply}
+    (hxs : canonicalSupply xs) (hlen : 2 ≤ xs.length) :
+    items (capture xs) = xs :=
+  items_capture_fixed_point_of_non_singleton hxs (by omega)
+
+/-- Multi-item specialization at the value level: a spread that contributes
+two or more items is re-supplied unchanged by repeated spread. -/
+theorem repeated_spread_fixed_point_of_multi {v : Val}
+    (hv : normalize v = v) (hlen : 2 ≤ (items v).length) :
+    items (capture (items v)) = items v :=
+  items_capture_fixed_point_of_multi (canonicalSupply_items_of_canonical hv) hlen
+
+/-- The values whose spread supplies exactly themselves-as-one-item are the
+atoms: a sequence or list value cannot be its own lone stored item (the
+structural order excludes it). This is what makes scalar spread total AND
+repeated-spread-neutral. -/
+theorem items_eq_singleton_self_iff_atom (v : Val) :
+    items v = [v] ↔ ∃ n, v = Val.atom n := by
+  cases v with
+  | atom n => exact ⟨fun _ => ⟨n, rfl⟩, fun _ => rfl⟩
+  | seq xs =>
+    constructor
+    · intro h
+      have hpay : [Val.seq xs] = xs := h.symm
+      exact (list_payload_not_self xs (Val.seq xs) hpay
+        (fun w hw => mem_ne_seq hw)).elim
+    · rintro ⟨n, hn⟩
+      cases hn
+  | list xs =>
+    constructor
+    · intro h
+      have hpay : [Val.list xs] = xs := h.symm
+      exact (list_payload_not_self xs (Val.list xs) hpay
+        (fun w hw => mem_ne_list hw)).elim
+    · rintro ⟨n, hn⟩
+      cases hn
+
+/-- Complete fixed-point characterization of repeated spread: for a
+canonical value, `value**` supplies exactly what `value*` supplies IFF the
+first spread is not a singleton, or its lone item is an atom. Equivalently:
+the second spread can expose another boundary ONLY through singleton capture
+of a lone structured item — never by opening the members of a multi-item
+supply. -/
+theorem repeated_spread_fixed_iff {v : Val} (hv : normalize v = v) :
+    items (capture (items v)) = items v ↔
+      (items v).length ≠ 1 ∨ ∃ n, items v = [Val.atom n] := by
+  constructor
+  · intro hfix
+    cases hx : items v with
+    | nil =>
+      left
+      simp only [List.length_nil]
+      omega
+    | cons a t =>
+      cases t with
+      | cons b t2 =>
+        left
+        simp only [List.length_cons]
+        omega
+      | nil =>
+        right
+        have ha : normalize a = a := by
+          have hc := canonicalSupply_items_of_canonical hv
+          rw [hx] at hc
+          exact (canonicalSupply_iff_forall [a]).mp hc a List.mem_cons_self
+        rw [hx, items_capture_singleton, ha] at hfix
+        obtain ⟨n, hn⟩ := (items_eq_singleton_self_iff_atom a).mp hfix
+        exact ⟨n, by rw [hn]⟩
+  · rintro (hlen | ⟨n, hn⟩)
+    · exact repeated_spread_fixed_point_of_non_singleton hv hlen
+    · rw [hn, items_capture_singleton_atom]
+
+-- `()**` and `[]**`: zero-item fixed points — both empty structures
+-- re-spread to no items.
+example : items (capture (items (Val.seq []))) = [] := rfl
+example : items (capture (items (Val.list []))) = [] := rfl
+
+-- `[[7]]*` supplies the inner list `[7]`; `[[7]]**` singleton-captures that
+-- lone structured item and opens ONE more boundary, supplying `7`.
+example : items (Val.list [Val.list [Val.atom 7]]) = [Val.list [Val.atom 7]] := rfl
+example :
+    items (capture (items (Val.list [Val.list [Val.atom 7]])))
+      = [Val.atom 7] := rfl
+
+-- `[7]*` and `[7]**` both supply `7`: singleton scalar neutrality.
+example :
+    items (capture (items (Val.list [Val.atom 7])))
+      = items (Val.list [Val.atom 7]) := rfl
+
+-- Triple chain on `[[[7]]]`: each written star crosses one more capture
+-- boundary and opens exactly one lone-list boundary — `[[[7]]]*` supplies
+-- `[[7]]`, `[[[7]]]**` supplies `[7]`, `[[[7]]]***` supplies `7`. Ordinary
+-- composition, one boundary at a time — never all at once.
+example :
+    items (Val.list [Val.list [Val.list [Val.atom 7]]])
+      = [Val.list [Val.list [Val.atom 7]]] := rfl
+example :
+    items (capture (items (Val.list [Val.list [Val.list [Val.atom 7]]])))
+      = [Val.list [Val.atom 7]] := rfl
+example :
+    items (capture (items (capture (items
+      (Val.list [Val.list [Val.list [Val.atom 7]]])))))
+      = [Val.atom 7] := rfl
+
+/-- Multi-item fixed point, pinned concretely: `[[1, 2], [3, 4]]**` supplies
+the SAME two intact inner lists as `[[1, 2], [3, 4]]*` — the
+extraction-side mirror of the authoritative evaluator guard
+`stackedSpreadMultiItemFixedPoint` in `CoreTests.lean`. -/
+theorem repeated_spread_multi_item_fixed_point :
+    items (capture (items (Val.list
+        [Val.list [Val.atom 1, Val.atom 2], Val.list [Val.atom 3, Val.atom 4]])))
+      = [Val.list [Val.atom 1, Val.atom 2], Val.list [Val.atom 3, Val.atom 4]] := rfl
+
+/-- The explicit anti-flattening check: the multi-item repeated spread is
+NOT `1, 2, 3, 4`. A hypothetical per-item lift — concatenating `items` over
+every supplied member (`concatMap`-style recursive flattening) — would
+produce exactly that supply here, so this inequality together with the fixed
+points above is the mutation check that rules such an implementation out. -/
+theorem repeated_spread_not_recursive_flattening :
+    items (capture (items (Val.list
+        [Val.list [Val.atom 1, Val.atom 2], Val.list [Val.atom 3, Val.atom 4]])))
+      ≠ [Val.atom 1, Val.atom 2, Val.atom 3, Val.atom 4] := by
+  decide
+
+/-- Mixed multi-item fixed point: `[[1, 2], 3]**` keeps the inner list
+intact as the first supplied item and the scalar as the second — the second
+spread re-spreads the captured pair; it does not selectively open the
+structured member (mirror of the authoritative
+`stackedSpreadMixedSupplyStaysUnopened`). -/
+theorem repeated_spread_mixed_supply_fixed_point :
+    items (capture (items
+        (Val.list [Val.list [Val.atom 1, Val.atom 2], Val.atom 3])))
+      = [Val.list [Val.atom 1, Val.atom 2], Val.atom 3] := rfl
+
+/-- The mixed anti-flattening twin: the mixed supply does not flatten to
+`1, 2, 3` either. -/
+theorem repeated_spread_mixed_not_recursive_flattening :
+    items (capture (items
+        (Val.list [Val.list [Val.atom 1, Val.atom 2], Val.atom 3])))
+      ≠ [Val.atom 1, Val.atom 2, Val.atom 3] := by
+  decide
 
 end CoreArityAlgebra

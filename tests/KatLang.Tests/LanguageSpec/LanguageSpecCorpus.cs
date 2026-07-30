@@ -355,6 +355,106 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "spread-capture-count",
+            Category = "item-supply-vs-value",
+            Source = "A = [1, 2, 3]\n\n(A*).count",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("A", "(.listLiteral [.num 1, .num 2, .num 3])")],
+                [$".dotCall {LBlock(".sequenceSpread (.resolve \"A\")")} \"count\" none"]),
+            Probes =
+            [
+                new SpecProbe("A = [1, 2, 3]\nA*.count", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Parentheses around a supply-producing expression perform CAPTURE — they are not always redundant grouping: `(A*).count` counts one captured sequence value (3), while the fluent `A*.count` is the call `count(A*)` whose three argument slots do not fit the fixed `count(collection)` signature (an arity error).",
+        },
+        new()
+        {
+            Id = "repeated-spread-fixed-point",
+            Category = "item-supply-vs-value",
+            Source = "Collect(*items) = items\nA = [[1, 2], [3, 4]]\n\nCollect(A*)\nCollect(A**)\nCollect((A*)*)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[1, 2], [3, 4]]\n[[1, 2], [3, 4]]\n[[1, 2], [3, 4]]",
+            ExpectedRaw = "S[L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]], L[L[1, 2], L[3, 4]]]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg(
+                [LFnP("Collect", [LVar("items")], ".param \"items\""),
+                 LProp("A", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
+                [LCall("Collect", ".sequenceSpread (.resolve \"A\")"),
+                 LCall("Collect", ".sequenceSpread (.sequenceSpread (.resolve \"A\"))"),
+                 LCall("Collect", $".sequenceSpread {LBlock(".sequenceSpread (.resolve \"A\")")}")]),
+            Probes =
+            [
+                new SpecProbe("Collect(*items) = items\nCollect([[1, 2], 3]*)", "ok raw=L[L[1, 2], 3] n=1"),
+                new SpecProbe("Collect(*items) = items\nCollect([[1, 2], 3]**)", "ok raw=L[L[1, 2], 3] n=1"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\nA**", "ok raw=S[L[1, 2], L[3, 4]] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Repeated spread is ordinary composition, not recursive flattening: `A**` means `(A*)*`. The first star supplies A's two inner lists; the ordinary expression boundary CAPTURES that two-item supply back into one sequence value; the second star re-spreads the same two items — a fixed point. The inner lists are never opened.",
+        },
+        new()
+        {
+            Id = "repeated-spread-singleton-opens",
+            Category = "item-supply-vs-value",
+            Source = "Collect(*items) = items\n\nCollect([[7]]*)\nCollect([[7]]**)\nCollect([7]*)\nCollect([7]**)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[7]]\n[7]\n[7]\n[7]",
+            ExpectedRaw = "S[L[L[7]], L[7], L[7], L[7]]",
+            ExpectedEmittedCount = 4,
+            LeanProgram = LProg(
+                [LFnP("Collect", [LVar("items")], ".param \"items\"")],
+                [LCall("Collect", ".sequenceSpread (.listLiteral [.listLiteral [.num 7]])"),
+                 LCall("Collect", ".sequenceSpread (.sequenceSpread (.listLiteral [.listLiteral [.num 7]]))"),
+                 LCall("Collect", ".sequenceSpread (.listLiteral [.num 7])"),
+                 LCall("Collect", ".sequenceSpread (.sequenceSpread (.listLiteral [.num 7]))")]),
+            Probes =
+            [
+                new SpecProbe("Collect(*items) = items\nCollect([]*)", "ok raw=L[] n=1"),
+                new SpecProbe("Collect(*items) = items\nCollect([]**)", "ok raw=L[] n=1"),
+                new SpecProbe("Collect(*items) = items\nCollect(5*)", "ok raw=L[5] n=1"),
+            ],
+            Explanation = "A second star changes the observable supply only when the first spread contributes exactly ONE structured value: singleton capture collapses to that item, so the second star can open its boundary (`[[7]]**` supplies `7`). A scalar singleton is neutral (`[7]**` equals `[7]*` — spread is total), and a zero-item supply stays zero (`[]**` captures `()` in between).",
+        },
+        new()
+        {
+            Id = "scalar-spread-neutral",
+            Category = "item-supply-vs-value",
+            Source = "Collect(*items) = items\n\nCollect(5)\nCollect(5*)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[5]\n[5]",
+            ExpectedRaw = "S[L[5], L[5]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFnP("Collect", [LVar("items")], ".param \"items\"")],
+                [LCall("Collect", ".num 5"),
+                 LCall("Collect", ".sequenceSpread (.num 5)")]),
+            Explanation = "The item view is total: an atom contributes itself as a one-item supply, so spreading an atom is observationally neutral in this collecting context. This is a fact about the item view, not a claim that atoms and collection values are the same kind of value.",
+        },
+        new()
+        {
+            Id = "select-spread-vs-capture-select",
+            Category = "item-supply-vs-value",
+            Source = "A = [[1, 2], [3, 4]]\n\n(A:0)*\n(A*):0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n[1, 2]",
+            ExpectedRaw = "S[1, 2, L[1, 2]]",
+            ExpectedEmittedCount = 3,
+            LeanProgram = LProg(
+                [LProp("A", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
+                [$".sequenceSpread {LBlock(".index (.resolve \"A\") (.num 0)")}",
+                 $".index {LBlock(".sequenceSpread (.resolve \"A\")")} (.num 0)"]),
+            Probes =
+            [
+                new SpecProbe("A = [[1, 2], [3, 4]]\nA:0*", "ok raw=S[1, 2] n=2"),
+            ],
+            Explanation = "Select-then-spread and capture-then-select are different operations: `(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. (`A:0*` is the same select-then-spread: the star attaches to the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
+        },
+        new()
+        {
             Id = "fixed-call-preserves-boundaries",
             Category = "item-supply-vs-value",
             Source = "Pair = 10, 20\nAdd(x, y) = x + y\n\nAdd(Pair)",
@@ -864,6 +964,25 @@ public static class LanguageSpecCorpus
                  LCall("Init", LBlock(LNums(1, 2)), ".num 3"),
                  LCall("Last", ".resolve \"Arg\"", ".num 3")]),
             Explanation = "Grouped arguments are single slots: a collected segment of one grouped value is the one-element list holding it (never the value itself), and fixed captures bind whole argument boundaries.",
+        },
+        new()
+        {
+            Id = "collecting-minimum-arity",
+            Category = "variadic-calls",
+            Source = "F(first, *middle, last) = middle\n\nF(1, 2)\nF(1, 2, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]\n[2]",
+            ExpectedRaw = "S[L[], L[2]]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFnP("F", [LFix("first"), LVar("middle"), LFix("last")], ".param \"middle\"")],
+                [LCall("F", ".num 1", ".num 2"),
+                 LCall("F", LNums(1, 2, 3))]),
+            Probes =
+            [
+                new SpecProbe("F(first, *middle, last) = middle\nF(1)", "err arity"),
+            ],
+            Explanation = "The fixed bindings set a minimum: `F(first, *middle, last)` requires at least two supplied items because `first` and `last` each bind one, while the movable collecting parameter collects the (possibly empty) middle as an exact list. `F(1)` reports the targeted minimum-arity error.",
         },
         new()
         {

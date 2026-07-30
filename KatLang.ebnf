@@ -312,9 +312,14 @@ SpreadMarker    = "*" ;
                      spread : Value -> Supply; the RECEIVER decides what the
                      items become). It lowers directly to the one unary spread
                      node — there is no call or property boundary. Each
-                     additional directly attached star adds one spread layer:
-                     `value**` is `SequenceSpread(SequenceSpread(value))`, applied
-                     compositionally. `value**next` and `value** next` are
+                     additional directly attached star nests one more unary
+                     spread node (`value**` lowers to
+                     SequenceSpread(SequenceSpread(value))), and evaluation
+                     is compositional: `value**` means `(value*)*` — the
+                     inner star's item supply is re-captured into one value
+                     at the ordinary expression boundary before the outer
+                     star spreads it. Repeated spread is not recursive
+                     flattening. `value**next` and `value** next` are
                      rejected — the second star has a same-line right operand,
                      so it is multiplication whose left operand is a spread
                      (a targeted scalar-operand error); this is never

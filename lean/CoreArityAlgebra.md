@@ -62,7 +62,7 @@ abbrev Supply := List Val      -- many slots (the ungrouped, multi-output contex
 | partial projection of a sequence value's stored items | `sequenceItems? : Val → Option Supply` |
 | partial projection of a list value's stored elements | `listItems? : Val → Option Supply` |
 | shared openable-structure projection    | `structureItems? : Val → Option Supply` |
-| the total named-spread view               | `items  : Val → Supply`          |
+| the total item view (surface spread)      | `items  : Val → Supply`          |
 | recursively collapse singleton sequence groups | `normalize : Val → Val`   |
 | ordinary value capture                  | `capture : Supply → Val`         |
 | the canonical-supply invariant          | `canonicalSupply : Supply → Prop` |
@@ -156,6 +156,100 @@ it to the sequence world (`capture_items_of_list` — `x = A*` with
 The first law is what makes collecting-parameter forwarding ordinary list spread:
 `Forward(*items) = Target(items*)` re-supplies exactly the collected
 items with no hidden raw-supply metadata.
+
+## Repeated spread is capture-mediated composition
+
+A spread expression produces a *supply*, not a value, so a second postfix
+spread can never apply directly. The extraction contains no surface syntax;
+it represents both surface spellings of repeated spread — the stacked marker
+`value**` and the grouped `(value*)*` — by the same composition through the
+ordinary capture boundary:
+
+```text
+value** ≡ (value*)*              -- the surface interpretation law
+spread(capture(spread(value)))   -- the conceptual composition
+```
+
+written in the extraction as
+
+```lean
+items (capture (items value))
+```
+
+This is a *semantic arity-interpretation law*, not a parser theorem: the
+extraction assigns one meaning to both spellings and proves exactly how that
+meaning behaves. (Parse-time lowering of the stacked spelling lives in the
+C# parser; the authoritative evaluator pins the same behavior end to end —
+see Faithfulness below.)
+
+The strongest law is general. Raw Lean supplies may contain noncanonical
+sequence values, and `items_capture` is honest about their normalization:
+
+```lean
+items (capture xs) = match xs with
+  | []          => []
+  | [v]         => items (normalize v)
+  | a :: b :: t => normalizeList (a :: b :: t)
+```
+
+— `normalizeList` normalizes each member; it does not concatenate the
+members' `items` views. Canonical structure boundaries therefore stay
+intact, although raw redundant singleton-sequence boundaries can collapse
+during that member normalization. Observable runtime supplies satisfy
+`canonicalSupply`, and opening a canonical value yields a canonical supply
+(`canonicalSupply_items_of_canonical`), so the observable law is the exact
+cardinality split (`items_capture_of_canonicalSupply`; value level
+`repeated_spread_cardinality`):
+
+| First spread contributes    | Capture then spread    |
+| --------------------------- | ---------------------- |
+| zero items                  | zero items             |
+| exactly one item `v`        | `items v`              |
+| two or more canonical items | the same items, intact |
+
+```katlang
+()**                 // contributes no items
+[]**                 // contributes no items
+[[7]]**              // contributes 7 — singleton capture re-opens one boundary
+[7]**                // contributes 7 — scalar neutrality
+[[1, 2], [3, 4]]**   // contributes the same two intact inner lists
+[[1, 2], 3]**        // preserves the list and the scalar as two items
+```
+
+> **Repeated spread is ordinary composition through capture, not recursive
+> flattening.** Only a LONE canonical structured item can open one further
+> boundary — through singleton capture, which returns the item itself for
+> the next spread to read. A canonical multi-item supply is a fixed point
+> whose structured members are never opened:
+> `repeated_spread_not_recursive_flattening` pins that
+> `[[1, 2], [3, 4]]**` is **not** `1, 2, 3, 4`.
+
+The theorem family in `CoreArityAlgebraProofs.lean`:
+
+* `items_capture` — the general raw-supply law above;
+* `items_capture_of_canonicalSupply` — the canonical cardinality split;
+* `repeated_spread_cardinality` — the value-level interpretation of
+  `value** ≡ (value*)*`;
+* `repeated_spread_zero` — the zero-item fixed point (`()**`, `[]**`; by
+  `items_eq_nil_iff` those are the only zero-item spreads), with no
+  canonicality premise;
+* `items_capture_singleton` / `items_capture_singleton_of_canonical` /
+  `repeated_spread_singleton` — the singleton law, the ONE case that can
+  expose another boundary (canonicality is needed for the lone item and
+  follows from canonicality of the spread value), with
+  `items_capture_singleton_atom` / `repeated_spread_singleton_atom` as
+  premise-free scalar neutrality;
+* `items_capture_fixed_point_of_non_singleton` /
+  `repeated_spread_fixed_point_of_non_singleton` and the `…_of_multi`
+  specializations — the non-singleton fixed points;
+* `items_eq_singleton_self_iff_atom` and `repeated_spread_fixed_iff` — the
+  complete characterization: repeated spread coincides with single spread
+  iff the first spread is not a singleton or its lone item is an atom;
+* `repeated_spread_multi_item_fixed_point`,
+  `repeated_spread_mixed_supply_fixed_point`,
+  `repeated_spread_not_recursive_flattening`, and
+  `repeated_spread_mixed_not_recursive_flattening` — concrete pins mirroring
+  the authoritative `stackedSpread*` guards (below).
 
 ## Collecting binding collects an exact list
 
@@ -308,6 +402,17 @@ in `KatLang.lean`, including the subtle points:
   `(structureItems? v).getD [v]` — the exact shape of the full model's
   deconstruction binder
   (`openLoneStructure_single_eq_structureItems?_getD`).
+* Repeated spread is capture-mediated: the authoritative evaluator applies
+  each extra written star by re-capturing the previous star's supply
+  (`Result.normalize ∘ Result.sequenceValue`) and re-spreading
+  (`Result.spreadItems`) — exactly the extraction's
+  `items (capture (items v))`, since `items` mirrors `Result.spreadItems`
+  and `capture` is `normalize ∘ Val.seq`. The guards
+  `stackedSpreadAgreesWithGroupedCompositionalForm`,
+  `stackedSpreadMultiItemFixedPoint`, and
+  `stackedSpreadMixedSupplyStaysUnopened` in `CoreTests.lean` pin the same
+  behavior end to end through the real spread evaluation path, including
+  the direct `A**` = `(A*)*` equality on the multi-item fixed point.
 
 See the provenance table in the file header for the exact `KatLang.lean`
 correspondences, and `KatLangArityLaws.lean` for the bridge theorems proved

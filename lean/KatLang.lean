@@ -2183,15 +2183,19 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
   sequenceConstructLeavesLoop [expr] []
 
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
-    Used by evaluation together with `peelSequenceSpreadLayers`: each written
-    `.sequenceSpread` layer opens exactly one structure boundary, applied compositionally
-    and iteratively (stack-safe for deep `A**` chains, matching the C#
-    evaluator). For sequence values the extra layers are fixed points (the
-    re-captured sequence re-spreads to the same items), so stacked spread is
-    value-equivalent to one spread; for exact LIST values each layer opens one
-    more list boundary (`[[7]]**` is `7`, like `([[7]]*)*`). This is
-    NOT binary spine flattening: there is no right operand, it only unwraps
-    the single-operand chain. -/
+    Used by evaluation together with `peelSequenceSpreadLayers`: stacked
+    spread is COMPOSITIONAL (`A**` agrees with `(A*)*`) — each extra written
+    layer re-captures the previous layer's item supply into one value
+    (`Result.normalize ∘ Result.sequenceValue`, the ordinary expression
+    capture) and spreads that captured value, applied iteratively
+    (stack-safe for deep `A**` chains, matching the C# evaluator). A
+    multi-item supply re-captures as a sequence whose spread restores the
+    same items, so extra layers are fixed points there
+    (`[[1, 2], [3, 4]]**` supplies the two inner lists unchanged); only a
+    LONE structured item singleton-collapses at the capture and lets the
+    next layer open one more boundary (`[[7]]**` is `7`, like
+    `([[7]]*)*`). This is NOT binary spine flattening: there is no right
+    operand, it only unwraps the single-operand chain. -/
 partial def peelSequenceSpread : Expr -> Expr
   | .sequenceSpread operand => peelSequenceSpread operand
   | e => e
@@ -5130,8 +5134,9 @@ mutual
       members are not recursively flattened. Directly-nested spreads (`A**`)
       are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
       nesting) and then each written layer is applied COMPOSITIONALLY: every
-      each written `sequenceSpread` layer opens exactly one boundary of the value the previous layer would
-      have captured, so `A**` agrees with `(A*)*`. For sequence values
+      written `sequenceSpread` layer opens exactly one boundary of the value
+      the previous layer's supply re-captures, so `A**` agrees with `(A*)*`.
+      For sequence values
       the extra layers are fixed points (value-equivalent to a single spread);
       a singleton-list chain opens one list boundary per layer
       (`[[7]]**` supplies `7`), while a multi-element list re-captures as

@@ -12599,10 +12599,13 @@ def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
 
 #guard listIndexingBuiltinResultsDirectlyIndexable
 
--- Each written spread layer opens exactly one boundary: stacked spread on a
--- nested list agrees with the value-boundary-separated form (`A**` is
--- `(A*)*`), and extra layers on sequence values stay fixed points.
-def stackedSpreadOpensOneListBoundaryPerLayer : Bool :=
+-- Stacked spread is compositional: `A**` agrees with the value-boundary-
+-- separated form `(A*)*` — each extra star spreads the value the previous
+-- star's supply re-captures at the ordinary expression boundary. A LONE
+-- structured item singleton-collapses at that capture, so a singleton-list
+-- chain opens one more list boundary per written star, while a multi-item
+-- supply is a fixed point (see the dedicated guards below).
+def stackedSpreadAgreesWithGroupedCompositionalForm : Bool :=
   (match runResult (.block (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])]
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
@@ -12616,7 +12619,45 @@ def stackedSpreadOpensOneListBoundaryPerLayer : Bool :=
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
    | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false)
 
-#guard stackedSpreadOpensOneListBoundaryPerLayer
+#guard stackedSpreadAgreesWithGroupedCompositionalForm
+
+-- The multi-item fixed point, asserted as DIRECT equality between the
+-- stacked spelling `A**` and the grouped spelling `(A*)*` (a zero-parameter
+-- block is the written-parentheses capture boundary), plus the pinned value:
+-- the two inner lists survive unopened. This guard is what stops a future
+-- refactor from replacing capture-law composition with a concatMap-style
+-- per-item lift, which would flatten to S[1, 2, 3, 4] here.
+def stackedSpreadMultiItemFixedPoint : Bool :=
+  let multiA : KatLang.Expr -> KatLang.Expr := fun output =>
+    .block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral
+        [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]])]
+      [output])
+  let stacked := runResult (multiA (.sequenceSpread (.sequenceSpread (.resolve "A"))))
+  let grouped := runResult (multiA
+    (.sequenceSpread (.block (alg [] [] [] [.sequenceSpread (.resolve "A")]))))
+  match stacked, grouped with
+  | Except.ok s, Except.ok g =>
+      s == g &&
+      s == Result.sequenceValue
+        [Result.listValue [Result.atom 1, Result.atom 2],
+         Result.listValue [Result.atom 3, Result.atom 4]]
+  | _, _ => false
+
+#guard stackedSpreadMultiItemFixedPoint
+
+-- A MIXED multi-item supply stays a fixed point too: the second star
+-- re-spreads the captured pair; it does not selectively open the structured
+-- member.
+def stackedSpreadMixedSupplyStaysUnopened : Bool :=
+  match runResult (.block (algPrivate [] []
+      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]
+      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
+  | Except.ok r =>
+      r == Result.sequenceValue [Result.listValue [Result.atom 1, Result.atom 2], Result.atom 3]
+  | _ => false
+
+#guard stackedSpreadMixedSupplyStaysUnopened
 
 --------------------------------------------------------------------------------
 -- Collecting bindings collect exact immutable lists (collectSegment)

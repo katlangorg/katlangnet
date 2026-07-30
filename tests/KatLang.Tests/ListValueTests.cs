@@ -217,16 +217,29 @@ public class ListValueTests
         => AssertEvalCounted("A = [(1, 2)]\nB = A*\nB", 1, SequenceValue(Atom(1), Atom(2)));
 
     [Fact]
-    public void StackedSpread_OpensOneListBoundaryPerLayer()
+    public void StackedSpread_AgreesWithTheGroupedCompositionalForm()
     {
-        // Each written `*` opens exactly one boundary, so the stacked form
-        // agrees with the value-boundary-separated form.
+        // Repeated spread is composition, `A**` = `(A*)*`: each extra star
+        // spreads the value the previous star's supply re-captures. A lone
+        // structured item singleton-collapses at that capture, so a
+        // singleton-list chain opens one more list boundary per written star.
         AssertEvalCounted("A = [[7]]\nA**", 1, Atom(7));
         AssertEvalCounted("A = [[7]]\n(A*)*", 1, Atom(7));
         AssertEvalCounted("A = [[1, 2]]\nA**", 2, SequenceValue(Atom(1), Atom(2)));
         // Extra layers on a sequence value stay fixed points (unchanged
         // pre-list behavior).
         AssertEvalCounted("A = (1, 2)\nA**", 2, SequenceValue(Atom(1), Atom(2)));
+        // A MULTI-item first spread is a fixed point too: the two-item supply
+        // re-captures as a sequence whose spread restores the same two items,
+        // so the second star never opens the inner lists ([[1, 2], [3, 4]]**
+        // is NOT 1, 2, 3, 4 — repeated spread is not recursive flattening).
+        AssertEvalCounted("A = [[1, 2], [3, 4]]\nA**", 2,
+            SequenceValue(ListValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        AssertEvalCounted("A = [[1, 2], [3, 4]]\n(A*)*", 2,
+            SequenceValue(ListValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        // Mixed items stay unopened as well.
+        AssertEvalCounted("A = [[1, 2], 3]\nA**", 2,
+            SequenceValue(ListValue(Atom(1), Atom(2)), Atom(3)));
     }
 
     // ── Spread inside list literals ──────────────────────────────────────────

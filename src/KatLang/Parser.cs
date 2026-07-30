@@ -810,9 +810,12 @@ public sealed class Parser
     // its line is multiplication whose right operand continues on the next
     // line (`a *` newline `b`), while an attached line-final star is a
     // spread (`a*` newline `b` is a spread row and a `b` row). Chained
-    // spread is `value**` — each directly attached star contributes one
-    // additional spread layer, building nested
-    // SequenceSpread(SequenceSpread(expr)).
+    // spread is `value**` — each directly attached star nests one more
+    // unary spread node, building SequenceSpread(SequenceSpread(expr)).
+    // The parser only records the written layers; evaluation applies them
+    // compositionally, `value**` agreeing with `(value*)*` (each layer
+    // spreads the value the previous layer's supply re-captures — see
+    // Evaluator.EvalSequenceSpreadCounted).
     //
     // A spread expression is legal only as a whole expression-list slot
     // (root output rows, call argument slots, parenthesized group and
@@ -1011,23 +1014,37 @@ public sealed class Parser
         "A spread expression contributes items to the surrounding item supply and cannot be used as a scalar operand. Spread the whole expression instead, e.g. `(A + B)*`.";
 
     /// <summary>
+    /// Targeted message for the indexing continuation (`A*:0`): selection
+    /// needs ONE value while a spread supplies items, and the two nearby
+    /// valid forms mean DIFFERENT things — `(A:0)*` selects first and then
+    /// spreads the selected value, `(A*):0` captures the spread supply as one
+    /// sequence value and then selects. The message names both intentions so
+    /// they are not presented as interchangeable fixes.
+    /// </summary>
+    private const string SpreadSelectionDiagnostic =
+        "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value. Write `(A:0)*` to select first and then spread the selected value, or `(A*):0` to capture the spread items as one sequence value and then select; the two forms have different meanings.";
+
+    /// <summary>
     /// Rejects a spread expression used as an operand of a larger expression
     /// (unary/binary operand, indexing target or selector). Spread is legal
     /// only as a whole expression-list slot, as the operand of another
     /// spread, or as the fluent dot-chain receiver (which lowers to a call).
-    /// Recovery unwraps to the innermost non-spread operand so no embedded
+    /// The default message covers scalar operand positions; the indexing
+    /// continuation passes <see cref="SpreadSelectionDiagnostic"/> to
+    /// distinguish select-then-spread from capture-then-select. Recovery
+    /// unwraps to the innermost non-spread operand so no embedded
     /// SequenceSpread survives in the recovered tree — downstream layers
     /// keep the slot-level-only spread invariant.
     /// </summary>
-    private Expr RejectMisplacedSpreadOperand(Expr expr)
+    private Expr RejectMisplacedSpreadOperand(Expr expr, string diagnostic = MisplacedSpreadDiagnostic)
     {
         if (expr is not Expr.SequenceSpread spread)
             return expr;
 
         if (spread.Span is { } span)
-            ReportError(MisplacedSpreadDiagnostic, span);
+            ReportError(diagnostic, span);
         else
-            ReportError(MisplacedSpreadDiagnostic);
+            ReportError(diagnostic);
 
         var operand = spread.Operand;
         while (operand is Expr.SequenceSpread inner)
@@ -2176,8 +2193,10 @@ public sealed class Parser
                     // postfix indexing, mirroring the call-delimiter rule. A
                     // ':'-led line is rejected by ParsePrimary with a
                     // targeted diagnostic. A spread expression is never an
-                    // indexing target or selector (`A*:0` is an error;
-                    // spread the indexed value instead: `(A:0)*`).
+                    // indexing target or selector (`A*:0` reports
+                    // SpreadSelectionDiagnostic, which distinguishes
+                    // select-then-spread `(A:0)*` from capture-then-select
+                    // `(A*):0`).
                     var colonToken = Advance(); // consume ':'
                     lhs = ParseIndexContinuation(lhs, colonToken);
                     break;
@@ -2287,8 +2306,8 @@ public sealed class Parser
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private Expr ParseIndexContinuation(Expr lhs, Token colonToken)
     {
-        lhs = RejectMisplacedSpreadOperand(lhs);
-        var selector = RejectMisplacedSpreadOperand(ParsePrimary());
+        lhs = RejectMisplacedSpreadOperand(lhs, SpreadSelectionDiagnostic);
+        var selector = RejectMisplacedSpreadOperand(ParsePrimary(), SpreadSelectionDiagnostic);
         var index = new Expr.Index(lhs, selector) { Span = SpanFrom(lhs) };
         return GuardExpressionChainDepth(index, TokenSpan(colonToken), lhs, selector);
     }
