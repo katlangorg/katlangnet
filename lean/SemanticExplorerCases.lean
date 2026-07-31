@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1417
+- surface corpus cases: 1495
 - excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1386
+- Lean-representable surface cases: 1464
 - internal-node cases: 13
-- total generated guards: 1399 case guards + 2 count guards
+- total generated guards: 1477 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -6592,6 +6592,396 @@ def case_takeCollecting__pl1 : Expr :=
   .block (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "G") (alg [] [] [] [.call (.resolve "take") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])])), .num 1])])])
 #guard obs case_takeCollecting__pl1 == "ok raw=L[L[1]] n=1"
 
+-- spreadRootStacked__e: ()**
+def case_spreadRootStacked__e : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.emptySequence 0))])
+#guard obs case_spreadRootStacked__e == "ok raw=S[] n=0"
+
+-- spreadRootStacked__n0: 0**
+def case_spreadRootStacked__n0 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 0))])
+#guard obs case_spreadRootStacked__n0 == "ok raw=0 n=1"
+
+-- spreadRootStacked__n1: 1**
+def case_spreadRootStacked__n1 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 1))])
+#guard obs case_spreadRootStacked__n1 == "ok raw=1 n=1"
+
+-- spreadRootStacked__p1: (1)**
+def case_spreadRootStacked__p1 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1)])))])
+#guard obs case_spreadRootStacked__p1 == "ok raw=1 n=1"
+
+-- spreadRootStacked__p12: (1, 2)**
+def case_spreadRootStacked__p12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)])))])
+#guard obs case_spreadRootStacked__p12 == "ok raw=S[1, 2] n=2"
+
+-- spreadRootStacked__p123: (1, 2, 3)**
+def case_spreadRootStacked__p123 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])))])
+#guard obs case_spreadRootStacked__p123 == "ok raw=S[1, 2, 3] n=3"
+
+-- spreadRootStacked__pee: ((), ())**
+def case_spreadRootStacked__pee : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])))])
+#guard obs case_spreadRootStacked__pee == "ok raw=S[S[], S[]] n=2"
+
+-- spreadRootStacked__pe1: ((), 1)**
+def case_spreadRootStacked__pe1 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)])))])
+#guard obs case_spreadRootStacked__pe1 == "ok raw=S[S[], 1] n=2"
+
+-- spreadRootStacked__p1e: (1, ())**
+def case_spreadRootStacked__p1e : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)])))])
+#guard obs case_spreadRootStacked__p1e == "ok raw=S[1, S[]] n=2"
+
+-- spreadRootStacked__p12_3: ((1, 2), 3)**
+def case_spreadRootStacked__p12_3 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])))])
+#guard obs case_spreadRootStacked__p12_3 == "ok raw=S[S[1, 2], 3] n=2"
+
+-- spreadRootStacked__p12_34: ((1, 2), (3, 4))**
+def case_spreadRootStacked__p12_34 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])))])
+#guard obs case_spreadRootStacked__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=2"
+
+-- spreadRootStacked__pe_12: ((), (1, 2))**
+def case_spreadRootStacked__pe_12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])))])
+#guard obs case_spreadRootStacked__pe_12 == "ok raw=S[S[], S[1, 2]] n=2"
+
+-- spreadRootStacked__ppe1_2: (((), 1), 2)**
+def case_spreadRootStacked__ppe1_2 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])))])
+#guard obs case_spreadRootStacked__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=2"
+
+-- spreadRootStacked__p12_e: ((1, 2), ())**
+def case_spreadRootStacked__p12_e : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])))])
+#guard obs case_spreadRootStacked__p12_e == "ok raw=S[S[1, 2], S[]] n=2"
+
+-- spreadRootStacked__ppe: (())**
+def case_spreadRootStacked__ppe : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)])))])
+#guard obs case_spreadRootStacked__ppe == "ok raw=S[] n=0"
+
+-- spreadRootStacked__pp1: ((1))**
+def case_spreadRootStacked__pp1 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])))])
+#guard obs case_spreadRootStacked__pp1 == "ok raw=1 n=1"
+
+-- spreadRootStacked__ppp12: (((1, 2)))**
+def case_spreadRootStacked__ppp12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])))])
+#guard obs case_spreadRootStacked__ppp12 == "ok raw=S[1, 2] n=2"
+
+-- spreadRootStacked__le: []**
+def case_spreadRootStacked__le : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral []))])
+#guard obs case_spreadRootStacked__le == "ok raw=S[] n=0"
+
+-- spreadRootStacked__l7: [7]**
+def case_spreadRootStacked__l7 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 7)]))])
+#guard obs case_spreadRootStacked__l7 == "ok raw=7 n=1"
+
+-- spreadRootStacked__l12: [1, 2]**
+def case_spreadRootStacked__l12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 1), (.num 2)]))])
+#guard obs case_spreadRootStacked__l12 == "ok raw=S[1, 2] n=2"
+
+-- spreadRootStacked__l12_3: [[1, 2], 3]**
+def case_spreadRootStacked__l12_3 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])
+#guard obs case_spreadRootStacked__l12_3 == "ok raw=S[L[1, 2], 3] n=2"
+
+-- spreadRootStacked__lle: [[]]**
+def case_spreadRootStacked__lle : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])]))])
+#guard obs case_spreadRootStacked__lle == "ok raw=S[] n=0"
+
+-- spreadRootStacked__l_e: [()]**
+def case_spreadRootStacked__l_e : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)]))])
+#guard obs case_spreadRootStacked__l_e == "ok raw=S[] n=0"
+
+-- spreadRootStacked__l_p12: [(1, 2)]**
+def case_spreadRootStacked__l_p12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])
+#guard obs case_spreadRootStacked__l_p12 == "ok raw=S[1, 2] n=2"
+
+-- spreadRootStacked__p_l12: ([1, 2], 3)**
+def case_spreadRootStacked__p_l12 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])))])
+#guard obs case_spreadRootStacked__p_l12 == "ok raw=S[L[1, 2], 3] n=2"
+
+-- spreadRootStacked__pl1: ([1])**
+def case_spreadRootStacked__pl1 : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])])))])
+#guard obs case_spreadRootStacked__pl1 == "ok raw=1 n=1"
+
+-- collectingStacked__e: F(*a) = a \n F(()**)
+def case_collectingStacked__e : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.emptySequence 0))])])
+#guard obs case_collectingStacked__e == "ok raw=L[] n=1"
+
+-- collectingStacked__n0: F(*a) = a \n F(0**)
+def case_collectingStacked__n0 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 0))])])
+#guard obs case_collectingStacked__n0 == "ok raw=L[0] n=1"
+
+-- collectingStacked__n1: F(*a) = a \n F(1**)
+def case_collectingStacked__n1 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 1))])])
+#guard obs case_collectingStacked__n1 == "ok raw=L[1] n=1"
+
+-- collectingStacked__p1: F(*a) = a \n F((1)**)
+def case_collectingStacked__p1 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1)])))])])
+#guard obs case_collectingStacked__p1 == "ok raw=L[1] n=1"
+
+-- collectingStacked__p12: F(*a) = a \n F((1, 2)**)
+def case_collectingStacked__p12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)])))])])
+#guard obs case_collectingStacked__p12 == "ok raw=L[1, 2] n=1"
+
+-- collectingStacked__p123: F(*a) = a \n F((1, 2, 3)**)
+def case_collectingStacked__p123 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])))])])
+#guard obs case_collectingStacked__p123 == "ok raw=L[1, 2, 3] n=1"
+
+-- collectingStacked__pee: F(*a) = a \n F(((), ())**)
+def case_collectingStacked__pee : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])))])])
+#guard obs case_collectingStacked__pee == "ok raw=L[S[], S[]] n=1"
+
+-- collectingStacked__pe1: F(*a) = a \n F(((), 1)**)
+def case_collectingStacked__pe1 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)])))])])
+#guard obs case_collectingStacked__pe1 == "ok raw=L[S[], 1] n=1"
+
+-- collectingStacked__p1e: F(*a) = a \n F((1, ())**)
+def case_collectingStacked__p1e : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)])))])])
+#guard obs case_collectingStacked__p1e == "ok raw=L[1, S[]] n=1"
+
+-- collectingStacked__p12_3: F(*a) = a \n F(((1, 2), 3)**)
+def case_collectingStacked__p12_3 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])))])])
+#guard obs case_collectingStacked__p12_3 == "ok raw=L[S[1, 2], 3] n=1"
+
+-- collectingStacked__p12_34: F(*a) = a \n F(((1, 2), (3, 4))**)
+def case_collectingStacked__p12_34 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])))])])
+#guard obs case_collectingStacked__p12_34 == "ok raw=L[S[1, 2], S[3, 4]] n=1"
+
+-- collectingStacked__pe_12: F(*a) = a \n F(((), (1, 2))**)
+def case_collectingStacked__pe_12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])))])])
+#guard obs case_collectingStacked__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
+
+-- collectingStacked__ppe1_2: F(*a) = a \n F((((), 1), 2)**)
+def case_collectingStacked__ppe1_2 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])))])])
+#guard obs case_collectingStacked__ppe1_2 == "ok raw=L[S[S[], 1], 2] n=1"
+
+-- collectingStacked__p12_e: F(*a) = a \n F(((1, 2), ())**)
+def case_collectingStacked__p12_e : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])))])])
+#guard obs case_collectingStacked__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
+
+-- collectingStacked__ppe: F(*a) = a \n F((())**)
+def case_collectingStacked__ppe : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)])))])])
+#guard obs case_collectingStacked__ppe == "ok raw=L[] n=1"
+
+-- collectingStacked__pp1: F(*a) = a \n F(((1))**)
+def case_collectingStacked__pp1 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])))])])
+#guard obs case_collectingStacked__pp1 == "ok raw=L[1] n=1"
+
+-- collectingStacked__ppp12: F(*a) = a \n F((((1, 2)))**)
+def case_collectingStacked__ppp12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])))])])
+#guard obs case_collectingStacked__ppp12 == "ok raw=L[1, 2] n=1"
+
+-- collectingStacked__le: F(*a) = a \n F([]**)
+def case_collectingStacked__le : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral []))])])
+#guard obs case_collectingStacked__le == "ok raw=L[] n=1"
+
+-- collectingStacked__l7: F(*a) = a \n F([7]**)
+def case_collectingStacked__l7 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 7)]))])])
+#guard obs case_collectingStacked__l7 == "ok raw=L[7] n=1"
+
+-- collectingStacked__l12: F(*a) = a \n F([1, 2]**)
+def case_collectingStacked__l12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 1), (.num 2)]))])])
+#guard obs case_collectingStacked__l12 == "ok raw=L[1, 2] n=1"
+
+-- collectingStacked__l12_3: F(*a) = a \n F([[1, 2], 3]**)
+def case_collectingStacked__l12_3 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])])
+#guard obs case_collectingStacked__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
+
+-- collectingStacked__lle: F(*a) = a \n F([[]]**)
+def case_collectingStacked__lle : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])]))])])
+#guard obs case_collectingStacked__lle == "ok raw=L[] n=1"
+
+-- collectingStacked__l_e: F(*a) = a \n F([()]**)
+def case_collectingStacked__l_e : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)]))])])
+#guard obs case_collectingStacked__l_e == "ok raw=L[] n=1"
+
+-- collectingStacked__l_p12: F(*a) = a \n F([(1, 2)]**)
+def case_collectingStacked__l_p12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])])
+#guard obs case_collectingStacked__l_p12 == "ok raw=L[1, 2] n=1"
+
+-- collectingStacked__p_l12: F(*a) = a \n F(([1, 2], 3)**)
+def case_collectingStacked__p_l12 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])))])])
+#guard obs case_collectingStacked__p_l12 == "ok raw=L[L[1, 2], 3] n=1"
+
+-- collectingStacked__pl1: F(*a) = a \n F(([1])**)
+def case_collectingStacked__pl1 : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])])))])])
+#guard obs case_collectingStacked__pl1 == "ok raw=L[1] n=1"
+
+-- captureStacked__e: x = ()** \n x
+def case_captureStacked__e : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.emptySequence 0))])] [.resolve "x"])
+#guard obs case_captureStacked__e == "ok raw=S[] n=1"
+
+-- captureStacked__n0: x = 0** \n x
+def case_captureStacked__n0 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 0))])] [.resolve "x"])
+#guard obs case_captureStacked__n0 == "ok raw=0 n=1"
+
+-- captureStacked__n1: x = 1** \n x
+def case_captureStacked__n1 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.num 1))])] [.resolve "x"])
+#guard obs case_captureStacked__n1 == "ok raw=1 n=1"
+
+-- captureStacked__p1: x = (1)** \n x
+def case_captureStacked__p1 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p1 == "ok raw=1 n=1"
+
+-- captureStacked__p12: x = (1, 2)** \n x
+def case_captureStacked__p12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p12 == "ok raw=S[1, 2] n=1"
+
+-- captureStacked__p123: x = (1, 2, 3)** \n x
+def case_captureStacked__p123 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p123 == "ok raw=S[1, 2, 3] n=1"
+
+-- captureStacked__pee: x = ((), ())** \n x
+def case_captureStacked__pee : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)])))])] [.resolve "x"])
+#guard obs case_captureStacked__pee == "ok raw=S[S[], S[]] n=1"
+
+-- captureStacked__pe1: x = ((), 1)** \n x
+def case_captureStacked__pe1 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.num 1)])))])] [.resolve "x"])
+#guard obs case_captureStacked__pe1 == "ok raw=S[S[], 1] n=1"
+
+-- captureStacked__p1e: x = (1, ())** \n x
+def case_captureStacked__p1e : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.num 1), (.emptySequence 0)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p1e == "ok raw=S[1, S[]] n=1"
+
+-- captureStacked__p12_3: x = ((1, 2), 3)** \n x
+def case_captureStacked__p12_3 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
+
+-- captureStacked__p12_34: x = ((1, 2), (3, 4))** \n x
+def case_captureStacked__p12_34 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))])))])] [.resolve "x"])
+#guard obs case_captureStacked__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
+
+-- captureStacked__pe_12: x = ((), (1, 2))** \n x
+def case_captureStacked__pe_12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))])))])] [.resolve "x"])
+#guard obs case_captureStacked__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
+
+-- captureStacked__ppe1_2: x = (((), 1), 2)** \n x
+def case_captureStacked__ppe1_2 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)])))])] [.resolve "x"])
+#guard obs case_captureStacked__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
+
+-- captureStacked__p12_e: x = ((1, 2), ())** \n x
+def case_captureStacked__p12_e : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
+
+-- captureStacked__ppe: x = (())** \n x
+def case_captureStacked__ppe : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.emptySequence 0)])))])] [.resolve "x"])
+#guard obs case_captureStacked__ppe == "ok raw=S[] n=1"
+
+-- captureStacked__pp1: x = ((1))** \n x
+def case_captureStacked__pp1 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])))])] [.resolve "x"])
+#guard obs case_captureStacked__pp1 == "ok raw=1 n=1"
+
+-- captureStacked__ppp12: x = (((1, 2)))** \n x
+def case_captureStacked__ppp12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])))])] [.resolve "x"])
+#guard obs case_captureStacked__ppp12 == "ok raw=S[1, 2] n=1"
+
+-- captureStacked__le: x = []** \n x
+def case_captureStacked__le : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral []))])] [.resolve "x"])
+#guard obs case_captureStacked__le == "ok raw=S[] n=1"
+
+-- captureStacked__l7: x = [7]** \n x
+def case_captureStacked__l7 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 7)]))])] [.resolve "x"])
+#guard obs case_captureStacked__l7 == "ok raw=7 n=1"
+
+-- captureStacked__l12: x = [1, 2]** \n x
+def case_captureStacked__l12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.num 1), (.num 2)]))])] [.resolve "x"])
+#guard obs case_captureStacked__l12 == "ok raw=S[1, 2] n=1"
+
+-- captureStacked__l12_3: x = [[1, 2], 3]** \n x
+def case_captureStacked__l12_3 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [.resolve "x"])
+#guard obs case_captureStacked__l12_3 == "ok raw=S[L[1, 2], 3] n=1"
+
+-- captureStacked__lle: x = [[]]** \n x
+def case_captureStacked__lle : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])]))])] [.resolve "x"])
+#guard obs case_captureStacked__lle == "ok raw=S[] n=1"
+
+-- captureStacked__l_e: x = [()]** \n x
+def case_captureStacked__l_e : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)]))])] [.resolve "x"])
+#guard obs case_captureStacked__l_e == "ok raw=S[] n=1"
+
+-- captureStacked__l_p12: x = [(1, 2)]** \n x
+def case_captureStacked__l_p12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [.resolve "x"])
+#guard obs case_captureStacked__l_p12 == "ok raw=S[1, 2] n=1"
+
+-- captureStacked__p_l12: x = ([1, 2], 3)** \n x
+def case_captureStacked__p_l12 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])))])] [.resolve "x"])
+#guard obs case_captureStacked__p_l12 == "ok raw=S[L[1, 2], 3] n=1"
+
+-- captureStacked__pl1: x = ([1])** \n x
+def case_captureStacked__pl1 : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [.sequenceSpread (.sequenceSpread (.block (alg [] [] [] [(.listLiteral [(.num 1)])])))])] [.resolve "x"])
+#guard obs case_captureStacked__pl1 == "ok raw=1 n=1"
+
 -- special__multiProp: P = 1, 2, 3 \n P
 def case_special__multiProp : Expr :=
   .block (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [.resolve "P"])
@@ -7022,7 +7412,7 @@ def case_special__listLoneCollectingAssignment : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [])
 #guard obs case_special__listLoneCollectingAssignment == "err missingOutput"
 
--- 1386 differential cases.
+-- 1464 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -8330,6 +8720,84 @@ def surfaceCaseIds : List String := [
   "takeCollecting__l_p12",
   "takeCollecting__p_l12",
   "takeCollecting__pl1",
+  "spreadRootStacked__e",
+  "spreadRootStacked__n0",
+  "spreadRootStacked__n1",
+  "spreadRootStacked__p1",
+  "spreadRootStacked__p12",
+  "spreadRootStacked__p123",
+  "spreadRootStacked__pee",
+  "spreadRootStacked__pe1",
+  "spreadRootStacked__p1e",
+  "spreadRootStacked__p12_3",
+  "spreadRootStacked__p12_34",
+  "spreadRootStacked__pe_12",
+  "spreadRootStacked__ppe1_2",
+  "spreadRootStacked__p12_e",
+  "spreadRootStacked__ppe",
+  "spreadRootStacked__pp1",
+  "spreadRootStacked__ppp12",
+  "spreadRootStacked__le",
+  "spreadRootStacked__l7",
+  "spreadRootStacked__l12",
+  "spreadRootStacked__l12_3",
+  "spreadRootStacked__lle",
+  "spreadRootStacked__l_e",
+  "spreadRootStacked__l_p12",
+  "spreadRootStacked__p_l12",
+  "spreadRootStacked__pl1",
+  "collectingStacked__e",
+  "collectingStacked__n0",
+  "collectingStacked__n1",
+  "collectingStacked__p1",
+  "collectingStacked__p12",
+  "collectingStacked__p123",
+  "collectingStacked__pee",
+  "collectingStacked__pe1",
+  "collectingStacked__p1e",
+  "collectingStacked__p12_3",
+  "collectingStacked__p12_34",
+  "collectingStacked__pe_12",
+  "collectingStacked__ppe1_2",
+  "collectingStacked__p12_e",
+  "collectingStacked__ppe",
+  "collectingStacked__pp1",
+  "collectingStacked__ppp12",
+  "collectingStacked__le",
+  "collectingStacked__l7",
+  "collectingStacked__l12",
+  "collectingStacked__l12_3",
+  "collectingStacked__lle",
+  "collectingStacked__l_e",
+  "collectingStacked__l_p12",
+  "collectingStacked__p_l12",
+  "collectingStacked__pl1",
+  "captureStacked__e",
+  "captureStacked__n0",
+  "captureStacked__n1",
+  "captureStacked__p1",
+  "captureStacked__p12",
+  "captureStacked__p123",
+  "captureStacked__pee",
+  "captureStacked__pe1",
+  "captureStacked__p1e",
+  "captureStacked__p12_3",
+  "captureStacked__p12_34",
+  "captureStacked__pe_12",
+  "captureStacked__ppe1_2",
+  "captureStacked__p12_e",
+  "captureStacked__ppe",
+  "captureStacked__pp1",
+  "captureStacked__ppp12",
+  "captureStacked__le",
+  "captureStacked__l7",
+  "captureStacked__l12",
+  "captureStacked__l12_3",
+  "captureStacked__lle",
+  "captureStacked__l_e",
+  "captureStacked__l_p12",
+  "captureStacked__p_l12",
+  "captureStacked__pl1",
   "special__multiProp",
   "special__multiPropCall",
   "special__multiPropCount",
@@ -8417,7 +8885,7 @@ def surfaceCaseIds : List String := [
   "special__listCollectingSpreadCall",
   "special__listLoneCollectingAssignment"
 ]
-#guard surfaceCaseIds.length == 1386
+#guard surfaceCaseIds.length == 1464
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -8513,5 +8981,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 13
 
 -- 13 internal-node cases.
--- Total: 1399 case guards (1386 surface + 13 internal-node).
+-- Total: 1477 case guards (1464 surface + 13 internal-node).
 end SemanticExplorerCases

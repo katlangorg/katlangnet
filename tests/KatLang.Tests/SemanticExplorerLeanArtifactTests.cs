@@ -107,7 +107,10 @@ public class SemanticExplorerLeanArtifactTests
         var allCases = SemanticExplorerCorpus.AllCases();
         var observations = allCases.Select(SemanticExplorerHarness.Observe).ToList();
         var surface = allCases.Count;
-        var templates = allCases.Count(c => !c.Id.StartsWith("special__", StringComparison.Ordinal));
+        var templateCases = allCases.Where(c => !c.Id.StartsWith("special__", StringComparison.Ordinal)).ToList();
+        var templates = templateCases.Count;
+        var templateIds = templateCases.Select(c => c.TemplateId).Distinct().Count();
+        var valueIds = templateCases.Select(c => c.ValueId).Distinct().Count();
         var specials = surface - templates;
         var leanRepresentable = allCases.Count(c => c.LeanProgram is not null);
         var internalNodes = SemanticExplorerCorpus.InternalNodeCases().Count;
@@ -120,7 +123,7 @@ public class SemanticExplorerLeanArtifactTests
         Assert.Contains($"(**{Count(leanRepresentable)} surface cases**", document, StringComparison.Ordinal);
         var expectedSurfaceRow =
             $"| Surface corpus (= C# semantic report surface section) | {Count(surface)} | " +
-            $"{Count(templates)} template cases (51 receiver templates x 26 values) + {specials} specials; " +
+            $"{Count(templates)} template cases ({templateIds} receiver templates x {valueIds} values) + {specials} specials; " +
             $"outcomes {Count(outcomes["ok"])} ok / {Count(outcomes["err"])} err / " +
             $"{Count(outcomes["parseError"])} parse-error |";
         Assert.True(

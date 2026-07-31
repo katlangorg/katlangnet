@@ -354,6 +354,22 @@ public static class SemanticExplorerCorpus
         new("takeCollecting",
             v => $"G(*a) = a\nG(take({v.Source}, 1))",
             v => LProg([LCollectingG], [LCall("G", LCall("take", v.LeanExpr, ".num 1"))])),
+        // Stacked (repeated) spread `value**`: each extra written star crosses
+        // one ordinary capture boundary (`items ∘ capture` per layer), so a
+        // multi-item first spread is a fixed point and only a lone structured
+        // item opens one more boundary. These three templates differentially
+        // pin the repeated-spread chain at the root-emission, collecting-call,
+        // and capture receivers across every corpus value (the hand-written
+        // stackedSpread* CoreTests guards pin the law on selected values only).
+        new("spreadRootStacked",
+            v => $"{v.Source}**",
+            v => LProg([], [$".sequenceSpread (.sequenceSpread {v.LeanExpr})"])),
+        new("collectingStacked",
+            v => $"F(*a) = a\nF({v.Source}**)",
+            v => LProg([LCollectingF], [LCall("F", $".sequenceSpread (.sequenceSpread {v.LeanExpr})")])),
+        new("captureStacked",
+            v => $"x = {v.Source}**\nx",
+            v => LProg([LVal("x", $".sequenceSpread (.sequenceSpread {v.LeanExpr})")], [".resolve \"x\""])),
     ];
 
     // ----- Specials -----------------------------------------------------------
