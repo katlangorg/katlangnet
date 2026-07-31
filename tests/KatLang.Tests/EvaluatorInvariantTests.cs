@@ -22,10 +22,10 @@ public class EvaluatorInvariantTests
     [InlineData("[1, 2, 3]")]
     [InlineData("()")]
     [InlineData("'text'")]
-    [InlineData("F(x) = x * 2\nOutput = range(1, 4).map(F)")]
+    [InlineData("F(x) = x * 2\nrange(1, 4).map(F)")]
     [InlineData("1 / 0")]                       // structured error
-    [InlineData("Output = missing")]            // structured error
-    [InlineData("f(0) = 1\nf(n) = n\nOutput = f(9)")]
+    [InlineData("missing")]            // structured error
+    [InlineData("f(0) = 1\nf(n) = n\nf(9)")]
     public void PlainAndCounted_AgreeOnOutcomeAndValue(string source)
     {
         var block = Block(source);
@@ -59,15 +59,15 @@ public class EvaluatorInvariantTests
 
     // ── Determinism and input independence ───────────────────────────────────
     [Theory]
-    [InlineData("A = 1 + 1\nOutput = A + A")]
-    [InlineData("x, y = (1, 2)\nOutput = x + y")]
-    [InlineData("F(x) = x + 1\nOutput = range(1, 3).map(F)")]
+    [InlineData("A = 1 + 1\nA + A")]
+    [InlineData("x, y = (1, 2)\nx + y")]
+    [InlineData("F(x) = x + 1\nrange(1, 3).map(F)")]
     public void Evaluation_IsDeterministicAndInputIndependent(string source)
     {
         string First() => KatLangEngine.Run(source).ToDisplayString();
 
         var a1 = First();
-        _ = KatLangEngine.Run("B = (C = 5)\nD(x) = x + 1\nOutput = D(B.C)");   // unrelated work
+        _ = KatLangEngine.Run("B = (C = 5)\nD(x) = x + 1\nD(B.C)");   // unrelated work
         var a2 = First();
 
         Assert.Equal(a1, a2);
@@ -107,7 +107,7 @@ public class EvaluatorInvariantTests
     [Fact]
     public void ModestFiniteRecursion_Evaluates()
     {
-        var engine = KatLangEngine.Run("f(0) = 0\nf(n) = f(n - 1)\nOutput = f(100)");
+        var engine = KatLangEngine.Run("f(0) = 0\nf(n) = f(n - 1)\nf(100)");
         Assert.IsType<RunResult.Success>(engine);
     }
 }

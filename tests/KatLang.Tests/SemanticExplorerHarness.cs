@@ -189,7 +189,6 @@ public static class SemanticExplorerHarness
             EvalError.AmbiguousOpen => "ambiguousOpen",
             EvalError.DuplicateProperty => "duplicateProperty",
             EvalError.DuplicateBranchPattern => "duplicateBranchPattern",
-            EvalError.SpecialOutputAccess => "specialOutputAccess",
             EvalError.ExplicitParametersRequireOutput => "explicitParamsRequireOutput",
             EvalError.UnresolvedImplicitParams => "unresolvedImplicitParams",
             // C#-only: the Lean core uses unbounded Int and cannot overflow.

@@ -39,7 +39,7 @@ public class ClauseFamilyScalabilityTests
         var sb = new StringBuilder();
         for (var i = 0; i < 50; i++)
             sb.Append($"F({i}) = {i * 10}\n");
-        sb.Append("Output = F(0), F(25), F(49)");
+        sb.Append("F(0), F(25), F(49)");
         Assert.Equal([0m, 250m, 490m], Atoms(sb.ToString()));
     }
 
@@ -48,7 +48,7 @@ public class ClauseFamilyScalabilityTests
     {
         // F(a) and F(b) match the same inputs (any one value): match-equivalent, so the second is a
         // duplicate branch even though the binder names differ.
-        var duplicates = DuplicateBranchDiagnostics("F(a) = 1\nF(b) = 2\nOutput = F(3)");
+        var duplicates = DuplicateBranchDiagnostics("F(a) = 1\nF(b) = 2\nF(3)");
         Assert.Single(duplicates);
     }
 
@@ -56,38 +56,38 @@ public class ClauseFamilyScalabilityTests
     public void LiteralAndBinder_AreNotEquivalent()
     {
         // F(0) matches only 0; F(x) matches anything. Distinct — no duplicate — and both dispatch.
-        Assert.Empty(DuplicateBranchDiagnostics("F(0) = 1\nF(x) = 2\nOutput = F(0)"));
-        Assert.Equal([1m, 2m], Atoms("F(0) = 1\nF(x) = 2\nOutput = F(0), F(7)"));
+        Assert.Empty(DuplicateBranchDiagnostics("F(0) = 1\nF(x) = 2\nF(0)"));
+        Assert.Equal([1m, 2m], Atoms("F(0) = 1\nF(x) = 2\nF(0), F(7)"));
     }
 
     [Fact]
     public void DistinctLiteralClauses_AreNotDuplicates()
-        => Assert.Empty(DuplicateBranchDiagnostics("F(0) = 1\nF(1) = 2\nF(2) = 3\nOutput = F(1)"));
+        => Assert.Empty(DuplicateBranchDiagnostics("F(0) = 1\nF(1) = 2\nF(2) = 3\nF(1)"));
 
     [Fact]
     public void RepeatedBinderStructure_MustAgree_ForEquivalence()
     {
         // (a, a) constrains the two positions to be EQUAL; (b, c) does not. Different match sets, so
         // NOT equivalent — no duplicate.
-        Assert.Empty(DuplicateBranchDiagnostics("F((a, a)) = 1\nF((b, c)) = 2\nOutput = F((1, 2))"));
+        Assert.Empty(DuplicateBranchDiagnostics("F((a, a)) = 1\nF((b, c)) = 2\nF((1, 2))"));
 
         // (a, a) and (b, b) impose the same equality constraint: equivalent, so a duplicate.
-        Assert.Single(DuplicateBranchDiagnostics("F((a, a)) = 1\nF((b, b)) = 2\nOutput = F((1, 1))"));
+        Assert.Single(DuplicateBranchDiagnostics("F((a, a)) = 1\nF((b, b)) = 2\nF((1, 1))"));
     }
 
     [Fact]
     public void NestedSequencePatterns_CompareStructurally()
     {
         // (0, x) vs (0, y): literal 0 equal, binder renamed — equivalent, duplicate.
-        Assert.Single(DuplicateBranchDiagnostics("F((0, x)) = 1\nF((0, y)) = 2\nOutput = F((0, 9))"));
+        Assert.Single(DuplicateBranchDiagnostics("F((0, x)) = 1\nF((0, y)) = 2\nF((0, 9))"));
 
         // (0, x) vs (1, x): leading literals differ — not equivalent, no duplicate.
-        Assert.Empty(DuplicateBranchDiagnostics("F((0, x)) = 1\nF((1, x)) = 2\nOutput = F((0, 9))"));
+        Assert.Empty(DuplicateBranchDiagnostics("F((0, x)) = 1\nF((1, x)) = 2\nF((0, 9))"));
     }
 
     [Fact]
     public void DifferentArityNestedPatterns_AreNotEquivalent()
-        => Assert.Empty(DuplicateBranchDiagnostics("F((a, b)) = 1\nF((a, b, c)) = 2\nOutput = F((1, 2))"));
+        => Assert.Empty(DuplicateBranchDiagnostics("F((a, b)) = 1\nF((a, b, c)) = 2\nF((1, 2))"));
 
     // ───────────────────────── diagnostics: presence, order, spans ─────────────────────────
 
@@ -97,7 +97,7 @@ public class ClauseFamilyScalabilityTests
         var sb = new StringBuilder("F(0) = 0\nF(0) = 1\n");
         for (var i = 1; i < 40; i++)
             sb.Append($"F({i}) = {i}\n");
-        sb.Append("Output = F(0)");
+        sb.Append("F(0)");
         Assert.Single(DuplicateBranchDiagnostics(sb.ToString()));
     }
 
@@ -107,7 +107,7 @@ public class ClauseFamilyScalabilityTests
         var sb = new StringBuilder();
         for (var i = 0; i < 40; i++)
             sb.Append($"F({i}) = {i}\n");
-        sb.Append("F(39) = 999\nOutput = F(0)"); // duplicates the last distinct clause
+        sb.Append("F(39) = 999\nF(0)"); // duplicates the last distinct clause
         Assert.Single(DuplicateBranchDiagnostics(sb.ToString()));
     }
 
@@ -119,7 +119,7 @@ public class ClauseFamilyScalabilityTests
         var sb = new StringBuilder();
         for (var i = 0; i < 10; i++)
             sb.Append($"F({i}) = {i}\n");
-        sb.Append("F(2) = 20\nF(5) = 50\nF(8) = 80\nOutput = F(0)");
+        sb.Append("F(2) = 20\nF(5) = 50\nF(8) = 80\nF(0)");
 
         var duplicates = DuplicateBranchDiagnostics(sb.ToString());
         Assert.Equal(3, duplicates.Count);
@@ -131,7 +131,7 @@ public class ClauseFamilyScalabilityTests
     [Fact]
     public void DuplicateDiagnostic_CarriesTheDuplicateClauseSpan()
     {
-        var duplicates = DuplicateBranchDiagnostics("F(0) = 1\nF(1) = 2\nF(0) = 3\nOutput = F(0)");
+        var duplicates = DuplicateBranchDiagnostics("F(0) = 1\nF(1) = 2\nF(0) = 3\nF(0)");
         var duplicate = Assert.Single(duplicates);
         Assert.Equal(3, duplicate.Span.StartLineNumber); // the offending re-declaration, not the original
     }
@@ -146,7 +146,7 @@ public class ClauseFamilyScalabilityTests
             Classify(0) = 100
             Classify(1) = 200
             Classify(n) = n
-            Output = Classify(0), Classify(1), Classify(2), Classify(7)
+            Classify(0), Classify(1), Classify(2), Classify(7)
             """;
         Assert.Equal([100m, 200m, 2m, 7m], Atoms(source));
     }
@@ -158,7 +158,7 @@ public class ClauseFamilyScalabilityTests
         // duplicate is caught at parse time (the runtime HasDuplicateBranchPatterns guard reaches the
         // same verdict for hand-built ASTs); the indexed single-pass check preserves that rejection.
         var failure = Assert.IsType<RunResult.ParseFailure>(
-            KatLangEngine.Run("F(a) = 1\nF(b) = 2\nOutput = F(3)"));
+            KatLangEngine.Run("F(a) = 1\nF(b) = 2\nF(3)"));
         Assert.Contains(
             failure.Errors,
             e => e.Message.Contains("Duplicate branch", StringComparison.Ordinal));
@@ -265,6 +265,6 @@ public class ClauseFamilyScalabilityTests
         var sb = new StringBuilder(n * 12);
         for (var i = 0; i < n; i++)
             sb.Append("F(").Append(i).Append(") = ").Append(i).Append('\n');
-        return sb.Append("Output = F(0)").ToString();
+        return sb.Append("F(0)").ToString();
     }
 }

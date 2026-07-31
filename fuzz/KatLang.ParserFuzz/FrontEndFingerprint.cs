@@ -60,7 +60,7 @@ internal static class FrontEndFingerprint
             case Algorithm.User u:
                 sb.Append("User{param:").Append(u.IsParametrized ? '1' : '0')
                   .Append(",decon:").Append(u.IsAssignmentDeconstructionHelper ? '1' : '0')
-                  .Append(",outSpan:").Append(Span(u.ExplicitOutputSpan)).Append("}(");
+                  .Append("}(");
                 sb.Append("params[");
                 foreach (var p in u.Parameters) ParamDecl(sb, p);
                 sb.Append("]patterns[");

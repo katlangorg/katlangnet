@@ -155,7 +155,7 @@ public class EditorFuzzHarnessTests
     [Fact]
     public void UnresolvedLoad_ThrowsFromBuild_ButTheHarnessDeclinesCleanly()
     {
-        const string source = "Data = load('lib')\nOutput = Data";
+        const string source = "Data = load('lib')\nData";
         var root = Parser.Parse(source).Root;
 
         // The contract: building a semantic model from an AST that still carries a load throws.
@@ -187,7 +187,7 @@ public class EditorFuzzHarnessTests
     [Fact]
     public void OrdinaryAndDottedCall_ResolveToTheSameDeclaration()
     {
-        const string source = "MmF(c, n) = c.take(n)\nData = (1, 2, 3)\nA = MmF(Data, 2)\nB = Data.MmF(2)\nOutput = A";
+        const string source = "MmF(c, n) = c.take(n)\nData = (1, 2, 3)\nA = MmF(Data, 2)\nB = Data.MmF(2)\nA";
         var model = Assert.IsType<SemanticModel>(EditorModel.Run(source, EditorExecutionMode.Elaborated).Model);
 
         var ordinary = model.IdentifierResolutions.Single(resolution =>

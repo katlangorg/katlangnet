@@ -68,8 +68,8 @@ public class FrontEndPipelineInvariantTests
 
     // ── Determinism across two Process() calls on the same source ────────────
     [Theory]
-    [InlineData("Area = w * h\nOutput = Area")]
-    [InlineData("x, y, z = (1, 2, 3)\nOutput = x + y + z")]
+    [InlineData("Area = w * h\nArea")]
+    [InlineData("x, y, z = (1, 2, 3)\nx + y + z")]
     [InlineData("fib(0) = 0\nfib(1) = 1\nfib(n) = n")]
     [InlineData("a, *mid, z = (1, 2, 3, 4)")]
     public void Frontend_Process_IsDeterministic(string source)
@@ -87,8 +87,8 @@ public class FrontEndPipelineInvariantTests
     [Fact]
     public void Deconstruction_SyntheticNames_AreInputIndependent()
     {
-        const string a = "x, *y, z = (1, 2, 3, 4)\nOutput = x + z";
-        const string b = "p, q = (9, 8)\nHelper(k) = k + p\nOutput = Helper(q)";
+        const string a = "x, *y, z = (1, 2, 3, 4)\nx + z";
+        const string b = "p, q = (9, 8)\nHelper(k) = k + p\nHelper(q)";
 
         var a1 = PropertyNames(FrontEndPipeline.Process(a).ElaboratedRoot);
         _ = FrontEndPipeline.Process(b);                 // unrelated work in between
@@ -101,7 +101,7 @@ public class FrontEndPipelineInvariantTests
     // ── Public wrapper parity: Parser.Parse == Process().ToParseResult() ──────
     [Theory]
     [InlineData("Area = w * h")]
-    [InlineData("x, y = (1, 2)\nOutput = x")]
+    [InlineData("x, y = (1, 2)\nx")]
     [InlineData("g(0) = 1\ng(n) = n * 2")]
     [InlineData("(1")]
     public void PublicWrapper_Matches_Process(string source)

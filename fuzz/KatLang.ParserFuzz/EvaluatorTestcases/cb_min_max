@@ -1,2 +1,2 @@
 V = (3, 1, 2)
-Output = V.min, V.max
+V.min, V.max

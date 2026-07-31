@@ -287,19 +287,19 @@ public class Utf16LexerContractTests
     {
         // Isolated surrogates included: nothing on the path validates or replaces a code unit, and
         // the string's Length is its UTF-16 code-unit count.
-        Assert.Equal("\uD83D\uDE00", Evaluate("Output = '\uD83D\uDE00'"));
-        Assert.Equal("\uD83D", Evaluate("Output = '\uD83D'"));
-        Assert.Equal("\uDE00", Evaluate("Output = '\uDE00'"));
-        Assert.Equal("\uDE00\uD83D", Evaluate("Output = '\uDE00\uD83D'"));
-        Assert.Equal("\u0000", Evaluate("Output = '\u0000'"));   // NUL is ordinary content
-        Assert.Equal("\u00A0", Evaluate("Output = '\u00A0'"));       // and so is a no-break space
-        Assert.Equal(2, Evaluate("Output = '\uD83D\uDE00'").Length);
-        Assert.Equal(1, Evaluate("Output = '\uD83D'").Length);
+        Assert.Equal("\uD83D\uDE00", Evaluate("'\uD83D\uDE00'"));
+        Assert.Equal("\uD83D", Evaluate("'\uD83D'"));
+        Assert.Equal("\uDE00", Evaluate("'\uDE00'"));
+        Assert.Equal("\uDE00\uD83D", Evaluate("'\uDE00\uD83D'"));
+        Assert.Equal("\u0000", Evaluate("'\u0000'"));   // NUL is ordinary content
+        Assert.Equal("\u00A0", Evaluate("'\u00A0'"));       // and so is a no-break space
+        Assert.Equal(2, Evaluate("'\uD83D\uDE00'").Length);
+        Assert.Equal(1, Evaluate("'\uD83D'").Length);
 
         // Precomposed and decomposed forms stay distinct all the way to the value.
-        Assert.Equal(1, Evaluate("Output = '\u00E9'").Length);
-        Assert.Equal(2, Evaluate("Output = 'e\u0301'").Length);
-        Assert.NotEqual(Evaluate("Output = '\u00E9'"), Evaluate("Output = 'e\u0301'"));
+        Assert.Equal(1, Evaluate("'\u00E9'").Length);
+        Assert.Equal(2, Evaluate("'e\u0301'").Length);
+        Assert.NotEqual(Evaluate("'\u00E9'"), Evaluate("'e\u0301'"));
     }
 
     // ── Comments ─────────────────────────────────────────────────────────────
@@ -307,9 +307,9 @@ public class Utf16LexerContractTests
     [Fact]
     public void CommentsRunToALineFeedOrACarriageReturn_AndThereAreNoBlockComments()
     {
-        Assert.Equal(" x", CommentOf("// x\nOutput = 1"));
-        Assert.Equal(" x", CommentOf("// x\r\nOutput = 1"));
-        Assert.Equal(" x", CommentOf("// x\rOutput = 1"));
+        Assert.Equal(" x", CommentOf("// x\n1"));
+        Assert.Equal(" x", CommentOf("// x\r\n1"));
+        Assert.Equal(" x", CommentOf("// x\rP = 1"));
         Assert.Equal(" x", CommentOf("// x"));                    // running to end of file
 
         // There is no /* ... */ form: the characters lex individually.
@@ -322,7 +322,7 @@ public class Utf16LexerContractTests
     [Fact]
     public void CommentTextIsTheExactSourceSliceAndCannotDisturbTheFollowingToken()
     {
-        const string source = "// \uD83D \u0301\nOutput = 1";
+        const string source = "// \uD83D \u0301\n1";
         var (tokens, _) = Lexer.Tokenize(source);
 
         var comment = Assert.Single(tokens, t => t.Kind == TokenKind.Comment);
@@ -330,9 +330,9 @@ public class Utf16LexerContractTests
         Assert.Equal(source[comment.Position..(comment.Position + comment.Length)][2..], comment.StringValue);
 
         // The token after the comment is exactly where it would be without it.
-        var output = Assert.Single(tokens, t => t.Kind == TokenKind.Identifier);
-        Assert.Equal(2, output.Line);
-        Assert.Equal(1, output.Column);
+        var following = Assert.Single(tokens, t => t.Kind == TokenKind.Number);
+        Assert.Equal(2, following.Line);
+        Assert.Equal(1, following.Column);
     }
 
     [Fact]

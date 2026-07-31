@@ -72,26 +72,26 @@ public class EvaluationLimitsTests
 
     [Fact]
     public void DirectRecursion_BelowLimit_Succeeds()
-        => Assert.False(Eval($"{CountDown}Output = f(5)", Depth(16)).IsError);
+        => Assert.False(Eval($"{CountDown}f(5)", Depth(16)).IsError);
 
     [Fact]
     public void DirectRecursion_ExactlyAtLimit_Succeeds()
     {
         // Depth 16 admits exactly 16 nested invocations, so f(15) is the deepest call
         // that fits: f(15) .. f(0).
-        Assert.False(Eval($"{CountDown}Output = f(15)", Depth(16)).IsError);
+        Assert.False(Eval($"{CountDown}f(15)", Depth(16)).IsError);
     }
 
     [Fact]
     public void DirectRecursion_OneBeyondLimit_ReturnsDepthError()
     {
-        var error = ErrorOf($"{CountDown}Output = f(16)", Depth(16));
+        var error = ErrorOf($"{CountDown}f(16)", Depth(16));
         Assert.Equal(16, Assert.IsType<EvalError.EvaluationDepthExceeded>(error).Limit);
     }
 
     [Fact]
     public void UnboundedDirectRecursion_ReturnsDepthError()
-        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("f(x) = f(x)\nOutput = f(1)", Depth(24)));
+        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("f(x) = f(x)\nf(1)", Depth(24)));
 
     [Fact]
     public void DefaultLimits_UnboundedRecursion_ReturnsResourceErrorWithoutCrashing()
@@ -99,7 +99,7 @@ public class EvaluationLimitsTests
         // No configured limits: the internal ceiling must still apply on the public
         // engine path. The exact kind may be the deterministic depth limit or the
         // machine-dependent stack backstop, but it is always structured.
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("f(x) = f(x)\nOutput = f(1)"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("f(x) = f(x)\nf(1)"));
         Assert.Single(failure.Errors);
     }
 
@@ -108,68 +108,68 @@ public class EvaluationLimitsTests
     [Fact]
     public void MutualRecursion_TwoFunctions_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("f(x) = g(x)\ng(x) = f(x)\nOutput = f(1)", Depth(20)));
+            ErrorOf("f(x) = g(x)\ng(x) = f(x)\nf(1)", Depth(20)));
 
     [Fact]
     public void MutualRecursion_ThreeFunctionCycle_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("f(x) = g(x)\ng(x) = h(x)\nh(x) = f(x)\nOutput = f(1)", Depth(20)));
+            ErrorOf("f(x) = g(x)\ng(x) = h(x)\nh(x) = f(x)\nf(1)", Depth(20)));
 
     // ── Depth: property recursion ────────────────────────────────────────────
 
     [Fact]
     public void PropertyRecursion_SelfReference_ReturnsDepthError()
-        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = A\nOutput = A", Depth(12)));
+        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = A\nA", Depth(12)));
 
     [Fact]
     public void PropertyRecursion_MutuallyDependent_ReturnsDepthError()
-        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = B\nB = A\nOutput = A", Depth(12)));
+        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = B\nB = A\nA", Depth(12)));
 
     [Fact]
     public void PropertyRecursion_ExplicitCallForm_ReturnsDepthError()
-        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = A()\nOutput = A()", Depth(12)));
+        => Assert.IsType<EvalError.EvaluationDepthExceeded>(ErrorOf("A = A()\nA()", Depth(12)));
 
     [Fact]
     public void PropertyStyleAccess_RepeatedReads_StayWellWithinDepth()
     {
         // Depth is about ACTIVE invocations, so repeated (cached) property reads never
         // accumulate depth however many times the property is named.
-        Assert.False(Eval("A = 1\nOutput = A + A + A + A + A + A + A + A", Depth(4)).IsError);
+        Assert.False(Eval("A = 1\nA + A + A + A + A + A + A + A", Depth(4)).IsError);
     }
 
     // ── Depth: conditional recursion ─────────────────────────────────────────
 
     [Fact]
     public void ConditionalRecursion_WithBaseCase_TerminatesWithinLimit()
-        => Assert.False(Eval($"{CountDown}Output = f(3)", Depth(8)).IsError);
+        => Assert.False(Eval($"{CountDown}f(3)", Depth(8)).IsError);
 
     [Fact]
     public void ConditionalRecursion_WithoutBaseCase_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("f(0) = f(0)\nf(n) = f(n)\nOutput = f(0)", Depth(16)));
+            ErrorOf("f(0) = f(0)\nf(n) = f(n)\nf(0)", Depth(16)));
 
     [Fact]
     public void IfBuiltinRecursion_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("f(n) = if(n > 0, f(n - 1), 0)\nOutput = f(1000)", Depth(16)));
+            ErrorOf("f(n) = if(n > 0, f(n - 1), 0)\nf(1000)", Depth(16)));
 
     // ── Depth: callback and higher-order recursion ───────────────────────────
 
     [Fact]
     public void CollectionCallbackRecursion_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("F(x) = [x].map(F)\nOutput = F(1)", Depth(16)));
+            ErrorOf("F(x) = [x].map(F)\nF(1)", Depth(16)));
 
     [Fact]
     public void HigherOrderArgumentRecursion_ReturnsDepthError()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("Apply(g, x) = g(x)\nF(x) = Apply(F, x)\nOutput = F(1)", Depth(16)));
+            ErrorOf("Apply(g, x) = g(x)\nF(x) = Apply(F, x)\nF(1)", Depth(16)));
 
     // ── Error shape: span, context, display ──────────────────────────────────
 
     [Fact]
     public void DepthError_CarriesSourceSpan()
-        => Assert.NotNull(ErrorOf($"{CountDown}Output = f(50)", Depth(8)).Span);
+        => Assert.NotNull(ErrorOf($"{CountDown}f(50)", Depth(8)).Span);
 
     [Fact]
     public void DepthError_IsNotBuriedUnderOneContextFramePerActiveCall()
@@ -177,14 +177,14 @@ public class EvaluationLimitsTests
         // A depth failure is a property of the RUN, not of any one call on the chain:
         // accumulating one "while evaluating call to f" frame per active invocation
         // would produce hundreds of identical lines that say nothing extra.
-        var error = ErrorOf($"{CountDown}Output = f(50)", Depth(8));
+        var error = ErrorOf($"{CountDown}f(50)", Depth(8));
         Assert.IsType<EvalError.EvaluationDepthExceeded>(error);
     }
 
     [Fact]
     public void DepthError_PublicDisplayIsStableAndSingleLine()
     {
-        var display = KatLangEngine.Run($"{CountDown}Output = f(50)", new RunOptions { EvaluationLimits = Depth(8) })
+        var display = KatLangEngine.Run($"{CountDown}f(50)", new RunOptions { EvaluationLimits = Depth(8) })
             .ToDisplayString();
         Assert.Equal("[2:10] Evaluation recursion limit of 8 was exceeded", display);
     }
@@ -192,7 +192,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void StepLimitError_PublicDisplayIsStable()
     {
-        var display = Run("Step = x, 1\nOutput = Step.while(0)", Steps(25)).ToDisplayString();
+        var display = Run("Step = x, 1\nStep.while(0)", Steps(25)).ToDisplayString();
         Assert.Contains("Evaluation step limit of 25 was exceeded", display);
     }
 
@@ -201,7 +201,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void EngineRun_AppliesConfiguredDepthLimit()
     {
-        var failure = Assert.IsType<RunResult.EvalFailure>(Run($"{CountDown}Output = f(40)", Depth(8)));
+        var failure = Assert.IsType<RunResult.EvalFailure>(Run($"{CountDown}f(40)", Depth(8)));
         Assert.Contains("recursion limit of 8", failure.Errors[0].Message);
     }
 
@@ -209,7 +209,7 @@ public class EvaluationLimitsTests
     public void EvaluateToAtoms_AppliesConfiguredDepthLimit()
     {
         var ex = Assert.Throws<KatLangException>(
-            () => KatLangEngine.EvaluateToAtoms($"{CountDown}Output = f(40)", new RunOptions { EvaluationLimits = Depth(8) }));
+            () => KatLangEngine.EvaluateToAtoms($"{CountDown}f(40)", new RunOptions { EvaluationLimits = Depth(8) }));
         Assert.Contains("recursion limit of 8", ex.Errors[0].Message);
     }
 
@@ -217,12 +217,12 @@ public class EvaluationLimitsTests
     public void EvaluateToString_AppliesConfiguredDepthLimit()
         => Assert.Contains(
             "recursion limit of 8",
-            KatLangEngine.EvaluateToString($"{CountDown}Output = f(40)", new RunOptions { EvaluationLimits = Depth(8) }));
+            KatLangEngine.EvaluateToString($"{CountDown}f(40)", new RunOptions { EvaluationLimits = Depth(8) }));
 
     [Fact]
     public void PlainAndCountedEvaluators_AgreeOnLimitOutcome()
     {
-        var expr = new Expr.Block(Parser.Parse($"{CountDown}Output = f(40)").Root);
+        var expr = new Expr.Block(Parser.Parse($"{CountDown}f(40)").Root);
         var plain = Evaluator.Run(expr, Depth(8));
         var counted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance, Depth(8));
         Assert.IsType<EvalError.EvaluationDepthExceeded>(plain.Error);
@@ -232,14 +232,14 @@ public class EvaluationLimitsTests
     [Fact]
     public void RunFlat_AppliesConfiguredDepthLimit()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            Evaluator.RunFlat(new Expr.Block(Parser.Parse($"{CountDown}Output = f(40)").Root), Depth(8)).Error);
+            Evaluator.RunFlat(new Expr.Block(Parser.Parse($"{CountDown}f(40)").Root), Depth(8)).Error);
 
     [Fact]
     public void LowLevelEvaluatorDefaults_AreBoundedNotUnlimited()
     {
         // The parameterless public overloads must not be an unguarded back door.
-        Assert.True(Evaluator.Run(new Expr.Block(Parser.Parse("f(x) = f(x)\nOutput = f(1)").Root)).IsError);
-        Assert.True(Evaluator.RunFlat(new Expr.Block(Parser.Parse("f(x) = f(x)\nOutput = f(1)").Root)).IsError);
+        Assert.True(Evaluator.Run(new Expr.Block(Parser.Parse("f(x) = f(x)\nf(1)").Root)).IsError);
+        Assert.True(Evaluator.RunFlat(new Expr.Block(Parser.Parse("f(x) = f(x)\nf(1)").Root)).IsError);
     }
 
     // ── Entry-point x configuration depth matrix ─────────────────────────────
@@ -301,8 +301,8 @@ public class EvaluationLimitsTests
     public void CeilingEquivalentConfigurations_AdmitExactlyOneLessThanTheCeiling(int? maxDepth)
     {
         var limits = maxDepth is { } d ? new EvaluationLimits { MaxDepth = d } : null;
-        AssertAllEntryPoints($"{CountDown}Output = f({EvaluationLimits.MaxSupportedDepth - 1})", limits, expectCompleted: true);
-        AssertAllEntryPoints($"{CountDown}Output = f({EvaluationLimits.MaxSupportedDepth})", limits, expectCompleted: false);
+        AssertAllEntryPoints($"{CountDown}f({EvaluationLimits.MaxSupportedDepth - 1})", limits, expectCompleted: true);
+        AssertAllEntryPoints($"{CountDown}f({EvaluationLimits.MaxSupportedDepth})", limits, expectCompleted: false);
     }
 
     [Theory]
@@ -314,21 +314,21 @@ public class EvaluationLimitsTests
         // succeed on any default path. (The Phase-5 report's "f(223) succeeds" line was
         // stale text from the earlier 256 calibration and is corrected here.)
         var limits = maxDepth is { } d ? new EvaluationLimits { MaxDepth = d } : null;
-        AssertAllEntryPoints($"{CountDown}Output = f(223)", limits, expectCompleted: false);
+        AssertAllEntryPoints($"{CountDown}f(223)", limits, expectCompleted: false);
     }
 
     [Fact]
     public void ConfiguredLowerLimit_AdmitsExactlyOneLessThanItself()
     {
-        AssertAllEntryPoints($"{CountDown}Output = f(63)", Depth(64), expectCompleted: true);
-        AssertAllEntryPoints($"{CountDown}Output = f(64)", Depth(64), expectCompleted: false);
+        AssertAllEntryPoints($"{CountDown}f(63)", Depth(64), expectCompleted: true);
+        AssertAllEntryPoints($"{CountDown}f(64)", Depth(64), expectCompleted: false);
     }
 
     [Fact]
     public void ConfiguredLimitCannotRaiseTheCeiling()
     {
         // A request above MaxSupportedDepth is clamped, never honoured.
-        AssertAllEntryPoints($"{CountDown}Output = f(200)", new EvaluationLimits { MaxDepth = 100_000 }, expectCompleted: false);
+        AssertAllEntryPoints($"{CountDown}f(200)", new EvaluationLimits { MaxDepth = 100_000 }, expectCompleted: false);
     }
 
     // ── Run-scoped state isolation ───────────────────────────────────────────
@@ -337,18 +337,18 @@ public class EvaluationLimitsTests
     public void RepeatedRuns_SharingOneOptionsInstance_EachStartFresh()
     {
         var options = new RunOptions { EvaluationLimits = Steps(200) };
-        var first = KatLangEngine.Run($"{CountDown}Output = f(20)", options).ToDisplayString();
+        var first = KatLangEngine.Run($"{CountDown}f(20)", options).ToDisplayString();
         for (var i = 0; i < 5; i++)
-            Assert.Equal(first, KatLangEngine.Run($"{CountDown}Output = f(20)", options).ToDisplayString());
+            Assert.Equal(first, KatLangEngine.Run($"{CountDown}f(20)", options).ToDisplayString());
     }
 
     [Fact]
     public void FailedRun_DoesNotAffectTheNextRun_AbaDeterminism()
     {
         var options = new RunOptions { EvaluationLimits = Steps(60) };
-        var a1 = KatLangEngine.Run($"{CountDown}Output = f(10)", options).ToDisplayString();
-        var b = KatLangEngine.Run($"{CountDown}Output = f(10000)", options).ToDisplayString();
-        var a2 = KatLangEngine.Run($"{CountDown}Output = f(10)", options).ToDisplayString();
+        var a1 = KatLangEngine.Run($"{CountDown}f(10)", options).ToDisplayString();
+        var b = KatLangEngine.Run($"{CountDown}f(10000)", options).ToDisplayString();
+        var a2 = KatLangEngine.Run($"{CountDown}f(10)", options).ToDisplayString();
 
         Assert.Equal("0", a1);
         Assert.Equal(a1, a2);
@@ -360,7 +360,7 @@ public class EvaluationLimitsTests
     {
         var options = new RunOptions { EvaluationLimits = Steps(200) };
         var results = new string[32];
-        Parallel.For(0, results.Length, i => results[i] = KatLangEngine.Run($"{CountDown}Output = f(20)", options).ToDisplayString());
+        Parallel.For(0, results.Length, i => results[i] = KatLangEngine.Run($"{CountDown}f(20)", options).ToDisplayString());
         Assert.All(results, r => Assert.Equal("0", r));
     }
 
@@ -370,33 +370,33 @@ public class EvaluationLimitsTests
     public void StepBudget_ExactBoundary_Succeeds()
     {
         // f(3) charges one step per invocation: f(3), f(2), f(1), f(0).
-        Assert.False(Eval($"{CountDown}Output = f(3)", Steps(4)).IsError);
+        Assert.False(Eval($"{CountDown}f(3)", Steps(4)).IsError);
     }
 
     [Fact]
     public void StepBudget_OneStepShort_ReturnsStepLimitError()
     {
-        var error = ErrorOf($"{CountDown}Output = f(3)", Steps(3));
+        var error = ErrorOf($"{CountDown}f(3)", Steps(3));
         Assert.Equal(3L, Assert.IsType<EvalError.EvaluationStepLimitExceeded>(error).Limit);
     }
 
     [Fact]
     public void StepBudget_OfOne_FailsDeterministically()
-        => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf($"{CountDown}Output = f(3)", Steps(1)));
+        => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf($"{CountDown}f(3)", Steps(1)));
 
     [Fact]
     public void StepBudget_ProgramWithNoInvocations_NeedsNoSteps()
-        => Assert.False(Eval("Output = 1 + 2 * 3", Steps(1)).IsError);
+        => Assert.False(Eval("1 + 2 * 3", Steps(1)).IsError);
 
     [Fact]
     public void InfiniteWhile_TerminatesWithStepLimitError()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, 1\nOutput = Step.while(0)", Steps(500)));
+            ErrorOf("Step = x, 1\nStep.while(0)", Steps(500)));
 
     [Fact]
     public void FiniteWhile_WithSufficientBudget_Succeeds()
     {
-        var result = Eval("Step = x - 1, x > 1\nOutput = Step.while(200)", Steps(10_000));
+        var result = Eval("Step = x - 1, x > 1\nStep.while(200)", Steps(10_000));
         Assert.False(result.IsError);
     }
 
@@ -405,24 +405,24 @@ public class EvaluationLimitsTests
     {
         // 100 iterations plus the `Inc` step invocations must not fit in 100 steps,
         // and comfortably fit in 10_000.
-        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf("Inc = x + 1\nOutput = Inc.repeat(100, 0)", Steps(50)));
-        Assert.False(Eval("Inc = x + 1\nOutput = Inc.repeat(100, 0)", Steps(10_000)).IsError);
+        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf("Inc = x + 1\nInc.repeat(100, 0)", Steps(50)));
+        Assert.False(Eval("Inc = x + 1\nInc.repeat(100, 0)", Steps(10_000)).IsError);
     }
 
     [Fact]
     public void LoopWithCallback_IsCharged()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("G(y) = y + 1\nInc = G(x)\nOutput = Inc.repeat(1000, 0)", Steps(200)));
+            ErrorOf("G(y) = y + 1\nInc = G(x)\nInc.repeat(1000, 0)", Steps(200)));
 
     [Fact]
     public void CollectionCallbackPipeline_IsCharged()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("F(x) = x + 1\nOutput = range(1, 1000).map(F).count", Steps(100)));
+            ErrorOf("F(x) = x + 1\nrange(1, 1000).map(F).count", Steps(100)));
 
     [Fact]
     public void ReduceCallback_IsCharged()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Add(a, b) = a + b\nOutput = range(1, 1000).reduce(Add, 0)", Steps(100)));
+            ErrorOf("Add(a, b) = a + b\nrange(1, 1000).reduce(Add, 0)", Steps(100)));
 
     [Fact]
     public void CachedProperty_ChargesTheAccessButNotTheCachedComputation()
@@ -430,14 +430,14 @@ public class EvaluationLimitsTests
         // `Slow` is evaluated once and then served from the zero-argument property
         // cache: eight reads cost eight access steps plus one evaluation, not eight
         // evaluations. A budget that only fits the cached shape proves the difference.
-        const string source = "Slow = 1 + 1\nOutput = Slow + Slow + Slow + Slow + Slow + Slow + Slow + Slow";
+        const string source = "Slow = 1 + 1\nSlow + Slow + Slow + Slow + Slow + Slow + Slow + Slow";
         Assert.False(Eval(source, Steps(16)).IsError);
     }
 
     [Fact]
     public void PropertyEvaluationThatReachesTheBudget_IsNotCachedAsSuccess()
     {
-        var error = ErrorOf("A = A\nOutput = A", Steps(6));
+        var error = ErrorOf("A = A\nA", Steps(6));
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(error);
     }
 
@@ -446,7 +446,7 @@ public class EvaluationLimitsTests
     {
         // The documented default is depth-bounded but work-unbounded, so existing
         // long-running programs keep working with no options supplied.
-        var result = KatLangEngine.Run("Inc = x + 1\nOutput = Inc.repeat(50000, 0)");
+        var result = KatLangEngine.Run("Inc = x + 1\nInc.repeat(50000, 0)");
         Assert.Equal("50000", Assert.IsType<RunResult.Success>(result).ToDisplayString());
     }
 
@@ -457,9 +457,9 @@ public class EvaluationLimitsTests
     {
         // A budgeted run always takes the generic loop/pipeline paths, so the charged
         // count cannot depend on whether an optimization applied to this shape.
-        var budgeted = Eval("Inc = x + 1\nOutput = Inc.repeat(500, 0)", Steps(100_000));
+        var budgeted = Eval("Inc = x + 1\nInc.repeat(500, 0)", Steps(100_000));
         var generic = Evaluator.Run(
-            new Expr.Block(Parser.Parse("Inc = x + 1\nOutput = Inc.repeat(500, 0)").Root),
+            new Expr.Block(Parser.Parse("Inc = x + 1\nInc.repeat(500, 0)").Root),
             UncachedZeroArgPropertyResultCache.Instance,
             enableLoopOptimization: false);
 
@@ -469,10 +469,10 @@ public class EvaluationLimitsTests
     }
 
     [Theory]
-    [InlineData("Inc = x + 1\nOutput = Inc.repeat(200, 0)")]
-    [InlineData("Step = x - 1, x > 1\nOutput = Step.while(200)")]
-    [InlineData("F(x) = x * 2\nOutput = range(1, 50).map(F).sum")]
-    [InlineData("Output = range(1, 50).filter(IsBig).count\nIsBig(x) = x > 10")]
+    [InlineData("Inc = x + 1\nInc.repeat(200, 0)")]
+    [InlineData("Step = x - 1, x > 1\nStep.while(200)")]
+    [InlineData("F(x) = x * 2\nrange(1, 50).map(F).sum")]
+    [InlineData("range(1, 50).filter(IsBig).count\nIsBig(x) = x > 10")]
     public void BudgetedAndUnbudgetedRuns_ProduceTheSameValue(string source)
     {
         var unbudgeted = Eval(source);
@@ -486,10 +486,10 @@ public class EvaluationLimitsTests
     // ── In-budget programs are untouched ─────────────────────────────────────
 
     [Theory]
-    [InlineData("Output = 1 + 2", "3")]
-    [InlineData("f(0) = 1\nf(n) = n * f(n - 1)\nOutput = f(10)", "3628800")]
-    [InlineData("Output = range(1, 10).sum", "55")]
-    [InlineData("A = 7\nOutput = A + A", "14")]
+    [InlineData("1 + 2", "3")]
+    [InlineData("f(0) = 1\nf(n) = n * f(n - 1)\nf(10)", "3628800")]
+    [InlineData("range(1, 10).sum", "55")]
+    [InlineData("A = 7\nA + A", "14")]
     public void InBudgetPrograms_AreUnaffectedByLimits(string source, string expected)
     {
         Assert.Equal(expected, KatLangEngine.Run(source).ToDisplayString());

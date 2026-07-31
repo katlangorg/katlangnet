@@ -92,78 +92,78 @@ internal static class MetamorphicOptimizerTemplate
         // `RepeatLoopCounted` returns the initial state when the count is zero, before the
         // optimizer flag, the shape check, or the state-slot check are reached. Declaring it as
         // an optimizer hit would be false; declaring the short circuit is what is actually proven.
-        new("repeat-zero-iterations", $"{Loop} = x + 1\nOutput = {Loop}.repeat(0, 0)", ShortCircuit),
+        new("repeat-zero-iterations", $"{Loop} = x + 1\n{Loop}.repeat(0, 0)", ShortCircuit),
 
         // ── Loops: the loop optimizer selecting a plan ─────────────────────────
-        new("repeat-one-iteration", $"{Loop} = x + 1\nOutput = {Loop}.repeat(1, 0)", Planned),
-        new("repeat-many-iterations", $"{Loop} = x + 1\nOutput = {Loop}.repeat(12, 0)", Planned),
-        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\nOutput = {Loop}.repeat(6, 1, 0):1", Planned),
-        new("while-scalar-state", $"{Loop} = x - 1, x > 1\nOutput = {Loop}.while(9)", Planned),
-        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\nOutput = {Loop}.while(8, 0):1", Planned),
+        new("repeat-one-iteration", $"{Loop} = x + 1\n{Loop}.repeat(1, 0)", Planned),
+        new("repeat-many-iterations", $"{Loop} = x + 1\n{Loop}.repeat(12, 0)", Planned),
+        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\n{Loop}.repeat(6, 1, 0):1", Planned),
+        new("while-scalar-state", $"{Loop} = x - 1, x > 1\n{Loop}.while(9)", Planned),
+        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}.while(8, 0):1", Planned),
         new("repeat-conditional-body",
-            $"{Loop} = x + if(x > 3, 2, 1)\nOutput = {Loop}.repeat(7, 0)", Planned),
+            $"{Loop} = x + if(x > 3, 2, 1)\n{Loop}.repeat(7, 0)", Planned),
 
         // ── Loops: the loop optimizer FALLING BACK on a non-scalar state slot ──
-        new("repeat-list-state", $"{Loop} = xs\nOutput = {Loop}.repeat(3, [1, 2])", FellBack),
-        new("repeat-sequence-state", $"{Loop} = xs\nOutput = {Loop}.repeat(3, (1, 2))", FellBack),
-        new("repeat-string-state", $"{Loop} = xs\nOutput = {Loop}.repeat(2, 'ab')", FellBack),
-        new("repeat-nested-list-state", $"{Loop} = xs\nOutput = {Loop}.repeat(2, [[1, 2], [3]])", FellBack),
-        new("repeat-empty-list-state", $"{Loop} = xs\nOutput = {Loop}.repeat(2, [])", FellBack),
+        new("repeat-list-state", $"{Loop} = xs\n{Loop}.repeat(3, [1, 2])", FellBack),
+        new("repeat-sequence-state", $"{Loop} = xs\n{Loop}.repeat(3, (1, 2))", FellBack),
+        new("repeat-string-state", $"{Loop} = xs\n{Loop}.repeat(2, 'ab')", FellBack),
+        new("repeat-nested-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [[1, 2], [3]])", FellBack),
+        new("repeat-empty-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [])", FellBack),
 
         // ── Sequence-pipeline fusion ───────────────────────────────────────────
         new("fuse-dotted-range-filter-count",
-            $"{Pred}(x) = x mod 2 == 0\nOutput = range(1, 12).filter({Pred}).count", Fused),
+            $"{Pred}(x) = x mod 2 == 0\nrange(1, 12).filter({Pred}).count", Fused),
         new("fuse-plain-range-filter-count",
-            $"{Pred}(x) = x mod 2 == 0\nOutput = count(range(1, 12).filter({Pred}))", Fused),
+            $"{Pred}(x) = x mod 2 == 0\ncount(range(1, 12).filter({Pred}))", Fused),
         new("fuse-descending-range",
-            $"{Pred}(x) = x mod 2 == 0\nOutput = range(12, 1).filter({Pred}).count", Fused),
+            $"{Pred}(x) = x mod 2 == 0\nrange(12, 1).filter({Pred}).count", Fused),
         new("fuse-singleton-range",
-            $"{Pred}(x) = x == 5\nOutput = range(5, 5).filter({Pred}).count", Fused),
+            $"{Pred}(x) = x == 5\nrange(5, 5).filter({Pred}).count", Fused),
         new("fuse-list-property-source",
             $"{MetamorphicTables.ReceiverProperty} = [1, 2, 3, 4]\n{Pred}(x) = x > 2\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
+            $"{MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
         new("fuse-empty-list-source",
             $"{MetamorphicTables.ReceiverProperty} = []\n{Pred}(x) = x > 2\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
+            $"{MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
         new("fuse-nested-list-source",
             $"{MetamorphicTables.ReceiverProperty} = [[1, 2], [3]]\n{Pred}(x) = x.count > 1\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
+            $"{MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
         new("fuse-string-list-source",
             $"{MetamorphicTables.ReceiverProperty} = ['abc', 'de']\n{Pred}(x) = x.count > 0\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
+            $"{MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
         new("fuse-sequence-source",
             $"{MetamorphicTables.ReceiverProperty} = (1, 2, 3, 4)\n{Pred}(x) = x > 2\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
+            $"{MetamorphicTables.ReceiverProperty}.filter({Pred}).count", Fused),
 
         // ── Fusion crossed with the rest of the collection surface ─────────────
         new("fuse-then-collection-builtins",
             $"{Pred}(x) = x mod 2 == 0\n{Double}(x) = x * 2\n" +
-            $"Output = range(1, 10).filter({Pred}).count, [1, 2, 3].map({Double}), [3, 1, 2].order, " +
+            $"range(1, 10).filter({Pred}).count, [1, 2, 3].map({Double}), [3, 1, 2].order, " +
             "[3, 1, 2].orderDesc, [1, 1, 2].distinct, take([1, 2, 3], 2), skip([1, 2, 3], 1), sum([1, 2, 3])",
             Fused),
         new("fuse-then-callback-pipelines",
             $"{Pred}(x) = x mod 2 == 0\n{Double}(x) = x * 2\n{MetamorphicTables.AddCallback}(a, b) = a + b\n" +
-            $"Output = range(1, 8).filter({Pred}).count, [[1, 2], [3]].map(count), ['ab', 'cde'].map(count), " +
+            $"range(1, 8).filter({Pred}).count, [[1, 2], [3]].map(count), ['ab', 'cde'].map(count), " +
             $"[1, 2, 3].map({Double}), reduce([1, 2, 3], {MetamorphicTables.AddCallback}, 0)",
             Fused),
         new("fuse-then-value-shapes",
             $"{Pred}(x) = x mod 2 == 0\n" +
-            $"Output = range(1, 6).filter({Pred}).count, 7, 'ab', [], [7], [[1, 2], [3, 4]], (1, 2, 3), " +
+            $"range(1, 6).filter({Pred}).count, 7, 'ab', [], [7], [[1, 2], [3, 4]], (1, 2, 3), " +
             "([1, 2], [3, 4]), ()",
             Fused),
         new("fuse-then-callback-error",
-            $"{Pred}(x) = x mod 2 == 0\nOutput = range(1, 8).filter({Pred}).count, [()].map(min)",
+            $"{Pred}(x) = x mod 2 == 0\nrange(1, 8).filter({Pred}).count, [()].map(min)",
             Fused),
 
         // ── Both optimizers in one program ─────────────────────────────────────
         new("loop-and-fusion",
             $"{Pred}(x) = x mod 2 == 0\n{Loop} = x + 1\n" +
-            $"Output = {Loop}.repeat(5, 0), range(1, 10).filter({Pred}).count",
+            $"{Loop}.repeat(5, 0), range(1, 10).filter({Pred}).count",
             Planned | Fused),
         new("loop-with-string-constant",
-            $"{Loop} = x + count('ab')\nOutput = {Loop}.repeat(4, 0)", PartiallyPlanned),
+            $"{Loop} = x + count('ab')\n{Loop}.repeat(4, 0)", PartiallyPlanned),
         new("loop-with-user-callback-body",
-            $"{Double}(x) = x * 2\n{Loop} = {Double}(x)\nOutput = {Loop}.repeat(4, 1)", PartiallyPlanned),
+            $"{Double}(x) = x * 2\n{Loop} = {Double}(x)\n{Loop}.repeat(4, 1)", PartiallyPlanned),
     ];
 
     internal static int SourceCount => Sources.Length;

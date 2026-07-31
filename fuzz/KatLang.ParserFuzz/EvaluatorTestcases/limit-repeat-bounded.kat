@@ -1,2 +1,2 @@
 Inc = x + 1
-Output = Inc.repeat(100, 0)
+Inc.repeat(100, 0)

@@ -801,12 +801,6 @@ public abstract record Algorithm
     public virtual IReadOnlyList<ParameterPattern> ExplicitParameterPatterns { get; init; } = [];
 
     /// <summary>
-    /// Exact span of the reserved <c>Output</c> declaration name when this
-    /// algorithm used explicit output syntax.
-    /// </summary>
-    public virtual SourceSpan? ExplicitOutputSpan { get; init; }
-
-    /// <summary>
     /// Check whether the property list contains duplicate property names.
     /// Returns the first duplicate name found, or null if all names are unique.
     /// Lean: Algorithm.findDuplicatePropName.

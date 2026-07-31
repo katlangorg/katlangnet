@@ -82,7 +82,7 @@ public class PropertyExposureResolverTests
             """
             PrivateHelper(Candidate) = {
                 Step = Candidate + 1
-                Output = Step
+                Step
             }
 
             public PublicApi(N) = PrivateHelper(N)

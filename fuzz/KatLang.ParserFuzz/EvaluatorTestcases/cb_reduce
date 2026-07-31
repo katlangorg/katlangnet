@@ -1,2 +1,2 @@
 R(a, b) = a + b
-Output = range(1, 4).reduce(R, 0)
+range(1, 4).reduce(R, 0)

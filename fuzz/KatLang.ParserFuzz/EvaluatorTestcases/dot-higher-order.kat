@@ -1,3 +1,3 @@
 Apply(g, v) = g(v)
 Double(x) = x * 2
-Output = Double.Apply(7)
+Double.Apply(7)

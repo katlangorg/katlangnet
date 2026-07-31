@@ -123,6 +123,28 @@ public static class LanguageSpecCorpus
                 [".resolve \"Answer\"", ".call (.resolve \"Answer\") (alg [] [] [] [])"]),
             Explanation = "Property-style access `Answer` and the explicit call `Answer()` observe the same value; the call shape only controls the zero-argument cache.",
         },
+        new()
+        {
+            Id = "output-is-ordinary-property",
+            Category = "arithmetic",
+            Source = "Output = 5\nOutput",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("Output", ".num 5")],
+                [".resolve \"Output\""]),
+            Probes =
+            [
+                new SpecProbe("A = 3\nOutput = A + 2", "err missingOutput"),
+                new SpecProbe("A = 3\nOutput = A + 2\nOutput", "ok raw=5 n=1"),
+                new SpecProbe("output = 6\noutput", "ok raw=6 n=1"),
+                new SpecProbe("Output(x) = x * 2\nOutput(4)", "ok raw=8 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.",
+        },
 
         // ==================== empty-and-singleton ====================
         new()
@@ -1281,6 +1303,20 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "output-dotted-access-ordinary",
+            Category = "access-boundaries",
+            Source = "A = {\n    Output = 9\n}\n\nA.Output",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "9",
+            ExpectedRaw = "9",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                ["privateProp \"A\" (alg [] [] [privateProp \"Output\" (alg [] [] [] [.num 9])] [])"],
+                [".dotCall (.resolve \"A\") \"Output\" none"]),
+            Explanation = "A property named `Output` follows ordinary dotted property access rules — there is no reserved output member.",
+        },
+        new()
+        {
             Id = "property-call-boundary",
             Category = "access-boundaries",
             Source = "P = 1, 2, 3\nP()",
@@ -2052,6 +2088,25 @@ public static class LanguageSpecCorpus
         },
 
         // ==================== parser-layout ====================
+        new()
+        {
+            Id = "output-rows-interleave-definitions",
+            Category = "parser-layout",
+            Source = "A = 3\nA + B\nB = 2",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("A", ".num 3"), LProp("B", ".num 2")],
+                [".binary .add (.resolve \"A\") (.resolve \"B\")"]),
+            Probes =
+            [
+                new SpecProbe("A = 3\nA\nA + 1", "ok raw=S[3, 4] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Output rows may be interleaved with property definitions: property resolution uses the complete property set of the algorithm, not textual order.",
+        },
         new()
         {
             Id = "semicolon-not-expression-syntax",

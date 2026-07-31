@@ -1,2 +1,2 @@
 A = (public p = 1)
-Output = A.p
+A.p

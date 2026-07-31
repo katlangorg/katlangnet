@@ -110,8 +110,8 @@ public class OperationalMetamorphicTests
     [MemberData(nameof(DottedPairs))]
     public void DottedAndOrdinaryForms_ChargeExactlyTheSameWork(string ordinary, string dotted)
     {
-        var a = Observe($"{Preamble}C = range(1, 10)\nOutput = {ordinary}");
-        var b = Observe($"{Preamble}C = range(1, 10)\nOutput = {dotted}");
+        var a = Observe($"{Preamble}C = range(1, 10)\n{ordinary}");
+        var b = Observe($"{Preamble}C = range(1, 10)\n{dotted}");
 
         Assert.Equal(a.Semantic, b.Semantic);
         Assert.Equal(a.MaterializedItems, b.MaterializedItems);
@@ -130,8 +130,8 @@ public class OperationalMetamorphicTests
     [InlineData("range(1, 4)")]
     public void DottedAndOrdinaryForms_AgreeForEveryReceiverValueKind(string receiver)
     {
-        var a = Observe($"R = {receiver}\nOutput = count(R)");
-        var b = Observe($"R = {receiver}\nOutput = R.count");
+        var a = Observe($"R = {receiver}\ncount(R)");
+        var b = Observe($"R = {receiver}\nR.count");
 
         Assert.Equal(a.Semantic, b.Semantic);
         Assert.Equal(a.MaterializedItems, b.MaterializedItems);
@@ -140,40 +140,40 @@ public class OperationalMetamorphicTests
     public static TheoryData<string, string> PreparedBuiltinCallbackPairs => new()
     {
         {
-            "Rows = [[1, 2]]\nOutput = Rows.map(count)",
-            "C(x) = x.count\nRows = [[1, 2]]\nOutput = Rows.map(C)"
+            "Rows = [[1, 2]]\nRows.map(count)",
+            "C(x) = x.count\nRows = [[1, 2]]\nRows.map(C)"
         },
         {
-            "Rows = ['abc']\nOutput = Rows.map(count)",
-            "C(x) = x.count\nRows = ['abc']\nOutput = Rows.map(C)"
+            "Rows = ['abc']\nRows.map(count)",
+            "C(x) = x.count\nRows = ['abc']\nRows.map(C)"
         },
         {
-            "Rows = [[1, [2, 3]]]\nOutput = Rows.map(atoms)",
-            "C(x) = x.atoms\nRows = [[1, [2, 3]]]\nOutput = Rows.map(C)"
+            "Rows = [[1, [2, 3]]]\nRows.map(atoms)",
+            "C(x) = x.atoms\nRows = [[1, [2, 3]]]\nRows.map(C)"
         },
         {
-            "Rows = [(1, (2, 3))]\nOutput = Rows.map(atoms)",
-            "C(x) = x.atoms\nRows = [(1, (2, 3))]\nOutput = Rows.map(C)"
+            "Rows = [(1, (2, 3))]\nRows.map(atoms)",
+            "C(x) = x.atoms\nRows = [(1, (2, 3))]\nRows.map(C)"
         },
         {
-            "Rows = []\nOutput = Rows.map(count)",
-            "C(x) = x.count\nRows = []\nOutput = Rows.map(C)"
+            "Rows = []\nRows.map(count)",
+            "C(x) = x.count\nRows = []\nRows.map(C)"
         },
         {
-            "Rows = [[]]\nOutput = Rows.map(first)",
-            "C(x) = x.first\nRows = [[]]\nOutput = Rows.map(C)"
+            "Rows = [[]]\nRows.map(first)",
+            "C(x) = x.first\nRows = [[]]\nRows.map(C)"
         },
         {
-            "Rows = ['abc']\nOutput = Rows.map(sum)",
-            "C(x) = x.sum\nRows = ['abc']\nOutput = Rows.map(C)"
+            "Rows = ['abc']\nRows.map(sum)",
+            "C(x) = x.sum\nRows = ['abc']\nRows.map(C)"
         },
         {
-            "Rows = [[1, 2], []]\nOutput = Rows.filter(count)",
-            "C(x) = x.count\nRows = [[1, 2], []]\nOutput = Rows.filter(C)"
+            "Rows = [[1, 2], []]\nRows.filter(count)",
+            "C(x) = x.count\nRows = [[1, 2], []]\nRows.filter(C)"
         },
         {
-            "Rows = [2]\nOutput = Rows.reduce(contains, [1, 2])",
-            "C(xs, x) = xs.contains(x)\nRows = [2]\nOutput = Rows.reduce(C, [1, 2])"
+            "Rows = [2]\nRows.reduce(contains, [1, 2])",
+            "C(xs, x) = xs.contains(x)\nRows = [2]\nRows.reduce(C, [1, 2])"
         },
     };
 
@@ -192,8 +192,8 @@ public class OperationalMetamorphicTests
     [Fact]
     public void BuiltinCallback_CumulativeBoundariesMatchEquivalentUserWrapper()
     {
-        const string builtinSource = "Rows = [[1, 2]]\nOutput = Rows.map(count)";
-        const string wrapperSource = "C(x) = x.count\nRows = [[1, 2]]\nOutput = Rows.map(C)";
+        const string builtinSource = "Rows = [[1, 2]]\nRows.map(count)";
+        const string wrapperSource = "C(x) = x.count\nRows = [[1, 2]]\nRows.map(C)";
 
         for (var limit = 1L; limit <= 8; limit++)
         {
@@ -201,8 +201,8 @@ public class OperationalMetamorphicTests
             Assert.Equal(Observe(wrapperSource, limits).Semantic, Observe(builtinSource, limits).Semantic);
         }
 
-        const string builtinStringSource = "Rows = ['abc']\nOutput = Rows.map(count)";
-        const string wrapperStringSource = "C(x) = x.count\nRows = ['abc']\nOutput = Rows.map(C)";
+        const string builtinStringSource = "Rows = ['abc']\nRows.map(count)";
+        const string wrapperStringSource = "C(x) = x.count\nRows = ['abc']\nRows.map(C)";
         for (var limit = 0L; limit <= 5; limit++)
         {
             var limits = new EvaluationLimits { MaxMaterializedStringChars = limit };
@@ -213,8 +213,8 @@ public class OperationalMetamorphicTests
     [Fact]
     public void DottedChain_ChargesTheSameAsNestedOrdinaryCalls()
     {
-        var a = Observe($"{Preamble}Output = count(map(filter(range(1, 20), Big), Double))");
-        var b = Observe($"{Preamble}Output = range(1, 20).filter(Big).map(Double).count");
+        var a = Observe($"{Preamble}count(map(filter(range(1, 20), Big), Double))");
+        var b = Observe($"{Preamble}range(1, 20).filter(Big).map(Double).count");
 
         Assert.Equal(a.Semantic, b.Semantic);
         Assert.Equal(a.MaterializedItems, b.MaterializedItems);
@@ -223,8 +223,8 @@ public class OperationalMetamorphicTests
     [Fact]
     public void UserExtensionCall_ChargesTheSameInBothForms()
     {
-        var a = Observe("F(c, n) = take(c, n)\nOutput = F(range(1, 10), 3)");
-        var b = Observe("F(c, n) = take(c, n)\nOutput = range(1, 10).F(3)");
+        var a = Observe("F(c, n) = take(c, n)\nF(range(1, 10), 3)");
+        var b = Observe("F(c, n) = take(c, n)\nrange(1, 10).F(3)");
 
         Assert.Equal(a.Semantic, b.Semantic);
         Assert.Equal(a.MaterializedItems, b.MaterializedItems);
@@ -236,7 +236,7 @@ public class OperationalMetamorphicTests
     {
         // `Object.Value` is structural member access, NOT an extension-call rewriting, so
         // the dotted/ordinary relation does not apply to it. It is asserted directly.
-        Assert.Equal("ok", Observe("Object = (\n    public Value = 7\n)\nOutput = Object.Value").Semantic.Outcome);
+        Assert.Equal("ok", Observe("Object = (\n    public Value = 7\n)\nObject.Value").Semantic.Outcome);
     }
 
     // ── Relation 2: cached <= rebuilt (never equality) ───────────────────────
@@ -244,8 +244,8 @@ public class OperationalMetamorphicTests
     [Fact]
     public void CachedReceiver_IsNeverMoreExpensiveThanRebuilding()
     {
-        var cached = Observe("V = range(1, 10)\nOutput = V.count + V.count + V.count");
-        var rebuilt = Observe("Output = range(1, 10).count + range(1, 10).count + range(1, 10).count");
+        var cached = Observe("V = range(1, 10)\nV.count + V.count + V.count");
+        var rebuilt = Observe("range(1, 10).count + range(1, 10).count + range(1, 10).count");
 
         Assert.Equal(cached.Semantic, rebuilt.Semantic);
         Assert.True(cached.MaterializedItems <= rebuilt.MaterializedItems,
@@ -255,11 +255,11 @@ public class OperationalMetamorphicTests
     // ── Relation 3: optimized <= generic, semantics equal ────────────────────
 
     [Theory]
-    [InlineData("Output = range(1, 20).count")]
-    [InlineData("Output = range(1, 20).sum")]
-    [InlineData("B(x) = x > 5\nOutput = range(1, 20).filter(B).count")]
-    [InlineData("D(x) = x * 2\nOutput = range(1, 20).map(D)")]
-    [InlineData("Inc = x + 1\nOutput = Inc.repeat(20, 0)")]
+    [InlineData("range(1, 20).count")]
+    [InlineData("range(1, 20).sum")]
+    [InlineData("B(x) = x > 5\nrange(1, 20).filter(B).count")]
+    [InlineData("D(x) = x * 2\nrange(1, 20).map(D)")]
+    [InlineData("Inc = x + 1\nInc.repeat(20, 0)")]
     public void OptimizedAndGenericPaths_AgreeSemanticallyAndNeverCostMore(string source)
     {
         var optimized = Observe(source, optimize: true);
@@ -273,11 +273,11 @@ public class OperationalMetamorphicTests
     // ── Relation 4: plain / counted / engine agreement ───────────────────────
 
     [Theory]
-    [InlineData("Output = range(1, 10).count")]
-    [InlineData("Output = 1, 2, 3")]
-    [InlineData("Output = [1, [2, 3]]")]
-    [InlineData("Output = ()")]
-    [InlineData("Output = 'abc'")]
+    [InlineData("range(1, 10).count")]
+    [InlineData("1, 2, 3")]
+    [InlineData("[1, [2, 3]]")]
+    [InlineData("()")]
+    [InlineData("'abc'")]
     public void PlainCountedAndEngine_ProduceTheSameValue(string source)
     {
         var expr = new Expr.Block(Parser.Parse(source).Root);
@@ -295,10 +295,10 @@ public class OperationalMetamorphicTests
 
     public static TheoryData<string> BudgetPrograms => new()
     {
-        "Output = range(1, 10).count",
-        "f(0) = 0\nf(n) = f(n - 1)\nOutput = f(5)",
-        "D(x) = x * 2\nOutput = range(1, 8).map(D)",
-        "Output = [1, 2, 3], 'text'",
+        "range(1, 10).count",
+        "f(0) = 0\nf(n) = f(n - 1)\nf(5)",
+        "D(x) = x * 2\nrange(1, 8).map(D)",
+        "[1, 2, 3], 'text'",
     };
 
     [Theory]
@@ -340,8 +340,8 @@ public class OperationalMetamorphicTests
         {
             var limits = new EvaluationLimits { MaxMaterializedItems = budget };
             Assert.Equal(
-                Observe("Output = count(range(1, 10))", limits).Semantic,
-                Observe("Output = range(1, 10).count", limits).Semantic);
+                Observe("count(range(1, 10))", limits).Semantic,
+                Observe("range(1, 10).count", limits).Semantic);
         }
     }
 
@@ -366,9 +366,9 @@ public class OperationalMetamorphicTests
     public void FailedReservation_DoesNotChangeALaterRunOrASecondaryError()
     {
         var options = new RunOptions { EvaluationLimits = new EvaluationLimits { MaxMaterializedItems = 12 } };
-        var before = KatLangEngine.Run("Output = range(1, 10).count", options).ToDisplayString();
-        _ = KatLangEngine.Run("Output = range(1, 500).count", options).ToDisplayString();   // rejected
-        var after = KatLangEngine.Run("Output = range(1, 10).count", options).ToDisplayString();
+        var before = KatLangEngine.Run("range(1, 10).count", options).ToDisplayString();
+        _ = KatLangEngine.Run("range(1, 500).count", options).ToDisplayString();   // rejected
+        var after = KatLangEngine.Run("range(1, 10).count", options).ToDisplayString();
 
         Assert.Equal(before, after);
     }
@@ -376,10 +376,10 @@ public class OperationalMetamorphicTests
     // ── Relation 6: rendering laws ───────────────────────────────────────────
 
     [Theory]
-    [InlineData("Output = 1, 2, 3")]
-    [InlineData("Output = [1, [2, 3]], (4, 5)")]
-    [InlineData("Output = 'abc', 'de'")]
-    [InlineData("Output = ()")]
+    [InlineData("1, 2, 3")]
+    [InlineData("[1, [2, 3]], (4, 5)")]
+    [InlineData("'abc', 'de'")]
+    [InlineData("()")]
     public void RenderedText_NeverExceedsItsLimit_AndIsDeterministic(string source)
     {
         var natural = KatLangEngine.Run(source).ToDisplayString().Length;
@@ -398,7 +398,7 @@ public class OperationalMetamorphicTests
     [Fact]
     public void Rendering_DoesNotAlterEvaluationCountersOrValues()
     {
-        var run = KatLangEngine.Run("Output = range(1, 5)");
+        var run = KatLangEngine.Run("range(1, 5)");
         var success = Assert.IsType<RunResult.Success>(run);
         var before = success.Value;
 
@@ -435,7 +435,7 @@ public class OperationalMetamorphicTests
     [Fact]
     public void WrapperParity_ParseAgreesWithTheFrontEndPipeline()
     {
-        foreach (var source in new[] { "Output = 1 + 2", "A = (\n    public B = 1\n)\nOutput = A.B", "M(-2, 2) = (open(o\n" })
+        foreach (var source in new[] { "1 + 2", "A = (\n    public B = 1\n)\nA.B", "M(-2, 2) = (open(o\n" })
         {
             var parsed = Parser.Parse(source);
             var pipeline = FrontEndPipeline.Process(source);
@@ -536,12 +536,12 @@ public class OperationalMetamorphicTests
 
         var errors = new EvalError[]
         {
-            RunError("f(0) = 0\nf(n) = f(n - 1)\nOutput = f(50)", new EvaluationLimits { MaxDepth = 8 }),
-            RunError("Step = x, 1\nOutput = Step.while(0)", new EvaluationLimits { MaxSteps = 25 }),
-            RunError("Output = range(1, 6)", new EvaluationLimits { MaxCollectionItems = 5 }),
-            RunError("Output = [1, 2]", new EvaluationLimits { MaxMaterializedItems = 1 }),
-            RunError("Output = 'abcdef'", new EvaluationLimits { MaxStringLength = 5 }),
-            RunError("Output = 'abc', 'def'", new EvaluationLimits { MaxMaterializedStringChars = 5 }),
+            RunError("f(0) = 0\nf(n) = f(n - 1)\nf(50)", new EvaluationLimits { MaxDepth = 8 }),
+            RunError("Step = x, 1\nStep.while(0)", new EvaluationLimits { MaxSteps = 25 }),
+            RunError("range(1, 6)", new EvaluationLimits { MaxCollectionItems = 5 }),
+            RunError("[1, 2]", new EvaluationLimits { MaxMaterializedItems = 1 }),
+            RunError("'abcdef'", new EvaluationLimits { MaxStringLength = 5 }),
+            RunError("'abc', 'def'", new EvaluationLimits { MaxMaterializedStringChars = 5 }),
         };
 
         Assert.All(errors, error =>
@@ -562,9 +562,9 @@ public class OperationalMetamorphicTests
     [Fact]
     public void EvaluatingAnUnrelatedProgram_DoesNotChangeALaterObservation()
     {
-        var a1 = Observe("Output = range(1, 10).count");
-        _ = Observe("V = range(1, 500)\nOutput = V.sum");
-        var a2 = Observe("Output = range(1, 10).count");
+        var a1 = Observe("range(1, 10).count");
+        _ = Observe("V = range(1, 500)\nV.sum");
+        var a2 = Observe("range(1, 10).count");
 
         Assert.Equal(a1, a2);
     }

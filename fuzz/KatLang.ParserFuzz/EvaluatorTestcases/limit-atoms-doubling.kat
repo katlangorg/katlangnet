@@ -3,4 +3,4 @@ B = [A, A]
 C = [B, B]
 D = [C, C]
 E = [D, D]
-Output = E.atoms.count
+E.atoms.count

@@ -1,1 +1,1 @@
-Output = range(1, 5001).count
+range(1, 5001).count

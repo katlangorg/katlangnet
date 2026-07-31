@@ -91,7 +91,7 @@ internal static class Utf16Executor
     public const int MaxDiagnosticsAtOnePosition = Parser.MaxNestingDepth;
 
     /// <summary>An unrelated program processed between two runs of the same source (A/B/A).</summary>
-    private const string ProbeSourceB = "p, q = (1, 2)\nHelper(x) = x + p\nOutput = Helper(q)";
+    private const string ProbeSourceB = "p, q = (1, 2)\nHelper(x) = x + p\nHelper(q)";
 
     public static Utf16Observation Execute(Utf16Case testCase, ref Utf16Phase phase)
     {

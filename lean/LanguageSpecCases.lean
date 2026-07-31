@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 155
+- specification surface cases: 158
 - excluded parse-level cases (Lean has no surface parser): 5
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 149
-- probe observations (C#-only by design): 205
+- Lean-guarded cases: 152
+- probe observations (C#-only by design): 210
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -64,7 +64,6 @@ partial def errCategory : Error -> String
   | .ambiguousOpen _ _ => "ambiguousOpen"
   | .duplicateProperty _ => "duplicateProperty"
   | .duplicateBranchPattern => "duplicateBranchPattern"
-  | .specialOutputAccess => "specialOutputAccess"
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
@@ -108,6 +107,11 @@ def case_first_program : Expr :=
 def case_property_access_and_call : Expr :=
   .block (alg [] [] [privateProp "Answer" (alg [] [] [] [.num 42])] [.resolve "Answer", .call (.resolve "Answer") (alg [] [] [] [])])
 #guard obs case_property_access_and_call == "ok raw=S[42, 42] n=2"
+
+-- output-is-ordinary-property [arithmetic]: Output = 5 \n Output
+def case_output_is_ordinary_property : Expr :=
+  .block (alg [] [] [privateProp "Output" (alg [] [] [] [.num 5])] [.resolve "Output"])
+#guard obs case_output_is_ordinary_property == "ok raw=5 n=1"
 
 -- empty-literal [empty-and-singleton]: ()
 def case_empty_literal : Expr :=
@@ -439,6 +443,11 @@ def case_dot_access_value_boundary : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dot_access_value_boundary == "ok raw=S[1, 2, 3] n=1"
 
+-- output-dotted-access-ordinary [access-boundaries]: A = { \n     Output = 9 \n } \n  \n A.Output
+def case_output_dotted_access_ordinary : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "Output" (alg [] [] [] [.num 9])] [])] [.dotCall (.resolve "A") "Output" none])
+#guard obs case_output_dotted_access_ordinary == "ok raw=9 n=1"
+
 -- property-call-boundary [access-boundaries]: P = 1, 2, 3 \n P()
 def case_property_call_boundary : Expr :=
   .block (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [.call (.resolve "P") (alg [] [] [] [])])
@@ -664,6 +673,11 @@ def case_index_captured_requality : Expr :=
   .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))]), privateProp "y" (alg [] [] [] [.index (.resolve "x") (.num 0)])] [.binary .eq (.resolve "y") (.block (alg [] [] [] [.num 1, .num 2]))])
 #guard obs case_index_captured_requality == "ok raw=1 n=1"
 
+-- output-rows-interleave-definitions [parser-layout]: A = 3 \n A + B \n B = 2
+def case_output_rows_interleave_definitions : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 3]), privateProp "B" (alg [] [] [] [.num 2])] [.binary .add (.resolve "A") (.resolve "B")])
+#guard obs case_output_rows_interleave_definitions == "ok raw=5 n=1"
+
 -- trailing-comma-continues-line [parser-layout]: 1, \n 2
 def case_trailing_comma_continues_line : Expr :=
   .block (alg [] [] [] [.num 1, .num 2])
@@ -844,7 +858,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 149 canonical Lean-guarded specification cases.
+-- 152 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -854,6 +868,7 @@ independently from the corpus partition, so a generation bug fails `lake build`.
 def specCaseIds : List String := [
   "first-program",
   "property-access-and-call",
+  "output-is-ordinary-property",
   "empty-literal",
   "empty-wrapped",
   "empty-wrapped-twice",
@@ -920,6 +935,7 @@ def specCaseIds : List String := [
   "spread-slots-capture",
   "spread-one-level-only",
   "dot-access-value-boundary",
+  "output-dotted-access-ordinary",
   "property-call-boundary",
   "builtin-result-reentry",
   "zero-arg-access-of-parametrized",
@@ -965,6 +981,7 @@ def specCaseIds : List String := [
   "index-empty-item-visible",
   "index-out-of-range",
   "index-captured-requality",
+  "output-rows-interleave-definitions",
   "trailing-comma-continues-line",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
@@ -1002,6 +1019,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 149
+#guard specCaseIds.length == 152
 
 end LanguageSpecCases

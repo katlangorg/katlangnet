@@ -1,2 +1,2 @@
 V = (3, 1, 2)
-Output = V.first, V.last
+V.first, V.last

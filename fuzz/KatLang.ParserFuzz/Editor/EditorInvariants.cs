@@ -68,7 +68,7 @@ internal sealed record EditorReport(
 internal static class EditorInvariants
 {
     /// <summary>An unrelated program processed between two runs of the same request (A/B/A).</summary>
-    private const string ProbeSource = "p = 1\nHelper(x) = x + p\nq, r = (2, 3)\nOutput = Helper(q) + r";
+    private const string ProbeSource = "p = 1\nHelper(x) = x + p\nq, r = (2, 3)\nHelper(q) + r";
 
     /// <summary>libFuzzer callback. Lets everything escape, by design.</summary>
     public static void Check(ReadOnlySpan<byte> payload) => _ = Run(payload);
@@ -169,14 +169,14 @@ internal static class EditorInvariants
     {
         var result = EditorModel.Run(source, parameters.ExecutionMode);
         var (line, column) = EditorCursor.QueryPosition(parameters, source, cursorOffset);
-        var lookup = result.Model is { } model ? EditorSurfaces.ChooseLookupName(model) : "Output";
+        var lookup = result.Model is { } model ? EditorSurfaces.ChooseLookupName(model) : "A";
         return EditorModel.Digest(result, line, column, lookup);
     }
 
     private static void RunProbe()
     {
         var result = EditorModel.Run(ProbeSource, EditorExecutionMode.Elaborated);
-        _ = EditorModel.Digest(result, 1, 1, "Output");
+        _ = EditorModel.Digest(result, 1, 1, "Helper");
     }
 
     private static EditorObservation Observe(

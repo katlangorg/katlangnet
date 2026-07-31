@@ -8,7 +8,6 @@ public enum OccurrenceKind
     PropertyDefinition,
     ExplicitParameterDefinition,
     ConditionalBinderDefinition,
-    ReservedNameDefinition,
     ResolveReference,
     ParameterReference,
     DotMemberReference,
@@ -36,7 +35,6 @@ public enum IdentifierClassification
     /// </summary>
     LoadedExternalMemberReference,
     OpenTarget,
-    ReservedName,
     Unresolved,
 }
 

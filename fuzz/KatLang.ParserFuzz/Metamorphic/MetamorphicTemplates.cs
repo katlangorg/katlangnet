@@ -84,8 +84,8 @@ internal static class MetamorphicTemplates
         var cardinality = RangeCardinality(stop);
         var stopText = stop.ToString(CultureInfo.InvariantCulture);
 
-        var left = $"Output = count(range(1, {stopText}))";
-        var right = $"Output = range(1, {stopText}).count";
+        var left = $"count(range(1, {stopText}))";
+        var right = $"range(1, {stopText}).count";
 
         return MetamorphicCaseFactory.Create(
             parameters,

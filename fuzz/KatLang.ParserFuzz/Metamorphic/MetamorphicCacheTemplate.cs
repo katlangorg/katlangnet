@@ -28,8 +28,8 @@ internal sealed record MetamorphicCacheSource(
 ///
 /// <code>
 /// left (cached)    MmA = range(1, 6)                 right (rebuilt)  MmA1 = range(1, 6)
-///                  Output = MmA.count, MmA.count                      MmA2 = range(1, 6)
-///                                                                     Output = MmA1.count, MmA2.count
+///                  MmA.count, MmA.count                               MmA2 = range(1, 6)
+///                                                                     MmA1.count, MmA2.count
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> KatLang is pure, so binding one property and using it twice
@@ -197,7 +197,7 @@ internal static class MetamorphicCacheTemplate
         var text = new StringBuilder();
         AppendPreamble(text, source);
         text.Append(Property).Append(" = ").Append(source.Value).Append('\n');
-        text.Append("Output = ").Append(
+        text.Append(
             string.Join(", ", Enumerable.Repeat(Apply(source.Use, Property), uses)));
         AppendTrailingRow(text, source);
         return text.ToString();
@@ -215,7 +215,7 @@ internal static class MetamorphicCacheTemplate
             text.Append(names[i]).Append(" = ").Append(source.Value).Append('\n');
         }
 
-        text.Append("Output = ").Append(string.Join(", ", names.Select(name => Apply(source.Use, name))));
+        text.Append(string.Join(", ", names.Select(name => Apply(source.Use, name))));
         AppendTrailingRow(text, source);
         return text.ToString();
     }

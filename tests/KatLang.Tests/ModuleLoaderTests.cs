@@ -155,7 +155,7 @@ public class ModuleLoaderTests
             ["https://katlang.org/demo/local-helper.kat"] = """
                 PrivateHelper(Candidate) = {
                     Step = Candidate + 1
-                    Output = Step
+                    Step
                 }
 
                 public PublicApi(N) = PrivateHelper(N)
@@ -183,12 +183,12 @@ public class ModuleLoaderTests
 
                 IsSmallPrime(Candidate) = {
                     IsSmallPrimeStep = Candidate + 2
-                    Output = IsSmallPrimeStep
+                    IsSmallPrimeStep
                 }
 
                 _IsPrime(Candidate) = {
                     IsPrimeStep = Candidate + 1
-                    Output = IsPrimeStep
+                    IsPrimeStep
                 }
 
                 public IsPrime(N) = if(

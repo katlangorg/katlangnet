@@ -640,7 +640,7 @@ public class SequenceSpreadTests
             """
             Values = 10, 20
             Sum(*values) = values.sum
-            Output = (Values*).Sum
+            (Values*).Sum
             """,
             30m);
 
@@ -655,7 +655,7 @@ public class SequenceSpreadTests
             """
             Values = 10, 20
             Sum(*values) = values.sum
-            Output = (Values*, 7).Sum
+            (Values*, 7).Sum
             """);
 
     [Fact]
@@ -664,7 +664,7 @@ public class SequenceSpreadTests
             """
             Values = 10, 20
             Sum(*values) = values.sum
-            Output = ((Values*, 7)*).Sum
+            ((Values*, 7)*).Sum
             """,
             37m);
 
@@ -676,7 +676,7 @@ public class SequenceSpreadTests
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
-            Output = (Pair*).Sum
+            (Pair*).Sum
             """,
             30m);
 
@@ -691,14 +691,14 @@ public class SequenceSpreadTests
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
-            Output = (Pair*, 7).Sum
+            (Pair*, 7).Sum
             """);
 
         AssertEval(
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
-            Output = ((Pair*, 7)*).Sum
+            ((Pair*, 7)*).Sum
             """,
             37m);
     }
@@ -709,7 +709,7 @@ public class SequenceSpreadTests
             """
             Pair = 10, 20
             Add(x, y) = x + y
-            Output = (Pair*).Add
+            (Pair*).Add
             """);
 
     [Fact]

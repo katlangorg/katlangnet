@@ -12,7 +12,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Output only KatLang code.
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
-- Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { Output = ... }`. Never write `Output(x) = ...`, never make `Output` a multi-branch definition, never put explicit algorithm parameters on a container with no output, and never access results as `Algo.Output` or `Algo.Output(...)`; call `Algo(...)` directly instead.
+- Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { x + 1 }`. Never put explicit algorithm parameters on a container with no output. To get an algorithm's result, call it directly: `Algo(...)`.
 - The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` canonicalize to `()`, so `() == (())` is `1` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
 - Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
 - Construction preserves structure; selection projects content. With `Pairs = (1, 2), (3, 4)`, `Pairs:0` yields `1, 2`; with `Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))`, `Bags:0` yields `(1, 2), (3, 4)`. Exact list targets index the same way (`[10, 20, 30]:1` is `20`), and a selected LIST element is returned exactly as stored (`[[1, 2], [3, 4]]:0` is `[1, 2]`). Chained `:` repeats the same one-level projection step and never recursively flattens nested sequence or list elements. For a state result such as `State = candidate, found`, use `State:1` for `found`; do not write `State:0:1` unless `State:0` is itself a sequence value and its second member is needed.
@@ -30,7 +30,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - A collection builtin takes exactly one collection argument plus its fixed controls. Never generate inline-item calls (`count(1, 2, 3)`) or spread-fed calls (`count(A*)`); pass one value (`X.count`, `count(X)`) or group explicitly (`count((A*, B*))`).
 - For `filter`, `map`, and `reduce`, keep that same top-level iteration structure, but bind each callback item as the same one-level projected view that `S:i` would produce. `filter` still keeps or discards the original top-level item, `reduce` leaves accumulator semantics unchanged, and nothing recursively flattens. Dot-call sequence builtins on the callback variable consume that projected item's counted top-level items, so `item.count` can reflect projected sequence content. If you need members of a sequence-value callback item, use ordinary parameters or `item:i`.
 - Callbacks with a collecting parameter collect exact lists like ordinary calls. A single-collecting-parameter map/filter callback (`Collect(*items) = items`) receives each iterated element as ONE collected slot — `[7].map(Collect)` is `[[7]]`, `[(1, 2)].map(Collect)` is `[[(1, 2)]]` — so predicates can compare kinds exactly (`IsSingleSeven(*items) = items == [7]`). A multi-parameter flat callback (`F(first, *middle, last)`) opens a lone sequence-valued element into row slots first (the same row rule as fixed callbacks) and then collects the middle: `[(1, 2, 3, 4)].map(F)` binds `middle = [2, 3]`, agreeing with the nested `F((first, *middle, last))` form. Reduce supplies two callback slots, element and accumulator: `R(*items) = items` therefore binds `items = [element, accumulator]`, while `R(*items, acc)` binds `items = [element]`.
-- Avoid shadowing builtin or prelude algorithm names with implicit parameter names, local binders, or helper placeholders. Only `Output` (in definition position) is a hard-reserved parser-level name; the names below are syntactically shadowable but unsafe to shadow because it can break lookup, collection pipelines, or intended builtin calls. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
+- Avoid shadowing builtin or prelude algorithm names with implicit parameter names, local binders, or helper placeholders. No name is hard-reserved at the parser level; the names below are syntactically shadowable but unsafe to shadow because it can break lookup, collection pipelines, or intended builtin calls. Avoid names such as `if`, `while`, `repeat`, `atoms`, `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `load`, and `Math`. When the natural English word would collide, rename it to a non-builtin alternative such as `total` instead of `sum`, `minimumValue` instead of `min`, `maximumValue` instead of `max`, `averageValue` instead of `avg`, `itemCount` instead of `count`, `hasItem` instead of `contains`, `firstValue` instead of `first`, `lastValue` instead of `last`, `uniqueValues` instead of `distinct`, `prefixValues` instead of `take`, `remainingValues` instead of `skip`, `startValue` instead of `range`, `predicate` instead of `filter`, `transform` instead of `map`, or `sortedValues` instead of `order`.
 - For concrete-result requests, the response must always produce executable output — even when some input values are missing from the prompt. Choose reasonable assumed sample values for the final call when needed (see Assumed Final-Call Inputs).
 - When the user asks to calculate, solve, find, or compute a concrete result, the generated code must produce output — not just define algorithms.
 - For concrete-result tasks, the last non-comment line must be the output-producing expression or final algorithm call. Definitions may appear above it, but never instead of it.
@@ -48,7 +48,7 @@ Generated KatLang code should use whitespace to reveal structure. Do not visuall
 - Use blank lines between conceptual sections:
     - after initial constants or input-like properties;
     - before and after nested algorithm definitions;
-    - before the implicit output expression of a non-trivial algorithm;
+    - before the output expression of a non-trivial algorithm;
     - before the final executable call.
 - Nested algorithm bodies should be visually separated from their parent scope. The reader should be able to distinguish outer properties, nested algorithm definitions, the output expression of the current scope, and the final executable call.
 - Prefer readable names over excessive comments. Use short comments only when units, assumptions, or domain meaning are not obvious.
@@ -260,15 +260,14 @@ GOOD — assumed values in final call:
 - When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `// unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `// unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
 - Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `( ... )` or `{ ... }` only when the body contains nested property definitions (see Nested Properties).
 - Do not generate multiple `open` declarations.
-- Do not put `public` on `open` or `Output`.
+- Do not put `public` on `open`.
 - For exported clause-style APIs, `public Name(pattern) = body` is valid, but every clause in that same-name family must include `public`; do not mix public and private clauses.
-- Do not declare parameters or branches on `Output`; `Output = ...` is reserved result syntax. Put parameters and branches on the enclosing algorithm instead, and only put explicit parameters there when that algorithm defines output. If only a child property is callable, move the parameters to that property.
-- Do not generate `Algo.Output` or `Algo.Output(...)`; `Output` is not a public property and the designated result must be obtained by calling the algorithm directly.
+- Declare explicit parameters only on an algorithm that defines output. If only a child property is callable, move the parameters to that property.
 - Do not call arbitrary expressions (e.g., `(1 + 2)(3)` is invalid).
 - Parenthesized sub-expressions work normally as call arguments. `f((a + b) mod 2, c)` is valid and parses as two arguments.
 - Single-quoted strings in `open 'url'` / load targets are compile-time directives. String literals used as runtime values follow separate rules (see String Literals).
 - No dummy arithmetic (`a * 0 + b`, `a - a + b`, `0 * a + b`) for parameter ordering — use grace `~`.
-- Do not use more than one collecting binding in the same comma-separated pattern level, do not combine collecting bindings with grace `~`, and do not write `Output(*values) = ...`.
+- Do not use more than one collecting binding in the same comma-separated pattern level, and do not combine collecting bindings with grace `~`.
 - Do not replace a general mathematical definition with a bounded constant checklist derived from the requested numeric input.
 - Do not bake task-specific cutoff constants into helper predicates when the problem defines a reusable concept.
 - Do not specialize a predicate to one requested limit unless the user explicitly asks for a bounded shortcut.
@@ -276,7 +275,7 @@ GOOD — assumed values in final call:
 - Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
 - When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `// assumed annual salary = 50000`.
-- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. Only `Output` (in definition position) is hard-reserved at the parser level; the rest are syntactically shadowable but unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
+- Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. No name is hard-reserved at the parser level, but these are unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
 - Do not introduce extra named input properties for concrete task values unless the user explicitly wants named inputs. Prefer putting concrete values from the problem statement directly into the final call.
 - Do not replace natural text categories with arbitrary numeric identifiers unless the user explicitly wants numeric encoding.
 - Do not invent special default-branch syntax for conditional algorithms such as `Else = b`.
@@ -295,7 +294,7 @@ Before emitting code, verify silently:
 
 - Response contains only KatLang — no prose, no markdown.
 - All constructs are valid KatLang syntax.
-- Any explicit parameters or same-name clause branches appear on enclosing algorithm definitions, never on `Output`.
+- Any explicit parameters or same-name clause branches appear on enclosing algorithm definitions.
 - Any algorithm that declares explicit parameters also defines output.
 - No implicit parameter, branch binder, or helper placeholder shadows a builtin/prelude algorithm name.
 - Parentheses and braces are used correctly.
@@ -382,7 +381,7 @@ If ANY checklist item fails, fix the output before emitting it.
 
 ## KatLang Core Model
 
-- A program is a single algorithm: optional `open`, then property definitions, then trailing output expression(s).
+- A program is a single algorithm: optional `open`, then property definitions and output expression rows. Output rows may be interleaved with property definitions; the conventional style is definitions first, output last.
 - Numeric scalar values are decimal numbers.
 - String literals (single-quoted) are first-class runtime values.
 - Logical truth is numeric.
@@ -392,8 +391,7 @@ If ANY checklist item fails, fix the output before emitting it.
 ## Program Structure
 
 - At most one `open` declaration, before all properties and outputs.
-- Prefer trailing output expressions. Use `Output = ...` only when it clearly improves readability.
-- Do not mix `Output = ...` with trailing outputs.
+- Output is written as bare expression rows. Prefer trailing output expressions (definitions first, output last).
 - Use `public` only when the task requires exported properties for `open` use.
 
 ## Open Visibility, Ambiguity, and Load
@@ -771,7 +769,7 @@ Core rules:
 - Nested sequence values remain intact; sibling grouped values are not auto-flattened. With `Arg = (1, 2), (3, 4)` and `Many(*values) = values.count`, `Many(Arg*)` is `2` — the spread opens `Arg` into the item supply, keeping its two grouped values as siblings — while `Many(Arg)` is `1` (one collected slot).
 - Forwarding a collected list is ordinary spread: `Forward(*items) = items*.Target` — equivalently `Forward(*items) = Target(items*)` — re-supplies exactly the collected items; passing `items` without the spread star passes the whole list as one argument. Inside a helper body, pass the collected list unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)`), never spread into it (`sum(values*)` is an arity error).
 - A normal parameter remains one ordinary argument boundary, but sequence builtins applied later may destructure that returned value. With `Collect(list) = list` and `Arg = 1, 2, 3`, `Arg.Collect.count` is `3` because `count` opens the returned sequence value one level.
-- Collecting parameters are explicit only. Use at most one per sibling pattern level, never combine with grace `~`, and never write `Output(*values) = ...`.
+- Collecting parameters are explicit only. Use at most one per sibling pattern level, and never combine with grace `~`.
 
 Preferred sequence-style helper shapes:
 
@@ -1532,7 +1530,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (43 of the 155-case canonical language specification,
+Verified reference examples (45 of the 158-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1541,6 +1539,14 @@ language behaviors they demonstrate.
 Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+
+[output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
+
+    Output = 5
+    Output
+
+  Displays:
+    5
 
 [empty-literal] `()` is the empty sequence value — a real value occupying one visible output slot that contains zero items.
 
@@ -1805,6 +1811,15 @@ Regenerate this block from the repo root with:
 
   Displays:
     (1, 2, 3, 4)
+
+[output-rows-interleave-definitions] Output rows may be interleaved with property definitions: property resolution uses the complete property set of the algorithm, not textual order.
+
+    A = 3
+    A + B
+    B = 2
+
+  Displays:
+    5
 
 [semicolon-not-expression-syntax] Semicolon is not expression syntax: use comma or adjacency for separate slots, or parentheses for one sequence value.
 

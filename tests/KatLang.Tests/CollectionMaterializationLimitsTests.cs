@@ -78,7 +78,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void GiantRange_IsRejectedUnderDefaultLimits()
     {
-        var error = ErrorOf("Output = range(1, 10000000).count");
+        var error = ErrorOf("range(1, 10000000).count");
         var limit = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(error);
         Assert.Equal(EvaluationLimits.MaxSupportedCollectionItems, limit.Limit);
         Assert.Equal(10_000_000L, limit.Requested);
@@ -87,7 +87,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void GiantRange_IsRejectedThroughEveryEngineSurface()
     {
-        const string source = "Output = range(1, 10000000).count";
+        const string source = "range(1, 10000000).count";
         Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         Assert.Throws<KatLangException>(() => KatLangEngine.EvaluateToAtoms(source));
         Assert.Contains("Collection size limit", KatLangEngine.EvaluateToString(source));
@@ -101,12 +101,12 @@ public class CollectionMaterializationLimitsTests
 
     [Fact]
     public void Range_ExactlyAtLimit_Succeeds()
-        => Assert.False(Eval("Output = range(1, 10).count", Items(10)).IsError);
+        => Assert.False(Eval("range(1, 10).count", Items(10)).IsError);
 
     [Fact]
     public void Range_OneOverLimit_ReportsRequestedCount()
     {
-        var limit = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("Output = range(1, 11).count", Items(10)));
+        var limit = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("range(1, 11).count", Items(10)));
         Assert.Equal(10, limit.Limit);
         Assert.Equal(11L, limit.Requested);
     }
@@ -114,16 +114,16 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void Range_SingleItem_NeedsOneSlot()
     {
-        Assert.False(Eval("Output = range(5, 5).count", Items(1)).IsError);
-        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("Output = range(5, 6).count", Items(1)));
+        Assert.False(Eval("range(5, 5).count", Items(1)).IsError);
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("range(5, 6).count", Items(1)));
     }
 
     [Fact]
     public void Range_DescendingBounds_ChargeTheSameCardinality()
     {
         // Inclusive bounds always yield at least one element, in either direction.
-        Assert.False(Eval("Output = range(10, 1).count", Items(10)).IsError);
-        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("Output = range(11, 1).count", Items(10)));
+        Assert.False(Eval("range(10, 1).count", Items(10)).IsError);
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("range(11, 1).count", Items(10)));
     }
 
     [Fact]
@@ -132,17 +132,17 @@ public class CollectionMaterializationLimitsTests
         // Cardinality is computed from the bounds with a saturating conversion, so an
         // absurd span is rejected rather than wrapping into a small count.
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(
-            ErrorOf("Output = range(-100000000000000000000, 100000000000000000000).count"));
-        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("Output = range(0, 99999999999999999999).count"));
+            ErrorOf("range(-100000000000000000000, 100000000000000000000).count"));
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("range(0, 99999999999999999999).count"));
     }
 
     // ── Collection builtins charge their true output count ───────────────────
 
     [Theory]
-    [InlineData("Output = range(1, 6).map(Double).count\nDouble(x) = x * 2")]
-    [InlineData("Output = range(1, 6).order.count")]
-    [InlineData("Output = range(1, 6).orderDesc.count")]
-    [InlineData("Output = range(1, 6).distinct.count")]
+    [InlineData("range(1, 6).map(Double).count\nDouble(x) = x * 2")]
+    [InlineData("range(1, 6).order.count")]
+    [InlineData("range(1, 6).orderDesc.count")]
+    [InlineData("range(1, 6).distinct.count")]
     public void CollectionBuiltins_ProducingSixItems_NeedSixSlots(string source)
     {
         Assert.False(Eval(source, Items(6)).IsError);
@@ -154,14 +154,14 @@ public class CollectionMaterializationLimitsTests
     {
         // take(6, 2) keeps 2 items, so a 2-slot limit is enough even though the input
         // needed 6 — the limit is per collection, and `range` already paid for its own.
-        Assert.False(Eval("Values = range(1, 6)\nOutput = Values.take(2).count", Items(6)).IsError);
-        Assert.False(Eval("Values = range(1, 6)\nOutput = Values.skip(4).count", Items(6)).IsError);
+        Assert.False(Eval("Values = range(1, 6)\nValues.take(2).count", Items(6)).IsError);
+        Assert.False(Eval("Values = range(1, 6)\nValues.skip(4).count", Items(6)).IsError);
     }
 
     [Fact]
     public void Filter_ChargesTheKeptCount()
     {
-        const string source = "Big(x) = x > 3\nOutput = range(1, 6).filter(Big).count";
+        const string source = "Big(x) = x > 3\nrange(1, 6).filter(Big).count";
         Assert.False(Eval(source, Items(6)).IsError);          // input needs 6, kept needs 3
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
     }
@@ -170,7 +170,7 @@ public class CollectionMaterializationLimitsTests
 
     [Fact]
     public void Atoms_FlatteningWithinLimit_Succeeds()
-        => Assert.False(Eval("Output = [1, [2, 3], 4].atoms.count", Items(4)).IsError);
+        => Assert.False(Eval("[1, [2, 3], 4].atoms.count", Items(4)).IsError);
 
     [Fact]
     public void Atoms_ExpandingBeyondItsInput_IsBounded()
@@ -179,7 +179,7 @@ public class CollectionMaterializationLimitsTests
         // slots, so `atoms` can vastly exceed every collection it traverses. The traversal
         // itself must stop, not merely the result construction.
         const string source =
-            "A = [1, 2]\nB = [A, A]\nC = [B, B]\nD = [C, C]\nE = [D, D]\nOutput = E.atoms.count";
+            "A = [1, 2]\nB = [A, A]\nC = [B, B]\nD = [C, C]\nE = [D, D]\nE.atoms.count";
         Assert.False(Eval(source, Items(32)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(31)));
     }
@@ -189,14 +189,14 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void ListLiteral_ChargesItsElementSlots()
     {
-        Assert.False(Eval("Output = [1, 2, 3].count", Items(3)).IsError);
-        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("Output = [1, 2, 3, 4].count", Items(3)));
+        Assert.False(Eval("[1, 2, 3].count", Items(3)).IsError);
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf("[1, 2, 3, 4].count", Items(3)));
     }
 
     [Fact]
     public void ListLiteralWithSpread_ChargesTheExpandedSlots()
     {
-        const string source = "Values = [1, 2, 3]\nOutput = [Values*, Values*].count";
+        const string source = "Values = [1, 2, 3]\n[Values*, Values*].count";
         Assert.False(Eval(source, Items(6)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
     }
@@ -206,7 +206,7 @@ public class CollectionMaterializationLimitsTests
     {
         // `(A*, A*)` doubles a captured sequence value; without charging capture this
         // is an unbounded growth path that never touches a collection builtin.
-        const string source = "A = (1, 2, 3)\nB = (A*, A*)\nOutput = B.count";
+        const string source = "A = (1, 2, 3)\nB = (A*, A*)\nB.count";
         Assert.False(Eval(source, Items(6)).IsError);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
     }
@@ -214,7 +214,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void OrdinaryFlatVariadic_IsCheckedBeforeItsExactListIsCreated()
     {
-        const string source = "F(*items) = items.count\nOutput = F(1, 2, 3, 4)";
+        const string source = "F(*items) = items.count\nF(1, 2, 3, 4)";
         var failed = Observe(source, Items(3));
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(failed.Result.Error);
         Assert.Equal(4, error.Requested);
@@ -231,7 +231,7 @@ public class CollectionMaterializationLimitsTests
         const string source =
             "A = range(1, 100000)\n" +
             "F(*items) = items.count\n" +
-            "Output = F(A*, A*)";
+            "F(A*, A*)";
 
         var observed = Observe(source);
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(observed.Result.Error);
@@ -244,10 +244,10 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Theory]
-    [InlineData("F((head, *tail)) = tail.count\nOutput = F((1, 2, 3))", 5)]
-    [InlineData("x, *tail = [1, 2, 3, 4]\nOutput = tail.count", 7)]
-    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nOutput = Rows.map(Collect)", 6)]
-    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nOutput = Rows.reduce(Collect, 0)", 6)]
+    [InlineData("F((head, *tail)) = tail.count\nF((1, 2, 3))", 5)]
+    [InlineData("x, *tail = [1, 2, 3, 4]\ntail.count", 7)]
+    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nRows.map(Collect)", 6)]
+    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nRows.reduce(Collect, 0)", 6)]
     public void EveryCollectingBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
     {
         var observed = Observe(source, Total(expectedItems));
@@ -260,9 +260,9 @@ public class CollectionMaterializationLimitsTests
 
     public static TheoryData<string> MultiSlotLoopSources => new()
     {
-        "Step(a, b) = a, b\nOutput = Step.repeat(0, 1, 2)",
-        "Step(a, b) = a + 1, b + 1\nOutput = Step.repeat(3, 1, 2)",
-        "Step(a, b) = a + 1, b + 1, a < 2\nOutput = Step.while(0, 2)",
+        "Step(a, b) = a, b\nStep.repeat(0, 1, 2)",
+        "Step(a, b) = a + 1, b + 1\nStep.repeat(3, 1, 2)",
+        "Step(a, b) = a + 1, b + 1, a < 2\nStep.while(0, 2)",
     };
 
     [Theory]
@@ -298,8 +298,8 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void DirectNestedSpreads_ChargeEveryRealSequenceRecapture()
     {
-        const string oneLayer = "A = (1, 2, 3)\nOutput = A*";
-        const string twoLayers = "A = (1, 2, 3)\nOutput = A**";
+        const string oneLayer = "A = (1, 2, 3)\nA*";
+        const string twoLayers = "A = (1, 2, 3)\nA**";
 
         var one = Observe(oneLayer, Total(9));
         var two = Observe(twoLayers, Total(12));
@@ -315,7 +315,7 @@ public class CollectionMaterializationLimitsTests
     {
         // [[1, 2], [3, 4]] is three collections: two inner pairs and one outer pair.
         // The per-collection ceiling therefore only has to admit 2, not 4.
-        Assert.False(Eval("Output = [[1, 2], [3, 4]].count", Items(2)).IsError);
+        Assert.False(Eval("[[1, 2], [3, 4]].count", Items(2)).IsError);
     }
 
     // ── Cumulative materialization budget ────────────────────────────────────
@@ -324,8 +324,8 @@ public class CollectionMaterializationLimitsTests
     public void CumulativeBudget_ExactBoundary()
     {
         // One materialized range of ten items costs exactly ten slots.
-        Assert.False(Eval("Output = range(1, 10)", Total(10)).IsError);
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf("Output = range(1, 10)", Total(9)));
+        Assert.False(Eval("range(1, 10)", Total(10)).IsError);
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf("range(1, 10)", Total(9)));
     }
 
     [Fact]
@@ -333,8 +333,8 @@ public class CollectionMaterializationLimitsTests
     {
         // Each range is comfortably within the per-collection ceiling; together they are
         // not within the run total. This is the case a per-collection limit cannot catch.
-        const string one = "Output = range(1, 10)";
-        const string three = "Output = range(1, 10), range(1, 10), range(1, 10)";
+        const string one = "range(1, 10)";
+        const string three = "range(1, 10), range(1, 10), range(1, 10)";
 
         Assert.False(Eval(one, Total(10)).IsError);
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(three, Total(10)));
@@ -348,18 +348,18 @@ public class CollectionMaterializationLimitsTests
         // cache, so later reads do not re-charge the slots it already created. Rebuilding
         // an equal collection each time does, and runs out of the same budget.
         Assert.False(Eval(
-            "Values = range(1, 10)\nOutput = Values.count + Values.count + Values.count + Values.count",
+            "Values = range(1, 10)\nValues.count + Values.count + Values.count + Values.count",
             Total(30)).IsError);
 
         Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
-            "Output = range(1, 10).count + range(1, 10).count + range(1, 10).count + range(1, 10).count",
+            "range(1, 10).count + range(1, 10).count + range(1, 10).count + range(1, 10).count",
             Total(30)));
     }
 
     [Fact]
     public void CumulativeBudget_IsSharedByNestedCallbacks()
         => Assert.IsType<EvalError.MaterializationLimitExceeded>(
-            ErrorOf("Wrap(x) = [x, x]\nOutput = range(1, 10).map(Wrap).count", Total(25)));
+            ErrorOf("Wrap(x) = [x, x]\nrange(1, 10).map(Wrap).count", Total(25)));
 
     [Fact]
     public void FailedReservation_DoesNotCorruptTheRunTotal()
@@ -388,9 +388,9 @@ public class CollectionMaterializationLimitsTests
             limits);
 
     [Theory]
-    [InlineData("Output = range(1, 10).count")]
-    [InlineData("Output = range(1, 10).sum")]
-    [InlineData("Big(x) = x > 3\nOutput = range(1, 10).filter(Big).count")]
+    [InlineData("range(1, 10).count")]
+    [InlineData("range(1, 10).sum")]
+    [InlineData("Big(x) = x > 3\nrange(1, 10).filter(Big).count")]
     public void OptimizedAndGenericPaths_AgreeBelowTheLimit(string source)
     {
         var optimized = EvalWithOptimizations(source, Items(10), optimized: true);
@@ -402,9 +402,9 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Theory]
-    [InlineData("Output = range(1, 11).count")]
-    [InlineData("Output = range(1, 11).sum")]
-    [InlineData("Big(x) = x > 3\nOutput = range(1, 11).filter(Big).count")]
+    [InlineData("range(1, 11).count")]
+    [InlineData("range(1, 11).sum")]
+    [InlineData("Big(x) = x > 3\nrange(1, 11).filter(Big).count")]
     public void OptimizedAndGenericPaths_ProduceTheSameErrorOneOverTheLimit(string source)
     {
         // A fused pipeline never materializes the range, but it must still reject exactly
@@ -424,7 +424,7 @@ public class CollectionMaterializationLimitsTests
         // A fused filter-count allocates nothing, so charging it cumulatively would be the
         // double charging fusion exists to avoid. The generic path does materialize the
         // range and the kept list, and does pay for both.
-        const string source = "Big(x) = x > 3\nOutput = range(1, 100).filter(Big).count";
+        const string source = "Big(x) = x > 3\nrange(1, 100).filter(Big).count";
         Assert.False(EvalWithOptimizations(source, Total(1), optimized: true).IsError);
         Assert.IsType<EvalError.MaterializationLimitExceeded>(
             EvalWithOptimizations(source, Total(1), optimized: false).Error);
@@ -438,7 +438,7 @@ public class CollectionMaterializationLimitsTests
         // The host projection opens both sequence and list boundaries recursively, so a
         // small result value can flatten into a huge host list. A successful evaluation
         // must not be followed by an unbounded allocation on the way out.
-        const string source = "A = [1, 2]\nB = [A, A]\nC = [B, B]\nD = [C, C]\nOutput = D";
+        const string source = "A = [1, 2]\nB = [A, A]\nC = [B, B]\nD = [C, C]\nD";
         Assert.IsType<RunResult.Success>(KatLangEngine.Run(source, new RunOptions { EvaluationLimits = Items(16) }));
 
         var failure = Assert.IsType<RunResult.EvalFailure>(
@@ -452,9 +452,9 @@ public class CollectionMaterializationLimitsTests
     public void DepthAndStepErrors_AreUnchanged()
     {
         Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            ErrorOf("f(0) = 0\nf(n) = f(n - 1)\nOutput = f(40)", new EvaluationLimits { MaxDepth = 8 }));
+            ErrorOf("f(0) = 0\nf(n) = f(n - 1)\nf(40)", new EvaluationLimits { MaxDepth = 8 }));
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, 1\nOutput = Step.while(0)", new EvaluationLimits { MaxSteps = 500 }));
+            ErrorOf("Step = x, 1\nStep.while(0)", new EvaluationLimits { MaxSteps = 500 }));
     }
 
     [Fact]
@@ -464,7 +464,7 @@ public class CollectionMaterializationLimitsTests
         // program that is over BOTH reports the limit it reaches first in evaluation order:
         // the range materializes before the loop that would exhaust the step budget.
         var error = ErrorOf(
-            "Output = range(1, 1000).count",
+            "range(1, 1000).count",
             new EvaluationLimits { MaxCollectionItems = 10, MaxSteps = 1_000_000 });
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(error);
     }
@@ -475,7 +475,7 @@ public class CollectionMaterializationLimitsTests
     public void RepeatedAndConcurrentRuns_SharingOneOptionsInstance_EachStartFresh()
     {
         var options = new RunOptions { EvaluationLimits = Total(1_000) };
-        const string source = "Output = range(1, 10).count + range(1, 10).count + range(1, 10).count";
+        const string source = "range(1, 10).count + range(1, 10).count + range(1, 10).count";
 
         for (var i = 0; i < 3; i++)
             Assert.Equal("30", KatLangEngine.Run(source, options).ToDisplayString());
@@ -488,11 +488,11 @@ public class CollectionMaterializationLimitsTests
     // ── In-limit programs are untouched ──────────────────────────────────────
 
     [Theory]
-    [InlineData("Output = range(1, 5).sum", "15")]
-    [InlineData("Output = [1, 2, 3]", "[1, 2, 3]")]
-    [InlineData("Output = ()", "()")]
-    [InlineData("Output = [].count", "0")]
-    [InlineData("Output = range(1, 4).orderDesc", "[4, 3, 2, 1]")]
+    [InlineData("range(1, 5).sum", "15")]
+    [InlineData("[1, 2, 3]", "[1, 2, 3]")]
+    [InlineData("()", "()")]
+    [InlineData("[].count", "0")]
+    [InlineData("range(1, 4).orderDesc", "[4, 3, 2, 1]")]
     public void InLimitPrograms_AreUnaffected(string source, string expected)
     {
         Assert.Equal(expected, KatLangEngine.Run(source).ToDisplayString());

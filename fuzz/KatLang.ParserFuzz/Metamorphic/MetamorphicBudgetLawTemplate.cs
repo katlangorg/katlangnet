@@ -103,17 +103,17 @@ internal static class MetamorphicBudgetLawTemplate
     /// <summary>Compact programs, each exercising several resource dimensions at small sizes.</summary>
     internal static readonly ImmutableArray<MetamorphicBudgetSource> Sources =
     [
-        new("range-count", "Output = range(1, 12).count"),
-        new("list-literal", $"{V} = [1, 2, 3, 4, 5]\nOutput = {V}.count"),
-        new("string-rows", "Output = 'abcd', 'ef'"),
-        new("string-projection", "Output = range(1, 4).count.string"),
-        new("direct-recursion", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\nOutput = {F}(5)"),
-        new("counted-loop", $"{V}Step = x + 1\nOutput = {V}Step.repeat(6, 0)"),
-        new("map-pipeline", $"{Double}(x) = x * 2\nOutput = range(1, 6).map({Double})"),
-        new("filter-count-pipeline", $"{Big}(x) = x > 2\nOutput = range(1, 9).filter({Big}).count"),
-        new("nested-structures", "Output = [[1, 2], [3, 4]], (5, 6)"),
-        new("mixed-collection", $"{V} = [1, 'ab', [2, 3]]\nOutput = {V}.count, {V}"),
-        new("exact-collected-list", $"{F}(*items) = items\nOutput = {F}(1, 2, 3, 4)"),
+        new("range-count", "range(1, 12).count"),
+        new("list-literal", $"{V} = [1, 2, 3, 4, 5]\n{V}.count"),
+        new("string-rows", "'abcd', 'ef'"),
+        new("string-projection", "range(1, 4).count.string"),
+        new("direct-recursion", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\n{F}(5)"),
+        new("counted-loop", $"{V}Step = x + 1\n{V}Step.repeat(6, 0)"),
+        new("map-pipeline", $"{Double}(x) = x * 2\nrange(1, 6).map({Double})"),
+        new("filter-count-pipeline", $"{Big}(x) = x > 2\nrange(1, 9).filter({Big}).count"),
+        new("nested-structures", "[[1, 2], [3, 4]], (5, 6)"),
+        new("mixed-collection", $"{V} = [1, 'ab', [2, 3]]\n{V}.count, {V}"),
+        new("exact-collected-list", $"{F}(*items) = items\n{F}(1, 2, 3, 4)"),
     ];
 
     internal static int SourceCount => Sources.Length;
@@ -127,21 +127,21 @@ internal static class MetamorphicBudgetLawTemplate
     internal static readonly ImmutableArray<MetamorphicEquivalentForms> Forms =
     [
         new("ordinary-vs-dotted-count",
-            "Output = count(range(1, 10))", "Output = range(1, 10).count", SharesWorkBoundary: false),
+            "count(range(1, 10))", "range(1, 10).count", SharesWorkBoundary: false),
         new("ordinary-vs-dotted-sum",
-            "Output = sum(range(1, 6))", "Output = range(1, 6).sum", SharesWorkBoundary: false),
+            "sum(range(1, 6))", "range(1, 6).sum", SharesWorkBoundary: false),
         new("ordinary-vs-dotted-take",
-            "Output = take([1, 2, 3, 4], 2)", "Output = [1, 2, 3, 4].take(2)", SharesWorkBoundary: false),
+            "take([1, 2, 3, 4], 2)", "[1, 2, 3, 4].take(2)", SharesWorkBoundary: false),
         new("ordinary-vs-dotted-strings",
-            "Output = count(['abc', 'de'])", "Output = ['abc', 'de'].count", SharesWorkBoundary: false),
+            "count(['abc', 'de'])", "['abc', 'de'].count", SharesWorkBoundary: false),
         new("user-extension-ordinary-vs-dotted",
-            $"{F}(r, a) = take(r, a)\n{V} = [1, 2, 3, 4]\nOutput = {F}({V}, 2)",
-            $"{F}(r, a) = take(r, a)\n{V} = [1, 2, 3, 4]\nOutput = {V}.{F}(2)",
+            $"{F}(r, a) = take(r, a)\n{V} = [1, 2, 3, 4]\n{F}({V}, 2)",
+            $"{F}(r, a) = take(r, a)\n{V} = [1, 2, 3, 4]\n{V}.{F}(2)",
             SharesWorkBoundary: true),
         new("builtin-callback-vs-wrapper",
-            $"{V} = [[1, 2], [3]]\nOutput = {V}.map(count)",
+            $"{V} = [[1, 2], [3]]\n{V}.map(count)",
             $"{V} = [[1, 2], [3]]\n{MetamorphicTables.WrapperFunction}(a) = a.count\n" +
-            $"Output = {V}.map({MetamorphicTables.WrapperFunction})",
+            $"{V}.map({MetamorphicTables.WrapperFunction})",
             SharesWorkBoundary: false),
     ];
 

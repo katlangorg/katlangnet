@@ -54,9 +54,6 @@ public abstract class AstWalker
             }
         }
 
-        if (algorithm.ExplicitOutputSpan is { } outputSpan)
-            VisitReservedOutputDeclaration(algorithm, outputSpan);
-
         foreach (var open in algorithm.Opens)
             VisitOpenExpression(open);
 
@@ -201,13 +198,6 @@ public abstract class AstWalker
     /// Visits one explicit ordinary parameter declaration.
     /// </summary>
     protected virtual void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration declaration)
-    {
-    }
-
-    /// <summary>
-    /// Visits the reserved <c>Output</c> declaration name when explicit output syntax was used.
-    /// </summary>
-    protected virtual void VisitReservedOutputDeclaration(Algorithm algorithm, SourceSpan span)
     {
     }
 

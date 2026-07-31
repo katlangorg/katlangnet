@@ -381,38 +381,28 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_OutputPropertyAccess_ReturnsParseFailureWithGuidance()
+    public void Run_OutputDotCall_IsOrdinaryMemberCall()
     {
         var result = KatLangEngine.Run(
             """
-            Algo(x) = {
-              Output = x + 1
+            Algo = {
+              Output(x) = x + 1
             }
             Algo.Output(6)
             """);
 
-        var failure = Assert.IsType<RunResult.ParseFailure>(result);
-        var error = Assert.Single(failure.Errors);
-        Assert.Contains("Output is the designated result of an algorithm", error.Message);
-        Assert.Contains("Instead of `Algo.Output(6)`, write `Algo(6)`", error.Message);
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal("7", success.ToDisplayString());
     }
 
     [Fact]
-    public void Run_NestedOutputPropertyAccess_ReturnsParseFailure()
+    public void Run_OutputNamedPropertyAlone_IsNoProgramOutput()
     {
-        var result = KatLangEngine.Run(
-            """
-            Outer = {
-              Inner(x) = {
-                Output = x + 10
-              }
-            }
-            Outer.Inner.Output(6)
-            """);
+        // The former explicit-output spelling is an ordinary property
+        // definition: with no expression rows the program has no output.
+        var result = KatLangEngine.Run("Output = 42");
 
-        var failure = Assert.IsType<RunResult.ParseFailure>(result);
-        var error = Assert.Single(failure.Errors);
-        Assert.Contains("Output is the designated result of an algorithm", error.Message);
+        Assert.IsType<RunResult.NoProgramOutput>(result);
     }
 
     [Fact]
@@ -861,7 +851,7 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run(
             """
             Collect(list) = list
-            Output = (10, 20, 30).Collect
+            (10, 20, 30).Collect
             """);
 
         Assert.Equal("(10, 20, 30)", result.ToDisplayString());
@@ -876,7 +866,7 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
-            Output = (10, 20, 30).Collect
+            (10, 20, 30).Collect
             """);
 
         Assert.Equal("[(10, 20, 30)]", result.ToDisplayString());
@@ -891,7 +881,7 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
-            Output = ((10, 20, 30)*).Collect*
+            ((10, 20, 30)*).Collect*
             """);
 
         Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());

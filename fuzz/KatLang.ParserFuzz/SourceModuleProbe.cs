@@ -50,38 +50,38 @@ internal static class SourceModuleProbe
     [
         // ── long flat source ──────────────────────────────────────────────────
         // One very long identifier (per-token length vs total source).
-        new("long_ident", "flat", n => { var id = "A" + Repeat("a", n); return $"{id} = 1\nOutput = {id}"; }, Big),
+        new("long_ident", "flat", n => { var id = "A" + Repeat("a", n); return $"{id} = 1\n{id}"; }, Big),
         // One very long string literal.
-        new("long_string", "flat", n => $"Output = '{Repeat("x", n)}'", Big),
+        new("long_string", "flat", n => $"'{Repeat("x", n)}'", Big),
         // One very long comment.
-        new("long_comment", "flat", n => $"// {Repeat("x", n)}\nOutput = 1", Big),
+        new("long_comment", "flat", n => $"// {Repeat("x", n)}\n1", Big),
         // Repeated whitespace.
-        new("ws_repeat", "flat", n => $"Output = 1{Repeat(" ", n)}", Big),
+        new("ws_repeat", "flat", n => $"1{Repeat(" ", n)}", Big),
         // One very long numeric literal.
-        new("long_number", "flat", n => $"Output = {Repeat("9", n)}", Mid),
+        new("long_number", "flat", n => $"{Repeat("9", n)}", Mid),
 
         // ── many tiny expressions ─────────────────────────────────────────────
-        new("many_num_oneline", "wide", n => "Output = " + Repeat("1 ", n), Mid),
+        new("many_num_oneline", "wide", n => Repeat("1 ", n), Mid),
         new("many_num_lines", "many", n => Repeat("1\n", n) + "1", Mid),
-        new("many_props", "many", n => Concat(n, i => $"A{i} = {i}\n") + "Output = A0", Mid),
-        new("many_funcs", "many", n => Concat(n, i => $"F{i}(x) = x + {i}\n") + "Output = F0(1)", Mid),
-        new("many_lists", "many", n => "Output = " + Repeat("[1] ", n), Mid),
-        new("many_empty", "many", n => Concat(n, i => $"A{i} = ()\n") + "Output = A0", Mid),
+        new("many_props", "many", n => Concat(n, i => $"A{i} = {i}\n") + "A0", Mid),
+        new("many_funcs", "many", n => Concat(n, i => $"F{i}(x) = x + {i}\n") + "F0(1)", Mid),
+        new("many_lists", "many", n => Repeat("[1] ", n), Mid),
+        new("many_empty", "many", n => Concat(n, i => $"A{i} = ()\n") + "A0", Mid),
 
         // ── deep but legal syntax (near parser MaxNestingDepth) ────────────────
         // Confirms the existing depth guard constrains recursive shape but not node count.
-        new("deep_nesting", "deep", n => $"Output = {Repeat("(", n)}1{Repeat(")", n)}", [50, 100, 200, 280]),
+        new("deep_nesting", "deep", n => $"{Repeat("(", n)}1{Repeat(")", n)}", [50, 100, 200, 280]),
 
         // ── wide syntax ───────────────────────────────────────────────────────
-        new("wide_args", "wide", n => $"F({Concat(n, i => i == 0 ? "x0" : $", x{i}")}) = x0\nOutput = F({Concat(n, i => i == 0 ? "1" : ", 1")})", [10, 100, 1_000, 10_000]),
-        new("wide_list", "wide", n => "Output = [" + Repeat("1,", n) + "1]", Mid),
-        new("wide_seq", "wide", n => "Output = sum((" + Repeat("1,", n) + "1))", Mid),
-        new("wide_deconstruct", "wide", n => $"{Concat(n, i => i == 0 ? "x0" : $", x{i}")} = range(1, {n})\nOutput = x0", [10, 100, 1_000, 10_000]),
+        new("wide_args", "wide", n => $"F({Concat(n, i => i == 0 ? "x0" : $", x{i}")}) = x0\nF({Concat(n, i => i == 0 ? "1" : ", 1")})", [10, 100, 1_000, 10_000]),
+        new("wide_list", "wide", n => "[" + Repeat("1,", n) + "1]", Mid),
+        new("wide_seq", "wide", n => "sum((" + Repeat("1,", n) + "1))", Mid),
+        new("wide_deconstruct", "wide", n => $"{Concat(n, i => i == 0 ? "x0" : $", x{i}")} = range(1, {n})\nx0", [10, 100, 1_000, 10_000]),
 
         // ── frontend amplification: conditional clause family ──────────────────
         // The historical exponential-blowup shape. postNodes/rawNodes must stay linear.
-        new("many_clauses", "frontend", n => Concat(n, i => $"F({i}) = {i}\n") + "Output = F(0)", [10, 100, 1_000, 5_000]),
-        new("many_callbacks", "frontend", n => Concat(n, i => $"G{i}(x) = x + {i}\n") + "Values = range(1, 10)\n" + "Output = " + Concat(n, i => i == 0 ? "Values.map(G0)" : $", Values.map(G{i})") , [10, 100, 1_000]),
+        new("many_clauses", "frontend", n => Concat(n, i => $"F({i}) = {i}\n") + "F(0)", [10, 100, 1_000, 5_000]),
+        new("many_callbacks", "frontend", n => Concat(n, i => $"G{i}(x) = x + {i}\n") + "Values = range(1, 10)\n" + Concat(n, i => i == 0 ? "Values.map(G0)" : $", Values.map(G{i})") , [10, 100, 1_000]),
 
         // ── diagnostic-heavy malformed input ──────────────────────────────────
         new("diag_per_token", "diag", n => Repeat("@ ", n), Mid),
@@ -133,7 +133,7 @@ internal static class SourceModuleProbe
         var shapes = selected.Count > 0 ? SourceShapes.Where(s => selected.Contains(s.Id)).ToArray() : SourceShapes;
 
         // Warm the pipeline so the first measured row is not paying JIT.
-        for (var i = 0; i < 3; i++) MeasureSource("A = 1\nOutput = A", out _);
+        for (var i = 0; i < 3; i++) MeasureSource("A = 1\nA", out _);
 
         Console.WriteLine($"# source resource probe  build={BuildConfig()}  shapes={shapes.Length}");
         Console.WriteLine($"{"shape",-18}{"kind",-9}{"size",8}{"srcLen",10}{"tokens",9}{"rawNode",9}{"postNode",9}{"pDiag",7}{"feDiag",7}  {"tok/src",8}{"node/src",9}{"post/raw",9}{"diag/src",9}{"allocKb",10}{"ms",8}");

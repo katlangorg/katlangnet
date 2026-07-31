@@ -167,7 +167,7 @@ Minimize a crashing input with libFuzzer before triaging:
 every grammar area: numbers (decimals, exponents, digit separators, malformed forms),
 strings (incl. unterminated and Unicode), identifiers, operators and precedence,
 parentheses/braces/exact-list brackets and their empty/nested forms, comma vs adjacency,
-newline/CRLF/lone-CR boundaries, comments, property/`public`/`Output =` definitions,
+newline/CRLF/lone-CR boundaries, comments, property/`public` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
 leading-dot continuation, `open` declarations, `:` indexing, `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,
 deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-

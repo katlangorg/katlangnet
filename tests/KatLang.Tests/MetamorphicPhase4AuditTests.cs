@@ -37,16 +37,16 @@ public class MetamorphicPhase4AuditTests
     /// <summary>Programs covering every value kind and every failure channel a surface can meet.</summary>
     private static readonly (string Id, string Source, bool Parses)[] SurfaceProbes =
     [
-        ("scalar", "Output = 1 + 2", true),
-        ("collection", "Output = range(1, 4)", true),
-        ("list", "Output = [1, [2, 3]]", true),
-        ("empty-sequence", "Output = ()", true),
-        ("string", "Output = 'abc'", true),
-        ("top-level-property", "DisplayDecimals = 2\nOutput = 1.5", true),
-        ("semantic-failure", "Output = min([])", true),
-        ("resource-failure", "Output = range(1, 200000).count", true),
+        ("scalar", "1 + 2", true),
+        ("collection", "range(1, 4)", true),
+        ("list", "[1, [2, 3]]", true),
+        ("empty-sequence", "()", true),
+        ("string", "'abc'", true),
+        ("top-level-property", "DisplayDecimals = 2\n1.5", true),
+        ("semantic-failure", "min([])", true),
+        ("resource-failure", "range(1, 200000).count", true),
         ("no-program-output", "MmA = 1", true),
-        ("parse-failure", "Output = 1 ; 2", false),
+        ("parse-failure", "1 ; 2", false),
     ];
 
     /// <summary>

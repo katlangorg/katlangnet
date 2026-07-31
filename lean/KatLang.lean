@@ -53,29 +53,12 @@
 --   binding for higher-order arguments, while true conditional algorithms keep
 --   their full-input-specification and whole-argument matching semantics.
 --
--- Explicit output syntax (exact-syntax sugar, parser-only):
---   `Output = expr` inside an algorithm body is special output-definition syntax.
---   It is NOT a normal property assignment — it lowers to the Algorithm's `output`
---   field (the same representation used by implicit trailing output).
---
---   Equivalence:
---     Implicit:  `A = 6\n A`           → Algorithm.mk ... output=[Resolve("A")]
---     Explicit:  `A = 6\n Output = A`  → Algorithm.mk ... output=[Resolve("A")]
---
---   Rules:
---     - Each algorithm may define output at most once.
---     - The user may choose either implicit output OR explicit `Output = expr`,
---       but not both in the same algorithm.
---     - `Output = expr` may appear anywhere in the property list (not only at end).
---     - The name `Output` in assignment position is reserved for this syntax;
---       users cannot define a normal property named `Output`.
---     - Explicit parameters and clause branches belong on the enclosing
---       algorithm head, not on `Output`; exact syntax such as `Output(x) = ...`
---       is invalid.
---     - External qualified access such as `Algo.Output` or `Algo.Output(...)`
---       is invalid; users must call the algorithm directly as `Algo(...)`.
---     - `Output` can still be used as a free identifier / parameter name in
---       expressions (only the `Output = ...` assignment form is special).
+-- Algorithm output (surface syntax):
+--   Every non-definition expression row in an algorithm body contributes to
+--   the Algorithm's `output` field. Output rows and property definitions may
+--   be interleaved; there is no dedicated output keyword or output-definition
+--   syntax, and `Output`/`output` are ordinary identifiers with no special
+--   treatment (`Output = expr` is an ordinary property definition).
 --
 --   Semantic rules (enforced by evaluator, not parser):
 --     - Opens provide PUBLIC properties only (lookupOpens filters by isPublic).
@@ -291,7 +274,6 @@ inductive Error where
   | branchOutputArityMismatch : Ident -> Nat -> Nat -> Error  -- conditional algorithm: branch top-level output arity mismatch (name, expected, actual); raised by pre-evaluation validation (validateBranchOutputArities)
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
-  | specialOutputAccess : Error                -- external property-style access to designated Output is invalid
   | explicitParamsRequireOutput : Error        -- explicit algorithm params require an algorithm output
   | missingOutput    : Error                   -- forced user-defined algorithm does not define output
   | spreadMissingOutput : Error          -- spread operand produced no output
@@ -5061,9 +5043,6 @@ mutual
       changing the semantic behavior of dotCall itself. -/
   partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    if name = "Output" then
-      .error Error.specialOutputAccess
-    else
     match <- evalAttempt (resolveAlg target ctx) with
     | .ok targetAlg =>
       if name = "string" then do
@@ -5976,9 +5955,6 @@ inductive LoadPosition where
   which guarantees:
     1. Runtime `Expr.stringLiteral` nodes may remain as ordinary first-class values.
     2. No unresolved load calls remain (i.e., no `call (resolve "load") _` nodes).
-    3. No elaborated dot-call targets the reserved member name `Output`.
-    4. No structural property is named `Output`; reserved `Output = ...`
-       syntax lowers directly to the algorithm output list instead of a property.
   All load directives have been replaced with `Expr.block` containing the
   parsed and elaborated remote algorithm. The evaluator never sees unresolved
   load calls.
@@ -5986,13 +5962,10 @@ inductive LoadPosition where
   Formally:
     elaborate(call(resolve("load"), [stringLiteral url])) = block(parseModule(fetch(url)))
     ∀ e ∈ elaborated AST, e ≠ Expr.call (Expr.resolve "load") _
-    ∀ e ∈ elaborated AST, e ≠ Expr.dotCall _ "Output" _
-    ∀ a ∈ elaborated AST algorithms, ∀ p ∈ a.props, p.name ≠ "Output"
 -/
 mutual
 /-- Post-elaboration invariant: returns true iff the expression tree contains
-    no unresolved load calls (`call (resolve "load") _`) and no elaborated
-    dot-call targeting the reserved member name `Output`. Runtime
+    no unresolved load calls (`call (resolve "load") _`). Runtime
     `Expr.stringLiteral` nodes are allowed as ordinary first-class values.
     An AST satisfying this predicate is ready for semantic evaluation. -/
 partial def postElabInvariant : Expr -> Bool
@@ -6005,7 +5978,6 @@ partial def postElabInvariant : Expr -> Bool
   | .listLiteral items      => items.all postElabInvariant
   | .call (.resolve "load") _ => false  -- unresolved load call
   | .call f args     => postElabInvariant f && postElabInvariantAlg args
-  | .dotCall _ "Output" _ => false
   | .dotCall a _ args =>
       postElabInvariant a &&
       match args with
@@ -6015,15 +5987,12 @@ partial def postElabInvariant : Expr -> Bool
   | _                => true  -- param, num, resolve
 
 /-- Algorithm-level post-elaboration invariant: all contained expressions
-  satisfy `postElabInvariant`, no elaborated dot-call targets the reserved
-  member name `Output`, and no structural property is named `Output`
-  because reserved `Output = ...` syntax lowers directly to the algorithm
-  output list instead of a property. -/
+  satisfy `postElabInvariant`. -/
 partial def postElabInvariantAlg : Algorithm -> Bool
   | .builtin _ => true
   | .mk _ _ opens props output =>
       opens.all postElabInvariant &&
-      props.all (fun p => p.name != "Output" && postElabInvariantAlg p.alg) &&
+      props.all (fun p => postElabInvariantAlg p.alg) &&
       output.all postElabInvariant
   | .conditional _ opens branches =>
       opens.all postElabInvariant &&

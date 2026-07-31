@@ -113,9 +113,9 @@ public class Utf16ReadinessTests
     {
         // A relation nobody can break is not a test. Each one is shown here to REJECT a deliberately
         // wrong pair, using the same comparison the relation itself performs.
-        var lf = "A = 1\nOutput = A";
-        var crlf = "A = 1\r\nOutput = A";
-        var loneCr = "A = 1\rOutput = A";
+        var lf = "A = 1\nA";
+        var crlf = "A = 1\r\nA";
+        var loneCr = "A = 1\rA";
 
         // cr-transparency: identical tokens by line/column, and it would notice if they were not.
         var (lfTokens, _) = Lexer.Tokenize(lf);
@@ -133,9 +133,9 @@ public class Utf16ReadinessTests
         Assert.Contains(lfTokens, t => t.Line > 1);
 
         // trailing-newline-neutral: it compares real trees, and a CONTENT change does move them.
-        var closed = Parser.ParseSyntax("Output = 'a'");
-        var closedNewline = Parser.ParseSyntax("Output = 'a'\n");
-        var different = Parser.ParseSyntax("Output = 'b'");
+        var closed = Parser.ParseSyntax("'a'");
+        var closedNewline = Parser.ParseSyntax("'a'\n");
+        var different = Parser.ParseSyntax("'b'");
         Assert.Equal(
             FrontEndFingerprint.ComputeParseResult(closed.Root, closed.Diagnostics),
             FrontEndFingerprint.ComputeParseResult(closedNewline.Root, closedNewline.Diagnostics));
@@ -145,15 +145,15 @@ public class Utf16ReadinessTests
 
         // exact-string-preservation: it reads the real evaluated value, and it distinguishes
         // precomposed from decomposed text — which is exactly what a normalizing path would hide.
-        Assert.Equal("\u00E9", StringValueOf("Output = '\u00E9'"));
-        Assert.Equal("\u0065\u0301", StringValueOf("Output = '\u0065\u0301'"));
-        Assert.NotEqual(StringValueOf("Output = '\u00E9'"), StringValueOf("Output = '\u0065\u0301'"));
+        Assert.Equal("\u00E9", StringValueOf("'\u00E9'"));
+        Assert.Equal("\u0065\u0301", StringValueOf("'\u0065\u0301'"));
+        Assert.NotEqual(StringValueOf("'\u00E9'"), StringValueOf("'\u0065\u0301'"));
     }
 
     [Fact]
     public void EveryInvariantTheHarnessClaimsIsProvenToFireOnABrokenInput()
     {
-        var source = "A = 1\nOutput = A";
+        var source = "A = 1\nA";
         var (tokens, _) = Lexer.Tokenize(source);
 
         // Token offset past the source.

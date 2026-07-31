@@ -167,8 +167,8 @@ internal static class MetamorphicChainTemplate
 
         return MetamorphicCaseFactory.Create(
             parameters,
-            $"{preamble}Output = {ordinary}",
-            $"{preamble}Output = {dotted}",
+            $"{preamble}{ordinary}",
+            $"{preamble}{dotted}",
             Validate(parameters),
             $"{chain.Length.ToString(CultureInfo.InvariantCulture)}-link chain " +
             $"{string.Join(" > ", chain.Select(link => link.Builtin))} on receiver {receiver.Id}");

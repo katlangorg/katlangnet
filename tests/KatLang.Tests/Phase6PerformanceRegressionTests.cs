@@ -39,10 +39,10 @@ public class Phase6PerformanceRegressionTests
             Middle = Leaf
             Shadow = {
               Leaf = 100
-              Output = Leaf
+              Leaf
             }
             Top = Middle
-            Output = Top(7), Shadow
+            Top(7), Shadow
             """;
 
         var parsed = Parser.Parse(source);
@@ -64,10 +64,10 @@ public class Phase6PerformanceRegressionTests
               Captured = x
               PublicContainer = {
                 public Value = 1
-                Output = Value
+                Value
               }
               After = Captured
-              Output = After
+              After
             }
             """);
 

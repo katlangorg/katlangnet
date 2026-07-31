@@ -53,7 +53,7 @@ Generated KatLang should look like careful hand-written KatLang. Formatting is p
 Use blank lines to reveal structure:
 - after input-like constants;
 - before and after nested algorithm definitions;
-- before the implicit output expression of a non-trivial algorithm;
+- before the output expression of a non-trivial algorithm;
 - before the final executable call.
 
 Do not visually flatten nested scopes. The reader should be able to distinguish outer properties, nested algorithms, current-scope output, and the final call.
@@ -107,20 +107,20 @@ Use explicit heads only when they add semantic value:
 - literal branch patterns are needed;
 - a higher-order callable interface is clearer with named binders;
 - a reusable sequence-style helper must capture immediate top-level call items with a collecting parameter, e.g. `Many(*values) = values.count`;
-- an algorithm body uses `Output = ...` or a block structure where the explicit call interface is intentional;
+- an algorithm body uses a block structure where the explicit call interface is intentional;
 - the user explicitly asks for an explicit callable signature.
 
 Explicit algorithm head:
     Name(x, y) = {
-        Output = x + y
+        x + y
     }
 
-Prefer implicit trailing output:
+Prefer trailing output:
     A = 3
     B = 4
     A + B
 
-Use `Output = ...` only when it clearly improves readability. Explicit and implicit output never mix in either direction: a plain expression line after `Output = ...` is a parse error, not an additional contribution. The `Output = ...` body is line-bounded like every definition body, so write one sequence-valued explicit output as `Output = (A, B)`. Do not write `Algo.Output(...)`; call `Algo(...)` directly.
+Output is written as bare expression rows; output rows may be interleaved with property definitions, and the conventional style is definitions first, output last.
 
 Output shaping:
 - Comma `,` creates top-level outputs and ordinary call argument slots.
@@ -174,7 +174,6 @@ Rules:
 - At most one collecting parameter is allowed in each comma-separated pattern level.
 - Collecting parameters are explicit only; do not infer them from free identifiers.
 - Do not combine a collecting binding with grace `~`.
-- Do not write `Output(*values) = ...`; declare parameters on the enclosing algorithm/property head.
 - A lone collecting parameter `*values` collects the supplied call arguments (the degenerate lone-collecting-binding case): with `Arg = 1, 2, 3`, `Many(Arg*)` and `Many(1, 2, 3)` collect `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Many((1, 2, 3))` supply ONE grouped argument and collect `values = [Arg]` (count 1) — the argument is NOT opened, and grouped vs spread calls differ for every sequence-, list-, and empty-valued argument (scalar atoms/strings coincide because spread is total). Supply items with an explicit spread `Arg*`. An empty call `Many()` collects `[]`; multiple sibling grouped values are preserved as separate elements unless each is explicitly spread.
 - A parameter list with two or more captures that contains one collecting parameter is the general comma deconstruction form of the same item-supply binding. Fixed captures before the collecting parameter bind from the front, fixed captures after it bind from the back, and the collecting parameter collects the matched middle items (possibly zero) as one exact immutable list.
 - An item-supply call consumes the supplied argument slots as given. With `Scale(*values, factor) = values.map{n * factor}` and `Arg = 1, 2, 3`, `factor` binds from the back and `*values` collects the front: `Scale(Arg*, 10)` and `Scale(1, 2, 3, 10)` supply three front slots collected as `values = [1, 2, 3]` and return the exact list value `[10, 20, 30]` (use `Scale(Arg*, 10)*` to open it into separate rows). `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as ONE front slot, collected as `values = [Arg]`, so the numeric `map` callback fails on the sequence element — always spread when the helper needs the items. The plain argument is never opened during binding.
@@ -252,7 +251,7 @@ Do not invent unsupported display forms. None of these exist:
 - PascalCase for properties and algorithms: `CircleArea`, `Total`, `Step`.
 - Lowercase/camelCase for implicit parameters: `price`, `radius`, `itemCount`.
 - Single-letter names are fine for conventional math or physics notation.
-- Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. Only `Output` (in definition position) is a hard-reserved parser-level name; the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
+- Avoid shadowing builtin/prelude names with parameters, binders, or helper placeholders. No name is hard-reserved at the parser level; the builtin/prelude names below are syntactically shadowable, but shadowing them is unsafe because it can break lookup, collection pipelines, or intended builtin calls. Do not generate code that shadows them.
 
 Avoid shadowing these parameter or helper names:
 `if`, `while`, `repeat`, `range`, `filter`, `map`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `min`, `max`, `sum`, `avg`, `reduce`, `order`, `orderDesc`, `atoms`, `load`, `Math`.
@@ -598,7 +597,7 @@ Collection builtins are ordinary fixed-arity callables such as `count(collection
     // Sum(Values, 7) is an ERROR: the unspread Values is ONE collected
     // element (values = [(10, 20)]), which sum rejects.
     Window((first, *rest), factor) = first * factor, rest.count
-    Output = (1, 2, 3).Window(10)
+    (1, 2, 3).Window(10)
 
 Do not describe or use ordinary dot-call as a spread operator.
 
@@ -898,7 +897,7 @@ The `open` target itself only needs to be lexically visible — it may be a priv
     }
     Pi                   // 3
 
-Do not put `public` on `open` or `Output`. Use `public` only when the task requires exported properties or clause families for open/load use.
+Do not put `public` on `open`. Use `public` only when the task requires exported properties or clause families for open/load use.
 
 `load` is a compile-time module directive, not a runtime function. Single-quoted strings in `open 'url'` or `load(...)` targets are compile-time directive targets; runtime strings follow the normal string-literal rules. Valid forms:
     Lib = load('https://katlang.org/lib.kat')       // property definition
@@ -1005,7 +1004,6 @@ KatLang validity:
 - the empty sequence value `()` is used correctly; `{}` is not used as if it were a value;
 - Unicode math is normalized to ASCII;
 - simple property bodies are not unnecessarily wrapped;
-- `Output = ...` is not mixed with trailing implicit output;
 - explicit heads are used only when they add semantic value.
 
 Numeric, operator, and literal correctness:
@@ -1042,7 +1040,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (43 of the 155-case canonical language specification,
+Verified reference examples (45 of the 158-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1051,6 +1049,14 @@ language behaviors they demonstrate.
 Regenerate this block from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
   dotnet test .\KatLang.slnx --filter LanguageSpecArtifacts
+
+[output-is-ordinary-property] `Output` and `output` are ordinary identifiers: `Output = 5` defines a regular property named `Output`, and only bare expression rows contribute to algorithm output — a program whose rows are all definitions has no output.
+
+    Output = 5
+    Output
+
+  Displays:
+    5
 
 [empty-literal] `()` is the empty sequence value — a real value occupying one visible output slot that contains zero items.
 
@@ -1315,6 +1321,15 @@ Regenerate this block from the repo root with:
 
   Displays:
     (1, 2, 3, 4)
+
+[output-rows-interleave-definitions] Output rows may be interleaved with property definitions: property resolution uses the complete property set of the algorithm, not textual order.
+
+    A = 3
+    A + B
+    B = 2
+
+  Displays:
+    5
 
 [semicolon-not-expression-syntax] Semicolon is not expression syntax: use comma or adjacency for separate slots, or parentheses for one sequence value.
 

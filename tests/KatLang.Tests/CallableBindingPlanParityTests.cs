@@ -321,7 +321,7 @@ public class CallableBindingPlanParityTests
         AssertEval(
             """
             Collect(list) = list.count
-            Output = (10, 20, 30).Collect
+            (10, 20, 30).Collect
             """,
             3);
         // (fixed parameter: the receiver binds untouched and the collection
@@ -337,7 +337,7 @@ public class CallableBindingPlanParityTests
         AssertEval(
             """
             Collect(*list) = list.count
-            Output = ((10, 20, 30)*).Collect
+            ((10, 20, 30)*).Collect
             """,
             3);
     }

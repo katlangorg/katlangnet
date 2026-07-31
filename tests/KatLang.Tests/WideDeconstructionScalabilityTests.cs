@@ -33,7 +33,7 @@ public class WideDeconstructionScalabilityTests
     public void Elaboration_HoistsOneSharedSourceThenTargetsInWrittenOrder()
     {
         const int n = 400;
-        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nOutput = x0").Root;
+        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nx0").Root;
 
         var expected = new List<string> { "$deconstruct$0" };
         for (var i = 0; i < n; i++)
@@ -48,7 +48,7 @@ public class WideDeconstructionScalabilityTests
     public void Elaboration_EachTargetBindsSharedSourceThroughFullPatternHelper()
     {
         const int n = 60;
-        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nOutput = x0").Root;
+        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nx0").Root;
 
         foreach (var i in new[] { 0, 23, n - 1 })
         {
@@ -121,7 +121,7 @@ public class WideDeconstructionScalabilityTests
     public void Semantics_UnreferencedWrongArityDeconstruction_DoesNotError()
     {
         // Deferred semantics: an unused deconstruction never binds, so a wrong arity is silent.
-        Assert.Equal([5m], Atoms("x, y, z = (1, 2)\nOutput = 5"));
+        Assert.Equal([5m], Atoms("x, y, z = (1, 2)\n5"));
     }
 
     // ───────────────────────── collision + duplicate + recovery diagnostics ─────────────────────────
@@ -129,7 +129,7 @@ public class WideDeconstructionScalabilityTests
     [Fact]
     public void Diagnostics_DuplicateTargetsWithinOnePattern_ReportedInOrder()
     {
-        var result = Parser.ParseSyntax("a, b, a, c, b = range(1, 5)\nOutput = a");
+        var result = Parser.ParseSyntax("a, b, a, c, b = range(1, 5)\na");
         var duplicates = result.Diagnostics
             .Where(d => d.Message.Contains("already defined", StringComparison.Ordinal))
             .ToList();
@@ -156,7 +156,7 @@ public class WideDeconstructionScalabilityTests
             P, Q = (3, 4)
             F, R = (5, 6)
             a, S = (7, 8)
-            Output = 1
+            1
             """);
 
         var lines = result.Diagnostics
@@ -172,7 +172,7 @@ public class WideDeconstructionScalabilityTests
     {
         // A non-identifier target (`5`) breaks the binding-pattern lookahead; the parser recovers,
         // reports, and still returns a well-formed root instead of throwing.
-        var result = Parser.ParseSyntax("x, 5, z = (1, 2, 3)\nOutput = 1");
+        var result = Parser.ParseSyntax("x, 5, z = (1, 2, 3)\n1");
         Assert.NotNull(result.Root);
         Assert.NotEmpty(result.Diagnostics);
     }
@@ -218,7 +218,7 @@ public class WideDeconstructionScalabilityTests
     public void LargeCase_TenThousandTargets_ParsesAndElaboratesWithoutBlowup()
     {
         const int n = 10_000;
-        var result = Parser.Parse(WideSource(n, $"range(1, {n})") + "\nOutput = x0");
+        var result = Parser.Parse(WideSource(n, $"range(1, {n})") + "\nx0");
 
         // Parsing AND front-end elaboration both complete with no errors and no stack failure.
         Assert.False(

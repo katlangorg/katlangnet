@@ -170,14 +170,13 @@ public class MetamorphicFuzzHarnessTests
             var testCase = MetamorphicTemplates.Build(parameters);
             var stop = parameters.RangeStop.ToString(CultureInfo.InvariantCulture);
 
-            Assert.Equal($"Output = count(range(1, {stop}))", testCase.LeftSource);
-            Assert.Equal($"Output = range(1, {stop}).count", testCase.RightSource);
+            Assert.Equal($"count(range(1, {stop}))", testCase.LeftSource);
+            Assert.Equal($"range(1, {stop}).count", testCase.RightSource);
 
             // Structural member access is a DIFFERENT language construct and is explicitly out
             // of this relation's scope, so the template must never accidentally produce it.
             Assert.DoesNotContain("public", testCase.LeftSource, StringComparison.Ordinal);
             Assert.DoesNotContain("public", testCase.RightSource, StringComparison.Ordinal);
-            Assert.DoesNotContain("Output.", testCase.RightSource, StringComparison.Ordinal);
         }
     }
 
@@ -187,7 +186,7 @@ public class MetamorphicFuzzHarnessTests
         foreach (var stop in MetamorphicDecoder.RangeStopTable)
         {
             var expected = MetamorphicTemplates.RangeCardinality(stop);
-            var source = $"Output = count(range(1, {stop.ToString(CultureInfo.InvariantCulture)}))";
+            var source = $"count(range(1, {stop.ToString(CultureInfo.InvariantCulture)}))";
 
             Assert.True(MetamorphicExecutor.TryObserve(source, null, true, out var observation, out _));
             Assert.Equal("ok", observation.Semantic.Outcome);
@@ -272,8 +271,8 @@ public class MetamorphicFuzzHarnessTests
             for (var budget = 1L; budget <= cardinality + 2; budget++)
             {
                 var limits = new EvaluationLimits { MaxMaterializedItems = budget };
-                var left = $"Output = count(range(1, {stop.ToString(CultureInfo.InvariantCulture)}))";
-                var right = $"Output = range(1, {stop.ToString(CultureInfo.InvariantCulture)}).count";
+                var left = $"count(range(1, {stop.ToString(CultureInfo.InvariantCulture)}))";
+                var right = $"range(1, {stop.ToString(CultureInfo.InvariantCulture)}).count";
 
                 Assert.True(MetamorphicExecutor.TryObserve(left, limits, true, out var a, out _));
                 Assert.True(MetamorphicExecutor.TryObserve(right, limits, true, out var b, out _));
@@ -290,7 +289,7 @@ public class MetamorphicFuzzHarnessTests
     {
         // Running the identical program twice must produce byte-identical observations: a
         // leaked budget or a shared property cache would show up as different counters.
-        const string source = "Output = range(1, 9).count";
+        const string source = "range(1, 9).count";
         Assert.True(MetamorphicExecutor.TryObserve(source, null, true, out var first, out _));
         Assert.True(MetamorphicExecutor.TryObserve(source, null, true, out var second, out _));
         Assert.Equal(first, second);
@@ -301,10 +300,10 @@ public class MetamorphicFuzzHarnessTests
     public void Executor_IsIsolatedAcrossAnUnrelatedEvaluation()
     {
         // A/B/A: left, unrelated source, left.
-        MetamorphicExecutor.AssertIsolated("Output = count(range(1, 6))", null, true);
-        MetamorphicExecutor.AssertIsolated("Output = range(1, 6).count", null, true);
+        MetamorphicExecutor.AssertIsolated("count(range(1, 6))", null, true);
+        MetamorphicExecutor.AssertIsolated("range(1, 6).count", null, true);
         MetamorphicExecutor.AssertIsolated(
-            "Output = range(1, 6).count", new EvaluationLimits { MaxMaterializedItems = 6 }, true);
+            "range(1, 6).count", new EvaluationLimits { MaxMaterializedItems = 6 }, true);
     }
 
     [Fact]
@@ -320,7 +319,7 @@ public class MetamorphicFuzzHarnessTests
             Assert.True(execution.Accepted);
             Assert.Equal("ok", execution.Left!.Semantic.Outcome);
 
-            Assert.True(MetamorphicExecutor.TryObserve("Output = range(1, 5).count", shared, true, out var direct, out _));
+            Assert.True(MetamorphicExecutor.TryObserve("range(1, 5).count", shared, true, out var direct, out _));
             Assert.Equal("ok", direct.Semantic.Outcome);
             Assert.Equal(5, direct.MaterializedItems);
         }
@@ -347,7 +346,7 @@ public class MetamorphicFuzzHarnessTests
     {
         var broken = MetamorphicTemplates.Build(ParametersFor(5, MetamorphicLimitMode.Default, 0, 0, true)) with
         {
-            LeftSource = "Output = count(range(1,",
+            LeftSource = "count(range(1,",
         };
 
         var execution = MetamorphicExecutor.Execute(broken);
@@ -447,7 +446,7 @@ public class MetamorphicFuzzHarnessTests
         foreach (var required in new[]
         {
             "dotted-collection-call", "MaterializedItems", "SemanticEqual", "ExactMaterializationEqual",
-            "Output = count(range(1, 5))", "Output = range(1, 5).count", "maxMaterializedItems=5",
+            "count(range(1, 5))", "range(1, 5).count", "maxMaterializedItems=5",
             "optimizer policy:", "precondition:", "left semantic:", "right semantic:",
             "left operational:", "right operational:", "fingerprint:", "metamorphic-replay --payload",
             "Lean-representable:", "raw fuzz input:", "replay payload (hex):",

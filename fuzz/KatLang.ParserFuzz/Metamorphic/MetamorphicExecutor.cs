@@ -37,7 +37,7 @@ internal sealed record MetamorphicExecution(
 internal static class MetamorphicExecutor
 {
     /// <summary>An unrelated program used to prove one run cannot influence the next.</summary>
-    internal const string IsolationProbeSource = "V = range(1, 7)\nOutput = V.count + V.sum + V.count";
+    internal const string IsolationProbeSource = "V = range(1, 7)\nV.count + V.sum + V.count";
 
     /// <summary>
     /// Distinct threads a <see cref="MetamorphicRunPlan.BoundedParallel"/> case starts. Fixed and

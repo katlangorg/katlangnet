@@ -15,10 +15,6 @@ namespace KatLang;
 /// </summary>
 public sealed class Parser
 {
-    private const string OutputPropertyAccessDiagnostic =
-        "Output is the designated result of an algorithm and cannot be accessed through property syntax. " +
-        "Call the algorithm directly instead. Instead of `Algo.Output(6)`, write `Algo(6)`.";
-
     private readonly IReadOnlyList<Token> _tokens;
     private readonly List<Diagnostic> _diagnostics;
 
@@ -281,9 +277,6 @@ public sealed class Parser
             span));
     }
 
-    private void ReportOutputPropertyAccess(SourceSpan span)
-        => ReportError(OutputPropertyAccessDiagnostic, span);
-
     private Token Previous
     {
         get
@@ -392,9 +385,8 @@ public sealed class Parser
 
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Reads property definitions (Name = ...) and output expression lines.
-    // Explicit output syntax: `Output = expr` is special output-definition syntax,
-    // NOT a property assignment or clause head. It lowers to the algorithm's
-    // Output list.
+    // Every non-definition expression row contributes to the algorithm's
+    // Output list; definitions and output rows may be interleaved.
 
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
@@ -410,10 +402,6 @@ public sealed class Parser
         // duplicate checks, so those additions do not need mirroring.
         var declaredPropertyNames = new HashSet<string>(StringComparer.Ordinal);
         var output = new List<Expr>();
-        var hasExplicitOutput = false;
-        var hasImplicitOutput = false;
-        var sawOutputClauseDefinition = false;
-        SourceSpan? explicitOutputSpan = null;
         var clauseGroups = new Dictionary<string, List<CondBranch>>();
         var clauseGroupSpans = new Dictionary<string, List<SourceSpan>>();
         var clauseGroupNameSpans = new Dictionary<string, List<SourceSpan>>();
@@ -429,36 +417,11 @@ public sealed class Parser
         {
             if (isPublic)
             {
-                var publicToken = Current;
                 Advance(); // consume 'public'
-                if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output")
-                {
-                    ReportError(
-                        "'public' cannot be applied to output definitions. Use 'Output = expr' without 'public'.",
-                        TokenSpan(publicToken));
-                }
             }
 
             var name = Current.StringValue!;
             var nameToken = Current;
-
-            if (name == "Output")
-            {
-                ReportError(
-                    sawOutputClauseDefinition
-                        ? "Output cannot be a conditional or multi-branch definition. Declare branches on the enclosing algorithm instead."
-                        : "Output cannot declare explicit parameters. Declare parameters on the enclosing algorithm instead.",
-                    TokenSpan(nameToken));
-                sawOutputClauseDefinition = true;
-
-                Advance(); // consume 'Output'
-                Expect(TokenKind.LParen);
-                _ = ParsePattern();
-                Expect(TokenKind.RParen);
-                Expect(TokenKind.Equals);
-                _ = ParseOutputLine();
-                return;
-            }
 
             // Check for conflict: mixing normal and conditional definition
             if (declaredPropertyNames.Contains(name))
@@ -549,13 +512,6 @@ public sealed class Parser
                 Advance(); // consume 'public'
                 // Fall through: next iteration will parse the open declaration normally
             }
-            // public Output = ... → reject (output cannot be public)
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicOutputDef())
-            {
-                ReportError("'public' cannot be applied to output definitions. Use 'Output = expr' without 'public'.");
-                Advance(); // consume 'public'
-                // Fall through: next iteration will parse as explicit output
-            }
             // Check for public property definition: public Name = ...
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
             {
@@ -582,56 +538,6 @@ public sealed class Parser
             else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
             {
                 ParseClauseDefinition(isPublic: true);
-            }
-            // Explicit output definition: Output = expr
-            else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsEquals())
-            {
-                var outputToken = Current;
-                if (hasExplicitOutput)
-                {
-                    ReportError("Algorithm output may be defined only once.");
-                }
-                if (hasImplicitOutput)
-                {
-                    ReportError("Cannot use both explicit 'Output = ...' and implicit trailing output in the same algorithm.");
-                }
-
-                hasExplicitOutput = true;
-                explicitOutputSpan ??= TokenSpan(outputToken);
-                Advance(); // consume 'Output'
-                Advance(); // consume '='
-                // `Output = ...` is a definition, so its body is line-bounded:
-                // a newline ends it and never continues it as another
-                // expression-list row (an expression on a following line is a
-                // separate output row parsed by the loop below, not part of the
-                // `Output = ...` body). A ';' here is invalid expression syntax
-                // and reports the unsupported-semicolon diagnostic; any
-                // expression error recovery then attaches is recovery only, not
-                // valid carry-on syntax.
-                // A later implicit row is NOT an additional contribution —
-                // explicit and implicit output cannot mix, so the row reports
-                // the mixing diagnostic in the implicit-output branch below.
-                var exprs = ParseOutputLineExprs(
-                    allowNewlineImplicitExpressionListSeparator: false);
-                AppendOutputContribution(output, exprs, joinWithExisting: output.Count != 0);
-            }
-            // Invalid Output clause definition: Output(pattern) = body
-            else if (Current.Kind == TokenKind.Identifier && Current.StringValue == "Output" && LookaheadIsClauseDefinition())
-            {
-                var outputToken = Current;
-                ReportError(
-                    sawOutputClauseDefinition
-                        ? "Output cannot be a conditional or multi-branch definition. Declare branches on the enclosing algorithm instead."
-                        : "Output cannot declare explicit parameters. Declare parameters on the enclosing algorithm instead.",
-                    TokenSpan(outputToken));
-                sawOutputClauseDefinition = true;
-
-                Advance(); // consume 'Output'
-                Expect(TokenKind.LParen);
-                _ = ParsePattern();
-                Expect(TokenKind.RParen);
-                Expect(TokenKind.Equals);
-                _ = ParseOutputLine();
             }
             // Check for property definition: Identifier '='
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
@@ -669,19 +575,12 @@ public sealed class Parser
             }
             else
             {
-                // Implicit output expression line, or an additional output
+                // Output expression line, or an additional output
                 // contribution. Adjacency between complete expressions is an
                 // implicit expression-list separator in output contexts — root
                 // output, algorithm and brace bodies, explicit parenthesized
                 // groups, and call argument lists. This loop appends
-                // contributions that are separated by definitions. Explicit and implicit output
-                // cannot mix in either direction: an implicit row after
-                // `Output = ...` reports the same diagnostic as `Output = ...`
-                // after an implicit row.
-                if (hasExplicitOutput)
-                    ReportError("Cannot use both explicit 'Output = ...' and implicit trailing output in the same algorithm.");
-                else
-                    hasImplicitOutput = true;
+                // contributions that are separated by definitions.
                 var exprs = ParseOutputLineExprs(allowNewlineImplicitExpressionListSeparator: true);
                 AppendOutputContribution(output, exprs, joinWithExisting: output.Count != 0);
             }
@@ -778,8 +677,7 @@ public sealed class Parser
             Properties: properties,
             Output: output)
         {
-            IsParametrized = isParametrized,
-            ExplicitOutputSpan = explicitOutputSpan
+            IsParametrized = isParametrized
         };
     }
 
@@ -819,8 +717,8 @@ public sealed class Parser
     //
     // A spread expression is legal only as a whole expression-list slot
     // (root output rows, call argument slots, parenthesized group and
-    // brace-body slots, list-literal elements, definition/`Output =` body
-    // slots, and the operand of another spread), or as the receiver of the
+    // brace-body slots, list-literal elements, definition body slots, and
+    // the operand of another spread), or as the receiver of the
     // fluent dot continuation `operand*.Target(...)`, which lowers to the
     // ordinary lexical call `Target(operand*, ...)` with the spread as the
     // leading argument slot. It never participates as an operand of a
@@ -1330,18 +1228,6 @@ public sealed class Parser
     /// </summary>
     private bool LookaheadIsPublicOpen()
         => PeekSignificant(1).Kind == TokenKind.KeywordOpen;
-
-    /// <summary>
-    /// Checks if 'public' keyword is followed by 'Output' '='.
-    /// Used to detect and reject public output definitions.
-    /// </summary>
-    private bool LookaheadIsPublicOutputDef()
-    {
-        var next = PeekSignificant(1);
-        return next.Kind == TokenKind.Identifier
-            && next.StringValue == "Output"
-            && PeekSignificant(2).Kind == TokenKind.Equals;
-    }
 
     /// <summary>
     /// Checks if 'public' keyword is followed by Identifier '='.
@@ -1891,7 +1777,7 @@ public sealed class Parser
     /// When <paramref name="allowNewlineImplicitExpressionListSeparator"/> is
     /// true (root output and algorithm/brace bodies), an expression starting on
     /// a later physical line is an implicit expression-list separator. When
-    /// false (definition bodies and explicit `Output = ...` bodies), the body is
+    /// false (definition bodies), the body is
     /// line-bounded: a newline ends it and a following expression is parsed by
     /// the surrounding output/algorithm context instead. Open target lists never
     /// use this method: `open` has its own dedicated comma-list parser
@@ -1950,8 +1836,7 @@ public sealed class Parser
     /// adjacency parses as an implicit expression-list separator. Same-line
     /// adjacency always qualifies; adjacency across a physical newline qualifies
     /// only in contexts that opt into multiline expression lists (root output and
-    /// algorithm/brace bodies). Definition bodies and explicit `Output = ...`
-    /// bodies opt out, so a newline ends them.
+    /// algorithm/brace bodies). Definition bodies opt out, so a newline ends them.
     /// Tokens that begin a declaration are never adjacent expressions: the
     /// algorithm loop owns those forms and their diagnostics.
     /// Implicit list separation fires only for tokens that start a new independent
@@ -1980,10 +1865,10 @@ public sealed class Parser
         if (Current.Kind == TokenKind.KeywordOpen)
             return false;
 
-        // Property definition `Name = ...`, explicit output `Output = ...`,
+        // Property definition `Name = ...`,
         // clause definition `Name(pattern) = ...`, or comma deconstruction
         // assignment `x, *y, z = ...`. The algorithm loop owns these definition
-        // forms, so they end any preceding implicit output expression list.
+        // forms, so they end any preceding output expression list.
         if (Current.Kind == TokenKind.Identifier
             && (LookaheadIsEquals()
                 || LookaheadIsBindingPatternAssignment()
@@ -2217,29 +2102,14 @@ public sealed class Parser
                     var memberSpan = TokenSpan(propNameToken);
                     Advance(); // consume identifier
 
-                    if (propName == "Output")
-                        ReportOutputPropertyAccess(memberSpan);
-
                     if (lhs is Expr.SequenceSpread)
                     {
-                        if (propName == "Output")
-                        {
-                            // The Output diagnostic above already flagged the
-                            // form; recover by unwrapping the spread layers so
-                            // no Call(Output, ...) or embedded spread survives,
-                            // then fall through to the ordinary dot-call build.
-                            while (lhs is Expr.SequenceSpread spreadLayer)
-                                lhs = spreadLayer.Operand;
-                        }
-                        else
-                        {
-                            // Fluent supply transition: `operand*.Target(...)`
-                            // consumes the spread items as the leading call
-                            // arguments. Lowers to the ordinary lexical call
-                            // `Target(operand*, ...)`.
-                            lhs = ParseSpreadReceiverContinuation(lhs, dotToken, propNameToken, memberSpan);
-                            break;
-                        }
+                        // Fluent supply transition: `operand*.Target(...)`
+                        // consumes the spread items as the leading call
+                        // arguments. Lowers to the ordinary lexical call
+                        // `Target(operand*, ...)`.
+                        lhs = ParseSpreadReceiverContinuation(lhs, dotToken, propNameToken, memberSpan);
+                        break;
                     }
 
                     if (IsCallArgumentStart())

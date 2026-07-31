@@ -28,66 +28,66 @@ internal static class EvaluatorProbe
     private static readonly Family[] Families =
     [
         // ── recursion ────────────────────────────────────────────────────────
-        new("rec_infinite",   "recursion", _ => "f(x) = f(x)\nOutput = f(1)", 1, true),
-        new("rec_mutual",     "recursion", _ => "f(x) = g(x)\ng(x) = f(x)\nOutput = f(1)", 1, true),
-        new("rec_property",   "recursion", _ => "A = A\nOutput = A", 1, true),
-        new("rec_prop_mutual","recursion", _ => "A = B\nB = A\nOutput = A", 1, true),
+        new("rec_infinite",   "recursion", _ => "f(x) = f(x)\nf(1)", 1, true),
+        new("rec_mutual",     "recursion", _ => "f(x) = g(x)\ng(x) = f(x)\nf(1)", 1, true),
+        new("rec_property",   "recursion", _ => "A = A\nA", 1, true),
+        new("rec_prop_mutual","recursion", _ => "A = B\nB = A\nA", 1, true),
         // Parameter ceilings are deliberately modest: the goal is a clear growth/failure
         // curve, not to consume the machine's memory (see the task's resource guidance).
-        new("rec_finite",     "recursion", n => $"f(0) = 0\nf(n) = f(n - 1)\nOutput = f({n})", 1_000_000, false),
-        new("rec_callback",   "recursion", n => $"F(x) = [x].map(F)\nOutput = F({n})", 1, true),
+        new("rec_finite",     "recursion", n => $"f(0) = 0\nf(n) = f(n - 1)\nf({n})", 1_000_000, false),
+        new("rec_callback",   "recursion", n => $"F(x) = [x].map(F)\nF({n})", 1, true),
         // Depth-ceiling calibration shapes (Phase-5). Each recurses once per level but
         // through a different dispatch path, so the largest completed n measures the
         // per-level host-stack cost of that path.
-        new("rec_if_finite",  "recursion", n => $"f(n) = if(n > 0, f(n - 1), 0)\nOutput = f({n})", 1_000_000, false),
-        new("rec_nested_finite", "recursion", n => $"f(0) = 0\nf(n) = {new string('(', 10)}f(n - 1){new string(')', 10)}\nOutput = f({n})", 1_000_000, false),
-        new("rec_cb_finite",  "recursion", n => $"F(0) = 0\nF(n) = [n - 1].map(F).first\nOutput = F({n})", 1_000_000, false),
-        new("rec_dot_finite", "recursion", n => $"f(0) = 0\nf(n) = (n - 1).f\nOutput = f({n})", 1_000_000, false),
+        new("rec_if_finite",  "recursion", n => $"f(n) = if(n > 0, f(n - 1), 0)\nf({n})", 1_000_000, false),
+        new("rec_nested_finite", "recursion", n => $"f(0) = 0\nf(n) = {new string('(', 10)}f(n - 1){new string(')', 10)}\nf({n})", 1_000_000, false),
+        new("rec_cb_finite",  "recursion", n => $"F(0) = 0\nF(n) = [n - 1].map(F).first\nF({n})", 1_000_000, false),
+        new("rec_dot_finite", "recursion", n => $"f(0) = 0\nf(n) = (n - 1).f\nf({n})", 1_000_000, false),
         // ── loops ────────────────────────────────────────────────────────────
-        new("while_infinite", "loop", _ => "Step = x, 1\nOutput = Step.while(0)", 1, true),
-        new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nOutput = Step.while({n})", 10_000_000, false),
-        new("repeat_count",   "loop", n => $"Inc = x + 1\nOutput = Inc.repeat({n}, 0)", 10_000_000, false),
-        new("while_multislot","loop", n => $"Step = a + 1, b + a, a < {n}\nOutput = Step.while(0, 0)", 10_000_000, false),
-        new("loop_callback",  "loop", n => $"G(y) = y + 1\nInc = G(x)\nOutput = Inc.repeat({n}, 0)", 1_000_000, false),
+        new("while_infinite", "loop", _ => "Step = x, 1\nStep.while(0)", 1, true),
+        new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nStep.while({n})", 10_000_000, false),
+        new("repeat_count",   "loop", n => $"Inc = x + 1\nInc.repeat({n}, 0)", 10_000_000, false),
+        new("while_multislot","loop", n => $"Step = a + 1, b + a, a < {n}\nStep.while(0, 0)", 10_000_000, false),
+        new("loop_callback",  "loop", n => $"G(y) = y + 1\nInc = G(x)\nInc.repeat({n}, 0)", 1_000_000, false),
         // ── allocation growth ────────────────────────────────────────────────
-        new("range_alloc",    "allocation", n => $"Output = range(1, {n}).count", 5_000_000, false),
-        new("map_pipeline",   "allocation", n => $"F(x) = x + 1\nOutput = range(1, {n}).map(F).count", 2_000_000, false),
-        new("distinct_large", "allocation", n => $"Output = range(1, {n}).distinct.count", 2_000_000, false),
-        new("order_large",    "allocation", n => $"Output = range(1, {n}).orderDesc.count", 2_000_000, false),
-        new("nested_list",    "allocation", n => $"F(x) = [x, x]\nOutput = range(1, {n}).map(F).count", 1_000_000, false),
+        new("range_alloc",    "allocation", n => $"range(1, {n}).count", 5_000_000, false),
+        new("map_pipeline",   "allocation", n => $"F(x) = x + 1\nrange(1, {n}).map(F).count", 2_000_000, false),
+        new("distinct_large", "allocation", n => $"range(1, {n}).distinct.count", 2_000_000, false),
+        new("order_large",    "allocation", n => $"range(1, {n}).orderDesc.count", 2_000_000, false),
+        new("nested_list",    "allocation", n => $"F(x) = [x, x]\nrange(1, {n}).map(F).count", 1_000_000, false),
         // ── rendering / string growth ────────────────────────────────────────
         // Display flattens a value recursively, so these render far larger than they
         // evaluate. `display_nested` is the compact-source reproducer: every extra line
         // adds two item slots and DOUBLES the rendered length.
         new("display_nested",  "render", n => "A = range(1, 1000)\n"
             + string.Concat(Enumerable.Range(0, n).Select(i => $"L{i} = [{(i == 0 ? "A" : $"L{i - 1}")}, {(i == 0 ? "A" : $"L{i - 1}")}]\n"))
-            + $"Output = L{Math.Max(0, n - 1)}", 40, false),
+            + $"L{Math.Max(0, n - 1)}", 40, false),
         // The sharpest reproducer: string elements contribute NO host atoms and each level
         // adds only two item slots, so no evaluation limit sees it grow — only rendering
         // does, doubling per line.
         new("display_str_nested", "render", n => "ToText(x) = x.string\nValues = range(1, 40000).map(ToText)\n"
             + string.Concat(Enumerable.Range(0, n).Select(i => $"L{i} = [{(i == 0 ? "Values" : $"L{i - 1}")}, {(i == 0 ? "Values" : $"L{i - 1}")}]\n"))
-            + $"Output = L{Math.Max(0, n - 1)}", 40, false),
-        new("display_list",    "render", n => $"Output = range(1, {n})", 1_000_000, false),
-        new("display_rows",    "render", n => $"Output = range(1, {n})*", 1_000_000, false),
-        new("display_string",  "render", n => $"Values = range(1, {n})\nOutput = Values.map(ToText)\nToText(x) = x.string", 1_000_000, false),
+            + $"L{Math.Max(0, n - 1)}", 40, false),
+        new("display_list",    "render", n => $"range(1, {n})", 1_000_000, false),
+        new("display_rows",    "render", n => $"range(1, {n})*", 1_000_000, false),
+        new("display_string",  "render", n => $"Values = range(1, {n})\nValues.map(ToText)\nToText(x) = x.string", 1_000_000, false),
         // ── arithmetic stress ────────────────────────────────────────────────
-        new("pow_chain",      "arithmetic", n => $"Output = 2 ^ {n}", 100_000, false),
-        new("sum_large",      "arithmetic", n => $"Output = range(1, {n}).sum", 5_000_000, false),
+        new("pow_chain",      "arithmetic", n => $"2 ^ {n}", 100_000, false),
+        new("sum_large",      "arithmetic", n => $"range(1, {n}).sum", 5_000_000, false),
         // ── wide deconstruction: DEMAND every target ─────────────────────────
         // One N-target deconstruction whose N targets are all forced through one
         // compact sum. Historically each demanded target re-bound the shared
         // N-capture pattern (O(N^2)); the shared run-scoped bind makes it linear.
         new("eval_all_deconstruct", "deconstruct",
             n => $"{string.Join(", ", Enumerable.Range(0, n).Select(i => $"x{i}"))} = range(1, {n})\n"
-                + $"Output = sum(({string.Join(", ", Enumerable.Range(0, n).Select(i => $"x{i}"))}))",
+                + $"sum(({string.Join(", ", Enumerable.Range(0, n).Select(i => $"x{i}"))}))",
             30_000, false),
         // ── conditional clause family: CALL it (runtime duplicate-branch scan) ─
         // A family of N literal clauses, invoked once. The runtime path scans the
         // branch list for match-equivalent duplicates before dispatch; the indexed
         // lookup makes that scan linear.
         new("eval_clause_family", "frontend",
-            n => string.Concat(Enumerable.Range(0, n).Select(i => $"F({i}) = {i}\n")) + "Output = F(0)", 30_000, false),
+            n => string.Concat(Enumerable.Range(0, n).Select(i => $"F({i}) = {i}\n")) + "F(0)", 30_000, false),
     ];
 
     private static Family? Find(string id) => Families.FirstOrDefault(f => f.Id == id);

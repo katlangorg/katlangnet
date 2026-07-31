@@ -535,14 +535,6 @@ public class EvaluatorTests
         Assert.Equal(expectedEndColumn, span.EndColumn);
     }
 
-    private static void AssertInnermostSpecialOutputAccess(EvalError error)
-    {
-        while (error is EvalError.WithContext context)
-            error = context.Inner;
-
-        Assert.IsType<EvalError.SpecialOutputAccess>(error);
-    }
-
     private static void AssertMissingOutputMessage(
         string source,
         string expectedMessage,
@@ -1568,8 +1560,8 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ExplicitOutputWithSequenceValueComma_EmitsOneSequenceValueOutput()
-        => AssertEvalCounted("Output = (1, 3)", 1, ResultFromAtoms(1, 3));
+    public void Eval_ParenthesizedSequenceValueRow_EmitsOneSequenceValueOutput()
+        => AssertEvalCounted("(1, 3)", 1, ResultFromAtoms(1, 3));
 
     [Theory]
     [InlineData("A = 10\nA\n-1")]
@@ -4840,7 +4832,7 @@ public class EvaluatorTests
 
             Keep = Inner(n) == n
 
-            Output = (2,3).filter(Keep)
+            (2,3).filter(Keep)
             """;
 
         AssertEvalLoopModes(source, 2, 3);
@@ -5619,7 +5611,7 @@ public class EvaluatorTests
         // one-element list [(1, 2)]. Lean twin: `(1, 2).CountItems` is 1.
         var source = """
             CountItems(*items) = items.count
-            Output = (1, 2).CountItems
+            (1, 2).CountItems
             """;
 
         AssertEval(source, 1);
@@ -5632,7 +5624,7 @@ public class EvaluatorTests
         // so the collecting parameter collects [1, 2] and the numeric body works.
         var source = """
             Mean(*vector) = vector.sum
-            Output = ((1, 2)*).Mean
+            ((1, 2)*).Mean
             """;
 
         AssertEval(source, 3);
@@ -5816,7 +5808,7 @@ public class EvaluatorTests
     {
         var source = """
             CountOne(value) = value.count
-            Output = (1, 2).CountOne
+            (1, 2).CountOne
             """;
 
         AssertEval(source, 2);
@@ -6923,7 +6915,7 @@ public class EvaluatorTests
 
             CountMatchStep(element, tt) = {
                 T = atoms(tt)
-                Output = (T.first, T:1 + if(element == T.first, 1, 0))
+                (T.first, T:1 + if(element == T.first, 1, 0))
             }
 
             MatchCount = reduce(Right, CountMatchStep, (value, 0)):1
@@ -7530,7 +7522,7 @@ public class EvaluatorTests
     {
         var source = """
             Add = x + total
-            Output = (1, 2, 3).reduce(Add, 0)
+            (1, 2, 3).reduce(Add, 0)
             """;
 
         AssertEval(source, 6);
@@ -9443,7 +9435,7 @@ public class EvaluatorTests
     {
         var source = """
             F = a + b
-            Output = (3).F(7)
+            (3).F(7)
             """;
 
         AssertEval(source, 10);
@@ -9488,7 +9480,7 @@ public class EvaluatorTests
         var result = EvalFull(
             """
             G = x
-            Output = (3, 7).G
+            (3, 7).G
             """);
 
         if (result.IsError)
@@ -9501,7 +9493,7 @@ public class EvaluatorTests
     {
         var source = """
             H = a + b + c
-            Output = (3).H((4, 5))
+            (3).H((4, 5))
             """;
 
         AssertEvalFailsWithArityMismatch(source, expected: 3, actual: 2);
@@ -9552,7 +9544,7 @@ public class EvaluatorTests
         // (2 + 3).Square → Square(5) → n*n = 25
         var source = """
             Square = n * n
-            Output = (2 + 3).Square
+            (2 + 3).Square
             """;
         AssertEval(source, 25);
     }
@@ -9586,7 +9578,7 @@ public class EvaluatorTests
         // (2 + 3).Add(7) → Add(5, 7) → a+b = 12
         var source = """
             Add = a + b
-            Output = (2 + 3).Add(7)
+            (2 + 3).Add(7)
             """;
         AssertEval(source, 12);
     }
@@ -9606,7 +9598,7 @@ public class EvaluatorTests
     {
         var source = """
             Add = a + b
-            Output = (2).Add(6)
+            (2).Add(6)
             """;
         AssertEval(source, 8);
     }
@@ -10264,7 +10256,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Collect(*list) = list
-            Output = Arg.Collect.count
+            Arg.Collect.count
             """,
             1);
     }
@@ -10276,7 +10268,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Collect(*list) = list
-            Output = (Arg*).Collect.count
+            (Arg*).Collect.count
             """,
             3);
     }
@@ -10302,7 +10294,7 @@ public class EvaluatorTests
             """
             Arg = (1, 2), (3, 4)
             Collect(*list) = list
-            Output = (Arg*).Collect.count
+            (Arg*).Collect.count
             """,
             2);
     }
@@ -10377,7 +10369,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Scale(*values, factor) = values.map{n * factor}
-            Output = (Arg*).Scale(10)
+            (Arg*).Scale(10)
             """,
             10, 20, 30);
     }
@@ -10388,7 +10380,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             TotalWithFee(*values, fee) = values.sum + fee
-            Output = ((10, 20, 30)*).TotalWithFee(5)
+            ((10, 20, 30)*).TotalWithFee(5)
             """,
             65);
     }
@@ -10425,7 +10417,7 @@ public class EvaluatorTests
         // sequence-valued element. The spread forms above supply the items.
         var source = """
             TotalWithFee(*values, fee) = values.sum + fee
-            Output = ((10, 20, 30)).TotalWithFee(5)
+            ((10, 20, 30)).TotalWithFee(5)
             """;
 
         AssertEvalFails(source);
@@ -10437,7 +10429,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Collect(list) = list.count
-            Output = (10, 20, 30).Collect
+            (10, 20, 30).Collect
             """,
             3);
     }
@@ -10450,7 +10442,7 @@ public class EvaluatorTests
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
-            Output = ((10, 20, 30)*).Collect
+            ((10, 20, 30)*).Collect
             """,
             3);
     }
@@ -10470,7 +10462,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3, 4, 5
             Between(*values, min, max) = values.filter{n >= min and n <= max}
-            Output = (Arg*).Between(2, 4)
+            (Arg*).Between(2, 4)
             """,
             2, 3, 4);
     }
@@ -10516,7 +10508,7 @@ public class EvaluatorTests
             """
             Arg = range(1, 3)
             Qmean(*values) = values.sum / values.count
-            Output = (Arg*).Qmean
+            (Arg*).Qmean
             """,
             2);
     }
@@ -12199,7 +12191,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3
             Scale(*values, factor) = values.map{n * factor}
-            Output = (Arg*).Scale(10), Arg.map{n * 10}
+            (Arg*).Scale(10), Arg.map{n * 10}
             """,
             10, 20, 30, 10, 20, 30);
     }
@@ -12211,7 +12203,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3, 4, 5
             KeepBetween(*values, minValue, maxValue) = values.filter{n >= minValue and n <= maxValue}
-            Output = (Arg*).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
+            (Arg*).KeepBetween(2, 4), Arg.filter{n >= 2 and n <= 4}
             """,
             2, 3, 4, 2, 3, 4);
     }
@@ -12223,7 +12215,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3, 4
             TakeFirst(*values, itemCount) = values.take(itemCount)
-            Output = (Arg*).TakeFirst(2), Arg.take(2)
+            (Arg*).TakeFirst(2), Arg.take(2)
             """,
             1, 2, 1, 2);
     }
@@ -12235,7 +12227,7 @@ public class EvaluatorTests
             """
             Arg = 1, 2, 3, 4
             SkipFirst(*values, itemCount) = values.skip(itemCount)
-            Output = (Arg*).SkipFirst(2), Arg.skip(2)
+            (Arg*).SkipFirst(2), Arg.skip(2)
             """,
             3, 4, 3, 4);
     }
@@ -14026,7 +14018,7 @@ public class EvaluatorTests
     {
         var source = """
             Algo(x) = {
-              Output = x + 1
+              x + 1
             }
             Algo(6)
             """;
@@ -14035,12 +14027,12 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_DirectCall_MultiParameterAlgorithmLevelDefinition_SupportsExplicitOutput()
+    public void Eval_DirectCall_MultiParameterAlgorithmLevelDefinition_SupportsBraceBodyOutputRow()
     {
         var source = """
             ImpactOnEarth(mass, height) = {
               Gravity = 9.81
-              Output = mass * Gravity * height
+              mass * Gravity * height
             }
             ImpactOnEarth(3, 2)
             """;
@@ -14065,7 +14057,7 @@ public class EvaluatorTests
         AssertArityMismatchMessage(
             """
             Algo(x) = {
-              Output = x + 1
+              x + 1
             }
             Algo()
             """,
@@ -14073,12 +14065,12 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_DirectCall_ZeroParamExplicitOutput_PreservesExistingBehavior()
+    public void Eval_DirectCall_ZeroParamBraceBody_PreservesExistingBehavior()
     {
         AssertEval(
             """
             Algo = {
-              Output = 5
+              5
             }
             Algo()
             """,
@@ -14087,7 +14079,7 @@ public class EvaluatorTests
         AssertArityMismatchMessage(
             """
             Algo = {
-              Output = 5
+              5
             }
             Algo(6)
             """,
@@ -14101,7 +14093,7 @@ public class EvaluatorTests
             """
             Algo = {
               Helper(x) = x * 2
-              Output = 5
+              5
             }
             Algo(6)
             """,
@@ -14114,7 +14106,7 @@ public class EvaluatorTests
         var source = """
             Algo = {
               Helper(x) = x * 2
-              Output = 5
+              5
             }
             Algo.Helper(6)
             """;
@@ -14234,7 +14226,7 @@ public class EvaluatorTests
         var source = """
             Outer = {
               Inner(x) = {
-                Output = x + 10
+                x + 10
               }
               Inner(5)
             }
@@ -14313,8 +14305,10 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ManualOutputDotCall_IsRejected()
+    public void Eval_ManualOutputDotCall_IsOrdinaryStructuralCall()
     {
+        // `Output` is an ordinary member name: a hand-built dot-call binds the
+        // structural property named `Output` exactly like any other member.
         var callee = new Algorithm.User(
             Parent: null,
             Parameters: Algorithm.NormalParameters(["x"]),
@@ -14322,11 +14316,18 @@ public class EvaluatorTests
             Properties: [],
             Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(1m))]);
 
+        var container = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("Output", callee)],
+            Output: []);
+
         var root = new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
-            Properties: [new Property("Algo", callee)],
+            Properties: [new Property("Algo", container)],
             Output:
             [
                 new Expr.DotCall(
@@ -14335,52 +14336,10 @@ public class EvaluatorTests
                     new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(6m)]))
             ]);
 
-        var result = Evaluator.Run(new Expr.Block(root));
+        var result = Evaluator.RunFlat(new Expr.Block(root));
 
-        Assert.True(result.IsError);
-        AssertInnermostSpecialOutputAccess(result.Error);
-        Assert.Equal(
-            "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead. Instead of `Algo.Output(...)`, write `Algo(...)`.",
-            KatLangError.FromEvalError(result.Error).Message);
-    }
-
-    [Fact]
-    public void Eval_ManualNestedOutputDotCall_UsesReceiverSpecificGuidance()
-    {
-        var inner = new Algorithm.User(
-            Parent: null,
-            Parameters: Algorithm.NormalParameters(["x"]),
-            Opens: [],
-            Properties: [],
-            Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(10m))]);
-
-        var outer = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [new Property("Inner", inner)],
-            Output: []);
-
-        var root = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [new Property("Outer", outer)],
-            Output:
-            [
-                new Expr.DotCall(
-                    new Expr.DotCall(new Expr.Resolve("Outer"), "Inner"),
-                    "Output",
-                    new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(6m)]))
-            ]);
-
-        var result = Evaluator.Run(new Expr.Block(root));
-
-        Assert.True(result.IsError);
-        AssertInnermostSpecialOutputAccess(result.Error);
-        Assert.Equal(
-            "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead. Instead of `Outer.Inner.Output(...)`, write `Outer.Inner(...)`.",
-            KatLangError.FromEvalError(result.Error).Message);
+        Assert.False(result.IsError);
+        Assert.Equal([7m], result.Value);
     }
 
     [Fact]
@@ -14521,58 +14480,95 @@ public class EvaluatorTests
         AssertEvalFails("Use = func\nUse{a + 1}");
     }
 
-    // ── Explicit output syntax ──────────────────────────────────────────────
+    // ── `Output` as an ordinary identifier ──────────────────────────────────
+    // Output rows are the only output mechanism; `Output` and `output` follow
+    // ordinary property, call, visibility, and access rules.
 
     [Fact]
-    public void Eval_ExplicitOutput_BasicForm()
+    public void Eval_OutputProperty_IsOrdinary()
     {
-        // Explicit: Output = A should work the same as implicit A
-        AssertEval("A = 6\nOutput = A", 6);
+        AssertEval("Output = 5\nOutput", 5);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_NumericLiteral()
+    public void Eval_LowercaseOutputProperty_IsOrdinary()
     {
-        AssertEval("Output = 42", 42);
+        AssertEval("output = 6\noutput", 6);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_Expression()
+    public void Eval_OutputCallableProperty_IsOrdinary()
     {
-        AssertEval("A = 3\nOutput = A + 1", 4);
+        AssertEval("Output(x) = x * 2\nOutput(4)", 8);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_InMiddleOfProperties()
+    public void Eval_PublicOutputProperty_IsOrdinary()
     {
-        // Output defined between properties should still work
-        AssertEval("A = 1\nOutput = A + B\nB = 2", 3);
+        AssertEval("public Output = 7\nOutput", 7);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_MultipleValues()
+    public void Eval_OutputAndLowercaseOutput_AreDistinctCaseSensitiveNames()
     {
-        AssertEval("Output = 1, 2, 3", 1, 2, 3);
+        AssertEval("Output = 1\noutput = 2\nOutput + output", 3);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_EquivalentToImplicit()
+    public void Eval_OutputRow_InterleavedWithProperties()
     {
-        // Both forms should produce the same result
-        var implicitResult = Eval("A = 6\nA");
-        var explicitResult = Eval("A = 6\nOutput = A");
-        Assert.True(implicitResult.IsOk);
-        Assert.True(explicitResult.IsOk);
-        Assert.Equal(implicitResult.Value, explicitResult.Value);
+        AssertEval("A = 3\nA + B\nB = 2", 5);
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_InsideBlock()
+    public void Eval_MultipleOutputRows_KeepMultiOutputSemantics()
+    {
+        AssertEval("A = 3\nA\nA + 1", 3, 4);
+    }
+
+    [Fact]
+    public void Eval_OutputNamedProperty_WithoutReference_LeavesNoOutput()
+    {
+        // The former explicit syntax is now just a property definition, so
+        // this program has properties `A` and `Output` and no output rows.
+        var result = EvalFull("A = 3\nOutput = A + 2");
+
+        Assert.True(result.IsError);
+        AssertInnermostMissingOutput(result.Error);
+    }
+
+    [Fact]
+    public void Eval_OutputNamedProperty_ReferencedByRow_ContributesItsValue()
+    {
+        AssertEval("A = 3\nOutput = A + 2\nOutput", 5);
+    }
+
+    [Fact]
+    public void Eval_OutputProperty_WithFollowingRows_HasNoMixingRule()
+    {
+        AssertEval("Output = 4\nOutput\n5", 4, 5);
+    }
+
+    [Fact]
+    public void Eval_OutputProperty_DottedAccess_IsOrdinary()
+    {
+        var source = """
+            A = {
+                Output = 9
+            }
+
+            A.Output
+            """;
+        AssertEval(source, 9);
+    }
+
+    [Fact]
+    public void Eval_OutputRows_InterleavedInsideBlock()
     {
         var source = """
             X = {
               A = 3
-              Output = A + 1
+              A + 1
               B = 2
             }
             X
@@ -14581,17 +14577,9 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_ExplicitOutput_WithParametrizedProperty()
+    public void Eval_OutputRow_WithParametrizedProperty()
     {
-        // Explicit output with a property that has implicit params
-        AssertEval("Add = x + y\nOutput = Add(3, 4)", 7);
-    }
-
-    [Fact]
-    public void Eval_ImplicitOutput_StillWorks()
-    {
-        // Ensure implicit output is unaffected
-        AssertEval("A = 6\nA", 6);
+        AssertEval("Add = x + y\nAdd(3, 4)", 7);
     }
 
     // ── if builtin ───────────────────────────────────────────────────────────────

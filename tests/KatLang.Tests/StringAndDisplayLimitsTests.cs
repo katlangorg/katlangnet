@@ -45,7 +45,7 @@ public class StringAndDisplayLimitsTests
 
     private static Expr BuildStringRepeatAst(string value, long count)
     {
-        var parsed = Parser.Parse($"Step(x) = 'placeholder'\nOutput = Step.repeat({count}, 0)").Root;
+        var parsed = Parser.Parse($"Step(x) = 'placeholder'\nStep.repeat({count}, 0)").Root;
         var properties = parsed.Properties.Select(property =>
         {
             if (property.Name != "Step") return property;
@@ -88,8 +88,8 @@ public class StringAndDisplayLimitsTests
     {
         // Zero is a meaningful configuration here (unlike depth): no string may be created
         // and nothing may be rendered.
-        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("Output = 'a'", Str(0)));
-        Assert.Equal(string.Empty, Display("Output = 1", Display(0)));
+        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("'a'", Str(0)));
+        Assert.Equal(string.Empty, Display("1", Display(0)));
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class StringAndDisplayLimitsTests
     public void RepeatedAndConcurrentRuns_SharingOneOptionsInstance_EachStartFresh()
     {
         var options = new RunOptions { EvaluationLimits = new EvaluationLimits { MaxMaterializedStringChars = 12 } };
-        const string source = "Output = 'abc', 'abc'";
+        const string source = "'abc', 'abc'";
 
         for (var i = 0; i < 3; i++)
             Assert.False(KatLangEngine.Run(source, options) is RunResult.EvalFailure);
@@ -131,38 +131,38 @@ public class StringAndDisplayLimitsTests
 
     [Fact]
     public void StringLiteral_ExactlyAtLimit_Succeeds()
-        => Assert.False(Eval("Output = 'abc'", Str(3)).IsError);
+        => Assert.False(Eval("'abc'", Str(3)).IsError);
 
     [Fact]
     public void StringLiteral_OneOverLimit_ReportsRequestedLength()
     {
-        var limit = Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("Output = 'abcd'", Str(3)));
+        var limit = Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("'abcd'", Str(3)));
         Assert.Equal(3, limit.Limit);
         Assert.Equal(4L, limit.Requested);
     }
 
     [Fact]
     public void EmptyStringLiteral_CostsNothing()
-        => Assert.False(Eval("Output = ''", Str(0)).IsError);
+        => Assert.False(Eval("''", Str(0)).IsError);
 
     [Fact]
     public void StringLiteralError_CarriesItsSourceSpan()
-        => Assert.NotNull(ErrorOf("Output = 'abcd'", Str(3)).Span);
+        => Assert.NotNull(ErrorOf("'abcd'", Str(3)).Span);
 
     [Fact]
     public void NumericStringConversion_IsChargedThroughTheSameCeiling()
     {
-        Assert.False(Eval("Output = 12345.string", Str(5)).IsError);
-        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("Output = 12345.string", Str(4)));
+        Assert.False(Eval("12345.string", Str(5)).IsError);
+        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("12345.string", Str(4)));
     }
 
     [Fact]
     public void StringsThroughCallbacksAndLoops_AreCharged()
     {
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
-            ErrorOf("ToText(x) = x.string\nOutput = [12345].map(ToText)", Str(4)));
+            ErrorOf("ToText(x) = x.string\n[12345].map(ToText)", Str(4)));
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
-            ErrorOf("Step(x) = 'abcd', 0\nOutput = Step.while(1)", Str(3)));
+            ErrorOf("Step(x) = 'abcd', 0\nStep.while(1)", Str(3)));
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public class StringAndDisplayLimitsTests
     {
         // The reason the per-string ceiling is defence in depth rather than the closure of
         // a compact-source path: there is no operation that makes a longer string.
-        var error = ErrorOf("Output = 'ab' + 'cd'");
+        var error = ErrorOf("'ab' + 'cd'");
         Assert.Contains("Strings only support", Assert.IsType<EvalError.TypeMismatch>(error).Message);
     }
 
@@ -249,9 +249,9 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void AsciiAndBmpCharacters_CostOneUnitEach()
     {
-        Assert.False(Eval("Output = 'abc'", Str(3)).IsError);
-        Assert.False(Eval("Output = 'äöü'", Str(3)).IsError);
-        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("Output = 'äöü'", Str(2)));
+        Assert.False(Eval("'abc'", Str(3)).IsError);
+        Assert.False(Eval("'äöü'", Str(3)).IsError);
+        Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf("'äöü'", Str(2)));
     }
 
     [Fact]
@@ -259,7 +259,7 @@ public class StringAndDisplayLimitsTests
     {
         // One supplementary-plane character is two UTF-16 code units, matching
         // string.Length — the unit this limit is defined in.
-        const string source = "Output = '\U0001D54F'";
+        const string source = "'\U0001D54F'";
         Assert.False(Eval(source, Str(2)).IsError);
         Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf(source, Str(1)));
     }
@@ -267,7 +267,7 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void CombiningSequences_CostOneUnitPerCodeUnit()
     {
-        const string source = "Output = 'é'";      // e + combining acute = 2 units
+        const string source = "'é'";      // e + combining acute = 2 units
         Assert.False(Eval(source, Str(2)).IsError);
         Assert.IsType<EvalError.StringSizeLimitExceeded>(ErrorOf(source, Str(1)));
     }
@@ -278,18 +278,18 @@ public class StringAndDisplayLimitsTests
     public void CumulativeStringBudget_ExactBoundary()
     {
         var limits = new EvaluationLimits { MaxMaterializedStringChars = 6 };
-        Assert.False(Eval("Output = 'abc', 'abc'", limits).IsError);
+        Assert.False(Eval("'abc', 'abc'", limits).IsError);
         Assert.IsType<EvalError.StringMaterializationLimitExceeded>(
-            ErrorOf("Output = 'abc', 'abc', 'a'", limits));
+            ErrorOf("'abc', 'abc', 'a'", limits));
     }
 
     [Fact]
     public void CumulativeStringBudget_CachedPropertyReuse_DoesNotRepay()
     {
         var limits = new EvaluationLimits { MaxMaterializedStringChars = 3 };
-        Assert.False(Eval("Text = 'abc'\nOutput = Text, Text, Text", limits).IsError);
+        Assert.False(Eval("Text = 'abc'\nText, Text, Text", limits).IsError);
         Assert.IsType<EvalError.StringMaterializationLimitExceeded>(
-            ErrorOf("Output = 'abc', 'abc'", limits));
+            ErrorOf("'abc', 'abc'", limits));
     }
 
     [Fact]
@@ -307,15 +307,15 @@ public class StringAndDisplayLimitsTests
     // ── Rendering: output is identical below the limit ───────────────────────
 
     [Theory]
-    [InlineData("Output = 1", "1")]
-    [InlineData("Output = 'text'", "text")]
-    [InlineData("Output = ()", "()")]
-    [InlineData("Output = []", "[]")]
-    [InlineData("Output = (1, 2, 3)", "(1, 2, 3)")]
-    [InlineData("Output = [1, 2, 3]", "[1, 2, 3]")]
-    [InlineData("Output = [(1, 2), [3, [4]]]", "[(1, 2), [3, [4]]]")]
-    [InlineData("Output = [[], ()]", "[[], ()]")]
-    [InlineData("DisplayDecimals = 2\nOutput = 1.5", "1.50")]
+    [InlineData("1", "1")]
+    [InlineData("'text'", "text")]
+    [InlineData("()", "()")]
+    [InlineData("[]", "[]")]
+    [InlineData("(1, 2, 3)", "(1, 2, 3)")]
+    [InlineData("[1, 2, 3]", "[1, 2, 3]")]
+    [InlineData("[(1, 2), [3, [4]]]", "[(1, 2), [3, [4]]]")]
+    [InlineData("[[], ()]", "[[], ()]")]
+    [InlineData("DisplayDecimals = 2\n1.5", "1.50")]
     public void Rendering_BelowTheLimit_IsUnchanged(string source, string expected)
     {
         Assert.Equal(expected, Display(source));
@@ -324,18 +324,18 @@ public class StringAndDisplayLimitsTests
 
     [Fact]
     public void MultiRowOutput_RendersEveryRow()
-        => Assert.Equal($"1{Environment.NewLine}2{Environment.NewLine}3", Display("Output = 1, 2, 3"));
+        => Assert.Equal($"1{Environment.NewLine}2{Environment.NewLine}3", Display("1, 2, 3"));
 
     // ── Rendering: exact boundaries ──────────────────────────────────────────
 
     [Fact]
     public void Rendering_ExactlyAtTheLimit_Succeeds()
-        => Assert.Equal("[1, 2, 3]", Display("Output = [1, 2, 3]", Display(9)));
+        => Assert.Equal("[1, 2, 3]", Display("[1, 2, 3]", Display(9)));
 
     [Fact]
     public void Rendering_OneOverTheLimit_UsesBoundedMarker()
     {
-        var text = Display("Output = [1, 2, 3]", Display(8));
+        var text = Display("[1, 2, 3]", Display(8));
         Assert.Equal("…", text);
         Assert.True(text.Length <= 8);
     }
@@ -344,8 +344,8 @@ public class StringAndDisplayLimitsTests
     public void SeparatorsAndDelimiters_CountTowardTheLimit()
     {
         // "[1, 2]" is 6 units: two atoms, two brackets, and a two-unit separator.
-        Assert.Equal("[1, 2]", Display("Output = [1, 2]", Display(6)));
-        Assert.Equal("…", Display("Output = [1, 2]", Display(5)));
+        Assert.Equal("[1, 2]", Display("[1, 2]", Display(6)));
+        Assert.Equal("…", Display("[1, 2]", Display(5)));
     }
 
     [Fact]
@@ -356,14 +356,14 @@ public class StringAndDisplayLimitsTests
         // canonical single unit would have let the returned text exceed a limit that is
         // defined in UTF-16 code units.
         var exact = 2 + Environment.NewLine.Length;
-        Assert.Equal($"1{Environment.NewLine}2", Display("Output = 1, 2", Display(exact)));
-        Assert.Equal("…", Display("Output = 1, 2", Display(exact - 1)));
+        Assert.Equal($"1{Environment.NewLine}2", Display("1, 2", Display(exact)));
+        Assert.Equal("…", Display("1, 2", Display(exact - 1)));
     }
 
     [Theory]
-    [InlineData("Output = 1, 2, 3, 4, 5")]
-    [InlineData("Output = [1, 2, 3], [4, 5, 6]")]
-    [InlineData("Output = 'abc', 'def', 'ghi'")]
+    [InlineData("1, 2, 3, 4, 5")]
+    [InlineData("[1, 2, 3], [4, 5, 6]")]
+    [InlineData("'abc', 'def', 'ghi'")]
     public void RenderedText_NeverExceedsTheConfiguredLimit(string source)
     {
         // Sweep every limit around the natural length: the contract is unconditional.
@@ -380,9 +380,9 @@ public class StringAndDisplayLimitsTests
     {
         var cases = new (string Source, Type ExpectedType)[]
         {
-            ("Output = [(1, 2), [3, [4]]]", typeof(RunResult.Success)),
-            ("Output = )(", typeof(RunResult.ParseFailure)),
-            ("Output = 1 div 0", typeof(RunResult.EvalFailure)),
+            ("[(1, 2), [3, [4]]]", typeof(RunResult.Success)),
+            (")(", typeof(RunResult.ParseFailure)),
+            ("1 div 0", typeof(RunResult.EvalFailure)),
             ("Value = 1", typeof(RunResult.NoProgramOutput)),
         };
 
@@ -421,10 +421,10 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void OverflowReplacement_IsItselfStrictlyBounded()
     {
-        Assert.Equal(string.Empty, Display("Output = 1, 2, 3", Display(0)));
-        Assert.Equal("…", Display("Output = 1, 2, 3", Display(1)));
+        Assert.Equal(string.Empty, Display("1, 2, 3", Display(0)));
+        Assert.Equal("…", Display("1, 2, 3", Display(1)));
 
-        var longOutput = "Output = '" + new string('x', 200) + "'";
+        var longOutput = "'" + new string('x', 200) + "'";
         var completeMessage = Display(longOutput, Display(100));
         Assert.StartsWith(LimitPrefix, completeMessage);
         Assert.True(completeMessage.Length <= 100);
@@ -433,7 +433,7 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void OverLimitRendering_IsNeverPartialOrTruncated()
     {
-        var text = Display("Output = [111, 222, 333]", Display(10));
+        var text = Display("[111, 222, 333]", Display(10));
         Assert.Equal("…", text);
         Assert.DoesNotContain("111", text);
     }
@@ -443,7 +443,7 @@ public class StringAndDisplayLimitsTests
     private const string NestedStringDoubling =
         "ToText(x) = x.string\nValues = range(1, 200).map(ToText)\n"
         + "L0 = [Values, Values]\nL1 = [L0, L0]\nL2 = [L1, L1]\nL3 = [L2, L2]\nL4 = [L3, L3]\n"
-        + "Output = L4";
+        + "L4";
 
     [Fact]
     public void NestedSharedValue_EvaluatesButIsRefusedRendering()
@@ -490,13 +490,13 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void EvaluateToString_IsBounded()
     {
-        Assert.Equal("1 2 3", KatLangEngine.EvaluateToString("Output = 1, 2, 3"));
+        Assert.Equal("1 2 3", KatLangEngine.EvaluateToString("1, 2, 3"));
         Assert.Equal(
             "…",
             KatLangEngine.EvaluateToString(
-                "Output = 1, 2, 3",
+                "1, 2, 3",
                 new RunOptions { EvaluationLimits = Display(4) }));
-        var longOutput = "Output = " + string.Join(", ", Enumerable.Range(1, 100));
+        var longOutput = string.Join(", ", Enumerable.Range(1, 100));
         Assert.StartsWith(
             LimitPrefix,
             KatLangEngine.EvaluateToString(
@@ -508,13 +508,13 @@ public class StringAndDisplayLimitsTests
     public void EvaluateToString_ExactBoundary()
         => Assert.Equal(
             "1 2 3",
-            KatLangEngine.EvaluateToString("Output = 1, 2, 3", new RunOptions { EvaluationLimits = Display(5) }));
+            KatLangEngine.EvaluateToString("1, 2, 3", new RunOptions { EvaluationLimits = Display(5) }));
 
     [Fact]
     public void ErrorRendering_StillReportsEveryDiagnostic()
     {
         // Bounding the rendering surface must not discard diagnostics.
-        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run("Output = )("));
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(")("));
         Assert.NotEmpty(failure.Errors);
         Assert.NotEmpty(failure.ToDisplayString());
     }
@@ -525,7 +525,7 @@ public class StringAndDisplayLimitsTests
     public void EvaluatorResourceErrors_RemainStructuredWhenRenderingIsRefused()
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(
-            "Output = range(1, 1000)",
+            "range(1, 1000)",
             new RunOptions
             {
                 EvaluationLimits = new EvaluationLimits { MaxCollectionItems = 10, MaxDisplayLength = 1 },
@@ -539,7 +539,7 @@ public class StringAndDisplayLimitsTests
     {
         // Items and UTF-16 code units are different resources: a tiny collection limit does
         // not restrict string length, and a tiny string limit does not restrict item count.
-        Assert.False(Eval("Output = 'abcdefghij'", new EvaluationLimits { MaxCollectionItems = 1 }).IsError);
-        Assert.False(Eval("Output = [1, 2, 3, 4]", new EvaluationLimits { MaxStringLength = 1 }).IsError);
+        Assert.False(Eval("'abcdefghij'", new EvaluationLimits { MaxCollectionItems = 1 }).IsError);
+        Assert.False(Eval("[1, 2, 3, 4]", new EvaluationLimits { MaxStringLength = 1 }).IsError);
     }
 }

@@ -8,7 +8,6 @@
 # ── Keywords ────────────────────────────────────────────────────────────────
 kw_open="open"
 kw_public="public"
-kw_output="Output"
 kw_div="div"
 kw_mod="mod"
 kw_and="and"
@@ -49,7 +48,6 @@ empty_brace="{}"
 empty_list="[]"
 
 # ── Common combined shapes ──────────────────────────────────────────────────
-output_assign="Output = "
 open_space="open "
 public_space="public "
 assign_spaced=" = "

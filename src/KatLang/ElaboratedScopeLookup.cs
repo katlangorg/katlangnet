@@ -82,9 +82,6 @@ internal static class ElaboratedScopeLookup
 
             case Expr.DotCall(var target, var name, null):
             {
-                if (name == "Output")
-                    return null;
-
                 var targetAlgorithm = ResolveOpenTarget(scope, target);
                 return targetAlgorithm is null
                     ? null

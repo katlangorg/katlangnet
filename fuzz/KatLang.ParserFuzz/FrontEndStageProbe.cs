@@ -16,7 +16,7 @@ namespace KatLang.ParserFuzz;
 /// </summary>
 internal static class FrontEndStageProbe
 {
-    private const string WarmUp = "A = 1 + 1\nF(x) = x * 2\nOutput = F(A)";
+    private const string WarmUp = "A = 1 + 1\nF(x) = x * 2\nF(A)";
 
     public static int Run(string[] args)
     {

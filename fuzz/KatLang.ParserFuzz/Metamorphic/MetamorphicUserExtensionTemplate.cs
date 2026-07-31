@@ -14,7 +14,7 @@ internal sealed record MetamorphicExtensionBody(string Id, string Body, int Suff
 /// <code>
 /// MmF(r, n) = &lt;body&gt;                MmF(r, n) = &lt;body&gt;
 /// MmR = &lt;receiver&gt;                  MmR = &lt;receiver&gt;
-/// Output = MmF(MmR, 2)              Output = MmR.MmF(2)
+/// MmF(MmR, 2)                       MmR.MmF(2)
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> The same receiver-first rewrite as Group A, applied to a
@@ -160,8 +160,8 @@ internal static class MetamorphicUserExtensionTemplate
             // Identical spread on both sides, in the suffix only.
             preamble.Append(MetamorphicTables.NamePrefix).Append("S = (8, 9)\n");
             var spread = MetamorphicTables.NamePrefix + "S*";
-            left = $"{preamble}Output = {F}({R}, {spread})";
-            right = $"{preamble}Output = {R}.{F}({spread})";
+            left = $"{preamble}{F}({R}, {spread})";
+            right = $"{preamble}{R}.{F}({spread})";
         }
         else
         {
@@ -174,8 +174,8 @@ internal static class MetamorphicUserExtensionTemplate
 
             var ordinaryArguments = suffixList.Length == 0 ? R : R + ", " + suffixList;
             var dottedSuffix = suffixList.Length == 0 ? "" : "(" + suffixList + ")";
-            left = $"{preamble}Output = {F}({ordinaryArguments})";
-            right = $"{preamble}Output = {R}.{F}{dottedSuffix}";
+            left = $"{preamble}{F}({ordinaryArguments})";
+            right = $"{preamble}{R}.{F}{dottedSuffix}";
         }
 
         return MetamorphicCaseFactory.Create(

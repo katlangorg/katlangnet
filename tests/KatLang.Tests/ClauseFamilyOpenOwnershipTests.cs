@@ -129,7 +129,7 @@ public class ClauseFamilyOpenOwnershipTests
     [InlineData("M(x, y) = (open(o\nM(x, y) = (open(o\n")]          // capture head
     [InlineData("M(-2, 2) = (open(o))\n")]                          // closed
     [InlineData("A(-2, 2) = (open(o\nB(-2, 2) = (open(o\n")]        // different names
-    [InlineData("M(-2, 2) = (open(o\nZ = 1\nOutput = Z\n")]         // followed by valid declarations
+    [InlineData("M(-2, 2) = (open(o\nZ = 1\nZ\n")]         // followed by valid declarations
     public void MalformedRecovery_IsBoundedAndProducesNoSequenceConstruct(string source)
     {
         var result = Parser.Parse(source);

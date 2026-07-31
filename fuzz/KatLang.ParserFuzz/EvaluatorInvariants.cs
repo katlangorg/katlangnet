@@ -56,7 +56,7 @@ internal static class EvaluatorInvariants
     private const uint InputIndependenceSampleModulus = 64;
 
     // Exercises the zero-argument property cache, nested properties, and a call.
-    private const string ProbeSourceB = "A = 1 + 1\nB = (C = A + 2)\nD(x) = x + A\nOutput = D(B.C) + A";
+    private const string ProbeSourceB = "A = 1 + 1\nB = (C = A + 2)\nD(x) = x + A\nD(B.C) + A";
 
     public static void Check(string source)
     {

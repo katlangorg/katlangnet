@@ -46,7 +46,7 @@ internal static class FrontEndInvariants
     // A fixed, unrelated program processed *between* two runs of the same source to detect
     // leaked static / cross-parse frontend state. Uses deconstruction (synthetic shared-
     // source properties) + an implicit parameter to stress the most stateful passes.
-    private const string ProbeSourceB = "p, q, r = (1, 2, 3)\nHelper(x) = x + p\nOutput = Helper(q) + r";
+    private const string ProbeSourceB = "p, q, r = (1, 2, 3)\nHelper(x) = x + p\nHelper(q) + r";
 
     /// <summary>Fuzz-callback entry: runs all stages and lets any violation escape.</summary>
     public static void Check(string source)
@@ -159,7 +159,7 @@ internal static class FrontEndInvariants
 
     /// <summary>
     /// Total, cycle-safe walk of an AST that validates every non-null source-backed span
-    /// (expression, member, declaration, and output spans) and forbids
+    /// (expression, member, and declaration spans) and forbids
     /// <see cref="Expr.SequenceConstruct"/>. Reuses <see cref="AstWalker"/>, which visits
     /// children only and never follows the parent/back-reference field.
     /// </summary>
@@ -176,7 +176,6 @@ internal static class FrontEndInvariants
 
         protected override void VisitPropertyDeclaration(Property property, SourceSpan span) => Check(span, "property-declaration");
         protected override void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration declaration) => Check(declaration.Span, "parameter-declaration");
-        protected override void VisitReservedOutputDeclaration(Algorithm algorithm, SourceSpan span) => Check(span, "output-declaration");
         protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span) => Check(span, "conditional-binder");
         protected override void VisitCollectMarker(SourceSpan span) => Check(span, "collect-marker");
         protected override void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span) => Check(span, "dot-member");

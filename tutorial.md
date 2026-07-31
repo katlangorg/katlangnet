@@ -15,7 +15,7 @@
 5. [Properties](#properties)
    - [Calls Return One Value](#calls-return-one-value)
    - [Zero-Parameter Property Caching](#zero-parameter-property-caching)
-   - [Implicit and Explicit Output](#implicit-and-explicit-output)
+   - [Algorithm Output](#algorithm-output)
    - [The Empty Sequence Value](#the-empty-sequence-value)
     - [Sequence Values and Count](#sequence-values-and-count)
    - [Output Selection](#output-selection)
@@ -524,12 +524,7 @@ Sum(vector) = vector.sum
 (1, 2).Sum         // separate report row: 3
 ```
 
-A leading semicolon after a definition body is invalid and produces a diagnostic. During error recovery the parser may still attach the following expression to the current body so later diagnostics stay useful, but that recovery is not valid KatLang syntax — semicolon is never an expression operator. When a definition and its result read better together, `Output = ...` states the result explicitly:
-
-```
-Sum(vector) = vector.sum
-Output = (1, 2).Sum     // 3
-```
+A leading semicolon after a definition body is invalid and produces a diagnostic. During error recovery the parser may still attach the following expression to the current body so later diagnostics stay useful, but that recovery is not valid KatLang syntax — semicolon is never an expression operator.
 
 Comma is the explicit expression-list separator. Where an expression list is already open, same-line adjacency acts as an implicit comma, so `a b` means `a, b`. A newline is a different mechanism — a body, statement, or output boundary, not a global implicit comma — so it does not extend an expression list across lines unless the syntax explicitly keeps the context open (for example an open `(`/`{`, a trailing comma, a same-line binary operator, or a leading `.`). Expression spreading uses the postfix spread marker `value*`; a `*` with a valid same-line right operand is instead the multiplication operator regardless of spacing, so a comma is required between a spread and a following same-line item (`a*, b` — `a* b` is the product `a * b`), while a spread whose star ends the line leaves the next line a separate slot. The prefix `*` in a binding pattern is the collect marker: it must be directly attached to its binding name in a parameter or deconstruction pattern (`*name`; `* name` is an error), and it is not an expression operator.
 
@@ -708,11 +703,9 @@ Coordinates*
 20
 ```
 
-### Implicit and Explicit Output
+### Algorithm Output
 
-An algorithm may define output in one of two ways, and it may also define no output at all.
-
-**Implicit output (preferred):** any expression that appears after all property definitions becomes the algorithm's output. This is the concise, idiomatic style.
+An expression row in an algorithm body contributes its result to the algorithm's output. An algorithm may also define no output at all.
 
 ```
 A = 3
@@ -722,31 +715,42 @@ A + B
 
 **Result:** `5`
 
-Here `A` and `B` are property definitions; the trailing `A + B` is the implicit output.
+Here `A` and `B` are property definitions; the expression row `A + B` is the algorithm's output.
 
-**Explicit output:** you can instead write `Output = expression` to declare the output anywhere in the algorithm body — even before some property definitions. This can improve readability when the property list is long.
+Output rows and property definitions may be interleaved — an output row does not need to appear after all property definitions, because property resolution uses the complete property set of the algorithm, not textual order:
 
+<!-- spec:output-rows-interleave-definitions -->
 ```
 A = 3
-Output = A + B
+A + B
 B = 2
 ```
 
 **Result:** `5`
 
-`Output = expr` is reserved syntax, not a regular property assignment. An algorithm may use it at most once, and you cannot mix it with implicit output in the same algorithm — in either direction: an expression row before `Output = ...` and an expression row after it both report the mixing error. Like every definition body, the `Output = ...` body is line-bounded: a newline ends it, so write sequence-valued explicit output with parentheses, for example `Output = (A, B)`. `Output = A` followed by `B` on a later line — indented or not — is the mixing error (the body ended at the newline and `B` is a separate output row), not a sequence-valued output. The name `Output` is reserved in definition position: `Output(x) = ...` and multi-branch `Output` definitions are invalid. If you need explicit parameters or clause branches, declare them on the enclosing algorithm instead. If you declare explicit parameters on the enclosing algorithm, that algorithm must define output. External qualified access is also invalid: `Algo.Output` and `Algo.Output(...)` are rejected because `Output` is not a public property surface.
+`Output` and `output` are ordinary identifiers with no special meaning. `Output = A + B` is a regular property definition named `Output`; like any property, it contributes nothing to algorithm output unless some expression row references it:
 
-When an algorithm is used in call position, KatLang calls the algorithm using its own parameter list. Put the call interface on the algorithm head, and use `Output = ...` only to declare its result:
+<!-- spec:output-is-ordinary-property -->
+```
+Output = 5
+Output
+```
+
+**Result:** `5`
+
+If you declare explicit parameters on the enclosing algorithm, that algorithm must define output.
+
+When an algorithm is used in call position, KatLang calls the algorithm using its own parameter list. Put the call interface on the algorithm head; the body's expression row is its result:
 
 ```
 Algo(x) = {
-    Output = x + 1
+    x + 1
 }
 
 Algo(6)
 ```
 
-This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head, not on `Output`. To get an algorithm's designated result, call the algorithm directly; do not write `Algo.Output(...)`. Bare `Algo` still refers to the algorithm value, not an automatic call. Self-contained helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`. If a nested property depends on parameters owned by the enclosing algorithm, or is defined inside a conditional algorithm branch, it is local-only and cannot be accessed as `Algo.Helper` or exported through `open`/`load`.
+This produces `7`. Conditional branches follow the same rule: declare them on the enclosing algorithm head. To get an algorithm's result, call the algorithm directly. Bare `Algo` still refers to the algorithm value, not an automatic call. Self-contained helper properties remain accessible through dot syntax, for example `Algo.Helper(6)`. If a nested property depends on parameters owned by the enclosing algorithm, or is defined inside a conditional algorithm branch, it is local-only and cannot be accessed as `Algo.Helper` or exported through `open`/`load`.
 
 Algorithm-level explicit parameters define the algorithm's direct-call interface, so they are valid only when the algorithm defines output. This is invalid:
 
@@ -1573,7 +1577,7 @@ Final
 
 `(*history)` opens the single sequence-value state slot and collects its items as the exact list `history`. Inside `(history*, previous + 1)`, the spread `history*` opens that one list boundary into its immediate items (see [Opening one level vs flattening](#opening-one-level-vs-flattening)), so each step rebuilds one flat accumulator sequence value beside the new value: `(1, 2)` → `(1, 2, 3)` → `(1, 2, 3, 4)`. The accumulator grows flat while remaining a single state slot beside `previous + 1`. The comma after the spread is required — `history* previous` would be the multiplication `history * previous` — and it is what places `previous + 1` beside the spread history items.
 
-Only one collecting binding is allowed in each comma-separated pattern level, collecting bindings must be explicit, and they cannot use the Grace `~` reordering operator. The collect marker must be directly attached to its binding name: `*items` is a collecting binding, while `* items` is an error. `Output(*values) = ...` is invalid; declare explicit parameters on the enclosing algorithm or property head instead.
+Only one collecting binding is allowed in each comma-separated pattern level, collecting bindings must be explicit, and they cannot use the Grace `~` reordering operator. The collect marker must be directly attached to its binding name: `*items` is a collecting binding, while `* items` is an error.
 
 ### Reordering Parameters with Grace~ operator
 
@@ -3770,5 +3774,4 @@ A collecting step parameter follows the same collection rule as every other coll
 | `load` | `Name = load('url')` — load external algorithm |
 | `open` | `open target` — import public properties into scope |
 | `public` | `public Prop = ...` or `public Prop(pattern) = ...` — expose property to callers |
-| `Output` | `Output = expr` — explicit output declaration |
 | `Math` | Built-in namespace for constants and functions |

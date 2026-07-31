@@ -1043,7 +1043,6 @@ public class ParserTests
 
     [Theory]
     [InlineData("1 2")]
-    [InlineData("Output = 1 2")]
     public void Parse_SameLineAdjacentExpressions_ParseAsExpressionList(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1055,7 +1054,6 @@ public class ParserTests
 
     [Theory]
     [InlineData("(1, 2)")]
-    [InlineData("Output = (1, 2)")]
     public void Parse_ParenthesizedComma_ParseAsSequenceValue(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1651,24 +1649,6 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("Output = A\n~B")]
-    [InlineData("Output = A // comment\n~B")]
-    public void Parse_TildeLedLineAfterExplicitOutput_ReportsMixingNotPostfixGrace(string source)
-    {
-        // The newline ends the `Output =` body before the '~', so the body
-        // stays the bare resolve `A` and the '~'-led line is an implicit
-        // output row — which cannot mix with explicit output.
-        var result = Parser.ParseSyntax(source);
-
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
-        Assert.Equal(2, result.Root.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
-        var grace = Assert.IsType<Expr.Grace>(result.Root.Output[1]);
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(grace.Inner).Name);
-    }
-
-    [Theory]
     [InlineData("A*, B\nC")]
     [InlineData("A*, B\nP = 9\nC")]
     public void Parse_PostfixSpreadThenLaterOutput_SequencesAfterSpread(string source)
@@ -1751,13 +1731,16 @@ public class ParserTests
     [Theory]
     [InlineData("Output\n= 1")]
     [InlineData("Output // comment\n= 1")]
-    public void Parse_CommentInExplicitOutputHeader_StillParsesExplicitOutput(string source)
+    public void Parse_CommentInOutputNamedPropertyHeader_StillParsesPropertyDefinition(string source)
     {
+        // `Output` is an ordinary identifier, so the cross-line definition
+        // header parses exactly like any other property named `Output`.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        Assert.Empty(result.Root.Properties);
-        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(result.Root.Output)).Value);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.Empty(result.Root.Output);
     }
 
     [Theory]
@@ -2193,15 +2176,17 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_ExplicitOutputDefinitionAfterPropertyBody_KeepsDeclarationBoundary()
+    public void Parse_OutputNamedPropertyAfterPropertyBody_KeepsDeclarationBoundary()
     {
+        // A definition header named `Output` on a later line is an ordinary
+        // property definition, never a continuation of the previous body.
         var result = Parser.ParseSyntax("P = 1\nOutput = 2");
 
         Assert.False(result.HasErrors);
-        var property = Assert.Single(result.Root.Properties);
-        Assert.Equal("P", property.Name);
-        var output = Assert.Single(result.Root.Output);
-        Assert.Equal(2, Assert.IsType<Expr.Num>(output).Value);
+        Assert.Equal(2, result.Root.Properties.Count);
+        Assert.Equal("P", result.Root.Properties[0].Name);
+        Assert.Equal("Output", result.Root.Properties[1].Name);
+        Assert.Empty(result.Root.Output);
     }
 
     [Fact]
@@ -3251,7 +3236,7 @@ public class ParserTests
     [Fact]
     public void Parse_Open_CrossLineSemicolon_DoesNotContinueOpenList()
     {
-        // Unlike `Output = 1` newline `; 2` (where the leading ';' is invalid
+        // Unlike `P = 1` newline `; 2` (where the leading ';' is invalid
         // expression syntax that error recovery still attaches to the body),
         // a ';'-led line after an open declaration is not an open continuation:
         // the declaration ended at the newline.
@@ -3400,46 +3385,61 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("must appear before"));
     }
 
-    // ── Explicit output syntax ──────────────────────────────────────────────
+    // ── `Output` as an ordinary identifier ──────────────────────────────────
+    // There is no explicit output syntax: `Output = expr` is an ordinary
+    // property definition, and expression rows are the only output mechanism.
 
     [Fact]
-    public void Parse_ExplicitOutput_BasicForm()
+    public void Parse_Output_IsOrdinaryProperty()
     {
-        var result = Parser.ParseSyntax("A = 6\nOutput = A");
-        Assert.False(result.HasErrors);
-        Assert.Single(result.Root.Properties);
-        Assert.Equal("A", result.Root.Properties[0].Name);
-        Assert.Single(result.Root.Output);
-        Assert.IsType<Expr.Resolve>(result.Root.Output[0]);
-        Assert.Equal("A", ((Expr.Resolve)result.Root.Output[0]).Name);
-    }
-
-    [Fact]
-    public void Parse_ExplicitOutput_NotAProperty()
-    {
-        // Output = expr must NOT create a property named "Output"
         var result = Parser.ParseSyntax("Output = 42");
         Assert.False(result.HasErrors);
-        Assert.Empty(result.Root.Properties);
-        Assert.Single(result.Root.Output);
-        Assert.IsType<Expr.Num>(result.Root.Output[0]);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.Empty(result.Root.Output);
     }
 
     [Fact]
-    public void Parse_ExplicitOutput_Expression()
+    public void Parse_LowercaseOutput_IsOrdinaryProperty()
     {
-        var result = Parser.ParseSyntax("A = 1\nOutput = A + 1");
+        var result = Parser.ParseSyntax("output = 6\noutput");
         Assert.False(result.HasErrors);
-        Assert.Single(result.Root.Properties);
-        Assert.Single(result.Root.Output);
-        var binary = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal(BinaryOp.Add, binary.Op);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("output", property.Name);
+        Assert.Equal("output", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
     }
 
     [Fact]
-    public void Parse_ExplicitOutput_InMiddleOfProperties()
+    public void Parse_OutputPropertyAndReferenceRow()
     {
-        var result = Parser.ParseSyntax("A = 1\nOutput = A + 1\nB = 2");
+        var result = Parser.ParseSyntax("Output = 5\nOutput");
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.Equal("Output", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Output)).Name);
+    }
+
+    [Fact]
+    public void Parse_OutputProperty_CaseSensitiveNames_AreDistinct()
+    {
+        var result = Parser.ParseSyntax("Output = 1\noutput = 2\nOUTPUT = 3");
+        Assert.False(result.HasErrors);
+        Assert.Equal(["Output", "output", "OUTPUT"], result.Root.Properties.Select(p => p.Name));
+        Assert.Empty(result.Root.Output);
+    }
+
+    [Fact]
+    public void Parse_DuplicateOutputProperty_ReportsOrdinaryDuplicateDiagnostic()
+    {
+        var result = Parser.ParseSyntax("Output = 1\nOutput = 2");
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Property 'Output' is already defined."));
+    }
+
+    [Fact]
+    public void Parse_OutputRow_InterleavedWithPropertyDefinitions()
+    {
+        var result = Parser.ParseSyntax("A = 1\nA + 1\nB = 2");
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Properties.Count);
         Assert.Equal("A", result.Root.Properties[0].Name);
@@ -3450,50 +3450,36 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_ExplicitOutput_MultipleValues()
+    public void Parse_OutputProperty_WithFollowingRows_HasNoMixingRule()
     {
-        var result = Parser.ParseSyntax("Output = 1, 2, 3");
+        // Former explicit/implicit mixing shapes are ordinary programs now: a
+        // property named `Output` plus any number of output rows.
+        var result = Parser.ParseSyntax("Output = 4\nOutput\n5");
+
         Assert.False(result.HasErrors);
-        Assert.Equal(3, result.Root.Output.Count);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.Equal(2, result.Root.Output.Count);
+        Assert.Equal("Output", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
+        Assert.Equal(5m, Assert.IsType<Expr.Num>(result.Root.Output[1]).Value);
     }
 
     [Fact]
-    public void Parse_ExplicitOutput_DuplicateReportsError()
-    {
-        var result = Parser.ParseSyntax("Output = 1\nOutput = 2");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("output may be defined only once"));
-    }
-
-    [Theory]
-    [InlineData("A = 1\nOutput = A\nA")]
-    [InlineData("Output = 1\n3")]
-    public void Parse_ExplicitThenImplicitOutput_ReportsError(string source)
-    {
-        // Explicit and implicit output cannot mix in either direction. The
-        // `Output = ...` body is line-bounded like every definition body, so
-        // a following row is an implicit output row, and it reports the same
-        // diagnostic as `Output = ...` after an implicit row. Write
-        // `Output = (A, B)` when one sequence-valued explicit output is intended.
-        var result = Parser.ParseSyntax(source);
-
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
-    }
-
-    [Fact]
-    public void Parse_ExplicitThenImplicitOutput_InNestedBraceAlgorithm_ReportsError()
+    public void Parse_OutputProperty_InNestedBraceAlgorithm_IsOrdinary()
     {
         var result = Parser.ParseSyntax("F = {Output = 1\n3}\nF");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        var block = property.Value;
+        Assert.Equal("Output", Assert.Single(block.Properties).Name);
+        Assert.Equal(3m, Assert.IsType<Expr.Num>(Assert.Single(block.Output)).Value);
     }
 
     [Theory]
-    [InlineData("Output = 1 ; 3")]
-    [InlineData("Output = 1\n; 3")]
-    public void Parse_ExplicitOutput_SemicolonInBody_ReportsUnsupportedExpressionSeparator(string source)
+    [InlineData("1 ; 3")]
+    [InlineData("1\n; 3")]
+    public void Parse_OutputRows_SemicolonBetweenRows_ReportsUnsupportedExpressionSeparator(string source)
     {
         var result = Parser.ParseSyntax(source);
 
@@ -3501,22 +3487,14 @@ public class ParserTests
         Assert.Equal(2, result.Root.Output.Count);
     }
 
-    [Theory]
-    [InlineData("Output = 1\n         3")]
-    [InlineData("Output = Add(1, 2)\n         3")]
-    public void Parse_ExplicitOutput_IndentedNextLine_IsSeparateRowNotBodyContinuation(string source)
+    [Fact]
+    public void Parse_OutputProperty_SemicolonInBody_ReportsUnsupportedExpressionSeparator()
     {
-        // `Output = ...` bodies are line-bounded: an indented expression on the
-        // next line is a separate (implicit) output row, NOT absorbed into the
-        // explicit output body. Because explicit and implicit output cannot mix,
-        // that separate row reports the mixing diagnostic — proof the `3` was
-        // never part of the explicit `Output = ...` body.
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax("Output = 1 ; 3");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both", StringComparison.Ordinal));
-        Assert.Equal(2, result.Root.Output.Count);
-        Assert.Equal(3m, Assert.IsType<Expr.Num>(result.Root.Output[1]).Value);
+        AssertUnsupportedSemicolonDiagnostic(result);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
     }
 
     [Theory]
@@ -3631,54 +3609,33 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_ImplicitThenExplicitOutput_ReportsError()
-    {
-        var result = Parser.ParseSyntax("A = 1\nA\nOutput = A");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Cannot use both"));
-    }
-
-    [Fact]
-    public void Parse_PublicOutput_ReportsError()
+    public void Parse_PublicOutputProperty_IsOrdinaryPublicProperty()
     {
         var result = Parser.ParseSyntax("public Output = 42");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to output"));
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.True(property.IsPublic);
+        Assert.Empty(result.Root.Output);
     }
 
     [Fact]
-    public void Parse_PublicOutputClauseDefinition_ReportsError()
+    public void Parse_PublicOutputClauseDefinition_IsOrdinaryPublicClause()
     {
         var result = Parser.ParseSyntax("public Output(x) = x + 1");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("'public' cannot be applied to output"));
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot declare explicit parameters"));
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        Assert.True(property.IsPublic);
+        var user = Assert.IsType<Algorithm.User>(property.Value);
+        Assert.Equal(["x"], user.Params);
     }
 
     [Fact]
-    public void Parse_ExplicitOutput_ImplicitOutputSameAST()
+    public void Parse_OutputRows_InterleavedInsideBlock()
     {
-        // Both forms should produce equivalent Output lists
-        var implicit_ = Parser.ParseSyntax("A = 6\nA");
-        var explicit_ = Parser.ParseSyntax("A = 6\nOutput = A");
-
-        Assert.False(implicit_.HasErrors);
-        Assert.False(explicit_.HasErrors);
-
-        Assert.Single(implicit_.Root.Output);
-        Assert.Single(explicit_.Root.Output);
-
-        // Both should be Resolve("A")
-        var implicitOut = Assert.IsType<Expr.Resolve>(implicit_.Root.Output[0]);
-        var explicitOut = Assert.IsType<Expr.Resolve>(explicit_.Root.Output[0]);
-        Assert.Equal(implicitOut.Name, explicitOut.Name);
-    }
-
-    [Fact]
-    public void Parse_ExplicitOutput_InsideBlock()
-    {
-        var result = Parser.ParseSyntax("X = {A = 1\nOutput = A + 1\nB = 2}");
+        var result = Parser.ParseSyntax("X = {A = 1\nA + 1\nB = 2}");
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Properties);
         var block = result.Root.Properties[0].Value;
@@ -3687,22 +3644,27 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_OutputClauseDefinition_ReportsError()
+    public void Parse_OutputClauseDefinition_IsOrdinaryCallableProperty()
     {
         var result = Parser.ParseSyntax("Output(x) = x + 1");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot declare explicit parameters"));
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        var user = Assert.IsType<Algorithm.User>(property.Value);
+        Assert.Equal(["x"], user.Params);
     }
 
     [Fact]
-    public void Parse_OutputClauseGroup_ReportsConditionalError()
+    public void Parse_OutputClauseGroup_IsOrdinaryConditionalFamily()
     {
         var result = Parser.ParseSyntax("Output(0) = 0\nOutput(x) = x");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot declare explicit parameters"));
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output cannot be a conditional or multi-branch definition"));
+        Assert.False(result.HasErrors);
+        var property = Assert.Single(result.Root.Properties);
+        Assert.Equal("Output", property.Name);
+        var conditional = Assert.IsType<Algorithm.Conditional>(property.Value);
+        Assert.Equal(2, conditional.Branches.Count);
     }
 
     [Fact]
@@ -3739,9 +3701,9 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_ParametrizedAlgorithm_WithExplicitOutputInBody()
+    public void Parse_ParametrizedAlgorithm_WithOutputRowInBody()
     {
-        var result = Parser.ParseSyntax("Algo(x) = { Output = x + 1 }");
+        var result = Parser.ParseSyntax("Algo(x) = { x + 1 }");
 
         Assert.False(result.HasErrors);
         Assert.Single(result.Root.Properties);
@@ -4233,51 +4195,55 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_OutputPropertyAccess_ReportsError()
+    public void Parse_OutputDotCall_IsOrdinaryDotCall()
     {
         var result = Parser.ParseSyntax(
             """
-            Algo(x) = {
-              Output = x + 1
+            Algo = {
+              Output(x) = x + 1
             }
             Algo.Output(6)
             """);
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Instead of `Algo.Output(6)`, write `Algo(6)`"));
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Output));
+        Assert.Equal("Output", dotCall.Name);
+        Assert.NotNull(dotCall.Args);
     }
 
     [Fact]
-    public void Parse_NestedOutputPropertyAccess_ReportsError()
+    public void Parse_NestedOutputDotCall_IsOrdinaryDotCall()
     {
         var result = Parser.ParseSyntax(
             """
             Outer = {
-              Inner(x) = {
-                Output = x + 10
+              Inner = {
+                Output(x) = x + 10
               }
             }
             Outer.Inner.Output(6)
             """);
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Output));
+        Assert.Equal("Output", dotCall.Name);
     }
 
     [Fact]
-    public void Parse_BareOutputPropertyAccess_ReportsError()
+    public void Parse_BareOutputDotAccess_IsOrdinaryDotCall()
     {
         var result = Parser.ParseSyntax(
             """
             Algo = {
-              Output = 5
+              Output = 9
             }
             Algo.Output
             """);
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Output is the designated result of an algorithm"));
+        Assert.False(result.HasErrors);
+        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Output));
+        Assert.Equal("Output", dotCall.Name);
+        Assert.Null(dotCall.Args);
     }
 
     // -- Double-parens: ordinary parentheses unless preserving a sequence-value receiver block ---

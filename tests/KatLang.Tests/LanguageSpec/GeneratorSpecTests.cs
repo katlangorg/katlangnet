@@ -105,6 +105,13 @@ public class LanguageSpecArtifactsGeneratorPromptTests
         Assert.DoesNotContain("rest parameter", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("rest binding", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("variadic parameter", content, StringComparison.OrdinalIgnoreCase);
+
+        // Explicit output syntax is gone: `Output` is an ordinary identifier, so the
+        // prompts must not teach it as reserved result syntax or forbid ordinary use.
+        Assert.DoesNotContain("Output = ...", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("reserved result syntax", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("explicit output", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("implicit output", content, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReplaceOrAppendBlock(string content, string block)

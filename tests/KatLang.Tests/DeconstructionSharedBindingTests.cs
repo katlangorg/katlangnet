@@ -67,7 +67,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void DemandFirstTargetOnly_ReturnsItsValue_WithOneBind()
     {
-        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\nOutput = a");
+        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\na");
         Assert.Equal([10m], atoms);
         Assert.Equal(1, binds);
     }
@@ -75,7 +75,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void DemandMiddleTargetOnly_ReturnsItsValue_WithOneBind()
     {
-        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\nOutput = c");
+        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\nc");
         Assert.Equal([30m], atoms);
         Assert.Equal(1, binds);
     }
@@ -83,7 +83,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void DemandLastTargetOnly_ReturnsItsValue_WithOneBind()
     {
-        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\nOutput = d");
+        var (atoms, binds) = RunCountingBinds("a, b, c, d = (10, 20, 30, 40)\nd");
         Assert.Equal([40m], atoms);
         Assert.Equal(1, binds);
     }
@@ -94,7 +94,7 @@ public class DeconstructionSharedBindingTests
     public void DemandAllTargets_PerformsExactlyOneBind()
     {
         const int n = 200;
-        var (atoms, binds) = RunCountingBinds(WideSource(n, $"range(1, {n})") + $"\nOutput = sum(({AllTargets(n)}))");
+        var (atoms, binds) = RunCountingBinds(WideSource(n, $"range(1, {n})") + $"\nsum(({AllTargets(n)}))");
         Assert.Equal([n * (n + 1) / 2m], atoms); // sum 1..n
         Assert.Equal(1, binds);
     }
@@ -104,7 +104,7 @@ public class DeconstructionSharedBindingTests
     {
         const int n = 60;
         // Reference every target in two separate output rows: still one shared bind for the run.
-        var source = WideSource(n, $"range(1, {n})") + $"\nOutput = sum(({AllTargets(n)})), sum(({AllTargets(n)}))";
+        var source = WideSource(n, $"range(1, {n})") + $"\nsum(({AllTargets(n)})), sum(({AllTargets(n)}))";
         var (atoms, binds) = RunCountingBinds(source);
         var expected = n * (n + 1) / 2m;
         Assert.Equal([expected, expected], atoms);
@@ -114,9 +114,9 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void DemandTargetsInReverseAndInterleavedOrder_AreEquivalent_AndOneBind()
     {
-        const string forward = "a, b, c, d = (1, 2, 3, 4)\nOutput = a, b, c, d";
-        const string reverse = "a, b, c, d = (1, 2, 3, 4)\nOutput = d, c, b, a";
-        const string interleaved = "a, b, c, d = (1, 2, 3, 4)\nOutput = c, a, d, b, a, d";
+        const string forward = "a, b, c, d = (1, 2, 3, 4)\na, b, c, d";
+        const string reverse = "a, b, c, d = (1, 2, 3, 4)\nd, c, b, a";
+        const string interleaved = "a, b, c, d = (1, 2, 3, 4)\nc, a, d, b, a, d";
 
         var (forwardAtoms, forwardBinds) = RunCountingBinds(forward);
         Assert.Equal([1m, 2m, 3m, 4m], forwardAtoms);
@@ -170,7 +170,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void UnusedInvalidDeconstruction_IsSilent_AndNeverBinds()
     {
-        var (atoms, binds) = RunCountingBinds("x, y = 1\nOutput = 0");
+        var (atoms, binds) = RunCountingBinds("x, y = 1\n0");
         Assert.Equal([0m], atoms);
         Assert.Equal(0, binds); // deferred: nothing demanded, nothing bound
     }
@@ -178,7 +178,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void WrongArity_WhenDemanded_FailsAgainstWrittenPattern()
     {
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y, z = (1, 2)\nOutput = x"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y, z = (1, 2)\nx"));
         var message = failure.ToDisplayString();
         Assert.Contains("Assignment pattern `x, y, z`", message, StringComparison.Ordinal);
         Assert.DoesNotContain("(inline library)", message, StringComparison.Ordinal);
@@ -188,9 +188,9 @@ public class DeconstructionSharedBindingTests
     public void RightHandSideError_IsDeferred_SurfacingOnlyWhenATargetIsDemanded()
     {
         // Unused: the erroring RHS never evaluates through the shared bind.
-        Assert.Equal([5m], Atoms("x, y = (1, 1 / 0)\nOutput = 5"));
+        Assert.Equal([5m], Atoms("x, y = (1, 1 / 0)\n5"));
         // Demanded: the RHS evaluates through the shared bind and its error surfaces.
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y = (1, 1 / 0)\nOutput = x"));
+        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y = (1, 1 / 0)\nx"));
     }
 
     [Fact]
@@ -200,14 +200,14 @@ public class DeconstructionSharedBindingTests
         // counted like a successful one (it is one begun binding computation), but failures are never
         // cached, so the failure path is not shared across targets the way success is.
         //   * unused invalid deconstruction: no bind at all (deferred).
-        Assert.Equal(0, CountFullBinds("x, y, z = (1, 2)\nOutput = 0"));
+        Assert.Equal(0, CountFullBinds("x, y, z = (1, 2)\n0"));
         //   * one demanded invalid target: exactly one failed full bind.
-        Assert.Equal(1, CountFullBinds("x, y, z = (1, 2)\nOutput = x"));
+        Assert.Equal(1, CountFullBinds("x, y, z = (1, 2)\nx"));
         //   * demanding more targets does not add binds here because evaluation short-circuits at the
         //     first failed target, so ordinary output reaches the group's bind once. (An uncached
         //     failure would rebind only if the group were demanded again past the error, which
         //     short-circuit semantics prevent within one run.)
-        Assert.Equal(1, CountFullBinds("x, y, z = (1, 2)\nOutput = x, y, z"));
+        Assert.Equal(1, CountFullBinds("x, y, z = (1, 2)\nx, y, z"));
     }
 
     // ───────────────────────── binding context separation ─────────────────────────
@@ -227,7 +227,7 @@ public class DeconstructionSharedBindingTests
     {
         // Two independent deconstruction groups, all targets demanded: one bind per group.
         var (atoms, binds) = RunCountingBinds(
-            "a, b = (1, 2)\nc, d = (3, 4)\nOutput = a, b, c, d");
+            "a, b = (1, 2)\nc, d = (3, 4)\na, b, c, d");
         Assert.Equal([1m, 2m, 3m, 4m], atoms);
         Assert.Equal(2, binds);
     }
@@ -242,9 +242,9 @@ public class DeconstructionSharedBindingTests
             """
             F(a) = {
                 p, q = (a, a * 10)
-                Output = p + q
+                p + q
             }
-            Output = F(1), F(2)
+            F(1), F(2)
             """;
         var (atoms, binds) = RunCountingBinds(source);
         Assert.Equal([11m, 22m], atoms); // 1+10, 2+20
@@ -256,7 +256,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void SeparateRuns_EachRebindFreshly()
     {
-        const string source = "a, b, c = (1, 2, 3)\nOutput = a, b, c";
+        const string source = "a, b, c = (1, 2, 3)\na, b, c";
 
         var first = RunCountingBinds(source);
         Assert.Equal([1m, 2m, 3m], first.Atoms);
@@ -273,8 +273,8 @@ public class DeconstructionSharedBindingTests
     {
         // A/B/A: an unrelated run B between two runs of A must not perturb A's observation, and the
         // order of observation must not matter. Each run owns a fresh observations object.
-        const string a = "a, b = (1, 2)\nOutput = a, b";                 // one group
-        const string b = "p, q = (1, 2)\nr, s = (3, 4)\nOutput = p, q, r, s"; // two groups
+        const string a = "a, b = (1, 2)\na, b";                 // one group
+        const string b = "p, q = (1, 2)\nr, s = (3, 4)\np, q, r, s"; // two groups
 
         Assert.Equal(1, CountFullBinds(a));
         Assert.Equal(2, CountFullBinds(b));
@@ -287,7 +287,7 @@ public class DeconstructionSharedBindingTests
         // Run-scoped observations live on one object per run, so concurrent runs on different threads
         // never contend or leak — the exact failure mode a [ThreadStatic] or ambient counter risks.
         // Each of many parallel runs must see EXACTLY its own group's single shared bind.
-        const string source = "a, b, c, d = (1, 2, 3, 4)\nOutput = sum((a, b, c, d))";
+        const string source = "a, b, c, d = (1, 2, 3, 4)\nsum((a, b, c, d))";
         var binds = new long[64];
 
         Parallel.For(0, binds.Length, i => binds[i] = CountFullBinds(source));
@@ -298,7 +298,7 @@ public class DeconstructionSharedBindingTests
     [Fact]
     public void FreshRunAfterFailedBinding_Succeeds()
     {
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y, z = (1, 2)\nOutput = x"));
+        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, y, z = (1, 2)\nx"));
         // A failed bind is never cached across runs; a subsequent valid run is unaffected.
         Assert.Equal([1m, 2m, 3m], Atoms("x, y, z = (1, 2, 3)\nx, y, z"));
     }
@@ -312,7 +312,7 @@ public class DeconstructionSharedBindingTests
         // targets are demanded. The old per-target path performed N binds; this asserts exactly one.
         foreach (var n in new[] { 50, 250, 1000 })
         {
-            var (_, binds) = RunCountingBinds(WideSource(n, $"range(1, {n})") + $"\nOutput = sum(({AllTargets(n)}))");
+            var (_, binds) = RunCountingBinds(WideSource(n, $"range(1, {n})") + $"\nsum(({AllTargets(n)}))");
             Assert.Equal(1, binds);
         }
     }
@@ -339,7 +339,7 @@ public class DeconstructionSharedBindingTests
     }
 
     private static string EvaluateAllSource(int n)
-        => WideSource(n, $"range(1, {n})") + $"\nOutput = sum(({AllTargets(n)}))";
+        => WideSource(n, $"range(1, {n})") + $"\nsum(({AllTargets(n)}))";
 
     private static long MeasureEvaluateAllAllocation(int n)
     {

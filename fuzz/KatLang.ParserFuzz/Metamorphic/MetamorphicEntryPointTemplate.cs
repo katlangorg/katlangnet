@@ -71,22 +71,22 @@ internal static class MetamorphicEntryPointTemplate
     /// <summary>Reviewed program shapes: successes of every value kind, and every failure channel.</summary>
     internal static readonly ImmutableArray<MetamorphicEntryPointSource> Sources =
     [
-        new("scalar-success", "Output = 1 + 2"),
-        new("collection-success", "Output = range(1, 5)"),
-        new("list-success", "Output = [1, [2, 3]]"),
-        new("sequence-success", "Output = (1, 2, 3)"),
-        new("multiple-rows", "Output = 1, 2, 3"),
-        new("empty-sequence", "Output = ()"),
-        new("empty-list", "Output = []"),
-        new("string-success", "Output = 'abc'"),
-        new("mixed-rows", "Output = [1, 'ab', [2, 3]], (4, 5)"),
-        new("top-level-property", "DisplayDecimals = 2\nOutput = 1.5"),
-        new("evaluator-failure", "Output = min([])"),
-        new("arity-failure", $"{F}(a, b) = a + b\nOutput = {F}(1)"),
-        new("resource-failure-collection", "Output = range(1, 200000).count"),
-        new("resource-failure-depth", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\nOutput = {F}(200)"),
+        new("scalar-success", "1 + 2"),
+        new("collection-success", "range(1, 5)"),
+        new("list-success", "[1, [2, 3]]"),
+        new("sequence-success", "(1, 2, 3)"),
+        new("multiple-rows", "1, 2, 3"),
+        new("empty-sequence", "()"),
+        new("empty-list", "[]"),
+        new("string-success", "'abc'"),
+        new("mixed-rows", "[1, 'ab', [2, 3]], (4, 5)"),
+        new("top-level-property", "DisplayDecimals = 2\n1.5"),
+        new("evaluator-failure", "min([])"),
+        new("arity-failure", $"{F}(a, b) = a + b\n{F}(1)"),
+        new("resource-failure-collection", "range(1, 200000).count"),
+        new("resource-failure-depth", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\n{F}(200)"),
         new("no-program-output", $"{A} = 1"),
-        new("parse-failure", "Output = 1 ; 2", Parses: false),
+        new("parse-failure", "1 ; 2", Parses: false),
     ];
 
     internal static int SourceCount => Sources.Length;

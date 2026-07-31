@@ -55,7 +55,7 @@ internal static class EditorSurfaces
         foreach (var resolution in model.IdentifierResolutions)
             if (resolution.Occurrence.Name.Length > 0)
                 return resolution.Occurrence.Name;
-        return "Output";
+        return "A";
     }
 
     // ── Core invariants ──────────────────────────────────────────────────────

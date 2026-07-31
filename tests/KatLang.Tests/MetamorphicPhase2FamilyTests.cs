@@ -148,8 +148,8 @@ public class MetamorphicPhase2FamilyTests
         var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(ParseHex(payloadHex)));
 
         Assert.Equal(MetamorphicFamily.DottedCollectionCall, testCase.Family);
-        Assert.Equal("Output = " + leftExpression, testCase.LeftSource);
-        Assert.Equal("Output = " + rightExpression, testCase.RightSource);
+        Assert.Equal(leftExpression, testCase.LeftSource);
+        Assert.Equal(rightExpression, testCase.RightSource);
         Assert.Equal(limits, testCase.LimitsText);
         Assert.Equal(optimizations, testCase.EnableOptimizations);
         Assert.Equal(MetamorphicOperationalRelation.ExactMaterializationEqual, testCase.OperationalRelation);
@@ -313,9 +313,6 @@ public class MetamorphicPhase2FamilyTests
             Assert.Equal(definition, MetamorphicFamilyRegistry.Get(definition.Family));
             Assert.True(MetamorphicFamilyRegistry.TryGetById(definition.Id, out var byId));
             Assert.Equal(definition, byId);
-
-            // A family id is never source text.
-            Assert.DoesNotContain("Output", definition.Id, StringComparison.Ordinal);
         }
     }
 
@@ -379,7 +376,7 @@ public class MetamorphicPhase2FamilyTests
         // Builtin names must be real prelude callables, not strings that merely look right.
         foreach (var builtin in MetamorphicTables.Builtins)
         {
-            var probe = $"MmR = [1, 2, 3]\nOutput = {builtin.Name}";
+            var probe = $"MmR = [1, 2, 3]\n{builtin.Name}";
             Assert.False(Parser.Parse(probe).HasErrors, probe);
             Assert.Contains(builtin.Name, KatLang.BuiltinRegistry.BuiltinNames);
         }
@@ -387,7 +384,7 @@ public class MetamorphicPhase2FamilyTests
         // Declared collection-view sizes must match what the runtime actually reports.
         foreach (var shape in MetamorphicTables.ReceiverShapes.Concat(MetamorphicTables.CallbackInputShapes))
         {
-            var source = $"MmR = {shape.Source}\nOutput = MmR.count";
+            var source = $"MmR = {shape.Source}\nMmR.count";
             Assert.True(MetamorphicExecutor.TryObserve(source, null, true, out var observation, out var reason), reason);
             Assert.Equal("ok", observation.Semantic.Outcome);
             Assert.Equal(
@@ -411,7 +408,6 @@ public class MetamorphicPhase2FamilyTests
                 // Structural member access is a DIFFERENT construct and out of scope: no
                 // template may declare an algorithm with exposed members and dot into it.
                 Assert.DoesNotContain("public ", source, StringComparison.Ordinal);
-                Assert.DoesNotContain("Output.", source, StringComparison.Ordinal);
             }
 
             Assert.NotEqual(testCase.LeftSource, testCase.RightSource);
@@ -481,7 +477,7 @@ public class MetamorphicPhase2FamilyTests
         // an extension-style call rather than a member lookup.
         foreach (var shape in MetamorphicTables.ReceiverShapes)
         {
-            var parsed = Parser.Parse($"Output = {shape.Source}");
+            var parsed = Parser.Parse($"{shape.Source}");
             Assert.False(parsed.HasErrors, shape.Source);
             var evaluated = Evaluator.RunCounted(new Expr.Block(parsed.Root));
             Assert.False(evaluated.IsError, shape.Source);
@@ -547,11 +543,11 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(receiverInjectionWitnesses > 0, "no suffix-carrying builtin exercised receiver injection");
 
         // Dropping the receiver really is an arity error, so the agreement above is evidence.
-        Assert.True(MetamorphicExecutor.TryObserve("MmR = [1, 2, 3]\nOutput = take(2)", null, true, out var dropped, out _));
+        Assert.True(MetamorphicExecutor.TryObserve("MmR = [1, 2, 3]\ntake(2)", null, true, out var dropped, out _));
         Assert.Equal("err", dropped.Semantic.Outcome);
 
         // The contrast: an exposed member DOES resolve structurally, and no template builds one.
-        const string structural = "MmObject = (\n    public MmValue = 7\n)\nOutput = MmObject.MmValue";
+        const string structural = "MmObject = (\n    public MmValue = 7\n)\nMmObject.MmValue";
         var structuralParse = Parser.Parse(structural);
         Assert.False(structuralParse.HasErrors);
         Assert.Contains("MmValue", ExposedMemberNames(structural));
@@ -742,8 +738,8 @@ public class MetamorphicPhase2FamilyTests
     {
         // A receiver whose construction materializes item slots: evaluating it twice would show
         // up as doubled materialization, which the exact-work relation forbids.
-        const string once = "MmF(r) = r.count\nMmR = range(1, 10)\nOutput = MmF(MmR)";
-        const string dotted = "MmF(r) = r.count\nMmR = range(1, 10)\nOutput = MmR.MmF";
+        const string once = "MmF(r) = r.count\nMmR = range(1, 10)\nMmF(MmR)";
+        const string dotted = "MmF(r) = r.count\nMmR = range(1, 10)\nMmR.MmF";
 
         Assert.True(MetamorphicExecutor.TryObserve(once, null, true, out var a, out _));
         Assert.True(MetamorphicExecutor.TryObserve(dotted, null, true, out var b, out _));
@@ -788,8 +784,8 @@ public class MetamorphicPhase2FamilyTests
     {
         // Evidence for the precondition: a collecting parameter COLLECTS the supplied
         // slot into a list, so the wrapper sees [element] where the direct builtin sees element.
-        const string direct = "MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)";
-        const string collectingWrapper = "MmWrap(*xs) = count(xs)\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)";
+        const string direct = "MmRows = [[1, 2], [3]]\nMmRows.map(count)";
+        const string collectingWrapper = "MmWrap(*xs) = count(xs)\nMmRows = [[1, 2], [3]]\nMmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
         Assert.True(MetamorphicExecutor.TryObserve(collectingWrapper, null, true, out var b, out _));
@@ -801,8 +797,8 @@ public class MetamorphicPhase2FamilyTests
     [Fact]
     public void ArityMismatchedProjection_IsGenuinelyNotEquivalent()
     {
-        const string direct = "MmRows = [1, 2, 3]\nOutput = MmRows.map(count)";
-        const string twoParam = "MmWrap(a, b) = count(a)\nMmRows = [1, 2, 3]\nOutput = MmRows.map(MmWrap)";
+        const string direct = "MmRows = [1, 2, 3]\nMmRows.map(count)";
+        const string twoParam = "MmWrap(a, b) = count(a)\nMmRows = [1, 2, 3]\nMmRows.map(MmWrap)";
 
         Assert.True(MetamorphicExecutor.TryObserve(direct, null, true, out var a, out _));
         Assert.True(MetamorphicExecutor.TryObserve(twoParam, null, true, out var b, out _));
@@ -955,9 +951,9 @@ public class MetamorphicPhase2FamilyTests
 
         // A callable receiver keeps its algorithm meaning through the dotted rewrite.
         Assert.True(MetamorphicExecutor.TryObserve(
-            "MmApply(g, v) = g(v)\nMmDouble(x) = x * 2\nOutput = MmDouble.MmApply(7)", null, true, out var dotted, out _));
+            "MmApply(g, v) = g(v)\nMmDouble(x) = x * 2\nMmDouble.MmApply(7)", null, true, out var dotted, out _));
         Assert.True(MetamorphicExecutor.TryObserve(
-            "MmApply(g, v) = g(v)\nMmDouble(x) = x * 2\nOutput = MmApply(MmDouble, 7)", null, true, out var ordinary, out _));
+            "MmApply(g, v) = g(v)\nMmDouble(x) = x * 2\nMmApply(MmDouble, 7)", null, true, out var ordinary, out _));
         Assert.Equal(ordinary.Semantic, dotted.Semantic);
         Assert.Equal("14", dotted.Semantic.Structure);
     }
@@ -1078,14 +1074,14 @@ public class MetamorphicPhase2FamilyTests
     {
         var probes = new (string Left, string Right)[]
         {
-            ("MmR = range(1, 6)\nOutput = take(MmR, 3)", "MmR = range(1, 6)\nOutput = MmR.take(3)"),
-            ("MmF(r, a) = take(r, a)\nMmR = range(1, 6)\nOutput = MmF(MmR, 3)",
-             "MmF(r, a) = take(r, a)\nMmR = range(1, 6)\nOutput = MmR.MmF(3)"),
-            ("MmDouble(x) = x * 2\nMmR = range(1, 6)\nOutput = count(map(MmR, MmDouble))",
-             "MmDouble(x) = x * 2\nMmR = range(1, 6)\nOutput = MmR.map(MmDouble).count"),
-            ("MmRows = [[1, 2], [3]]\nOutput = MmRows.map(count)",
-             "MmWrap(a) = a.count\nMmRows = [[1, 2], [3]]\nOutput = MmRows.map(MmWrap)"),
-            ("MmR = ['abc', 'de']\nOutput = distinct(MmR)", "MmR = ['abc', 'de']\nOutput = MmR.distinct"),
+            ("MmR = range(1, 6)\ntake(MmR, 3)", "MmR = range(1, 6)\nMmR.take(3)"),
+            ("MmF(r, a) = take(r, a)\nMmR = range(1, 6)\nMmF(MmR, 3)",
+             "MmF(r, a) = take(r, a)\nMmR = range(1, 6)\nMmR.MmF(3)"),
+            ("MmDouble(x) = x * 2\nMmR = range(1, 6)\ncount(map(MmR, MmDouble))",
+             "MmDouble(x) = x * 2\nMmR = range(1, 6)\nMmR.map(MmDouble).count"),
+            ("MmRows = [[1, 2], [3]]\nMmRows.map(count)",
+             "MmWrap(a) = a.count\nMmRows = [[1, 2], [3]]\nMmRows.map(MmWrap)"),
+            ("MmR = ['abc', 'de']\ndistinct(MmR)", "MmR = ['abc', 'de']\nMmR.distinct"),
         };
 
         foreach (var (left, right) in probes)
@@ -1143,8 +1139,8 @@ public class MetamorphicPhase2FamilyTests
         Assert.Equal(MetamorphicMismatchClass.Operational, errorMismatch.Class);
 
         // A real pair that fails this way is compared, not skipped: `sum` over strings.
-        Assert.True(MetamorphicExecutor.TryObserve("MmR = ['ab', 'cd']\nOutput = sum(MmR)", null, true, out var realLeft, out _));
-        Assert.True(MetamorphicExecutor.TryObserve("MmR = ['ab', 'cd']\nOutput = MmR.sum", null, true, out var realRight, out _));
+        Assert.True(MetamorphicExecutor.TryObserve("MmR = ['ab', 'cd']\nsum(MmR)", null, true, out var realLeft, out _));
+        Assert.True(MetamorphicExecutor.TryObserve("MmR = ['ab', 'cd']\nMmR.sum", null, true, out var realRight, out _));
         Assert.Equal("err", realLeft.Semantic.Outcome);
         Assert.False(realLeft.Semantic.IsResourceLimit);
         Assert.True(MetamorphicComparator.WorkIsComparable(realLeft, realRight));
@@ -1154,8 +1150,8 @@ public class MetamorphicPhase2FamilyTests
         // both forms stop on the SAME string-budget error with the SAME payload, but the ordinary
         // call materialized its initial accumulator before forcing the receiver while the dotted
         // call prepares the receiver first — so the counters captured at the abort differ (2 vs 0).
-        const string ordinary = "MmR = 'ab'\nOutput = reduce(MmR, contains, [1, 2])";
-        const string dotted = "MmR = 'ab'\nOutput = MmR.reduce(contains, [1, 2])";
+        const string ordinary = "MmR = 'ab'\nreduce(MmR, contains, [1, 2])";
+        const string dotted = "MmR = 'ab'\nMmR.reduce(contains, [1, 2])";
         var limits = new EvaluationLimits { MaxMaterializedStringChars = 1 };
 
         Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, false, out var left, out _));
@@ -1202,8 +1198,8 @@ public class MetamorphicPhase2FamilyTests
         foreach (var receiver in new[] { "'ab'", "['ab', 'cd']", "[1, 2, 3]", "7", "()" })
             foreach (var (ordinary, dotted) in builtins)
             {
-                var left = $"MmR = {receiver}\nOutput = {ordinary}";
-                var right = $"MmR = {receiver}\nOutput = {dotted}";
+                var left = $"MmR = {receiver}\n{ordinary}";
+                var right = $"MmR = {receiver}\n{dotted}";
 
                 for (var strings = 0L; strings <= 3; strings++)
                     for (var items = 1L; items <= 5; items++)
@@ -1541,7 +1537,7 @@ public class MetamorphicPhase2FamilyTests
 
             Assert.Equal(fingerprint, MetamorphicFingerprint.Describe(execution, null));
             Assert.DoesNotContain("System.", fingerprint, StringComparison.Ordinal);
-            Assert.DoesNotContain("Output = ", fingerprint, StringComparison.Ordinal);   // never source text
+            Assert.DoesNotContain("count(range(", fingerprint, StringComparison.Ordinal);   // never source text
             Assert.False(
                 seen.ContainsKey(fingerprint),
                 $"fingerprint collision:\n  {parameters}\n  {seen.GetValueOrDefault(fingerprint)}");
@@ -1729,10 +1725,12 @@ public class MetamorphicPhase2FamilyTests
     private static T Parameters<T>(MetamorphicCase testCase, Func<MetamorphicParameters, T> selector)
         => selector(testCase.Parameters);
 
+    // The templates emit their output row as the final non-empty line of the
+    // generated program (bare expression row; preparation definitions precede it).
     private static string OutputLine(string source)
-        => source.Split('\n').First(line => line.StartsWith("Output = ", StringComparison.Ordinal));
+        => source.Split('\n').Last(line => line.Length > 0);
 
-    private static string OutputExpression(string source) => OutputLine(source)["Output = ".Length..];
+    private static string OutputExpression(string source) => OutputLine(source);
 
     private static int CountOccurrences(string text, string needle)
     {

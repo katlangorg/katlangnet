@@ -113,9 +113,9 @@ public class MetamorphicPhase3FamilyTests
     /// derived from the templates: a template change that alters a committed seed must fail here.
     /// </summary>
     [Theory]
-    [InlineData("000401010100", "Output = count(range(1, 5))", "Output = range(1, 5).count")]
-    [InlineData("00000001 0100", "Output = count(range(1, 1))", "Output = range(1, 1).count")]
-    [InlineData("00070100 0100", "Output = count(range(1, -3))", "Output = range(1, -3).count")]
+    [InlineData("000401010100", "count(range(1, 5))", "range(1, 5).count")]
+    [InlineData("00000001 0100", "count(range(1, 1))", "range(1, 1).count")]
+    [InlineData("00070100 0100", "count(range(1, -3))", "range(1, -3).count")]
     public void FrozenLegacySeeds_StillGenerateTheirExactProgramPair(string hex, string left, string right)
     {
         Assert.True(MetamorphicSeedFile.TryParseHex(hex, out var payload, out var problem), problem);
@@ -365,7 +365,7 @@ public class MetamorphicPhase3FamilyTests
     [Fact]
     public void ZeroIterationRepeat_IsShortCircuitedRatherThanFallenBack()
     {
-        var observation = ObserveWithEvidence("MmStep = x + 1\nOutput = MmStep.repeat(0, 0)", enableOptimizations: true);
+        var observation = ObserveWithEvidence("MmStep = x + 1\nMmStep.repeat(0, 0)", enableOptimizations: true);
         var evidence = Assert.IsType<MetamorphicOptimizerEvidence>(observation.OptimizerEvidence);
 
         Assert.True(evidence.Paths.HasFlag(MetamorphicOptimizerPath.LoopShortCircuited));
@@ -435,7 +435,7 @@ public class MetamorphicPhase3FamilyTests
     [Fact]
     public void OptimizedAndGenericPaths_ShareTheSamePerCollectionBoundary()
     {
-        const string source = "MmEven(x) = x mod 2 == 0\nOutput = range(1, 12).filter(MmEven).count";
+        const string source = "MmEven(x) = x mod 2 == 0\nrange(1, 12).filter(MmEven).count";
 
         for (var limit = 1; limit <= 16; limit++)
         {
@@ -573,8 +573,8 @@ public class MetamorphicPhase3FamilyTests
     [Fact]
     public void ArgumentPositionPropertyReference_DoesNotConsultTheCache()
     {
-        var argument = ObserveWithEvidence("MmA = range(1, 6)\nOutput = sum(MmA), sum(MmA)", enableOptimizations: true);
-        var receiver = ObserveWithEvidence("MmA = range(1, 6)\nOutput = MmA.sum, MmA.sum", enableOptimizations: true);
+        var argument = ObserveWithEvidence("MmA = range(1, 6)\nsum(MmA), sum(MmA)", enableOptimizations: true);
+        var receiver = ObserveWithEvidence("MmA = range(1, 6)\nMmA.sum, MmA.sum", enableOptimizations: true);
 
         var argumentCache = Assert.IsType<MetamorphicCacheEvidence>(argument.CacheEvidence);
         var receiverCache = Assert.IsType<MetamorphicCacheEvidence>(receiver.CacheEvidence);
@@ -979,7 +979,7 @@ public class MetamorphicPhase3FamilyTests
             var profile = new MetamorphicExecutionProfile(surface, limits, EnableOptimizations: true);
             var probeProfile = new MetamorphicExecutionProfile(surface, limits, EnableOptimizations: true);
 
-            foreach (var source in new[] { "Output = range(1, 9).count", "Output = 'abcd', 'ef'" })
+            foreach (var source in new[] { "range(1, 9).count", "'abcd', 'ef'" })
             {
                 var first = ObserveShared(source, profile, options);
 
@@ -1120,9 +1120,9 @@ public class MetamorphicPhase3FamilyTests
         var sources = new[]
         {
             $"{MetamorphicTables.ReceiverProperty} = range(1, 8)\n" +
-            $"Output = {MetamorphicTables.ReceiverProperty}.count, {MetamorphicTables.ReceiverProperty}.sum",
-            $"{MetamorphicTables.ReceiverProperty}Step = x + 1\nOutput = {MetamorphicTables.ReceiverProperty}Step.repeat(6, 0)",
-            "Output = 'abcd', 'ef', 'ghij'",
+            $"{MetamorphicTables.ReceiverProperty}.count, {MetamorphicTables.ReceiverProperty}.sum",
+            $"{MetamorphicTables.ReceiverProperty}Step = x + 1\n{MetamorphicTables.ReceiverProperty}Step.repeat(6, 0)",
+            "'abcd', 'ef', 'ghij'",
         };
 
         foreach (var source in sources)
@@ -1160,7 +1160,7 @@ public class MetamorphicPhase3FamilyTests
     public void SimultaneousFailingAndSucceedingRuns_DoNotContaminateEachOther()
     {
         const int Degree = 8;
-        const string Source = "Output = range(1, 12).count";
+        const string Source = "range(1, 12).count";
         var generous = new EvaluationLimits { MaxMaterializedItems = 10_000 };
         var failing = new EvaluationLimits { MaxMaterializedItems = 1 };
 
@@ -1764,7 +1764,7 @@ public class MetamorphicPhase3FamilyTests
             SemanticRelation = MetamorphicSemanticRelation.SameStructuredOutcome,
             OperationalRelation = MetamorphicOperationalRelation.NotCompared,
         };
-        var renderLeft = ObserveThrough(MetamorphicSurface.EngineRun, "Output = 1, 2, 3");
+        var renderLeft = ObserveThrough(MetamorphicSurface.EngineRun, "1, 2, 3");
         var renderRight = renderLeft with
         {
             Projection = renderLeft.Projection! with { RenderedText = "different" },
@@ -1789,7 +1789,7 @@ public class MetamorphicPhase3FamilyTests
     {
         var testCase = BuildOf(MetamorphicFamily.OptimizerGenericParity, 0, 1, 1, 0, 12, 0);
         var ok = Observe(testCase.LeftSource, null, true);
-        var failed = Observe("Output = range(1, 200000).count", null, true);
+        var failed = Observe("range(1, 200000).count", null, true);
 
         // Monotonicity: a larger limit turning success into failure.
         var monotonic = testCase with
@@ -1831,8 +1831,8 @@ public class MetamorphicPhase3FamilyTests
     [Fact]
     public void OperationalCounters_AreNotComparedWhenASurfaceCannotReportThem()
     {
-        var observed = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "Output = range(1, 5).count");
-        var plain = ObserveThrough(MetamorphicSurface.EvaluatorRun, "Output = range(1, 5).count");
+        var observed = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "range(1, 5).count");
+        var plain = ObserveThrough(MetamorphicSurface.EvaluatorRun, "range(1, 5).count");
 
         Assert.False(MetamorphicComparator.WorkIsComparable(observed, plain));
         Assert.True(MetamorphicComparator.WorkIsComparable(observed, observed));
@@ -2018,7 +2018,6 @@ public class MetamorphicPhase3FamilyTests
             foreach (var source in new[] { testCase.LeftSource, testCase.RightSource })
             {
                 Assert.DoesNotContain("public ", source, StringComparison.Ordinal);
-                Assert.DoesNotContain("Output.", source, StringComparison.Ordinal);
                 if (!malformed.Contains(source)) Assert.False(Parser.Parse(source).HasErrors, source);
             }
         }

@@ -58,11 +58,6 @@ def innermostIsExplicitParamsRequireOutput : Error -> Bool
   | .explicitParamsRequireOutput => true
   | _ => false
 
-def innermostIsSpecialOutputAccess : Error -> Bool
-  | .withContext _ inner => innermostIsSpecialOutputAccess inner
-  | .specialOutputAccess => true
-  | _ => false
-
 def innermostIsIllegalInEval (target : String) : Error -> Bool
   | .withContext _ inner => innermostIsIllegalInEval target inner
   | .illegalInEval actual => actual = target
@@ -606,44 +601,50 @@ def conditionalSplitHelpersRejected : Bool :=
 
 #guard conditionalSplitHelpersRejected
 
-def publicOutputAlg : Algorithm :=
-  alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+-- `Output` is an ordinary identifier: a property named `Output` follows the
+-- same structural dot-call rules as any other property name.
 
-def outputDotCallRejectedRoot : Algorithm :=
-  algPrivate [] [] [("Algo", publicOutputAlg)] [
+def outputNamedCallablePropertyAlg : Algorithm :=
+  algPrivate [] [] [("Output", alg ["x"] [] [] [.binary .add (.param "x") (.num 1)])] []
+
+def outputDotCallOrdinaryRoot : Algorithm :=
+  algPrivate [] [] [("Algo", outputNamedCallablePropertyAlg)] [
     .dotCall (.resolve "Algo") "Output" (some (alg [] [] [] [.num 6]))
   ]
 
-def outputDotCallRejected : Bool :=
-  match runResult (.block outputDotCallRejectedRoot) with
-  | Except.error err => innermostIsSpecialOutputAccess err
-  | Except.ok _ => false
+def outputDotCallOrdinaryWorks : Bool :=
+  match runFlat (.block outputDotCallOrdinaryRoot) with
+  | Except.ok [7] => true
+  | _ => false
 
-#guard outputDotCallRejected
+#guard outputDotCallOrdinaryWorks
 
-def nestedOutputDotCallRejectedRoot : Algorithm :=
-  algPrivate [] [] [("Outer", outerDirectCallAlg)] [
-    .dotCall (.dotCall (.resolve "Outer") "Inner" none) "Output" (some (alg [] [] [] [.num 6]))
+def outputNamedZeroArgPropertyAlg : Algorithm :=
+  algPrivate [] [] [("Output", alg [] [] [] [.num 9])] []
+
+def bareOutputAccessOrdinaryRoot : Algorithm :=
+  algPrivate [] [] [("Algo", outputNamedZeroArgPropertyAlg)] [
+    .dotCall (.resolve "Algo") "Output" none
   ]
 
-def nestedOutputDotCallRejected : Bool :=
-  match runResult (.block nestedOutputDotCallRejectedRoot) with
-  | Except.error err => innermostIsSpecialOutputAccess err
-  | Except.ok _ => false
+def bareOutputAccessOrdinaryWorks : Bool :=
+  match runFlat (.block bareOutputAccessOrdinaryRoot) with
+  | Except.ok [9] => true
+  | _ => false
 
-#guard nestedOutputDotCallRejected
+#guard bareOutputAccessOrdinaryWorks
 
-def bareOutputAccessRejectedRoot : Algorithm :=
+def missingOutputMemberRoot : Algorithm :=
   algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
     .dotCall (.resolve "Algo") "Output" none
   ]
 
-def bareOutputAccessRejected : Bool :=
-  match runResult (.block bareOutputAccessRejectedRoot) with
-  | Except.error err => innermostIsSpecialOutputAccess err
+def missingOutputMemberIsOrdinaryUnknownName : Bool :=
+  match runResult (.block missingOutputMemberRoot) with
+  | Except.error err => innermostIsUnknownName "Output" err
   | Except.ok _ => false
 
-#guard bareOutputAccessRejected
+#guard missingOutputMemberIsOrdinaryUnknownName
 
 def stringLiteralSatisfiesInvariant : Bool :=
   KatLang.postElabInvariant (.stringLiteral "abc")
@@ -661,16 +662,16 @@ def unresolvedLoadViolatesInvariant : Bool :=
 
 #guard unresolvedLoadViolatesInvariant
 
-def outputDotCallViolatesInvariant : Bool :=
-  !KatLang.postElabInvariant (.dotCall (.resolve "Algo") "Output" none)
+def outputDotCallSatisfiesInvariant : Bool :=
+  KatLang.postElabInvariant (.dotCall (.resolve "Algo") "Output" none)
 
-#guard outputDotCallViolatesInvariant
+#guard outputDotCallSatisfiesInvariant
 
-def structuralOutputPropertyViolatesInvariant : Bool :=
-  !KatLang.postElabInvariantAlg
+def outputNamedPropertySatisfiesInvariant : Bool :=
+  KatLang.postElabInvariantAlg
     (alg [] [] [privateProp "Output" (alg [] [] [] [.num 1])] [.num 2])
 
-#guard structuralOutputPropertyViolatesInvariant
+#guard outputNamedPropertySatisfiesInvariant
 
 def helperPropertySatisfiesInvariant : Bool :=
   KatLang.postElabInvariantAlg

@@ -164,7 +164,7 @@ internal static class EditorRelations
         foreach (var declaration in model.Declarations)
         {
             var name = declaration.Name;
-            if (name.Length == 0 || !IsPlainIdentifier(name) || name == "Output")
+            if (name.Length == 0 || !IsPlainIdentifier(name))
                 continue;
 
             // Exactly one declaration of this name, and it is a user symbol (has property metadata or

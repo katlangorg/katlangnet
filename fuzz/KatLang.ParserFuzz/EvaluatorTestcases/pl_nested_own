@@ -1,2 +1,2 @@
 A = (B = 2)
-Output = A.B
+A.B

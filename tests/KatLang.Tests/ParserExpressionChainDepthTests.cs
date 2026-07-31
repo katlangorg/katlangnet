@@ -13,19 +13,19 @@ public class ParserExpressionChainDepthTests
     private const string ProbeChildEnvironment = "KATLANG_EXPRESSION_CHAIN_PROBE_CHILD";
 
     private static string BinaryChain(string op, int operatorCount)
-        => "Output = " + string.Join(
+        => string.Join(
             $" {op} ",
             Enumerable.Repeat("1", operatorCount + 1));
 
     private static string MultilineTrailingOperatorChain(string op, int operatorCount)
-        => "Output = " + string.Join(
+        => string.Join(
             $" {op}{Environment.NewLine}",
             Enumerable.Repeat("1", operatorCount + 1));
 
     private static string DotCallChain(int operatorCount, bool leadingNewlines = false)
     {
         var separator = leadingNewlines ? Environment.NewLine : string.Empty;
-        return "Output = Root" + string.Concat(
+        return "Root" + string.Concat(
             Enumerable.Repeat($"{separator}.Member()", operatorCount));
     }
 
@@ -36,15 +36,13 @@ public class ParserExpressionChainDepthTests
     /// spread markers (each star adds one spread layer). The base primary contributes
     /// NO expression-chain level (only guarded operator/postfix nodes are recorded),
     /// so the chain depth equals the number of written spread markers exactly — there
-    /// is no root-node off-by-one to account for. Written both as an explicit
-    /// `Output = ...` body and as a bare root-output row, which reach the same guard.
+    /// is no root-node off-by-one to account for. Written as a bare root-output row.
     /// </summary>
-    private static string SpreadChain(int spreadCount, bool explicitOutput = true)
-        => (explicitOutput ? "Output = 1" : "1")
-            + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
+    private static string SpreadChain(int spreadCount)
+        => "1" + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
 
     private static string DotThenSpreadChain(int dotCount, int spreadCount)
-        => "Output = Root"
+        => "Root"
             + string.Concat(Enumerable.Repeat(".Member", dotCount))
             + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
 
@@ -100,22 +98,18 @@ public class ParserExpressionChainDepthTests
         => AssertControlledChainFailure(
             DotCallChain(Parser.MaxExpressionChainDepth + 1, leadingNewlines: true));
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void SpreadChain_AtLimit_ParsesWithoutDiagnostics(bool explicitOutput)
+    [Fact]
+    public void SpreadChain_AtLimit_ParsesWithoutDiagnostics()
     {
-        var result = Parser.Parse(SpreadChain(Parser.MaxExpressionChainDepth, explicitOutput));
+        var result = Parser.Parse(SpreadChain(Parser.MaxExpressionChainDepth));
         Assert.False(result.HasErrors);
         Assert.Empty(result.Diagnostics);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void SpreadChain_AboveLimit_ReturnsStructuredError(bool explicitOutput)
+    [Fact]
+    public void SpreadChain_AboveLimit_ReturnsStructuredError()
         => AssertControlledChainFailure(
-            SpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput));
+            SpreadChain(Parser.MaxExpressionChainDepth + 1));
 
     [Fact]
     public void SpreadChain_BoundaryIsExactlyMaxExpressionChainDepth()
@@ -135,7 +129,7 @@ public class ParserExpressionChainDepthTests
         // marker that crossed the limit — the (MaxExpressionChainDepth + 1)-th —
         // rather than at the whole expression (matching the dot-call chain guard,
         // which anchors on the dot token).
-        var source = SpreadChain(Parser.MaxExpressionChainDepth + 1, explicitOutput: false);
+        var source = SpreadChain(Parser.MaxExpressionChainDepth + 1);
         var offendingColumn = "1".Length + (Parser.MaxExpressionChainDepth * SpreadContinuation.Length) + 1;
 
         var first = AssertControlledChainFailure(source);
@@ -201,9 +195,9 @@ public class ParserExpressionChainDepthTests
     public void CommaListAndSequenceHeavySources_AreNotTreatedAsOperatorChains()
     {
         var items = string.Join(", ", Enumerable.Repeat("1", 2_000));
-        Assert.False(Parser.Parse("Output = " + items).HasErrors);
-        Assert.False(Parser.Parse("Output = [" + items + "]").HasErrors);
-        Assert.False(Parser.Parse("Output = (" + items + ")").HasErrors);
+        Assert.False(Parser.Parse(items).HasErrors);
+        Assert.False(Parser.Parse("[" + items + "]").HasErrors);
+        Assert.False(Parser.Parse("(" + items + ")").HasErrors);
     }
 
     [Fact]

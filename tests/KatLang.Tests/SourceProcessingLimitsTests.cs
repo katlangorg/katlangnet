@@ -134,8 +134,8 @@ public class SourceProcessingLimitsTests
     [Fact]
     public void MainSource_ExactlyAtLimit_Succeeds()
     {
-        // "Output = 7" is 10 code units.
-        var source = "Output = 7";
+        // "7 + 3 * 21" is 10 code units.
+        var source = "7 + 3 * 21";
         Assert.Equal(10, source.Length);
         Assert.IsType<RunResult.Success>(Run(source, new SourceProcessingLimits { MaxSourceLength = 10 }));
     }
@@ -143,7 +143,7 @@ public class SourceProcessingLimitsTests
     [Fact]
     public void MainSource_OneOverLimit_IsRejectedWithStructuredError()
     {
-        var source = "Output = 77";  // 11 code units
+        var source = "7 + 3 * 211";  // 11 code units
         var result = Run(source, new SourceProcessingLimits { MaxSourceLength = 10 });
         var message = FirstError(result);
         Assert.Contains("Source length 11", message);
@@ -263,7 +263,7 @@ public class SourceProcessingLimitsTests
     {
         // Configuring the aggregate below the main program's own length rejects it directly.
         var result = KatLangEngine.Run(
-            "Output = 12345",
+            "12345",
             new RunOptions { SourceProcessingLimits = new SourceProcessingLimits { MaxAggregateSourceLength = 3 } });
         Assert.Contains("exceeds the maximum total source", FirstError(result));
     }
@@ -354,7 +354,7 @@ public class SourceProcessingLimitsTests
     [Fact]
     public void InBudgetProgram_WithAndWithoutExplicitDefaultLimits_ProduceSameResult()
     {
-        const string source = "A = 1 + 1\nF(x) = x * 2\nOutput = F(A)";
+        const string source = "A = 1 + 1\nF(x) = x * 2\nF(A)";
         var withoutLimits = KatLangEngine.Run(source);
         var withDefault = KatLangEngine.Run(source, new RunOptions { SourceProcessingLimits = SourceProcessingLimits.Default });
         Assert.Equal(withoutLimits.ToDisplayString(), withDefault.ToDisplayString());
@@ -404,7 +404,7 @@ public class SourceProcessingLimitsTests
     [Fact]
     public void PublicExecutionSurfaces_PropagateConfiguredSourceLimit()
     {
-        const string source = "Output = 77";
+        const string source = "77";
         var options = new RunOptions
         {
             SourceProcessingLimits = new SourceProcessingLimits { MaxSourceLength = source.Length - 1 },

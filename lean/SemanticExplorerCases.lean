@@ -58,7 +58,6 @@ partial def errCategory : Error -> String
   | .ambiguousOpen _ _ => "ambiguousOpen"
   | .duplicateProperty _ => "duplicateProperty"
   | .duplicateBranchPattern => "duplicateBranchPattern"
-  | .specialOutputAccess => "specialOutputAccess"
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 

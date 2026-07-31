@@ -9,8 +9,8 @@ namespace KatLang.ParserFuzz;
 ///
 /// <code>
 /// MmRows = [[1, 2], [3]]            MmWrap(a) = a.count
-/// Output = MmRows.map(count)        MmRows = [[1, 2], [3]]
-///                                   Output = MmRows.map(MmWrap)
+/// MmRows.map(count)                 MmRows = [[1, 2], [3]]
+///                                   MmRows.map(MmWrap)
 /// </code>
 ///
 /// <para><b>Equivalence argument, and why it is narrow.</b> KatLang's flat-callback binding is
@@ -130,8 +130,8 @@ internal static class MetamorphicCallbackWrapperTemplate
         var trailing = MetamorphicTables.ConsumerTrailingArgument(consumer);
 
         var rowsLine = $"{Rows} = {input.Source}\n";
-        var left = $"{rowsLine}Output = {Rows}.{consumer}({callback.Name}{trailing})";
-        var right = $"{WrapperDefinition(callback, arity, projection)}{rowsLine}Output = {Rows}.{consumer}({Wrap}{trailing})";
+        var left = $"{rowsLine}{Rows}.{consumer}({callback.Name}{trailing})";
+        var right = $"{WrapperDefinition(callback, arity, projection)}{rowsLine}{Rows}.{consumer}({Wrap}{trailing})";
 
         return MetamorphicCaseFactory.Create(
             parameters,

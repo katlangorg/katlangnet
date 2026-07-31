@@ -382,7 +382,7 @@ public class SemanticModelTests
             x = 1
             inner = {
             x = 2
-            Output = x
+            result = x
             }
             inner
             """);
@@ -1051,16 +1051,16 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_TracksReservedOutputDeclarationAndImplicitParameterReferences()
+    public void Build_OutputNamedProperty_IsOrdinaryPropertyDefinition()
     {
         var model = BuildModel("Output = missing");
 
         var outputDeclaration = Assert.Single(model.FindDeclarations("Output"));
-        Assert.Equal(OccurrenceKind.ReservedNameDefinition, outputDeclaration.Kind);
+        Assert.Equal(OccurrenceKind.PropertyDefinition, outputDeclaration.Kind);
         AssertSpan(outputDeclaration.Span, 1, 1, 1, 6);
 
         var outputResolution = ResolutionAt(model, 1, 1);
-        Assert.Equal(IdentifierClassification.ReservedName, outputResolution.Classification);
+        Assert.Equal(IdentifierClassification.PropertyDefinition, outputResolution.Classification);
         Assert.Equal(outputDeclaration, outputResolution.ResolvedDeclaration);
 
         var missingResolution = ResolutionAt(model, 1, 10);
@@ -1070,25 +1070,25 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_OutputDotMember_IsClassifiedAsReservedName()
+    public void Build_OutputDotMember_IsOrdinaryDotMemberReference()
     {
         var source =
             """
-            Algo(x) = {
-              Output = x + 1
+            Algo = {
+              public Output(x) = x + 1
             }
             Algo.Output(6)
             """;
 
         var parseResult = Parser.Parse(source);
-        Assert.True(parseResult.HasErrors);
-        Assert.Contains(parseResult.Diagnostics, diagnostic => diagnostic.Message.Contains("Output is the designated result of an algorithm"));
+        Assert.False(parseResult.HasErrors);
 
         var model = SemanticModelBuilder.Build(parseResult);
         var outputReference = ResolutionAt(model, 4, 6);
         Assert.Equal(OccurrenceKind.DotMemberReference, outputReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.ReservedName, outputReference.Classification);
-        Assert.Null(outputReference.ResolvedDeclaration);
+        Assert.Equal(IdentifierClassification.PropertyReference, outputReference.Classification);
+        Assert.NotNull(outputReference.ResolvedDeclaration);
+        Assert.Equal("Output", outputReference.ResolvedDeclaration!.Name);
     }
 
     [Fact]
@@ -1451,12 +1451,12 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_ExplicitOutput_RemainsReserved_And_OuterParametersStayOnAlgorithmMetadata()
+    public void Build_OuterParametersStayOnAlgorithmMetadata()
     {
         var model = BuildModel(
             """
             Algo(x) = {
-            Output = x + 1
+            x + 1
             }
             Algo(6)
             """);
@@ -1468,16 +1468,11 @@ public class SemanticModelTests
         Assert.Equal(PropertyParameterKind.Explicit, parameter.Kind);
         Assert.NotNull(parameter.Span);
 
+        // No hidden `Output` symbol exists anywhere in this model.
         Assert.Empty(model.FindProperties("Output"));
+        Assert.Empty(model.FindDeclarations("Output"));
 
-        var outputDeclaration = Assert.Single(model.FindDeclarations("Output"));
-        Assert.Equal(OccurrenceKind.ReservedNameDefinition, outputDeclaration.Kind);
-
-        var outputResolution = ResolutionAt(model, 2, 1);
-        Assert.Equal(IdentifierClassification.ReservedName, outputResolution.Classification);
-        Assert.Equal(outputDeclaration, outputResolution.ResolvedDeclaration);
-
-        var xReference = ResolutionAt(model, 2, 10);
+        var xReference = ResolutionAt(model, 2, 1);
         Assert.Equal(IdentifierClassification.ExplicitParameterReference, xReference.Classification);
 
         var callReference = ResolutionAt(model, 4, 1);
@@ -1651,7 +1646,7 @@ public class SemanticModelTests
             apply(x) = x + value
             match(0) = 0
             match(y) = y
-            Output = apply(1).string
+            apply(1).string
             """);
 
         Assert.False(
@@ -1663,7 +1658,6 @@ public class SemanticModelTests
 
         Assert.Equal(["value", "apply", "match", "match"], walker.PropertyDeclarations);
         Assert.Equal(["x"], walker.ExplicitParameters);
-        Assert.Equal(1, walker.ReservedOutputs);
         Assert.Equal(["y"], walker.ConditionalBinders);
         Assert.Equal(["value", "apply"], walker.ResolveIdentifiers);
         Assert.Equal(["x", "y"], walker.ParameterIdentifiers);
@@ -1675,8 +1669,6 @@ public class SemanticModelTests
         public List<string> PropertyDeclarations { get; } = [];
 
         public List<string> ExplicitParameters { get; } = [];
-
-        public int ReservedOutputs { get; private set; }
 
         public List<string> ConditionalBinders { get; } = [];
 
@@ -1691,9 +1683,6 @@ public class SemanticModelTests
 
         protected override void VisitExplicitParameterDeclaration(Algorithm algorithm, ParameterDeclaration declaration)
             => ExplicitParameters.Add(declaration.Name);
-
-        protected override void VisitReservedOutputDeclaration(Algorithm algorithm, SourceSpan span)
-            => ReservedOutputs++;
 
         protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span)
             => ConditionalBinders.Add(pattern.Name);

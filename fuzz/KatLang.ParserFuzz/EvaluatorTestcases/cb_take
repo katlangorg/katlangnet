@@ -1,1 +1,1 @@
-Output = range(1, 5).take(2)
+range(1, 5).take(2)

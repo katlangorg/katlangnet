@@ -8,7 +8,7 @@ namespace KatLang.ParserFuzz;
 ///
 /// <code>
 /// MmR = &lt;receiver&gt;                 MmR = &lt;receiver&gt;
-/// Output = F(MmR, suffix)          Output = MmR.F(suffix)
+/// F(MmR, suffix)                   MmR.F(suffix)
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> KatLang DEFINES the dotted form as the ordinary
@@ -79,8 +79,8 @@ internal static class MetamorphicDottedBuiltinTemplate
             : MetamorphicTables.ReceiverProperty + ", " + suffix;
         var dottedSuffix = suffix.Length == 0 ? "" : "(" + suffix + ")";
 
-        var left = $"{preamble}Output = {builtin.Name}({ordinaryArguments})";
-        var right = $"{preamble}Output = {MetamorphicTables.ReceiverProperty}.{builtin.Name}{dottedSuffix}";
+        var left = $"{preamble}{builtin.Name}({ordinaryArguments})";
+        var right = $"{preamble}{MetamorphicTables.ReceiverProperty}.{builtin.Name}{dottedSuffix}";
 
         return MetamorphicCaseFactory.Create(
             parameters,

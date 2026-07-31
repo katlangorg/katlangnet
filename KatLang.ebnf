@@ -1,7 +1,7 @@
 Program         = Algorithm ;
 
 Algorithm       = { AlgorithmItem } ;
-AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | ExplicitOutputDefinition | OutputLine ;
+AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | OutputLine ;
 
 OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
@@ -30,7 +30,7 @@ OpenTarget      = StringLiteral              (* sugar: open 'url' → open load(
                 | ParenBundleExpr ;          (* parenthesized/block open target *)
 DottedOpenPath  = Identifier { "." Identifier } ;
 
-PropertyDefinition = [ "public" ] NonOutputIdentifier "=" PropertyBody ;
+PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
 PropertyBody       = Algorithm ;
 
 DeconstructionDefinition = CollectingBinding "=" OutputBundle
@@ -71,7 +71,7 @@ CollectingBinding        = "*" BindingIdentifier ;
                         F(*values) is the degenerate lone-collecting-binding
                         case. *)
 
-ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBundle ;
+ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
                         Recognized only in definition position;
                         in expression position Name(...) remains an ordinary call.
@@ -89,17 +89,7 @@ ClauseDefinition = [ "public" ] NonOutputIdentifier "(" Pattern ")" "=" OutputBu
                         sibling values at their own pattern-list level and collect
                         the assigned slots as one exact immutable list.
                         Multi-clause families and literal/mixed heads elaborate as
-                        conditional algorithms.
-                        `Output(...) = ...` is invalid; declare parameters and
-                        branches on the enclosing algorithm instead. *)
-
-ExplicitOutputDefinition = "Output" "=" OutputBundle ;
-                     (* "Output = ..." is a definition: its body is
-                        line-bounded like every definition body (a newline ends it).
-                        Explicit and implicit output cannot mix in the same
-                        algorithm in either direction. Write Output = (A, B)
-                        for one sequence-valued explicit output, or Output = A, B for
-                        separate explicit output slots. *)
+                        conditional algorithms. *)
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = BindingIdentifier             (* fixed bind *)
@@ -172,7 +162,7 @@ SequenceAtom          = Expression ;
                         collect-marker (binding) syntax and is a targeted
                         error in expression position. *)
                      (* Semicolon is intentionally absent from ExpressionList.
-                     `1 ; 2`, `A* ; B`, `Output = 1 ; 2`, and `F(1 ; 2)`
+                     `1 ; 2`, `A* ; B`, `P = 1 ; 2`, and `F(1 ; 2)`
                      all report the unsupported-semicolon diagnostic.
                      ImplicitAdjacency is not a token: a complete expression
                      followed by the start of another complete expression
@@ -189,8 +179,8 @@ SequenceAtom          = Expression ;
                      unless a leading-dot continuation carries it on, and ends an open target list unless an
                      explicit comma (trailing or leading) or a leading-dot
                      continuation carries it on (a "("- or "{"-led line
-                     never continues either), so properties, clauses, opens,
-                     and Output definitions on later lines keep their
+                     never continues either), so properties, clauses, and
+                     opens on later lines keep their
                      declaration meaning. Implicit expression-list separation is
                      inserted only when the next token cannot legally continue
                      the current expression; a token that continues it as a
@@ -213,7 +203,7 @@ SequenceAtom          = Expression ;
                      Adjacency
                      applies only between complete expressions: it never
                      splits identifiers or numbers, and a token sequence that
-                     begins a property, clause, open, or Output definition is
+                     begins a property, clause, or open definition is
                      a definition, not an adjacent expression. A star never
                      participates in adjacency: it is multiplication, a
                      collect marker, or a spread marker. Physical line
@@ -373,7 +363,6 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
 
 NumberLiteral   = Number ;
 Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;
-NonOutputIdentifier = Identifier ;       (* except reserved definition-position name "Output" *)
 BindingIdentifier = Identifier ;
 Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
 StringLiteral   = /'([^'\r\n])*'/ ;

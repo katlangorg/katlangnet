@@ -6907,9 +6907,6 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (name == "Output")
-            return new EvalError.SpecialOutputAccess();
-
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.DotCall(target, name, argsOpt),
             ctx,
@@ -7300,9 +7297,6 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (name == "Output")
-            return new EvalError.SpecialOutputAccess();
-
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.DotCall(target, name, argsOpt),
             ctx,

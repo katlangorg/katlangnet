@@ -1,2 +1,2 @@
 A = (b = 1)
-Output = A.zzz
+A.zzz

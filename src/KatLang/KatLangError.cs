@@ -36,8 +36,6 @@ public sealed class KatLangError
     {
         if (TryFormatDotCallUnknownName(error, out var formattedDotCallError))
             return formattedDotCallError;
-        if (TryFormatSpecialOutputAccess(error, out var formattedSpecialOutputAccess))
-            return formattedSpecialOutputAccess;
         if (TryFormatLocalOnlyProperty(error, out var formattedLocalOnlyProperty))
             return formattedLocalOnlyProperty;
         if (TryFormatMissingOutput(error, out var formattedMissingOutput))
@@ -71,7 +69,6 @@ public sealed class KatLangError
             EvalError.BadIndex => "Bad index",
             EvalError.DivByZero => "Division by zero",
             EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
-            EvalError.SpecialOutputAccess => FormatSpecialOutputAccess(receiverDesc: null),
             EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
             EvalError.MissingOutput => FormatGenericMissingOutput(),
             EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(),
@@ -109,39 +106,6 @@ public sealed class KatLangError
         context = string.Empty;
         inner = null!;
         return false;
-    }
-
-    private static bool TryFormatSpecialOutputAccess(EvalError error, out string message)
-    {
-        message = string.Empty;
-
-        if (error is EvalError.SpecialOutputAccess)
-        {
-            message = FormatSpecialOutputAccess(receiverDesc: null);
-            return true;
-        }
-
-        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotContext, Inner: EvalError.SpecialOutputAccess })
-        {
-            message = string.Equals(dotContext.PropertyName, "Output", StringComparison.Ordinal)
-                ? FormatSpecialOutputAccess(dotContext.ReceiverDescription)
-                : FormatSpecialOutputAccess(receiverDesc: null);
-            return true;
-        }
-
-        if (error is not EvalError.WithContext { Inner: EvalError.SpecialOutputAccess })
-            return false;
-
-        if (TryGetTextContext(error, out var context, out _)
-            && TryParseDotCallContext(context, out var receiverDesc, out var propertyName)
-            && string.Equals(propertyName, "Output", StringComparison.Ordinal))
-        {
-            message = FormatSpecialOutputAccess(receiverDesc);
-            return true;
-        }
-
-        message = FormatSpecialOutputAccess(receiverDesc: null);
-        return true;
     }
 
     private static bool TryFormatLocalOnlyProperty(EvalError error, out string message)
@@ -480,14 +444,6 @@ public sealed class KatLangError
                 $"Property '{propertyName}' on `{objectDesc}` is local-only because properties defined inside conditional algorithms are not publicly visible.",
             _ => $"Property '{propertyName}' on `{objectDesc}` is local-only.",
         };
-
-    private static string FormatSpecialOutputAccess(string? receiverDesc)
-    {
-        const string baseMessage = "Output is the designated result of an algorithm and cannot be accessed through property syntax. Call the algorithm directly instead.";
-        return string.IsNullOrWhiteSpace(receiverDesc)
-            ? $"{baseMessage} Instead of `Algo.Output(6)`, write `Algo(6)`."
-            : $"{baseMessage} Instead of `{receiverDesc}.Output(...)`, write `{receiverDesc}(...)`.";
-    }
 
     private static string FormatReferenceMissingOutput(string referenceDesc)
         => IsSimpleIdentifier(referenceDesc)

@@ -1,2 +1,2 @@
 Step = x - 1, x > 1
-Output = Step.while(5)
+Step.while(5)

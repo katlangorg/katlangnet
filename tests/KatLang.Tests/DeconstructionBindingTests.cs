@@ -220,7 +220,7 @@ public class DeconstructionBindingTests
     [Fact]
     public void Assignment_DeconstructionAfterOutputLine_DoesNotAbsorbIntoOutput()
     {
-        // An implicit output line ends at a following deconstruction assignment:
+        // An output line ends at a following deconstruction assignment:
         // the output stays the single `F(A*)` row (15), and `x, *y, z = A` defines
         // its own (unused) properties instead of being swallowed as more output.
         AssertAtoms(
