@@ -1144,10 +1144,11 @@ public static class Evaluator
         /// both of which have already been evaluated before builtin binding begins.
         ///
         /// <para><see cref="Algorithm"/> retains a source-backed algorithm channel when one
-        /// exists. Callback data values leave that channel null so their structure is not
-        /// eagerly rebuilt as an AST; an algorithm-only consumer can recreate the legacy
-        /// channel lazily from this counted value. The value channel always uses this field
-        /// directly and never re-evaluates a reconstructed literal.</para>
+        /// exists. Callback data values and dotted sequence-builtin receivers leave that
+        /// channel null so their structure is not eagerly rebuilt as an AST; an
+        /// algorithm-only consumer can recreate the legacy channel lazily from this counted
+        /// value. The value channel always uses this field directly and never re-evaluates
+        /// a reconstructed literal.</para>
         /// </summary>
         public CountedResult? PreparedValue { get; init; }
     }
@@ -2746,9 +2747,13 @@ public static class Evaluator
 
     /// <summary>
     /// Reify a pre-evaluated counted argument as a zero-parameter algorithm
-    /// that preserves the same value and emitted top-level count.
+    /// that preserves the same value and emitted top-level count. This rebuild
+    /// costs O(value size), so it is performed lazily — only when an
+    /// algorithm-only consumer actually requests a prepared argument's
+    /// algorithm channel — and each completed construction is recorded on the
+    /// run's passive <see cref="EvaluationObservations"/>.
     /// </summary>
-    private static Algorithm CountedArgAlgorithm(CountedResult arg)
+    private static Algorithm CountedArgAlgorithm(CountedResult arg, EvalCtx ctx)
     {
         IReadOnlyList<Expr> output = arg.EmittedCount switch
         {
@@ -2757,12 +2762,16 @@ public static class Evaluator
             _ => arg.Value.ToItems().Select(ResultToExpr).ToList(),
         };
 
-        return new Algorithm.User(
+        var algorithm = new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
             Properties: [],
             Output: output);
+
+        // Record the completed wrapper, not merely a request that entered this helper.
+        ctx.Observations?.RecordCountedArgumentReification();
+        return algorithm;
     }
 
     /// <summary>
@@ -3915,7 +3924,7 @@ public static class Evaluator
                 {
                     var algorithm = item.Algorithm
                         ?? (item.PreparedValue is { } prepared
-                            ? CountedArgAlgorithm(prepared)
+                            ? CountedArgAlgorithm(prepared, ctx)
                             : null);
                     if (algorithm is not null)
                     {
@@ -4859,15 +4868,16 @@ public static class Evaluator
                 : new EvalError.BadArity();
 
     /// <summary>
-    /// Returns the argument's algorithm channel. Already evaluated callback data normally
-    /// never needs one; if an algorithm-only builtin position does request it, build the
-    /// legacy counted-value wrapper at that point rather than for every callback invocation.
+    /// Returns the argument's algorithm channel. Already evaluated callback data and dotted
+    /// sequence-builtin receivers normally never need one; if an algorithm-only builtin
+    /// position does request it, build the legacy counted-value wrapper at that point rather
+    /// than for every prepared argument.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveArgumentAlgorithm(ResolvedArgumentAlgorithm arg)
+    private static EvalResult<Algorithm> ResolveArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
         => arg.Algorithm is { } algorithm
             ? EvalResult<Algorithm>.Ok(algorithm)
             : arg.PreparedValue is { } prepared
-                ? EvalResult<Algorithm>.Ok(CountedArgAlgorithm(prepared))
+                ? EvalResult<Algorithm>.Ok(CountedArgAlgorithm(prepared, ctx))
                 : new EvalError.BadArity();
 
     private static EvalResult<Result> EvalResolvedArgument(
@@ -4953,7 +4963,7 @@ public static class Evaluator
 
             case (BuiltinId.@while, _) when args.Count >= 2:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
                     if (initialStateR.IsError) return initialStateR.Error;
@@ -4962,7 +4972,7 @@ public static class Evaluator
 
             case (BuiltinId.@repeat, _) when args.Count >= 3:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var countR = EvalResolvedArgument(args[1], ctx, valEnv);
                     if (countR.IsError) return countR.Error;
@@ -5721,7 +5731,7 @@ public static class Evaluator
             // while(step, init1, init2, ...)
             case (BuiltinId.@while, _) when args.Count >= 2:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
                     if (initialStateR.IsError) return initialStateR.Error;
@@ -5731,7 +5741,7 @@ public static class Evaluator
             // repeat(step, count, init1, init2, ...)
             case (BuiltinId.@repeat, _) when args.Count >= 3:
                 {
-                    var stepR = ResolveArgumentAlgorithm(args[0]);
+                    var stepR = ResolveArgumentAlgorithm(args[0], ctx);
                     if (stepR.IsError) return stepR.Error;
                     var countR = EvalResolvedArgument(args[1], ctx, valEnv);
                     if (countR.IsError) return countR.Error;
@@ -7175,16 +7185,17 @@ public static class Evaluator
         var receiverR = EvalSequenceBuiltinDotReceiverCounted(receiver, ctx, valEnv);
         if (receiverR.IsError) return receiverR.Error;
 
-        // The receiver has just been evaluated to dispatch on it. Carry that counted value
-        // forward as the argument's PREPARED value: the reified algorithm is kept for the
-        // algorithm channel, but the value channel must not evaluate it again. Without
-        // this, `A.count` re-evaluated the reified literal and materialized a second
-        // identical copy of A — `range(1, 10).count` charged 20 item slots for one
-        // ten-item collection, and a cached receiver property did not help because the
-        // duplicate was a RECONSTRUCTION from the already-evaluated result, not a second
-        // evaluation of the source expression.
+        // The receiver has just been evaluated — exactly once — to dispatch on it. Carry
+        // that counted result forward as the argument's PREPARED value only: the value
+        // channel reads it directly and must never reconstruct or re-evaluate it. No
+        // algorithm channel is built here — reifying the result as an expression tree
+        // (CountedArgAlgorithm → ResultToExpr) costs O(receiver size), and the ordinary
+        // value path (`A.count`, `A.take(2)`, `A.map(F)`) never consumes it because
+        // PreparedValue short-circuits evaluation. If an algorithm-only consumer does
+        // request the channel, ResolveArgumentAlgorithm / PrepareSequenceBuiltinSuffixArg
+        // synthesize the legacy counted-value wrapper lazily at that point.
         return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            [new ResolvedArgumentAlgorithm(CountedArgAlgorithm(receiverR.Value), SpreadsSequence: false)
+            [new ResolvedArgumentAlgorithm(Algorithm: null, SpreadsSequence: false)
             {
                 PreparedValue = receiverR.Value,
             }]);

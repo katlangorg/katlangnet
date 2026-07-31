@@ -30,4 +30,21 @@ internal sealed class EvaluationObservations
 
     internal void RecordDeconstructionFullBind()
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
+
+    /// <summary>
+    /// Number of counted-argument reifications performed during this run: each increment is one
+    /// construction of the legacy zero-parameter expression-tree wrapper around an already-evaluated
+    /// argument's counted value (<c>Evaluator.CountedArgAlgorithm</c> → <c>ResultToExpr</c>, an
+    /// O(value size) rebuild). The wrapper is built lazily, only when an algorithm-only consumer
+    /// requests a prepared argument's algorithm channel; value-channel consumption reads
+    /// <c>PreparedValue</c> directly and never reifies. An ordinary sequence-builtin dot call
+    /// (<c>A.count</c>, <c>A.take(2)</c>, <c>A.map(F)</c>) therefore observes zero, while a run that
+    /// routes a pre-evaluated value into an algorithm-only builtin position (for example a builtin
+    /// used as a callback, whose prepared arguments reach <c>while</c>'s step slot) observes exactly
+    /// one reification per requested channel.
+    /// </summary>
+    public long CountedArgumentReificationCount { get; private set; }
+
+    internal void RecordCountedArgumentReification()
+        => CountedArgumentReificationCount = checked(CountedArgumentReificationCount + 1);
 }
