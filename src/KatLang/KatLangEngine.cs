@@ -194,55 +194,73 @@ public abstract record RunResult
     /// know its own size — the exact shape that lets a legal but deeply shared value
     /// allocate far beyond the limit — and would also recurse as deeply as the value
     /// nests, which for host-constructed <see cref="Result"/> trees is unbounded by the
-    /// parser. The explicit stack holds either a pending value or a literal delimiter.
+    /// parser. Indexed continuation frames keep auxiliary traversal storage proportional
+    /// to nesting depth, not collection breadth, so a wide value does not allocate a
+    /// pending entry for every sibling before the writer can enforce its length limit.
     /// </summary>
     internal static bool AppendValue(Result value, DisplayOptions displayOptions, BoundedDisplayWriter writer)
     {
-        var pending = new Stack<object>();
-        pending.Push(value);
-
-        while (pending.Count > 0)
+        IReadOnlyList<Result> items;
+        string close;
+        switch (value)
         {
-            var next = pending.Pop();
-            if (next is string literal)
+            case Result.Atom atom:
+                return writer.Append(FormatAtom(atom.Value, displayOptions));
+            case Result.Str str:
+                return writer.Append(str.Value);
+            case Result.SequenceValue sequence:
+                if (!writer.Append("(")) return false;
+                items = sequence.Items;
+                close = ")";
+                break;
+            case Result.ListValue list:
+                if (!writer.Append("[")) return false;
+                items = list.Items;
+                close = "]";
+                break;
+            default:
+                return true;
+        }
+
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next, string Close)>();
+        var next = 0;
+
+        while (true)
+        {
+            if (next >= items.Count)
             {
-                if (!writer.Append(literal)) return false;
+                if (!writer.Append(close)) return false;
+                if (suspended.Count == 0) return true;
+                (items, next, close) = suspended.Pop();
                 continue;
             }
 
-            switch ((Result)next)
+            if (next > 0 && !writer.Append(", ")) return false;
+            var child = items[next];
+            next++;
+
+            switch (child)
             {
-                case Result.Atom a:
-                    if (!writer.Append(FormatAtom(a.Value, displayOptions))) return false;
+                case Result.Atom atom:
+                    if (!writer.Append(FormatAtom(atom.Value, displayOptions))) return false;
                     break;
-                case Result.Str s:
-                    if (!writer.Append(s.Value)) return false;
+                case Result.Str str:
+                    if (!writer.Append(str.Value)) return false;
                     break;
-                case Result.SequenceValue g:
-                    PushStructure(pending, "(", ")", g.Items);
+                case Result.SequenceValue sequence:
+                    if (!writer.Append("(")) return false;
+                    suspended.Push((items, next, close));
+                    (items, next, close) = (sequence.Items, 0, ")");
                     break;
-                case Result.ListValue l:
-                    PushStructure(pending, "[", "]", l.Items);
+                case Result.ListValue list:
+                    if (!writer.Append("[")) return false;
+                    suspended.Push((items, next, close));
+                    (items, next, close) = (list.Items, 0, "]");
                     break;
                 default:
                     break;
             }
         }
-
-        return true;
-    }
-
-    /// <summary>Pushes open, items separated by ", ", and close, in reverse so they pop in order.</summary>
-    private static void PushStructure(Stack<object> pending, string open, string close, IReadOnlyList<Result> items)
-    {
-        pending.Push(close);
-        for (var i = items.Count - 1; i >= 0; i--)
-        {
-            pending.Push(items[i]);
-            if (i > 0) pending.Push(", ");
-        }
-
-        pending.Push(open);
     }
 
     internal static string FormatAtom(decimal value, DisplayOptions displayOptions)

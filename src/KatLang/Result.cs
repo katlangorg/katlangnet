@@ -3,6 +3,23 @@ namespace KatLang;
 /// <summary>
 /// Structured evaluation result.
 /// Corresponds to <c>Result</c> in the Lean specification.
+///
+/// <para>Value NESTING DEPTH is unbounded: evaluation limits bound only
+/// per-collection breadth, an in-budget loop builds a depth-n value in n
+/// steps, and host-constructed trees are not bounded by the parser at all.
+/// Every whole-value traversal over <see cref="Result"/> trees must therefore
+/// use an explicit stack instead of native recursion — a recursive walk
+/// overflows the host stack on legally built deep values, and
+/// <see cref="StackOverflowException"/> terminates the embedding process
+/// uncatchably. The traversal stack must hold indexed continuation frames
+/// (one frame per open structure level: the collection plus the next child
+/// index), NEVER one entry per pending sibling — a legal collection holds up
+/// to 100,000 items, so sibling-granular stacks scale with breadth and
+/// allocate large-object-heap-sized backing arrays for wide, shallow values.
+/// Auxiliary traversal storage is O(nesting depth); storage for a produced
+/// value, atom collection, string, or AST is required output, not traversal
+/// overhead. Display rendering follows the same no-recursion rule
+/// (<c>KatLangEngine.AppendValue</c>).</para>
 /// </summary>
 public abstract record Result
 {
@@ -139,19 +156,80 @@ public abstract record Result
     /// </summary>
     public Result Normalize()
     {
-        return this switch
+        if (this is not (SequenceValue or ListValue))
+            return this;
+
+        // Post-order rebuild with explicit frames (see the depth note on the
+        // class): each frame fills a fresh array of normalized children, and a
+        // completed frame hands its value to the parent frame's open slot.
+        var frames = new Stack<NormalizeFrame>();
+        frames.Push(new NormalizeFrame(this));
+        Result? completed = null;
+
+        while (true)
         {
-            Atom _ => this,
-            Str _ => this,
-            SequenceValue(var items) =>
-                items.Select(r => r.Normalize()).ToArray() switch
-                {
-                    [var single] => single,
-                    var normalized => SequenceValue.TakeOwnership(normalized),
-                },
-            ListValue(var items) => ListValue.TakeOwnership(items.Select(r => r.Normalize()).ToArray()),
-            _ => this,
-        };
+            var frame = frames.Peek();
+            if (completed is not null)
+            {
+                frame.Normalized[frame.Next++] = completed;
+                completed = null;
+            }
+
+            while (frame.Next < frame.Normalized.Length)
+            {
+                var child = frame.Source[frame.Next];
+                if (child is SequenceValue or ListValue)
+                    break;
+                frame.Normalized[frame.Next++] = child;
+            }
+
+            if (frame.Next < frame.Normalized.Length)
+            {
+                frames.Push(new NormalizeFrame(frame.Source[frame.Next]));
+                continue;
+            }
+
+            frames.Pop();
+            completed = frame.Complete();
+            if (frames.Count == 0)
+                return completed;
+        }
+    }
+
+    /// <summary>One in-progress structure rebuild in the <see cref="Normalize"/> walk.</summary>
+    private sealed class NormalizeFrame
+    {
+        public readonly IReadOnlyList<Result> Source;
+        public readonly Result[] Normalized;
+        public readonly bool IsSequence;
+        public int Next;
+
+        public NormalizeFrame(Result structure)
+        {
+            switch (structure)
+            {
+                case SequenceValue(var items):
+                    Source = items;
+                    IsSequence = true;
+                    break;
+                case ListValue(var items):
+                    Source = items;
+                    IsSequence = false;
+                    break;
+                default:
+                    throw new ArgumentException(
+                        "Normalize frames require a sequence or list value.", nameof(structure));
+            }
+
+            Normalized = new Result[Source.Count];
+        }
+
+        public Result Complete()
+        {
+            if (IsSequence)
+                return Normalized is [var single] ? single : SequenceValue.TakeOwnership(Normalized);
+            return ListValue.TakeOwnership(Normalized);
+        }
     }
 
     /// <summary>
@@ -165,14 +243,51 @@ public abstract record Result
     /// </summary>
     public IReadOnlyList<decimal> ToAtoms()
     {
-        return this switch
+        if (this is Atom(var single))
+            return [single];
+        if (this is not SequenceValue(var rootItems))
+            return [];
+
+        // Indexed continuation frames (see the depth note on the class): the
+        // collected list is the required output; traversal storage is one
+        // suspended frame per open sequence level.
+        var collected = new List<decimal>();
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        var items = rootItems;
+        var next = 0;
+
+        while (true)
         {
-            Atom(var n) => [n],
-            Str _ => [],
-            SequenceValue(var items) => items.SelectMany(r => r.ToAtoms()).ToList(),
-            ListValue _ => [],
-            _ => [],
-        };
+            if (next >= items.Count)
+            {
+                if (suspended.Count == 0) return collected;
+                (items, next) = suspended.Pop();
+                continue;
+            }
+
+            var child = items[next];
+            next++;
+
+            switch (child)
+            {
+                case Atom(var n):
+                    collected.Add(n);
+                    break;
+                case SequenceValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                default:
+                    break; // strings and opaque list values contribute no atoms
+            }
+        }
     }
 
     /// <summary>
@@ -205,33 +320,76 @@ public abstract record Result
     /// </summary>
     internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
     {
+        // Indexed continuation frames (see the depth note on the class): the
+        // collected list is the required output; traversal storage is one
+        // suspended frame per open structure level.
         var collected = new List<decimal>();
-        var withinLimit = CollectLanguageAtoms(collected, maxItems);
         atoms = collected;
-        return withinLimit;
-    }
 
-    private bool CollectLanguageAtoms(List<decimal> collected, long maxItems)
-    {
+        IReadOnlyList<Result> items;
         switch (this)
         {
-            case Atom(var n):
+            case Atom(var single):
                 if (collected.Count >= maxItems) return false;
-                collected.Add(n);
+                collected.Add(single);
+                return true;
+            case SequenceValue(var rootItems):
+                items = rootItems;
                 break;
-            case SequenceValue(var items):
-                foreach (var item in items)
-                    if (!item.CollectLanguageAtoms(collected, maxItems)) return false;
-                break;
-            case ListValue(var items):
-                foreach (var item in items)
-                    if (!item.CollectLanguageAtoms(collected, maxItems)) return false;
+            case ListValue(var rootItems):
+                items = rootItems;
                 break;
             default:
-                break; // strings and any other non-numeric leaves contribute no atoms
+                return true; // strings and any other non-numeric leaves contribute no atoms
         }
 
-        return true;
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        var next = 0;
+
+        while (true)
+        {
+            if (next >= items.Count)
+            {
+                if (suspended.Count == 0) return true;
+                (items, next) = suspended.Pop();
+                continue;
+            }
+
+            var child = items[next];
+            next++;
+
+            switch (child)
+            {
+                case Atom(var n):
+                    if (collected.Count >= maxItems) return false;
+                    collected.Add(n);
+                    break;
+                case SequenceValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                case ListValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                default:
+                    break; // strings and any other non-numeric leaves contribute no atoms
+            }
+        }
     }
 
     /// <summary>
@@ -263,35 +421,80 @@ public abstract record Result
     /// </summary>
     internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<decimal> atoms)
     {
+        // Indexed continuation frames (see the depth note on the class): the
+        // collected list is the required output; traversal storage is one
+        // suspended frame per open structure level.
         var collected = new List<decimal>();
-        var withinLimit = CollectHostAtoms(collected, maxItems);
         atoms = collected;
-        return withinLimit;
-    }
 
-    private bool CollectHostAtoms(List<decimal> collected, long maxItems)
-    {
+        IReadOnlyList<Result> items;
         switch (this)
         {
-            case Atom(var n):
+            case Atom(var single):
                 if (collected.Count >= maxItems) return false;
-                collected.Add(n);
-                break;
+                collected.Add(single);
+                return true;
             case Str:
+                return true;
+            case SequenceValue(var rootItems):
+                items = rootItems;
                 break;
-            case SequenceValue(var items):
-                foreach (var item in items)
-                    if (!item.CollectHostAtoms(collected, maxItems)) return false;
-                break;
-            case ListValue(var items):
-                foreach (var item in items)
-                    if (!item.CollectHostAtoms(collected, maxItems)) return false;
+            case ListValue(var rootItems):
+                items = rootItems;
                 break;
             default:
-                break;
+                return true;
         }
 
-        return true;
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        var next = 0;
+
+        while (true)
+        {
+            if (next >= items.Count)
+            {
+                if (suspended.Count == 0) return true;
+                (items, next) = suspended.Pop();
+                continue;
+            }
+
+            var child = items[next];
+            next++;
+
+            switch (child)
+            {
+                case Atom(var n):
+                    if (collected.Count >= maxItems) return false;
+                    collected.Add(n);
+                    break;
+                case Str:
+                    break;
+                case SequenceValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                case ListValue(var childItems):
+                    if (childItems.Count > 0)
+                    {
+                        // Tail descent: a parent with no children left to
+                        // visit has no continuation worth suspending.
+                        if (next < items.Count)
+                            suspended.Push((items, next));
+                        (items, next) = (childItems, 0);
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
     /// <summary>
@@ -530,65 +733,194 @@ public abstract record Result
             if (ReferenceEquals(x, y)) return true;
             if (x is null || y is null) return false;
 
-            return (x, y) switch
+            IReadOnlyList<Result> leftItems;
+            IReadOnlyList<Result> rightItems;
+            switch (x, y)
             {
-                (Atom(var left), Atom(var right)) => left == right,
-                (Str(var left), Str(var right)) => StringComparer.Ordinal.Equals(left, right),
-                (SequenceValue(var leftItems), SequenceValue(var rightItems)) =>
-                    leftItems.Count == rightItems.Count && ItemsEqual(leftItems, rightItems),
-                // Lists compare structurally and recursively; a list never
+                case (Atom(var leftValue), Atom(var rightValue)):
+                    return leftValue == rightValue;
+
+                case (Str(var leftValue), Str(var rightValue)):
+                    return StringComparer.Ordinal.Equals(leftValue, rightValue);
+
+                case (SequenceValue(var left), SequenceValue(var right)):
+                    if (left.Count != right.Count) return false;
+                    (leftItems, rightItems) = (left, right);
+                    break;
+
+                // Lists compare structurally element by element; a list never
                 // equals a sequence value, even with equal elements.
-                (ListValue(var leftItems), ListValue(var rightItems)) =>
-                    leftItems.Count == rightItems.Count && ItemsEqual(leftItems, rightItems),
-                _ => false,
-            };
+                case (ListValue(var left), ListValue(var right)):
+                    if (left.Count != right.Count) return false;
+                    (leftItems, rightItems) = (left, right);
+                    break;
+
+                default:
+                    return false;
+            }
+
+            // Pairwise structural walk with indexed continuation frames (see
+            // the depth note on the class): the registers hold the current
+            // collection pair and next child index, and the stack holds one
+            // suspended parent frame per open structure level — never one
+            // entry per pending sibling. Pairs compare left to right, and the
+            // reference fast path applies at every level so shared subtrees
+            // short-circuit.
+            var suspended = new Stack<(IReadOnlyList<Result> Left, IReadOnlyList<Result> Right, int Next)>();
+            var next = 0;
+
+            while (true)
+            {
+                if (next >= leftItems.Count)
+                {
+                    if (suspended.Count == 0) return true;
+                    (leftItems, rightItems, next) = suspended.Pop();
+                    continue;
+                }
+
+                var left = leftItems[next];
+                var right = rightItems[next];
+                next++;
+
+                if (ReferenceEquals(left, right)) continue;
+                if (left is null || right is null) return false;
+
+                switch (left, right)
+                {
+                    case (Atom(var leftValue), Atom(var rightValue)):
+                        if (leftValue != rightValue) return false;
+                        break;
+
+                    case (Str(var leftValue), Str(var rightValue)):
+                        if (!StringComparer.Ordinal.Equals(leftValue, rightValue)) return false;
+                        break;
+
+                    case (SequenceValue(var childLeft), SequenceValue(var childRight)):
+                        if (childLeft.Count != childRight.Count) return false;
+                        if (childLeft.Count > 0)
+                        {
+                            // Tail descent: a parent with no children left to
+                            // visit has no continuation worth suspending.
+                            if (next < leftItems.Count)
+                                suspended.Push((leftItems, rightItems, next));
+                            (leftItems, rightItems, next) = (childLeft, childRight, 0);
+                        }
+
+                        break;
+
+                    case (ListValue(var childLeft), ListValue(var childRight)):
+                        if (childLeft.Count != childRight.Count) return false;
+                        if (childLeft.Count > 0)
+                        {
+                            // Tail descent: a parent with no children left to
+                            // visit has no continuation worth suspending.
+                            if (next < leftItems.Count)
+                                suspended.Push((leftItems, rightItems, next));
+                            (leftItems, rightItems, next) = (childLeft, childRight, 0);
+                        }
+
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
         }
 
         public int GetHashCode(Result obj)
         {
+            // Depth-first pre-order visit with indexed continuation frames
+            // (see the depth note on the class): each node contributes its
+            // kind tag, leaves their value, structures their count then their
+            // children. The registers hold the current collection and next
+            // child index; the stack holds one suspended parent frame per
+            // open structure level.
             var hash = new HashCode();
-            AddHashCode(ref hash, obj);
-            return hash.ToHashCode();
-        }
 
-        private bool ItemsEqual(IReadOnlyList<Result> left, IReadOnlyList<Result> right)
-        {
-            for (var index = 0; index < left.Count; index++)
-            {
-                if (!Equals(left[index], right[index]))
-                    return false;
-            }
-
-            return true;
-        }
-
-        private static void AddHashCode(ref HashCode hash, Result result)
-        {
-            switch (result)
+            IReadOnlyList<Result> items;
+            switch (obj)
             {
                 case Atom(var value):
                     hash.Add(0);
                     hash.Add(value);
-                    break;
+                    return hash.ToHashCode();
 
                 case Str(var value):
                     hash.Add(1);
                     hash.Add(value, StringComparer.Ordinal);
-                    break;
+                    return hash.ToHashCode();
 
-                case SequenceValue(var items):
+                case SequenceValue(var rootItems):
                     hash.Add(2);
-                    hash.Add(items.Count);
-                    foreach (var item in items)
-                        AddHashCode(ref hash, item);
+                    hash.Add(rootItems.Count);
+                    items = rootItems;
                     break;
 
-                case ListValue(var items):
+                case ListValue(var rootItems):
                     hash.Add(3);
-                    hash.Add(items.Count);
-                    foreach (var item in items)
-                        AddHashCode(ref hash, item);
+                    hash.Add(rootItems.Count);
+                    items = rootItems;
                     break;
+
+                default:
+                    return hash.ToHashCode();
+            }
+
+            var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+            var next = 0;
+
+            while (true)
+            {
+                if (next >= items.Count)
+                {
+                    if (suspended.Count == 0) return hash.ToHashCode();
+                    (items, next) = suspended.Pop();
+                    continue;
+                }
+
+                var child = items[next];
+                next++;
+
+                switch (child)
+                {
+                    case Atom(var value):
+                        hash.Add(0);
+                        hash.Add(value);
+                        break;
+
+                    case Str(var value):
+                        hash.Add(1);
+                        hash.Add(value, StringComparer.Ordinal);
+                        break;
+
+                    case SequenceValue(var childItems):
+                        hash.Add(2);
+                        hash.Add(childItems.Count);
+                        if (childItems.Count > 0)
+                        {
+                            // Tail descent: a parent with no children left to
+                            // visit has no continuation worth suspending.
+                            if (next < items.Count)
+                                suspended.Push((items, next));
+                            (items, next) = (childItems, 0);
+                        }
+
+                        break;
+
+                    case ListValue(var childItems):
+                        hash.Add(3);
+                        hash.Add(childItems.Count);
+                        if (childItems.Count > 0)
+                        {
+                            // Tail descent: a parent with no children left to
+                            // visit has no continuation worth suspending.
+                            if (next < items.Count)
+                                suspended.Push((items, next));
+                            (items, next) = (childItems, 0);
+                        }
+
+                        break;
+                }
             }
         }
     }

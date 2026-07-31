@@ -951,14 +951,74 @@ public static class Evaluator
     private static string Pluralize(int count, string singular)
         => count == 1 ? singular : singular + "s";
 
-    internal static string FormatResultForDiagnostic(Result value) => value switch
+    internal static string FormatResultForDiagnostic(Result value)
     {
-        Result.Atom(var number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        Result.Str(var text) => $"'{text}'",
-        Result.SequenceValue(var items) => $"({string.Join(", ", items.Select(FormatResultForDiagnostic))})",
-        Result.ListValue(var items) => $"[{string.Join(", ", items.Select(FormatResultForDiagnostic))}]",
-        _ => "value",
-    };
+        switch (value)
+        {
+            case Result.Atom(var number):
+                return number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            case Result.Str(var str):
+                return $"'{str}'";
+            case Result.SequenceValue:
+            case Result.ListValue:
+                break;
+            default:
+                return "value";
+        }
+
+        // Diagnostic values nest as deep and as wide as any runtime value
+        // (see the depth note on Result), so the walk uses indexed
+        // continuation frames: the builder is the required output; traversal
+        // storage is one suspended frame per open structure level.
+        var text = new System.Text.StringBuilder();
+        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next, char Close)>();
+        var (items, close) = value switch
+        {
+            Result.SequenceValue(var rootItems) => (rootItems, ')'),
+            Result.ListValue(var rootItems) => (rootItems, ']'),
+            _ => throw new ArgumentException("Diagnostic structure walk requires a sequence or list value.", nameof(value)),
+        };
+        text.Append(close == ')' ? '(' : '[');
+        var next = 0;
+
+        while (true)
+        {
+            if (next >= items.Count)
+            {
+                text.Append(close);
+                if (suspended.Count == 0) return text.ToString();
+                (items, next, close) = suspended.Pop();
+                continue;
+            }
+
+            if (next > 0) text.Append(", ");
+            var child = items[next];
+            next++;
+
+            switch (child)
+            {
+                case Result.Atom(var number):
+                    text.Append(number.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                case Result.Str(var str):
+                    text.Append('\'').Append(str).Append('\'');
+                    break;
+                case Result.SequenceValue(var childItems):
+                    suspended.Push((items, next, close));
+                    (items, next, close) = (childItems, 0, ')');
+                    text.Append('(');
+                    break;
+                case Result.ListValue(var childItems):
+                    suspended.Push((items, next, close));
+                    (items, next, close) = (childItems, 0, ']');
+                    text.Append('[');
+                    break;
+                default:
+                    text.Append("value");
+                    break;
+            }
+        }
+    }
 
     /// <summary>
     /// Require an exact integer-valued number for integer-only builtins.
@@ -2209,7 +2269,53 @@ public static class Evaluator
     private static Expr EmptyResultExpr()
         => new Expr.EmptySequence(0);
 
-    private static Expr ResultToExpr(Result result) => result switch
+    private static Expr ResultToExpr(Result result)
+    {
+        if (ResultToExprLeaf(result) is { } leaf)
+            return leaf;
+
+        // Reified values nest as deep as any runtime value (unbounded — see
+        // the depth note on Result), so the rebuild is an iterative post-order
+        // walk: each frame fills a fresh array of converted children, and a
+        // completed frame hands its expression to the parent frame's open slot.
+        var frames = new Stack<ResultToExprFrame>();
+        frames.Push(new ResultToExprFrame(result));
+        Expr? completed = null;
+
+        while (true)
+        {
+            var frame = frames.Peek();
+            if (completed is not null)
+            {
+                frame.Converted[frame.Next++] = completed;
+                completed = null;
+            }
+
+            while (frame.Next < frame.Converted.Length)
+            {
+                if (ResultToExprLeaf(frame.Source[frame.Next]) is not { } childLeaf)
+                    break;
+                frame.Converted[frame.Next++] = childLeaf;
+            }
+
+            if (frame.Next < frame.Converted.Length)
+            {
+                frames.Push(new ResultToExprFrame(frame.Source[frame.Next]));
+                continue;
+            }
+
+            frames.Pop();
+            completed = frame.Complete();
+            if (frames.Count == 0)
+                return completed;
+        }
+    }
+
+    /// <summary>
+    /// Reifies the values <see cref="ResultToExpr"/> does not descend into;
+    /// returns null for the two structure shapes that convert child by child.
+    /// </summary>
+    private static Expr? ResultToExprLeaf(Result result) => result switch
     {
         Result.Atom(var n) => new Expr.Num(n),
         Result.Str(var s) => new Expr.StringLiteral(s),
@@ -2217,17 +2323,52 @@ public static class Evaluator
         // surface structure, so any empty-sequence chain reifies as `()`.
         Result.SequenceValue when IsEmptySequenceChain(result)
             => new Expr.EmptySequence(0),
-        Result.SequenceValue(var items) => new Expr.Block(new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: items.Select(ResultToExpr).ToList())),
-        // Exact list values reify as list literals so they round-trip
-        // losslessly (a reified `()` element stays one visible list element).
-        Result.ListValue(var items) => new Expr.ListLiteral(items.Select(ResultToExpr).ToList()),
+        Result.SequenceValue => null,
+        Result.ListValue => null,
         _ => EmptyResultExpr(),
     };
+
+    /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr"/> walk.</summary>
+    private sealed class ResultToExprFrame
+    {
+        public readonly IReadOnlyList<Result> Source;
+        public readonly Expr[] Converted;
+        public readonly bool IsSequence;
+        public int Next;
+
+        public ResultToExprFrame(Result structure)
+        {
+            switch (structure)
+            {
+                case Result.SequenceValue(var items):
+                    Source = items;
+                    IsSequence = true;
+                    break;
+                case Result.ListValue(var items):
+                    Source = items;
+                    IsSequence = false;
+                    break;
+                default:
+                    throw new ArgumentException(
+                        "Result reification frames require a sequence or list value.", nameof(structure));
+            }
+
+            Converted = new Expr[Source.Count];
+        }
+
+        public Expr Complete()
+            => IsSequence
+                ? new Expr.Block(new Algorithm.User(
+                    Parent: null,
+                    Parameters: [],
+                    Opens: [],
+                    Properties: [],
+                    Output: Converted))
+                // Exact list values reify as list literals so they round-trip
+                // losslessly (a reified `()` element stays one visible list
+                // element).
+                : new Expr.ListLiteral(Converted);
+    }
 
     /// <summary>
     /// Builds the canonical empty sequence value for an <see cref="Expr.EmptySequence"/>.
