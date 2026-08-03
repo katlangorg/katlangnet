@@ -129,14 +129,20 @@ The multiplication carries the one decimal place of `0.2`, and the default displ
 
 ### Comments
 
-Use `//` to add notes. Everything from `//` to the end of the line is ignored.
+Use `#` to add notes. Everything from `#` to the end of the line is ignored.
 
 ```
-// Full-line comment
-1 + 1  // inline comment
+# Full-line comment
+1 + 1  # inline comment
 ```
 
 **Result:** `2`
+
+The lexical rule is permissive: a `#` outside a string literal starts a comment no matter what comes before it, so whitespace before `#` is optional — `value=6#7` assigns `6` and treats `7` as comment text. As a style matter, prefer one space before a trailing `#` and one space after it:
+
+```
+value = 6 # Explanation
+```
 
 Comments are helpful for explaining your algorithms — you'll see them throughout this tutorial.
 
@@ -484,8 +490,8 @@ Postfix continuations win over adjacency on the same physical line. An implicit 
 ```
 Add(a, b) = a + b
 
-Add(1, 2)    // 3
-Add (1, 2)   // the same call, 3
+Add(1, 2)    # 3
+Add (1, 2)   # the same call, 3
 ```
 
 A physical newline never continues a closed expression into a call. A line that starts with `(` or `{` is its own output row, never call arguments for the previous line:
@@ -494,7 +500,7 @@ A physical newline never continues a closed expression into a call. A line that 
 Add(a, b) = a + b
 
 Add
-(1, 2)       // not a call: expression-list slots `Add, (1, 2)`
+(1, 2)       # not a call: expression-list slots `Add, (1, 2)`
 ```
 
 For a multiline call, open the delimiter before the newline — an already-open argument list spans lines normally:
@@ -504,24 +510,24 @@ Add(a, b) = a + b
 
 Add(
   1, 2
-)            // the call Add(1, 2): 3
+)            # the call Add(1, 2): 3
 ```
 
 The same applies to dot calls and callback braces: `A.B (1)` is the dot call `A.B(1)` and `values.map { n * 2 }` is `values.map{n * 2}`, but `A.B` followed by `(1)` on the next line is the expression list `A.B, (1)`, and `values.map` followed by `{ n * 2 }` on the next line is not a callback call (write `values.map{` and break inside the braces instead). This is only about same-line whitespace between the callee and its delimiter — inside the argument list adjacency still creates argument slots, so `Add (1 2)` is the two-argument call `Add(1, 2)`. Comma and a newline both keep separate slots: `F, (1)` and `F` followed by `(1)` are expression-list structure. Non-callable targets never become calls: `2 (3)` stays the expression list `2, 3`.
 
-Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. For `*` the trailing operator must stay detached: `A *` at the end of a line continues as the multiplication `A * B` onto the next line, while the directly attached `A*` is a completed spread expression, so `A*` followed by `B` is a spread slot and a separate row (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A // note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
+Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. For `*` the trailing operator must stay detached: `A *` at the end of a line continues as the multiplication `A * B` onto the next line, while the directly attached `A*` is a completed spread expression, so `A*` followed by `B` is a spread slot and a separate row (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
 
 ```
 (1, 2, 3)
 .map { n * 2 }
-.sum         // 12
+.sum         # 12
 ```
 
 The newline boundary keeps definition boundaries predictable: a `(`- or `{`-led line after a definition body is a following output row, never call arguments appended to that body:
 
 ```
 Sum(vector) = vector.sum
-(1, 2).Sum         // separate report row: 3
+(1, 2).Sum         # separate report row: 3
 ```
 
 A leading semicolon after a definition body is invalid and produces a diagnostic. During error recovery the parser may still attach the following expression to the current body so later diagnostics stay useful, but that recovery is not valid KatLang syntax — semicolon is never an expression operator.
@@ -565,10 +571,10 @@ Use parentheses when sequence-valued output intent is clearer:
 Comma and adjacency create expression lists. Root output consumes a bare expression list as output slots, call syntax consumes it as argument slots, parentheses materialize it as one sequence value, and square brackets materialize it as one exact [list value](#lists). Semicolon is not an expression separator; use comma/adjacency for separate slots or parentheses for one sequence value. A spread expression is one whole slot: `A B*, C` is the expression list `A, B*, C` — adjacency separates `A` from `B*`, and the comma after the spread is required because `B* C` would be the multiplication `B * C`. Comma and adjacency slots stay structural (`F(a*, b)` is a two-argument call). Physical line breaks do not create sequence-value boundaries. Explicit parentheses do:
 
 ```
-1, (2, 3)    // two slots: 1 and (2, 3)
-(1, 2), 3    // two slots: (1, 2) and 3
-(1, 2, 3)    // one sequence value
-(1, 2, 3)    // (1, 2, 3)
+1, (2, 3)    # two slots: 1 and (2, 3)
+(1, 2), 3    # two slots: (1, 2) and 3
+(1, 2, 3)    # one sequence value
+(1, 2, 3)    # (1, 2, 3)
 ```
 
 Comma creates multiple top-level output slots; parentheses create one sequence-valued slot. The result window may show comma slots on separate rows, while sequence values display as sequence values. `EvaluateToString()` is a separate convenience stringification path that extracts atoms and joins them with spaces. See [Spread with the Postfix Star](#spread-with-the-postfix-star).
@@ -581,15 +587,15 @@ Flat fixed calls preserve expression boundaries. A property reference used as on
 Pair = 10, 20
 Add(x, y) = x + y
 
-Add(Pair)           // bad arity: one argument expression
-Add(Pair:0, Pair:1) // 30
+Add(Pair)           # bad arity: one argument expression
+Add(Pair:0, Pair:1) # 30
 
 Tail = 2, 3
 Use(a, b, c) = a + b + c
 
-Use(1, Tail)    // bad arity: two argument boundaries
-Use(1, Tail*) // 6: Tail* spreads its items into the b and c slots
-Use(1*, Tail)  // bad arity: spreading the scalar 1 yields one item, so only two argument slots
+Use(1, Tail)    # bad arity: two argument boundaries
+Use(1, Tail*) # 6: Tail* spreads its items into the b and c slots
+Use(1*, Tail)  # bad arity: spreading the scalar 1 yields one item, so only two argument slots
 ```
 
 ---
@@ -600,13 +606,13 @@ An algorithm can be given a name using `=`. Named algorithms are called **proper
 
 <!-- spec:property-access-and-call -->
 ```
-// Define a property:
+# Define a property:
 Answer = 42
 
-// Property-style access:
+# Property-style access:
 Answer
 
-// Explicit zero-parameter call:
+# Explicit zero-parameter call:
 Answer()
 ```
 
@@ -670,8 +676,8 @@ When the property produces values that can change, property-style access and exp
 ```
 Fun = Math.Random(0, 1), Math.Random(0, 1)
 
-Fun, Fun     // property-style access: the same pair may be reused
-Fun(), Fun() // explicit calls: the body is evaluated again for each call
+Fun, Fun     # property-style access: the same pair may be reused
+Fun(), Fun() # explicit calls: the body is evaluated again for each call
 ```
 
 `Fun()` bypasses the zero-argument cache for `Fun` itself. It does not recursively force property-style references inside `Fun` to bypass their own caches. To request fresh nested values, write those nested calls explicitly with `()`:
@@ -679,11 +685,11 @@ Fun(), Fun() // explicit calls: the body is evaluated again for each call
 ```
 A = Math.RandomInt(0, 10)
 
-B = A, A        // uses cached/property-style A access
-C = A(), A()    // explicitly asks for fresh A values
+B = A, A        # uses cached/property-style A access
+C = A(), A()    # explicitly asks for fresh A values
 
-B()             // re-evaluates B, but A remains cached inside B
-C()             // re-evaluates C, and A() is fresh because it is explicit
+B()             # re-evaluates B, but A remains cached inside B
+C()             # re-evaluates C, and A() is fresh because it is explicit
 ```
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
@@ -810,20 +816,20 @@ A.count
 Parentheses around an empty-sequence literal are redundant grouping. They canonicalize to the same empty sequence value:
 
 ```
-()       // the empty sequence
-(())     // canonicalizes to ()
-((()))   // canonicalizes to ()
+()       # the empty sequence
+(())     # canonicalizes to ()
+((()))   # canonicalizes to ()
 ```
 
 They stay equal after parsing, assignment, display, and equality:
 
 <!-- spec:empty-eq-family -->
 ```
-() == ()      // 1
-() == (())    // 1
-() != (())    // 0
-count(())     // 0
-count((()))   // 0
+() == ()      # 1
+() == (())    # 1
+() != (())    # 0
+count(())     # 0
+count((()))   # 0
 ```
 
 #### `()` versus a no-output body
@@ -959,7 +965,7 @@ Construction preserves structure; selection projects content.
 ```
 Nums = 10, 20, 30, 40, 50
 
-// Select the third value (index 2):
+# Select the third value (index 2):
 Nums:2
 ```
 
@@ -1014,10 +1020,10 @@ A property call can be written with dot notation, placing the first argument bef
 ```
 Square = n * n
 
-// Standard call:
+# Standard call:
 Square(5)
 
-// Extension (dot-call) syntax:
+# Extension (dot-call) syntax:
 5.Square
 ```
 
@@ -1042,9 +1048,9 @@ Ordinary dot-call preserves the receiver as one leading argument boundary. A seq
 ```
 Add = a + b
 
-Add(3, 7)      // 10
-(3).Add(7)     // 10
-(3, 7).Add     // error: receiver stays one argument
+Add(3, 7)      # 10
+(3).Add(7)     # 10
+(3, 7).Add     # error: receiver stays one argument
 ```
 
 Use direct multi-argument syntax, or put one scalar receiver before the dot and the remaining arguments after the property name, when a user-defined algorithm expects several fixed parameters.
@@ -1089,8 +1095,8 @@ If the name is not found at any of these levels, KatLang treats it as an implici
 X = 1
 Inner = {
     Y = 2
-    // X is found at level 2 (parent chain)
-    // Y is found at level 1 (local)
+    # X is found at level 2 (parent chain)
+    # Y is found at level 1 (local)
     X + Y
 }
 Inner
@@ -1125,7 +1131,7 @@ Lib = {
     public X = 999
 }
 X = 1
-// X resolves to the local property, not to Lib.X:
+# X resolves to the local property, not to Lib.X:
 X
 ```
 
@@ -1224,7 +1230,7 @@ Only numeric values are supported. Applying `.string` to a non-numeric value (su
 Parameters are named in camelCase by convention to distinguish them from PascalCase property names.
 
 ```
-// 'x' is not defined as a property → it becomes a parameter
+# 'x' is not defined as a property → it becomes a parameter
 Add6 = x + 6
 
 Add6(3)
@@ -1240,7 +1246,7 @@ Add6(10)
 The order of implicit parameters is determined by their first appearance in the definition, reading left to right.
 
 ```
-// 'a' appears first, then 'b'
+# 'a' appears first, then 'b'
 Sub = a - b
 
 Sub(10, 3)
@@ -1251,7 +1257,7 @@ Sub(10, 3)
 Multiple parameters follow the same rule:
 
 ```
-// Three parameters in order of appearance: a, b, c
+# Three parameters in order of appearance: a, b, c
 WeightedSum = a * 2 + b * 3 + c * 5
 
 WeightedSum(1, 2, 3)
@@ -1274,7 +1280,7 @@ By contrast, this is invalid because `y` is not part of the closed explicit para
 
 ```
 Add(x) = x + y
-// error: y is not part of the closed explicit parameter list
+# error: y is not part of the closed explicit parameter list
 ```
 
 ### Collecting Explicit Parameters
@@ -1586,8 +1592,8 @@ Sometimes the natural reading order of parameters in a definition does not match
 Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later.
 
 ```
-// Without Grace, parameter order would be (y, x) since 'y' appears first.
-// ~x moves x one position earlier → call order: (x, y)
+# Without Grace, parameter order would be (y, x) since 'y' appears first.
+# ~x moves x one position earlier → call order: (x, y)
 Divide = y / ~x
 
 Divide(2, 10)
@@ -1623,7 +1629,7 @@ if(1 > 2, 1, 0)
 Combining `if` with properties:
 
 ```
-// Return 1 if n is divisible by 3, 0 otherwise
+# Return 1 if n is divisible by 3, 0 otherwise
 DivBy3 = if(n mod 3 == 0, 1, 0)
 
 DivBy3(9)
@@ -2381,10 +2387,10 @@ Results such as `acc, x` or any empty result are still invalid step outputs beca
 `repeat` is a builtin algorithm that takes three arguments: a step algorithm, a count, and an initial state. It runs the step algorithm the given number of times, feeding each output back as the next input.
 
 ```
-// Step: add 1 to x
+# Step: add 1 to x
 Increment = x + 1
 
-// Run 5 times starting from 0:
+# Run 5 times starting from 0:
 Increment.repeat(5, 0)
 ```
 
@@ -2393,11 +2399,11 @@ Increment.repeat(5, 0)
 Multi-output step algorithms maintain all outputs as state across iterations:
 
 ```
-// Accumulate a running sum of 1..4
-// State: (index, total)
+# Accumulate a running sum of 1..4
+# State: (index, total)
 Step = a + 1, total + a
 
-// Run 4 times starting from (a=1, total=0), then select total:
+# Run 4 times starting from (a=1, total=0), then select total:
 Step.repeat(4, 1, 0) : 1
 ```
 
@@ -2408,8 +2414,8 @@ Step.repeat(4, 1, 0) : 1
 **Factorial:**
 
 ```
-// State: (n, accumulator)
-// Each step: advance counter, multiply accumulator
+# State: (n, accumulator)
+# Each step: advance counter, multiply accumulator
 Fact = n + 1, acc * n
 
 Fact.repeat(5, 1, 1) : 1
@@ -2428,7 +2434,7 @@ Fact.repeat(5, 1, 1) : 1
 3. **Pre-check semantics:** the loop returns the state from the last iteration where the flag was non-zero. The iteration that produces flag `0` is never committed.
 
 ```
-// Step: decrement x, continue while x > 1
+# Step: decrement x, continue while x > 1
 Step = x - 1, x > 1
 
 Step.while(5)
@@ -2441,11 +2447,11 @@ When `Step` runs with `x = 1`, it would produce `(0, 0)` — the flag is `0`, so
 Multi-output state works the same way — only the last output is the continue-flag:
 
 ```
-// Sum multiples of 3 or 5 below 1000
-// State: (n, total) — last output is the continue flag
+# Sum multiples of 3 or 5 below 1000
+# State: (n, total) — last output is the continue flag
 Algo = n - 1, total + if(n mod 3 == 0 or n mod 5 == 0, n, 0), n > 2
 
-// Start from (n=999, total=0), select total:
+# Start from (n=999, total=0), select total:
 Algo.while(999, 0) : 1
 ```
 
@@ -2460,7 +2466,7 @@ Algo.while(999, 0) : 1
 A simple unit converter with one parameter:
 
 ```
-// Convert between temperature units
+# Convert between temperature units
 FtoC = (f - 32) * 5 / 9
 
 FtoC(212)
@@ -2482,10 +2488,10 @@ Computing both area and circumference of a circle:
 ```
 Circle = r * r * Math.Pi, 2 * r * Math.Pi
 
-// Call to get area and circumference as one sequence value:
+# Call to get area and circumference as one sequence value:
 Circle(5)
 
-// Pick just the area (index 0):
+# Pick just the area (index 0):
 Circle(5) : 0
 ```
 
@@ -2502,10 +2508,10 @@ Compute the sum of all numbers in a multi-value property using `repeat`:
 ```
 Numbers = 3, 5, 9, 1, 0, 6
 
-// Step: advance index, accumulate Numbers:a
+# Step: advance index, accumulate Numbers:a
 Step = a + 1, total + Numbers:a
 
-// Repeat once per element, then select the accumulated sum:
+# Repeat once per element, then select the accumulated sum:
 repeat(Step, Numbers.count, 0, 0) : 1
 ```
 
@@ -2516,10 +2522,10 @@ repeat(Step, Numbers.count, 0, 0) : 1
 Compute the Nth Fibonacci number:
 
 ```
-// State: (a, b) — consecutive Fibonacci numbers
+# State: (a, b) — consecutive Fibonacci numbers
 Fib = b~, a + b
 
-// 10 steps starting from (0, 1), take the first value:
+# 10 steps starting from (0, 1), take the first value:
 Fib.repeat(10, 0, 1) : 0
 ```
 
@@ -2539,10 +2545,10 @@ Fixed calls preserve argument expression boundaries. If a property expects multi
 Sum3 = a + b + c
 Input = 1, 2, 3
 
-// Input is one argument expression, so this is bad arity:
+# Input is one argument expression, so this is bad arity:
 Sum3(Input)
 
-// Explicit forms:
+# Explicit forms:
 Sum3(Input:0, Input:1, Input:2)
 Sum3(1, 2, 3)
 ```
@@ -2552,10 +2558,10 @@ Both explicit forms produce `6`.
 Algorithms can also be passed as callable values:
 
 ```
-// Apply takes a callable 'f' and calls it with 9
+# Apply takes a callable 'f' and calls it with 9
 Apply = f(9)
 
-// Pass an algorithm that adds 1 to its argument:
+# Pass an algorithm that adds 1 to its argument:
 Apply{a + 1}
 ```
 
@@ -3370,8 +3376,8 @@ Repeating a binder name within one pattern adds an equality constraint. The firs
 Equal(x, x) = 1
 Equal(x, y) = 0
 
-Equal(1, 1)  // 1
-Equal(1, 2)  // 0
+Equal(1, 1)  # 1
+Equal(1, 2)  # 0
 ```
 
 This also works inside sequence-value parameter patterns such as `SamePair((x, x))`. Repeated names involving a collecting binding, such as `F(*xs, xs)`, are not supported.
@@ -3399,7 +3405,7 @@ A bare variable without parentheses matches anything, including a sequence value
 ```
 Loose(a, b) = a
 
-// b binds to the entire sequence value (2, 3):
+# b binds to the entire sequence value (2, 3):
 Loose(1, (2, 3))
 ```
 
@@ -3408,7 +3414,7 @@ Loose(1, (2, 3))
 But a parenthesized single variable `(b)` is a 1-element sequence-value pattern — it only matches a single value, not a multi-element sequence value:
 
 ```
-// (b) does not match (2, 3) because arities differ:
+# (b) does not match (2, 3) because arities differ:
 Strict(a, (b)) = a
 Strict(1, (2, 3))
 ```
@@ -3537,13 +3543,13 @@ F(999)
 Algorithms can be loaded from URLs using `load`. The loaded algorithm becomes a property whose public sub-properties you access with dot syntax.
 
 ```
-// Load and bind to property 'Lib':
+# Load and bind to property 'Lib':
 Lib = load('https://katlang.org/algorithm.kat')
 
-// Access a public property 'X' from the loaded algorithm:
+# Access a public property 'X' from the loaded algorithm:
 Lib.X + 3
 
-// Use the second output value of the loaded algorithm (index 1):
+# Use the second output value of the loaded algorithm (index 1):
 Lib:1 + 10
 ```
 
@@ -3560,7 +3566,7 @@ The `open` keyword makes all **public** properties of a target algorithm availab
 ```
 open 'https://katlang.org/algorithm.kat'
 
-// X is now directly accessible:
+# X is now directly accessible:
 X + 3
 ```
 
@@ -3629,11 +3635,11 @@ Sqrt(16)
 By default, properties are private — accessible within their own algorithm and its children, but not visible to outside callers who load or open the algorithm. Marking a property `public` makes it eligible for external exposure, but a property is exported only if it is self-contained. A nested property is not exported if it depends on parameters owned by an enclosing algorithm, or if it is defined inside a conditional algorithm branch.
 
 ```
-// In a library algorithm:
+# In a library algorithm:
 public Area = r * r * Math.Pi
 public Kind(0) = 'zero'
-public Kind(x) = 'nonzero'   // visibility is family-level: every clause is public or none
-Helper = Area / 2   // private — not visible to callers
+public Kind(x) = 'nonzero'   # visibility is family-level: every clause is public or none
+Helper = Area / 2   # private — not visible to callers
 ```
 
 Only `public` exported properties are exposed through `load` and `open`.
@@ -3650,26 +3656,26 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 
   ```
-  // Wrong — no way to declare 'b' to discard; calling with two args fails:
+  # Wrong — no way to declare 'b' to discard; calling with two args fails:
   KeepFirst = a
-  KeepFirst(42, 999)  // error: too many arguments
+  KeepFirst(42, 999)  # error: too many arguments
 
-  // Right — 'b' is bound by the explicit parameter pattern but never used:
+  # Right — 'b' is bound by the explicit parameter pattern but never used:
   KeepFirst(a, b) = a
-  KeepFirst(42, 999) // Result: 42
+  KeepFirst(42, 999) # Result: 42
   ```
 - **Property redefinition:** defining the same property name twice is an error — properties are immutable bindings, not reassignable variables:
 
   ```
   A = 5
-  A = 6  // error: Property 'A' is already defined
+  A = 6  # error: Property 'A' is already defined
   ```
 
 - **Duplicate branch patterns:** two conditional branches with match-equivalent patterns are rejected because the second branch would be unreachable under first-match semantics. Binder spelling does not matter, but repeated-name equality relationships do:
 
   ```
   F(x) = x + 1
-  F(y) = y + 2  // error: duplicate branch pattern
+  F(y) = y + 2  # error: duplicate branch pattern
   ```
 
   `F(x, x)` and `F(a, a)` are also equivalent, while `F(x, x)` and `F(a, b)` are distinct because only the first pattern requires equal arguments.
@@ -3678,7 +3684,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 
   ```
   F(0) = 1
-  F(x) = x + 1  // OK — 0 and a variable are not equivalent
+  F(x) = x + 1  # OK — 0 and a variable are not equivalent
   ```
 
 - **Recursion depth:** evaluation bounds how many algorithm calls may be active at once, so a runaway recursion reports an error instead of taking the host process down with it. A missing base case, a mutual cycle (`f` calls `g` calls `f`), and a self-referential property (`A = A`) all stop the same way:
@@ -3687,7 +3693,7 @@ Only `public` exported properties are exposed through `load` and `open`.
   f(0) = 0
   f(n) = f(n - 1)
 
-  f(1000)  // error: Evaluation recursion limit of 128 was exceeded
+  f(1000)  # error: Evaluation recursion limit of 128 was exceeded
   ```
 
   This is a host runtime limit, not a language rule: a program that finishes within the limit produces exactly the result it always did. Recursion deeper than the limit needs an iterative form — `repeat` or `while` — which repeats work without stacking up calls.
@@ -3697,7 +3703,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **Collection size:** one sequence or list can hold up to 100,000 items. A request for more is rejected before anything is allocated, so an accidental extra zero costs you an error message rather than the whole process:
 
   ```
-  range(1, 10000000)  // error: Collection size limit of 100000 items was exceeded; requested 10000000 items
+  range(1, 10000000)  # error: Collection size limit of 100000 items was exceeded; requested 10000000 items
   ```
 
   This counts the items of a single collection, so nesting is fine — `[[1, 2], [3, 4]]` is three small collections, not one big one. Like the recursion limit it is a host runtime limit, not a language rule: results within the limit are exactly what they always were.
@@ -3708,7 +3714,7 @@ Only `public` exported properties are exposed through `load` and `open`.
   Values = range(1, 200)
   L0 = [Values, Values]
   L1 = [L0, L0]
-  // ... a few more lines and the printed form is megabytes
+  # ... a few more lines and the printed form is megabytes
 
   ```
 

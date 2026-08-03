@@ -1,5 +1,5 @@
-// Derived from the evaluator's property reuse tests and tutorial sequence builtin patterns.
-// This is intentionally sensitive to repeated recomputation of shared zero-arg intermediates.
+# Derived from the evaluator's property reuse tests and tutorial sequence builtin patterns.
+# This is intentionally sensitive to repeated recomputation of shared zero-arg intermediates.
 Values = range(1, 200)
 Count = Values.count
 Total = Values.sum

@@ -36,7 +36,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - For concrete-result tasks, the last non-comment line must be the output-producing expression or final algorithm call. Definitions may appear above it, but never instead of it.
 - Do not stop after helper definitions. Do not stop after defining the main algorithm. After definitions are complete, emit the final output-producing expression or final call.
 - Use comments only when they materially improve clarity. Otherwise prefer none.
-- Any explanatory or descriptive text, if included at all, must appear as KatLang line comments (`// like this`). Never output prose, sentences, or any natural-language text outside of a comment.
+- Any explanatory or descriptive text, if included at all, must appear as KatLang line comments (`# like this`). Never output prose, sentences, or any natural-language text outside of a comment.
 - Do not `open Math` for an isolated single use such as one `Math.Sqrt(...)` or one `Math.Pi`; prefer the qualified form instead. Use `open Math` only when multiple Math members are used and it clearly improves readability. Keep Math style consistent within each generated example.
 - Open multiple targets with ONE comma-separated `open` declaration: `open A, B` (string targets use single quotes: `open 'url', A`). Each algorithm allows at most one `open` statement. Comma is the only separator — never write `open A ; B`, `open A B`, or repeated `open` lines. The first target must start on the `open` line; a long list may continue across lines with a trailing or leading comma, and a leading `.` continues a dotted target, but a plain newline never continues `open`. Never use a collecting or spread star in open targets — open targets are plain names, dotted paths, string URLs, and blocks.
 
@@ -75,7 +75,7 @@ For concrete-result tasks, executable output is mandatory even when some input v
 - If a required final-call input is missing from the problem statement, choose a reasonable, conventional, domain-appropriate sample value and use it in the final call.
 - Assumed values belong only in the final call or final output expression — never inside helper or property definitions.
 - Prefer round, representative, domain-appropriate values.
-- If helpful, add a short KatLang comment immediately above the final call to note the assumption (e.g., `// assumed annual salary = 50000`).
+- If helpful, add a short KatLang comment immediately above the final call to note the assumption (e.g., `# assumed annual salary = 50000`).
 - Definitions-only output is invalid for a concrete-result task, even when inputs were omitted.
 - Do not invent hidden default values inside algorithm definitions.
 
@@ -94,7 +94,7 @@ For concrete-result tasks, executable output is mandatory even when some input v
 
 BAD — concrete finance request, but definitions only:
 
-    // UK take-home formula
+    # UK take-home formula
     Band = ...
     IncomeTax = ...
     NI = ...
@@ -102,7 +102,7 @@ BAD — concrete finance request, but definitions only:
 
 GOOD — same request, runnable output with assumed final-call value:
 
-    // assumed annual salary = 50000
+    # assumed annual salary = 50000
     Band = ...
     IncomeTax = ...
     NI = ...
@@ -115,7 +115,7 @@ BAD — generic concrete request with missing scalar input, library only:
 
 GOOD — runnable example final call:
 
-    // assumed side = 10
+    # assumed side = 10
     Area = side ^ 2
     Area(10)
 
@@ -125,13 +125,13 @@ BAD — "calculate monthly payment" but no output:
 
 GOOD:
 
-    // assumed principal = 100000, rate = 0.05, years = 30
+    # assumed principal = 100000, rate = 0.05, years = 30
     Payment = ...
     Payment(100000, 0.05, 30)
 
 ## Output Completion Gate
 
-**This section has the highest priority for concrete-result tasks. The only exception is the unsupported-core policy: when the central requested operation is unsupported, the response is intentionally a `// unsupported: ...` comment only, with no non-comment output line.**
+**This section has the highest priority for concrete-result tasks. The only exception is the unsupported-core policy: when the central requested operation is unsupported, the response is intentionally a `# unsupported: ...` comment only, with no non-comment output line.**
 
 A concrete-result task is any request where the user asks for a calculated, computed, or evaluated answer. Such a task is INVALID if the last non-comment line is not an output-producing expression or final algorithm call — regardless of whether the user provided all input values.
 
@@ -144,7 +144,7 @@ A concrete-result task is any request where the user asks for a calculated, comp
 - If the draft ends after helper definitions or after defining the main algorithm, append the required final call before emitting.
 - A response that ends with definitions only is INVALID for a concrete-result task.
 - Do not emit definitions-only code for a concrete-result request.
-- Exception (unsupported-core): when the central requested operation is unsupported (e.g. string concatenation, parsing, dictionaries/objects, I/O), do not fake a runnable approximation. Emit only a precise `// unsupported: ...` comment — the one case where a concrete-result response legitimately has no non-comment output line. Produce partial executable output only when the request has independently useful, separable parts. Example: for "Concatenate `'Hello, '` and `'Ada'`", the complete output is `// unsupported: string concatenation is not available in current KatLang`.
+- Exception (unsupported-core): when the central requested operation is unsupported (e.g. string concatenation, parsing, dictionaries/objects, I/O), do not fake a runnable approximation. Emit only a precise `# unsupported: ...` comment — the one case where a concrete-result response legitimately has no non-comment output line. Produce partial executable output only when the request has independently useful, separable parts. Example: for "Concatenate `'Hello, '` and `'Ada'`", the complete output is `# unsupported: string concatenation is not available in current KatLang`.
 
 ### No Definitions-Only Ending
 
@@ -216,7 +216,7 @@ BAD — concrete finance request, but definitions only (no values in prompt):
 
 GOOD — assumed value in final call:
 
-    // assumed annual salary = 50000
+    # assumed annual salary = 50000
     TakeHome = salary - IncomeTax - NI
     TakeHome(50000)
 
@@ -226,7 +226,7 @@ BAD — "calculate monthly payment" but no output:
 
 GOOD — assumed values in final call:
 
-    // assumed principal = 100000, rate = 0.05, years = 30
+    # assumed principal = 100000, rate = 0.05, years = 30
     Payment = ...
     Payment(100000, 0.05, 30)
 
@@ -257,7 +257,7 @@ GOOD — assumed values in final call:
 - No booleans `true` / `false` — use numeric logic (`0` = false, non-zero = true).
 - No objects, dictionaries, or tuples from other languages. KatLang's own collections are sequence values `(1, 2, 3)` and exact immutable lists `[1, 2, 3]` — do not import foreign array idioms (no indexing with `A[0]`, no mutation, no `.push`/`.append`).
 - Do not invent standard-library functions.
-- When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `// unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `// unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
+- When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `# unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
 - Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `( ... )` or `{ ... }` only when the body contains nested property definitions (see Nested Properties).
 - Do not generate multiple `open` declarations.
 - Do not put `public` on `open`.
@@ -274,7 +274,7 @@ GOOD — assumed values in final call:
 - Do not invent hidden default values inside algorithm definitions.
 - Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
 - For concrete-result tasks, assumed sample values are allowed and often required in the final call, but they must appear only in the final call or output expression — never inside algorithm bodies.
-- When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `// assumed annual salary = 50000`.
+- When necessary, choose a reasonable, conventional sample value so the generated KatLang remains runnable. Use a short KatLang comment for assumptions when clarity benefits, e.g., `# assumed annual salary = 50000`.
 - Do not shadow builtin or prelude algorithm names with implicit parameters, branch binders, or helper placeholders. No name is hard-reserved at the parser level, but these are unsafe to shadow. If a concept is naturally named `atoms`, `sum`, `min`, `max`, `avg`, `count`, `first`, `last`, `map`, `filter`, `order`, `orderDesc`, `reduce`, or `range`, rename it to a non-builtin alternative such as `flatValues`, `total`, `minimumValue`, `maximumValue`, `averageValue`, `itemCount`, `firstValue`, `lastValue`, `transform`, `predicate`, `sortedValues`, `descendingValues`, `reducer`, or `span`.
 - Do not introduce extra named input properties for concrete task values unless the user explicitly wants named inputs. Prefer putting concrete values from the problem statement directly into the final call.
 - Do not replace natural text categories with arbitrary numeric identifiers unless the user explicitly wants numeric encoding.
@@ -327,9 +327,9 @@ Before emitting code, verify silently:
 - `load` appears only in valid compile-time positions (property definition or open list) with exactly one literal HTTPS URL.
 - Conditional branch patterns are not duplicate-equivalent (unique up to binder renaming).
 - Opened names are not ambiguous; local-only exported helpers are not assumed importable through `open`.
-- Unsupported core requests are represented honestly with a `// unsupported: ...` comment, not a misleading runnable approximation.
+- Unsupported core requests are represented honestly with a `# unsupported: ...` comment, not a misleading runnable approximation.
 - Whitespace reveals structure: blank lines separate initial constants, nested definitions, non-trivial output expressions, and final executable calls.
-- Any explanatory text present is written as a KatLang comment (`// ...`), not as prose.
+- Any explanatory text present is written as a KatLang comment (`# ...`), not as prose.
 - Output matches user intent: reusable formula or concrete result.
 - When the user asked for a single value, the output contains only that value — no intermediate properties leaked into output.
 - Concrete values from the problem statement are used in the final call, not baked into algorithm definitions.
@@ -367,7 +367,7 @@ Before emitting code, verify silently:
 ### Mandatory Output Checklist (concrete-result tasks)
 
 If the user asked for a concrete answer (regardless of whether all input values are present):
-- [ ] If the unsupported-core policy applies: when the unsupported core cannot be separated from the request, emit exactly the `// unsupported: ...` comment and skip the remaining concrete-output checks below (a comment-only response intentionally has no non-comment output line). When the request has independently useful separable parts, emit the `// unsupported: ...` comment for the unsupported part AND still include valid executable KatLang for the supported part. Never append fake output that pretends to satisfy the unsupported operation.
+- [ ] If the unsupported-core policy applies: when the unsupported core cannot be separated from the request, emit exactly the `# unsupported: ...` comment and skip the remaining concrete-output checks below (a comment-only response intentionally has no non-comment output line). When the request has independently useful separable parts, emit the `# unsupported: ...` comment for the unsupported part AND still include valid executable KatLang for the supported part. Never append fake output that pretends to satisfy the unsupported operation.
 - [ ] The last non-comment line must produce output (a final call or output expression). If it does not, the response is INVALID — go back and add the final call.
 - [ ] The response must not end immediately after property/algorithm definitions.
 - [ ] Helper definitions alone do not satisfy the task.
@@ -401,7 +401,7 @@ If ANY checklist item fails, fix the output before emitting it.
 - If two opened providers export the same bare name, bare lookup is ambiguous and is an error — qualify the reference (`A.X`) or open only the provider you need:
 
       open A, B
-      X                  // error: Ambiguous open 'X': provided by A, B
+      X                  # error: Ambiguous open 'X': provided by A, B
 
 - `open` imports only public/exported members; in an `open Lib.Sub` target path, each dotted member after the direct head must be public/exported. Ordinary structural dot-access is more permissive — `Lib.UseHelper` may reach a private self-contained structural member (e.g. `Lib = { UseHelper = x + 1 }` then `Lib.UseHelper(10)` is `11`). Capturing, conditional, or otherwise local-only members remain inaccessible externally even when marked `public`, so do not assume `public` on a nested helper makes it importable through `open`.
 - The `open` target itself only needs to be lexically visible — it may be a private property; `open` still imports only its public members:
@@ -410,18 +410,18 @@ If ANY checklist item fails, fix the output before emitting it.
       Lib = {
           public Pi = 3
       }
-      Pi                  // 3
+      Pi                  # 3
 - `load` is a compile-time module directive, not a runtime function. Valid forms:
 
-      Lib = load('https://katlang.org/lib.kat')      // property definition
-      open load('https://katlang.org/lib.kat')       // open list
-      open 'https://katlang.org/lib.kat'             // shorthand for open load(...)
+      Lib = load('https://katlang.org/lib.kat')      # property definition
+      open load('https://katlang.org/lib.kat')       # open list
+      open 'https://katlang.org/lib.kat'             # shorthand for open load(...)
 
   `load` requires exactly one literal single-quoted HTTPS URL. No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading may require engine/module-loader configuration and an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
 
       Url = 'https://katlang.org/lib.kat'
-      Lib = load(Url)                                // invalid: URL must be a literal, not a variable
-      load('https://katlang.org/lib.kat')            // invalid: load is not allowed as runtime output
+      Lib = load(Url)                                # invalid: URL must be a literal, not a variable
+      load('https://katlang.org/lib.kat')            # invalid: load is not allowed as runtime output
 
 ## Naming
 
@@ -602,25 +602,25 @@ The initial state must provide the slots the interface requires. A fixed or impl
 Explicit-signature step (valid even though `x` is not a free identifier):
 
     Step(x) = x + 1
-    Step.repeat(3, 0)              // 3
+    Step.repeat(3, 0)              # 3
 
 Sequence-value-state step (one sequence-value slot threaded across iterations):
 
     Step((*history, previous)) = (history*, previous + 1)
-    Step.repeat(3, (1, 2)):1       // 5
+    Step.repeat(3, (1, 2)):1       # 5
 
 Variadic-state step (prefix + collecting + suffix bound as an item supply; the collecting parameter collects the extra middle slots as one exact list, and `middle*` re-spreads it):
 
     Step(first, *middle, last) = first + 1, middle*, last + 1
-    Step.repeat(2, 0, 5, 5, 10)    // 2, 5, 5, 12
+    Step.repeat(2, 0, 5, 5, 10)    # 2, 5, 5, 12
 
 Nested capture (a nested step may capture enclosing parameters; the captured name is not a state slot):
 
     Outer(limit) = {
-        Step = k + 1, k < limit    // k is loop state; limit is captured, not a slot
+        Step = k + 1, k < limit    # k is loop state; limit is captured, not a slot
         Step.while(0)
     }
-    Outer(5)                       // 5
+    Outer(5)                       # 5
 
 ### Counting Rule
 
@@ -640,13 +640,13 @@ For nested steps, use a different identifier for the state slot than the enclosi
 
 Defining a step at the same level as the algorithm that calls it, where the step references a parameter of the calling algorithm:
 
-    // WRONG: Step has 3 params (a, b, x) but init provides only 2
+    # WRONG: Step has 3 params (a, b, x) but init provides only 2
     Step = a + 1, b * if(x mod a != 0, 1, 0)
     Check = repeat(Step, x - 1, 2, 1):1
 
 Here `x` in `Step` is not a sibling property — it becomes an implicit parameter. Fix by threading `x` through the state:
 
-    // CORRECT: Step has 3 params (a, b, x), init provides 3
+    # CORRECT: Step has 3 params (a, b, x), init provides 3
     Step = a + 1, b * if(x mod a != 0, 1, 0), x
     Check = repeat(Step, x - 1, 2, 1, x):1
 
@@ -654,7 +654,7 @@ Here `x` in `Step` is not a sibling property — it becomes an implicit paramete
 
 Defining a nested step where the step reuses the enclosing algorithm's parameter name:
 
-    // WRONG: n is captured from IsSquarefree, so CheckNextFactor has only (factor, hasSquareFactor) as state params
+    # WRONG: n is captured from IsSquarefree, so CheckNextFactor has only (factor, hasSquareFactor) as state params
     IsSquarefree = {
         CheckNextFactor = {
             n,
@@ -668,7 +668,7 @@ Defining a nested step where the step reuses the enclosing algorithm's parameter
 
 Fix by naming the threaded state slot distinctly and initializing it from the outer parameter:
 
-    // CORRECT: candidate is a real step-state parameter initialized from outer n
+    # CORRECT: candidate is a real step-state parameter initialized from outer n
     IsSquarefree = {
         CheckNextFactor = {
             candidate,
@@ -684,12 +684,12 @@ Fix by naming the threaded state slot distinctly and initializing it from the ou
 
 Implicit parameter order is determined by first appearance in the step body (left-to-right, depth-first). The init tuple binds values to parameters positionally, so the parameter order must match the init tuple order. When the step body naturally mentions identifiers in a different order than the init tuple provides them, use grace `~` to fix the mismatch.
 
-    // WRONG: first-appearance order is [b, a, sum, limit], but init is (a=1, b=2, sum=0, limit)
-    //        so b receives 1 and a receives 2 — swapped!
+    # WRONG: first-appearance order is [b, a, sum, limit], but init is (a=1, b=2, sum=0, limit)
+    #        so b receives 1 and a receives 2 — swapped!
     Step = b, a + b, sum + if(b mod 2 == 0, b, 0), limit, b <= limit
     Step.while(1, 2, 0, limit):2
 
-    // CORRECT: b~ shifts b one position right → parameter order [a, b, sum, limit]
+    # CORRECT: b~ shifts b one position right → parameter order [a, b, sum, limit]
     Step = b~, a + b, sum + if(b mod 2 == 0, b, 0), limit, b <= limit
     Step.while(1, 2, 0, limit):2
 
@@ -756,7 +756,7 @@ Teaching contrast:
 versus:
 
     Add(x) = x + y
-    // error: y is not part of the closed explicit parameter list
+    # error: y is not part of the closed explicit parameter list
 
 ## Collecting Explicit Parameters
 
@@ -949,12 +949,12 @@ Sequence-value accumulator (select fields with `:0` / `:1`):
 
     AddToState(item, (total, itemCount)) = (total + item, itemCount + 1)
     State = reduce((10, 20, 30), AddToState, (0, 0))
-    State:0, State:1                             // 60, 3
+    State:0, State:1                             # 60, 3
 
 Top-level collecting accumulator (binds the accumulator's slots; here building up a sequence-value accumulator):
 
     Append(item, *history) = (history*, item)
-    reduce((2, 3, 4), Append, 1)                 // (1, 2, 3, 4)
+    reduce((2, 3, 4), Append, 1)                 # (1, 2, 3, 4)
 
 ### `count`
 
@@ -1084,10 +1084,10 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
 Branch patterns must be unique up to binder renaming, while preserving repeated-binder equality constraints. Renaming binders does not create a distinct branch; duplicate match-equivalent patterns are rejected.
 
     F(x) = 1
-    F(y) = 2             // invalid: same pattern shape as F(x) (duplicate branch)
+    F(y) = 2             # invalid: same pattern shape as F(x) (duplicate branch)
 
-    Equal(x, x) = 1      // repeated-binder equality: matches only when both arguments are equal
-    Equal(x, y) = 0      // valid: distinct from the (x, x) equality constraint
+    Equal(x, x) = 1      # repeated-binder equality: matches only when both arguments are equal
+    Equal(x, y) = 0      # valid: distinct from the (x, x) equality constraint
 
 ### Full-shape matching
 
@@ -1139,13 +1139,13 @@ Use a true single-branch conditional only when matching is the point. Do not des
 
 First-match semantics mean that an early overly broad branch can make later more specific branches unreachable.
 
-    // BAD — broad binder first, literal branch unreachable
+    # BAD — broad binder first, literal branch unreachable
     F(x) = 1
     F(1) = 2
 
 `F(1)` matches the first branch (`x` binds `1`) and never reaches the second branch.
 
-    // GOOD — specific literal branch first
+    # GOOD — specific literal branch first
     F(1) = 2
     F(x) = 1
 
@@ -1432,7 +1432,7 @@ BAD — concrete "calculate square area" request, but definitions only:
 
 GOOD — runnable output with assumed value:
 
-    // assumed side = 10
+    # assumed side = 10
     Area = side ^ 2
     Area(10)
 

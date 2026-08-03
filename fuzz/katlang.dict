@@ -34,7 +34,7 @@ op_colon=":"
 op_dot="."
 op_tilde="~"
 op_quote="'"
-op_comment="//"
+op_comment="#"
 
 # ── Delimiters, single and paired (incl. empty forms) ───────────────────────
 lparen="("

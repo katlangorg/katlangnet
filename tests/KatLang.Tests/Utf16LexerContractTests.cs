@@ -307,27 +307,33 @@ public class Utf16LexerContractTests
     [Fact]
     public void CommentsRunToALineFeedOrACarriageReturn_AndThereAreNoBlockComments()
     {
-        Assert.Equal(" x", CommentOf("// x\n1"));
-        Assert.Equal(" x", CommentOf("// x\r\n1"));
-        Assert.Equal(" x", CommentOf("// x\rP = 1"));
-        Assert.Equal(" x", CommentOf("// x"));                    // running to end of file
+        Assert.Equal(" x", CommentOf("# x\n1"));
+        Assert.Equal(" x", CommentOf("# x\r\n1"));
+        Assert.Equal(" x", CommentOf("# x\rP = 1"));
+        Assert.Equal(" x", CommentOf("# x"));                     // running to end of file
 
         // There is no /* ... */ form: the characters lex individually.
         var (_, diagnostics) = Lexer.Tokenize("/* x */");
         Assert.Empty(diagnostics);                                // '/' and '*' are real operators
         var (tokens, _) = Lexer.Tokenize("/* x */");
         Assert.DoesNotContain(tokens, t => t.Kind == TokenKind.Comment);
+
+        // The former `//` marker is gone: both slashes lex as division tokens.
+        var (formerTokens, formerDiagnostics) = Lexer.Tokenize("// x");
+        Assert.Empty(formerDiagnostics);
+        Assert.DoesNotContain(formerTokens, t => t.Kind == TokenKind.Comment);
+        Assert.Equal(2, formerTokens.Count(t => t.Kind == TokenKind.Slash));
     }
 
     [Fact]
     public void CommentTextIsTheExactSourceSliceAndCannotDisturbTheFollowingToken()
     {
-        const string source = "// \uD83D \u0301\n1";
+        const string source = "# \uD83D \u0301\n1";
         var (tokens, _) = Lexer.Tokenize(source);
 
         var comment = Assert.Single(tokens, t => t.Kind == TokenKind.Comment);
         Assert.Equal(" \uD83D \u0301", comment.StringValue);
-        Assert.Equal(source[comment.Position..(comment.Position + comment.Length)][2..], comment.StringValue);
+        Assert.Equal(source[comment.Position..(comment.Position + comment.Length)][1..], comment.StringValue);
 
         // The token after the comment is exactly where it would be without it.
         var following = Assert.Single(tokens, t => t.Kind == TokenKind.Number);
@@ -338,10 +344,10 @@ public class Utf16LexerContractTests
     [Fact]
     public void ACommentOnlySourceIsDeterministicAndProducesNoProgram()
     {
-        var syntax = Parser.ParseSyntax("// only a comment");
+        var syntax = Parser.ParseSyntax("# only a comment");
         Assert.Empty(syntax.Diagnostics);
 
-        var again = Parser.ParseSyntax("// only a comment");
+        var again = Parser.ParseSyntax("# only a comment");
         Assert.Equal(
             FrontEndFingerprint.ComputeParseResult(syntax.Root, syntax.Diagnostics),
             FrontEndFingerprint.ComputeParseResult(again.Root, again.Diagnostics));
@@ -370,7 +376,7 @@ public class Utf16LexerContractTests
         foreach (var source in new[]
                  {
                      "\uD83D", "\uDE00", "\uD83D\uDE00", " ", "\u0301", "\uFEFF",
-                     "'\uD83D", "// \uD83D", "a\rb\uD83D", "\uD83D\n\uDE00", "\uFF10", "!",
+                     "'\uD83D", "# \uD83D", "// \uD83D", "a\rb\uD83D", "\uD83D\n\uDE00", "\uFF10", "!",
                  })
         {
             var widths = SourceSpanValidator.LineWidths(source);

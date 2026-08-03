@@ -247,10 +247,10 @@ internal static class Utf16Executor
                     $"Identifier token text is not its source slice: token={HexOf(token.StringValue ?? "")} " +
                     $"source={HexOf(slice)}");
 
-            case TokenKind.Comment when !string.Equals(token.StringValue, slice[2..], StringComparison.Ordinal):
+            case TokenKind.Comment when !string.Equals(token.StringValue, slice[1..], StringComparison.Ordinal):
                 throw new Utf16InvariantException(
-                    $"Comment token text is not its source slice after '//': token={HexOf(token.StringValue ?? "")} " +
-                    $"source={HexOf(slice[2..])}");
+                    $"Comment token text is not its source slice after '#': token={HexOf(token.StringValue ?? "")} " +
+                    $"source={HexOf(slice[1..])}");
 
             case TokenKind.StringLiteral:
                 {

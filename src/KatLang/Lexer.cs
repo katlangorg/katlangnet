@@ -2,7 +2,10 @@ namespace KatLang;
 
 /// <summary>
 /// Tokenizes a KatLang source string into a list of tokens.
-/// Integers only (no floats). Comments start with <c>//</c>.
+/// Digit-leading base-10 numeric literals may include a fractional part, a lowercase
+/// <c>e</c> exponent with an optional sign, and underscore separators within digit runs.
+/// The C# runtime stores numeric values as <c>decimal</c>; the Lean core intentionally
+/// models numeric semantics abstractly with <c>Int</c>. Comments start with <c>#</c>.
 /// </summary>
 public static class Lexer
 {
@@ -28,16 +31,19 @@ public static class Lexer
             }
 
             // Comments — emitted as Comment tokens so callers (e.g. colorizers) can use them.
-            // The parser skips them via its navigation helpers.
-            if (c == '/' && i + 1 < source.Length && source[i + 1] == '/')
+            // The parser skips them via its navigation helpers. A '#' starts a comment
+            // regardless of what precedes it (whitespace before '#' is not required);
+            // the comment ends before the next newline, which keeps its normal
+            // line-boundary semantics, or at end of source.
+            if (c == '#')
             {
                 var commentStart = i;
                 var commentLine = line;
                 var commentCol = col;
-                i += 2; col += 2;
+                i += 1; col += 1;
                 while (i < source.Length && source[i] != '\n' && source[i] != '\r')
                 { i++; col++; }
-                var commentText = source[(commentStart + 2)..i]; // text after the leading //
+                var commentText = source[(commentStart + 1)..i]; // text after the leading #
                 tokens.Add(Token.CreateComment(commentText, commentStart, i - commentStart, commentLine, commentCol));
                 continue;
             }

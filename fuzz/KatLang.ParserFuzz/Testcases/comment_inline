@@ -1,1 +1,1 @@
-x = 1 // trailing comment
+x = 1 # trailing comment

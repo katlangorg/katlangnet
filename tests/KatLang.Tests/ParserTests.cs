@@ -711,7 +711,7 @@ public class ParserTests
             """
             A = range(1, 3)
 
-            A* // a newline never continues a closed expression
+            A* # a newline never continues a closed expression
             A
             """);
 
@@ -761,7 +761,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            F(x*) // the physical line ends with ')' before the comment
+            F(x*) # the physical line ends with ')' before the comment
             y
             """);
 
@@ -795,7 +795,7 @@ public class ParserTests
     {
         var result = Parser.ParseSyntax(
             """
-            (x*) // the physical line ends with ')' before the comment
+            (x*) # the physical line ends with ')' before the comment
             y
             """);
 
@@ -1515,7 +1515,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("Pair = 1, 2\nPair\n:0")]
-    [InlineData("Pair = 1, 2\nPair // comment\n:0")]
+    [InlineData("Pair = 1, 2\nPair # comment\n:0")]
     public void Parse_ColonLedLineAfterOutputRow_IsRejectedNotPostfixContinuation(string source)
     {
         // Same boundary in root output: `Pair` newline `:0` is not the index
@@ -1558,7 +1558,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A\n-1")]
-    [InlineData("A // comment\n-1")]
+    [InlineData("A # comment\n-1")]
     public void Parse_MinusLedLineAfterOutputRow_IsAdjacencyRowNotSubtraction(string source)
     {
         // A binary operator never continues a closed expression across a
@@ -1575,7 +1575,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("P = A\n-1")]
-    [InlineData("P = A // comment\n-1")]
+    [InlineData("P = A # comment\n-1")]
     public void Parse_MinusLedLineAfterDefinitionBody_IsOutputRowNotBodySubtraction(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1590,7 +1590,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("F(A\n-1)")]
-    [InlineData("F(A // comment\n-1)")]
+    [InlineData("F(A # comment\n-1)")]
     public void Parse_MinusLedLineInCallArguments_JoinsAsOneArgument(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1604,7 +1604,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("F\n(1)")]
-    [InlineData("F // comment\n(1)")]
+    [InlineData("F # comment\n(1)")]
     public void Parse_CommentBeforeParenLedLine_DoesNotEnableCallContinuation(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1632,7 +1632,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A\n~B")]
-    [InlineData("A // comment\n~B")]
+    [InlineData("A # comment\n~B")]
     public void Parse_TildeLedLine_IsPrefixGraceRowNotPostfixContinuation(string source)
     {
         // A physical newline never continues a closed expression into
@@ -1702,7 +1702,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("P\n= 1\nP")]
-    [InlineData("P // comment\n= 1\nP")]
+    [InlineData("P # comment\n= 1\nP")]
     public void Parse_CommentBeforeEqualsLine_StillParsesPropertyDefinition(string source)
     {
         // Declaration lookahead skips comments: a trailing comment before
@@ -1717,7 +1717,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("public P\n= 1\nP")]
-    [InlineData("public P // comment\n= 1\nP")]
+    [InlineData("public P # comment\n= 1\nP")]
     public void Parse_CommentInPublicPropertyHeader_StillParsesPublicDefinition(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1730,7 +1730,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("Output\n= 1")]
-    [InlineData("Output // comment\n= 1")]
+    [InlineData("Output # comment\n= 1")]
     public void Parse_CommentInOutputNamedPropertyHeader_StillParsesPropertyDefinition(string source)
     {
         // `Output` is an ordinary identifier, so the cross-line definition
@@ -1745,7 +1745,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("F(x) = x\nF(4)")]
-    [InlineData("F // comment\n(x) // comment\n= x\nF(4)")]
+    [InlineData("F # comment\n(x) # comment\n= x\nF(4)")]
     public void Parse_CommentedClauseHeader_ParsesIdentically(string source)
     {
         // Clause-header lookahead scans through the shared significant-token
@@ -1762,7 +1762,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("public F(x) = x\nF(4)")]
-    [InlineData("public F // comment\n(x) // comment\n= x\nF(4)")]
+    [InlineData("public F # comment\n(x) # comment\n= x\nF(4)")]
     public void Parse_CommentedPublicClauseHeader_ParsesIdentically(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1775,7 +1775,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A = (public X = 1)\npublic open A")]
-    [InlineData("A = (public X = 1)\npublic // comment\nopen A")]
+    [InlineData("A = (public X = 1)\npublic # comment\nopen A")]
     public void Parse_CommentedPublicOpen_ReportsSameDiagnostic(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1863,7 +1863,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("~P\n= 1\nP")]
-    [InlineData("~P // comment\n= 1\nP")]
+    [InlineData("~P # comment\n= 1\nP")]
     public void Parse_CommentInGracePrefixedDefinition_ReportsSameGraceDiagnostic(string source)
     {
         // The invalid-grace property diagnostic fires identically with or
@@ -1880,7 +1880,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("(A\n-1)")]
-    [InlineData("(A // comment\n-1)")]
+    [InlineData("(A # comment\n-1)")]
     public void Parse_MinusLedLineInGroup_JoinsAsSequenceValueRows(string source)
     {
         var result = Parser.ParseSyntax(source);
@@ -1894,7 +1894,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A\n...")]
-    [InlineData("A // comment\n...")]
+    [InlineData("A # comment\n...")]
     public void Parse_LegacyEllipsisLedLine_IsRejectedIdentically(string source)
     {
         // `...` is not a token: it lexes as three dots, and a leading '.' is
@@ -1909,7 +1909,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("A\n*")]
-    [InlineData("A // comment\n*")]
+    [InlineData("A # comment\n*")]
     public void Parse_StarLedLine_IsCollectMarkerInExpressionError(string source)
     {
         // A star never crosses lines: the previous row is complete, so a
@@ -2418,7 +2418,7 @@ public class ParserTests
         // Comments are semantically invisible: a same-line comment changes
         // nothing, and a trailing operator continues its expression onto the
         // next line with or without a comment in between.
-        foreach (var source in new[] { "1 + 2 // comment", "1 +\n2", "1 + // comment\n2" })
+        foreach (var source in new[] { "1 + 2 # comment", "1 +\n2", "1 + # comment\n2" })
         {
             var result = Parser.ParseSyntax(source);
 
@@ -2430,7 +2430,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("1\n+ 2")]
-    [InlineData("1 // comment\n+ 2")]
+    [InlineData("1 # comment\n+ 2")]
     public void Parse_CommentDoesNotEnableBinaryContinuationAcrossNewline(string source)
     {
         // A binary operator never continues a closed expression across a
@@ -2723,13 +2723,28 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_CommentDoesNotConflictWithSlash()
+    public void Parse_CommentMarkerDoesNotConflictWithSlash()
     {
-        // // is comment, / is division
-        var result = Parser.ParseSyntax("10 / 2 // this is a comment");
+        // # is comment, / is division — a trailing comment after a division
+        // leaves the division untouched.
+        var result = Parser.ParseSyntax("10 / 2 # this is a comment");
         Assert.False(result.HasErrors);
         var div = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
         Assert.Equal(BinaryOp.Div, div.Op);
+    }
+
+    [Theory]
+    [InlineData("// old comment")]
+    [InlineData("value = 6 // old comment")]
+    public void Parse_DoubleSlash_IsNoLongerACommentMarker(string source)
+    {
+        // The former `//` comment syntax is removed: each '/' lexes as the
+        // ordinary division token, so the second '/' has no operand and the
+        // former comment text is parsed as KatLang instead of being skipped.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.True(result.HasErrors);
+        Assert.DoesNotContain(Lexer.Tokenize(source).Tokens, t => t.Kind == TokenKind.Comment);
     }
 
     [Fact]
@@ -3123,7 +3138,7 @@ public class ParserTests
     [Theory]
     [InlineData("open A.B\n1")]
     [InlineData("open A\n.B\n1")]
-    [InlineData("open A // comment\n.B\n1")]
+    [InlineData("open A # comment\n.B\n1")]
     public void Parse_Open_LeadingDotContinuation_ContinuesDottedTarget(string source)
     {
         // A leading '.' is the whitelisted dotted-path continuation, so a
@@ -3151,7 +3166,7 @@ public class ParserTests
 
     [Theory]
     [InlineData("open\nA")]
-    [InlineData("open // comment\nA")]
+    [InlineData("open # comment\nA")]
     public void Parse_Open_FirstTargetOnLaterLine_ReportsMissingTargetAndKeepsNextRow(string source)
     {
         // The first target must begin on the same physical line as `open`;

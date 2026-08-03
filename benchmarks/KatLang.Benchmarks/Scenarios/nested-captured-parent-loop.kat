@@ -1,4 +1,4 @@
-// Nested step captures parent parameters and reads a sibling property per iteration.
+# Nested step captures parent parameters and reads a sibling property per iteration.
 Outer(limit, offset) = {
     Reached = candidate + offset >= limit
     Step = candidate + 1, not Reached

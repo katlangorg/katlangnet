@@ -208,12 +208,12 @@ cardinality split (`items_capture_of_canonicalSupply`; value level
 | two or more canonical items | the same items, intact |
 
 ```katlang
-()**                 // contributes no items
-[]**                 // contributes no items
-[[7]]**              // contributes 7 — singleton capture re-opens one boundary
-[7]**                // contributes 7 — scalar neutrality
-[[1, 2], [3, 4]]**   // contributes the same two intact inner lists
-[[1, 2], 3]**        // preserves the list and the scalar as two items
+()**                 # contributes no items
+[]**                 # contributes no items
+[[7]]**              # contributes 7 — singleton capture re-opens one boundary
+[7]**                # contributes 7 — scalar neutrality
+[[1, 2], [3, 4]]**   # contributes the same two intact inner lists
+[[1, 2], 3]**        # preserves the list and the scalar as two items
 ```
 
 > **Repeated spread is ordinary composition through capture, not recursive

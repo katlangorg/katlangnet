@@ -1,5 +1,5 @@
-// Derived from the tutorial's range, filter, map, and reduce examples.
-// This isolates sequence traversal and callback dispatch without loop state machines.
+# Derived from the tutorial's range, filter, map, and reduce examples.
+# This isolates sequence traversal and callback dispatch without loop state machines.
 IsEven = x mod 2 == 0
 Square = x * x
 Add(x, acc) = acc + x

@@ -1003,7 +1003,7 @@ The contract this target rests on — written down in `Utf16LexerContractTests`,
 | Non-ASCII letters | Identifier characters (Latvian, Greek, Cyrillic, ideographic, and letter-like symbols). |
 | Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `decimal.TryParse` then rejects under the invariant culture. |
 | String literals | Single quotes, **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. |
-| Comments | `//` to `'\n'` or `'\r'`. There is no block-comment form. |
+| Comments | `#` to `'\n'` or `'\r'`. There is no block-comment form. |
 
 ### Invariants
 
@@ -1021,7 +1021,7 @@ adds is all about the code-unit model:
    scanning, this derives them from the source, and they must agree. One shared helper, one model,
    used by the raw, frontend and UTF-16 layers alike.
 4. **Exact source slices.** Identifier, comment and string-literal token text must be the exact
-   source slice (minus `//` or the quotes). This is what catches a normalization or a replacement
+   source slice (minus `#` or the quotes). This is what catches a normalization or a replacement
    character introduced anywhere on the path.
 5. **Bounded diagnostics.** Total diagnostics are bounded linearly in source length, and the number
    sharing one `(line, column)` is bounded by `Parser.MaxNestingDepth`.

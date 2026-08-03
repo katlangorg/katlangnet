@@ -54,7 +54,7 @@ internal static class SourceModuleProbe
         // One very long string literal.
         new("long_string", "flat", n => $"'{Repeat("x", n)}'", Big),
         // One very long comment.
-        new("long_comment", "flat", n => $"// {Repeat("x", n)}\n1", Big),
+        new("long_comment", "flat", n => $"# {Repeat("x", n)}\n1", Big),
         // Repeated whitespace.
         new("ws_repeat", "flat", n => $"1{Repeat(" ", n)}", Big),
         // One very long numeric literal.
@@ -268,9 +268,9 @@ internal static class SourceModuleProbe
                     return $"public V{parts[1]} = {parts[1]}";
                 case "fill":
                     var size = int.Parse(parts[2], CultureInfo.InvariantCulture);
-                    return $"// {new string('x', Math.Max(0, size))}\npublic V{parts[1]} = {parts[1]}";
+                    return $"# {new string('x', Math.Max(0, size))}\npublic V{parts[1]} = {parts[1]}";
                 case "pad" when _pad > 0:
-                    return $"// {new string('x', _pad)}\npublic V{parts[1]} = {parts[1]}";
+                    return $"# {new string('x', _pad)}\npublic V{parts[1]} = {parts[1]}";
                 default:
                     throw new Exception($"404 {url}");
             }

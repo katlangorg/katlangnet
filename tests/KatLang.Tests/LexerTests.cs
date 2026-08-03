@@ -160,7 +160,7 @@ public class LexerTests
         // Comments are preserved in the token stream so consumers (e.g. colorizers) can use them.
         // The parser skips them via its navigation helpers.
         var source = """
-            1 // this is a comment
+            1 # this is a comment
             2
             """;
         var (tokens, _) = Lexer.Tokenize(source);
@@ -178,11 +178,11 @@ public class LexerTests
     [Fact]
     public void Tokenize_Comment_TokenCarriesTextAndPosition()
     {
-        var (tokens, _) = Lexer.Tokenize("1 // hello");
+        var (tokens, _) = Lexer.Tokenize("1 # hello");
 
         var comment = Assert.Single(tokens, t => t.Kind == TokenKind.Comment);
-        Assert.Equal(" hello", comment.StringValue);  // text after //
-        Assert.Equal(2, comment.Position);             // starts at offset of first /
+        Assert.Equal(" hello", comment.StringValue);  // text after #
+        Assert.Equal(2, comment.Position);             // starts at offset of '#'
         Assert.Equal(1, comment.Line);
         Assert.Equal(3, comment.Column);
     }

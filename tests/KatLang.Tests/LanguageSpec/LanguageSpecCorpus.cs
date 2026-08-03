@@ -113,7 +113,7 @@ public static class LanguageSpecCorpus
         {
             Id = "property-access-and-call",
             Category = "arithmetic",
-            Source = "// Define a property:\nAnswer = 42\n\n// Property-style access:\nAnswer\n\n// Explicit zero-parameter call:\nAnswer()",
+            Source = "# Define a property:\nAnswer = 42\n\n# Property-style access:\nAnswer\n\n# Explicit zero-parameter call:\nAnswer()",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "42\n42",
             ExpectedRaw = "S[42, 42]",
@@ -222,7 +222,7 @@ public static class LanguageSpecCorpus
         {
             Id = "empty-eq-family",
             Category = "empty-and-singleton",
-            Source = "() == ()      // 1\n() == (())    // 1\n() != (())    // 0\ncount(())     // 0\ncount((()))   // 0",
+            Source = "() == ()      # 1\n() == (())    # 1\n() != (())    # 0\ncount(())     # 0\ncount((()))   # 0",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n1\n0\n0\n0",
             ExpectedRaw = "S[1, 1, 0, 0, 0]",
@@ -1998,7 +1998,7 @@ public static class LanguageSpecCorpus
         {
             Id = "index-selects-atom",
             Category = "equality-and-indexing",
-            Source = "Nums = 10, 20, 30, 40, 50\n\n// Select the third value (index 2):\nNums:2",
+            Source = "Nums = 10, 20, 30, 40, 50\n\n# Select the third value (index 2):\nNums:2",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "30",
             ExpectedRaw = "30",
@@ -2157,7 +2157,7 @@ public static class LanguageSpecCorpus
         {
             Id = "adjacency-call-across-space",
             Category = "parser-layout",
-            Source = "Add(a, b) = a + b\n\nAdd(1, 2)    // 3\nAdd (1, 2)   // the same call, 3",
+            Source = "Add(a, b) = a + b\n\nAdd(1, 2)    # 3\nAdd (1, 2)   # the same call, 3",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3\n3",
             ExpectedRaw = "S[3, 3]",
@@ -2198,7 +2198,7 @@ public static class LanguageSpecCorpus
         {
             Id = "comment-does-not-change-parse",
             Category = "parser-layout",
-            Source = "// comment\n1 + 1",
+            Source = "# comment\n1 + 1",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2",
             ExpectedRaw = "2",

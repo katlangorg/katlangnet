@@ -308,7 +308,7 @@ public sealed class Parser
     // is collect-marker (binding) syntax or an error. Comments are
     // semantically invisible for all of these decisions: Current/Advance/
     // Previous skip comment tokens and no rule may consult skipped comments
-    // to relax a newline boundary, so `A` newline `-1` and `A // note`
+    // to relax a newline boundary, so `A` newline `-1` and `A # note`
     // newline `-1` parse identically.
 
     private readonly record struct ContinuationPolicy(
@@ -347,7 +347,7 @@ public sealed class Parser
     // Offset 0 is the current significant token, offset 1 the next, and so
     // on; comment tokens are skipped at every step and the walk saturates at
     // end of input. Declaration headers may have comments between their
-    // tokens (`P // note` newline `= 1`), and comments must never change
+    // tokens (`P # note` newline `= 1`), and comments must never change
     // what parses as a declaration — all declaration lookaheads go through
     // this API instead of raw adjacent-token indexing.
     private Token PeekSignificant(int offset)
@@ -1951,7 +1951,7 @@ public sealed class Parser
             // A binary operator never continues a closed expression across a
             // physical newline (write the operator before the newline to
             // continue arithmetic: `A -` newline `1` is the subtraction).
-            // Comments are invisible here: `A // note` newline `-1` breaks
+            // Comments are invisible here: `A # note` newline `-1` breaks
             // exactly like `A` newline `-1` and joins as output adjacency.
             if (!MayContinueClosedExpression(Current.Kind)) break;
 

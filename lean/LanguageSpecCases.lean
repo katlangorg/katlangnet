@@ -103,7 +103,7 @@ def case_first_program : Expr :=
   .block (alg [] [] [] [.binary .add (.num 2) (.binary .mul (.num 3) (.num 4))])
 #guard obs case_first_program == "ok raw=14 n=1"
 
--- property-access-and-call [arithmetic]: // Define a property: \n Answer = 42 \n  \n // Property-style access: \n Answer \n  \n // Explicit zero-parameter call: \n Answer()
+-- property-access-and-call [arithmetic]: # Define a property: \n Answer = 42 \n  \n # Property-style access: \n Answer \n  \n # Explicit zero-parameter call: \n Answer()
 def case_property_access_and_call : Expr :=
   .block (alg [] [] [privateProp "Answer" (alg [] [] [] [.num 42])] [.resolve "Answer", .call (.resolve "Answer") (alg [] [] [] [])])
 #guard obs case_property_access_and_call == "ok raw=S[42, 42] n=2"
@@ -138,7 +138,7 @@ def case_singleton_paren_deep : Expr :=
   .block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 7]))]))]))])
 #guard obs case_singleton_paren_deep == "ok raw=7 n=1"
 
--- empty-eq-family [empty-and-singleton]: () == ()      // 1 \n () == (())    // 1 \n () != (())    // 0 \n count(())     // 0 \n count((()))   // 0
+-- empty-eq-family [empty-and-singleton]: () == ()      # 1 \n () == (())    # 1 \n () != (())    # 0 \n count(())     # 0 \n count((()))   # 0
 def case_empty_eq_family : Expr :=
   .block (alg [] [] [] [.binary .eq (.emptySequence 0) (.emptySequence 0), .binary .eq (.emptySequence 0) (.block (alg [] [] [] [(.emptySequence 0)])), .binary .ne (.emptySequence 0) (.block (alg [] [] [] [(.emptySequence 0)])), .call (.resolve "count") (alg [] [] [] [(.emptySequence 0)]), .call (.resolve "count") (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])])
 #guard obs case_empty_eq_family == "ok raw=S[1, 1, 0, 0, 0] n=5"
@@ -643,7 +643,7 @@ def case_eq_structural_nested : Expr :=
   .block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))]), privateProp "B" (alg [] [] [] [.num 1, (.block (alg [] [] [] [.num 2, .num 3]))])] [.binary .eq (.resolve "A") (.resolve "B")])
 #guard obs case_eq_structural_nested == "ok raw=1 n=1"
 
--- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n // Select the third value (index 2): \n Nums:2
+-- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums:2
 def case_index_selects_atom : Expr :=
   .block (alg [] [] [privateProp "Nums" (alg [] [] [] [.num 10, .num 20, .num 30, .num 40, .num 50])] [.index (.resolve "Nums") (.num 2)])
 #guard obs case_index_selects_atom == "ok raw=30 n=1"
@@ -683,7 +683,7 @@ def case_trailing_comma_continues_line : Expr :=
   .block (alg [] [] [] [.num 1, .num 2])
 #guard obs case_trailing_comma_continues_line == "ok raw=S[1, 2] n=2"
 
--- adjacency-call-across-space [parser-layout]: Add(a, b) = a + b \n  \n Add(1, 2)    // 3 \n Add (1, 2)   // the same call, 3
+-- adjacency-call-across-space [parser-layout]: Add(a, b) = a + b \n  \n Add(1, 2)    # 3 \n Add (1, 2)   # the same call, 3
 def case_adjacency_call_across_space : Expr :=
   .block (alg [] [] [privateProp "Add" (alg ["a", "b"] [] [] [.binary .add (.param "a") (.param "b")])] [.call (.resolve "Add") (alg [] [] [] [.num 1, .num 2]), .call (.resolve "Add") (alg [] [] [] [.num 1, .num 2])])
 #guard obs case_adjacency_call_across_space == "ok raw=S[3, 3] n=2"
@@ -698,7 +698,7 @@ def case_newline_ends_property_body : Expr :=
   .block (alg [] [] [privateProp "P" (alg [] [] [] [.num 1])] [.num 2])
 #guard obs case_newline_ends_property_body == "ok raw=2 n=1"
 
--- comment-does-not-change-parse [parser-layout]: // comment \n 1 + 1
+-- comment-does-not-change-parse [parser-layout]: # comment \n 1 + 1
 def case_comment_does_not_change_parse : Expr :=
   .block (alg [] [] [] [.binary .add (.num 1) (.num 1)])
 #guard obs case_comment_does_not_change_parse == "ok raw=2 n=1"

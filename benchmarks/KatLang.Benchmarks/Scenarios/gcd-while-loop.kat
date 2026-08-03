@@ -1,3 +1,3 @@
-// Euclidean GCD loop used to compare generic and optimized while execution.
+# Euclidean GCD loop used to compare generic and optimized while execution.
 GcdStep = b, ~a mod b, a mod b != 0
 GcdStep.while(1071, 462):1

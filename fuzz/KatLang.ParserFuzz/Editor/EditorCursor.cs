@@ -34,7 +34,7 @@ internal static class EditorCursor
             EditorCursorKind.InsideArgumentList => IndexOf(source, '(', bias) + 1,
             EditorCursorKind.AfterComma => IndexOf(source, ',', bias) + 1,
             EditorCursorKind.InsideString => InsideFirstToken(tokens, TokenKind.StringLiteral, bias + 1),
-            EditorCursorKind.InsideComment => InsideFirstToken(tokens, TokenKind.Comment, bias + 2),
+            EditorCursorKind.InsideComment => InsideFirstToken(tokens, TokenKind.Comment, bias + 1),
             EditorCursorKind.InsideWhitespace => IndexOfAny(source, " \t", bias),
             EditorCursorKind.AtCarriageReturn => IndexOf(source, '\r', bias),
             EditorCursorKind.BetweenCarriageReturnAndLineFeed => BetweenCrLf(source),

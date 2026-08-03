@@ -1,4 +1,4 @@
-// Captured parent value loop for Stage 2 slot-bound expression planning.
+# Captured parent value loop for Stage 2 slot-bound expression planning.
 Outer(num) = {
     Step = k + 1, k * k <= num
     Step.while(2):0

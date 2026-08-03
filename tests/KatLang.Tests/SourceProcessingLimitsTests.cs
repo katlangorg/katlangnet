@@ -36,7 +36,7 @@ public class SourceProcessingLimitsTests
             fetches++;
             var k = url[(Host.Length + "leaf/".Length)..];
             var body = $"public V{k} = {k}";
-            return pad > 0 ? $"// {new string('x', pad)}\n{body}" : body;
+            return pad > 0 ? $"# {new string('x', pad)}\n{body}" : body;
         }
         return (Download, () => fetches);
     }
@@ -418,8 +418,8 @@ public class SourceProcessingLimitsTests
     [Fact]
     public void SourceLength_UsesUtf16CodeUnits()
     {
-        const string source = "// \U0001F600\n1";
-        Assert.Equal(7, source.Length);
+        const string source = "# \U0001F600\n1";
+        Assert.Equal(6, source.Length);
         Assert.IsType<RunResult.Success>(Run(
             source,
             new SourceProcessingLimits { MaxSourceLength = source.Length }));
@@ -427,7 +427,7 @@ public class SourceProcessingLimitsTests
         var rejected = Run(
             source,
             new SourceProcessingLimits { MaxSourceLength = source.Length - 1 });
-        Assert.Contains("Source length 7", FirstError(rejected));
+        Assert.Contains("Source length 6", FirstError(rejected));
     }
 
     [Fact]
@@ -435,7 +435,7 @@ public class SourceProcessingLimitsTests
     {
         var url = $"{Host}module-source";
         var main = $"public Lib = load('{url}')\n1";
-        var exact = PadToLength("// \U0001F600\npublic V = 1", 100);
+        var exact = PadToLength("# \U0001F600\npublic V = 1", 100);
         Assert.Equal(100, exact.Length);
         var limits = new SourceProcessingLimits
         {

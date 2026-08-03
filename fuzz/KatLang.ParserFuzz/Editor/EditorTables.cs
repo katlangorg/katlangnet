@@ -96,7 +96,7 @@ internal static class EditorTables
     [
         new(EditorTemplateIds.Empty, "", ""),
         new(EditorTemplateIds.WhitespaceOnly, "  ", "  "),
-        new(EditorTemplateIds.CommentOnly, "// ", ""),
+        new(EditorTemplateIds.CommentOnly, "# ", ""),
         new(EditorTemplateIds.PropertyReference, "Alpha = 1\nBeta = ", "\nAlpha + Beta", ClosedWhenBenign: true),
         new(EditorTemplateIds.IncompleteIdentifier, "Al", ""),
         new(EditorTemplateIds.IdentifierSplit, "Value = 1\nVa", "lue", ClosedWhenBenign: true),

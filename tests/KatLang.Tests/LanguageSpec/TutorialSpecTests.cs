@@ -25,6 +25,12 @@ public class TutorialSpecTests
 
     private static string TutorialPath => Path.Combine(RepoRoot.Find(), "tutorial.md");
 
+    private static IReadOnlyList<string> CommentTexts(string source) =>
+        Lexer.Tokenize(source).Tokens
+            .Where(token => token.Kind == TokenKind.Comment)
+            .Select(token => token.StringValue ?? string.Empty)
+            .ToArray();
+
     private static IReadOnlyList<LinkedExample> ParseLinkedExamples()
     {
         var lines = File.ReadAllText(TutorialPath).ReplaceLineEndings("\n").Split('\n');
@@ -169,8 +175,8 @@ public class TutorialSpecTests
             // claims as inline comments (verified by the comment-claims lint
             // below); require at least one comment so a marker is never
             // silently unverified.
-            Assert.True(example.FenceSource.Contains("//", StringComparison.Ordinal),
-                $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} has neither a Result(s) block nor inline `//` claims.");
+            Assert.True(CommentTexts(example.FenceSource).Count > 0,
+                $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} has neither a Result(s) block nor inline `#` claims.");
         }
     }
 
@@ -186,7 +192,6 @@ public class TutorialSpecTests
     public void LinkedExamples_InlineValueClaimsMatchDisplayRows()
     {
         var cases = LanguageSpecCorpus.AllCases().ToDictionary(c => c.Id);
-        var claimPattern = new Regex(@"//\s*(?<claim>[^/]+?)\s*$");
 
         foreach (var example in ParseLinkedExamples())
         {
@@ -196,10 +201,8 @@ public class TutorialSpecTests
                 continue;
             }
 
-            var claims = example.FenceSource.Split('\n')
-                .Select(line => claimPattern.Match(line))
-                .Where(m => m.Success)
-                .Select(m => m.Groups["claim"].Value)
+            var claims = CommentTexts(example.FenceSource)
+                .Select(comment => comment.Trim())
                 .Where(IsValueLiteral)
                 .ToList();
 
@@ -213,6 +216,13 @@ public class TutorialSpecTests
                     $"tutorial.md line {example.MarkerLine}: spec:{example.CaseId} row {i} comment claims `{claims[i]}` but the canonical display row is `{rows[i]}`.");
             }
         }
+    }
+
+    [Fact]
+    public void InlineClaimExtraction_IgnoresHashesInsideStrings()
+    {
+        Assert.Empty(CommentTexts("'# is string content'"));
+        Assert.Equal([" 7"], CommentTexts("'# is string content' # 7"));
     }
 
     private static bool IsValueLiteral(string claim) =>

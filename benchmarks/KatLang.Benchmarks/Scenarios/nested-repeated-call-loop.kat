@@ -1,4 +1,4 @@
-// Nested repeated call shape for Stage 2 loop planning.
+# Nested repeated call shape for Stage 2 loop planning.
 Test = {
     Step = k + 1, k <= 100
     Step.while(2):0

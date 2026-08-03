@@ -190,7 +190,7 @@ public class SequenceSpreadTests
             """
             A = 1, 2
             F(x, y) = x + y
-            F(A*) // the line ends with the call, not the inner spread marker
+            F(A*) # the line ends with the call, not the inner spread marker
             9
             """,
             3m,

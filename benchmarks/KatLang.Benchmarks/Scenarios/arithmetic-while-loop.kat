@@ -1,3 +1,3 @@
-// Simple arithmetic while loop with a planned multiply in the continuation.
+# Simple arithmetic while loop with a planned multiply in the continuation.
 Step = k + 1, k * k <= 1000000
 Step.while(2):0

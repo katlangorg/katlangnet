@@ -223,7 +223,7 @@ SequenceAtom          = Expression ;
                      attached trailing "*" is a spread, an unattached one is
                      multiplication continuing on the next line). Comments are
                      semantically invisible for these decisions: A newline -1
-                     and A // note newline -1 parse identically as the expression
+                     and A # note newline -1 parse identically as the expression
                      list A, -1, never the subtraction A - 1. *)
 
 Expression      = OrExpr ;
@@ -366,6 +366,9 @@ Number          = /\d(_*\d)*(\.\d(_*\d)*)?(e[+-]?\d(_*\d)*)?/ ;
 BindingIdentifier = Identifier ;
 Identifier      = /[A-Za-z_][A-Za-z0-9_]*/ ;
 StringLiteral   = /'([^'\r\n])*'/ ;
-Comment         = /\/\/[^\r\n]*/ ;
-                  (* comments are semantically invisible: they never extend
-                     or break a physical-line continuation decision. *)
+Comment         = /#[^\r\n]*/ ;
+                  (* a "#" outside a string literal starts a comment that runs
+                     to the next physical newline or end of source; whitespace
+                     before "#" is not required. Comments are semantically
+                     invisible: they never extend or break a physical-line
+                     continuation decision. *)

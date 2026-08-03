@@ -41,14 +41,14 @@ With `A = [[1, 2], [3, 4]]`: `(A:0)*` contributes `1`, `2` while `(A*):0` produc
 ## Examples
 
 ```katlang
-1, 2, 3              // three output slots at root
-1 2 3                // also three output slots where adjacency is allowed
-(1, 2, 3)            // one sequence value
-1, (2, 3)            // two output slots: atom 1 and sequence value (2, 3)
-(1, 2), 3            // two output slots: sequence value (1, 2) and atom 3
-F(1, 2, 3)           // three call argument slots
-F((1, 2, 3))         // one sequence argument
-F((1, 2, 3), (4, 5, 6)) // two call arguments, each a sequence value
+1, 2, 3              # three output slots at root
+1 2 3                # also three output slots where adjacency is allowed
+(1, 2, 3)            # one sequence value
+1, (2, 3)            # two output slots: atom 1 and sequence value (2, 3)
+(1, 2), 3            # two output slots: sequence value (1, 2) and atom 3
+F(1, 2, 3)           # three call argument slots
+F((1, 2, 3))         # one sequence argument
+F((1, 2, 3), (4, 5, 6)) # two call arguments, each a sequence value
 ```
 
 Table-like output uses sequence-value rows:

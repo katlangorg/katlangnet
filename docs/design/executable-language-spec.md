@@ -126,7 +126,7 @@ canonical display through whichever convention follows the fence —
 `**Result:** `value``, `**Result:** error — ...`, or a `**Results:**` fence
 (blank lines inside a results fence are presentation-only grouping and are
 ignored for comparison). Fences whose expectations live in trailing
-`// value` comments are covered by the comment-claims lint when the
+`# value` comments are covered by the comment-claims lint when the
 value-literal claims line up one-to-one with display rows.
 
 Keep prose free: only the marked source and its stated outputs are pinned.

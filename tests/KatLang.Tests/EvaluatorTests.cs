@@ -1565,7 +1565,7 @@ public class EvaluatorTests
 
     [Theory]
     [InlineData("A = 10\nA\n-1")]
-    [InlineData("A = 10\nA // comment\n-1")]
+    [InlineData("A = 10\nA # comment\n-1")]
     public void Eval_CommentDoesNotEnableBinaryContinuationAcrossNewline(string source)
         // Comments are semantically invisible for line boundaries: both
         // forms are the two output rows 10 and -1, never the subtraction 9.
@@ -1588,7 +1588,7 @@ public class EvaluatorTests
 
     [Theory]
     [InlineData("P\n= 1\nP")]
-    [InlineData("P // comment\n= 1\nP")]
+    [InlineData("P # comment\n= 1\nP")]
     public void Eval_CommentBeforeEqualsLine_DefinesPropertyIdentically(string source)
         => AssertEval(source, 1);
 

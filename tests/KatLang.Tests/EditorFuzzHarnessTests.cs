@@ -74,6 +74,18 @@ public class EditorFuzzHarnessTests
         Assert.True(column > source.Length + 1, "PastEndOfFile must query a column past the last line.");
     }
 
+    [Fact]
+    public void CommentCursor_SkipsTheOneCodeUnitHashMarker()
+    {
+        var parameters = EditorDecoder.Decode([]) with
+        {
+            Cursor = EditorCursorKind.InsideComment,
+            CursorBias = 0,
+        };
+
+        Assert.Equal(1, EditorCursor.Resolve(parameters, "# comment", injectionOffset: 0));
+    }
+
     // ── Replay determinism and isolation ─────────────────────────────────────
 
     [Fact]
