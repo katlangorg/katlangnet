@@ -1,6 +1,6 @@
-using System.Globalization;
 using System.Text;
 using KatLang.Evaluation.Caching;
+using KatLang.Rendering;
 
 namespace KatLang;
 
@@ -27,7 +27,7 @@ internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLeng
 /// when it fits; otherwise a complete one-character marker is returned when possible,
 /// and a zero-length limit returns the empty string.</para>
 /// </summary>
-internal sealed class BoundedDisplayWriter(int limit)
+internal sealed class BoundedDisplayWriter(int limit) : IDisplaySink
 {
     private readonly StringBuilder _builder = new();
     private long _charged;
@@ -46,6 +46,25 @@ internal sealed class BoundedDisplayWriter(int limit)
 
         _charged += text.Length;
         _builder.Append(text);
+        return true;
+    }
+
+    /// <summary>
+    /// Appends a repeated character (formatter indentation), charged one unit
+    /// per repetition like every other append — without materializing an
+    /// intermediate string.
+    /// </summary>
+    public bool Append(char c, int count)
+    {
+        if (LimitExceeded) return false;
+        if (count > limit - _charged)
+        {
+            LimitExceeded = true;
+            return false;
+        }
+
+        _charged += count;
+        _builder.Append(c, count);
         return true;
     }
 
@@ -82,6 +101,39 @@ public abstract record RunResult
         IReadOnlyList<decimal> Atoms) : RunResult
     {
         internal int EmittedCount { get; init; } = Value.ValueCount();
+
+        /// <summary>
+        /// The separately produced top-level output rows, exactly as canonical
+        /// display derives them. <see cref="Value"/> alone cannot represent the
+        /// root-output boundary: a program emitting two rows (<c>A()</c>
+        /// newline <c>B()</c>) and a program emitting one sequence value
+        /// (<c>(A() B())</c>) can produce the SAME structural <see cref="Value"/>
+        /// — this view keeps them distinguishable. Zero rows means the program
+        /// evaluated successfully with empty output (for example a spread
+        /// contributing zero items); one row is the whole <see cref="Value"/>
+        /// (an explicitly emitted empty string, empty sequence, or empty list
+        /// each stay one visible row); several rows are the value's top-level
+        /// items in emission order.
+        ///
+        /// <para>The view is read-only over finished values and is derived on
+        /// access without caching: the multi-row case returns the value's
+        /// existing backing list, the single-row case allocates one
+        /// single-element wrapper, and the zero-row case returns an empty
+        /// singleton.</para>
+        ///
+        /// <para>The evaluator's exact emitted-slot count is used here as a
+        /// zero/one/many discriminator, not as this view's indexable count. A
+        /// projected expression may emit several slots inside one combined
+        /// top-level display row, so <c>OutputRows.Count</c> need not equal that
+        /// internal arity count. <see cref="OutputRows"/> is authoritative for
+        /// presentation.</para>
+        /// </summary>
+        public IReadOnlyList<Result> OutputRows => EmittedCount switch
+        {
+            0 => Array.Empty<Result>(),
+            1 => Array.AsReadOnly([Value]),
+            _ => Value.ToItems(),
+        };
     }
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
@@ -131,23 +183,38 @@ public abstract record RunResult
     private static string FormatSuccess(Success success)
     {
         var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
-        var rows = TopLevelDisplayRows(success.Value, success.EmittedCount);
+        AppendSuccessRows(success.OutputRows, success.DisplayOptions, writer);
+        return Finish(writer, success.DisplayOptions.MaxDisplayLength);
+    }
 
+    /// <summary>
+    /// Canonical success rendering shared byte-for-byte by
+    /// <see cref="ToDisplayString"/> and the <c>exact</c> output formatter
+    /// (the <c>exact</c> output formatter): platform-newline row
+    /// separators over <see cref="Success.OutputRows"/>, each row in canonical
+    /// inline form.
+    /// </summary>
+    internal static bool AppendSuccessRows(
+        IReadOnlyList<Result> rows,
+        DisplayOptions displayOptions,
+        BoundedDisplayWriter writer)
+    {
         for (var i = 0; i < rows.Count; i++)
         {
-            if (i > 0 && !writer.AppendRowSeparator()) break;
-            if (!AppendValue(rows[i], success.DisplayOptions, writer)) break;
+            if (i > 0 && !writer.AppendRowSeparator()) return false;
+            if (!AppendValue(rows[i], displayOptions, writer)) return false;
         }
 
-        return Finish(writer, success.DisplayOptions.MaxDisplayLength);
+        return true;
     }
 
     /// <summary>
     /// Errors are rendered through the same configured bounded writer.
     /// The structured diagnostics are never dropped or rewritten to fit — only the final
-    /// public rendering surface is bounded.
+    /// public rendering surface is bounded. Shared with every output formatter,
+    /// so failures render identically regardless of the selected formatter.
     /// </summary>
-    private static string FormatErrors(IReadOnlyList<KatLangError> errors, int limit)
+    internal static string FormatErrors(IReadOnlyList<KatLangError> errors, int limit)
     {
         var writer = new BoundedDisplayWriter(limit);
 
@@ -160,7 +227,7 @@ public abstract record RunResult
         return Finish(writer, limit);
     }
 
-    private static string FormatText(string text, int limit)
+    internal static string FormatText(string text, int limit)
     {
         var writer = new BoundedDisplayWriter(limit);
         writer.Append(text);
@@ -180,108 +247,17 @@ public abstract record RunResult
         return marker.Length <= limit ? marker : string.Empty;
     }
 
-    private static IReadOnlyList<Result> TopLevelDisplayRows(Result value, int emittedCount)
-        => emittedCount switch
-        {
-            0 => [],
-            1 => [value],
-            _ => value.ToItems(),
-        };
-
     /// <summary>
-    /// Appends one value's display form, ITERATIVELY. Recursion plus
-    /// <c>Select(...).Join(...)</c> would build every child string before the parent could
-    /// know its own size — the exact shape that lets a legal but deeply shared value
-    /// allocate far beyond the limit — and would also recurse as deeply as the value
-    /// nests, which for host-constructed <see cref="Result"/> trees is unbounded by the
-    /// parser. Indexed continuation frames keep auxiliary traversal storage proportional
-    /// to nesting depth, not collection breadth, so a wide value does not allocate a
-    /// pending entry for every sibling before the writer can enforce its length limit.
+    /// Appends one value's canonical display form. The implementation is the
+    /// shared formatter-neutral iterative renderer
+    /// (<see cref="ValueTextRenderer.AppendValue"/>) with the raw string
+    /// strategy. Presentation formatters reuse the renderer by supplying their
+    /// own string-leaf policy; canonical display has no dependency on formatter
+    /// types or options. See the depth/breadth traversal note on
+    /// <see cref="Result"/>.
     /// </summary>
     internal static bool AppendValue(Result value, DisplayOptions displayOptions, BoundedDisplayWriter writer)
-    {
-        IReadOnlyList<Result> items;
-        string close;
-        switch (value)
-        {
-            case Result.Atom atom:
-                return writer.Append(FormatAtom(atom.Value, displayOptions));
-            case Result.Str str:
-                return writer.Append(str.Value);
-            case Result.SequenceValue sequence:
-                if (!writer.Append("(")) return false;
-                items = sequence.Items;
-                close = ")";
-                break;
-            case Result.ListValue list:
-                if (!writer.Append("[")) return false;
-                items = list.Items;
-                close = "]";
-                break;
-            default:
-                return true;
-        }
-
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next, string Close)>();
-        var next = 0;
-
-        while (true)
-        {
-            if (next >= items.Count)
-            {
-                if (!writer.Append(close)) return false;
-                if (suspended.Count == 0) return true;
-                (items, next, close) = suspended.Pop();
-                continue;
-            }
-
-            if (next > 0 && !writer.Append(", ")) return false;
-            var child = items[next];
-            next++;
-
-            switch (child)
-            {
-                case Result.Atom atom:
-                    if (!writer.Append(FormatAtom(atom.Value, displayOptions))) return false;
-                    break;
-                case Result.Str str:
-                    if (!writer.Append(str.Value)) return false;
-                    break;
-                case Result.SequenceValue sequence:
-                    if (!writer.Append("(")) return false;
-                    suspended.Push((items, next, close));
-                    (items, next, close) = (sequence.Items, 0, ")");
-                    break;
-                case Result.ListValue list:
-                    if (!writer.Append("[")) return false;
-                    suspended.Push((items, next, close));
-                    (items, next, close) = (list.Items, 0, "]");
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-
-    internal static string FormatAtom(decimal value, DisplayOptions displayOptions)
-    {
-        // Canonical KatLang value display is culture-invariant on every path:
-        // the decimal point is always `.` so fractional atoms can never
-        // collide with the `, ` element separator of sequence/list rendering,
-        // and output is identical on every machine (matching the lexer,
-        // `.string`, diagnostics, and the differential harness).
-        if (displayOptions.Decimals is not { } decimals)
-            return value.ToString(CultureInfo.InvariantCulture);
-
-        if (value == Math.Truncate(value) && DecimalScale(value) == 0)
-            return value.ToString(CultureInfo.InvariantCulture);
-
-        var format = "F" + decimals.ToString(CultureInfo.InvariantCulture);
-        return value.ToString(format, CultureInfo.InvariantCulture);
-    }
-
-    private static int DecimalScale(decimal value)
-        => (decimal.GetBits(value)[3] >> 16) & 0xFF;
+        => ValueTextRenderer.AppendValue(value, displayOptions, RawStringTextPolicy.Instance, writer);
 }
 
 /// <summary>
@@ -425,7 +401,7 @@ public static class KatLangEngine
         for (var i = 0; i < success.Atoms.Count; i++)
         {
             if (i > 0 && !writer.Append(" ")) break;
-            if (!writer.Append(RunResult.FormatAtom(success.Atoms[i], success.DisplayOptions))) break;
+            if (!writer.Append(ValueTextRenderer.FormatAtom(success.Atoms[i], success.DisplayOptions))) break;
         }
 
         return RunResult.Finish(writer, success.DisplayOptions.MaxDisplayLength);
