@@ -654,7 +654,11 @@ internal static class StructuredLayoutRenderer
         /// Pair-run eligibility for a delimited sequence frame: every
         /// comma-separated pair line within width. Token safety is not
         /// required here — the retained commas and parentheses delimit the
-        /// items exactly like any other delimited content.
+        /// items exactly like any other delimited content. Line-break
+        /// characters ARE excluded: a string containing a line feed or
+        /// carriage return can never be quoted (KatLang has no escapes) and
+        /// would split its pair line into two physical lines, breaking the
+        /// one-line-per-pair shape.
         /// </summary>
         private bool IsCommaPairRun(IReadOnlyList<Result> items, int level)
         {
@@ -664,6 +668,7 @@ internal static class StructuredLayoutRenderer
             {
                 var separator = i + 2 >= items.Count ? 0 : 1;
                 var labelText = ((Result.Str)items[i]).Value;
+                if (ContainsLineBreak(labelText)) return false;
                 var fixedLength = (long)columns + 2 + separator;
                 if (fixedLength + labelText.Length > _width) return false;
                 var labelLength = _strings.TokenLength(labelText);
@@ -672,7 +677,8 @@ internal static class StructuredLayoutRenderer
                 var valueLength = items[i + 1] switch
                 {
                     Result.Atom(var number) => ValueTextRenderer.FormatAtom(number, _displayOptions).Length,
-                    Result.Str(var text) when fixedLength + labelLength + text.Length <= _width
+                    Result.Str(var text) when !ContainsLineBreak(text)
+                        && fixedLength + labelLength + text.Length <= _width
                         => _strings.TokenLength(text),
                     _ => long.MaxValue / 2,
                 };
@@ -681,6 +687,9 @@ internal static class StructuredLayoutRenderer
 
             return true;
         }
+
+        private static bool ContainsLineBreak(string value)
+            => value.AsSpan().ContainsAny('\n', '\r');
 
         /// <summary>Opens a multiline delimited structure: the opening token on its own line, items one level deeper.</summary>
         private bool OpenDelimited(Result value, int atLevel, bool closeComma)

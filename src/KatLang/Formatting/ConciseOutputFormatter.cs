@@ -43,9 +43,11 @@ namespace KatLang.Formatting;
 /// the elision safety of each string is judged on its raw content
 /// (<c>neto</c>, <c>net_salary</c>, and other plain labels stay eligible for
 /// delimiter removal), and a raw string whose content would need delimiters
-/// (empty, whitespace, commas, <c>( ) [ ]</c>, a single quote, or
-/// numeric-looking text) conservatively forces the containing sequence's
-/// parentheses back rather than being quoted or altered.</para>
+/// (empty, whitespace, commas, <c>( ) [ ]</c>, a single quote,
+/// numeric-looking text, control characters, invisible Unicode format
+/// characters such as bidi controls or zero-width spaces, or unpaired
+/// surrogates) conservatively forces the containing sequence's parentheses
+/// back rather than being quoted or altered.</para>
 ///
 /// <para>Concise never invents punctuation or text: no colons, bullets,
 /// headings, labels, or case changes — <c>neto 1473.8</c> can only contain a

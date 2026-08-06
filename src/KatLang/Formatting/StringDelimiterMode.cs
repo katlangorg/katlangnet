@@ -28,8 +28,10 @@ public enum StringDelimiterMode
     /// the concrete raw item representations preserve safe boundaries: ordinary
     /// raw labels such as <c>neto</c> or <c>net_salary</c> still participate in
     /// delimiter removal, while an ambiguous raw string (empty,
-    /// whitespace-bearing, comma-bearing, structural-looking, quote-bearing, or
-    /// numeric-looking) makes the CONTAINING sequence keep its parentheses and
+    /// whitespace-bearing, comma-bearing, structural-looking, quote-bearing,
+    /// numeric-looking, control-bearing, invisible Unicode format characters
+    /// such as bidi controls or zero-width spaces, or unpaired surrogates)
+    /// makes the CONTAINING sequence keep its parentheses and
     /// canonical separators — the best available boundary information when
     /// quoting is forbidden. Lists always keep their brackets, empty sequences
     /// stay visible as <c>()</c>, root and nesting boundaries take priority
@@ -41,12 +43,15 @@ public enum StringDelimiterMode
     /// Render ordinary textual strings raw, and add single-quote delimiters
     /// only where the raw content would obscure item boundaries or the value
     /// kind: the empty string, strings containing whitespace,
-    /// numeric-looking strings (including signed, fractional, and exponent
-    /// forms, regardless of numeric overflow), strings containing structural characters
-    /// (<c>,</c> <c>(</c> <c>)</c> <c>[</c> <c>]</c> <c>'</c>), and strings
-    /// containing control characters. Quoting whitespace-bearing strings keeps
-    /// one string such as <c>'income tax'</c> visibly distinct from two adjacent
-    /// values laid out as <c>income tax</c>.
+    /// numeric-looking strings (including signed, fractional, exponent, and
+    /// KatLang digit-separator forms, regardless of numeric overflow), strings
+    /// containing structural characters
+    /// (<c>,</c> <c>(</c> <c>)</c> <c>[</c> <c>]</c> <c>'</c>), strings
+    /// containing control characters, invisible Unicode format characters
+    /// (bidi controls, zero-width spaces, byte-order marks, soft hyphens), and
+    /// unpaired surrogates. Quoting whitespace-bearing strings keeps one string
+    /// such as <c>'income tax'</c> visibly distinct from two adjacent values
+    /// laid out as <c>income tax</c>.
     /// </summary>
     WhenNeeded,
 

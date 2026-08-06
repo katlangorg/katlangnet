@@ -76,6 +76,24 @@ public class ReadableFormatterTests
             Format("('social', 681.8, 'income', 316.2, 'risk', 0.36)", Options(width: 20)));
 
     [Fact]
+    public void PairRun_WithALineBreakString_FallsBackToOneItemPerLine()
+    {
+        // A host-built string containing a line break can never be quoted and
+        // would split its pair line into two physical lines, so the pair-line
+        // grouping is not formed — every item keeps its own line instead.
+        var value = new Result.SequenceValue(
+        [
+            new Result.Str("a"), new Result.Atom(1),
+            new Result.Str("b\nc"), new Result.Atom(2),
+        ]);
+        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+
+        Assert.Equal(
+            "(\n  a,\n  1,\n  b\nc,\n  2\n)",
+            OutputFormatters.Readable.Format(success, Options(width: 8)));
+    }
+
+    [Fact]
     public void SalaryShapedValue_UsesStructuredMultilineLayout()
     {
         const string source =
