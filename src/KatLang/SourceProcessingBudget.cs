@@ -187,6 +187,12 @@ internal static class SourceProcessingDiagnostics
             $"load: loading '{url}' would request distinct module {requestedCount}, over the maximum of {Quantity(limit, "module")}.",
             span);
 
+    internal static Diagnostic ModuleNestingTooDeep(string url, int limit, SourceSpan? span)
+        => Error(
+            $"load: loading '{url}' at this position would nest module content deeper than the cumulative structural depth limit of {Quantity(limit, "level")}. "
+            + "Move the load closer to the top level of its module, or split the module chain into smaller modules.",
+            span);
+
     private static string Quantity(long value, string singular)
         => $"{value} {singular}{(value == 1 ? string.Empty : "s")}";
 

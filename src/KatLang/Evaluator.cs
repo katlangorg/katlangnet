@@ -358,139 +358,90 @@ public static class Evaluator
 
     /// <summary>
     /// Extract a descriptive name from an open expression for error messages.
-    /// Lean: openExprName.
+    /// Rendering is iterative and output-bounded (<see cref="ExprNameRenderer"/>):
+    /// it never consumes CLR stack proportional to the expression's depth, so the
+    /// arbitrarily deep internal join/spread chains the structural preflight
+    /// deliberately accepts stay safe on every diagnostic path, and names beyond
+    /// the bound are deterministically elided with the established <c>…</c> marker.
+    /// Lean: openExprName (Lean models the unbounded spelling; the bound is
+    /// C#-side host-safety presentation policy).
     /// </summary>
-    internal static string OpenExprName(Expr e) => e switch
+    internal static string OpenExprName(Expr e) => ExprNameRenderer.Render(e, ExprNameMode.Open);
+
+    /// <summary>
+    /// Renders a compound call-context expression on an actual diagnostic path and records that
+    /// work for an observed run. Simple identifiers reuse their existing string.
+    /// </summary>
+    internal static string CallDiagnosticExprName(Expr expression, EvalCtx ctx)
+        => CallDiagnosticName.FromExpression(expression).Render(ctx);
+
+    /// <summary>
+    /// Stack-only description of a callable's diagnostic name. Simple identifiers reuse their
+    /// existing string; compound expressions retain the AST reference and are rendered only if an
+    /// error actually needs the name. This avoids both a closure and diagnostic string allocation
+    /// on successful resolved calls.
+    /// </summary>
+    private readonly struct CallDiagnosticName
     {
-        Expr.Resolve(var n) => n,
-        Expr.Param(var n) => n,
-        Expr.Num(var n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        Expr.StringLiteral(var s) => $"'{s}'",
-        Expr.Unary(var op, var operand) => op switch
+        private readonly string? _knownName;
+        private readonly Expr? _expression;
+
+        private CallDiagnosticName(string? knownName, Expr? expression)
         {
-            UnaryOp.Minus => $"-{OpenExprUnaryOperandName(operand)}",
-            UnaryOp.Not => $"not {OpenExprUnaryOperandName(operand)}",
-            _ => $"({ExprKind(e)})",
-        },
-        Expr.Binary(var op, var left, var right) => $"({OpenExprName(left)} {OpenExprBinaryOp(op)} {OpenExprName(right)})",
-        // Diagnostic expression names use KatLang source syntax: indexing is
-        // postfix `target:selector`, never `target[selector]` (`[...]` is exact
-        // list literal syntax, so bracket text would read back as adjacency).
-        Expr.Index(var target, var selector)
-            => $"{OpenExprIndexTargetName(target)}:{OpenExprIndexSelectorName(selector)}",
-        Expr.DotCall(var o, var n, var argsOpt) => argsOpt is null
-            ? OpenExprName(o) + "." + n
-            : OpenExprName(o) + "." + n + "(...)",
-        Expr.Call(var f, _) => OpenExprName(f) + "(...)",
-        Expr.Grace(var inner, var weight) => weight < 0
-            ? "~" + OpenExprName(inner)
-            : OpenExprName(inner) + "~",
-        Expr.Block => "(inline library)",
-        // SequenceConstruct is an internal value node; ';' is not surface
-        // syntax, so render it as one sequence value, never with ';'.
-        Expr.SequenceConstruct(var a, var b) => "(" + OpenExprName(a) + ", " + OpenExprName(b) + ")",
-        // A spread expression renders in the canonical postfix-marker form.
-        Expr.SequenceSpread(var a) => OpenExprSpreadOperandName(a) + "*",
-        // Exact list literal `[a, b, c]`.
-        Expr.ListLiteral(var items) => "[" + string.Join(", ", items.Select(OpenExprName)) + "]",
-        // Empty sequence core nodes render by depth for diagnostics; evaluation
-        // canonicalizes repeated ordinary parentheses back to `()`.
-        Expr.EmptySequence(var depth) => new string('(', depth + 1) + new string(')', depth + 1),
-        _ => $"({ExprKind(e)})",
-    };
+            _knownName = knownName;
+            _expression = expression;
+        }
 
-    private static string OpenExprUnaryOperandName(Expr expr) => expr switch
-    {
-        Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.DotCall or Expr.Index
-            => OpenExprName(expr),
-        _ => $"({OpenExprName(expr)})",
-    };
+        public static CallDiagnosticName FromExpression(Expr expression)
+            => expression switch
+            {
+                Expr.Resolve(var name) when name.Length <= ExprNameRenderer.MaxRenderedNameLength
+                    => new(name, null),
+                Expr.Param(var name) when name.Length <= ExprNameRenderer.MaxRenderedNameLength
+                    => new(name, null),
+                _ => new(null, expression),
+            };
 
-    // Postfix spread binds to the completed operand. A unary operand therefore
-    // needs parentheses: `-A*` parses as unary minus applied to a spread, while
-    // `(-A)*` is the spread of the unary expression. Binary names already
-    // include their own parentheses in OpenExprName.
-    private static string OpenExprSpreadOperandName(Expr expr) => expr switch
-    {
-        Expr.Unary => $"({OpenExprName(expr)})",
-        _ => OpenExprName(expr),
-    };
+        public static CallDiagnosticName FromKnown(string name) => new(name, null);
+
+        /// <summary>
+        /// A non-rendering placeholder used only to derive the callable's structural binding plan.
+        /// Error-bearing signatures are rebuilt with <see cref="Render"/> on the error path.
+        /// </summary>
+        public string StructuralName => _knownName ?? "<anonymous>";
+
+        public string Render(EvalCtx ctx)
+        {
+            if (_knownName is not null)
+                return _knownName;
+
+            ctx.Observations?.RecordCallDiagnosticNameRender();
+            return OpenExprName(_expression!);
+        }
+    }
 
     /// <summary>
-    /// Parenthesize an index target when a bare rendering would rebind.
-    /// Indexing is postfix and binds tighter than unary, so <c>-A:0</c> reads as
-    /// <c>-(A:0)</c> and a unary target needs <c>(-A):0</c>. A binary target is
-    /// already self-parenthesized by <see cref="OpenExprName"/>. Postfix targets
-    /// (<c>A:0:1</c>, <c>A.B:0</c>, <c>f(...):0</c>) are left-associative and
-    /// render faithfully bare.
-    /// Lean: indexTargetNeedsParens.
+    /// Operand-shape spelling for binary operand-shape contexts (bare top-level
+    /// binary chains, zero-shape blocks and internal sequence joins rendered as one
+    /// written sequence value). Iterative and output-bounded like
+    /// <see cref="OpenExprName"/>.
     /// </summary>
-    private static string OpenExprIndexTargetName(Expr expr) => expr switch
-    {
-        Expr.Unary => $"({OpenExprName(expr)})",
-        _ => OpenExprName(expr),
-    };
-
-    /// <summary>
-    /// Parenthesize an index selector when a bare rendering would rebind. The
-    /// selector is a primary in source syntax, so any form that would continue
-    /// the postfix chain rebinds to the target instead: <c>A:B.C</c> reads as
-    /// <c>(A:B).C</c>, <c>A:B:C</c> as <c>(A:B):C</c>, <c>A:f(0)</c> as
-    /// adjacency, and <c>A:B*</c> as a spread of the whole index. A bare
-    /// negative literal (<c>A:-1</c>) is not selector syntax at all. A binary
-    /// selector is already self-parenthesized by <see cref="OpenExprName"/>.
-    /// Lean: indexSelectorNeedsParens.
-    /// </summary>
-    private static string OpenExprIndexSelectorName(Expr expr) => expr switch
-    {
-        Expr.Unary or Expr.Call or Expr.DotCall or Expr.Index or Expr.SequenceSpread
-            => $"({OpenExprName(expr)})",
-        Expr.Num(var value) when value < 0 => $"({OpenExprName(expr)})",
-        _ => OpenExprName(expr),
-    };
-
-    private static string OpenExprBinaryOp(BinaryOp op) => op switch
-    {
-        BinaryOp.Add => "+",
-        BinaryOp.Sub => "-",
-        BinaryOp.Mul => "*",
-        BinaryOp.Div => "/",
-        BinaryOp.IDiv => "div",
-        BinaryOp.Mod => "mod",
-        BinaryOp.Pow => "^",
-        BinaryOp.Lt => "<",
-        BinaryOp.Gt => ">",
-        BinaryOp.Le => "<=",
-        BinaryOp.Ge => ">=",
-        BinaryOp.Eq => "==",
-        BinaryOp.Ne => "!=",
-        BinaryOp.And => "and",
-        BinaryOp.Or => "or",
-        BinaryOp.Xor => "xor",
-        _ => "?",
-    };
-
-    private static string ExprDiagnosticName(Expr expr) => expr switch
-    {
-        Expr.Block(var algorithm) when algorithm.Params.Count == 0
-            && algorithm.Opens.Count == 0
-            && algorithm.Properties.Count == 0
-            => $"({string.Join(", ", algorithm.Output.Select(ExprDiagnosticName))})",
-        Expr.Binary(var op, var left, var right) => $"{ExprDiagnosticName(left)} {OpenExprBinaryOp(op)} {ExprDiagnosticName(right)}",
-        // Internal SequenceConstruct renders as one sequence value; ';' is not surface syntax.
-        Expr.SequenceConstruct(var left, var right) => $"({ExprDiagnosticName(left)}, {ExprDiagnosticName(right)})",
-        _ => OpenExprName(expr),
-    };
+    private static string ExprDiagnosticName(Expr expr)
+        => ExprNameRenderer.Render(expr, ExprNameMode.DiagnosticName);
 
     private static string BinaryExprDiagnosticName(BinaryOp op, Expr left, Expr right)
-        => $"{ExprDiagnosticName(left)} {OpenExprBinaryOp(op)} {ExprDiagnosticName(right)}";
+        => ExprNameRenderer.RenderBinaryDiagnosticName(op, left, right);
+
+    private static string BinaryOperandContext(BinaryOp op, Expr left, Expr right)
+        => $"while evaluating `{BinaryExprDiagnosticName(op, left, right)}`";
 
     // ── Error context helpers ──────────────────────────────────────────────
 
     private static ErrorContext CtxOpen(string key) => new OpenResolutionContext(key);
-    private static ErrorContext CtxCall(Expr f) => new CallContext(OpenExprName(f));
+    private static ErrorContext CtxCall(CallDiagnosticName name, EvalCtx ctx) => new CallContext(name.Render(ctx));
     private static ErrorContext CtxProperty(string name) => new PropertyEvaluationContext(name);
-    private static ErrorContext CtxDotCall(Expr obj, string name) => new DotCallContext(OpenExprName(obj), name);
+    private static ErrorContext CtxDotCall(Expr obj, string name, EvalCtx ctx)
+        => new DotCallContext(CallDiagnosticName.FromExpression(obj).Render(ctx), name);
 
     // ── Error context helper ────────────────────────────────────────────────
 
@@ -506,6 +457,26 @@ public static class Evaluator
 
     private static EvalResult<T> WithCtx<T>(string context, EvalResult<T> result)
         => WithCtx(new TextErrorContext(context), result);
+
+    /// <summary>
+    /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for call contexts, with
+    /// the context CONSTRUCTED ONLY ON THE ERROR PATH: rendering the callee name is
+    /// pure diagnostic work, so a successful call must not pay for it.
+    /// </summary>
+    private static EvalResult<T> WithCallCtx<T>(CallDiagnosticName function, EvalCtx ctx, EvalResult<T> result)
+        => result.IsError && !result.Error.IsResourceLimit
+            ? new EvalError.WithContext(CtxCall(function, ctx), result.Error) { Span = result.Error.Span }
+            : result;
+
+    /// <summary>
+    /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for dot-call contexts,
+    /// with the context constructed only on the error path (see
+    /// <see cref="WithCallCtx{T}"/>).
+    /// </summary>
+    private static EvalResult<T> WithDotCallCtx<T>(Expr target, string name, EvalCtx ctx, EvalResult<T> result)
+        => result.IsError && !result.Error.IsResourceLimit
+            ? new EvalError.WithContext(CtxDotCall(target, name, ctx), result.Error) { Span = result.Error.Span }
+            : result;
 
     private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
         result.IsError ? AtSpanIfMissing(result.Error, span) : result;
@@ -933,7 +904,7 @@ public static class Evaluator
         var number = value.AsNum();
         return number is not null
             ? EvalResult<decimal>.Ok(number.Value)
-            : new EvalError.TypeMismatch(NumericScalarOperandMessage(OpenExprBinaryOp(op), side, value));
+            : new EvalError.TypeMismatch(NumericScalarOperandMessage(ExprNameRenderer.BinaryOpText(op), side, value));
     }
 
     private static string NumericScalarOperandMessage(string operatorName, string side, Result value)
@@ -1786,7 +1757,7 @@ public static class Evaluator
         Algorithm wiredArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string? calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         // Passive, run-scoped observation: this is the one path that binds a deconstruction helper's
@@ -1795,8 +1766,6 @@ public static class Evaluator
         // Null for ordinary runs (no material effect); an observed run records through this context.
         if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true })
             ctx.Observations?.RecordDeconstructionFullBind();
-
-        var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
 
         var inputsR = BuildCallArgumentInputs(
             wiredArgs,
@@ -1813,7 +1782,7 @@ public static class Evaluator
             allowAlgorithmBindings: true,
             (required, actual) => new EvalError.ArityMismatch(required, actual)
             {
-                Signature = signature,
+                Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
             });
 
         // Assignment deconstruction is parser-elaborated into an anonymous
@@ -1857,7 +1826,7 @@ public static class Evaluator
         Algorithm wiredArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string? calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
         var group = helper.AssignmentDeconstructionGroup;
@@ -2115,13 +2084,11 @@ public static class Evaluator
         Algorithm wiredArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string? calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv, preserveArgBoundaries);
         if (inputsR.IsError) return inputsR.Error;
-
-        var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
 
         // A deconstruction parameter list always carries a collecting binding, so a
         // too-few-items failure reports the fixed-binding minimum ("at least N")
@@ -2131,7 +2098,15 @@ public static class Evaluator
             inputsR.Value,
             ctx,
             allowAlgorithmBindings: true,
-            (required, actual) => VariadicBindingArityMismatch(calleeName, required, actual, signature));
+            (required, actual) =>
+            {
+                var renderedName = calleeName.Render(ctx);
+                return VariadicBindingArityMismatch(
+                    renderedName,
+                    required,
+                    actual,
+                    CallableSignature.FromAlgorithm(renderedName, callee));
+            });
     }
 
     private static EvalCtx WithUserCallBindingEnvironments(
@@ -2156,7 +2131,8 @@ public static class Evaluator
     }
 
     private static EvalResult<FlatFixedUserCallBindings> BindFlatFixedUserCallArguments(
-        CallableSignature signature,
+        Algorithm callee,
+        CallDiagnosticName calleeName,
         IReadOnlyList<string> parameterNames,
         Algorithm wiredArgs,
         EvalCtx ctx,
@@ -2176,7 +2152,10 @@ public static class Evaluator
             .ToList();
 
         if (slots.Count > paramCount)
-            return new EvalError.ArityMismatch(paramCount, slots.Count) { Signature = signature };
+            return new EvalError.ArityMismatch(paramCount, slots.Count)
+            {
+                Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
+            };
 
         var algBindings = new List<(string, Algorithm)>();
         var valueParams = new List<string>();
@@ -2205,7 +2184,10 @@ public static class Evaluator
         if (argEnvR.IsError)
         {
             if (argEnvR.Error is EvalError.ArityMismatch arityMismatch)
-                return arityMismatch with { Signature = signature };
+                return arityMismatch with
+                {
+                    Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
+                };
 
             return argEnvR.Error;
         }
@@ -2251,40 +2233,6 @@ public static class Evaluator
     /// <c>1 div 0</c> keeps its own). Callers therefore need no wrapping of
     /// their own, and plain and counted evaluation report identical spans.
     /// </summary>
-    private static EvalResult<CountedResult> EvalIndexSelectionCounted(
-        Expr target,
-        Expr selector,
-        SourceSpan? span,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        var targetR = Eval(target, ctx, valEnv);
-        if (targetR.IsError) return WithSpan<CountedResult>(span, targetR.Error);
-
-        // ExpectInt reports TypeMismatch/BadArity from a Result and so has no
-        // span of its own; the index expression is the nearest source location.
-        var nR = EvalInt(selector, ctx, valEnv);
-        if (nR.IsError) return WithSpan<CountedResult>(span, nR.Error);
-
-        var n = nR.Value;
-        if (n < 0 || n != Math.Floor(n))
-            return new EvalError.BadIndex() { Span = span };
-
-        // Lean models the selector as an unbounded integer and reports
-        // badIndex for any position past the target's items; a selector
-        // beyond int range can never be in range, so it is the same
-        // out-of-range error rather than a host overflow.
-        if (n > int.MaxValue)
-            return new EvalError.BadIndex() { Span = span };
-
-        var selected = targetR.Value.SelectProjected((int)n);
-        if (selected is null)
-            return new EvalError.BadIndex() { Span = span };
-
-        return EvalResult<CountedResult>.Ok(
-            new CountedResult(selected.Value.Value, selected.Value.EmittedCount));
-    }
-
     /// <summary>
     /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
     /// evaluates back to the same shape.
@@ -3853,45 +3801,6 @@ public static class Evaluator
         }
 
         throw new InvalidOperationException("Sequence spread must contain at least one layer.");
-    }
-
-    /// <summary>
-    /// Evaluate a surface list literal <c>[e1, ..., en]</c> as exactly ONE
-    /// exact immutable list value. Element slots reuse the written-parentheses
-    /// expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>):
-    /// an explicit spread slot opens its operand's immediate items into the
-    /// list being constructed (an empty spread contributes no elements), a
-    /// non-spread slot is one element even when it evaluates to the empty
-    /// sequence value <c>()</c>, and a nested zero-parameter block is one
-    /// written grouping level. Unlike sequence construction the collected
-    /// elements are stored EXACTLY: no singleton erasure and no empty
-    /// canonicalization, so <c>[7]</c>, <c>[[7]]</c>, <c>[]</c>, and
-    /// <c>[()]</c> are all distinct list values. A list literal always emits
-    /// one value.
-    /// Lean: <c>evalListLiteralCounted</c>; plain <c>Eval</c> is this
-    /// function's value projection on both sides.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalListLiteralCounted(
-        IReadOnlyList<Expr> elements,
-        EvalCtx ctx,
-        IReadOnlyList<(string, Result)> valEnv,
-        SourceSpan? span)
-    {
-        var items = new List<Result>();
-        foreach (var element in elements)
-        {
-            var slotsR = EvalExplicitSequenceValueExprSlots(element, ctx, valEnv);
-            if (slotsR.IsError) return slotsR.Error;
-            items.AddRange(slotsR.Value);
-        }
-
-        // Cardinality is known once the written slots (including spread expansion) are
-        // evaluated, so the reservation happens before the persistent list is built.
-        if (ReserveCollection(ctx, items.Count, span) is { } limitError)
-            return limitError;
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(
-            Result.ListValue.TakeOwnership(items.ToArray()), 1));
     }
 
     private readonly record struct BoundSequenceBuiltinArguments(
@@ -5632,11 +5541,15 @@ public static class Evaluator
         if (leftValue is Result.Str || rightValue is Result.Str)
             return new EvalError.TypeMismatch("Cannot apply operator to string and non-string operands") { Span = span };
 
-        var binaryContext = $"while evaluating `{BinaryExprDiagnosticName(op, left, right)}`";
+        // The operand-shape context renders the WHOLE operand trees, which is
+        // quadratic over an operator chain — build it only on the error paths that
+        // actually attach it (the rendered text is identical either way).
         var xR = RequireNumericScalarOperand(op, "left", leftValue);
-        if (xR.IsError) return new EvalError.WithContext(binaryContext, xR.Error) { Span = span };
+        if (xR.IsError)
+            return new EvalError.WithContext(BinaryOperandContext(op, left, right), xR.Error) { Span = span };
         var yR = RequireNumericScalarOperand(op, "right", rightValue);
-        if (yR.IsError) return new EvalError.WithContext(binaryContext, yR.Error) { Span = span };
+        if (yR.IsError)
+            return new EvalError.WithContext(BinaryOperandContext(op, left, right), yR.Error) { Span = span };
         decimal x = xR.Value, y = yR.Value;
         if ((op is BinaryOp.Div or BinaryOp.IDiv or BinaryOp.Mod) && y == 0)
             return new EvalError.DivByZero() { Span = span };
@@ -6011,6 +5924,335 @@ public static class Evaluator
         return MakeCheckedLoopStateResult(ctx, stateSlots);
     }
 
+    // ── Iterative expression-spine evaluation ───────────────────────────────
+
+    /// <summary>
+    /// The pure-expression composite node kinds whose evaluation is driven by the
+    /// iterative spine machine (<see cref="EvalExpressionSpineCounted"/>) instead of
+    /// CLR recursion: unary and binary operators, index selection, and list literals.
+    /// These are the shapes whose recursive evaluation frames were measured to
+    /// exhaust a 1 MiB stack within the structural depth ceiling (binary/unary spines
+    /// at ~330-340 nodes, index spines at ~270-285, list spines at ~290-300 in Debug),
+    /// so within-ceiling safety REQUIRES that their nesting consume no proportional
+    /// call stack. Algorithm-carrying kinds (blocks, calls, dot-calls) stay on their
+    /// recursive paths and are bounded by the structural ceiling instead; the internal
+    /// sequence-join kinds already have their own iterative handling
+    /// (<see cref="EvalSequenceConstructCounted"/>, <see cref="EvalSequenceSpreadCounted"/>).
+    /// </summary>
+    private static bool IsExpressionSpineNode(Expr expr)
+        => expr is Expr.Unary or Expr.Binary or Expr.Index or Expr.ListLiteral;
+
+    /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>
+    private struct ExpressionSpineFrame(Expr node)
+    {
+        public readonly Expr Node = node;
+
+        /// <summary>Unary/Binary/Index: completed child count. ListLiteral: next element index.</summary>
+        public int Phase;
+
+        /// <summary>Binary left value / Index target value, once evaluated.</summary>
+        public Result? FirstValue;
+
+        /// <summary>ListLiteral element accumulator (exact written slots, spread already expanded).</summary>
+        public List<Result>? ListItems;
+    }
+
+    /// <summary>
+    /// Evaluates one maximal pure-expression spine with an explicit frame stack,
+    /// replicating the recursive per-kind evaluation EXACTLY — child order, error
+    /// decoration, spans, budget reservations, and emitted counts — while consuming
+    /// O(1) CLR stack per spine node. Children that are not spine kinds are delegated
+    /// to the ordinary recursive paths (one bounded frame layer; the structural
+    /// preflight bounds how many such layers a path can alternate through).
+    ///
+    /// <para>Per-kind semantics preserved here (previously the recursive
+    /// <c>Eval</c> cases and the <c>EvalIndexSelectionCounted</c> /
+    /// <c>EvalListLiteralCounted</c> helpers):</para>
+    /// <list type="bullet">
+    ///   <item><b>Unary</b>: empty sequence propagates; strings are a
+    ///   <see cref="EvalError.TypeMismatch"/> at the unary expression's span; operand
+    ///   errors propagate untouched. Lean: <c>eval</c> unary case.</item>
+    ///   <item><b>Binary</b>: left then right, each error propagating untouched, then
+    ///   <see cref="ApplyBinaryOperator"/>. Lean: <c>eval</c> binary case.</item>
+    ///   <item><b>Index</b>: target then selector; every child or coercion error gains
+    ///   the index expression's span when it has none; the selected item re-emits its
+    ///   PROJECTED count (<c>S:0</c> re-emits, never re-counts). Lean:
+    ///   <c>evalIndexSelectionCounted</c>.</item>
+    ///   <item><b>ListLiteral</b>: element slots follow the written-parentheses
+    ///   expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>);
+    ///   elements are stored EXACTLY (no singleton erasure, no empty canonicalization),
+    ///   the collection reservation happens before the persistent list is built, and a
+    ///   list literal always emits one value. Lean: <c>evalListLiteralCounted</c>;
+    ///   plain <c>Eval</c> is this function's value projection on both sides.</item>
+    /// </list>
+    /// </summary>
+    private static EvalResult<CountedResult> EvalExpressionSpineCounted(
+        Expr root,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var frames = new ExpressionSpineFrame[16];
+        var frameCount = 0;
+        frames[frameCount++] = new ExpressionSpineFrame(root);
+
+        // The counted result most recently produced for the top frame's pending
+        // child. Machine-kind children deliver here when their frame pops; delegated
+        // children deliver here directly.
+        CountedResult pendingChild = default;
+        var hasPendingChild = false;
+
+        while (true)
+        {
+            ref var frame = ref frames[frameCount - 1];
+            EvalResult<CountedResult>? completed = null;
+            Expr? requestedChild = null;
+
+            switch (frame.Node)
+            {
+                case Expr.Unary(var unaryOp, var operand):
+                {
+                    if (!hasPendingChild)
+                    {
+                        requestedChild = operand;
+                        break;
+                    }
+
+                    hasPendingChild = false;
+                    var operandValue = pendingChild.Value;
+
+                    // Empty result propagation through unary operators.
+                    if (operandValue is Result.SequenceValue(var uItems) && uItems.Count == 0)
+                    {
+                        var empty = Result.SequenceValue.TakeOwnership([]);
+                        completed = EvalResult<CountedResult>.Ok(new CountedResult(empty, empty.ValueCount()));
+                        break;
+                    }
+
+                    if (operandValue is Result.Str)
+                    {
+                        completed = new EvalError.TypeMismatch("Unary operator is not supported for strings")
+                        {
+                            Span = frame.Node.Span,
+                        };
+                        break;
+                    }
+
+                    var vR = ExpectInt(operandValue);
+                    if (vR.IsError)
+                    {
+                        completed = vR.Error;
+                        break;
+                    }
+
+                    var unaryResult = unaryOp switch
+                    {
+                        UnaryOp.Minus => -vR.Value,
+                        UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
+                        _ => 0m,
+                    };
+                    var unaryValue = new Result.Atom(unaryResult);
+                    completed = EvalResult<CountedResult>.Ok(new CountedResult(unaryValue, unaryValue.ValueCount()));
+                    break;
+                }
+
+                case Expr.Binary(var op, var left, var right):
+                {
+                    if (frame.Phase == 0)
+                    {
+                        if (!hasPendingChild)
+                        {
+                            requestedChild = left;
+                            break;
+                        }
+
+                        hasPendingChild = false;
+                        frame.FirstValue = pendingChild.Value;
+                        frame.Phase = 1;
+                        requestedChild = right;
+                        break;
+                    }
+
+                    hasPendingChild = false;
+                    var binaryR = ApplyBinaryOperator(
+                        op, left, right, frame.FirstValue!, pendingChild.Value, frame.Node.Span);
+                    completed = binaryR.IsError
+                        ? binaryR.Error
+                        : EvalResult<CountedResult>.Ok(new CountedResult(
+                            binaryR.Value, binaryR.Value.ValueCount()));
+                    break;
+                }
+
+                case Expr.Index(var target, var selector):
+                {
+                    if (frame.Phase == 0)
+                    {
+                        if (!hasPendingChild)
+                        {
+                            requestedChild = target;
+                            break;
+                        }
+
+                        hasPendingChild = false;
+                        frame.FirstValue = pendingChild.Value;
+                        frame.Phase = 1;
+                        requestedChild = selector;
+                        break;
+                    }
+
+                    hasPendingChild = false;
+
+                    // ExpectInt reports TypeMismatch/BadArity from a Result and so has no
+                    // span of its own; the index expression is the nearest source location.
+                    var nR = ExpectInt(pendingChild.Value);
+                    if (nR.IsError)
+                    {
+                        completed = AtSpanIfMissing(nR.Error, frame.Node.Span);
+                        break;
+                    }
+
+                    var n = nR.Value;
+                    if (n < 0 || n != Math.Floor(n))
+                    {
+                        completed = new EvalError.BadIndex() { Span = frame.Node.Span };
+                        break;
+                    }
+
+                    // Lean models the selector as an unbounded integer and reports
+                    // badIndex for any position past the target's items; a selector
+                    // beyond int range can never be in range, so it is the same
+                    // out-of-range error rather than a host overflow.
+                    if (n > int.MaxValue)
+                    {
+                        completed = new EvalError.BadIndex() { Span = frame.Node.Span };
+                        break;
+                    }
+
+                    var selected = frame.FirstValue!.SelectProjected((int)n);
+                    completed = selected is null
+                        ? new EvalError.BadIndex() { Span = frame.Node.Span }
+                        : EvalResult<CountedResult>.Ok(new CountedResult(
+                            selected.Value.Value, selected.Value.EmittedCount));
+                    break;
+                }
+
+                case Expr.ListLiteral(var elements):
+                {
+                    frame.ListItems ??= [];
+                    if (hasPendingChild)
+                    {
+                        // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
+                        // spread, so its counted supply contributes exactly ONE value.
+                        hasPendingChild = false;
+                        frame.ListItems.Add(pendingChild.Value);
+                        frame.Phase++;
+                    }
+
+                    while (frame.Phase < elements.Count)
+                    {
+                        var element = elements[frame.Phase];
+                        if (IsExpressionSpineNode(element))
+                            break;
+
+                        var slotsR = EvalExplicitSequenceValueExprSlots(element, ctx, valEnv);
+                        if (slotsR.IsError)
+                        {
+                            completed = slotsR.Error;
+                            break;
+                        }
+
+                        frame.ListItems.AddRange(slotsR.Value);
+                        frame.Phase++;
+                    }
+
+                    if (completed is not null)
+                        break;
+
+                    if (frame.Phase < elements.Count)
+                    {
+                        requestedChild = elements[frame.Phase];
+                        break;
+                    }
+
+                    // Cardinality is known once the written slots (including spread
+                    // expansion) are evaluated, so the reservation happens before the
+                    // persistent list is built.
+                    if (ReserveCollection(ctx, frame.ListItems.Count, frame.Node.Span) is { } limitError)
+                    {
+                        completed = limitError;
+                        break;
+                    }
+
+                    completed = EvalResult<CountedResult>.Ok(new CountedResult(
+                        Result.ListValue.TakeOwnership(frame.ListItems.ToArray()), 1));
+                    break;
+                }
+
+                default:
+                    throw new InvalidOperationException(
+                        $"EvalExpressionSpineCounted received the non-spine node kind '{frame.Node.GetType()}'.");
+            }
+
+            if (requestedChild is not null)
+            {
+                if (IsExpressionSpineNode(requestedChild))
+                {
+                    if (frameCount == frames.Length)
+                        Array.Resize(ref frames, frames.Length * 2);
+                    frames[frameCount++] = new ExpressionSpineFrame(requestedChild);
+                    continue;
+                }
+
+                // Delegated child: exactly the call the recursive code made — plain
+                // Eval for unary/binary operands and index targets/selectors. (List
+                // elements never reach here; non-machine elements go through
+                // EvalExplicitSequenceValueExprSlots above, exactly as before.)
+                var childR = Eval(requestedChild, ctx, valEnv);
+                if (childR.IsError)
+                {
+                    completed = childR.Error;
+                }
+                else
+                {
+                    pendingChild = new CountedResult(childR.Value, childR.Value.ValueCount());
+                    hasPendingChild = true;
+                    continue;
+                }
+            }
+
+            if (completed is not { } completedResult)
+                continue;
+
+            if (completedResult.IsError)
+            {
+                // Unwind exactly like the recursive returns: the frame whose child
+                // failed applies its child-error decoration (only Index attaches its
+                // span), then returns the error to ITS parent, which decorates in
+                // turn. An error produced by a frame's own apply step starts at that
+                // frame's parent.
+                var error = completedResult.Error;
+                var decorateTopFrame = requestedChild is not null;
+                while (frameCount > 0)
+                {
+                    ref var unwound = ref frames[frameCount - 1];
+                    if (decorateTopFrame && unwound.Node is Expr.Index)
+                        error = AtSpanIfMissing(error, unwound.Node.Span);
+
+                    decorateTopFrame = true;
+                    frameCount--;
+                }
+
+                return error;
+            }
+
+            frameCount--;
+            if (frameCount == 0)
+                return completedResult;
+
+            pendingChild = completedResult.Value;
+            hasPendingChild = true;
+        }
+    }
+
     // ── Main eval ───────────────────────────────────────────────────────────
 
     /// <summary>Lean: eval → EvalM Result.</summary>
@@ -6019,6 +6261,16 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // Structural nesting charges no dynamic invocation depth; the pre-evaluation
+        // structural preflight (AstStructuralPreflight) bounds every accepted tree to
+        // EvaluationLimits.MaxSupportedAstDepth before evaluation begins, and the
+        // pure-expression composite kinds (unary, binary, index, list literal, and the
+        // internal sequence joins) evaluate ITERATIVELY, so recursion here grows only
+        // at algorithm boundaries (blocks, calls, dot-calls) — the shapes the ceiling
+        // is calibrated against. Deliberately NO TryEnsureSufficientExecutionStack
+        // probe here: the CLR probe reserves roughly half of a 1 MiB stack, so a
+        // per-node probe rejects deep parser-produced programs that complete fine
+        // today (measured: a 288-level bracket nesting).
         switch (expr)
         {
             case Expr.Num(var n):
@@ -6052,34 +6304,15 @@ public static class Evaluator
                     return new EvalError.UnknownName(name) { Span = expr.Span };
                 }
 
-            case Expr.Unary(var unaryOp, var operand):
+            case Expr.Unary or Expr.Binary:
                 {
-                    // Empty result propagation through unary operators.
-                    var operandR = Eval(operand, ctx, valEnv);
-                    if (operandR.IsError) return operandR.Error;
-                    if (operandR.Value is Result.SequenceValue(var uItems) && uItems.Count == 0)
-                        return EvalResult<Result>.Ok(Result.SequenceValue.TakeOwnership([]));
-                    if (operandR.Value is Result.Str)
-                        return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = expr.Span };
-                    var vR = ExpectInt(operandR.Value);
-                    if (vR.IsError) return vR.Error;
-                    var unaryResult = unaryOp switch
-                    {
-                        UnaryOp.Minus => -vR.Value,
-                        UnaryOp.Not => vR.Value == 0 ? 1m : 0m,
-                        _ => 0m,
-                    };
-                    return EvalResult<Result>.Ok(new Result.Atom(unaryResult));
-                }
-
-            case Expr.Binary(var op, var left, var right):
-                {
-                    // Evaluate both sides as Result first so empty results can propagate.
-                    var lR = Eval(left, ctx, valEnv);
-                    if (lR.IsError) return lR.Error;
-                    var rR = Eval(right, ctx, valEnv);
-                    if (rR.IsError) return rR.Error;
-                    return ApplyBinaryOperator(op, left, right, lR.Value, rR.Value, expr.Span);
+                    // Unary and binary spines evaluate iteratively; the machine
+                    // preserves the recursive semantics exactly (empty-result
+                    // propagation, string rejection, ApplyBinaryOperator).
+                    var spineR = EvalExpressionSpineCounted(expr, ctx, valEnv);
+                    return spineR.IsError
+                        ? spineR.Error
+                        : EvalResult<Result>.Ok(spineR.Value.Value);
                 }
 
             case Expr.SequenceConstruct:
@@ -6101,9 +6334,9 @@ public static class Evaluator
                         : EvalResult<Result>.Ok(sequenceSpreadR.Value.Value);
                 }
 
-            case Expr.ListLiteral(var listItems):
+            case Expr.ListLiteral:
                 {
-                    var listLiteralR = EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
+                    var listLiteralR = EvalExpressionSpineCounted(expr, ctx, valEnv);
                     return listLiteralR.IsError
                         ? listLiteralR.Error
                         : EvalResult<Result>.Ok(listLiteralR.Value.Value);
@@ -6148,16 +6381,17 @@ public static class Evaluator
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
                 // Lean: eval (.dotCall o n argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
-                return WithSpan(expr.Span, WithCtx(CtxDotCall(dotTarget, dotName),
+                // (the context — which renders the receiver's name — is built only on error).
+                return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
                     EvalDotCall(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
             case Expr.Call(var func, var argsAlg):
                 return WithSpan(expr.Span,
                     EvalCallExpr(func, argsAlg, ctx, valEnv));
 
-            case Expr.Index(var target, var selector):
+            case Expr.Index:
                 {
-                    var selectionR = EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
+                    var selectionR = EvalExpressionSpineCounted(expr, ctx, valEnv);
                     return selectionR.IsError
                         ? selectionR.Error
                         : EvalResult<Result>.Ok(selectionR.Value.Value);
@@ -6225,8 +6459,8 @@ public static class Evaluator
             case Expr.SequenceConstruct:
                 return EvalSequenceConstructCounted(expr, ctx, valEnv);
 
-            case Expr.ListLiteral(var listItems):
-                return EvalListLiteralCounted(listItems, ctx, valEnv, expr.Span);
+            case Expr.Unary or Expr.Binary or Expr.ListLiteral:
+                return EvalExpressionSpineCounted(expr, ctx, valEnv);
 
             case Expr.EmptySequence(var depth):
                 {
@@ -6282,16 +6516,16 @@ public static class Evaluator
                 }
 
             case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
-                return WithSpan(expr.Span, WithCtx(CtxDotCall(dotTarget, dotName),
+                return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
                     EvalDotCallCounted(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
             case Expr.Call(var func, var argsAlg):
                 return WithSpan(expr.Span,
                     EvalCallCountedExpr(func, argsAlg, ctx, valEnv));
 
-            case Expr.Index(var target, var selector):
-                // EvalIndexSelectionCounted owns the index-expression span.
-                return EvalIndexSelectionCounted(target, selector, expr.Span, ctx, valEnv);
+            case Expr.Index:
+                // The spine machine owns the index-expression span.
+                return EvalExpressionSpineCounted(expr, ctx, valEnv);
 
             default:
                 {
@@ -6594,7 +6828,12 @@ public static class Evaluator
     {
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func));
+        return EvalResolvedCall(
+            calleeR.Value,
+            argsAlg,
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromExpression(func));
     }
 
     /// <summary>
@@ -6609,7 +6848,12 @@ public static class Evaluator
     {
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        return EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func));
+        return EvalResolvedCallCounted(
+            calleeR.Value,
+            argsAlg,
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromExpression(func));
     }
 
     /// <summary>
@@ -6621,22 +6865,27 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError)
-            return new EvalError.WithContext(CtxCall(func), calleeR.Error) { Span = calleeR.Error.Span };
+            return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
 
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.PlainCall(func, argsAlg, calleeR.Value),
             ctx,
             valEnv,
             out var sequencePipelineR))
-            return WithCtx(
-                CtxCall(func),
+            return WithCallCtx(
+                diagnosticName,
+                ctx,
                 sequencePipelineR.IsError
                     ? sequencePipelineR.Error
                     : EvalResult<Result>.Ok(sequencePipelineR.Value.Value));
 
-        return WithCtx(CtxCall(func), EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func)));
+        return WithCallCtx(
+            diagnosticName,
+            ctx,
+            EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, diagnosticName));
     }
 
     /// <summary>
@@ -6648,18 +6897,22 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveAlg(func, ctx);
         if (calleeR.IsError)
-            return new EvalError.WithContext(CtxCall(func), calleeR.Error) { Span = calleeR.Error.Span };
+            return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
 
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.PlainCall(func, argsAlg, calleeR.Value),
             ctx,
             valEnv,
             out var sequencePipelineR))
-            return WithCtx(CtxCall(func), sequencePipelineR);
+            return WithCallCtx(diagnosticName, ctx, sequencePipelineR);
 
-        return WithCtx(CtxCall(func), EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, OpenExprName(func)));
+        return WithCallCtx(
+            diagnosticName,
+            ctx,
+            EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, diagnosticName));
     }
 
     // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
@@ -6717,7 +6970,7 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName = "conditional",
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         // Charged dynamic invocation boundary: clause selection plus the selected
@@ -6739,7 +6992,7 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
         var wiredArgs = WireToCaller(ctx, args);
@@ -6756,7 +7009,7 @@ public static class Evaluator
 
         var match = MatchCallBranches(callee.Branches, argResults);
         if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName);
+            return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
 
         var (branch, bindings) = match.Value;
         var wiredBody = ChildOf(callee, branch.Body);
@@ -6780,7 +7033,7 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName = "conditional",
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         // Charged dynamic invocation boundary (see EvalConditionalCall).
@@ -6801,7 +7054,7 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
         var wiredArgs = WireToCaller(ctx, args);
@@ -6815,7 +7068,7 @@ public static class Evaluator
 
         var match = MatchCallBranches(callee.Branches, argResults);
         if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName);
+            return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
 
         var (branch, bindings) = match.Value;
         var wiredBody = ChildOf(callee, branch.Body);
@@ -6855,8 +7108,8 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries = null,
-        string? calleeName = null)
+        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
@@ -6877,7 +7130,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
-        string? calleeName)
+        CallDiagnosticName calleeName)
     {
         var wiredArgs = WireToCaller(ctx, args);
 
@@ -6893,7 +7146,7 @@ public static class Evaluator
             return sharedTarget;
         }
 
-        var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
+        var signature = CallableSignature.FromAlgorithm(calleeName.StructuralName, callee);
         var bindingPlan = CallableBindingPlan.FromSignature(signature);
 
         if (bindingPlan.RequiresPatternedBinding)
@@ -6921,7 +7174,13 @@ public static class Evaluator
         if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
             flatFixedParams = callee.Params;
 
-        var flatBindingsR = BindFlatFixedUserCallArguments(signature, flatFixedParams, wiredArgs, ctx, valEnv);
+        var flatBindingsR = BindFlatFixedUserCallArguments(
+            callee,
+            calleeName,
+            flatFixedParams,
+            wiredArgs,
+            ctx,
+            valEnv);
         if (flatBindingsR.IsError) return flatBindingsR.Error;
 
         var flatBindings = flatBindingsR.Value;
@@ -6936,7 +7195,7 @@ public static class Evaluator
         Algorithm argsAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         if (callee is Algorithm.Builtin(var builtinId))
@@ -6981,8 +7240,8 @@ public static class Evaluator
         Algorithm callee, Algorithm args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries = null,
-        string? calleeName = null)
+        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
@@ -7003,7 +7262,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
-        string? calleeName)
+        CallDiagnosticName calleeName)
     {
         var wiredArgs = WireToCaller(ctx, args);
 
@@ -7021,7 +7280,7 @@ public static class Evaluator
                 : EvalResult<CountedResult>.Ok(new CountedResult(sharedTarget.Value, sharedTarget.Value.ValueCount()));
         }
 
-        var signature = CallableSignature.FromAlgorithm(calleeName ?? "<anonymous>", callee);
+        var signature = CallableSignature.FromAlgorithm(calleeName.StructuralName, callee);
         var bindingPlan = CallableBindingPlan.FromSignature(signature);
 
         if (bindingPlan.RequiresPatternedBinding)
@@ -7049,7 +7308,13 @@ public static class Evaluator
         if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
             flatFixedParams = callee.Params;
 
-        var flatBindingsR = BindFlatFixedUserCallArguments(signature, flatFixedParams, wiredArgs, ctx, valEnv);
+        var flatBindingsR = BindFlatFixedUserCallArguments(
+            callee,
+            calleeName,
+            flatFixedParams,
+            wiredArgs,
+            ctx,
+            valEnv);
         if (flatBindingsR.IsError) return flatBindingsR.Error;
 
         var flatBindings = flatBindingsR.Value;
@@ -7064,7 +7329,7 @@ public static class Evaluator
         Algorithm argsAlg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        string calleeName,
+        CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
         if (callee is Algorithm.Builtin(var builtinId))
@@ -7184,7 +7449,12 @@ public static class Evaluator
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
-            return EvalResolvedCall(wired, argsOpt, ctx, valEnv, name);
+            return EvalResolvedCall(
+                wired,
+                argsOpt,
+                ctx,
+                valEnv,
+                CallDiagnosticName.FromKnown(name));
         }
 
         if (ConditionalBranchesDefineProperty(targetAlg, name))
@@ -7419,7 +7689,12 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var rangeR = WithSpan(callSpan, WithCtx(CtxCall(function), EvalBuiltinRangeCallArguments(argsAlg, ctx, valEnv)));
+        var rangeR = WithSpan(
+            callSpan,
+            WithCallCtx(
+                CallDiagnosticName.FromExpression(function),
+                ctx,
+                EvalBuiltinRangeCallArguments(argsAlg, ctx, valEnv)));
         if (rangeR.IsError)
             return rangeR;
 
@@ -7496,7 +7771,13 @@ public static class Evaluator
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
         var (combinedArgs, preserveArgBoundaries) = BuildLexicalReceiverCallArgs(calleeR.Value, name, receiver, extraArgs);
-        return EvalResolvedCall(calleeR.Value, combinedArgs, ctx, valEnv, name, preserveArgBoundaries);
+        return EvalResolvedCall(
+            calleeR.Value,
+            combinedArgs,
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromKnown(name),
+            preserveArgBoundaries);
     }
 
     /// <summary>
@@ -7566,7 +7847,12 @@ public static class Evaluator
                 return new EvalError.ArityMismatch(wired.Params.Count, 0);
             }
 
-            return EvalResolvedCallCounted(wired, argsOpt, ctx, valEnv, name);
+            return EvalResolvedCallCounted(
+                wired,
+                argsOpt,
+                ctx,
+                valEnv,
+                CallDiagnosticName.FromKnown(name));
         }
 
         if (ConditionalBranchesDefineProperty(targetAlg, name))
@@ -7593,7 +7879,13 @@ public static class Evaluator
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
         var (combinedArgs, preserveArgBoundaries) = BuildLexicalReceiverCallArgs(calleeR.Value, name, receiver, extraArgs);
-        return EvalResolvedCallCounted(calleeR.Value, combinedArgs, ctx, valEnv, name, preserveArgBoundaries);
+        return EvalResolvedCallCounted(
+            calleeR.Value,
+            combinedArgs,
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromKnown(name),
+            preserveArgBoundaries);
     }
 
     // ── Entry points ────────────────────────────────────────────────────────
@@ -7601,6 +7893,22 @@ public static class Evaluator
     /// <summary>
     /// Run evaluation on an expression with prelude in scope.
     /// Lean: runResult → EvalM Result.
+    /// <para><b>Host-AST contract:</b> the expression may be a preconstructed
+    /// (host-built) AST. Every entry point first runs a non-recursive structural safety
+    /// preflight: a tree whose weighted structural depth exceeds
+    /// <see cref="EvaluationLimits.MaxAstDepth"/> (bounded by
+    /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/>) is rejected with
+    /// <see cref="EvalError.AstDepthLimitExceeded"/>, and a cyclic node graph with
+    /// <see cref="EvalError.AstCycleDetected"/>, before any recursive validation,
+    /// optimization, or evaluation can overflow the CLR stack. Programs accepted by
+    /// the elaborating public parser stay within the hard ceiling; a raw syntax tree
+    /// from <c>Parser.ParseSyntax</c> may validly fall between that API's larger raw
+    /// gate and this evaluation gate and is rejected here.</para>
+    /// <para><b>Supported execution environment:</b> the structural safety envelope
+    /// is calibrated for threads with at least 1 MiB of stack (the CLR/Windows
+    /// default). Embedders running evaluation on smaller custom stacks are outside
+    /// the documented envelope and should lower
+    /// <see cref="EvaluationLimits.MaxAstDepth"/> accordingly.</para>
     /// </summary>
     public static EvalResult<Result> Run(Expr expr)
         => Run(expr, limits: null);
@@ -7698,6 +8006,25 @@ public static class Evaluator
             sequenceDiagnostics: null,
             limits);
 
+    /// <summary>
+    /// Non-recursive structural safety preflight shared by every evaluator entry point
+    /// that accepts a preconstructed AST. It MUST run before
+    /// <see cref="AlgorithmValidation.FindFirstExplicitParameterOutputViolation(Expr)"/>
+    /// and before any other recursive pass (validation walk, optimizer planning,
+    /// evaluation): those consume the tree on the CLR stack, so a host-built tree
+    /// deeper than the structural limit would otherwise terminate the process with an
+    /// unhandleable <see cref="StackOverflowException"/>. Returns <c>null</c> for safe
+    /// trees; runs before any budget exists and charges nothing to evaluation budgets.
+    /// </summary>
+    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits)
+    {
+        var effectiveLimit = (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth;
+        return AstStructuralPreflight.Check(
+                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines) is { } rejection
+            ? AstStructuralPreflight.ToEvalError(rejection, effectiveLimit)
+            : null;
+    }
+
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -7705,8 +8032,12 @@ public static class Evaluator
         LoopOptimizationDiagnostics? loopDiagnostics,
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
-        EvaluationLimits? limits = null)
+        EvaluationLimits? limits = null,
+        EvaluationObservations? observations = null)
     {
+        if (StructuralPreflight(expr, limits) is { } structuralError)
+            return structuralError;
+
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
@@ -7718,11 +8049,32 @@ public static class Evaluator
             loopDiagnostics,
             enableSequencePipelineOptimization,
             sequenceDiagnostics,
-            limits);
+            limits,
+            observations);
         return expr is Expr.Block(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
     }
+
+    /// <summary>
+    /// Non-counted harness entry point with the same passive, run-scoped observations as
+    /// <see cref="RunCountedObserved"/>. It exists only to prove implementation-path properties;
+    /// ordinary evaluation creates no observation object.
+    /// </summary>
+    internal static EvalResult<Result> RunObserved(
+        Expr expr,
+        EvaluationObservations observations,
+        bool enableOptimizations = true,
+        EvaluationLimits? limits = null)
+        => Run(
+            expr,
+            new RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: enableOptimizations,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: enableOptimizations,
+            sequenceDiagnostics: null,
+            limits,
+            observations);
 
     internal static EvalResult<CountedResult> RunCounted(Expr expr)
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
@@ -7757,6 +8109,9 @@ public static class Evaluator
         EvaluationObservations? observations = null)
     {
         var budget = EvaluationBudget.Create(limits);
+        if (StructuralPreflight(expr, limits) is { } structuralError)
+            return (structuralError, budget);
+
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return (new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span }, budget);
 
@@ -7780,6 +8135,9 @@ public static class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null)
     {
+        if (StructuralPreflight(expr, limits) is { } structuralError)
+            return structuralError;
+
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 
@@ -7803,6 +8161,9 @@ public static class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null)
     {
+        if (StructuralPreflight(expr, limits) is { } structuralError)
+            return structuralError;
+
         if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
             return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
 

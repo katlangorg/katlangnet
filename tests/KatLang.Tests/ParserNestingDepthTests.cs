@@ -20,6 +20,17 @@ public class ParserNestingDepthTests
     private static bool HasNestingDiagnostic(SyntaxParseResult r)
         => r.Diagnostics.Any(d => d.Message.Contains(NestingMessage, StringComparison.Ordinal));
 
+    private static bool HasExpressionChainDiagnostic(SyntaxParseResult r)
+        => r.Diagnostics.Any(
+            d => d.Message.Contains("Expression operator or postfix chain is too deep", StringComparison.Ordinal));
+
+    private static void AssertParses(string source)
+    {
+        var result = Parser.ParseSyntax(source);
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics));
+        Assert.False(HasNestingDiagnostic(result));
+    }
+
     private static Expr SingleOutput(SyntaxParseResult result)
     {
         var user = Assert.IsType<Algorithm.User>(result.Root);
@@ -28,36 +39,107 @@ public class ParserNestingDepthTests
 
     // ── Realistic deep input still succeeds (comfortably within budget) ───────
     [Theory]
-    [InlineData("(", ")")]
-    [InlineData("[", "]")]
-    [InlineData("{", "}")]
-    public void DeepBalanced_InBudget_ParsesWithoutError(string open, string close)
+    [InlineData("(", ")", 90)]   // groups: 4 weighted units/level (heavy machinery)
+    [InlineData("{", "}", 90)]   // blocks: 4 units/level
+    [InlineData("[", "]", 120)]  // lists: 3 units/level
+    public void DeepBalanced_InBudget_ParsesWithoutError(string open, string close, int levels)
     {
-        // 200 nested structural levels — above the 256-boundary bar's per-kind depth,
-        // well below the ~289 structural budget, and far below the native crash.
-        var result = Parser.ParseSyntax(Rep(open, 200) + "1" + Rep(close, 200));
+        // Just under each shape's budget capacity — every capacity was proven to
+        // parse on a dedicated 512 KiB thread (half the documented 1 MiB minimum),
+        // so the budget, not the machine, is what stops deeper input.
+        var result = Parser.ParseSyntax(Rep(open, levels) + "1" + Rep(close, levels));
         Assert.False(result.HasErrors);
         Assert.False(HasNestingDiagnostic(result));
     }
 
     [Theory]
-    [InlineData("not ")]     // prefix not-chain (~1 counter/level)
+    [InlineData("not ")]     // prefix not-chain (~1 weighted unit/level)
     [InlineData("-")]        // prefix minus-chain
     public void DeepPrefix_InBudget_ParsesWithoutError(string prefix)
     {
-        var result = Parser.ParseSyntax(Rep(prefix, 400) + "1");
+        var result = Parser.ParseSyntax(Rep(prefix, 350) + "1");
         Assert.False(result.HasErrors);
         Assert.False(HasNestingDiagnostic(result));
     }
 
-    // ── Boundary behaviour: just below parses, above diagnoses (no crash) ─────
-    [Fact]
-    public void StructuralBoundary_BelowParses_AboveDiagnoses()
+    // ── Boundary behaviour: exact per-shape maxima parse, one beyond diagnoses ─
+    [Theory]
+    [InlineData("(", ")", 95)]   // 95 x 4 units + 2 = 382 <= 384; 96 x 4 + 2 = 386
+    [InlineData("{", "}", 95)]
+    [InlineData("[", "]", 127)]  // 127 x 3 + 2 = 383 <= 384
+    public void StructuralBoundary_AtMaximumParses_OneBeyondDiagnoses(string open, string close, int max)
     {
-        // Effective structural limit is ~289 nested delimiters at MaxNestingDepth=580.
-        // Margins keep this robust to small frame-count shifts.
-        Assert.False(HasNestingDiagnostic(Parser.ParseSyntax(Rep("(", 260) + "1" + Rep(")", 260))));
-        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep("(", 340) + "1" + Rep(")", 340))));
+        AssertParses(Rep(open, max) + "1" + Rep(close, max));
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep(open, max + 1) + "1" + Rep(close, max + 1))));
+    }
+
+    [Fact]
+    public void PrefixBoundary_AtMaximumParses_OneBeyondDiagnoses()
+    {
+        // Unary levels charge one unit each: 382 + entry = 384 units exactly.
+        AssertParses(Rep("-", 382) + "1");
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep("-", 383) + "1")));
+    }
+
+    [Fact]
+    public void PowerBoundary_UsesTheEstablishedExpressionChainMaximum()
+    {
+        // Power is parsed right-associatively and charges the cumulative recursion
+        // counter, but its completed AST is also an operator chain. The established
+        // 256-link chain policy is therefore the first successful-surface boundary.
+        AssertParses(Rep("1 ^ ", Parser.MaxExpressionChainDepth) + "1");
+        var oneBeyond = Parser.ParseSyntax(Rep("1 ^ ", Parser.MaxExpressionChainDepth + 1) + "1");
+        Assert.True(oneBeyond.HasErrors);
+        Assert.True(HasExpressionChainDiagnostic(oneBeyond));
+        Assert.False(HasNestingDiagnostic(oneBeyond));
+    }
+
+    [Fact]
+    public void CallNestingBoundary_AtMaximumParses_OneBeyondDiagnoses()
+    {
+        // Call argument levels charge 3 units (base 2 + call surcharge 1).
+        AssertParses("f(x) = x\n" + Rep("f(", 127) + "1" + Rep(")", 127));
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
+            "f(x) = x\n" + Rep("f(", 128) + "1" + Rep(")", 128))));
+    }
+
+    [Fact]
+    public void PatternBoundary_AtMaximumParses_OneBeyondDiagnoses()
+    {
+        AssertParses("F" + Rep("(", 384) + "x" + Rep(")", 384) + " = x\nF(1)");
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
+            "F" + Rep("(", 385) + "x" + Rep(")", 385) + " = x\nF(1)")));
+    }
+
+    [Fact]
+    public void MixedContainers_ChargeCumulatively_NeverPerMechanism()
+    {
+        // The one cumulative budget is shared by every grammar mechanism: alternating
+        // group/list/block levels charge 4 + 3 + 4 units per cycle, so ~35 cycles
+        // exhaust it even though each DELIMITER KIND alone is far below its own
+        // capacity — per-mechanism budgets would wrongly admit this shape.
+        AssertParses(Rep("([{", 34) + "1" + Rep("}])", 34));
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(Rep("([{", 35) + "1" + Rep("}])", 35))));
+    }
+
+    [Fact]
+    public void InitialDebt_IsBoundedAndComposesWithExpressionFrames()
+    {
+        AssertParsesWithDebt("1", 382);
+
+        var oneBeyond = Parser.ParseSyntax("1", 383);
+        Assert.True(oneBeyond.HasErrors);
+        Assert.Single(oneBeyond.Diagnostics, d => d.Message.Contains(NestingMessage, StringComparison.Ordinal));
+
+        var hostileDebt = Parser.ParseSyntax("1", int.MaxValue);
+        Assert.True(hostileDebt.HasErrors);
+        Assert.Single(hostileDebt.Diagnostics, d => d.Message.Contains(NestingMessage, StringComparison.Ordinal));
+
+        static void AssertParsesWithDebt(string source, int debt)
+        {
+            var result = Parser.ParseSyntax(source, debt);
+            Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics));
+        }
     }
 
     // ── Over budget: one structured, source-positioned diagnostic, no crash ───

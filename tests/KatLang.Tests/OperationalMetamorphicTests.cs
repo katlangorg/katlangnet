@@ -485,6 +485,7 @@ public class OperationalMetamorphicTests
         EvalError[] allResourceVariants =
         {
             new EvalError.EvaluationDepthExceeded(8) { Span = span },
+            new EvalError.AstDepthLimitExceeded(EvaluationLimits.MaxSupportedAstDepth) { Span = span },
             new EvalError.EvaluationStepLimitExceeded(20) { Span = span },
             new EvalError.EvaluationStackExhausted() { Span = span },
             new EvalError.CollectionSizeLimitExceeded(5, 6) { Span = span },
@@ -494,7 +495,7 @@ public class OperationalMetamorphicTests
             new EvalError.DisplayLengthLimitExceeded(5),
         };
 
-        Assert.Equal(8, allResourceVariants.Select(static error => error.GetType()).Distinct().Count());
+        Assert.Equal(9, allResourceVariants.Select(static error => error.GetType()).Distinct().Count());
         Assert.All(allResourceVariants, error =>
         {
             Assert.True(error.IsResourceLimit, error.GetType().Name);

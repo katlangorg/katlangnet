@@ -127,6 +127,23 @@ internal static class FrontEndPipeline
         cancellationToken.ThrowIfCancellationRequested();
         var loadDiagnosticsEnd = diagnostics.Count;
 
+        // Module elaboration splices independently parsed module trees (each already
+        // structurally checked by ParseSyntax) into the host tree, so the COMPOSED root
+        // can be deeper than any single parse. Re-check it at the raw-syntax cap before
+        // the recursive load-invariant walk below; a rejected composition returns the
+        // same placeholder-root convention ParseSyntax uses, so no downstream consumer
+        // ever walks the unsafe tree. (FinalizeElaboration then applies the lower
+        // elaboration gate shared with the non-module path.)
+        if (AstStructuralPreflight.Check(
+                loadElaboratedRoot,
+                AstStructuralPreflight.RawSyntaxMaxAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+        {
+            diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
+                structuralRejection, AstStructuralPreflight.RawSyntaxMaxAstDepth));
+            return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
+
         if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _))
         {
             diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loadElaboratedRoot));
@@ -153,11 +170,34 @@ internal static class FrontEndPipeline
         bool canEvaluateAfterLoadErrors = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.Detect(loadElaboratedRoot);
+
+        // The elaboration passes below (parameter detection's rewriting walk,
+        // implicit-argument and exposure resolution) recurse with evaluation-class
+        // frame sizes — a ~500-626-node composed tree overflows a 1 MiB thread inside
+        // ParameterDetector.RewriteParams — so trees between the raw-syntax cap and
+        // the evaluation ceiling are rejected HERE, on both the module and non-module
+        // paths, with one structured diagnostic instead of being walked at
+        // machine-dependent risk. Anything this gate passes is also within the
+        // evaluator's own structural ceiling. This is the pipeline's ONE common gate:
+        // the passes below run through their prevalidated cores, so the modest
+        // depth growth elaboration itself adds (parameter lifting wraps calls) is
+        // absorbed by the ceiling's measured ≥2x margin rather than re-gated
+        // mid-pipeline.
+        if (AstStructuralPreflight.Check(
+                loadElaboratedRoot,
+                EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } elaborationRejection)
+        {
+            diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
+                elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
+            return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
+
+        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(loadElaboratedRoot);
         diagnostics.AddRange(parameterDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var implicitResolvedRoot = ImplicitArgumentResolver.Resolve(parameterizedRoot);
+        var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(parameterizedRoot);
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);
         cancellationToken.ThrowIfCancellationRequested();

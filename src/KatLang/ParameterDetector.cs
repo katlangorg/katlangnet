@@ -18,8 +18,40 @@ public static class ParameterDetector
     /// Returns a new AST with correct <see cref="Expr.Param"/> nodes and populated
     /// <see cref="Algorithm.Parameters"/> lists, along with any diagnostics (e.g. free
     /// identifiers in conditional branch bodies that violate the full-input-specification rule).
+    ///
+    /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built) AST.
+    /// A non-recursive structural preflight runs BEFORE this pass's recursive rewriting
+    /// walk: a tree whose structural depth exceeds
+    /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/> — the shared fat-frame
+    /// elaboration ceiling, measured with a ≥2x stack margin for this pass on the
+    /// documented 1 MiB thread baseline — or a cyclic node graph is rejected with a
+    /// placeholder root and one structured diagnostic instead of overflowing the
+    /// process stack. Roots reaching this pass through the front-end pipeline are
+    /// already gated and pass unchanged.</para>
     /// </summary>
     public static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) Detect(Algorithm root)
+    {
+        if (AstStructuralPreflight.Check(
+                root,
+                EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+        {
+            return (
+                new Algorithm.User(null, [], [], [], []),
+                [AstStructuralPreflight.ToParseDiagnostic(
+                    structuralRejection, EvaluationLimits.MaxSupportedAstDepth)]);
+        }
+
+        return DetectPrevalidated(root);
+    }
+
+    /// <summary>
+    /// The detection core behind <see cref="Detect"/>, without the structural
+    /// preflight. Only for callers that ALREADY gated the tree at the shared
+    /// elaboration ceiling (the front-end pipeline's common gate); it must never
+    /// become reachable with an unvalidated host tree.
+    /// </summary>
+    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) DetectPrevalidated(Algorithm root)
     {
         var diagnostics = new List<Diagnostic>();
         var preludeScope = ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm());

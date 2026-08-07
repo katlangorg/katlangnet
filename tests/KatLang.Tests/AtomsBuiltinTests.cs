@@ -141,10 +141,13 @@ public class AtomsBuiltinTests
     [Fact]
     public void Atoms_GeneratedDeepNesting_Flattens()
     {
-        // Alternate 128 sequence/list wrapper pairs (256 container
-        // boundaries); the recursive collector must stay within ordinary
-        // stack limits.
-        const int depth = 128;
+        // Alternate sequence/list wrapper pairs; the collector must stay within
+        // ordinary stack limits. 45 pairs (90 container boundaries) is the deepest
+        // alternation the parser's cumulative recursion budget admits with slack
+        // (each `([` pair charges 7 weighted units of the 384-unit budget);
+        // deeper VALUES than source can express are covered by the iterative
+        // whole-value walks and the host-AST structural gates.
+        const int depth = 45;
         var source = "atoms(" + string.Concat(Enumerable.Repeat("([", depth)) + "7"
             + string.Concat(Enumerable.Repeat("])", depth)) + ")";
         AssertEvalCounted(source, 1, ListValue(Atom(7)));

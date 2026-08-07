@@ -7,6 +7,12 @@ namespace KatLang;
 /// <list type="bullet">
 ///   <item><b>Depth</b> (<see cref="MaxDepth"/>) bounds how many dynamic algorithm
 ///   invocations may be active at once. Its purpose is host-stack safety.</item>
+///   <item><b>Structural AST depth</b> (<see cref="MaxAstDepth"/>) bounds how deeply
+///   the program tree ITSELF is nested, judged by a non-recursive preflight before any
+///   recursive validator, optimizer, or evaluator sees the tree. Its purpose is
+///   host-stack safety against host-constructed (or pathologically composed) ASTs; it
+///   is independent of <see cref="MaxDepth"/>, which governs runtime recursion of a
+///   program whose tree is shallow.</item>
 ///   <item><b>Steps</b> (<see cref="MaxSteps"/>) bounds the cumulative amount of
 ///   semantic work one run may perform. Its purpose is stopping unbounded or
 ///   excessive computation such as a non-terminating loop.</item>
@@ -61,6 +67,14 @@ public sealed record EvaluationLimits
     /// Maximum number of simultaneously active dynamic algorithm invocations, or
     /// <c>null</c> to use <see cref="MaxSupportedDepth"/>. Values above
     /// <see cref="MaxSupportedDepth"/> are clamped down to it.
+    ///
+    /// <para>This is RUNTIME recursion depth — how deeply a program calls into
+    /// algorithms while executing — and is unrelated to how deeply the program tree
+    /// itself is nested. Structural AST depth is a separate pre-evaluation safety
+    /// property governed by <see cref="MaxAstDepth"/> and
+    /// <see cref="MaxSupportedAstDepth"/>: a recursive program with a tiny AST is
+    /// bounded here, while a host-built thousand-level expression spine is rejected by
+    /// the structural preflight before evaluation begins.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public int? MaxDepth
@@ -75,6 +89,102 @@ public sealed record EvaluationLimits
             }
 
             _maxDepth = value;
+        }
+    }
+
+    /// <summary>
+    /// Internal hard ceiling on STRUCTURAL AST depth for EVALUATION — the WEIGHTED
+    /// structural depth of the longest parent-to-descendant path of the program
+    /// tree (root counts as 1; counted nodes are expressions, algorithms, patterns,
+    /// parameter patterns, and scope contexts). The weights are consumer-faithful,
+    /// so the value is a structural depth BUDGET rather than a literal node count:
+    /// on the evaluator gates a dot-call link costs THREE units (its resolution
+    /// machinery consumes several stack frames per link, so ~100 links reach a
+    /// 300-unit limit) and the two internal sequence-join kinds
+    /// (<see cref="Expr.SequenceConstruct"/>, <see cref="Expr.SequenceSpread"/>)
+    /// cost ZERO (every consumer walks their spines iteratively); every other node
+    /// costs one unit, and the fully recursive front-end/semantic gates count every
+    /// node as one unit. Enforced by a non-recursive
+    /// preflight on every evaluator entry point that accepts a preconstructed AST,
+    /// BEFORE any recursive validator, optimizer, or evaluator walks the tree.
+    /// <see cref="MaxAstDepth"/> can only request a LOWER limit; nothing can raise
+    /// this ceiling, because trees beyond it could otherwise terminate the process
+    /// with an unhandleable <see cref="StackOverflowException"/> inside recursive
+    /// consumers. This same ceiling also gates front-end ELABORATION (parameter
+    /// detection, implicit-argument and exposure resolution) and semantic-model
+    /// building, whose recursive passes measure in the same fat-frame class as
+    /// evaluation; only the small-framed walker-class consumers (post-parse
+    /// validation walk, module-composition load-invariant walk) run under the larger
+    /// raw-syntax gate (<c>AstStructuralPreflight.RawSyntaxMaxAstDepth</c>).
+    ///
+    /// <para>This bounds the shape of the program TREE and is independent of
+    /// <see cref="MaxDepth"/>, which bounds runtime algorithm recursion of an
+    /// already-accepted program: a deeply RECURSIVE program has a shallow AST and is
+    /// governed by <see cref="MaxDepth"/>; a deeply NESTED program tree is governed
+    /// by this ceiling.</para>
+    ///
+    /// <para><b>Safety invariant.</b> On the documented supported execution
+    /// environment — a thread stack of at least 1 MiB (the CLR/Windows default) —
+    /// every tree this gate accepts either evaluates normally or returns an
+    /// established structured KatLang error; no accepted shape is known to overflow
+    /// the process stack. This holds because the stack-heavy pure-expression spine
+    /// shapes (unary/binary operators, index selection, list literals, and the
+    /// internal sequence joins) evaluate ITERATIVELY and so consume no proportional
+    /// call stack; dot-call links are weighted at 3 units so a maximal accepted chain
+    /// (~100 links) stays well below the measured ~160-link (Debug) / ~250-link
+    /// (Release) failure boundary of the dot-call resolution machinery; nested calls
+    /// stop with the structured invocation-depth/stack backstop; and the deepest
+    /// remaining recursive shape — nested block/algorithm bodies at 2 counted nodes
+    /// per level — was measured to survive 240 nesting levels (~481 counted nodes) on
+    /// a 1 MiB Debug stack while this ceiling admits at most 150 levels (~55% of the
+    /// measured capacity, and roughly half that in Release), leaving the remainder as
+    /// headroom for caller frames, diagnostics, and platform/JIT variation.</para>
+    ///
+    /// <para><b>Value rationale.</b> 300 is anchored to the language's supported flat
+    /// chain contract, not to a crash boundary: the parser admits flat operator and
+    /// postfix chains up to <c>Parser.MaxExpressionChainDepth</c> = 256 (a ~258-node
+    /// spine, ~260 with engine root wrapping), and the weight-one/iterative shapes
+    /// must keep evaluating, with slack for front-end elaboration growth. Dot-call
+    /// links are the documented exception: each costs three units and a sufficiently
+    /// long otherwise-parseable chain is intentionally rejected. Deeper trees — reachable through
+    /// direct host construction or multi-mechanism composed source — are rejected
+    /// with the structured <see cref="EvalError.AstDepthLimitExceeded"/> instead of
+    /// being consumed at machine-dependent risk. A per-node
+    /// <see cref="System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack"/>
+    /// backstop was evaluated and rejected for the expression paths: the CLR probe
+    /// reserves roughly half of a 1 MiB stack, so it falsely rejects deep programs
+    /// that complete fine.</para>
+    /// </summary>
+    public const int MaxSupportedAstDepth = 300;
+
+    private readonly int? _maxAstDepth;
+
+    /// <summary>
+    /// Maximum WEIGHTED structural AST depth accepted by the pre-evaluation structural
+    /// safety preflight, or <c>null</c> to use <see cref="MaxSupportedAstDepth"/>. Values
+    /// above the supported maximum are clamped down to it rather than rejected, so raising
+    /// the request can never weaken process safety. Lowering it lets a host constrain how
+    /// deeply nested the programs it evaluates may be.
+    ///
+    /// <para>This limits the nesting of the program tree itself, measured as a
+    /// consumer-faithful depth budget rather than a literal node count: a dot-call
+    /// link costs 3 units and the internal sequence-join kinds cost 0 (see
+    /// <see cref="MaxSupportedAstDepth"/> for the exact weighting and counting). It
+    /// is NOT the runtime recursion limit — that is <see cref="MaxDepth"/>.</para>
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
+    public int? MaxAstDepth
+    {
+        get => _maxAstDepth;
+        init
+        {
+            if (value is <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxAstDepth), value, "AST structural depth limit must be at least 1.");
+            }
+
+            _maxAstDepth = value;
         }
     }
 
@@ -282,6 +392,10 @@ public sealed record EvaluationLimits
     /// <summary>The depth limit actually enforced: the ceiling, or a lower configured value.</summary>
     internal int EffectiveMaxDepth
         => _maxDepth is { } depth && depth < MaxSupportedDepth ? depth : MaxSupportedDepth;
+
+    /// <summary>The structural AST depth limit actually enforced: the ceiling, or a lower configured value.</summary>
+    internal int EffectiveMaxAstDepth
+        => _maxAstDepth is { } depth && depth < MaxSupportedAstDepth ? depth : MaxSupportedAstDepth;
 
     /// <summary>The step limit actually enforced, or <c>null</c> when unbudgeted.</summary>
     internal long? EffectiveMaxSteps => _maxSteps;

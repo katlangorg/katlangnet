@@ -10,7 +10,12 @@ public static class SemanticModelBuilder
 {
     /// <summary>
     /// Builds a semantic model from an elaborated KatLang root algorithm.
-    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling.
+    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling, and throws
+    /// <see cref="ArgumentException"/> for a structurally unsafe preconstructed root
+    /// (structural AST depth beyond the front-end structural gate, or a cyclic node
+    /// graph) — checked non-recursively before any recursive walk, so an unsafe
+    /// host-built tree cannot overflow the CLR stack. Roots from
+    /// <see cref="Parser.Parse(string)"/> always pass.
     /// </summary>
     public static SemanticModel Build(Algorithm root)
         => BuildElaborated(root);
@@ -30,6 +35,29 @@ public static class SemanticModelBuilder
 
     private static SemanticModel BuildElaborated(Algorithm elaboratedRoot)
     {
+        // Semantic modeling walks the tree recursively, and the public Build overloads
+        // accept preconstructed (host-built) roots, so the same non-recursive structural
+        // preflight that protects the evaluator entry points must run before any
+        // recursive walk here — including the load-guard walk below. Roots produced by
+        // Parser.Parse are already within the hard ceiling and pass unchanged.
+        // The builder's own recursive walk measures in the fat-frame class (building a
+        // 640-node spine overflows a 512 KiB thread; a 300-node one completes within
+        // it), so semantic modeling shares the evaluation/elaboration structural
+        // ceiling. Roots from Parser.Parse are already elaboration-gated to the same
+        // bound and pass unchanged.
+        if (AstStructuralPreflight.Check(
+                elaboratedRoot,
+                EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } rejection)
+        {
+            throw new ArgumentException(
+                rejection.Kind == AstStructuralViolation.CycleDetected
+                    ? "Semantic model building requires an acyclic AST: the supplied root reaches itself again through its own children."
+                    : "Semantic model building requires a structurally safe AST: the supplied root exceeds the structural AST depth limit of "
+                        + $"{EvaluationLimits.MaxSupportedAstDepth} nodes, which protects the host process from stack overflow.",
+                nameof(elaboratedRoot));
+        }
+
         LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
         return new Builder().Build(elaboratedRoot);
     }

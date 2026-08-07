@@ -89,6 +89,16 @@ public sealed class KatLangError
             EvalError.EvaluationStackExhausted =>
                 "Evaluation stopped to protect the host stack. "
                 + "Reduce how deeply this program calls into itself, or configure a lower evaluation depth limit",
+            // "Weighted units", not "nodes": the structural depth budget weighs
+            // dot-call links at 3 and internal sequence joins at 0 on the evaluator
+            // gates (see EvalError.AstDepthLimitExceeded), so the limit is not a
+            // literal node count.
+            EvalError.AstDepthLimitExceeded e =>
+                $"Structural AST depth limit of {e.Limit} weighted units was exceeded: the program tree is nested too deeply to process safely. "
+                + "This is separate from the runtime recursion limit on algorithm invocations. Split the program into smaller properties",
+            EvalError.AstCycleDetected =>
+                "The program tree contains a reference cycle, so it is not a valid KatLang program structure. "
+                + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
             _ => error.ToString()!,
         };

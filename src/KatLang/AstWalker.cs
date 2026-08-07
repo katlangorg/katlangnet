@@ -5,6 +5,16 @@ namespace KatLang;
 /// Override the visit hooks you care about; the default implementation walks
 /// all nested algorithms, expressions, patterns, declaration metadata, and
 /// nested scopes without using reflection.
+///
+/// <para><b>Recursion contract:</b> traversal is RECURSIVE on the CLR stack by
+/// design (the virtual visit hooks fire in depth-first order), and it is
+/// host-controlled: subclass walks over caller-supplied trees are NOT protected by
+/// the structural safety preflight that guards the library's own entry points
+/// (evaluator <c>Run*</c>, parsing, front-end elaboration, semantic modeling).
+/// A subclass walking an arbitrarily deep or cyclic host-built tree recurses on
+/// its caller's stack; keep host-built inputs within the depths those library
+/// gates document (see <see cref="EvaluationLimits.MaxSupportedAstDepth"/> and its
+/// 1 MiB minimum thread-stack envelope), or bound them before walking.</para>
 /// </summary>
 public abstract class AstWalker
 {

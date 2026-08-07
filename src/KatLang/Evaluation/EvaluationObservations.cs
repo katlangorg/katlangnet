@@ -47,4 +47,15 @@ internal sealed class EvaluationObservations
 
     internal void RecordCountedArgumentReification()
         => CountedArgumentReificationCount = checked(CountedArgumentReificationCount + 1);
+
+    /// <summary>
+    /// Number of compound expression names rendered for call or dot-call diagnostics during this
+    /// run. Successful calls and resource-limit errors observe zero; an ordinary error increments
+    /// once for each diagnostic/context frame that actually needs the compound name. Simple
+    /// identifier names reuse their existing string and do not increment.
+    /// </summary>
+    public long CallDiagnosticNameRenderCount { get; private set; }
+
+    internal void RecordCallDiagnosticNameRender()
+        => CallDiagnosticNameRenderCount = checked(CallDiagnosticNameRenderCount + 1);
 }

@@ -30,6 +30,78 @@ public sealed class ModuleLoader
     private readonly SourceProcessingBudget _budget;
 
     /// <summary>
+    /// Cumulative structural traversal ceiling for this loader's OWN recursive walk
+    /// (<see cref="ProcessAlgorithm(Algorithm, LoadContext, int)"/> /
+    /// <see cref="ProcessExpr"/>), counting live levels ACROSS nested module loads: a
+    /// nested load elaborates the fetched module while every parent traversal frame is
+    /// still on the CLR stack, so per-module gating alone cannot bound the stack — a
+    /// permitted chain of modules whose loads sit under deep container nesting stacks
+    /// its levels multiplicatively. Process-isolated probes measured this walk's
+    /// failure boundary on a 1 MiB thread at ~1,600-1,700 counted levels (Debug) and
+    /// ~1,300-1,600 (Release) on its worst per-level shape, so 640 — the raw-syntax
+    /// structural cap every single parsed module already satisfies — keeps a ≥2.0x
+    /// margin in both configurations while admitting every previously supported
+    /// ordinary module chain (top-level opens contribute only a few levels per module).
+    ///
+    /// <para><b>Nested parses are covered too:</b> a nested module's PARSE also runs
+    /// while the ancestor traversal frames are live, so every nested
+    /// <c>Parser.ParseSyntax</c> call starts with a conservative stack DEBT converted
+    /// from the live traversal levels (<see cref="NestedParseStackDebt"/>). The
+    /// parser's own cumulative recursion budget (<c>Parser.MaxNestingDepth</c>, held
+    /// to under half of a 1 MiB stack on its worst measured shape) then bounds
+    /// loader frames plus parser frames together, so no module source accepted for
+    /// parsing at any permitted load position can overflow the documented envelope.</para>
+    /// </summary>
+    internal const int MaxTraversalDepth = AstStructuralPreflight.RawSyntaxMaxAstDepth;
+
+    /// <summary>
+    /// Fixed per-nesting allowance for the constant intermediate frames between a
+    /// parent traversal and a nested module's traversal
+    /// (<see cref="ProcessLoad"/> / <see cref="FetchAndSplice"/> plus parser entry).
+    /// </summary>
+    private const int NestedSpliceFrameAllowance = 4;
+
+    /// <summary>
+    /// Minimum parser recursion budget (in <c>Parser</c> stack units) a nested module
+    /// parse must have left after the loader's stack debt: even the smallest module
+    /// (<c>public X = 1</c>) needs a few units, so when the debt leaves less than
+    /// this, the load is rejected BEFORE downloading — known active stack debt already
+    /// makes safe parsing impossible.
+    /// </summary>
+    private const int MinNestedParseBudget = 8;
+
+    /// <summary>
+    /// Converts live loader traversal levels into parser stack-debt units for the
+    /// nested module parse that runs ABOVE those frames. Measured per-level loader
+    /// cost is at most ~0.8 KB across the measured Debug/Release boundaries
+    /// (~1,300-1,700 levels per MiB), and one parser unit costs at most ~1.25 KB
+    /// after the parser's per-shape weighting, so charging 2/3 unit per loader
+    /// level models each level at ~0.83 KB — conservatively ABOVE the worst measured
+    /// cost. Combined proof: for any live base B ≤
+    /// <see cref="MaxTraversalDepth"/>, loader bytes (~0.8 KB x B) plus worst-case
+    /// parser bytes (~1.25 KB x (384 - 2B/3)) stay at or below ~480 KB — below half
+    /// of the documented 1 MiB minimum thread stack in both configurations.
+    /// </summary>
+    internal static int NestedParseStackDebt(int traversalBase)
+    {
+        if (traversalBase <= 0)
+            return 0;
+
+        var debt = ((long)traversalBase * 2 + 2) / 3;
+        return debt >= int.MaxValue ? int.MaxValue : (int)debt;
+    }
+
+    /// <summary>
+    /// Counted traversal levels held live by ancestor module elaborations while a
+    /// nested module is being processed. Adjusted around the nested
+    /// <see cref="ProcessAlgorithm(Algorithm, LoadContext, int)"/> call with
+    /// <c>finally</c> restore, so downloader failures, cancellation, and nested
+    /// rejections can never leak or corrupt it. Cache hits splice without
+    /// re-traversal and charge nothing.
+    /// </summary>
+    private int _nestedTraversalBase;
+
+    /// <summary>
     /// True when this elaboration emitted a source/module resource-policy diagnostic. Engine runs
     /// use this to avoid evaluating placeholder AST nodes merely to append unrelated evaluator
     /// context to a pre-evaluation resource rejection.
@@ -142,6 +214,18 @@ public sealed class ModuleLoader
     /// <summary>
     /// Processes the entire AST, resolving all load calls.
     /// Returns a new AST with load calls replaced by Block nodes.
+    ///
+    /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built)
+    /// AST. A non-recursive structural preflight runs BEFORE this pass's recursive
+    /// traversal: a tree deeper than the raw-syntax structural cap (which every
+    /// parsed module already satisfies, and which this walk was measured to survive
+    /// with a ≥2x stack margin on the documented 1 MiB thread baseline — see
+    /// <see cref="MaxTraversalDepth"/>), or a cyclic node graph, is rejected with one
+    /// structured diagnostic and a placeholder root instead of being walked at
+    /// process-terminating risk. Nested module loads are additionally bounded
+    /// CUMULATIVELY: a load site's own traversal depth counts against the same
+    /// ceiling for the module it loads, so stacked nested loads cannot multiply past
+    /// the measured envelope.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The source-processing token configured through <see cref="CreateWithCancellation"/> was
@@ -150,8 +234,40 @@ public sealed class ModuleLoader
     public Algorithm Elaborate(Algorithm root)
     {
         _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
-        var elaborated = ProcessAlgorithm(root, LoadContext.TopLevel);
+
+        // Structural safety boundary for this recursive consumer: checked iteratively
+        // before any recursive frame, cycle-aware, judging shared subtrees by their
+        // longest path. Trees the front-end pipeline hands in are ParseSyntax-gated to
+        // the same cap and always pass unchanged.
+        if (AstStructuralPreflight.Check(
+                root,
+                MaxTraversalDepth,
+                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+        {
+            ReportSourceProcessingDiagnostic(AstStructuralPreflight.ToParseDiagnostic(
+                structuralRejection, MaxTraversalDepth));
+            return new Algorithm.User(null, [], [], [], []);
+        }
+
+        var elaborated = ProcessAlgorithm(root, LoadContext.TopLevel, depth: 1);
         _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+
+        // Cache hits deliberately skip fetch, parse, and recursive loader traversal,
+        // but a module cached at a shallow site may later be spliced under a much
+        // deeper path. Re-check the FINISHED composition before this public boundary
+        // returns it. The front-end pipeline repeats the same gate before its own
+        // recursive load-invariant walk; this local check also protects callers that
+        // use ModuleLoader directly.
+        if (AstStructuralPreflight.Check(
+                elaborated,
+                MaxTraversalDepth,
+                AstConsumerProfile.FullyRecursive) is { } compositionRejection)
+        {
+            ReportSourceProcessingDiagnostic(AstStructuralPreflight.ToParseDiagnostic(
+                compositionRejection, MaxTraversalDepth));
+            return new Algorithm.User(null, [], [], [], []);
+        }
+
         return elaborated;
     }
 
@@ -174,7 +290,12 @@ public sealed class ModuleLoader
 
     // ── Algorithm processing ─────────────────────────────────────────────────
 
-    private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context)
+    // The `depth` parameter mirrors the structural preflight's counting exactly (every
+    // Expr/Algorithm node is one level; Property is a pass-through membrane), so the
+    // cumulative nested-load guard in FetchAndSplice can judge the LIVE traversal
+    // stack — parent frames plus the nested module's own depth — against the measured
+    // ceiling. Frame-local by construction: no cleanup is needed on unwind.
+    private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context, int depth)
     {
         _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
 
@@ -182,12 +303,12 @@ public sealed class ModuleLoader
 
         var newOpens = new List<Expr>(alg.Opens.Count);
         foreach (var open in alg.Opens)
-            newOpens.Add(ProcessExpr(open, LoadContext.OpenList));
+            newOpens.Add(ProcessExpr(open, LoadContext.OpenList, depth + 1));
 
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
-            var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef);
+            var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
             // Unwrap only algorithm-valued single-block property bodies. This keeps
             // plain sequence values such as (a, b) wrapped as one block value while
             // still letting load-elaborated modules become direct property values.
@@ -203,7 +324,7 @@ public sealed class ModuleLoader
             var outputCtx = context is LoadContext.PropertyDef or LoadContext.OpenList
                 ? LoadContext.PropertyDef
                 : LoadContext.RuntimeExpr;
-            newOutput.Add(ProcessExpr(expr, outputCtx));
+            newOutput.Add(ProcessExpr(expr, outputCtx, depth + 1));
         }
 
         var result = alg with
@@ -218,41 +339,41 @@ public sealed class ModuleLoader
 
     // ── Expression processing ────────────────────────────────────────────────
 
-    private Expr ProcessExpr(Expr expr, LoadContext context)
+    private Expr ProcessExpr(Expr expr, LoadContext context, int depth)
     {
         if (expr.TryGetUnresolvedLoadArguments(out var loadArgs))
-            return ProcessLoad(loadArgs, context, expr.Span);
+            return ProcessLoad(loadArgs, context, expr.Span, depth);
 
         switch (expr)
         {
             case Expr.Call(var func, var args):
                 return new Expr.Call(
-                    ProcessExpr(func, LoadContext.RuntimeExpr),
-                    ProcessAlgorithm(args, LoadContext.RuntimeExpr))
+                    ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
+                    ProcessAlgorithm(args, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
 
             case Expr.Block(var alg):
-                return new Expr.Block(ProcessAlgorithm(alg, context)) { Span = expr.Span };
+                return new Expr.Block(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
-                    ProcessExpr(left, LoadContext.RuntimeExpr),
-                    ProcessExpr(right, LoadContext.RuntimeExpr))
+                    ProcessExpr(left, LoadContext.RuntimeExpr, depth + 1),
+                    ProcessExpr(right, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
 
             case Expr.Unary(var op, var operand):
-                return new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr))
+                return new Expr.Unary(op, ProcessExpr(operand, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
 
             case Expr.Index(var target, var selector):
                 return new Expr.Index(
-                    ProcessExpr(target, LoadContext.RuntimeExpr),
-                    ProcessExpr(selector, LoadContext.RuntimeExpr))
+                    ProcessExpr(target, LoadContext.RuntimeExpr, depth + 1),
+                    ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1))
                 { Span = expr.Span };
 
             case Expr.SequenceSpread(var operand):
                 return new Expr.SequenceSpread(
-                    ProcessExpr(operand, context))
+                    ProcessExpr(operand, context, depth + 1))
                 {
                     Span = expr.Span,
                     SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
@@ -260,8 +381,8 @@ public sealed class ModuleLoader
 
             case Expr.SequenceConstruct(var left, var right):
                 return new Expr.SequenceConstruct(
-                    ProcessExpr(left, context),
-                    ProcessExpr(right, context))
+                    ProcessExpr(left, context, depth + 1),
+                    ProcessExpr(right, context, depth + 1))
                 { Span = expr.Span };
 
             // List-literal elements inherit the surrounding load context,
@@ -270,21 +391,21 @@ public sealed class ModuleLoader
             // `X = (load('url'), 1)` does.
             case Expr.ListLiteral(var items):
                 return new Expr.ListLiteral(
-                    items.Select(item => ProcessExpr(item, context)).ToList())
+                    items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
                 { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, var args):
                 return new Expr.DotCall(
-                    ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr),
+                    ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr, depth + 1),
                     name,
-                    args is not null ? ProcessAlgorithm(args, LoadContext.RuntimeExpr) : null)
+                    args is not null ? ProcessAlgorithm(args, LoadContext.RuntimeExpr, depth + 1) : null)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
                 };
 
             case Expr.Grace(var inner, var weight):
-                return new Expr.Grace(ProcessExpr(inner, context), weight) { Span = expr.Span };
+                return new Expr.Grace(ProcessExpr(inner, context, depth + 1), weight) { Span = expr.Span };
 
             // Leaf nodes — no transformation needed
             case Expr.Resolve:
@@ -301,7 +422,7 @@ public sealed class ModuleLoader
 
     // ── load processing ────────────────────────────────────────────────────────────────
 
-    private Expr ProcessLoad(Algorithm args, LoadContext context, SourceSpan? span)
+    private Expr ProcessLoad(Algorithm args, LoadContext context, SourceSpan? span, int depth)
     {
         // 1. Position check: load only allowed in property definitions and open lists
         if (context == LoadContext.RuntimeExpr)
@@ -327,12 +448,13 @@ public sealed class ModuleLoader
             return new Expr.Num(0) { Span = span };
         }
 
-        // 5. Cache check
+        // 5. Cache check — an already-elaborated module splices without re-traversal,
+        // so it charges no cumulative traversal depth.
         if (_cache.TryGetValue(normalized, out var cached))
             return new Expr.Block(cached) { Span = span };
 
         // 6. Fetch + parse + splice
-        return FetchAndSplice(normalized, span);
+        return FetchAndSplice(normalized, span, depth);
     }
 
     /// <summary>
@@ -402,8 +524,12 @@ public sealed class ModuleLoader
     /// <summary>
     /// Fetches remote source code, parses it, runs load elaboration recursively,
     /// and returns a Block containing the loaded algorithm.
+    /// <paramref name="depth"/> is the load site's own traversal depth within the
+    /// module currently being processed; together with the traversal levels ancestor
+    /// modules hold live it bounds the nested elaboration cumulatively (see
+    /// <see cref="MaxTraversalDepth"/>).
     /// </summary>
-    private Expr FetchAndSplice(string normalizedUrl, SourceSpan? span)
+    private Expr FetchAndSplice(string normalizedUrl, SourceSpan? span, int depth)
     {
         // Import-depth ceiling: descend one level, or turn a would-be host stack overflow into a
         // structured diagnostic. Only reached on a cache MISS, so it bounds the true chain depth.
@@ -428,6 +554,23 @@ public sealed class ModuleLoader
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleCountExceeded(
                     normalizedUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, span));
+                return new Expr.Num(0) { Span = span };
+            }
+
+            // Cumulative structural budget, pre-fetch half: when the parent traversal
+            // levels alone exhaust the traversal ceiling — or leave the PARSER less
+            // than a minimal useful recursion budget after the stack debt those live
+            // levels impose — no module content could be admitted here, so reject
+            // before paying for the download (matching the module-count check above).
+            // The fetched tree itself is judged against the remaining traversal
+            // allowance after parsing, below.
+            var traversalBase = checked(_nestedTraversalBase + depth + NestedSpliceFrameAllowance);
+            var nestedAllowance = MaxTraversalDepth - traversalBase;
+            var parseStackDebt = NestedParseStackDebt(traversalBase);
+            if (nestedAllowance < 1 || parseStackDebt > Parser.MaxNestingDepth - MinNestedParseBudget)
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
+                    normalizedUrl, MaxTraversalDepth, span));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -487,13 +630,24 @@ public sealed class ModuleLoader
             hasModuleSourceReservation = true;
             reservedSourceLength = source.Length;
 
-            // Parse the fetched source as raw syntax, then elaborate nested loads locally.
+            // Parse the fetched source as raw syntax, then elaborate nested loads
+            // locally. This parse RUNS ABOVE the loader's live traversal frames, so
+            // it starts with the conservative stack debt computed before the fetch:
+            // the parser's cumulative recursion budget then bounds loader frames plus
+            // parser frames TOGETHER (see NestedParseStackDebt for the combined
+            // stack proof). A module whose nesting no longer fits the indebted
+            // budget is rejected by the parser at the crossing token, and reported
+            // here on the established load channel at the load site.
             _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
-            var syntaxResult = Parser.ParseSyntax(source);
+            var syntaxResult = Parser.ParseSyntax(source, parseStackDebt);
 
             if (syntaxResult.HasErrors)
             {
-                ReportError(BuildLoadedSourceParseErrorMessage(normalizedUrl, source), span);
+                ReportError(
+                    HasStructuralBudgetDiagnostic(syntaxResult)
+                        ? BuildLoadedSourceNestingErrorMessage(normalizedUrl)
+                        : BuildLoadedSourceParseErrorMessage(normalizedUrl, source),
+                    span);
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -506,9 +660,39 @@ public sealed class ModuleLoader
                     diag.Span));
             }
 
+            // Cumulative structural budget, post-parse half: the parent modules' live
+            // traversal levels, this load site's own path depth, and the fixed splice
+            // allowance all count against the one measured ceiling the loader's
+            // recursion is proven safe under, so the fetched module's tree must fit
+            // the REMAINING allowance. Judged iteratively BEFORE the nested recursive
+            // traversal (the unsafe tree is never walked recursively and never
+            // rendered into the diagnostic); an unsafe nesting is one structured
+            // diagnostic and the load's established placeholder. The committed source
+            // reservation deliberately stays charged, exactly like a module whose
+            // content fails to parse.
+            if (AstStructuralPreflight.Check(
+                    syntaxResult.SyntaxRoot,
+                    nestedAllowance,
+                    AstConsumerProfile.FullyRecursive) is not null)
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
+                    normalizedUrl, MaxTraversalDepth, span));
+                return new Expr.Num(0) { Span = span };
+            }
+
             // Recursively elaborate any load calls in the fetched module
             _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
-            var elaborated = ProcessAlgorithm(syntaxResult.SyntaxRoot, LoadContext.TopLevel);
+            var previousTraversalBase = _nestedTraversalBase;
+            _nestedTraversalBase = traversalBase;
+            Algorithm elaborated;
+            try
+            {
+                elaborated = ProcessAlgorithm(syntaxResult.SyntaxRoot, LoadContext.TopLevel, depth: 1);
+            }
+            finally
+            {
+                _nestedTraversalBase = previousTraversalBase;
+            }
 
             // Cancellation never commits a partial module. This check also observes cancellation
             // requested during parsing or recursive elaboration before the cache write.
@@ -554,6 +738,21 @@ public sealed class ModuleLoader
         return $"load: cannot load '{normalizedUrl}': {sourceDescription}. " +
             "Check that the URL is correct and points directly to a KatLang .kat file.";
     }
+
+    /// <summary>
+    /// True when a nested module's parse failed on the parser's cumulative recursion
+    /// budget (which includes this loader's live-frame stack debt), so the failure is
+    /// a position-dependent nesting rejection rather than invalid module content.
+    /// </summary>
+    private static bool HasStructuralBudgetDiagnostic(SyntaxParseResult syntaxResult)
+        => syntaxResult.Diagnostics.Any(
+            d => d.Message.Contains(Parser.NestingTooDeepMessage, StringComparison.Ordinal)
+                || d.Message.Contains("structural AST depth limit", StringComparison.Ordinal));
+
+    private static string BuildLoadedSourceNestingErrorMessage(string normalizedUrl)
+        => $"load: loading '{normalizedUrl}' at this position would nest module source too deeply to parse safely "
+            + "(cumulative structural budget across the module chain). "
+            + "Move the load closer to the top level of its module, or split the module chain into smaller modules.";
 
     private static bool LooksLikeHtml(string source)
     {

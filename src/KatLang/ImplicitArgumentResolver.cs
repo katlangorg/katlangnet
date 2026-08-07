@@ -11,8 +11,46 @@ public static class ImplicitArgumentResolver
     /// Processes a root algorithm, resolving all implicit arguments throughout the tree.
     /// Returns a new AST where every bare reference to a parametrized algorithm
     /// has been rewritten into an explicit call with lifted parameters.
+    ///
+    /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built)
+    /// AST. A non-recursive structural preflight runs BEFORE this pass's recursive
+    /// rewriting walk and throws <see cref="ArgumentException"/> for a structurally
+    /// unsafe root (structural depth beyond
+    /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/> — the shared fat-frame
+    /// elaboration ceiling, measured with a ≥2x stack margin for this pass on the
+    /// documented 1 MiB thread baseline — or a cyclic node graph), matching the
+    /// <see cref="Semantics.SemanticModelBuilder"/> convention, instead of
+    /// overflowing the process stack. Roots reaching this pass through the front-end
+    /// pipeline are already gated and pass unchanged.</para>
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// The root exceeds the structural AST depth limit or contains a reference cycle.
+    /// </exception>
     public static Algorithm Resolve(Algorithm root)
+    {
+        if (AstStructuralPreflight.Check(
+                root,
+                EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+        {
+            throw new ArgumentException(
+                structuralRejection.Kind == AstStructuralViolation.CycleDetected
+                    ? "Implicit-argument resolution requires an acyclic AST: the supplied root reaches itself again through its own children."
+                    : "Implicit-argument resolution requires a structurally safe AST: the supplied root exceeds the structural AST depth limit of "
+                        + $"{EvaluationLimits.MaxSupportedAstDepth} nodes, which protects the host process from stack overflow.",
+                nameof(root));
+        }
+
+        return ResolvePrevalidated(root);
+    }
+
+    /// <summary>
+    /// The resolution core behind <see cref="Resolve"/>, without the structural
+    /// preflight. Only for callers that ALREADY gated the tree at the shared
+    /// elaboration ceiling (the front-end pipeline's common gate); it must never
+    /// become reachable with an unvalidated host tree.
+    /// </summary>
+    internal static Algorithm ResolvePrevalidated(Algorithm root)
     {
         return ProcessAlgorithm(root, parentParamMap: new Dictionary<string, CallableSignature>(), isRoot: true);
     }

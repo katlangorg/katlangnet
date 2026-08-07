@@ -43,7 +43,8 @@ internal static class SequencePipelineOptimizer
             return true;
 
         result = WithContext(
-            plan!.EvaluationContext,
+            plan!.EvaluationSyntax,
+            ctx,
             ExecuteFilterCount(plan, ctx, valEnv, diagnostics));
         return true;
     }
@@ -74,7 +75,13 @@ internal static class SequencePipelineOptimizer
             {
                 RecordFilterCountFallback(
                     diagnostics,
-                    CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr: null, predicateAlg: null),
+                    diagnostics is null
+                        ? null
+                        : CreateDiagnosticPlan(
+                            syntax.Form,
+                            syntax.Source,
+                            predicateExpr: null,
+                            predicateAlg: null),
                     fallbackReason);
                 return FilterCountRecognitionStatus.Fallback;
             }
@@ -83,7 +90,9 @@ internal static class SequencePipelineOptimizer
         }
 
         var predicateExpr = TryGetPredicateExpression(syntax);
-        var diagnosticPlan = CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg: null);
+        var diagnosticPlan = diagnostics is null
+            ? null
+            : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg: null);
 
         if (!ctx.EnableSequencePipelineOptimization)
         {
@@ -100,9 +109,11 @@ internal static class SequencePipelineOptimizer
         return syntax.Form switch
         {
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
-                TryNormalizeDotFilterCount(syntax, services, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
+                TryNormalizeDotFilterCount(
+                    syntax, services, ctx, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
             FilterCountPipelineForm.PlainCountPlainFilter =>
-                TryNormalizePlainFilterCount(syntax, services, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
+                TryNormalizePlainFilterCount(
+                    syntax, services, ctx, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
             _ => throw new InvalidOperationException($"Unsupported filter-count pipeline form '{syntax.Form}'."),
         };
     }
@@ -282,9 +293,10 @@ internal static class SequencePipelineOptimizer
     private static FilterCountRecognitionStatus TryNormalizeDotFilterCount(
         FilterCountPipelineSyntax syntax,
         SequencePipelineEvaluationServices services,
+        Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
         Expr? predicateExpr,
-        SequencePipelinePlan diagnosticPlan,
+        SequencePipelinePlan? diagnosticPlan,
         out FilterCountPipelinePlan? plan,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -352,12 +364,12 @@ internal static class SequencePipelineOptimizer
         // execution. A source-evaluation failure is propagated as a committed
         // optimized-path error (Error status), never a fallback that would
         // re-evaluate the source.
-        var evaluationContext = EvaluationContext(syntax);
         var sourcePlanStatus = TryCreateSourcePlan(
             syntax.Source,
             services,
             diagnostics,
-            evaluationContext,
+            syntax,
+            ctx,
             () => services.EvaluateDotReceiverIterationItems(syntax.Source),
             out var sourcePlan,
             out result);
@@ -373,17 +385,20 @@ internal static class SequencePipelineOptimizer
             predicateAlg,
             syntax.Form,
             predicateExpr,
-            evaluationContext,
-            CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
+            syntax,
+            diagnostics is null
+                ? null
+                : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }
 
     private static FilterCountRecognitionStatus TryNormalizePlainFilterCount(
         FilterCountPipelineSyntax syntax,
         SequencePipelineEvaluationServices services,
+        Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
         Expr? predicateExpr,
-        SequencePipelinePlan diagnosticPlan,
+        SequencePipelinePlan? diagnosticPlan,
         out FilterCountPipelinePlan? plan,
         out EvalResult<Evaluator.CountedResult> result)
     {
@@ -429,7 +444,6 @@ internal static class SequencePipelineOptimizer
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        var evaluationContext = EvaluationContext(syntax);
         // Plain `count(filter(SOURCE, pred))` only fuses a direct builtin-range
         // source. Use a range-ONLY probe that never evaluates a
         // generic/non-range source: evaluating a generic source here only to
@@ -440,7 +454,8 @@ internal static class SequencePipelineOptimizer
             syntax.Source,
             services,
             diagnostics,
-            evaluationContext,
+            syntax,
+            ctx,
             out var sourcePlan,
             out result);
         if (sourcePlanStatus == FilterCountRecognitionStatus.Error)
@@ -460,8 +475,10 @@ internal static class SequencePipelineOptimizer
             predicateAlg,
             syntax.Form,
             predicateExpr,
-            evaluationContext,
-            CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
+            syntax,
+            diagnostics is null
+                ? null
+                : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }
 
@@ -474,14 +491,18 @@ internal static class SequencePipelineOptimizer
         Expr source,
         SequencePipelineEvaluationServices services,
         SequencePipelineDiagnostics? diagnostics,
-        ErrorContext evaluationContext,
+        FilterCountPipelineSyntax evaluationSyntax,
+        Evaluator.EvalCtx ctx,
         out FilterCountSourcePlan? sourcePlan,
         out EvalResult<Evaluator.CountedResult> result)
     {
         sourcePlan = null;
         result = default;
 
-        var rangeSourceR = WithContext(evaluationContext, TryEvaluateBuiltinRangeSource(source, services));
+        var rangeSourceR = WithContext(
+            evaluationSyntax,
+            ctx,
+            TryEvaluateBuiltinRangeSource(source, services));
         if (rangeSourceR.IsError)
         {
             // The direct builtin-range bounds themselves failed to evaluate.
@@ -506,7 +527,8 @@ internal static class SequencePipelineOptimizer
         Expr source,
         SequencePipelineEvaluationServices services,
         SequencePipelineDiagnostics? diagnostics,
-        ErrorContext evaluationContext,
+        FilterCountPipelineSyntax evaluationSyntax,
+        Evaluator.EvalCtx ctx,
         Func<EvalResult<IReadOnlyList<Evaluator.CountedResult>>> evaluateGenericSource,
         out FilterCountSourcePlan? sourcePlan,
         out EvalResult<Evaluator.CountedResult> result)
@@ -514,7 +536,10 @@ internal static class SequencePipelineOptimizer
         sourcePlan = null;
         result = default;
 
-        var rangeSourceR = WithContext(evaluationContext, TryEvaluateBuiltinRangeSource(source, services));
+        var rangeSourceR = WithContext(
+            evaluationSyntax,
+            ctx,
+            TryEvaluateBuiltinRangeSource(source, services));
         if (rangeSourceR.IsError)
         {
             result = rangeSourceR.Error;
@@ -529,7 +554,7 @@ internal static class SequencePipelineOptimizer
 
         diagnostics?.RecordDirectRangeFusionFallback(rangeSourceR.Value.FallbackReason);
 
-        var sourceItemsR = WithContext(evaluationContext, evaluateGenericSource());
+        var sourceItemsR = WithContext(evaluationSyntax, ctx, evaluateGenericSource());
         if (sourceItemsR.IsError)
         {
             result = sourceItemsR.Error;
@@ -603,7 +628,7 @@ internal static class SequencePipelineOptimizer
         SequencePipelineDiagnostics? diagnostics)
     {
         var diagnosticKey = diagnostics?.RecordPipelineDiagnostic(
-            plan.Diagnostics,
+            plan.Diagnostics!,
             optimized: true,
             fallbackReason: null,
             sourceExecution: SourceExecutionEagerCollection,
@@ -665,7 +690,7 @@ internal static class SequencePipelineOptimizer
 
         var sourceCount = Evaluator.CountInclusiveRangeValues(range);
         var diagnosticKey = diagnostics?.RecordPipelineDiagnostic(
-            plan.Diagnostics,
+            plan.Diagnostics!,
             optimized: true,
             fallbackReason: null,
             sourceExecution: SourceExecutionDirectRange,
@@ -744,31 +769,41 @@ internal static class SequencePipelineOptimizer
             _ => null,
         };
 
-    private static ErrorContext EvaluationContext(FilterCountPipelineSyntax syntax)
+    private static ErrorContext EvaluationContext(
+        FilterCountPipelineSyntax syntax,
+        Evaluator.EvalCtx ctx)
         => syntax.Form switch
         {
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
-                new DotCallContext(Evaluator.OpenExprName(syntax.Source), BuiltinId.@filter.ToString()),
+                new DotCallContext(
+                    Evaluator.CallDiagnosticExprName(syntax.Source, ctx),
+                    BuiltinId.@filter.ToString()),
             FilterCountPipelineForm.PlainCountPlainFilter =>
-                new CallContext(Evaluator.OpenExprName(syntax.PlainFilterFunction!)),
+                new CallContext(Evaluator.CallDiagnosticExprName(syntax.PlainFilterFunction!, ctx)),
             _ => throw new InvalidOperationException($"Unsupported filter-count pipeline form '{syntax.Form}'."),
         };
 
-    private static EvalResult<T> WithContext<T>(ErrorContext context, EvalResult<T> result)
+    private static EvalResult<T> WithContext<T>(
+        FilterCountPipelineSyntax syntax,
+        Evaluator.EvalCtx ctx,
+        EvalResult<T> result)
         // Resource-limit errors never get extra context, matching the evaluator: the limit
         // belongs to the run, not to the pipeline stage that happened to reach it.
         => result.IsError && !result.Error.IsResourceLimit
-            ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
+            ? new EvalError.WithContext(EvaluationContext(syntax, ctx), result.Error) { Span = result.Error.Span }
             : result;
 
     private static void RecordFilterCountFallback(
         SequencePipelineDiagnostics? diagnostics,
-        SequencePipelinePlan plan,
+        SequencePipelinePlan? plan,
         string reason)
     {
-        diagnostics?.RecordFilterCountFusionFallback(reason);
-        diagnostics?.RecordPipelineDiagnostic(
-            plan,
+        if (diagnostics is null)
+            return;
+
+        diagnostics.RecordFilterCountFusionFallback(reason);
+        diagnostics.RecordPipelineDiagnostic(
+            plan!,
             optimized: false,
             fallbackReason: reason,
             sourceExecution: SourceExecutionNotExecuted,

@@ -46,27 +46,67 @@ public sealed class Parser
     // Deeply nested surface input — parentheses, brackets, braces, calls, prefix
     // operators, right-associative power, and clause-head patterns — drives the
     // recursive-descent parser into a fatal, host-terminating StackOverflowException.
-    // The fuzz depth probe measured native boundaries as small as ~329 nesting levels
-    // (~330 bytes) on a 1 MiB Windows stack. This budget converts such pathological
-    // input into ONE structured, source-positioned diagnostic instead of a process
-    // crash. It is enforced at the two chokepoints every nested construct passes
-    // through once per level — ParseUnary (all expression nesting, because
-    // ParseExpression always calls ParseUnary) and ParsePatternAtom (clause-head
-    // pattern nesting) — so one shared counter bounds every recursive syntax form.
-    // The limit sits far above any realistic KatLang program (including the 256-
-    // container-boundary generated-nesting regression test) yet safely below the
-    // smallest measured native boundary (~329 structural levels ≈ counter 660 on a
-    // 1 MiB Windows Debug stack; Release has more headroom). This is a C#-parser
-    // robustness concern only: the Lean model does not describe surface parsing, and
-    // every in-budget program parses identically (same AST, spans, and diagnostics).
+    // This budget converts such pathological input into ONE structured,
+    // source-positioned diagnostic instead of a process crash.
     //
-    // The counter increments per recursive frame, so structural nesting (which passes
-    // through both ParseExpression and ParseUnary each level) counts ~2 per level,
-    // while prefix/operator/pattern nesting counts ~1 per level. 580 therefore admits
-    // ~289 structural levels and ~579 prefix/pattern levels — both well above the
-    // 256-boundary bar and below every native crash boundary.
-    internal const int MaxNestingDepth = 580;
+    // METRIC: one CUMULATIVE weighted counter of live parser recursion, in "parser
+    // stack units", threaded through every recursive grammar mechanism for the WHOLE
+    // parse. It NEVER resets when entering a nested container, operator chain,
+    // pattern, call, or property — composed constructs (an operator chain restarting
+    // inside each container level, containers inside containers of different kinds)
+    // charge the one counter, so their stack costs add exactly like their frames do.
+    // Base charges: ParseExpression +1 and ParseUnary +1 (every expression level),
+    // ParsePatternAtom +1 (clause-head pattern nesting). Heavy productions whose
+    // per-level machinery measurably consumes more native stack carry SURCHARGES
+    // (see the *NestingSurcharge constants) so that one unit costs at most ~1.25 KB
+    // of Debug parser stack on every shape.
+    //
+    // CEILING: 384 units, non-bypassable and deliberately NOT configurable. It was
+    // calibrated by per-shape process-isolated probes on dedicated 1 MiB threads
+    // (the documented minimum supported stack): measured native crash boundaries are
+    // parenthesized groups and brace blocks ~4.7 KB/level (crash at 211-225 levels ≈
+    // 460 weighted units), call argument nesting ~3.5 KB/level, list literals
+    // ~2.8 KB/level, clause patterns ~1.2 KB/level, prefix unary ~1 KB/level, and
+    // mixed-container alternation tracks the SUM of its per-shape costs. At 384
+    // units every shape peaks at ≤ ~480 KB — under HALF the 1 MiB envelope (≥2.1x
+    // margin, Debug; Release frames are smaller still) — with the remainder as
+    // headroom for engine/front-end caller frames and platform/JIT variation.
+    //
+    // NESTED-MODULE DEBT: parsing a downloaded module begins while module-loader
+    // traversal frames are still live, so <see cref="ParseSyntax(string, int)"/>
+    // accepts an initial debt (in these same units) that pre-charges the counter;
+    // the loader converts its live traversal levels into debt conservatively
+    // (see ModuleLoader). A parse that starts in debt simply has less budget.
+    //
+    // This metric is DISTINCT from: EvaluationLimits.MaxAstDepth / MaxSupportedAstDepth
+    // (weighted STRUCTURAL depth of the finished AST, judged after parsing),
+    // AstStructuralPreflight.RawSyntaxMaxAstDepth (the raw post-parse tree gate),
+    // EvaluationLimits.MaxDepth (runtime algorithm invocations), MaxExpressionChainDepth
+    // (iteratively parsed chain AST depth — chains consume O(1) parser recursion, so a
+    // maximal 256-operator chain is unaffected by this budget), and the
+    // SourceProcessingLimits source-size ceilings. This is a C#-parser host-robustness
+    // concern only: the Lean model does not describe surface parsing, and every
+    // in-budget program parses identically (same AST, spans, and diagnostics).
+    internal const int MaxNestingDepth = 384;
     private int _nestingDepth;
+
+    // Per-level surcharges for the heavy productions, calibrated by the same probes:
+    // a parenthesized group or brace block runs the block/algorithm machinery each
+    // level (~4.7 KB Debug ⇒ 4 total units with the two base charges), a call
+    // argument list adds its call machinery (~3.5 KB ⇒ 3 units; the trailing-brace
+    // call form also runs the block machinery ⇒ 4 units), and a list literal adds
+    // its element-list machinery (~2.8 KB ⇒ 3 units).
+    private const int GroupNestingSurcharge = 2;
+    private const int BlockNestingSurcharge = 2;
+    private const int CallArgsNestingSurcharge = 1;
+    private const int ListNestingSurcharge = 1;
+
+    /// <summary>
+    /// The stable prefix of the parser recursion-budget diagnostic. The module
+    /// loader matches it to translate a nested module's budget rejection into its
+    /// own <c>load:</c> source-processing diagnostic at the load site.
+    /// </summary>
+    internal const string NestingTooDeepMessage = "Nesting is too deep for the parser to process safely.";
 
     // Flat left-associative binary and postfix syntax is parsed iteratively, but it
     // produces a left-deep AST that the frontend's recursive visitors must traverse.
@@ -92,9 +132,19 @@ public sealed class Parser
             return;
 
         ReportError(
-            "Nesting is too deep for the parser to process safely. " +
-            "Reduce the depth of nested parentheses, brackets, braces, calls, operators, or patterns.");
+            NestingTooDeepMessage +
+            " Reduce the depth of nested parentheses, brackets, braces, calls, operators, or patterns.");
         throw new NestingLimitExceededException();
+    }
+
+    /// <summary>
+    /// Charges a heavy production's surcharge on top of the base chokepoint units.
+    /// Callers guard from inside a <c>try</c> and release the same amount in its
+    /// <c>finally</c>, so a limit exception cannot leave the shared counter charged.
+    /// </summary>
+    private void EnterHeavyNesting(int surcharge)
+    {
+        _nestingDepth += surcharge;
     }
 
     /// <summary>
@@ -136,12 +186,27 @@ public sealed class Parser
         => ParseSyntax(source, comparisonObservations: null);
 
     /// <summary>
+    /// Raw parse that begins with part of the parser recursion budget already spent.
+    /// The module loader uses this when parsing a DOWNLOADED module: that parse runs
+    /// while the loader's own traversal frames are still live on the stack, so the
+    /// loader pre-charges a conservative debt (in the same cumulative parser stack
+    /// units) for those frames. A parse that starts in debt has proportionally less
+    /// nesting budget and reports the same established nesting diagnostic at the
+    /// crossing token; in-budget sources parse identically.
+    /// </summary>
+    internal static SyntaxParseResult ParseSyntax(string source, int initialNestingDebt)
+        => ParseSyntax(source, comparisonObservations: null, initialNestingDebt);
+
+    /// <summary>
     /// Raw parse that additionally records exact clause-family pattern comparisons into
     /// <paramref name="comparisonObservations"/>. Test/measurement-only entry: the observed and
     /// unobserved paths share this one implementation, so the AST, diagnostics, and spans are
     /// identical — only the passive comparison count differs.
     /// </summary>
-    internal static SyntaxParseResult ParseSyntax(string source, PatternComparisonObservations? comparisonObservations)
+    internal static SyntaxParseResult ParseSyntax(
+        string source,
+        PatternComparisonObservations? comparisonObservations,
+        int initialNestingDebt = 0)
     {
         // Always-active host-runtime backstop: reject an oversized source before allocating any
         // tokens or nodes. The configured (possibly lower) per-source limit is applied earlier by
@@ -162,9 +227,17 @@ public sealed class Parser
         var (tokens, lexDiags) = Lexer.Tokenize(source);
         var diagnostics = new List<Diagnostic>(lexDiags);
         var parser = new Parser(tokens, diagnostics, comparisonObservations);
+        // Pre-charge the caller's live stack debt (nested-module parses under active
+        // module-loader frames). Recursive charges pair with finally-releases, so the
+        // counter's floor stays at the debt for the whole parse.
+        // Clamp hostile/internal callers before adding any recursive charges. The
+        // one-above value is enough to reject immediately and avoids signed overflow
+        // when an arbitrarily large debt is supplied.
+        parser._nestingDepth = Math.Clamp(initialNestingDebt, 0, MaxNestingDepth + 1);
         Algorithm root;
         try
         {
+            parser.GuardNestingDepth();
             root = parser.ParseAlgorithm(isParametrized: true);
             if (parser.Current.Kind != TokenKind.EndOfFile)
             {
@@ -176,6 +249,25 @@ public sealed class Parser
             // A parser safety budget was exceeded. Its structured diagnostic is already
             // recorded; return a placeholder root so downstream consumers stay
             // well-defined (ParseResult.HasErrors is true) and never see the unsafe tree.
+            root = new Algorithm.User(null, [], [], [], []);
+        }
+
+        // Structural depth preflight over the finished syntax tree, BEFORE the recursive
+        // validation walk below and before any front-end elaboration pass. The in-flight
+        // budgets above bound each nesting/chain mechanism separately, but mechanisms
+        // COMPOSE: a chain restarts from depth zero inside each container level (list
+        // items, call arguments, block bodies), so stacked levels of in-budget chains can
+        // multiply into a tree far deeper than either budget alone admits — deep enough
+        // to overflow the recursive walkers that consume parser output. The iterative
+        // preflight bounds the finished tree's TOTAL depth with one structured
+        // diagnostic; downstream consumers never see the unsafe tree.
+        if (AstStructuralPreflight.Check(
+                root,
+                AstStructuralPreflight.RawSyntaxMaxAstDepth,
+                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+        {
+            diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
+                structuralRejection, AstStructuralPreflight.RawSyntaxMaxAstDepth));
             root = new Algorithm.User(null, [], [], [], []);
         }
 
@@ -193,6 +285,14 @@ public sealed class Parser
     /// <summary>
     /// Compatibility wrapper for the default public front-end without module elaboration support.
     /// Delegates to <see cref="FrontEndPipeline"/>.
+    /// <para><b>Recursion safety contract:</b> parsing is protected by one cumulative
+    /// weighted recursion budget (<see cref="MaxNestingDepth"/>) shared by every
+    /// grammar mechanism, calibrated so any accepted source parses on the documented
+    /// minimum supported environment — a thread stack of at least 1 MiB — with at
+    /// least a 2x margin. Source nested beyond the budget returns one structured,
+    /// source-positioned "nesting is too deep" diagnostic instead of risking process
+    /// termination; this also covers module sources parsed during load elaboration,
+    /// whose parses begin with the module loader's live stack pre-charged.</para>
     /// </summary>
     public static ParseResult Parse(string source)
         => FrontEndPipeline.Process(source).ToParseResult();
@@ -2294,7 +2394,17 @@ public sealed class Parser
         if (Current.Kind == TokenKind.LParen)
         {
             Advance(); // consume '('
-            var alg = ParseAlgorithm(isParametrized: false);
+            // Heavy production: call argument lists run the call + algorithm
+            // machinery each nesting level (see the recursion-budget notes).
+            EnterHeavyNesting(CallArgsNestingSurcharge);
+            Algorithm alg;
+            try
+            {
+                GuardNestingDepth();
+                alg = ParseAlgorithm(isParametrized: false);
+            }
+            finally { _nestingDepth -= CallArgsNestingSurcharge; }
+
             Expect(TokenKind.RParen);
             return alg;
         }
@@ -2303,10 +2413,20 @@ public sealed class Parser
             // Trailing brace-block: Algo{e} → Algo({e})
             // The brace content is a parametrized algorithm that becomes a single
             // Expr.Block argument inside a non-parametrized wrapper, so the block
-            // is resolvable as an algorithm by ResolveAlg(.block ...).
+            // is resolvable as an algorithm by ResolveAlg(.block ...). Charges the
+            // call surcharge PLUS the block surcharge: this form runs both
+            // machineries per level.
             var start = Current;
             Advance(); // consume '{'
-            var innerAlg = ParseAlgorithm(isParametrized: true);
+            EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge);
+            Algorithm innerAlg;
+            try
+            {
+                GuardNestingDepth();
+                innerAlg = ParseAlgorithm(isParametrized: true);
+            }
+            finally { _nestingDepth -= CallArgsNestingSurcharge + BlockNestingSurcharge; }
+
             Expect(TokenKind.RBrace);
             var blockExpr = new Expr.Block(innerAlg) { Span = MakeSpan(start) };
             return new Algorithm.User(
@@ -2411,7 +2531,18 @@ public sealed class Parser
                 {
                     var start = Current;
                     Advance(); // consume '('
-                    var alg = ParseAlgorithm(isParametrized: false);
+                    // Heavy production: each group level runs the block/algorithm
+                    // machinery, so it carries a calibrated surcharge on the shared
+                    // cumulative recursion budget.
+                    EnterHeavyNesting(GroupNestingSurcharge);
+                    Algorithm alg;
+                    try
+                    {
+                        GuardNestingDepth();
+                        alg = ParseAlgorithm(isParametrized: false);
+                    }
+                    finally { _nestingDepth -= GroupNestingSurcharge; }
+
                     Expect(TokenKind.RParen);
 
                     // Empty parentheses `()` construct the empty sequence value.
@@ -2439,7 +2570,16 @@ public sealed class Parser
                 {
                     var start = Current;
                     Advance(); // consume '{'
-                    var alg = ParseAlgorithm(isParametrized: true);
+                    // Heavy production (see the LParen arm).
+                    EnterHeavyNesting(BlockNestingSurcharge);
+                    Algorithm alg;
+                    try
+                    {
+                        GuardNestingDepth();
+                        alg = ParseAlgorithm(isParametrized: true);
+                    }
+                    finally { _nestingDepth -= BlockNestingSurcharge; }
+
                     Expect(TokenKind.RBrace);
                     return new Expr.Block(alg) { Span = MakeSpan(start) };
                 }
@@ -2454,9 +2594,18 @@ public sealed class Parser
                     // An already-open '[' spans physical lines like '(' and '{'.
                     var start = Current;
                     Advance(); // consume '['
-                    List<Expr> items = Current.Kind == TokenKind.RBracket
-                        ? []
-                        : ParseExpressionListOperand(allowNewlineImplicitExpressionListSeparator: true);
+                    // Heavy production (lighter than groups/blocks; see the LParen arm).
+                    EnterHeavyNesting(ListNestingSurcharge);
+                    List<Expr> items;
+                    try
+                    {
+                        GuardNestingDepth();
+                        items = Current.Kind == TokenKind.RBracket
+                            ? []
+                            : ParseExpressionListOperand(allowNewlineImplicitExpressionListSeparator: true);
+                    }
+                    finally { _nestingDepth -= ListNestingSurcharge; }
+
                     Expect(TokenKind.RBracket);
                     return new Expr.ListLiteral(items) { Span = MakeSpan(start) };
                 }

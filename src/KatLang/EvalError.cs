@@ -40,8 +40,10 @@ public abstract record EvalError
     private EvalError() { }
 
     /// <summary>
-    /// True for every host resource-limit outcome: depth, steps, stack headroom, collection
-    /// size and cumulative items, string size and cumulative string units, and display.
+    /// True for every host resource-limit outcome: runtime or weighted structural
+    /// depth, steps, stack headroom, collection size and cumulative items, string size
+    /// and cumulative string units, and display. A structural reference cycle is
+    /// malformed host input, not a resource limit.
     /// These stop accumulating call/property context on the way out: the limit is a
     /// property of the RUN, not of any one call on the chain,
     /// so the innermost span is preserved and a depth failure does not report one identical
@@ -50,6 +52,7 @@ public abstract record EvalError
     internal bool IsResourceLimit => this switch
     {
         EvaluationDepthExceeded
+            or AstDepthLimitExceeded
             or EvaluationStepLimitExceeded
             or EvaluationStackExhausted
             or CollectionSizeLimitExceeded
@@ -204,6 +207,38 @@ public abstract record EvalError
     /// machine-specific payload precisely because the boundary is not a semantic fact.
     /// </summary>
     public sealed record EvaluationStackExhausted() : EvalError;
+
+    /// <summary>
+    /// The pre-evaluation structural safety preflight rejected the program tree because
+    /// its WEIGHTED STRUCTURAL DEPTH exceeds <paramref name="Limit"/>
+    /// (<see cref="EvaluationLimits.MaxAstDepth"/>, bounded by
+    /// <see cref="EvaluationLimits.MaxSupportedAstDepth"/>). The metric is a
+    /// consumer-faithful structural depth budget over the longest
+    /// parent-to-descendant path, NOT a literal node count: most nodes cost one unit,
+    /// but on the evaluator gates a dot-call link costs THREE units (its resolution
+    /// machinery consumes several stack frames per link) and the internal
+    /// sequence-join kinds cost ZERO (every consumer walks their spines iteratively),
+    /// so a ~100-link dot-call chain reaches a limit of 300 units. Reported BEFORE any
+    /// recursive validation, optimization, or evaluation touches the tree, because a
+    /// tree this deep can otherwise terminate the process with an unhandleable
+    /// <see cref="StackOverflowException"/>. Successfully elaborated public parse
+    /// results stay within the hard ceiling; this error remains reachable through
+    /// host-constructed ASTs, raw syntax trees between the parser's larger raw gate
+    /// and this evaluation gate, and configured lower limits. Distinct from
+    /// <see cref="EvaluationDepthExceeded"/>, which bounds
+    /// RUNTIME algorithm recursion of an accepted program.
+    /// </summary>
+    public sealed record AstDepthLimitExceeded(int Limit) : EvalError;
+
+    /// <summary>
+    /// The pre-evaluation structural safety preflight found a reference cycle in the
+    /// program tree: some node reaches itself again through its own children. A cyclic
+    /// graph is not a valid KatLang program (recursive walkers would never terminate),
+    /// and is only constructible by mutating the caller-owned collections behind a
+    /// host-built AST after construction — the parser cannot produce one. Shared
+    /// ACYCLIC subtrees are legal and are not reported as cycles.
+    /// </summary>
+    public sealed record AstCycleDetected() : EvalError;
 
     /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>
     public sealed record WithContext : EvalError

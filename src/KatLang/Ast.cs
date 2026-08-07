@@ -151,12 +151,30 @@ public abstract record ParameterPattern
 
     public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
     {
-        if (patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 1)
-            return true;
+        // Iterative per-level scan: patterns are host-constructible to arbitrary
+        // depth, and this public helper must not recurse on the caller's stack.
+        var pending = new Stack<IReadOnlyList<ParameterPattern>>();
+        pending.Push(patterns);
 
-        return patterns
-            .OfType<SequenceValueParameterPattern>()
-            .Any(static group => HasMultipleCollectingCapturesAtAnyLevel(group.Items));
+        while (pending.Count > 0)
+        {
+            var level = pending.Pop();
+            var collectingAtLevel = 0;
+            foreach (var pattern in level)
+            {
+                if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
+                {
+                    if (++collectingAtLevel > 1)
+                        return true;
+                }
+                else if (pattern is SequenceValueParameterPattern group)
+                {
+                    pending.Push(group.Items);
+                }
+            }
+        }
+
+        return false;
     }
 
     public static bool HasRepeatedCaptureNames(IEnumerable<ParameterPattern> patterns)
@@ -194,8 +212,42 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
 {
     public override string DisplayName => $"({string.Join(", ", Items.Select(static item => item.DisplayName))})";
 
+    /// <summary>
+    /// Left-to-right depth-first capture flatten, walked with an explicit stack:
+    /// parameter patterns are host-constructible to arbitrary depth, and this public
+    /// convenience must not recurse on the caller's stack (a recursive flatten
+    /// overflowed the process on deep host-built patterns). Capture order, duplicate
+    /// names, and the produced declarations are identical to the recursive flatten.
+    /// </summary>
     public override IReadOnlyList<ParameterDeclaration> Captures
-        => Items.SelectMany(static item => item.Captures).ToList();
+    {
+        get
+        {
+            var captures = new List<ParameterDeclaration>();
+            var pending = new Stack<ParameterPattern>();
+            for (var i = Items.Count - 1; i >= 0; i--)
+                pending.Push(Items[i]);
+
+            while (pending.Count > 0)
+            {
+                switch (pending.Pop())
+                {
+                    case CaptureParameterPattern capture:
+                        captures.Add(new ParameterDeclaration(capture.Name, capture.Span, capture.Kind)
+                        {
+                            CollectMarkerSpan = capture.CollectMarkerSpan,
+                        });
+                        break;
+                    case SequenceValueParameterPattern group:
+                        for (var i = group.Items.Count - 1; i >= 0; i--)
+                            pending.Push(group.Items[i]);
+                        break;
+                }
+            }
+
+            return captures;
+        }
+    }
 }
 
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
@@ -375,15 +427,33 @@ public abstract record Pattern
     /// <summary>Matches <c>Result.SequenceValue(items)</c> with same arity, each sub-pattern matching.</summary>
     public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern;
 
-    /// <summary>Collect all binder names in this pattern (left-to-right).</summary>
-    public IReadOnlyList<string> BoundNames() => this switch
+    /// <summary>
+    /// Collect all binder names in this pattern (left-to-right). Walked with an
+    /// explicit stack: patterns are host-constructible to arbitrary depth, and this
+    /// public convenience must not recurse on the caller's stack.
+    /// </summary>
+    public IReadOnlyList<string> BoundNames()
     {
-        Bind(var name) => [name],
-        LitInt _ => [],
-        LitString _ => [],
-        SequenceValue(var items) => items.SelectMany(p => p.BoundNames()).ToList(),
-        _ => [],
-    };
+        var names = new List<string>();
+        var pending = new Stack<Pattern>();
+        pending.Push(this);
+
+        while (pending.Count > 0)
+        {
+            switch (pending.Pop())
+            {
+                case Bind(var name):
+                    names.Add(name);
+                    break;
+                case SequenceValue(var items):
+                    for (var i = items.Count - 1; i >= 0; i--)
+                        pending.Push(items[i]);
+                    break;
+            }
+        }
+
+        return names;
+    }
 
     /// <summary>
     /// Compute the top-level arity of a pattern.
@@ -1131,6 +1201,15 @@ internal static class AlgorithmValidation
     {
         public List<ExplicitParameterOutputViolation> Violations { get; } = [];
 
+        // Reference-identity memo over visited algorithms and expressions. The public
+        // AST is host-constructible with SHARED (acyclic) subtrees, and the violation
+        // this walker detects is node-local — a shared subtree cannot contain a
+        // different violation on a second visit — so revisits are pure waste: without
+        // the memo a compact diamond-shaped DAG (each node referenced twice) makes
+        // this pre-evaluation pass take time exponential in its depth. Walker
+        // instances are per-call, so the memo is run-scoped and never shared.
+        private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
+
         // This walker only inspects parameter COUNTS (via Parameters.Count below), never individual
         // declarations, so skip the per-declaration loop. That keeps validation of a wide assignment
         // deconstruction linear instead of O(N^2) across its N synthetic N-capture helpers.
@@ -1141,12 +1220,18 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
+            if (!_visited.Add(algorithm))
+                return;
+
             base.VisitAlgorithm(algorithm);
         }
 
         public override void VisitExpr(Expr expr)
         {
             if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            if (!_visited.Add(expr))
                 return;
 
             if (expr is Expr.SequenceConstruct or Expr.SequenceSpread)
@@ -1171,6 +1256,9 @@ internal static class AlgorithmValidation
                 var current = stack.Pop();
                 if (current is Expr.SequenceConstruct(var outputLeft, var outputRight))
                 {
+                    if (!ReferenceEquals(current, expr) && !_visited.Add(current))
+                        continue;
+
                     stack.Push(outputRight);
                     stack.Push(outputLeft);
                     continue;
@@ -1178,6 +1266,9 @@ internal static class AlgorithmValidation
 
                 if (current is Expr.SequenceSpread(var spreadOperand))
                 {
+                    if (!ReferenceEquals(current, expr) && !_visited.Add(current))
+                        continue;
+
                     stack.Push(spreadOperand);
                     continue;
                 }

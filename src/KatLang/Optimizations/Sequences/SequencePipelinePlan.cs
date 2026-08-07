@@ -91,8 +91,8 @@ internal sealed record FilterCountPipelinePlan(
     Algorithm Predicate,
     FilterCountPipelineForm FormForDiagnostics,
     Expr? PredicateExpression,
-    ErrorContext EvaluationContext,
-    SequencePipelinePlan Diagnostics);
+    FilterCountPipelineSyntax EvaluationSyntax,
+    SequencePipelinePlan? Diagnostics);
 
 internal sealed record SequencePipelinePlan(
     string Identity,
