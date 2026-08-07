@@ -162,7 +162,7 @@ Reopen builtin runtime binding integration only if a second non-executor consume
 
 ### Phase 29 conditional branch pattern model closure
 
-No `ConditionalBranchPatternPlan` is introduced at this stage. Conditional branches already have a distinct model: `Pattern`, ordered `CondBranch` entries, parser-owned branch arity and output arity validation, evaluator-owned normal and counted matching, and editor-facing branch metadata. This is intentionally separate from `CallableBindingPlan`.
+No `ConditionalBranchPatternPlan` is introduced at this stage. Conditional branches already have a distinct model: `Pattern`, ordered `CondBranch` entries, parser-owned clause-family diagnostics, shared pre-evaluation branch arity and output arity validation for prebuilt ASTs, evaluator-owned normal and counted matching, and editor-facing branch metadata. This is intentionally separate from `CallableBindingPlan`.
 
 A separate conditional plan is deferred because there is no concrete consumer today. Current diagnostics are parser/runtime owned, editor metadata already exposes conditional branch heads and binders, runtime matching paths differ in meaningful policy, and guard expressions do not exist yet. A speculative plan would duplicate facts already available on `Pattern` / `CondBranch` and blur the boundary between conditional matching and callable binding.
 

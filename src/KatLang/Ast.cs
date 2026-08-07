@@ -1178,6 +1178,26 @@ public abstract record Algorithm
 
 internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 
+/// <summary>
+/// One violation found by the shared pre-evaluation validation walk over a
+/// preconstructed AST. Lean: the error cases of
+/// <c>validateExplicitParamOutputInvariant</c> / <c>validateConditionalBranchArities</c>
+/// in <c>lean/KatLang.lean</c>, which <c>runResultM</c> raises before any evaluation.
+/// </summary>
+internal abstract record PreEvaluationAstViolation
+{
+    private PreEvaluationAstViolation() { }
+
+    /// <summary>Lean: <c>Error.explicitParamsRequireOutput</c>.</summary>
+    internal sealed record ExplicitParametersWithoutOutput(SourceSpan? Span) : PreEvaluationAstViolation;
+
+    /// <summary>Lean: <c>Error.branchArityMismatch name expected actual</c>.</summary>
+    internal sealed record ConditionalBranchArityMismatch(string AlgorithmName, int Expected, int Actual) : PreEvaluationAstViolation;
+
+    /// <summary>Lean: <c>Error.branchOutputArityMismatch name expected actual</c>.</summary>
+    internal sealed record ConditionalBranchOutputArityMismatch(string AlgorithmName, int Expected, int Actual) : PreEvaluationAstViolation;
+}
+
 internal static class AlgorithmValidation
 {
     internal const string ExplicitParametersRequireOutputMessage =
@@ -1185,21 +1205,48 @@ internal static class AlgorithmValidation
 
     public static IReadOnlyList<ExplicitParameterOutputViolation> FindExplicitParameterOutputViolations(Algorithm algorithm)
     {
-        var walker = new ExplicitParameterOutputWalker(stopAfterFirst: false);
+        // The parser's post-parse walk reports only the explicit-parameter invariant:
+        // clause elaboration already rejects conditional branch-arity mismatches with
+        // richer source-positioned diagnostics, so a parsed tree cannot contain one.
+        var walker = new PreEvaluationValidationWalker(stopAfterFirst: false, checkConditionalBranchArities: false);
         walker.VisitAlgorithm(algorithm);
-        return walker.Violations;
+        return [.. walker.Violations.Select(v =>
+            new ExplicitParameterOutputViolation(((PreEvaluationAstViolation.ExplicitParametersWithoutOutput)v).Span))];
     }
 
-    public static ExplicitParameterOutputViolation? FindFirstExplicitParameterOutputViolation(Expr expr)
+    /// <summary>
+    /// The pre-evaluation validation walk shared by every prebuilt-AST evaluator
+    /// entry point. Mirrors the pass Lean's <c>runResultM</c> runs before evaluation
+    /// (<c>validateExplicitParamOutputInvariantExpr</c>): one depth-first walk in
+    /// Lean's traversal order that checks, at each node and in Lean's precedence,
+    /// the explicit-parameters-require-output invariant and the uniform conditional
+    /// branch input/output arity invariants. Returns the first violation, or
+    /// <c>null</c> for a valid tree.
+    /// </summary>
+    public static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(Expr expr)
     {
-        var walker = new ExplicitParameterOutputWalker(stopAfterFirst: true);
+        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true);
         walker.VisitExpr(expr);
         return walker.Violations.Count > 0 ? walker.Violations[0] : null;
     }
 
-    private sealed class ExplicitParameterOutputWalker(bool stopAfterFirst) : AstWalker
+    private sealed class PreEvaluationValidationWalker(bool stopAfterFirst, bool checkConditionalBranchArities) : AstWalker
     {
-        public List<ExplicitParameterOutputViolation> Violations { get; } = [];
+        /// <summary>
+        /// Lean's default diagnostic label for a conditional reached outside a
+        /// property context (<c>validateExplicitParamOutputInvariant</c>'s
+        /// <c>name := "conditional"</c> default).
+        /// </summary>
+        private const string AnonymousConditionalName = "conditional";
+
+        public List<PreEvaluationAstViolation> Violations { get; } = [];
+
+        // Nearest enclosing property name for conditional branch-arity diagnostics.
+        // Lean threads it the same way: a property's directly-held algorithm (and a
+        // conditional's branch bodies) inherit the property name, while any algorithm
+        // reached through an EXPRESSION (block literal, call/dot-call arguments) is
+        // validated by the nameless expression walker and gets the default label.
+        private string _enclosingPropertyName = AnonymousConditionalName;
 
         // Reference-identity memo over visited algorithms and expressions. The public
         // AST is host-constructible with SHARED (acyclic) subtrees, and the violation
@@ -1234,13 +1281,19 @@ internal static class AlgorithmValidation
             if (!_visited.Add(expr))
                 return;
 
-            if (expr is Expr.SequenceConstruct or Expr.SequenceSpread)
-            {
-                VisitFlatOutputExpr(expr);
-                return;
-            }
+            // Expression descent is nameless in Lean, so any algorithm reached
+            // below this point gets the default conditional label. Restore the
+            // enclosing name afterwards: a conditional's opens are visited before
+            // its branch bodies, and those bodies must keep the conditional's name.
+            var enclosingName = _enclosingPropertyName;
+            _enclosingPropertyName = AnonymousConditionalName;
 
-            base.VisitExpr(expr);
+            if (expr is Expr.SequenceConstruct or Expr.SequenceSpread)
+                VisitFlatOutputExpr(expr);
+            else
+                base.VisitExpr(expr);
+
+            _enclosingPropertyName = enclosingName;
         }
 
         private void VisitFlatOutputExpr(Expr expr)
@@ -1286,12 +1339,72 @@ internal static class AlgorithmValidation
             if (algorithm.Parameters.Count > 0 && algorithm.Output.Count == 0)
             {
                 var span = algorithm.ExplicitParameters.FirstOrDefault()?.Span;
-                Violations.Add(new ExplicitParameterOutputViolation(span));
+                Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span));
                 if (stopAfterFirst)
                     return;
             }
 
             base.VisitUserAlgorithm(algorithm);
+        }
+
+        protected override void VisitProperty(Property property)
+        {
+            // Lean: validateExplicitParamOutputInvariant prop.alg prop.name — the
+            // property's directly-held algorithm is validated under the property name.
+            var enclosingName = _enclosingPropertyName;
+            _enclosingPropertyName = property.Name;
+            base.VisitProperty(property);
+            _enclosingPropertyName = enclosingName;
+        }
+
+        protected override void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)
+        {
+            // Lean: validateConditionalBranchArities runs BEFORE the conditional's
+            // opens and branch bodies are walked.
+            if (checkConditionalBranchArities)
+                ValidateConditionalBranchArities(algorithm);
+
+            if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            base.VisitConditionalAlgorithm(algorithm);
+        }
+
+        /// <summary>
+        /// Lean: <c>Algorithm.validateBranchArities</c> then
+        /// <c>Algorithm.validateBranchOutputArities</c> — expected comes from the
+        /// first branch, actual from the first mismatching branch, and an input-arity
+        /// mismatch suppresses the output-arity check for the same conditional.
+        /// </summary>
+        private void ValidateConditionalBranchArities(Algorithm.Conditional algorithm)
+        {
+            var branches = algorithm.Branches;
+            if (branches.Count == 0)
+                return;
+
+            var expectedArity = branches[0].Pattern.TopLevelArity();
+            for (var i = 1; i < branches.Count; i++)
+            {
+                var actualArity = branches[i].Pattern.TopLevelArity();
+                if (actualArity != expectedArity)
+                {
+                    Violations.Add(new PreEvaluationAstViolation.ConditionalBranchArityMismatch(
+                        _enclosingPropertyName, expectedArity, actualArity));
+                    return;
+                }
+            }
+
+            var expectedOutputArity = branches[0].TopLevelOutputArity();
+            for (var i = 1; i < branches.Count; i++)
+            {
+                var actualOutputArity = branches[i].TopLevelOutputArity();
+                if (actualOutputArity != expectedOutputArity)
+                {
+                    Violations.Add(new PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch(
+                        _enclosingPropertyName, expectedOutputArity, actualOutputArity));
+                    return;
+                }
+            }
         }
     }
 }

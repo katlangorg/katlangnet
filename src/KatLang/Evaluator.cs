@@ -7904,6 +7904,17 @@ public static class Evaluator
     /// the elaborating public parser stay within the hard ceiling; a raw syntax tree
     /// from <c>Parser.ParseSyntax</c> may validly fall between that API's larger raw
     /// gate and this evaluation gate and is rejected here.</para>
+    /// <para><b>Pre-evaluation validation:</b> after the structural preflight, the
+    /// validation pass Lean's <c>runResultM</c> runs before evaluation is applied to
+    /// the whole tree: an algorithm with explicit parameters but no output is rejected
+    /// with <see cref="EvalError.ExplicitParametersRequireOutput"/>, and a conditional
+    /// whose branches disagree on top-level pattern arity or top-level output arity is
+    /// rejected with <see cref="EvalError.BranchArityMismatch"/> /
+    /// <see cref="EvalError.BranchOutputArityMismatch"/> before any branch matching or
+    /// evaluation — even when the malformed conditional is never referenced. Parsed
+    /// surface programs never contain such conditionals (clause elaboration rejects
+    /// them with source-positioned diagnostics); this gate aligns hand-built ASTs with
+    /// Lean's <c>runResult</c>.</para>
     /// <para><b>Supported execution environment:</b> the structural safety envelope
     /// is calibrated for threads with at least 1 MiB of stack (the CLR/Windows
     /// default). Embedders running evaluation on smaller custom stacks are outside
@@ -8009,7 +8020,7 @@ public static class Evaluator
     /// <summary>
     /// Non-recursive structural safety preflight shared by every evaluator entry point
     /// that accepts a preconstructed AST. It MUST run before
-    /// <see cref="AlgorithmValidation.FindFirstExplicitParameterOutputViolation(Expr)"/>
+    /// <see cref="AlgorithmValidation.FindFirstPreEvaluationViolation(Expr)"/>
     /// and before any other recursive pass (validation walk, optimizer planning,
     /// evaluation): those consume the tree on the CLR stack, so a host-built tree
     /// deeper than the structural limit would otherwise terminate the process with an
@@ -8025,6 +8036,30 @@ public static class Evaluator
             : null;
     }
 
+    /// <summary>
+    /// Shared pre-evaluation validation gate for every prebuilt-AST entry point.
+    /// Lean: the validation pass <c>runResultM</c> runs before any evaluation
+    /// (<c>validateExplicitParamOutputInvariantExpr</c>). The violation kinds map
+    /// 1:1 onto Lean's validation errors, so a malformed hand-built tree — for
+    /// example a conditional with mismatched branch arities — is rejected here,
+    /// before branch matching, optimizer planning, or any evaluation, exactly
+    /// where Lean rejects it. Runs after <see cref="StructuralPreflight"/> because
+    /// the validation walk itself is recursive.
+    /// </summary>
+    private static EvalError? PreEvaluationValidationError(Expr expr)
+        => AlgorithmValidation.FindFirstPreEvaluationViolation(expr) switch
+        {
+            null => null,
+            PreEvaluationAstViolation.ExplicitParametersWithoutOutput v =>
+                new EvalError.ExplicitParametersRequireOutput() { Span = v.Span },
+            PreEvaluationAstViolation.ConditionalBranchArityMismatch v =>
+                new EvalError.BranchArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
+            PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
+                new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
+            var unknown => throw new InvalidOperationException(
+                $"Unhandled pre-evaluation violation kind: {unknown.GetType().Name}"),
+        };
+
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -8038,8 +8073,8 @@ public static class Evaluator
         if (StructuralPreflight(expr, limits) is { } structuralError)
             return structuralError;
 
-        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
-            return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
+        if (PreEvaluationValidationError(expr) is { } validationError)
+            return validationError;
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
@@ -8112,8 +8147,8 @@ public static class Evaluator
         if (StructuralPreflight(expr, limits) is { } structuralError)
             return (structuralError, budget);
 
-        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
-            return (new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span }, budget);
+        if (PreEvaluationValidationError(expr) is { } validationError)
+            return (validationError, budget);
 
         var ctx = CreateRootCtx(
             zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
@@ -8138,8 +8173,8 @@ public static class Evaluator
         if (StructuralPreflight(expr, limits) is { } structuralError)
             return structuralError;
 
-        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
-            return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
+        if (PreEvaluationValidationError(expr) is { } validationError)
+            return validationError;
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
@@ -8164,8 +8199,8 @@ public static class Evaluator
         if (StructuralPreflight(expr, limits) is { } structuralError)
             return structuralError;
 
-        if (AlgorithmValidation.FindFirstExplicitParameterOutputViolation(expr) is { } violation)
-            return new EvalError.ExplicitParametersRequireOutput() { Span = violation.Span };
+        if (PreEvaluationValidationError(expr) is { } validationError)
+            return validationError;
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);

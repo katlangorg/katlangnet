@@ -69,6 +69,12 @@ public sealed class KatLangError
             EvalError.BadIndex => "Bad index",
             EvalError.DivByZero => "Division by zero",
             EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
+            EvalError.BranchArityMismatch e =>
+                $"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level pattern arity. " +
+                $"Expected {e.Expected} (from first branch), but a branch has arity {e.Actual}",
+            EvalError.BranchOutputArityMismatch e =>
+                $"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level output arity. " +
+                $"Expected {e.Expected} (from first branch), but a branch has output arity {e.Actual}",
             EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
             EvalError.MissingOutput => FormatGenericMissingOutput(),
             EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(),
