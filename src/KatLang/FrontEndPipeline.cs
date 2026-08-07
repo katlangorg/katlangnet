@@ -13,7 +13,7 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source));
+        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source), CancellationToken.None);
     }
 
     internal static FrontEndResult Process(
@@ -25,20 +25,37 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        return ProcessWithModuleElaboration(Parser.ParseSyntax(source), downloadCode, allowedHosts, budget);
+        return ProcessWithModuleElaboration(
+            Parser.ParseSyntax(source),
+            downloadCode,
+            downloadCodeWithCancellation: null,
+            allowedHosts,
+            budget,
+            CancellationToken.None);
     }
 
     internal static FrontEndResult Process(string source, RunOptions? options)
     {
+        var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
+        cancellationToken.ThrowIfCancellationRequested();
+
         var budget = new SourceProcessingBudget(options?.SourceProcessingLimits);
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        if (options?.DownloadCode is not null)
-            return ProcessWithModuleElaboration(
-                Parser.ParseSyntax(source), options.DownloadCode, options.AllowedHosts, budget);
+        var syntaxResult = Parser.ParseSyntax(source);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source));
+        if (options?.DownloadCodeWithCancellation is not null || options?.DownloadCode is not null)
+            return ProcessWithModuleElaboration(
+                syntaxResult,
+                options.DownloadCode,
+                options.DownloadCodeWithCancellation,
+                options.AllowedHosts,
+                budget,
+                cancellationToken);
+
+        return ProcessWithoutModuleElaboration(syntaxResult, cancellationToken);
     }
 
     /// <summary>
@@ -72,7 +89,9 @@ internal static class FrontEndPipeline
         return false;
     }
 
-    private static FrontEndResult ProcessWithoutModuleElaboration(SyntaxParseResult syntaxResult)
+    private static FrontEndResult ProcessWithoutModuleElaboration(
+        SyntaxParseResult syntaxResult,
+        CancellationToken cancellationToken)
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
         var loadDiagnostics = LoadElaborationGuard.CreateUnavailableDiagnostics(syntaxResult.SyntaxRoot);
@@ -83,20 +102,29 @@ internal static class FrontEndPipeline
             return new FrontEndResult(syntaxResult.SyntaxRoot, diagnostics);
         }
 
-        return FinalizeElaboration(syntaxResult.SyntaxRoot, diagnostics);
+        return FinalizeElaboration(syntaxResult.SyntaxRoot, diagnostics, cancellationToken: cancellationToken);
     }
 
     private static FrontEndResult ProcessWithModuleElaboration(
         SyntaxParseResult syntaxResult,
         Func<string, string>? downloadCode,
+        Func<string, CancellationToken, string>? downloadCodeWithCancellation,
         IEnumerable<string>? allowedHosts,
-        SourceProcessingBudget budget)
+        SourceProcessingBudget budget,
+        CancellationToken cancellationToken)
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
 
         var loadDiagnosticStart = diagnostics.Count;
-        var loader = new ModuleLoader(diagnostics, downloadCode, allowedHosts, budget);
+        var loader = new ModuleLoader(
+            diagnostics,
+            downloadCode,
+            downloadCodeWithCancellation,
+            allowedHosts,
+            budget,
+            cancellationToken);
         var loadElaboratedRoot = loader.Elaborate(syntaxResult.SyntaxRoot);
+        cancellationToken.ThrowIfCancellationRequested();
         var loadDiagnosticsEnd = diagnostics.Count;
 
         if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _))
@@ -108,6 +136,7 @@ internal static class FrontEndPipeline
         return FinalizeElaboration(
             loadElaboratedRoot,
             diagnostics,
+            cancellationToken,
             canEvaluateAfterLoadErrors:
                 !syntaxResult.HasErrors &&
                 !loader.HasSourceProcessingErrors &&
@@ -120,13 +149,18 @@ internal static class FrontEndPipeline
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
         List<Diagnostic> diagnostics,
+        CancellationToken cancellationToken = default,
         bool canEvaluateAfterLoadErrors = false)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.Detect(loadElaboratedRoot);
         diagnostics.AddRange(parameterDiagnostics);
 
+        cancellationToken.ThrowIfCancellationRequested();
         var implicitResolvedRoot = ImplicitArgumentResolver.Resolve(parameterizedRoot);
+        cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot);
+        cancellationToken.ThrowIfCancellationRequested();
         return new FrontEndResult(propertyExposedRoot, diagnostics, canEvaluateAfterLoadErrors);
     }
 }

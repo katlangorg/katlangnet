@@ -272,7 +272,13 @@ public static class KatLangEngine
 
     /// <summary>
     /// Parse and evaluate KatLang source code, returning a unified <see cref="RunResult"/>.
+    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies through front-end source
+    /// and module processing only; evaluation is governed separately by
+    /// <see cref="RunOptions.EvaluationLimits"/>.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The configured source-processing token was cancelled before evaluation began.
+    /// </exception>
     public static RunResult Run(string source, RunOptions? options = null)
     {
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
@@ -366,6 +372,9 @@ public static class KatLangEngine
     /// Parse and evaluate, returning the flat list of atoms on success.
     /// Throws <see cref="KatLangException"/> on parse or evaluation failure.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The configured source-processing token was cancelled before evaluation began.
+    /// </exception>
     public static IReadOnlyList<decimal> EvaluateToAtoms(string source, RunOptions? options = null)
     {
         return Run(source, options) switch
@@ -382,6 +391,9 @@ public static class KatLangEngine
     /// Parse and evaluate, returning atoms joined by spaces as a display string.
     /// Returns error text on failure instead of throwing.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The configured source-processing token was cancelled before evaluation began.
+    /// </exception>
     public static string EvaluateToString(string source, RunOptions? options = null)
         => Run(source, options) switch
         {

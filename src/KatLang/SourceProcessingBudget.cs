@@ -8,7 +8,8 @@ namespace KatLang;
 ///
 /// <para>Reservations use checked arithmetic and are all-or-nothing: a reservation that would
 /// exceed its ceiling returns <c>false</c> and leaves every counter unchanged, so a rejected load
-/// never advances the aggregate or module-count totals.</para>
+/// never advances the aggregate or module-count totals. A module frame that is aborted by observed
+/// host cancellation rolls its successful reservation back before unwinding.</para>
 /// </summary>
 internal sealed class SourceProcessingBudget
 {
@@ -94,6 +95,20 @@ internal sealed class SourceProcessingBudget
         _aggregateSource += length;
         _moduleCount++;
         return true;
+    }
+
+    /// <summary>
+    /// Rolls back one previously successful <see cref="TryReserveModuleSource"/> call when host
+    /// cancellation aborts that module before it is accepted into the loader cache. Nested module
+    /// cancellation unwinds one reservation per active loader frame.
+    /// </summary>
+    internal void RollbackModuleSource(int length)
+    {
+        if (length < 0 || _moduleCount <= 0 || _aggregateSource < length)
+            throw new InvalidOperationException("Cannot roll back a module source reservation that is not active.");
+
+        _aggregateSource -= length;
+        _moduleCount--;
     }
 
     /// <summary>

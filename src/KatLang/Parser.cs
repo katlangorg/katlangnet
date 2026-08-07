@@ -217,9 +217,15 @@ public sealed class Parser
 
     /// <summary>
     /// Full pipeline with optional configuration via <see cref="RunOptions"/>.
-    /// When <paramref name="options"/> is null, or <see cref="RunOptions.DownloadCode"/> is null,
-    /// module elaboration is unavailable and <c>load</c> syntax is rejected.
+    /// When <paramref name="options"/> is null, or both <see cref="RunOptions.DownloadCode"/> and
+    /// <see cref="RunOptions.DownloadCodeWithCancellation"/> are null, module elaboration is
+    /// unavailable and <c>load</c> syntax is rejected. The configured
+    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies only to parsing, module
+    /// loading, and front-end source processing, not evaluator computation.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The configured source-processing token was cancelled.
+    /// </exception>
     public static ParseResult Parse(string source, RunOptions? options)
         => FrontEndPipeline.Process(source, options).ToParseResult();
 

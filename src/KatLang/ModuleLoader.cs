@@ -10,11 +10,13 @@ namespace KatLang;
 /// with <see cref="Expr.Block"/> nodes containing the parsed remote algorithm.
 /// </para>
 ///
-/// <para>Security: enforces domain allowlist, size limits, and cycle detection.</para>
+/// <para>Security: enforces domain allowlist, size limits, cycle detection, and optional
+/// host cancellation during source/module processing.</para>
 /// </summary>
 public sealed class ModuleLoader
 {
-    private readonly Func<string, string> _downloadCode;
+    private readonly Func<string, CancellationToken, string> _downloadCode;
+    private readonly CancellationToken _sourceProcessingCancellationToken;
     private readonly HashSet<string> _allowedHosts;
     private readonly Dictionary<string, Algorithm> _cache = new();
     private readonly HashSet<string> _inProgress = new();
@@ -33,6 +35,12 @@ public sealed class ModuleLoader
     /// context to a pre-evaluation resource rejection.
     /// </summary>
     internal bool HasSourceProcessingErrors { get; private set; }
+
+    /// <summary>Run-local state exposed internally for cleanup-invariant regression tests.</summary>
+    internal int InProgressModuleCount => _inProgress.Count;
+
+    /// <summary>Run-local state exposed internally for cache-commit regression tests.</summary>
+    internal int CachedModuleCount => _cache.Count;
 
     /// <summary>
     /// Creates a new ModuleLoader.
@@ -57,9 +65,51 @@ public sealed class ModuleLoader
         List<Diagnostic> diagnostics,
         Func<string, string>? downloadCode = null,
         IEnumerable<string>? allowedHosts = null)
-        : this(diagnostics, downloadCode, allowedHosts, budget: null)
+        : this(
+            diagnostics,
+            downloadCode,
+            downloadCodeWithCancellation: null,
+            allowedHosts,
+            budget: null,
+            CancellationToken.None)
     {
     }
+
+    /// <summary>
+    /// Creates a loader whose module fetches and source processing observe host cancellation.
+    /// </summary>
+    /// <param name="diagnostics">Mutable diagnostics list shared with the parser.</param>
+    /// <param name="sourceProcessingCancellationToken">
+    /// Host cancellation for module fetching, parsing, and recursive module elaboration. It does
+    /// not apply to evaluator computation performed after elaboration.
+    /// </param>
+    /// <param name="downloadCodeWithCancellation">
+    /// Optional token-aware code fetcher. The configured token is passed unchanged. If null, the
+    /// default HttpClient downloader is used with the same token and its existing ten-second
+    /// timeout.
+    /// </param>
+    /// <param name="allowedHosts">
+    /// Set of allowed hostnames. Defaults to katlang.org only.
+    /// </param>
+    /// <remarks>
+    /// An <see cref="OperationCanceledException"/> is propagated only when
+    /// <paramref name="sourceProcessingCancellationToken"/> has been cancelled. Downloader
+    /// cancellation or timeout while that token is not cancelled is reported as the ordinary
+    /// <c>load: failed to fetch</c> diagnostic. This factory leaves the existing constructor
+    /// signature and overload resolution unchanged for source compatibility.
+    /// </remarks>
+    public static ModuleLoader CreateWithCancellation(
+        List<Diagnostic> diagnostics,
+        CancellationToken sourceProcessingCancellationToken,
+        Func<string, CancellationToken, string>? downloadCodeWithCancellation = null,
+        IEnumerable<string>? allowedHosts = null)
+        => new(
+            diagnostics,
+            downloadCode: null,
+            downloadCodeWithCancellation,
+            allowedHosts,
+            budget: null,
+            sourceProcessingCancellationToken);
 
     /// <summary>
     /// Front-end entry point that threads the run-scoped <see cref="SourceProcessingBudget"/> so
@@ -70,11 +120,17 @@ public sealed class ModuleLoader
     internal ModuleLoader(
         List<Diagnostic> diagnostics,
         Func<string, string>? downloadCode,
+        Func<string, CancellationToken, string>? downloadCodeWithCancellation,
         IEnumerable<string>? allowedHosts,
-        SourceProcessingBudget? budget)
+        SourceProcessingBudget? budget,
+        CancellationToken sourceProcessingCancellationToken)
     {
         _diagnostics = diagnostics;
-        _downloadCode = downloadCode ?? DefaultDownloadCode;
+        _downloadCode = downloadCodeWithCancellation
+            ?? (downloadCode is not null
+                ? (url, _) => downloadCode(url)
+                : DefaultDownloadCode);
+        _sourceProcessingCancellationToken = sourceProcessingCancellationToken;
         _allowedHosts = allowedHosts is not null
             ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "katlang.org" };
@@ -87,9 +143,16 @@ public sealed class ModuleLoader
     /// Processes the entire AST, resolving all load calls.
     /// Returns a new AST with load calls replaced by Block nodes.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The source-processing token configured through <see cref="CreateWithCancellation"/> was
+    /// cancelled.
+    /// </exception>
     public Algorithm Elaborate(Algorithm root)
     {
-        return ProcessAlgorithm(root, LoadContext.TopLevel);
+        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        var elaborated = ProcessAlgorithm(root, LoadContext.TopLevel);
+        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+        return elaborated;
     }
 
     // ── Context tracking ────────────────────────────────────────────────────
@@ -113,6 +176,8 @@ public sealed class ModuleLoader
 
     private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context)
     {
+        _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+
         if (alg is Algorithm.Builtin) return alg;
 
         var newOpens = new List<Expr>(alg.Opens.Count);
@@ -351,6 +416,8 @@ public sealed class ModuleLoader
         }
 
         _inProgress.Add(normalizedUrl);
+        var hasModuleSourceReservation = false;
+        var reservedSourceLength = 0;
         try
         {
             // Distinct-module ceiling, checked BEFORE downloading a new module (this is a cache
@@ -368,10 +435,20 @@ public sealed class ModuleLoader
             string source;
             try
             {
-                source = _downloadCode(normalizedUrl);
+                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+                source = _downloadCode(normalizedUrl, _sourceProcessingCancellationToken);
+                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (_sourceProcessingCancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
+                // Host cancellation is authoritative even if the downloader surfaced a different
+                // exception while reacting to it. Only a still-active host token permits a fetch
+                // diagnostic (including downloader-owned cancellation/timeout exceptions).
+                _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
                 ReportError($"load: failed to fetch '{normalizedUrl}': {ex.Message}", span);
                 return new Expr.Num(0) { Span = span };
             }
@@ -391,9 +468,10 @@ public sealed class ModuleLoader
                 return new Expr.Num(0) { Span = span };
             }
 
-            // Aggregate-source ceiling. The aggregate and distinct-module reservations are both
-            // PERMANENT, so commit them together only once both fit — a rejected load leaves both
-            // counters unchanged.
+            // Aggregate-source ceiling. Commit the aggregate and distinct-module reservations
+            // together only once both fit — a rejected load leaves both counters unchanged. An
+            // observed host cancellation rolls this active frame's reservation back while
+            // unwinding, before the partial module can reach the cache.
             var requestedTotal = checked(_budget.AggregateSource + source.Length);
             if (!_budget.TryReserveModuleSource(source.Length))
             {
@@ -406,7 +484,11 @@ public sealed class ModuleLoader
                 return new Expr.Num(0) { Span = span };
             }
 
+            hasModuleSourceReservation = true;
+            reservedSourceLength = source.Length;
+
             // Parse the fetched source as raw syntax, then elaborate nested loads locally.
+            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
             var syntaxResult = Parser.ParseSyntax(source);
 
             if (syntaxResult.HasErrors)
@@ -425,12 +507,22 @@ public sealed class ModuleLoader
             }
 
             // Recursively elaborate any load calls in the fetched module
+            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
             var elaborated = ProcessAlgorithm(syntaxResult.SyntaxRoot, LoadContext.TopLevel);
 
-            // Cache the result
+            // Cancellation never commits a partial module. This check also observes cancellation
+            // requested during parsing or recursive elaboration before the cache write.
+            _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
             _cache[normalizedUrl] = elaborated;
 
             return new Expr.Block(elaborated) { Span = span };
+        }
+        catch (OperationCanceledException) when (_sourceProcessingCancellationToken.IsCancellationRequested)
+        {
+            if (hasModuleSourceReservation)
+                _budget.RollbackModuleSource(reservedSourceLength);
+
+            throw;
         }
         finally
         {
@@ -444,11 +536,11 @@ public sealed class ModuleLoader
     /// <summary>
     /// Default synchronous HTTP downloader using HttpClient.
     /// </summary>
-    private static string DefaultDownloadCode(string url)
+    private static string DefaultDownloadCode(string url, CancellationToken cancellationToken)
     {
         using var client = new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(10);
-        return client.GetStringAsync(url).GetAwaiter().GetResult();
+        return client.GetStringAsync(url, cancellationToken).GetAwaiter().GetResult();
     }
 
     // ── Error reporting ──────────────────────────────────────────────────────
