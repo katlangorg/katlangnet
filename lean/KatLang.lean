@@ -1,4 +1,4 @@
--- KatLang v0.8.146 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.154 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init boundaries).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -1110,6 +1110,21 @@ end Result
   Helpers whose names end in `Counted` preserve this pair instead of
   collapsing the result to just the normalized value. -/
 abbrev CountedResult := Prod Result Nat
+
+/-- One algorithm-output evaluation prepared for consumers that need both the
+    ordinary counted value and the evaluated written output slots. `outputSlots`
+    contains the same evaluated `Result` values used to construct `counted`; it
+    is not a second semantic sequence and does not perform another evaluation.
+    C#: `PreparedAlgorithmOutput`. -/
+structure PreparedAlgorithmOutput where
+  counted : CountedResult
+  outputSlots : List Result
+  deriving Repr
+
+structure PreparedCallArgumentEvaluation where
+  counted : CountedResult
+  explicitItems? : Option (List Result) := none
+  deriving Repr
 
 --------------------------------------------------------------------------------
 -- Environments
@@ -3924,7 +3939,7 @@ mutual
   --------------------------------------------------------------------------
 
   /-- Evaluate an algorithm's output expressions and collect into a single Result:
-      the value projection of `evalAlgOutputCountedCore`, so the plain and counted
+      the value projection of `evalAlgOutputPreparedCore`, so the plain and counted
       evaluators can never disagree on an output value. Each NON-spread output
       expression contributes exactly one visible slot, even when it evaluates to
       the empty sequence value `()` (counted output `0`); an explicit spread
@@ -3946,8 +3961,8 @@ mutual
       so a conditional must never silently force its empty output list.
       C#: `EvalAlgOutputCore`. -/
   partial def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- evalAlgOutputCountedCore a ctx env
-    pure out.fst
+    let out <- evalAlgOutputPreparedCore a ctx env
+    pure out.counted.fst
 
   /-- Force a user-defined algorithm value to produce output. -/
   partial def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
@@ -4026,18 +4041,22 @@ mutual
       : EvalM CountedResult :=
     evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName
 
-  /-- Evaluate an algorithm's output expressions and also count how many
-      top-level values they emitted at the current algorithm boundary.
+  /-- Evaluate an algorithm's output expressions once, retaining both the combined counted
+      value and the explicit evaluated output-slot view. The slot list is the accumulator
+      from the same left-to-right pass that constructs the combined value; it never reopens
+      or decomposes that value after singleton erasure and never evaluates an expression twice.
 
       A parenthesized sequence-value expression such as `(a, b)` counts as one emitted value,
       while multiple top-level output expressions `a, b` count as two. `reduce`
       uses this to distinguish sequence-value accumulator values from multi-output
       step results. -/
-  partial def evalAlgOutputCountedCore
+  partial def evalAlgOutputPreparedCore
       (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-      : EvalM CountedResult := do
+      : EvalM PreparedAlgorithmOutput := do
     match a with
-    | .builtin b => evalBuiltinValueCounted b
+    | .builtin b => do
+        let counted <- evalBuiltinValueCounted b
+        pure { counted := counted, outputSlots := countedTopLevelValues counted }
     | _ =>
       match a.findDuplicatePropName with
       | some n => .error (Error.duplicateProperty n)
@@ -4049,8 +4068,13 @@ mutual
         | .mk _ _ _ _ [] => .error Error.missingOutput
         | _ => pure ()
         let pushedCtx := EvalCtx.push a ctx
-        let rec collect : List Expr -> List Result -> Nat -> EvalM CountedResult
-          | [], acc, emitted => pure (combineOutputSlots acc.reverse, emitted)
+        let rec collect : List Expr -> List Result -> Nat -> EvalM PreparedAlgorithmOutput
+          | [], acc, emitted =>
+              let outputSlots := acc.reverse
+              pure {
+                counted := (combineOutputSlots outputSlots, emitted),
+                outputSlots := outputSlots
+              }
           | expr :: rest, acc, emitted => do
               let out <- evalCounted expr pushedCtx env
               match expr with
@@ -4063,6 +4087,13 @@ mutual
                   let slotCount := if out.snd = 0 then 1 else out.snd
                   collect rest (out.fst :: acc) (emitted + slotCount)
         collect (Algorithm.output a) [] 0
+
+  /-- Counted projection of the shared prepared algorithm-output evaluation. -/
+  partial def evalAlgOutputCountedCore
+      (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let out <- evalAlgOutputPreparedCore a ctx env
+    pure out.counted
 
   /-- Counted forcing variant of `evalAlgOutput`. -/
   partial def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -4638,9 +4669,37 @@ mutual
     else
       evalCounted e argEvalCtx env
 
+  /-- Evaluate one non-expanded call argument. Patterned calls additionally need the written
+      output-slot view of a zero-parameter parenthesized block; obtain both products from
+      `evalAlgOutputPreparedCore` in one pass. A multi-parameter block remains on the ordinary
+      dual algorithm/value fallback and is not forced to manufacture explicit items. -/
+  partial def evalVariadicCallItemPrepared (e : Expr) (ctx : EvalCtx)
+      (argEvalCtx : EvalCtx) (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
+      (includeExplicitItems : Bool) : EvalM PreparedCallArgumentEvaluation := do
+    if includeExplicitItems then
+      match e with
+      | .block a =>
+          let blockCtx := if exposeInlineBlockTopLevel then ctx else argEvalCtx
+          let wired := wireToCaller blockCtx a
+          if (Algorithm.params wired).length = 0 then do
+            let prepared <- evalAlgOutputPreparedCore wired blockCtx env
+            let counted :=
+              if exposeInlineBlockTopLevel then prepared.counted
+              else reCountValueBoundary prepared.counted
+            pure { counted := counted, explicitItems? := some prepared.outputSlots }
+          else do
+            let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+            pure { counted := counted }
+      | _ => do
+          let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+          pure { counted := counted }
+    else do
+      let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+      pure { counted := counted }
+
   /-- Shared call argument-slot assembly used by EVERY callable shape (flat
       fixed, flat/mixed variadic, patterned, and multi-clause conditional):
-      each written argument slot is evaluated, every non-spread slot is
+      each written argument slot is evaluated exactly once, left to right; every non-spread slot is
       reified as exactly ONE argument value (with its dual algorithm view
       where resolvable), and every explicit spread slot is expanded by
       exactly one value boundary into ordinary argument slots. The final
@@ -4661,11 +4720,6 @@ mutual
     let hasExplicitBoundaryFlags := !preserveArgBoundaries.isEmpty
     let argBoundaryFlags :=
       (List.range (Algorithm.output wiredArgs).length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
-    let explicitItemsFor (e : Expr) : EvalM (Option (List Result)) :=
-      if includeExplicitItems then
-        explicitSequenceValueItems? e argEvalCtx env
-      else
-        pure none
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
         (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
@@ -4685,10 +4739,12 @@ mutual
       | e :: es, ma :: mas, preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-          | .ok counted => do
-            let explicit <- if expand then pure none else explicitItemsFor e
-            loop es mas preserveBoundaries false (appendCounted counted ma expand explicit acc)
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env
+              (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
+              (includeExplicitItems && !expand)) with
+          | .ok prepared =>
+            loop es mas preserveBoundaries false
+              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
           | .error err =>
             match ma with
             | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
@@ -4696,20 +4752,23 @@ mutual
       | e :: es, [], preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))) with
-          | .ok counted => do
-            let explicit <- if expand then pure none else explicitItemsFor e
-            loop es [] preserveBoundaries false (appendCounted counted none expand explicit acc)
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env
+              (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
+              (includeExplicitItems && !expand)) with
+          | .ok prepared =>
+            loop es [] preserveBoundaries false
+              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
           | .error err => .error err
       | e :: es, ma :: mas, [], _, acc => do
           let expand :=
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-          | .ok counted => do
-            let explicit <- if expand then pure none else explicitItemsFor e
-            loop es mas [] false (appendCounted counted ma expand explicit acc)
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env false
+              (includeExplicitItems && !expand)) with
+          | .ok prepared =>
+            loop es mas [] false
+              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
           | .error err =>
             match ma with
             | some alg => loop es mas [] false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
@@ -4719,10 +4778,11 @@ mutual
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match <- evalAttempt (evalVariadicCallItemCounted e ctx argEvalCtx env false) with
-          | .ok counted => do
-            let explicit <- if expand then pure none else explicitItemsFor e
-            loop es [] [] false (appendCounted counted none expand explicit acc)
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env false
+              (includeExplicitItems && !expand)) with
+          | .ok prepared =>
+            loop es [] [] false
+              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
           | .error err => .error err
     loop (Algorithm.output wiredArgs) maybeAlgs argBoundaryFlags true []
 
@@ -4790,17 +4850,6 @@ mutual
         -- expression emitted (zero, one, or many). Only an explicit spread
         -- supplies the value's items into the surrounding item slots.
         pure [out.fst]
-
-  partial def explicitSequenceValueItems? (argExpr : Expr)
-      (argEvalCtx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) := do
-    match argExpr with
-    | .block algorithm => do
-        let wired := wireToCaller argEvalCtx algorithm
-        if (Algorithm.params wired).length = 0 then
-          pure (some (<- evalExplicitSequenceValueItems wired argEvalCtx env))
-        else
-          pure none
-    | _ => pure none
 
   partial def bindPatternedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])

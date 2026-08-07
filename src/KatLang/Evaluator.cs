@@ -1464,25 +1464,6 @@ public static class Evaluator
             new CountedResult(capturedResult, 1)));
     }
 
-    private static EvalResult<IReadOnlyList<Result>?> TryGetExplicitSequenceValueItems(
-        Expr argExpr,
-        EvalCtx argEvalCtx,
-        IReadOnlyList<(string, Result)> valEnv)
-    {
-        if (argExpr is Expr.Block(var algorithm))
-        {
-            var wired = WireToCaller(argEvalCtx, algorithm);
-            if (wired.Params.Count == 0)
-            {
-                var slotsR = EvalExplicitSequenceValueItems(wired, argEvalCtx, valEnv);
-                if (slotsR.IsError) return slotsR.Error;
-                return EvalResult<IReadOnlyList<Result>?>.Ok(slotsR.Value);
-            }
-        }
-
-        return EvalResult<IReadOnlyList<Result>?>.Ok(null);
-    }
-
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueItems(
         Algorithm alg,
         EvalCtx ctx,
@@ -1940,7 +1921,7 @@ public static class Evaluator
     /// <summary>
     /// Shared call argument-slot assembly used by EVERY callable shape (flat
     /// fixed, flat/mixed variadic, patterned, and multi-clause conditional):
-    /// each written argument slot is evaluated, every non-spread slot is
+    /// each written argument slot is evaluated exactly once, left to right; every non-spread slot is
     /// reified as exactly ONE argument value (with its dual algorithm view
     /// where resolvable), and every explicit spread slot is expanded by
     /// exactly one value boundary into ordinary argument slots. The final
@@ -1985,37 +1966,78 @@ public static class Evaluator
                 continue;
             }
 
-            var evaluatedR = isDotReceiverSegment
-                ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, argEvalCtx, valEnv)
-                : EvalCounted(argExpr, argEvalCtx, valEnv);
-            if (evaluatedR.IsOk)
+            var preparedR = PrepareCallArgumentEvaluation(
+                argExpr,
+                ctx,
+                argEvalCtx,
+                valEnv,
+                isDotReceiverSegment,
+                includeExplicitSequenceValueItems);
+            if (preparedR.IsOk)
             {
-                IReadOnlyList<Result>? explicitSequenceValueItems = null;
-                if (includeExplicitSequenceValueItems)
-                {
-                    var explicitSequenceValueItemsR = TryGetExplicitSequenceValueItems(argExpr, argEvalCtx, valEnv);
-                    if (explicitSequenceValueItemsR.IsError) return explicitSequenceValueItemsR.Error;
-                    explicitSequenceValueItems = explicitSequenceValueItemsR.Value;
-                }
-
                 inputs.Add(new ParameterPatternInput(
-                    evaluatedR.Value.Value,
+                    preparedR.Value.Counted.Value,
                     maybeAlg,
                     ValueError: null,
-                    explicitSequenceValueItems));
+                    preparedR.Value.ExplicitSequenceValueItems));
                 continue;
             }
 
             if (maybeAlg is not null)
             {
-                inputs.Add(new ParameterPatternInput(Value: null, maybeAlg, evaluatedR.Error, ExplicitSequenceValueItems: null));
+                inputs.Add(new ParameterPatternInput(Value: null, maybeAlg, preparedR.Error, ExplicitSequenceValueItems: null));
                 continue;
             }
 
-            return evaluatedR.Error;
+            return preparedR.Error;
         }
 
         return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);
+    }
+
+    /// <summary>
+    /// Evaluates one non-expanded call argument. Patterned calls need an additional written-slot
+    /// view for a zero-parameter parenthesized block; that view is captured by
+    /// <see cref="EvalAlgOutputPreparedCore"/> during the SAME output pass that constructs the
+    /// counted argument value. Multi-parameter blocks stay on the ordinary dual-channel fallback
+    /// and are never forced merely to request explicit pattern items.
+    /// </summary>
+    private static EvalResult<PreparedCallArgumentEvaluation> PrepareCallArgumentEvaluation(
+        Expr argExpr,
+        EvalCtx ctx,
+        EvalCtx argEvalCtx,
+        IReadOnlyList<(string, Result)> valEnv,
+        bool isDotReceiverSegment,
+        bool includeExplicitSequenceValueItems)
+    {
+        if (includeExplicitSequenceValueItems && argExpr is Expr.Block(var algorithm))
+        {
+            // An injected dotted receiver is evaluated in the receiver's caller context; an
+            // ordinary written argument is evaluated beneath the wired argument algorithm.
+            // Whichever context owns the value evaluation also owns its explicit-slot view.
+            var blockCtx = isDotReceiverSegment ? ctx : argEvalCtx;
+            var wired = WireToCaller(blockCtx, algorithm);
+            if (wired.Params.Count == 0)
+            {
+                var blockSpan = argExpr.Span ?? FirstSpan(wired.Output);
+                var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, blockCtx, valEnv));
+                if (preparedR.IsError) return preparedR.Error;
+
+                var counted = isDotReceiverSegment
+                    ? preparedR.Value.Counted
+                    : ReCountValueBoundary(preparedR.Value.Counted);
+                return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
+                    counted,
+                    preparedR.Value.OutputSlots));
+            }
+        }
+
+        var evaluatedR = isDotReceiverSegment
+            ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, argEvalCtx, valEnv)
+            : EvalCounted(argExpr, argEvalCtx, valEnv);
+        return evaluatedR.IsError
+            ? evaluatedR.Error
+            : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
     }
 
     private static bool IsInjectedDotCallReceiverSegment(
@@ -2414,6 +2436,24 @@ public static class Evaluator
     /// Lean: <c>CountedResult</c>.
     /// </summary>
     internal readonly record struct CountedResult(Result Value, int EmittedCount);
+
+    /// <summary>
+    /// One algorithm-output evaluation prepared for consumers that need both the ordinary
+    /// counted value and the evaluated written output slots. <see cref="OutputSlots"/> holds
+    /// the same <see cref="Result"/> instances used to construct <see cref="Counted"/>; it is
+    /// not a second semantic sequence and never triggers a second evaluation. The backing
+    /// storage is owned by the finished evaluation and must never be mutated (the combined
+    /// value snapshots its items, so the slot list never aliases into a
+    /// <see cref="Result"/>); the hot algorithm-output path deliberately allocates no
+    /// per-evaluation read-only wrapper for it. Lean: <c>PreparedAlgorithmOutput</c>.
+    /// </summary>
+    private readonly record struct PreparedAlgorithmOutput(
+        CountedResult Counted,
+        IReadOnlyList<Result> OutputSlots);
+
+    private readonly record struct PreparedCallArgumentEvaluation(
+        CountedResult Counted,
+        IReadOnlyList<Result>? ExplicitSequenceValueItems);
 
     internal readonly record struct CountedRootProgramResult(
         CountedResult Output,
@@ -3177,13 +3217,20 @@ public static class Evaluator
     /// output expressions count separately.
     /// Lean: <c>evalAlgOutputCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
+    private static EvalResult<PreparedAlgorithmOutput> EvalAlgOutputPreparedCore(
         Algorithm alg,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (alg is Algorithm.Builtin(var builtin))
-            return EvalBuiltinValueCounted(builtin);
+        {
+            var countedR = EvalBuiltinValueCounted(builtin);
+            return countedR.IsError
+                ? countedR.Error
+                : EvalResult<PreparedAlgorithmOutput>.Ok(new(
+                    countedR.Value,
+                    CountedTopLevelValues(countedR.Value)));
+        }
 
         var dupProp = alg.FindDuplicatePropName();
         if (dupProp is not null)
@@ -3224,7 +3271,19 @@ public static class Evaluator
         if (ReserveSequenceCapture(ctx, results.Count, FirstSpan(alg.Output)) is { } capturedLimitError)
             return capturedLimitError;
 
-        return EvalResult<CountedResult>.Ok(new CountedResult(CombineOutputSlots(results), emittedCount));
+        var counted = new CountedResult(CombineOutputSlots(results), emittedCount);
+        return EvalResult<PreparedAlgorithmOutput>.Ok(new(counted, results));
+    }
+
+    private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
+        Algorithm alg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
     }
 
     // Combine collected top-level output slots into one value. A single slot is
@@ -5269,10 +5328,10 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var countedR = EvalAlgOutputCountedCore(alg, ctx, valEnv);
-        return countedR.IsError
-            ? countedR.Error
-            : EvalResult<Result>.Ok(countedR.Value.Value);
+        var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<Result>.Ok(preparedR.Value.Counted.Value);
     }
 
     private static EvalResult<Result> EvalAlgOutput(

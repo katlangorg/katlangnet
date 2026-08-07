@@ -1294,6 +1294,14 @@ PairSum((2, 3))
 
 **Result:** `5`
 
+Call arguments are evaluated exactly once, from left to right, before arity checking or
+pattern binding. A parenthesized argument sent to a sequence-value pattern has two views—the
+combined sequence value and its explicit written items—but both come from that same evaluation.
+This matters for nondeterministic expressions such as `Math.Random(...)`, for failures and their
+source context, and for host evaluation budgets; parentheses never cause an argument to run again.
+Nested parentheses still contribute one grouped written item, and only an explicit postfix spread
+contributes the evaluated value's immediate items.
+
 A top-level collecting parameter (`*name`) instead consumes an **item supply**: it COLLECTS the supplied argument slots as one exact immutable [list](#lists). Zero slots collect `[]`, one slot collects `[item]` (never erased to the item), and many slots collect `[item1, item2, ...]`. A callable with a collecting parameter can therefore accept a variable number of argument items — it is variadic in that sense. A lone collecting parameter is the degenerate case — it collects the whole supply:
 
 <!-- spec:variadic-grouped-and-spread -->

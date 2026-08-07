@@ -43,6 +43,28 @@ failure can surface first (`F(H, 1 / 0)` reports Division by zero, matching
 the flat path) — both are the shared pipeline's uniform error rule, not
 incidental drift.
 
+### August 2026 correction: one evaluation also supplies patterned written items
+
+The shared stage's “evaluate each written slot” rule means **exactly once, left to right**.
+The original patterned implementation violated that contract for a zero-parameter
+parenthesized block: it first evaluated the block to obtain the ordinary counted/combined
+argument value, then ran a separate explicit-item walker over the same block for sequence-value
+pattern binding. The two channels could therefore come from different executions.
+
+C# now evaluates algorithm output through `PreparedAlgorithmOutput`, and Lean through the
+structurally equivalent `evalAlgOutputPreparedCore`. One output pass returns both the counted
+combined value and the explicit written-slot list. The slot list contains the already evaluated
+values used by the combined result; it is not another semantic sequence, is not reconstructed by
+opening the final value, and cannot evaluate any expression. Ordinary and dotted receiver-first
+calls select the appropriate caller context before that one pass. Multi-parameter blocks remain
+lazy on the dual algorithm channel.
+
+This correction intentionally changes nondeterministic patterned arguments (including
+`Math.Random(...)`) from two draws to one, prevents a later second-pass failure from replacing a
+successful first evaluation, and removes the duplicate C# step/materialization charges. It does
+not change `Math.Random` itself. Deterministic successful programs keep exactly the same values,
+sequence/list structure, emitted counts, written-slot reification, and binding outcomes.
+
 ## 2. Written-slot reification (F02)
 
 **Rule.** A non-spread expression occupying one written value slot — a

@@ -8,7 +8,8 @@ namespace KatLang.Tests;
 /// every callable shape — flat fixed, flat/mixed variadic, patterned
 /// (repeated-name / sequence-value patterns), and multi-clause conditional —
 /// receives its argument supply from ONE assembly stage that evaluates each
-/// written slot, reifies every non-spread slot as exactly one argument value,
+/// written slot exactly once, left to right; reuses that evaluation for any
+/// patterned explicit-item view; reifies every non-spread slot as exactly one argument value;
 /// and expands every explicit spread slot by exactly one value boundary.
 /// Arity checking, clause selection, and pattern binding all happen strictly
 /// AFTER that assembly, so the callee's internal representation never changes

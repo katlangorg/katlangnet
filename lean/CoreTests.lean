@@ -9695,6 +9695,80 @@ def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
 
 #guard sequenceValuePatternSpreadOfEmptyStillContributesNoItems
 
+/-- The shared prepared output pass retains the exact written-slot view while constructing
+    the combined counted value: a nested zero-parameter block stays one grouped item, a list
+    stays opaque, and only the explicit spread contributes its immediate items. Patterned call
+    assembly consumes this pair directly instead of evaluating the block a second time. -/
+def preparedAlgorithmOutputRetainsWrittenSlots : Bool :=
+  let nested := KatLang.Expr.block (alg [] [] [] [.num 1, .num 2])
+  let spreadPair := KatLang.Expr.sequenceSpread
+    (KatLang.Expr.block (alg [] [] [] [.num 5, .num 6]))
+  let output := alg [] [] [] [nested, .listLiteral [.num 3, .num 4], spreadPair]
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
+  match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
+  | .ok ({
+      counted := (.sequenceValue [
+        .sequenceValue [.atom 1, .atom 2],
+        .listValue [.atom 3, .atom 4],
+        .atom 5,
+        .atom 6], 4),
+      outputSlots := [
+        .sequenceValue [.atom 1, .atom 2],
+        .listValue [.atom 3, .atom 4],
+        .atom 5,
+        .atom 6]
+    }, _) => true
+  | _ => false
+
+#guard preparedAlgorithmOutputRetainsWrittenSlots
+
+/-- Discriminator: a multi-emitting single output row stays ONE written slot in the
+    prepared view. `((1, 2), (3, 4)):0` re-emits the selected pair with count 2, so
+    recovering the slot view by decomposing the combined counted value would present
+    `[1, 2]`; the retained accumulator keeps the one written slot `[(1, 2)]`. -/
+def preparedAlgorithmOutputKeepsMultiEmittingSlotWhole : Bool :=
+  let pairOfPairs := KatLang.Expr.block (alg [] [] [] [
+    .block (alg [] [] [] [.num 1, .num 2]),
+    .block (alg [] [] [] [.num 3, .num 4])
+  ])
+  let output := alg [] [] [] [.index pairOfPairs (.num 0)]
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
+  match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
+  | .ok ({
+      counted := (.sequenceValue [.atom 1, .atom 2], 2),
+      outputSlots := [.sequenceValue [.atom 1, .atom 2]]
+    }, _) => true
+  | _ => false
+
+#guard preparedAlgorithmOutputKeepsMultiEmittingSlotWhole
+
+def sequenceValueSingletonFirstAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }]
+  ] [] [] [.param "x"]
+
+/-- End-to-end: the patterned call consumes the retained written slot — the singleton
+    pattern binds the whole selected pair even though the projection re-emits count 2
+    inside the written group. (The C# surface parser folds redundant parentheses
+    around a lone postfix expression, so this written group is exercised on the AST
+    channel, mirroring `PatternedCallSingleEvaluationTests`.) -/
+def sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole : Bool :=
+  match runResult (.block (algPrivate [] [] [
+    ("S", alg [] [] [] [
+      .block (alg [] [] [] [.num 1, .num 2]),
+      .block (alg [] [] [] [.num 3, .num 4])
+    ]),
+    ("F", sequenceValueSingletonFirstAlg)
+  ] [
+    .call (resolve "F") (alg [] [] [] [
+      .block (alg [] [] [] [.index (resolve "S") (.num 0)])
+    ])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
+  | _ => false
+
+#guard sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole
+
 /-- Regression: `F(((1, 2)))` with `F((x, y)) = x`. The inline-written argument
     `((1, 2))` is one written grouping level around the canonical item
     `(1, 2)`, so the pattern receives exactly ONE written slot and reports
