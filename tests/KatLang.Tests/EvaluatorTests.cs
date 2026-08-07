@@ -8527,6 +8527,23 @@ public class EvaluatorTests
         Assert.Equal((decimal)(Math.PI / 4), result.Value[0], 10);
     }
 
+    [Fact]
+    public void Eval_MathAtan2_BindsArgumentsInConventionalYXOrder()
+    {
+        // Asymmetric arguments: atan2(y: 1, x: 0) is π/2, while the swapped
+        // reading atan2(y: 0, x: 1) would be 0 — symmetric probes like (1, 1)
+        // cannot tell the two argument orders apart.
+        var elevated = Eval("Math.Atan2(1, 0)");
+        Assert.True(elevated.IsOk);
+        Assert.Single(elevated.Value);
+        Assert.Equal((decimal)(Math.PI / 2), elevated.Value[0], 10);
+
+        var flat = Eval("Math.Atan2(0, 1)");
+        Assert.True(flat.IsOk);
+        Assert.Single(flat.Value);
+        Assert.Equal(0m, flat.Value[0], 10);
+    }
+
     // ── Trig normalization (floating-point residue cleanup) ─────────────────
 
     [Fact]

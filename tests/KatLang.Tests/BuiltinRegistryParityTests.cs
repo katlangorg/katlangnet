@@ -250,6 +250,13 @@ public class BuiltinRegistryParityTests
         Assert.Equal("Abs(x)", absSignature!.DisplayText);
         Assert.Equal(["x"], absSignature.ParameterNames);
 
+        // Atan2 follows the conventional atan2(y, x) argument order (the runtime
+        // forwards the first argument as y), so its signature must not fall back
+        // to the default binary names (x, y).
+        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Atan2", out var atan2Signature));
+        Assert.Equal("Atan2(y, x)", atan2Signature!.DisplayText);
+        Assert.Equal(["y", "x"], atan2Signature.ParameterNames);
+
         Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Random", out var randomSignature));
         Assert.Equal("Random(start, end)", randomSignature!.DisplayText);
         Assert.Equal(["start", "end"], randomSignature.ParameterNames);
@@ -290,19 +297,38 @@ public class BuiltinRegistryParityTests
         var failures = new List<string>();
         foreach (var name in expectedMath.Keys.Intersect(runtimeMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
         {
-            if (runtimeMath[name] != expectedMath[name])
+            if (runtimeMath[name].Count != expectedMath[name])
             {
                 failures.Add(
-                    $"Runtime Math member '{name}' has arity {runtimeMath[name]}, but BuiltinRegistry expects {expectedMath[name]}.");
+                    $"Runtime Math member '{name}' has arity {runtimeMath[name].Count}, but BuiltinRegistry expects {expectedMath[name]}.");
             }
         }
 
         foreach (var name in expectedMath.Keys.Intersect(semanticMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
         {
-            if (semanticMath[name] != expectedMath[name])
+            if (semanticMath[name].Count != expectedMath[name])
             {
                 failures.Add(
-                    $"Semantic Math member '{name}' has arity {semanticMath[name]}, but BuiltinRegistry expects {expectedMath[name]}.");
+                    $"Semantic Math member '{name}' has arity {semanticMath[name].Count}, but BuiltinRegistry expects {expectedMath[name]}.");
+            }
+        }
+
+        // Parameter names are runtime binding metadata (NativeCall resolves them
+        // positionally), so the runtime prelude, the semantic prelude, and the
+        // public callable-signature metadata must agree on the exact name order.
+        foreach (var name in runtimeMath.Keys.Intersect(semanticMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
+        {
+            if (!runtimeMath[name].SequenceEqual(semanticMath[name], StringComparer.Ordinal))
+            {
+                failures.Add(
+                    $"Math member '{name}' binds runtime parameters ({string.Join(", ", runtimeMath[name])}), but the semantic model exposes ({string.Join(", ", semanticMath[name])}).");
+            }
+
+            if (BuiltinRegistry.TryGetBuiltinCallableSignature("Math", name, out var signature)
+                && !signature!.ParameterNames.SequenceEqual(runtimeMath[name], StringComparer.Ordinal))
+            {
+                failures.Add(
+                    $"Math member '{name}' reports signature parameters ({string.Join(", ", signature.ParameterNames)}), but binds runtime parameters ({string.Join(", ", runtimeMath[name])}).");
             }
         }
 
@@ -521,11 +547,11 @@ public class BuiltinRegistryParityTests
         public static bool RuntimeBuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
             => InvokeStatic<bool>(RuntimeBuiltinAcceptsArityMethod, builtin, argumentCount);
 
-        public static IReadOnlyDictionary<string, int> RuntimeMathMembers()
-            => GetAlgorithmPropertyArities(GetUserAlgorithmStaticField(typeof(Evaluator), "MathAlgorithm"));
+        public static IReadOnlyDictionary<string, IReadOnlyList<string>> RuntimeMathMembers()
+            => GetAlgorithmPropertyParameters(GetUserAlgorithmStaticField(typeof(Evaluator), "MathAlgorithm"));
 
-        public static IReadOnlyDictionary<string, int> SemanticMathMembers()
-            => GetAlgorithmPropertyArities(GetUserAlgorithmStaticField(SemanticBuilderType, "MathAlgorithm"));
+        public static IReadOnlyDictionary<string, IReadOnlyList<string>> SemanticMathMembers()
+            => GetAlgorithmPropertyParameters(GetUserAlgorithmStaticField(SemanticBuilderType, "MathAlgorithm"));
 
         private static IReadOnlyList<string> SemanticPreludePropertyNames()
         {
@@ -536,18 +562,18 @@ public class BuiltinRegistryParityTests
                 .ToArray();
         }
 
-        private static IReadOnlyDictionary<string, int> GetAlgorithmPropertyArities(Algorithm.User algorithm)
+        private static IReadOnlyDictionary<string, IReadOnlyList<string>> GetAlgorithmPropertyParameters(Algorithm.User algorithm)
         {
-            var arities = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var parameters = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
             foreach (var property in algorithm.Properties)
             {
                 if (property.Value is not Algorithm.User user)
                     throw new InvalidOperationException($"Expected '{property.Name}' to be backed by an Algorithm.User for parity inspection.");
 
-                arities[property.Name] = user.Params.Count;
+                parameters[property.Name] = user.Params;
             }
 
-            return arities;
+            return parameters;
         }
 
         private static Algorithm.User GetUserAlgorithmStaticField(Type type, string fieldName)

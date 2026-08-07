@@ -267,7 +267,7 @@ internal static class BuiltinRegistry
         new("Acos", MathMemberKind.UnaryFunction),
         new("Tan", MathMemberKind.UnaryFunction),
         new("Atan", MathMemberKind.UnaryFunction),
-        new("Atan2", MathMemberKind.BinaryFunction),
+        new("Atan2", MathMemberKind.BinaryFunction, ParameterNames: ["y", "x"]),
         new("Pow", MathMemberKind.BinaryFunction),
         new("Log", MathMemberKind.BinaryFunction),
         new("Random", MathMemberKind.BinaryFunction, ParameterNames: ["start", "end"]),
