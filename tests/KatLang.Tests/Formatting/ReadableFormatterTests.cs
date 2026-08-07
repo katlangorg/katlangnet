@@ -93,6 +93,45 @@ public class ReadableFormatterTests
             OutputFormatters.Readable.Format(success, Options(width: 8)));
     }
 
+    [Theory]
+    [InlineData('\u0085')] // NEXT LINE
+    [InlineData('\u2028')] // LINE SEPARATOR
+    [InlineData('\u2029')] // PARAGRAPH SEPARATOR
+    public void PairRun_WithAUnicodeLineSeparatorLabel_FallsBackToOneItemPerLine(char separator)
+    {
+        // Unlike CR/LF these separators CAN be quoted, but they still break
+        // the rendered line, so the one-pair-per-line grouping must not form
+        // and every item keeps its own line instead.
+        var value = new Result.SequenceValue(
+        [
+            new Result.Str("a"), new Result.Atom(1),
+            new Result.Str($"b{separator}c"), new Result.Atom(2),
+        ]);
+        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+
+        Assert.Equal(
+            $"(\n  a,\n  1,\n  'b{separator}c',\n  2\n)",
+            OutputFormatters.Readable.Format(success, Options(width: 12)));
+    }
+
+    [Theory]
+    [InlineData('\u0085')] // NEXT LINE
+    [InlineData('\u2028')] // LINE SEPARATOR
+    [InlineData('\u2029')] // PARAGRAPH SEPARATOR
+    public void PairRun_WithAUnicodeLineSeparatorStringValue_FallsBackToOneItemPerLine(char separator)
+    {
+        var value = new Result.SequenceValue(
+        [
+            new Result.Str("a"), new Result.Atom(1),
+            new Result.Str("b"), new Result.Str($"x{separator}y"),
+        ]);
+        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+
+        Assert.Equal(
+            $"(\n  a,\n  1,\n  b,\n  'x{separator}y'\n)",
+            OutputFormatters.Readable.Format(success, Options(width: 12)));
+    }
+
     [Fact]
     public void SalaryShapedValue_UsesStructuredMultilineLayout()
     {

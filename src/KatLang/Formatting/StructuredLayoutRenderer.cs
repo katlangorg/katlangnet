@@ -1,3 +1,4 @@
+using System.Buffers;
 using KatLang.Rendering;
 
 namespace KatLang.Formatting;
@@ -655,10 +656,11 @@ internal static class StructuredLayoutRenderer
         /// comma-separated pair line within width. Token safety is not
         /// required here — the retained commas and parentheses delimit the
         /// items exactly like any other delimited content. Line-break
-        /// characters ARE excluded: a string containing a line feed or
-        /// carriage return can never be quoted (KatLang has no escapes) and
-        /// would split its pair line into two physical lines, breaking the
-        /// one-line-per-pair shape.
+        /// characters ARE excluded: CR and LF can never be quoted (KatLang
+        /// has no escapes), and the Unicode layout separators NEL, LINE
+        /// SEPARATOR, and PARAGRAPH SEPARATOR break the rendered line even
+        /// inside quotes — either way the pair line would split into several
+        /// physical lines, breaking the one-line-per-pair shape.
         /// </summary>
         private bool IsCommaPairRun(IReadOnlyList<Result> items, int level)
         {
@@ -688,8 +690,15 @@ internal static class StructuredLayoutRenderer
             return true;
         }
 
+        // The five characters that terminate a visual line: CR, LF, and the
+        // Unicode layout separators NEL (U+0085), LINE SEPARATOR (U+2028),
+        // and PARAGRAPH SEPARATOR (U+2029). Deliberately NOT general Unicode
+        // whitespace — ordinary spaces and tabs stay on one visual line.
+        private static readonly SearchValues<char> LineBreakChars =
+            SearchValues.Create("\r\n\u0085\u2028\u2029");
+
         private static bool ContainsLineBreak(string value)
-            => value.AsSpan().ContainsAny('\n', '\r');
+            => value.AsSpan().ContainsAny(LineBreakChars);
 
         /// <summary>Opens a multiline delimited structure: the opening token on its own line, items one level deeper.</summary>
         private bool OpenDelimited(Result value, int atLevel, bool closeComma)

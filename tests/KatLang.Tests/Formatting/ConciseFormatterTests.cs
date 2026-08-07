@@ -210,4 +210,44 @@ public class ConciseFormatterTests
 
         Assert.Equal("(can't, 1)", OutputFormatters.Concise.Format(success, Options()));
     }
+
+    [Theory]
+    [InlineData('\u0085')] // NEXT LINE
+    [InlineData('\u2028')] // LINE SEPARATOR
+    [InlineData('\u2029')] // PARAGRAPH SEPARATOR
+    public void PairRun_WithAUnicodeLineSeparatorLabel_FallsBackToOneItemPerLine(char separator)
+    {
+        // Not a safe concise token (whitespace), so no space join or pair
+        // block forms; the retained-parentheses fallback must not group
+        // pair lines either, because the separator breaks the rendered
+        // line even inside quotes.
+        var value = new Result.SequenceValue(
+        [
+            new Result.Str("a"), new Result.Atom(1),
+            new Result.Str($"b{separator}c"), new Result.Atom(2),
+        ]);
+        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+
+        Assert.Equal(
+            $"(\n  a,\n  1,\n  'b{separator}c',\n  2\n)",
+            OutputFormatters.Concise.Format(success, Options(width: 12)));
+    }
+
+    [Theory]
+    [InlineData('\u0085')] // NEXT LINE
+    [InlineData('\u2028')] // LINE SEPARATOR
+    [InlineData('\u2029')] // PARAGRAPH SEPARATOR
+    public void PairRun_WithAUnicodeLineSeparatorStringValue_FallsBackToOneItemPerLine(char separator)
+    {
+        var value = new Result.SequenceValue(
+        [
+            new Result.Str("a"), new Result.Atom(1),
+            new Result.Str("b"), new Result.Str($"x{separator}y"),
+        ]);
+        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+
+        Assert.Equal(
+            $"(\n  a,\n  1,\n  b,\n  'x{separator}y'\n)",
+            OutputFormatters.Concise.Format(success, Options(width: 12)));
+    }
 }
