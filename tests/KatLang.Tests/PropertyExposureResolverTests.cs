@@ -103,6 +103,174 @@ public class PropertyExposureResolverTests
         Assert.Equal(PropertyExposure.Exported, publicApi.Exposure);
     }
 
+    [Fact]
+    public void Build_AncestorCaptureInsideTransparentLayers_SeedsRequiredAncestorNames()
+    {
+        var algorithm = BuildUserAlgorithmBeforeExposure(
+            "Outer",
+            """
+            Outer(x) = {
+                Helper(y) = y + 10
+                Direct = x + 1
+                Grouped = (x, 1)
+                Called = Helper(x)
+                x
+            }
+            """);
+
+        var graph = PropertyDependencyGraphBuilder.Build(algorithm);
+
+        Assert.Equal(["x"], graph[PropertyIndex(graph, "Direct")].RequiredAncestorOwnedParameterNames);
+        Assert.Equal(["x"], graph[PropertyIndex(graph, "Grouped")].RequiredAncestorOwnedParameterNames);
+        Assert.Equal(["x"], graph[PropertyIndex(graph, "Called")].RequiredAncestorOwnedParameterNames);
+        Assert.Empty(graph[PropertyIndex(graph, "Helper")].RequiredAncestorOwnedParameterNames);
+    }
+
+    [Fact]
+    public void Parse_AncestorCaptureInParenthesizedGroup_IsLocalOnly()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Direct = x + 1
+                Grouped = (x, 1)
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "Direct").Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "Grouped").Exposure);
+    }
+
+    [Fact]
+    public void Parse_AncestorCaptureInCallArguments_IsLocalOnly()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Helper(y) = y + 10
+                Called = Helper(x)
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "Called").Exposure);
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Helper").Exposure);
+    }
+
+    [Fact]
+    public void Parse_AncestorCaptureThroughNestedTransparentLayers_IsLocalOnly()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Helper(y) = y + 10
+                Other(z) = z * 2
+                DoubleGrouped = ((x, 1))
+                GroupedArg = Helper((x, 1))
+                Chained = Helper(Other(x))
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "DoubleGrouped").Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "GroupedArg").Exposure);
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "Chained").Exposure);
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Helper").Exposure);
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Other").Exposure);
+    }
+
+    [Fact]
+    public void Parse_AncestorCaptureInDotCallArguments_IsLocalOnly()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Data = [1, 2, 3]
+                Taken = Data.take(x)
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "Taken").Exposure);
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Data").Exposure);
+    }
+
+    [Fact]
+    public void Parse_OwnCallableParametersThroughTransparentLayers_RemainExported()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Own(a) = (a, 1)
+                Forward(b) = Own(b)
+                x
+            }
+            """);
+
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Own").Exposure);
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "Forward").Exposure);
+    }
+
+    [Fact]
+    public void Parse_BraceBlockArgumentScopes_KeepOwnershipBoundaries()
+    {
+        var algorithm = ParseSinglePropertyBody(
+            """
+            Outer(x) = {
+                Apply(f) = f(3)
+                OwnedBrace = Apply({y + 1})
+                CapturedBrace = Apply({x + y})
+                x
+            }
+            """);
+
+        // The brace block owns its free name `y`, so passing it as an argument
+        // does not make the containing property depend on any ancestor parameter.
+        Assert.Equal(
+            PropertyExposure.Exported,
+            Assert.Single(algorithm.Properties, property => property.Name == "OwnedBrace").Exposure);
+        // A brace block that closes over the ancestor parameter `x` still marks
+        // the containing property local-only: the parametrized scope boundary
+        // owns `y` but not `x`.
+        Assert.Equal(
+            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            Assert.Single(algorithm.Properties, property => property.Name == "CapturedBrace").Exposure);
+    }
+
+    private static Algorithm.User ParseSinglePropertyBody(string source)
+    {
+        var result = Parser.Parse(source);
+        Assert.False(result.HasErrors, string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));
+        return Assert.IsType<Algorithm.User>(Assert.Single(result.Root.Properties).Value);
+    }
+
     private static Algorithm.User BuildUserAlgorithmBeforeExposure(string propertyName, string source)
     {
         var syntaxResult = Parser.ParseSyntax(source);

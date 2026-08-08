@@ -225,9 +225,16 @@ internal static class PropertyDependencyGraphBuilder
         var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
         ancestorOwnedForChildren.UnionWith(ownedHere);
 
-        var summaryOwnedHere = algorithm.IsParametrized
-            ? ownedHere
-            : CreateNameSet(ancestorOwnedForChildren);
+        // Ownership attribution follows the same transparency model as
+        // ParameterDetector: a non-parametrized algorithm (call/dot-call
+        // argument bundles, surviving parenthesized groups) owns no names, so
+        // its opens/output walk uses the same owned-name set as a parametrized
+        // scope — `ownedHere`, which is naturally empty for valid transparent
+        // algorithms. A parameter reference inside such a layer therefore seeds
+        // the same ancestor-capture requirement as the identical reference
+        // written directly in the enclosing owner; the final
+        // RemoveRequiredAncestorOwnedParameterNames strip below keeps each
+        // algorithm's self-owned parameters out of the summary it returns.
 
         var currentPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
         var propertyBaseSeeds = new SummarySeed[algorithm.Properties.Count];
@@ -264,12 +271,12 @@ internal static class PropertyDependencyGraphBuilder
         var seed = CollectSummarySeed(
             algorithm.Opens,
             currentPropertySummaries,
-            summaryOwnedHere,
+            ownedHere,
             ancestorOwnedForChildren);
         seed.UnionWith(CollectSummarySeed(
             algorithm.Output,
             currentPropertySummaries,
-            summaryOwnedHere,
+            ownedHere,
             ancestorOwnedForChildren));
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere);
         return seed;

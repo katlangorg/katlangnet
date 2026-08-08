@@ -14212,6 +14212,24 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_CapturedNestedProperty_ThroughCallArguments_DotAccess_IsLocalOnly()
+    {
+        // The capture sits inside a transparent call-argument algorithm; the
+        // property still depends on the enclosing algorithm's parameter, so it
+        // is local-only exactly like the directly written capture above.
+        AssertLocalOnlyPropertyMessage(
+                """
+                        Algo(x) = {
+                            Helper(y) = y + 10
+                            Prop = Helper(x)
+                            x
+                        }
+                        Algo.Prop
+                        """,
+                "Property 'Prop' on `Algo` is local-only because it depends on parameter(s) owned by the enclosing algorithm.");
+    }
+
+    [Fact]
     public void Eval_ContainerWithParametrizedChildProperty_RemainsCallable()
     {
         AssertEval(
