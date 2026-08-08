@@ -505,11 +505,21 @@ public sealed class Parser
     private const string PropertyDeclarationInParenthesesDiagnostic =
         "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.";
 
-    // `isParametrized: false` marks exactly the parenthesized algorithm
-    // contexts — expression groups and call argument lists. Declarations
-    // (open, properties, clause definitions, deconstruction bindings) are
-    // rejected there with the targeted diagnostics above; the declaration is
-    // still parsed and retained so error recovery keeps a truthful tree.
+    // Parses both roles of a User algorithm; the two share the same output-row
+    // grammar (comma/adjacency/newline expression lists) and recovery shape.
+    //   true  — a scope-owning (parametrized) algorithm: the root, brace
+    //           blocks, and property bodies. It owns declarations, and the
+    //           front end later detects/validates its parameters at this
+    //           level.
+    //   false — a transparent (non-parametrized) algorithm: expression groups
+    //           and call argument lists. This is a genuine final AST structure
+    //           (every call's Args, surviving parenthesized groups), not a
+    //           temporary parser artifact; it does not own parameter
+    //           elaboration at this level, so free identifiers inside it belong
+    //           to the nearest enclosing parametrized algorithm. Declarations
+    //           (open, properties, clause definitions, deconstruction bindings)
+    //           are rejected there with the targeted diagnostics above; each is
+    //           still parsed and retained so error recovery keeps a truthful tree.
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
         var opens = new List<Expr>();

@@ -17,20 +17,7 @@ internal static class PropertyExposureResolver
 
         public bool SetEquals(AnalysisSummary other)
             => RequiredAncestorOwnedParameterNames.SetEquals(other.RequiredAncestorOwnedParameterNames);
-
-        public AnalysisSummary Without(IEnumerable<string> names)
-        {
-            var filteredNames = new HashSet<string>(RequiredAncestorOwnedParameterNames, StringComparer.Ordinal);
-            filteredNames.ExceptWith(names);
-            return filteredNames.Count == 0
-                ? Empty
-                : new AnalysisSummary(filteredNames);
-        }
     }
-
-    private sealed record RewriteResult(Algorithm Algorithm, AnalysisSummary Summary);
-
-    private sealed record ExprRewriteResult(Expr Expr, AnalysisSummary Summary);
 
     public static Algorithm Resolve(Algorithm root)
         => ProcessAlgorithm(
@@ -38,9 +25,9 @@ internal static class PropertyExposureResolver
             visiblePropertySummaries: new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal),
             ancestorOwnedNames: CreateNameSet(),
             locallyOwnedNames: CreateNameSet(),
-            insideConditionalAlgorithm: false).Algorithm;
+            insideConditionalAlgorithm: false);
 
-    private static RewriteResult ProcessAlgorithm(
+    private static Algorithm ProcessAlgorithm(
         Algorithm algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
@@ -60,10 +47,10 @@ internal static class PropertyExposureResolver
                 ancestorOwnedNames,
                 locallyOwnedNames,
                 insideConditionalAlgorithm),
-            _ => new RewriteResult(algorithm, AnalysisSummary.Empty),
+            _ => algorithm,
         };
 
-    private static RewriteResult ProcessUserAlgorithm(
+    private static Algorithm ProcessUserAlgorithm(
         Algorithm.User algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
@@ -72,11 +59,11 @@ internal static class PropertyExposureResolver
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
-        // captures no ancestor-owned parameter, so its summary is empty and it needs no rewriting.
-        // The general path would build an O(N) owned-name union from its N-capture pattern per
-        // helper — O(N^2) across a wide deconstruction's N helpers — for no observable effect.
+        // captures no ancestor-owned parameter, so it needs no exposure rewriting. The general
+        // path would build an O(N) owned-name union from its N-capture pattern per helper —
+        // O(N^2) across a wide deconstruction's N helpers — for no observable effect.
         if (algorithm is Algorithm.User { IsAssignmentDeconstructionHelper: true })
-            return new RewriteResult(algorithm, AnalysisSummary.Empty);
+            return algorithm;
 
         var dependencyGraph = PropertyDependencyGraphBuilder.Build(
             algorithm,
@@ -84,9 +71,6 @@ internal static class PropertyExposureResolver
             locallyOwnedNames);
         var ownedHere = UnionNames(locallyOwnedNames, algorithm.Params);
         var ancestorOwnedForChildren = UnionNames(ancestorOwnedNames, ownedHere);
-        var summaryOwnedHere = algorithm.IsParametrized
-            ? ownedHere
-            : UnionNames(ownedHere, ancestorOwnedNames);
 
         var currentPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
         foreach (var property in algorithm.Properties)
@@ -140,7 +124,7 @@ internal static class PropertyExposureResolver
                     ? PropertyExposure.LocalOnlyCapturedAncestorParameters
                     : PropertyExposure.Exported;
 
-            rewrittenProperties.Add(new Property(property.Name, rewrittenPropertyValue.Algorithm, property.IsPublic, exposure)
+            rewrittenProperties.Add(new Property(property.Name, rewrittenPropertyValue, property.IsPublic, exposure)
             {
                 DeclarationSpans = property.DeclarationSpans
             });
@@ -149,27 +133,20 @@ internal static class PropertyExposureResolver
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
             finalVisiblePropertySummaries,
-            summaryOwnedHere,
             ancestorOwnedForChildren,
             insideConditionalAlgorithm);
         var rewrittenOutput = RewriteExprList(
             algorithm.Output,
             finalVisiblePropertySummaries,
-            summaryOwnedHere,
             ancestorOwnedForChildren,
             insideConditionalAlgorithm);
 
-        var rewrittenAlgorithm = algorithm with
+        return algorithm with
         {
-            Opens = rewrittenOpens.Select(result => result.Expr).ToList(),
+            Opens = rewrittenOpens,
             Properties = rewrittenProperties,
-            Output = rewrittenOutput.Select(result => result.Expr).ToList(),
+            Output = rewrittenOutput,
         };
-
-        return new RewriteResult(
-            rewrittenAlgorithm,
-            MergeSummaries(rewrittenOpens.Concat(rewrittenOutput).Select(result => result.Summary))
-                .Without(ownedHere));
     }
 
     private static AnalysisSummary SummarizePropertyDependencies(
@@ -201,26 +178,20 @@ internal static class PropertyExposureResolver
             : new AnalysisSummary(requiredAncestorOwnedParameterNames);
     }
 
-    private static RewriteResult ProcessConditionalAlgorithm(
+    private static Algorithm ProcessConditionalAlgorithm(
         Algorithm.Conditional algorithm,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
         HashSet<string> ancestorOwnedNames,
         HashSet<string> locallyOwnedNames,
         bool insideConditionalAlgorithm)
     {
-        var ownedHere = CreateNameSet(locallyOwnedNames);
-        var ancestorOwnedForChildren = UnionNames(ancestorOwnedNames, ownedHere);
+        var ancestorOwnedForChildren = UnionNames(ancestorOwnedNames, locallyOwnedNames);
 
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
             visiblePropertySummaries,
-            ownedHere,
             ancestorOwnedForChildren,
             insideConditionalAlgorithm);
-
-        var requiredAncestorOwnedParameterNames = new HashSet<string>(StringComparer.Ordinal);
-        requiredAncestorOwnedParameterNames.UnionWith(
-            MergeSummaries(rewrittenOpens.Select(result => result.Summary)).RequiredAncestorOwnedParameterNames);
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
         foreach (var branch in algorithm.Branches)
@@ -233,33 +204,28 @@ internal static class PropertyExposureResolver
                 binderNames,
                 insideConditionalAlgorithm: true);
 
-            rewrittenBranches.Add(new CondBranch(branch.Pattern, rewrittenBody.Algorithm));
-            requiredAncestorOwnedParameterNames.UnionWith(rewrittenBody.Summary.RequiredAncestorOwnedParameterNames);
+            rewrittenBranches.Add(new CondBranch(branch.Pattern, rewrittenBody));
         }
 
-        return new RewriteResult(
-            algorithm with
-            {
-                Opens = rewrittenOpens.Select(result => result.Expr).ToList(),
-                Branches = rewrittenBranches,
-            },
-            new AnalysisSummary(requiredAncestorOwnedParameterNames));
+        return algorithm with
+        {
+            Opens = rewrittenOpens,
+            Branches = rewrittenBranches,
+        };
     }
 
-    private static IReadOnlyList<ExprRewriteResult> RewriteExprList(
+    private static IReadOnlyList<Expr> RewriteExprList(
         IReadOnlyList<Expr> expressions,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
-        HashSet<string> ownedHere,
         HashSet<string> ancestorOwnedForChildren,
         bool insideConditionalAlgorithm)
     {
-        var rewritten = new List<ExprRewriteResult>(expressions.Count);
+        var rewritten = new List<Expr>(expressions.Count);
         foreach (var expression in expressions)
         {
             rewritten.Add(RewriteExpr(
                 expression,
                 visiblePropertySummaries,
-                ownedHere,
                 ancestorOwnedForChildren,
                 insideConditionalAlgorithm));
         }
@@ -267,40 +233,26 @@ internal static class PropertyExposureResolver
         return rewritten;
     }
 
-    private static ExprRewriteResult RewriteExpr(
+    // Expression descent exists to reach nested algorithms — block literals and
+    // call/dot-call argument bundles — so their properties receive exposure
+    // classifications too. Outside those nested algorithm replacements, each
+    // expression keeps the same shape and metadata.
+    private static Expr RewriteExpr(
         Expr expr,
         IReadOnlyDictionary<string, AnalysisSummary> visiblePropertySummaries,
-        HashSet<string> ownedHere,
         HashSet<string> ancestorOwnedForChildren,
         bool insideConditionalAlgorithm)
     {
         switch (expr)
         {
-            case Expr.Param(var name):
-                return new ExprRewriteResult(
-                    expr,
-                    ownedHere.Contains(name)
-                        ? AnalysisSummary.Empty
-                        : new AnalysisSummary([name]));
-
-            case Expr.Resolve(var name):
-                return new ExprRewriteResult(
-                    expr,
-                    visiblePropertySummaries.TryGetValue(name, out var summary)
-                        ? summary
-                        : AnalysisSummary.Empty);
-
             case Expr.Grace(var inner, var weight):
             {
                 var rewrittenInner = RewriteExpr(
                     inner,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Grace(rewrittenInner.Expr, weight) { Span = expr.Span },
-                    rewrittenInner.Summary);
+                return new Expr.Grace(rewrittenInner, weight) { Span = expr.Span };
             }
 
             case Expr.Unary(var op, var operand):
@@ -308,12 +260,9 @@ internal static class PropertyExposureResolver
                 var rewrittenOperand = RewriteExpr(
                     operand,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Unary(op, rewrittenOperand.Expr) { Span = expr.Span },
-                    rewrittenOperand.Summary);
+                return new Expr.Unary(op, rewrittenOperand) { Span = expr.Span };
             }
 
             case Expr.Binary(var op, var left, var right):
@@ -321,18 +270,14 @@ internal static class PropertyExposureResolver
                 var rewrittenLeft = RewriteExpr(
                     left,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
                 var rewrittenRight = RewriteExpr(
                     right,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Binary(op, rewrittenLeft.Expr, rewrittenRight.Expr) { Span = expr.Span },
-                    MergeSummaries([rewrittenLeft.Summary, rewrittenRight.Summary]));
+                return new Expr.Binary(op, rewrittenLeft, rewrittenRight) { Span = expr.Span };
             }
 
             case Expr.Index(var target, var selector):
@@ -340,18 +285,14 @@ internal static class PropertyExposureResolver
                 var rewrittenTarget = RewriteExpr(
                     target,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
                 var rewrittenSelector = RewriteExpr(
                     selector,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Index(rewrittenTarget.Expr, rewrittenSelector.Expr) { Span = expr.Span },
-                    MergeSummaries([rewrittenTarget.Summary, rewrittenSelector.Summary]));
+                return new Expr.Index(rewrittenTarget, rewrittenSelector) { Span = expr.Span };
             }
 
             case Expr.SequenceSpread(var operand):
@@ -359,16 +300,13 @@ internal static class PropertyExposureResolver
                 var rewrittenOperand = RewriteExpr(
                     operand,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.SequenceSpread(rewrittenOperand.Expr)
-                    {
-                        Span = expr.Span,
-                        SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
-                    },
-                    rewrittenOperand.Summary);
+                return new Expr.SequenceSpread(rewrittenOperand)
+                {
+                    Span = expr.Span,
+                    SpreadMarkerSpan = ((Expr.SequenceSpread)expr).SpreadMarkerSpan,
+                };
             }
 
             case Expr.SequenceConstruct(var left, var right):
@@ -376,39 +314,29 @@ internal static class PropertyExposureResolver
                 var rewrittenLeft = RewriteExpr(
                     left,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
                 var rewrittenRight = RewriteExpr(
                     right,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.SequenceConstruct(rewrittenLeft.Expr, rewrittenRight.Expr) { Span = expr.Span },
-                    MergeSummaries([rewrittenLeft.Summary, rewrittenRight.Summary]));
+                return new Expr.SequenceConstruct(rewrittenLeft, rewrittenRight) { Span = expr.Span };
             }
 
             case Expr.ListLiteral(var items):
             {
                 var rewrittenItems = new List<Expr>(items.Count);
-                var itemSummaries = new List<AnalysisSummary>(items.Count);
                 foreach (var item in items)
                 {
-                    var rewrittenItem = RewriteExpr(
+                    rewrittenItems.Add(RewriteExpr(
                         item,
                         visiblePropertySummaries,
-                        ownedHere,
                         ancestorOwnedForChildren,
-                        insideConditionalAlgorithm);
-                    rewrittenItems.Add(rewrittenItem.Expr);
-                    itemSummaries.Add(rewrittenItem.Summary);
+                        insideConditionalAlgorithm));
                 }
 
-                return new ExprRewriteResult(
-                    new Expr.ListLiteral(rewrittenItems) { Span = expr.Span },
-                    MergeSummaries(itemSummaries));
+                return new Expr.ListLiteral(rewrittenItems) { Span = expr.Span };
             }
 
             case Expr.Block(var algorithm):
@@ -419,9 +347,7 @@ internal static class PropertyExposureResolver
                     ancestorOwnedForChildren,
                     CreateNameSet(),
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Block(rewrittenAlgorithm.Algorithm) { Span = expr.Span },
-                    rewrittenAlgorithm.Summary);
+                return new Expr.Block(rewrittenAlgorithm) { Span = expr.Span };
             }
 
             case Expr.Call(var function, var args):
@@ -429,7 +355,6 @@ internal static class PropertyExposureResolver
                 var rewrittenFunction = RewriteExpr(
                     function,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
                 var rewrittenArgs = ProcessAlgorithm(
@@ -438,9 +363,7 @@ internal static class PropertyExposureResolver
                     ancestorOwnedForChildren,
                     CreateNameSet(),
                     insideConditionalAlgorithm);
-                return new ExprRewriteResult(
-                    new Expr.Call(rewrittenFunction.Expr, rewrittenArgs.Algorithm) { Span = expr.Span },
-                    MergeSummaries([rewrittenFunction.Summary, rewrittenArgs.Summary]));
+                return new Expr.Call(rewrittenFunction, rewrittenArgs) { Span = expr.Span };
             }
 
             case Expr.DotCall(var target, var name, var argsOpt):
@@ -448,10 +371,9 @@ internal static class PropertyExposureResolver
                 var rewrittenTarget = RewriteExpr(
                     target,
                     visiblePropertySummaries,
-                    ownedHere,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                RewriteResult? rewrittenArgs = null;
+                Algorithm? rewrittenArgs = null;
                 if (argsOpt is not null)
                 {
                     rewrittenArgs = ProcessAlgorithm(
@@ -462,19 +384,15 @@ internal static class PropertyExposureResolver
                         insideConditionalAlgorithm);
                 }
 
-                return new ExprRewriteResult(
-                    new Expr.DotCall(rewrittenTarget.Expr, name, rewrittenArgs?.Algorithm)
-                    {
-                        Span = expr.Span,
-                        MemberSpan = ((Expr.DotCall)expr).MemberSpan,
-                    },
-                    rewrittenArgs is null
-                        ? rewrittenTarget.Summary
-                        : MergeSummaries([rewrittenTarget.Summary, rewrittenArgs.Summary]));
+                return new Expr.DotCall(rewrittenTarget, name, rewrittenArgs)
+                {
+                    Span = expr.Span,
+                    MemberSpan = ((Expr.DotCall)expr).MemberSpan,
+                };
             }
 
             default:
-                return new ExprRewriteResult(expr, AnalysisSummary.Empty);
+                return expr;
         }
     }
 
@@ -510,14 +428,6 @@ internal static class PropertyExposureResolver
         }
 
         return true;
-    }
-
-    private static AnalysisSummary MergeSummaries(IEnumerable<AnalysisSummary> summaries)
-    {
-        var requiredAncestorOwnedParameterNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var summary in summaries)
-            requiredAncestorOwnedParameterNames.UnionWith(summary.RequiredAncestorOwnedParameterNames);
-        return new AnalysisSummary(requiredAncestorOwnedParameterNames);
     }
 
     private static HashSet<string> CreateNameSet(IEnumerable<string>? names = null)

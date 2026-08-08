@@ -3,17 +3,9 @@ namespace KatLang;
 internal sealed record PropertyDependencyNode(
     int PropertyIndex,
     IReadOnlyList<int> SiblingDependencyIndices,
-    IReadOnlyList<string> DirectAncestorOwnedParameterNames,
     IReadOnlyList<int> SummarySiblingDependencyIndices,
     IReadOnlyList<string> SummaryVisiblePropertyDependencyNames,
-    IReadOnlyList<string> RequiredAncestorOwnedParameterNames)
-{
-    public bool DirectlyCapturesAncestorOwnedParameters
-        => DirectAncestorOwnedParameterNames.Count > 0;
-
-    public bool RequiresAncestorOwnedParameters
-        => RequiredAncestorOwnedParameterNames.Count > 0;
-}
+    IReadOnlyList<string> RequiredAncestorOwnedParameterNames);
 
 internal sealed class PropertyDependencyGraph
 {
@@ -155,10 +147,6 @@ internal static class PropertyDependencyGraphBuilder
                 siblingNames,
                 propertyNameToIndex,
                 i);
-            var directAncestorOwnedParameterNames = CollectDirectAncestorOwnedParameterNames(
-                property.Value,
-                ancestorOwnedForProperties,
-                CreateNameSet());
             var summarySeed = CollectSummarySeed(
                 property.Value,
                 ancestorOwnedForProperties,
@@ -177,7 +165,6 @@ internal static class PropertyDependencyGraphBuilder
             nodes[i] = new PropertyDependencyNode(
                 i,
                 siblingDependencyIndices,
-                directAncestorOwnedParameterNames,
                 summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
                 summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
                 summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
@@ -564,175 +551,6 @@ internal static class PropertyDependencyGraphBuilder
     private static bool IsMathValueDotCall(Expr target, string name)
         => target is Expr.Resolve { Name: "Math" }
             && BuiltinRegistry.IsMathFunctionMember(name);
-
-    private static IReadOnlyList<string> CollectDirectAncestorOwnedParameterNames(
-        Algorithm algorithm,
-        HashSet<string> ancestorOwnedNames,
-        HashSet<string> locallyOwnedNames)
-    {
-        var captures = CreateNameSet();
-        CollectDirectAncestorOwnedParameterNames(algorithm, ancestorOwnedNames, locallyOwnedNames, captures);
-        return captures.OrderBy(static name => name, StringComparer.Ordinal).ToArray();
-    }
-
-    private static void CollectDirectAncestorOwnedParameterNames(
-        Algorithm algorithm,
-        HashSet<string> ancestorOwnedNames,
-        HashSet<string> locallyOwnedNames,
-        HashSet<string> captures)
-    {
-        switch (algorithm)
-        {
-            case Algorithm.User { IsAssignmentDeconstructionHelper: true }:
-                // Self-contained synthetic leaf: captures no ancestor-owned parameter. Walking it
-                // is O(N) in its capture count per helper; skipping it keeps a wide deconstruction
-                // linear. See the matching guard in CollectSummarySeed.
-                break;
-
-            case Algorithm.User user:
-            {
-                var ownedHere = CreateNameSet(locallyOwnedNames);
-                ownedHere.UnionWith(user.Params);
-
-                var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
-                ancestorOwnedForChildren.UnionWith(ownedHere);
-
-                CollectDirectAncestorOwnedParameterNames(
-                    user.Opens,
-                    ancestorOwnedNames,
-                    ownedHere,
-                    ancestorOwnedForChildren,
-                    captures);
-                CollectDirectAncestorOwnedParameterNames(
-                    user.Output,
-                    ancestorOwnedNames,
-                    ownedHere,
-                    ancestorOwnedForChildren,
-                    captures);
-                break;
-            }
-
-            case Algorithm.Conditional conditional:
-            {
-                var ownedHere = CreateNameSet(locallyOwnedNames);
-                var ancestorOwnedForChildren = CreateNameSet(ancestorOwnedNames);
-                ancestorOwnedForChildren.UnionWith(ownedHere);
-
-                CollectDirectAncestorOwnedParameterNames(
-                    conditional.Opens,
-                    ancestorOwnedNames,
-                    ownedHere,
-                    ancestorOwnedForChildren,
-                    captures);
-
-                foreach (var branch in conditional.Branches)
-                {
-                    var binderNames = CreateNameSet(branch.Pattern.BoundNames());
-                    CollectDirectAncestorOwnedParameterNames(
-                        branch.Body,
-                        ancestorOwnedForChildren,
-                        binderNames,
-                        captures);
-                }
-                break;
-            }
-        }
-    }
-
-    private static void CollectDirectAncestorOwnedParameterNames(
-        IReadOnlyList<Expr> expressions,
-        HashSet<string> ancestorOwnedNames,
-        HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren,
-        HashSet<string> captures)
-    {
-        foreach (var expression in expressions)
-        {
-            CollectDirectAncestorOwnedParameterNames(
-                expression,
-                ancestorOwnedNames,
-                ownedHere,
-                ancestorOwnedForChildren,
-                captures);
-        }
-    }
-
-    private static void CollectDirectAncestorOwnedParameterNames(
-        Expr expr,
-        HashSet<string> ancestorOwnedNames,
-        HashSet<string> ownedHere,
-        HashSet<string> ancestorOwnedForChildren,
-        HashSet<string> captures)
-    {
-        switch (expr)
-        {
-            case Expr.Param(var name):
-                if (!ownedHere.Contains(name) && ancestorOwnedNames.Contains(name))
-                    captures.Add(name);
-                break;
-
-            case Expr.Grace(var inner, _):
-                CollectDirectAncestorOwnedParameterNames(inner, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.Binary(_, var left, var right):
-                CollectDirectAncestorOwnedParameterNames(left, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                CollectDirectAncestorOwnedParameterNames(right, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.Unary(_, var operand):
-                CollectDirectAncestorOwnedParameterNames(operand, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.Index(var target, var selector):
-                CollectDirectAncestorOwnedParameterNames(target, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                CollectDirectAncestorOwnedParameterNames(selector, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.SequenceSpread(var operand):
-                CollectDirectAncestorOwnedParameterNames(operand, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.SequenceConstruct(var left, var right):
-                CollectDirectAncestorOwnedParameterNames(left, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                CollectDirectAncestorOwnedParameterNames(right, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.ListLiteral(var listItems):
-                foreach (var item in listItems)
-                    CollectDirectAncestorOwnedParameterNames(item, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                break;
-
-            case Expr.Block(var algorithm):
-                CollectDirectAncestorOwnedParameterNames(
-                    algorithm,
-                    ancestorOwnedForChildren,
-                    CreateNameSet(),
-                    captures);
-                break;
-
-            case Expr.Call(var function, var args):
-                CollectDirectAncestorOwnedParameterNames(function, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                CollectDirectAncestorOwnedParameterNames(
-                    args,
-                    ancestorOwnedForChildren,
-                    CreateNameSet(),
-                    captures);
-                break;
-
-            case Expr.DotCall(var target, _, var argsOpt):
-                CollectDirectAncestorOwnedParameterNames(target, ancestorOwnedNames, ownedHere, ancestorOwnedForChildren, captures);
-                if (argsOpt is not null)
-                {
-                    CollectDirectAncestorOwnedParameterNames(
-                        argsOpt,
-                        ancestorOwnedForChildren,
-                        CreateNameSet(),
-                        captures);
-                }
-                break;
-        }
-    }
 
     private static HashSet<string> CreateNameSet(IEnumerable<string>? names = null)
         => names is null

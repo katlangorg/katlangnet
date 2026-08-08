@@ -374,7 +374,11 @@ public abstract record Expr
     /// </summary>
     public sealed record Grace(Expr Inner, int Weight) : Expr;
 
-    /// <summary>Anonymous algorithm literal.</summary>
+    /// <summary>
+    /// An algorithm used in expression position. Surface forms include <c>{ }</c> algorithm
+    /// literals and surviving parenthesized output groups; front-end and host code may also
+    /// wrap synthetic or core algorithms in a block.
+    /// </summary>
     public sealed record Block(Algorithm Algorithm) : Expr;
 
     /// <summary>Algorithm application. <c>Call(f, args)</c> applies <c>f</c> to outputs of <c>args</c>.</summary>
@@ -912,9 +916,19 @@ public abstract record Algorithm
     }
 
     /// <summary>
-    /// Parser annotation: true when this algorithm should have parameters detected
-    /// (property bodies, <c>{}</c> blocks, root algorithm).
-    /// Not part of the Lean specification.
+    /// C# front-end elaboration annotation for <see cref="User"/> algorithms: true when the
+    /// algorithm owns parameter detection/elaboration at its own level — the root, <c>{ }</c>
+    /// brace blocks, and property bodies. Distinct from having parameters: <c>{ 1 }</c> is
+    /// parametrized with zero parameters. False means a <see cref="User"/> algorithm is
+    /// transparent to parameter elaboration. Common parser-created examples are call and
+    /// dot-call argument bundles and surviving parenthesized groups; free identifiers in those
+    /// surface forms belong to the nearest enclosing parametrized algorithm. Under the delimiter
+    /// model, diagnostic-free surface-derived non-parametrized algorithms carry output rows only;
+    /// invalid recovery trees may retain rejected declarations, and synthetic/internal carriers
+    /// need not have that surface shape. Consumed by front-end elaboration and parser unwrap
+    /// decisions, never by the evaluator; effectively inert on
+    /// <see cref="Conditional"/>, whose clause semantics are handled by algorithm type and
+    /// pattern matching. Not part of the Lean specification.
     /// </summary>
     internal virtual bool IsParametrized { get; init; }
 

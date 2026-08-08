@@ -2590,11 +2590,11 @@ Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case.
 
 ### Parametrized vs non-parametrized algorithms
 
-The distinction between braces and parentheses is critical. Each delimiter has one role:
+The distinction between braces, parentheses, and square brackets is critical. Their roles are:
 
 | Syntax | Meaning |
 |---|---|
-| `( ... )` | Non-parametrized sequence-value construction — evaluated in the enclosing scope; no new parameter scope and no declarations |
+| `( ... )` | Expression grouping/capture, or call-argument syntax after a callable — no new parameter scope and no declarations |
 | `[ ... ]` | Exact immutable list construction — element expressions only, no declarations |
 | `{ ... }` | Parametrized algorithm value — a new lexical scope that owns its inferred parameters, local declarations, and `open` |
 | `{a + 1}` | Parametrized algorithm with parameter `a`, passable as an argument |
@@ -2651,6 +2651,18 @@ When a block has defined output and no free parameters, `{...}` and `(...)` prod
 ```
 
 With no contents, `()` is the empty sequence value (a real value, displayed as `()`), while `{}` is an empty parametrized body with no defined output. They are not interchangeable: `()` is a value you can store, count, compare, and spread, whereas `{}` produces no value at all and is an error when used where a value is required.
+
+An algorithm — parametrized or not — is a computation that can produce zero or more outputs. A sequence value is what you get when produced outputs are **captured** as one value: `(1, 2)` captures two outputs into one value. Call-argument parentheses do not capture — they are call syntax, and the argument list's slots become the call's separate arguments. Capturing happens one level in, when you write an extra pair of parentheses inside the argument list:
+
+```
+Add(x, y) = x + y
+
+Add(1, 2)
+```
+
+**Result:** `3`
+
+`Add(1, 2)` passes two arguments. `Add((1, 2))` passes one argument — the sequence value `(1, 2)` — so the two-parameter callable rejects it: "Callable `Add(x, y)` expects 2 arguments, but was called with 1 argument." The one-argument shape is exactly what the fixed one-collection builtins expect: `sum((10, 20, 30))` is `60`, while `sum(10, 20, 30)` is a three-argument arity error under the fixed `sum(collection)` signature.
 
 ---
 
