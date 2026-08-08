@@ -1,1 +1,1 @@
-Outer = (Inner = x + y)
+Outer = { Inner = x + y }

@@ -1117,7 +1117,7 @@ public class StarSyntaxTests
     {
         Assert.Equal("5", Display("spread = 5\nspread"));
         Assert.Equal("8", Display("spread(x) = x + 1\nspread(7)"));
-        Assert.Equal("3", Display("A = (spread = 3)\nA.spread"));
+        Assert.Equal("3", Display("A = { spread = 3 }\nA.spread"));
     }
 
     [Fact]

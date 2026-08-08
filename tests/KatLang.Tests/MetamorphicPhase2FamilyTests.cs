@@ -547,7 +547,7 @@ public class MetamorphicPhase2FamilyTests
         Assert.Equal("err", dropped.Semantic.Outcome);
 
         // The contrast: an exposed member DOES resolve structurally, and no template builds one.
-        const string structural = "MmObject = (\n    public MmValue = 7\n)\nMmObject.MmValue";
+        const string structural = "MmObject = {\n    public MmValue = 7\n}\nMmObject.MmValue";
         var structuralParse = Parser.Parse(structural);
         Assert.False(structuralParse.HasErrors);
         Assert.Contains("MmValue", ExposedMemberNames(structural));

@@ -1,2 +1,2 @@
-A = (public p = 1)
+A = { public p = 1 }
 A.p

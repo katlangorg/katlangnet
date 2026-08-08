@@ -85,10 +85,12 @@ public static class Lexer
                 }
                 else
                 {
+                    // EndColumn is inclusive: `col` sits one past the last
+                    // consumed digit (at least one digit was consumed).
                     diagnostics.Add(new Diagnostic(
                         "Number literal is too large.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col)));
+                        new SourceSpan(startLine, startCol, line, col - 1)));
                     tokens.Add(Token.CreateNumber(0, start, i - start, startLine, startCol));
                 }
                 continue;
@@ -109,10 +111,12 @@ public static class Lexer
                 { i++; col++; } // skip closing quote
                 else
                 {
+                    // EndColumn is inclusive: `col` sits one past the last
+                    // consumed code unit (at least the opening quote).
                     diagnostics.Add(new Diagnostic(
                         "Unterminated string literal.",
                         DiagnosticSeverity.Error,
-                        new SourceSpan(startLine, startCol, line, col)));
+                        new SourceSpan(startLine, startCol, line, col - 1)));
                 }
                 tokens.Add(Token.CreateStringLiteral(value, start, i - start, startLine, startCol));
                 continue;

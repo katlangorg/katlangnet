@@ -3,6 +3,21 @@ Program         = Algorithm ;
 Algorithm       = { AlgorithmItem } ;
 AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | OutputLine ;
 
+ExpressionAlgorithm = { OutputLine } ;
+                  (* Delimiter model: each delimiter has one role.
+                     `( ... )` is sequence/expression grouping and
+                     call-argument syntax (ParenBundleExpr, ParenArgs) and
+                     parses this expression-only form; `[ ... ]` is list
+                     construction; only `{ ... }` (BraceAlgorithmExpr,
+                     BraceArgs) and the root Algorithm create an
+                     algorithm-level lexical scope and own declarations.
+                     A declaration written inside parentheses — an open
+                     declaration, property/clause definition, or
+                     deconstruction binding — is rejected with a targeted
+                     parser diagnostic directing it to a `{ ... }` block.
+                     Brace blocks work anywhere an expression-valued
+                     algorithm is allowed, including as a call argument. *)
+
 OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
                   (* `open` is a declaration/import directive, not an output
@@ -27,11 +42,13 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
                 | Identifier                 (* resolve form *)
                 | DottedOpenPath             (* argumentless dot-call path, e.g. Lib.Sub *)
-                | ParenBundleExpr ;          (* parenthesized/block open target *)
+                | BraceAlgorithmExpr         (* inline block bundle target, e.g. open { public X = 1 } *)
+                | ParenBundleExpr ;          (* parenthesized expression target — expression-only,
+                                                declarations belong to the brace form *)
 DottedOpenPath  = Identifier { "." Identifier } ;
 
 PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
-PropertyBody       = Algorithm ;
+PropertyBody       = OutputBundle ;
 
 DeconstructionDefinition = CollectingBinding "=" OutputBundle
                          | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
@@ -318,7 +335,7 @@ SpreadMarker    = "*" ;
 
 CallArgs        = BraceArgs | ParenArgs ;
 BraceArgs       = "{" Algorithm "}" ;
-ParenArgs       = "(" Algorithm ")" ;
+ParenArgs       = "(" ExpressionAlgorithm ")" ;
 
 Primary         = NumberLiteral
                 | StringLiteral
@@ -331,7 +348,7 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                   (* postfix "~" is same-physical-line only: a "~"-led line
                      is its own prefix-grace expression, never postfix grace
                      on the previous line's identifier. *)
-ParenBundleExpr = "(" Algorithm ")" ;
+ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty
                      sequence are redundant grouping and canonicalize to "()". Thus

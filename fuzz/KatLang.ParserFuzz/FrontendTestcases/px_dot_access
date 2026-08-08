@@ -1,2 +1,2 @@
-Obj = (X = 1)
+Obj = { X = 1 }
 Get = Obj.X

@@ -67,7 +67,7 @@ public class EvaluatorInvariantTests
         string First() => KatLangEngine.Run(source).ToDisplayString();
 
         var a1 = First();
-        _ = KatLangEngine.Run("B = (C = 5)\nD(x) = x + 1\nD(B.C)");   // unrelated work
+        _ = KatLangEngine.Run("B = { C = 5 }\nD(x) = x + 1\nD(B.C)");   // unrelated work
         var a2 = First();
 
         Assert.Equal(a1, a2);

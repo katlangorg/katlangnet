@@ -434,20 +434,21 @@ Parentheses:
 - preserve one sequence-value boundary around spread, such as `(history*, next)`
 - pass call arguments
 - wrap multi-output `if` branches
-- can contain nested property definitions
+- NEVER contain declarations: `open` and property/function definitions inside `( ... )` are parse errors
 
 Braces:
-- create algorithm-valued blocks
-- can contain nested property definitions
+- create algorithm-valued blocks with their own lexical scope
+- the only delimiter that owns declarations: nested property definitions and `open` go here
 - free identifiers inside become parameters of that block
+- work anywhere an expression-valued algorithm is allowed, including as a call argument
 
 Do not wrap simple property bodies in `{ ... }` or `( ... )`; simple property bodies are already implicitly parametrized.
 
 Nested properties:
-    Outer = (
+    Outer = {
         Inner = x + 1
         Inner(5)
-    )
+    }
 
 Nested property bodies may capture enclosing algorithm parameters by name. If a nested `repeat`/`while` step needs an enclosing value as part of its state, use a distinct state-slot name in the step body and initialize it from the outer parameter. Do not reuse the outer parameter name inside the step, because it will resolve to the enclosing parameter instead of becoming a step-state parameter.
 

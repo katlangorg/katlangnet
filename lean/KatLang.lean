@@ -26,7 +26,7 @@
 --     - identifier:     `open Math`            → Resolve("Math")
 --     - dotted path:    `open Lib.Sub`         → DotCall(Resolve("Lib"), "Sub", none)
 --     - load:           `open load('url')`     → Call(Resolve("load"), ...) → elaborated to Block (surface-only, not in core Expr)
---     - inline block:   `open (public X = 1)`  → Block(...)
+--     - inline block:   `open { public X = 1 }` → Block(...)
 --
 --   Exact-syntax sugar (parser-only, not in core model):
 --     - `open 'url'` desugars to `open load('url')` before elaboration.
@@ -5660,7 +5660,7 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
    already provided by the caller).
 
    Example:
-     Surface:   `(A = x + 1  B = A * 2)`
+     Surface:   `{ A = x + 1  B = A * 2 }`
      After detection: A.params = [x], B.params = []
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
 

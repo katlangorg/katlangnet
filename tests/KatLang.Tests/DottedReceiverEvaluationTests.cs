@@ -158,18 +158,18 @@ public class DottedReceiverEvaluationTests
     [Fact]
     public void StructuralPropertyAccess_IsNotTurnedIntoAnExtensionCall()
     {
-        Assert.Equal("7", DisplayOf("Object = (\n    public Value = 7\n)\nObject.Value"));
-        Assert.Equal("7", DisplayOf("Object = (\n    public Value = 7\n    public Get = Value\n)\nObject.Get"));
+        Assert.Equal("7", DisplayOf("Object = {\n    public Value = 7\n}\nObject.Value"));
+        Assert.Equal("7", DisplayOf("Object = {\n    public Value = 7\n    public Get = Value\n}\nObject.Get"));
     }
 
     [Fact]
     public void UnknownStructuralMember_StillFails()
         => Assert.IsType<RunResult.EvalFailure>(
-            KatLangEngine.Run("Object = (\n    public Value = 7\n)\nObject.Missing"));
+            KatLangEngine.Run("Object = {\n    public Value = 7\n}\nObject.Missing"));
 
     [Fact]
     public void ExportedStructuralMember_KeepsItsExistingVisibilityOutcome()
-        => Assert.Equal("7", DisplayOf("Object = (\n    Hidden = 7\n)\nObject.Hidden"));
+        => Assert.Equal("7", DisplayOf("Object = {\n    Hidden = 7\n}\nObject.Hidden"));
 
     // ── User extension-style calls ───────────────────────────────────────────
 

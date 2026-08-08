@@ -448,7 +448,7 @@ public class ParameterDetectorTests
     public void Detect_OpenPublicProperty_NotAParam()
     {
         var source = """
-            Lib = (public inc = x + 1)
+            Lib = { public inc = x + 1 }
             open Lib
             inc
             """;
@@ -463,7 +463,7 @@ public class ParameterDetectorTests
     public void Detect_OpenPrivateProperty_StillAParam()
     {
         var source = """
-            Lib = (inc = x + 1)
+            Lib = { inc = x + 1 }
             open Lib
             inc + 1
             """;
@@ -478,8 +478,8 @@ public class ParameterDetectorTests
     public void Detect_OpenMultipleLibraries_CollectsFromAll()
     {
         var source = """
-            A = (public foo = 1)
-            B = (public bar = 2)
+            A = { public foo = 1 }
+            B = { public bar = 2 }
             open A, B
             foo + bar + z
             """;
@@ -499,8 +499,8 @@ public class ParameterDetectorTests
         // `A * B` under the star law, and `open A*, B` would make B a real
         // second target — each would exercise something else.)
         var source = """
-            A = (public foo = 1)
-            B = (public bar = 2)
+            A = { public foo = 1 }
+            B = { public bar = 2 }
             open A*
             foo + bar + z
             """;
@@ -514,7 +514,7 @@ public class ParameterDetectorTests
     {
         // Child property body should see names from parent's opens
         var source = """
-            Lib = (public val = 42)
+            Lib = { public val = 42 }
             open Lib
             F = val + 1
             F
@@ -531,7 +531,7 @@ public class ParameterDetectorTests
     public void Detect_OpenDotPath_ResolvesPublicIntermediate()
     {
         var source = """
-            Outer = (public Inner = (public val = 42))
+            Outer = { public Inner = { public val = 42 } }
             open Outer.Inner
             val
             """;
@@ -546,7 +546,7 @@ public class ParameterDetectorTests
     public void Detect_OpenDotPath_PrivateIntermediate_StillAParam()
     {
         var source = """
-            Outer = (Inner = (public val = 42))
+            Outer = { Inner = { public val = 42 } }
             open Outer.Inner
             val + 1
             """;

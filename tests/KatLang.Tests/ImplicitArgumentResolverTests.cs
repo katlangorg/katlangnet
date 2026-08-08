@@ -265,8 +265,8 @@ public class ImplicitArgumentResolverTests
     public void Resolve_BareMathCallableAlias_DoesNotUseNativeSignatureWhenMathIsShadowed()
     {
         var source = """
-            Math = (Round = 42
-            Round)
+            Math = { Round = 42
+            Round }
             RoundB = Math.Round
             """;
         var root = Resolve(source);

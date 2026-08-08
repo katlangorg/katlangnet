@@ -2146,8 +2146,8 @@ public class EvaluatorTests
     public void Eval_PropertyAccess_SubProperty()
     {
         var source = """
-            X = (Y = 42
-            Y)
+            X = { Y = 42
+            Y }
             X.Y
             """;
         AssertEval(source, 42);
@@ -4457,7 +4457,7 @@ public class EvaluatorTests
         Assert.Equal(1, filterStats.FallbackReasons["filter does not resolve to builtin"]);
 
         var structuralFilterShadow = """
-            Source = (public filter(predicate) = 42)
+            Source = { public filter(predicate) = 42 }
             IsEven = x mod 2 == 0
             Source.filter(IsEven).count
             """;
@@ -8347,8 +8347,8 @@ public class EvaluatorTests
     public void Eval_MathPi_UserPropertyOverrides()
     {
         var source = """
-            Math = (Pi = 3
-            Pi)
+            Math = { Pi = 3
+            Pi }
             Math.Pi
             """;
         AssertEval(source, 3);
@@ -8788,8 +8788,8 @@ public class EvaluatorTests
     public void Eval_Open_UserDefinedModule()
     {
         var source = """
-            M = (public X = 42
-            X)
+            M = { public X = 42
+            X }
             open M
             X
             """;
@@ -8803,10 +8803,10 @@ public class EvaluatorTests
         // dotted open target is ordinary invalid syntax and the parse fails
         // before evaluation ever runs.
         var source = """
-            A = (public X = 1
-            X)
-            B = (public Y = 2
-            Y)
+            A = { public X = 1
+            X }
+            B = { public Y = 2
+            Y }
             open A...B
             X + Y
             """;
@@ -8822,8 +8822,8 @@ public class EvaluatorTests
         // A spread expression is not an open form: the parser rejects
         // it before evaluation ever runs.
         var source = """
-            A = (public X = 1
-            X)
+            A = { public X = 1
+            X }
             open A*
             X
             """;
@@ -8864,7 +8864,7 @@ public class EvaluatorTests
     public void Eval_Open_DirectFunctionOpen()
     {
         var source = """
-            Lib = (public F = x + 1)
+            Lib = { public F = x + 1 }
             open Lib
             F(10)
             """;
@@ -9007,9 +9007,9 @@ public class EvaluatorTests
     public void Eval_Open_DotAccess_NestedResolve()
     {
         var source = """
-            Lib = (Helper = x + 1
+            Lib = { Helper = x + 1
               UseHelper = Helper(x)
-            )
+            }
             Lib.UseHelper(10)
             """;
         AssertEval(source, 11);
@@ -9020,9 +9020,9 @@ public class EvaluatorTests
     public void Eval_Open_LibraryOpenWithNestedResolve()
     {
         var source = """
-            Lib = (public Helper = x + 1
+            Lib = { public Helper = x + 1
               public UseHelper = Helper(x)
-            )
+            }
             open Lib
             UseHelper(10)
             """;
@@ -9035,12 +9035,12 @@ public class EvaluatorTests
         // In the Opens model, libraries are isolated: they do NOT get access
         // to the opener's scope. Fn lives in Wrapper but is not visible to Lib.
         var source = """
-            Lib = (Apply = Fn(x))
-            Wrapper = (
-              Fn = x * 2
+            Lib = { Apply = Fn(x) }
+            Wrapper = {
               open Lib
+              Fn = x * 2
               Apply(5)
-            )
+            }
             Wrapper
             """;
         AssertEvalAllPublicFails(source);
@@ -9052,12 +9052,12 @@ public class EvaluatorTests
         // Library's property references a name that only exists in the opening scope.
         // Opens are isolated â€” Factor is not visible to Lib.
         var source = """
-            Lib = (Calc = x * Factor)
-            Main = (
-              Factor = 3
+            Lib = { Calc = x * Factor }
+            Main = {
               open Lib
+              Factor = 3
               Calc(5)
-            )
+            }
             Main
             """;
         AssertEvalAllPublicFails(source);
@@ -9068,10 +9068,10 @@ public class EvaluatorTests
     {
         // A library can reference its own properties (sibling resolution works).
         var source = """
-            Lib = (
+            Lib = {
               public Helper = x + 1
               public UseHelper = Helper(x)
-            )
+            }
             open Lib
             UseHelper(10)
             """;
@@ -9122,8 +9122,8 @@ public class EvaluatorTests
     {
         // 0-param structural property â†’ value access (navigation only)
         var source = """
-            X = (Inc = x + 1
-            5)
+            X = { Inc = x + 1
+            5 }
             X.Inc(5)
             """;
         AssertEval(source, 6);
@@ -9135,8 +9135,8 @@ public class EvaluatorTests
         // Structural property with params but no args â†’ arity mismatch
         // (navigation only: no receiver injection for structural properties)
         var source = """
-            X = (Inc = x + 1
-            5)
+            X = { Inc = x + 1
+            5 }
             X.Inc
             """;
         AssertEvalFails(source);
@@ -9147,8 +9147,8 @@ public class EvaluatorTests
     {
         // Navigation only: all args must be provided explicitly (no receiver injection)
         var source = """
-            X = (Add = a + b
-            5)
+            X = { Add = a + b
+            5 }
             X.Add(5, 10)
             """;
         AssertEval(source, 15);
@@ -9160,8 +9160,8 @@ public class EvaluatorTests
         // Confirm receiver value is NOT injected as first arg.
         // X has output 42, but F gets args directly: a=10, b=20 â†’ 30 (not 42+10=52)
         var source = """
-            X = (F = a + b
-            42)
+            X = { F = a + b
+            42 }
             X.F(10, 20)
             """;
         AssertEval(source, 30);
@@ -9530,8 +9530,8 @@ public class EvaluatorTests
     {
         // X.Inc: Inc has params but no args -> ArityMismatch propagated through dotCall
         var source = """
-            X = (Inc = x + 1
-            5)
+            X = { Inc = x + 1
+            5 }
             X.Inc
             """;
         AssertEvalFails(source);
@@ -12344,8 +12344,8 @@ public class EvaluatorTests
     public void Eval_Open_MultipleOpens()
     {
         var source = """
-            A = (public X = 1)
-            B = (public Y = 2)
+            A = { public X = 1 }
+            B = { public Y = 2 }
             open A, B
             X + Y
             """;
@@ -12357,8 +12357,8 @@ public class EvaluatorTests
     {
         // open Lib2, Lib3 → two separate opens; Val3 resolves from Lib3
         var source = """
-            Lib2 = (public Val2 = 20)
-            Lib3 = (public Val3 = 30)
+            Lib2 = { public Val2 = 20 }
+            Lib3 = { public Val3 = 30 }
             open Lib2, Lib3
             Val3
             """;
@@ -12370,8 +12370,8 @@ public class EvaluatorTests
     {
         // Both A and B provide X â†’ ambiguity â†’ should fail
         var source = """
-            A = (public X = 1)
-            B = (public X = 2)
+            A = { public X = 1 }
+            B = { public X = 2 }
             open A, B
             X
             """;
@@ -12383,7 +12383,7 @@ public class EvaluatorTests
     {
         // Local property takes priority over imported name
         var source = """
-            Lib = (public X = 99)
+            Lib = { public X = 99 }
             open Lib
             X = 1
             X
@@ -12399,8 +12399,8 @@ public class EvaluatorTests
         // token, so an `A...B` spelling lexes as dot tokens and is a parse
         // error, not a merged open.
         var source = """
-            A = (public X = 1)
-            B = (public Y = 2)
+            A = { public X = 1 }
+            B = { public Y = 2 }
             open A...B
             X + Y
             """;
@@ -12414,28 +12414,28 @@ public class EvaluatorTests
     public void Eval_Open_CommaList_OpensBothLibraries()
         // Comma is the open-target separator: one open declaration with a
         // comma-separated list opens both libraries, so X + Y = 3.
-        => AssertEvalAllPublic("A = (public X = 1)\nB = (public Y = 2)\nopen A, B\nX + Y", 3);
+        => AssertEvalAllPublic("A = { public X = 1 }\nB = { public Y = 2 }\nopen A, B\nX + Y", 3);
 
     [Theory]
-    [InlineData("A = (public X = 1)\nB = (public Y = 2)\nC = (public Z = 4)\nopen A, B, C\nX + Y + Z")]
-    [InlineData("A = (public X = 1)\nB = (public Y = 2)\nC = (public Z = 4)\nopen A,\nB,\nC\nX + Y + Z")]
-    [InlineData("A = (public X = 1)\nB = (public Y = 2)\nC = (public Z = 4)\nopen A\n, B\n, C\nX + Y + Z")]
+    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A, B, C\nX + Y + Z")]
+    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A,\nB,\nC\nX + Y + Z")]
+    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A\n, B\n, C\nX + Y + Z")]
     public void Eval_Open_CommaContinuationAcrossLines_OpensAllTargets(string source)
         // Trailing- and leading-comma continuation are equivalent to the
         // single-line list: all three libraries open, so X + Y + Z = 7.
         => AssertEvalAllPublic(source, 7);
 
     [Theory]
-    [InlineData("Lib = (public Sub = (public V = 7))\nopen Lib.Sub\nV")]
-    [InlineData("Lib = (public Sub = (public V = 7))\nopen Lib\n.Sub\nV")]
+    [InlineData("Lib = { public Sub = { public V = 7 } }\nopen Lib.Sub\nV")]
+    [InlineData("Lib = { public Sub = { public V = 7 } }\nopen Lib\n.Sub\nV")]
     public void Eval_Open_DottedTargetWithLeadingDotContinuation_OpensSameTarget(string source)
         // A leading '.' continues the dotted open target across the line,
         // so both spellings open Lib.Sub and V resolves to 7.
         => AssertEvalAllPublic(source, 7);
 
     [Theory]
-    [InlineData("A = (public X = 1)\nB = (public Y = 2)\nopen A ; B\nX + Y")]
-    [InlineData("A = (public X = 1)\nB = (public Y = 2)\nopen A B\nX + Y")]
+    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nopen A ; B\nX + Y")]
+    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nopen A B\nX + Y")]
     public void Eval_Open_NonCommaSeparator_IsParseErrorNotTwoOpens(string source)
     {
         // ';' and same-line adjacency are not open-target separators: the
@@ -12451,11 +12451,11 @@ public class EvaluatorTests
     {
         // Lib1's opens should not be visible to the opener
         var source = """
-            Inner = (public Z = 42)
-            Lib1 = (
+            Inner = { public Z = 42 }
+            Lib1 = {
                 open Inner
                 W = Z
-            )
+            }
             open Lib1
             Z
             """;
@@ -12469,7 +12469,7 @@ public class EvaluatorTests
         // "self" is no longer a keyword — it's now just an identifier.
         // Using it in open position fails because there's no algorithm named "self".
         var source = """
-            HiddenLib = (X = 42)
+            HiddenLib = { X = 42 }
             open self.HiddenLib
             X
             """;
@@ -12483,12 +12483,12 @@ public class EvaluatorTests
         // Parent opens Lib; Child does NOT open it.
         // Child resolves "X" via parent chain â†’ parent opens â†’ Lib.
         var source = """
-            Lib = (public X = 42)
-            Main = (
+            Lib = { public X = 42 }
+            Main = {
                 open Lib
                 Child = (X)
                 Child
-            )
+            }
             Main
             """;
         AssertEvalAllPublic(source, 42);
@@ -12509,14 +12509,14 @@ public class EvaluatorTests
         // structural Val = 0 takes precedence.
         var source = """
             Val = 0
-            Main = (
-                Lib = (public Val = 42)
+            Main = {
                 open Lib
+                Lib = { public Val = 42 }
                 Wrapper = (
                     Val
                 )
                 Wrapper
-            )
+            }
             Main
             """;
         AssertEvalAllPublic(source, 0);
@@ -12531,8 +12531,8 @@ public class EvaluatorTests
         // Open should see the public one but not the private one.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public X = 42
-            Y = 99)
+            public Lib = { public X = 42
+            Y = 99 }
             open Lib
             X
             """;
@@ -12540,8 +12540,8 @@ public class EvaluatorTests
 
         // Now try Y (private) â€” should fail
         var sourceY = """
-            public Lib = (public X = 42
-            Y = 99)
+            public Lib = { public X = 42
+            Y = 99 }
             open Lib
             Y
             """;
@@ -12555,8 +12555,8 @@ public class EvaluatorTests
         // Lib doesn't need public (it's in the ownership chain), but Sub must
         // be public because it's an intermediate on the open path.
         var source = """
-            Lib = (Sub = (public X = 42
-            X))
+            Lib = { Sub = { public X = 42
+            X } }
             open Lib.Sub
             X
             """;
@@ -12570,7 +12570,7 @@ public class EvaluatorTests
     {
         // Acceptance A: Lib.Sub in open â†’ prop-path resolves correctly
         var source = """
-            public Lib = (public Sub = (public X = 1))
+            public Lib = { public Sub = { public X = 1 } }
             open Lib.Sub
             X
             """;
@@ -12582,7 +12582,7 @@ public class EvaluatorTests
     {
         // Acceptance B: Lib.Sub() â†’ call-like dot syntax in open â†’ parse error
         var source = """
-            public Lib = (public Sub = (public X = 1))
+            public Lib = { public Sub = { public X = 1 } }
             open Lib.Sub()
             X
             """;
@@ -12596,8 +12596,8 @@ public class EvaluatorTests
     {
         // Acceptance C: multiple opens with comma-separated form
         var source = """
-            public Lib2 = (public Val = 2)
-            public Lib3 = (public Val2 = 3)
+            public Lib2 = { public Val = 2 }
+            public Lib3 = { public Val2 = 3 }
             open Lib2, Lib3
             Val2
             """;
@@ -12609,7 +12609,7 @@ public class EvaluatorTests
     {
         // Acceptance D: private intermediate on open path
         var source = """
-            Lib = (Sub = (public X = 1))
+            Lib = { Sub = { public X = 1 } }
             open Lib.Sub
             X
             """;
@@ -12624,14 +12624,14 @@ public class EvaluatorTests
         // Opens enforce public-only, but structural always wins first.
         var source = """
             Val = 0
-            Main = (
-                Lib = (Val = 42)
+            Main = {
                 open Lib
+                Lib = { Val = 42 }
                 Wrapper = (
                     Val
                 )
                 Wrapper
-            )
+            }
             Main
             """;
         // Make Lib and its Val public so the open path works
@@ -12643,8 +12643,8 @@ public class EvaluatorTests
     {
         // Two opens provide the same public name â†’ AmbiguousOpen error
         var source = """
-            A = (public X = 1)
-            B = (public X = 2)
+            A = { public X = 1 }
+            B = { public X = 2 }
             open A, B
             X
             """;
@@ -12669,7 +12669,7 @@ public class EvaluatorTests
         // Opening a user-defined library with default visibility should
         // not expose any properties through opens.
         var source = """
-            Lib = (X = 42)
+            Lib = { X = 42 }
             open Lib
             X
             """;
@@ -12683,7 +12683,7 @@ public class EvaluatorTests
     public void Eval_PublicKeyword_OpenCanSeePublicProperty()
     {
         var source = """
-            Lib = (public Val = 42)
+            Lib = { public Val = 42 }
             open Lib
             Val
             """;
@@ -12697,7 +12697,7 @@ public class EvaluatorTests
         // Full end-to-end: public keyword makes property visible through opens.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public Val = 42)
+            public Lib = { public Val = 42 }
             open Lib
             Val
             """;
@@ -12710,8 +12710,8 @@ public class EvaluatorTests
         // Library with one public and one private property
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public X = 1
-            Y = 2)
+            public Lib = { public X = 1
+            Y = 2 }
             open Lib
             X
             """;
@@ -12719,8 +12719,8 @@ public class EvaluatorTests
 
         // Y is private, should fail
         var sourceY = """
-            public Lib = (public X = 1
-            Y = 2)
+            public Lib = { public X = 1
+            Y = 2 }
             open Lib
             Y
             """;
@@ -12748,7 +12748,7 @@ public class EvaluatorTests
         // Lean: shouldTreatAsImplicitParam uses lookupLexical which includes opens.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public val = 42)
+            public Lib = { public val = 42 }
             open Lib
             val
             """;
@@ -12761,7 +12761,7 @@ public class EvaluatorTests
         // Opened lowercase function name: should stay as Resolve, not become param.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public inc = x + 1)
+            public Lib = { public inc = x + 1 }
             open Lib
             inc(5)
             """;
@@ -12774,7 +12774,7 @@ public class EvaluatorTests
         // "val" in F's body is visible through parent's opens (not a param of F).
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = (public val = 42)
+            public Lib = { public val = 42 }
             open Lib
             F = val + 1
             F
@@ -12955,7 +12955,7 @@ public class EvaluatorTests
     {
         // Property with dot-access usable as argument
         var source = """
-            G = (public Val = 7)
+            G = { public Val = 7 }
             F = x + 1
             F(G.Val)
             """;
@@ -13874,8 +13874,8 @@ public class EvaluatorTests
         // Structural property Apply takes a higher-order func param + value param
         // Must use same dual-view binding logic as normal user-defined calls
         var source = """
-            A = (Apply = func(x)
-            0)
+            A = { Apply = func(x)
+            0 }
             F = a + 1
             A.Apply(F, 5)
             """;
@@ -13887,8 +13887,8 @@ public class EvaluatorTests
     {
         // Structural property Algo calls a passed algorithm with fixed value
         var source = """
-            A = (Algo = func(9)
-            0)
+            A = { Algo = func(9)
+            0 }
             F = a + 1
             A.Algo(F)
             """;
@@ -13978,10 +13978,10 @@ public class EvaluatorTests
     public void Eval_HigherOrder_FlatMultiBinderClause_DotCallUsesOrdinaryBinding()
     {
         var source = """
-            Holder = (
+            Holder = {
                 Apply(x, transform) = transform(x)
                 Apply
-            )
+            }
             Increment = y + 1
             Holder.Apply(9, Increment)
             """;
@@ -14437,8 +14437,8 @@ public class EvaluatorTests
     {
         // A.Apply = func(x); A.Apply({a + 1}, 5) → 6
         var source = """
-            A = (Apply = func(x)
-            0)
+            A = { Apply = func(x)
+            0 }
             A.Apply({a + 1}, 5)
             """;
         AssertEvalAllPublic(source, 6);
@@ -15080,8 +15080,8 @@ public class EvaluatorTests
     {
         // Access conditional property via dot syntax with args
         var source = """
-            M = (F(x) = x + 1
-            F)
+            M = { F(x) = x + 1
+            F }
             M.F(10)
             """;
         AssertEval(source, 11);
@@ -15091,10 +15091,10 @@ public class EvaluatorTests
     public void Eval_PublicConditional_DotCallAccess()
     {
         var source = """
-                Lib = (
+                Lib = {
                     public Sign(1) = 100
                     public Sign(x) = 0
-                )
+                }
                 Lib.Sign(1), Lib.Sign(2)
                 """;
 

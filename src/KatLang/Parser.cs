@@ -494,6 +494,22 @@ public sealed class Parser
     // Every non-definition expression row contributes to the algorithm's
     // Output list; definitions and output rows may be interleaved.
 
+    // Delimiter model: `( ... )` is sequence/expression grouping and call
+    // argument syntax only, `[ ... ]` is list construction, and `{ ... }` is
+    // the algorithm/scope form. Only brace blocks and the root own
+    // algorithm-level declarations; a declaration inside parentheses is a
+    // parse error pointing the user at `{ ... }`.
+    private const string OpenDeclarationInParenthesesDiagnostic =
+        "An 'open' declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.";
+
+    private const string PropertyDeclarationInParenthesesDiagnostic =
+        "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.";
+
+    // `isParametrized: false` marks exactly the parenthesized algorithm
+    // contexts — expression groups and call argument lists. Declarations
+    // (open, properties, clause definitions, deconstruction bindings) are
+    // rejected there with the targeted diagnostics above; the declaration is
+    // still parsed and retained so error recovery keeps a truthful tree.
     private Algorithm ParseAlgorithm(bool isParametrized)
     {
         var opens = new List<Expr>();
@@ -533,6 +549,11 @@ public sealed class Parser
             if (declaredPropertyNames.Contains(name))
             {
                 ReportError($"Property '{name}' is already defined.");
+            }
+
+            if (!isParametrized)
+            {
+                ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
             }
 
             Advance(); // consume identifier
@@ -597,6 +618,7 @@ public sealed class Parser
             // Open declaration: open target1, target2, ...
             if (Current.Kind == TokenKind.KeywordOpen)
             {
+                var openToken = Current;
                 if (hasOpenDeclaration)
                 {
                     ReportError("Only one 'open' declaration is allowed per algorithm.");
@@ -609,6 +631,12 @@ public sealed class Parser
                 Advance(); // consume 'open'
                 var openExprs = ParseOpenTargetList();
                 NormalizeAndValidateOpenForms(openExprs);
+                if (!isParametrized)
+                {
+                    // The span covers the whole declaration, keyword through
+                    // the last parsed target.
+                    ReportError(OpenDeclarationInParenthesesDiagnostic, MakeSpan(openToken));
+                }
                 opens.AddRange(openExprs);
             }
             // public open ... → reject
@@ -629,6 +657,11 @@ public sealed class Parser
                 if (declaredPropertyNames.Contains(name) || clauseGroups.ContainsKey(name))
                 {
                     ReportError($"Property '{name}' is already defined.");
+                }
+
+                if (!isParametrized)
+                {
+                    ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
                 }
 
                 Advance(); // consume identifier
@@ -657,6 +690,11 @@ public sealed class Parser
                     ReportError($"Property '{name}' is already defined.");
                 }
 
+                if (!isParametrized)
+                {
+                    ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
+                }
+
                 Advance(); // consume identifier
                 Advance(); // consume '='
                 var body = ParseOutputLine();
@@ -672,7 +710,7 @@ public sealed class Parser
             else if ((Current.Kind is TokenKind.Identifier or TokenKind.Star)
                 && LookaheadIsBindingPatternAssignment())
             {
-                ParseBindingPatternAssignment(properties, clauseGroups, declaredPropertyNames);
+                ParseBindingPatternAssignment(properties, clauseGroups, declaredPropertyNames, isParametrized);
             }
             // Clause definition: Name(pattern) = body
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
@@ -1118,11 +1156,16 @@ public sealed class Parser
     /// repeated star) reports a targeted diagnostic and binds the name as an
     /// ordinary fixed target — malformed recovery never creates a collecting
     /// binding.
+    /// <paramref name="isParametrized"/> is the enclosing
+    /// <see cref="ParseAlgorithm"/> context flag: deconstruction declares
+    /// properties, so inside a parenthesized (non-parametrized) context the
+    /// binding pattern reports the property-in-parentheses diagnostic.
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
         Dictionary<string, List<CondBranch>> clauseGroups,
-        HashSet<string> declaredPropertyNames)
+        HashSet<string> declaredPropertyNames,
+        bool isParametrized)
     {
         var targets = new List<BindingTarget>();
         while (true)
@@ -1178,17 +1221,28 @@ public sealed class Parser
             break;
         }
 
+        if (!isParametrized)
+        {
+            // The span covers the whole binding pattern, first marker/name
+            // through the last binding name.
+            var first = targets[0];
+            ReportError(
+                PropertyDeclarationInParenthesesDiagnostic,
+                CombineSpans(first.CollectMarkerSpan ?? first.NameSpan, targets[^1].NameSpan)!);
+        }
+
         Expect(TokenKind.Equals);
         var rhsBody = ParseOutputLine();
 
         if (targets.Count(static target => target.Kind == ParameterKind.Collecting) > 1)
         {
-            var firstCollectingSpan = targets
-                .First(static target => target.Kind == ParameterKind.Collecting)
-                .NameSpan!;
+            // The first collecting binding stays the diagnostic subject; its
+            // span covers the whole `*name`, marker included.
+            var firstCollecting = targets
+                .First(static target => target.Kind == ParameterKind.Collecting);
             ReportError(
                 "A deconstruction binding pattern may contain at most one collecting binding (`*name`).",
-                firstCollectingSpan);
+                CombineSpans(firstCollecting.CollectMarkerSpan, firstCollecting.NameSpan)!);
         }
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1395,32 +1449,89 @@ public sealed class Parser
     /// <summary>
     /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Grace"/> node in the list.
     /// Used to reject Grace in conditional branch bodies with accurate error location.
+    /// <para>MUST STAY ITERATIVE: this scan runs while clause families are still being
+    /// elaborated, BEFORE the finished root reaches the <see cref="AstStructuralPreflight"/>
+    /// gate in <see cref="ParseSyntax(string, PatternComparisonObservations?, int)"/>, so it
+    /// can receive composed trees (in-budget chains stacked inside in-budget container
+    /// levels) far deeper than any CLR-safe recursion depth.</para>
     /// </summary>
     private static SourceSpan? FindGraceSpan(IReadOnlyList<Expr> exprs)
     {
-        foreach (var expr in exprs)
-        {
-            var span = FindGraceSpan(expr);
-            if (span is not null)
-                return span;
-        }
-        return null;
+        var pending = new Stack<Expr>();
+        for (var i = exprs.Count - 1; i >= 0; i--)
+            pending.Push(exprs[i]);
+        return ScanPendingForGraceSpan(pending);
     }
 
-    private static SourceSpan? FindGraceSpan(Expr expr) => expr switch
+    private static SourceSpan? FindGraceSpan(Expr expr)
     {
-        Expr.Grace g => g.Span,
-        Expr.Binary(_, var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
-        Expr.Unary(_, var o) => FindGraceSpan(o),
-        Expr.Index(var t, var s) => FindGraceSpan(t) ?? FindGraceSpan(s),
-        Expr.SequenceConstruct(var l, var r) => FindGraceSpan(l) ?? FindGraceSpan(r),
-        Expr.SequenceSpread(var operand) => FindGraceSpan(operand),
-        Expr.ListLiteral(var items) => FindGraceSpan(items),
-        Expr.DotCall(var t, _, var a) => FindGraceSpan(t) ?? (a is not null ? FindGraceSpan(a.Output) : null),
-        Expr.Call(var f, var a) => FindGraceSpan(f) ?? FindGraceSpan(a.Output),
-        Expr.Block(var alg) => FindGraceSpan(alg.Output),
-        _ => null,
-    };
+        var pending = new Stack<Expr>();
+        pending.Push(expr);
+        return ScanPendingForGraceSpan(pending);
+    }
+
+    /// <summary>
+    /// Shared iterative core of both <c>FindGraceSpan</c> overloads: a depth-first,
+    /// source-order scan over an explicit heap stack. Children are pushed in reverse
+    /// so the LIFO stack yields them left to right, keeping the original first-match
+    /// span selection. Only the child positions the scan has always inspected are
+    /// pushed — argument/block OUTPUT rows but never opens, properties, or patterns,
+    /// and never a <see cref="Expr.Grace"/> node's Inner (a Grace is a match boundary:
+    /// it either supplies its span or, span-less, contributes nothing).
+    /// </summary>
+    private static SourceSpan? ScanPendingForGraceSpan(Stack<Expr> pending)
+    {
+        while (pending.Count > 0)
+        {
+            switch (pending.Pop())
+            {
+                case Expr.Grace g:
+                    if (g.Span is { } span)
+                        return span;
+                    break;
+                case Expr.Binary(_, var left, var right):
+                    pending.Push(right);
+                    pending.Push(left);
+                    break;
+                case Expr.Unary(_, var operand):
+                    pending.Push(operand);
+                    break;
+                case Expr.Index(var target, var selector):
+                    pending.Push(selector);
+                    pending.Push(target);
+                    break;
+                case Expr.SequenceConstruct(var left, var right):
+                    pending.Push(right);
+                    pending.Push(left);
+                    break;
+                case Expr.SequenceSpread(var operand):
+                    pending.Push(operand);
+                    break;
+                case Expr.ListLiteral(var items):
+                    PushInReverse(pending, items);
+                    break;
+                case Expr.DotCall(var target, _, var args):
+                    if (args is not null)
+                        PushInReverse(pending, args.Output);
+                    pending.Push(target);
+                    break;
+                case Expr.Call(var function, var args):
+                    PushInReverse(pending, args.Output);
+                    pending.Push(function);
+                    break;
+                case Expr.Block(var algorithm):
+                    PushInReverse(pending, algorithm.Output);
+                    break;
+            }
+        }
+        return null;
+
+        static void PushInReverse(Stack<Expr> pending, IReadOnlyList<Expr> exprs)
+        {
+            for (var i = exprs.Count - 1; i >= 0; i--)
+                pending.Push(exprs[i]);
+        }
+    }
 
     private static bool PatternContainsCollectingParameter(Pattern pattern)
         => pattern switch
@@ -1609,16 +1720,27 @@ public sealed class Parser
 
             case TokenKind.Tilde:
                 {
-                    while (Current.Kind == TokenKind.Tilde) Advance(); // skip prefix tildes
+                    var firstTilde = Current;
+                    var lastGraceToken = Current;
+                    while (Current.Kind == TokenKind.Tilde)
+                        lastGraceToken = Advance(); // skip prefix tildes
                     if (Current.Kind == TokenKind.Identifier)
                     {
                         var token = Advance();
-                        while (Current.Kind == TokenKind.Tilde) Advance(); // skip postfix tildes
-                        ReportError("Grace is not allowed in clause-head patterns.");
+                        lastGraceToken = token;
+                        while (Current.Kind == TokenKind.Tilde)
+                            lastGraceToken = Advance(); // skip postfix tildes
+                        ReportError(
+                            "Grace is not allowed in clause-head patterns.",
+                            CombineSpans(TokenSpan(firstTilde), TokenSpan(lastGraceToken))!);
                         return CreateBindingPattern(token);
                     }
 
-                    ReportError("Grace is not allowed in clause-head patterns.");
+                    // No identifier follows: the diagnostic covers the marker
+                    // run itself; the recovered atom reports its own errors.
+                    ReportError(
+                        "Grace is not allowed in clause-head patterns.",
+                        CombineSpans(TokenSpan(firstTilde), TokenSpan(lastGraceToken))!);
                     // Try to parse remaining atom for recovery. `~*name` reaches
                     // the collecting-binding atom below, so the grace error keeps
                     // the collecting binding.
@@ -1654,15 +1776,14 @@ public sealed class Parser
                     var token = Advance();
                     var name = token.StringValue!;
 
-                    var hadPostfixGrace = false;
+                    Token? lastPostfixTilde = null;
                     while (Current.Kind == TokenKind.Tilde)
-                    {
-                        hadPostfixGrace = true;
-                        Advance();
-                    }
+                        lastPostfixTilde = Advance();
 
-                    if (hadPostfixGrace)
-                        ReportError("Grace is not allowed in clause-head patterns.");
+                    if (lastPostfixTilde is not null)
+                        ReportError(
+                            "Grace is not allowed in clause-head patterns.",
+                            CombineSpans(TokenSpan(token), TokenSpan(lastPostfixTilde))!);
 
                     // Postfix `*` after a binding name is spread syntax, never
                     // binding syntax. Report the targeted marker-side diagnostic
@@ -1726,7 +1847,7 @@ public sealed class Parser
     /// become the algorithm's output list.
     /// If the body is a single algorithm-valued block expression, return its
     /// algorithm directly (enables nested property access like X.Y where
-    /// X = (Y = ...)). Plain sequence values such as <c>(a, b)</c> stay wrapped
+    /// X = { Y = ... }). Plain sequence values such as <c>(a, b)</c> stay wrapped
     /// as a single block output so callers can distinguish one sequence value
     /// from multiple top-level outputs.
     /// </summary>
@@ -2261,9 +2382,13 @@ public sealed class Parser
                     // init arguments stay intact so the evaluator can preserve explicit
                     // state-slot boundaries.
                     callArgs = MaybeLowerBuiltinDirectCallArgs(lhs, callArgs);
+                    // The complete call span (callee through the consumed ')'),
+                    // computed once so the arity diagnostic and the Call node
+                    // report the same source range.
+                    var callSpan = SpanFrom(lhs);
                     // Validate if arity.
-                    ValidateIfArity(lhs, callArgs);
-                    var call = new Expr.Call(lhs, callArgs) { Span = SpanFrom(lhs) };
+                    ValidateIfArity(lhs, callArgs, callSpan);
+                    var call = new Expr.Call(lhs, callArgs) { Span = callSpan };
                     lhs = GuardExpressionChainDepth(call, TokenSpan(callToken), lhs);
                     break;
 
@@ -2364,8 +2489,9 @@ public sealed class Parser
 
         // The leading spread argument slot always defers `if` arity to the
         // evaluator's spread expansion, exactly like `if(X*)`.
-        ValidateIfArity(callee, args);
-        var call = new Expr.Call(callee, args) { Span = SpanFrom(spreadReceiver) };
+        var callSpan = SpanFrom(spreadReceiver);
+        ValidateIfArity(callee, args, callSpan);
+        var call = new Expr.Call(callee, args) { Span = callSpan };
         return GuardExpressionChainDepth(call, TokenSpan(dotToken), spreadReceiver);
     }
 
@@ -2445,7 +2571,12 @@ public sealed class Parser
 
     private static bool ShouldUnwrapParenthesizedPrimary(Algorithm alg)
     {
-        if (alg.Properties.Count != 0 || alg.Output.Count != 1)
+        // Declarations inside parentheses are a parse error (reported at the
+        // declaration by ParseAlgorithm), so a group carrying opens or
+        // properties only reaches this point during error recovery. Keeping
+        // its algorithm layer preserves the parsed declarations for
+        // downstream tooling instead of silently discarding them.
+        if (alg.Opens.Count != 0 || alg.Properties.Count != 0 || alg.Output.Count != 1)
             return false;
 
         return alg.Output[0] switch
@@ -2688,8 +2819,11 @@ public sealed class Parser
     /// as <c>MyIF(a, b, c) = if(a, b, c)</c> called as <c>MyIF(X*)</c>.
     /// Without a spread the friendly parse-time diagnostic is preserved, so
     /// <c>if(X)</c>, <c>if(1, 2)</c>, and <c>if()</c> still fail here.
+    /// The diagnostic is reported at <paramref name="callSpan"/> — the span of
+    /// the whole offending call, the same span the caller assigns to the
+    /// resulting <see cref="Expr.Call"/> node.
     /// </summary>
-    private void ValidateIfArity(Expr callee, Algorithm args)
+    private void ValidateIfArity(Expr callee, Algorithm args, SourceSpan callSpan)
     {
         if (callee is Expr.Resolve("if"))
         {
@@ -2699,7 +2833,7 @@ public sealed class Parser
             var argCount = args.Output.Count;
             if (argCount != 3)
             {
-                ReportError($"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {argCount}.");
+                ReportError($"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {argCount}.", callSpan);
             }
         }
     }

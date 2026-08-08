@@ -2590,15 +2590,52 @@ Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case.
 
 ### Parametrized vs non-parametrized algorithms
 
-The distinction between braces and parentheses is critical:
+The distinction between braces and parentheses is critical. Each delimiter has one role:
 
 | Syntax | Meaning |
 |---|---|
-| `( ... )` | Non-parametrized sequence-value construction — evaluated in the enclosing scope; no new parameter scope |
-| `{ ... }` | Parametrized algorithm value — creates a new scope with its own inferred parameters |
+| `( ... )` | Non-parametrized sequence-value construction — evaluated in the enclosing scope; no new parameter scope and no declarations |
+| `[ ... ]` | Exact immutable list construction — element expressions only, no declarations |
+| `{ ... }` | Parametrized algorithm value — a new lexical scope that owns its inferred parameters, local declarations, and `open` |
 | `{a + 1}` | Parametrized algorithm with parameter `a`, passable as an argument |
 
 `{}` braces mark the passed algorithm as **parametrized** — it owns its own parameters (`a` in the example above). A **non-parametrized** `()` expression has no parameter scope of its own — any free names are absorbed by the enclosing algorithm instead.
+
+Only `{ ... }` creates an algorithm-level lexical scope, so only brace blocks (and the root) own declarations. Parentheses may group and compose output expressions, but an `open` declaration or a property/function definition inside `( ... )` is a parse error pointing you at braces:
+
+```
+M = {
+    public P = 5
+}
+
+Y = {
+    open M
+    P + 1
+}
+
+Y
+```
+
+**Result:** `6`
+
+Writing `Y = (open M ...)` or `(A = 5 ...)` instead is rejected — for example: "An 'open' declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm."
+
+A brace block works anywhere an expression-valued algorithm is allowed, including directly as a function argument. The block's own opens and local properties resolve inside the block; they never leak outward or become implicit parameters of the surrounding algorithm:
+
+```
+M = {
+    public P = 5
+}
+
+Identity(x) = x
+
+Identity({
+    open M
+    P + 1
+})
+```
+
+**Result:** `6`
 
 When a block has defined output and no free parameters, `{...}` and `(...)` produce the same result:
 
@@ -3660,7 +3697,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 - **Floating-point-backed precision:** trig, logarithm, square root, and power functions compute in double precision and normalize their results to about 15 significant digits, so residuals snap away — `Math.Sin(Math.Pi)` returns exactly `0`. The flip side: do not rely on more than 15 significant digits from these functions, while other irrational results (such as `Math.Sin(1)`) remain approximations.
 - **Parameter order surprises:** parameter order is determined by first appearance reading left to right. If your expression reads `b - a`, the first parameter is `b`, not `a`. Use Grace (`~`) to override when needed.
 - **`if` arity:** builtin `if` requires three arguments after spread expansion: `if(cond, a, b)`. There is no two-argument form. A grouped value is one argument, so `if(X)` is invalid when `X = 1, 2, 3`; spread it with `if(X*)` to supply the three slots.
-- **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value.
+- **`()` vs `{}` confusion:** `(expr)` groups an expression in the current scope. `{expr}` creates a new algorithm with its own parameters. Passing `(a + 1)` as an argument doesn't create a callable — it evaluates `a + 1` immediately in the enclosing scope. Bare `()` is the empty sequence value (a real value); bare `{}` is a no-output body and is not a value. Declarations follow the same split: `open` and property definitions belong to `{ ... }` blocks (or the root) and are parse errors inside `( ... )`.
 - **Ignoring a parameter:** there is no special "ignore" syntax for implicit parameters — every undeclared name becomes a required argument. If you want to accept and discard an argument, use an explicit parameter pattern. Bind the unwanted argument to a variable in the pattern, then simply don't reference it in the body:
 
   ```

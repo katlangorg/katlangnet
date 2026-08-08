@@ -1,2 +1,2 @@
 base = 7
-Wrap = (inner = base)
+Wrap = { inner = base }

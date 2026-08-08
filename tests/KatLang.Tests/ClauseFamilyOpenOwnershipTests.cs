@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class ClauseFamilyOpenOwnershipTests
 {
-    private const string Library = "Library = (\n    public Value = 7\n)\n";
+    private const string Library = "Library = {\n    public Value = 7\n}\n";
 
     /// <summary>Case(N): the pathological family — a literal clause head whose body is an
     /// unclosed parenthesis containing `open`.</summary>
@@ -65,26 +65,51 @@ public class ClauseFamilyOpenOwnershipTests
     }
 
     // ── Valid-program semantics preserved ────────────────────────────────────
+    // Under the delimiter model, a clause body that owns an open is written as
+    // a brace block (`{ ... }` is the scoped algorithm form); parentheses no
+    // longer carry declarations.
     [Fact]
     public void SingleLiteralClause_OpenStillResolves()
     {
-        var result = KatLangEngine.Run(Library + "F(0) = (\n    open Library\n    Value\n)\nF(0)\n");
+        var result = KatLangEngine.Run(Library + "F(0) = {\n    open Library\n    Value\n}\nF(0)\n");
         Assert.Equal("7", Assert.IsType<RunResult.Success>(result).ToDisplayString());
     }
 
     [Fact]
     public void CaptureClause_OrdinaryAlgorithm_OpenStillResolves()
     {
-        var result = KatLangEngine.Run(Library + "F(x) = (\n    open Library\n    Value\n)\nF(0)\n");
+        var result = KatLangEngine.Run(Library + "F(x) = {\n    open Library\n    Value\n}\nF(0)\n");
         Assert.Equal("7", Assert.IsType<RunResult.Success>(result).ToDisplayString());
     }
 
     [Theory]
-    // Multi-clause families already reject open-provided names (unchanged by this fix).
+    // The substantive invariant: clause-family branches OWN their opens
+    // (Conditional.Opens stays empty; each branch body carries its own), so an
+    // open-provided name resolves inside the branch body instead of becoming a
+    // phantom clause parameter that would mismatch the family.
+    [InlineData("F(0) = {\n    open Library\n    Value\n}\nF(y) = {\n    open Library\n    Value + y\n}\nF(0)\n", "7")]
+    [InlineData("F(0) = (\n    1\n)\nF(y) = {\n    open Library\n    Value + y\n}\nF(1)\n", "8")]
+    [InlineData("F(0) = {\n    open Library\n    Value\n}\nF(y) = {\n    open Library\n    Value + y\n}\nF(3)\n", "10")]
+    public void MultiClauseFamily_OpenProvidedName_ResolvesThroughBranchOwnedOpens(string tail, string expected)
+    {
+        var result = KatLangEngine.Run(Library + tail);
+        Assert.Equal(expected, Assert.IsType<RunResult.Success>(result).ToDisplayString());
+    }
+
+    [Theory]
+    // The former parenthesized spellings of the same programs are now parser
+    // rejections: `open` is an algorithm-level declaration and `( ... )` is
+    // sequence/grouping syntax only.
+    [InlineData("F(0) = (\n    open Library\n    Value\n)\nF(0)\n")]
+    [InlineData("F(x) = (\n    open Library\n    Value\n)\nF(0)\n")]
     [InlineData("F(0) = (\n    open Library\n    Value\n)\nF(y) = (\n    open Library\n    Value + y\n)\nF(0)\n")]
-    [InlineData("F(0) = (\n    1\n)\nF(y) = (\n    open Library\n    Value + y\n)\nF(1)\n")]
-    public void MultiClauseFamily_OpenProvidedName_StillRejected(string tail)
-        => Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(Library + tail));
+    public void ClauseBodyOpenInParentheses_IsRejectedByTheParser(string tail)
+    {
+        var result = KatLangEngine.Run(Library + tail);
+        var failure = Assert.IsType<RunResult.ParseFailure>(result);
+        Assert.Contains(failure.Errors, e => e.Message.Contains(
+            "An 'open' declaration is not allowed inside parentheses"));
+    }
 
     // ── Deterministic work-growth regression (no wall-clock assertions) ──────
     [Theory]

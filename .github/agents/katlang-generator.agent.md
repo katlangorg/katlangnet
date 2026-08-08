@@ -258,7 +258,7 @@ GOOD — assumed values in final call:
 - No objects, dictionaries, or tuples from other languages. KatLang's own collections are sequence values `(1, 2, 3)` and exact immutable lists `[1, 2, 3]` — do not import foreign array idioms (no indexing with `A[0]`, no mutation, no `.push`/`.append`).
 - Do not invent standard-library functions.
 - When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `# unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
-- Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `( ... )` or `{ ... }` only when the body contains nested property definitions (see Nested Properties).
+- Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `{ ... }` only when the body contains nested property definitions or an `open` (see Nested Properties); `( ... )` cannot hold declarations.
 - Do not generate multiple `open` declarations.
 - Do not put `public` on `open`.
 - For exported clause-style APIs, `public Name(pattern) = body` is valid, but every clause in that same-name family must include `public`; do not mix public and private clauses.
@@ -299,7 +299,7 @@ Before emitting code, verify silently:
 - No implicit parameter, branch binder, or helper placeholder shadows a builtin/prelude algorithm name.
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
-- Nested property bodies use `( ... )` or `{ ... }` correctly; simple property bodies are not wrapped.
+- Nested property bodies use `{ ... }`; `( ... )` cannot contain declarations; simple property bodies are not wrapped.
 - Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid only when `X` is known to supply exactly three values (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument `if`.
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
@@ -561,25 +561,17 @@ Unless numeric coding was explicitly part of the user's request.
 
 ## Parentheses vs Braces
 
-- `( ... )` — concrete values, sequence-value data, call arguments, multi-output branch bodies, and property bodies containing nested definitions.
+- `( ... )` — concrete values, sequence-value data, call arguments, and multi-output branch bodies. Never declarations.
 - `(expr*)` — one sequence-value result materialized from the spread items; without parentheses, `expr*` contributes the spread items to the surrounding item supply (output rows, call argument slots, or list/sequence elements) — it does not create or emit a sequence value by itself.
 - `{ ... }` — algorithm-valued expressions whose free identifiers become parameters; also property bodies containing nested definitions.
-- Both `( ... )` and `{ ... }` work identically for property bodies with nested definitions.
+- Only `{ ... }` creates an algorithm scope: `open` declarations and nested property/function definitions belong to brace blocks (or the root). Writing them inside `( ... )` is a parse error — parentheses group expressions and compose outputs only.
 - Simple property bodies (no nested definitions) are already implicitly parametrized — do not wrap them.
 
 ## Nested Properties
 
-Properties can contain nested property definitions using `( ... )` or `{ ... }` syntax. This enables modular organization and encapsulation.
+Properties can contain nested property definitions using `{ ... }` syntax. This enables modular organization and encapsulation. (`( ... )` cannot hold definitions — it is sequence/expression grouping only.)
 
 ### Syntax
-
-    Outer = (
-        Inner1 = expr1
-        Inner2 = expr2
-        output_expr
-    )
-
-or equivalently with braces:
 
     Outer = {
         Inner1 = expr1
@@ -1499,10 +1491,10 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 ### Nested properties: public library with open
 
     open Lib
-    public Lib = (
+    public Lib = {
         public Helper = x + 1
         public UseHelper = Helper(x)
-    )
+    }
     UseHelper(10)
 
 ### Single-clause explicit-parameter clause family: ignoring an unused parameter

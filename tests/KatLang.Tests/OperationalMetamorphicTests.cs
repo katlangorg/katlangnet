@@ -236,7 +236,7 @@ public class OperationalMetamorphicTests
     {
         // `Object.Value` is structural member access, NOT an extension-call rewriting, so
         // the dotted/ordinary relation does not apply to it. It is asserted directly.
-        Assert.Equal("ok", Observe("Object = (\n    public Value = 7\n)\nObject.Value").Semantic.Outcome);
+        Assert.Equal("ok", Observe("Object = {\n    public Value = 7\n}\nObject.Value").Semantic.Outcome);
     }
 
     // ── Relation 2: cached <= rebuilt (never equality) ───────────────────────
@@ -435,7 +435,7 @@ public class OperationalMetamorphicTests
     [Fact]
     public void WrapperParity_ParseAgreesWithTheFrontEndPipeline()
     {
-        foreach (var source in new[] { "1 + 2", "A = (\n    public B = 1\n)\nA.B", "M(-2, 2) = (open(o\n" })
+        foreach (var source in new[] { "1 + 2", "A = {\n    public B = 1\n}\nA.B", "M(-2, 2) = (open(o\n" })
         {
             var parsed = Parser.Parse(source);
             var pipeline = FrontEndPipeline.Process(source);
