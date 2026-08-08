@@ -15,7 +15,8 @@ Each row maps a semantic area to its Lean witness, C# owner, C# tests, and wheth
 | Sequence-value / recursive parameter patterns | `lean/KatLang.lean` parameter pattern semantics | `Evaluator.cs`, `Parser.cs` | `EvaluatorTests`, `ParserTests` | Yes |
 | Conditionals | `lean/KatLang.lean` conditional matching | `Ast.cs`, `Parser.cs`, `Evaluator.cs` | `EvaluatorTests`, `ParserTests` | Yes |
 | Loops, generic semantics | `lean/KatLang.lean` loop semantics | `Evaluator.cs` generic loop paths | `EvaluatorTests` loop coverage | Yes |
-| Optimized loops | Generic Lean loop semantics; optimizer is C#-only | `Optimizations/Loops/*`, optimized gates in `Evaluator.cs` | loop optimizer / optimized-vs-generic tests | No Lean update; equivalence tests required |
+| Optimized loops | Generic Lean loop semantics; optimizer is C#-only | `Optimizations/Loops/*`, optimized gates in `Evaluator.cs` | loop optimizer / optimized-vs-generic tests, `LoopPlannedIfDiagnosticParityTests` | No Lean update; equivalence tests required |
+| Optimized sequence pipelines (`filter` -> `count` fusion) | Generic Lean builtin/callback semantics; optimizer is C#-only | `Optimizations/Sequences/*`, optimized gates in `Evaluator.cs` | `EvaluatorTests` sequence-pipeline coverage, `FilterCountFusionSpanParityTests` | No Lean update; equivalence tests required |
 | Callbacks / higher-order sequence behavior | `lean/KatLang.lean` callback/sequence semantics | `Evaluator.cs` callback paths | `EvaluatorTests`, builtin tests | Yes for observable behavior |
 | Builtin observable behavior | `lean/KatLang.lean` builtin semantics | `BuiltinRegistry.cs`, `Evaluator.cs` | `BuiltinRuntimeParityTests`, `BuiltinRegistryParityTests` | Yes for observable behavior |
 | Spread expression (postfix `x*`) | `lean/KatLang.lean` spread semantics (`Result.spreadItems`) | `Parser.cs`, `Evaluator.cs` spread paths | `StarSyntaxTests`, `SequenceSpreadTests`, `EvaluatorTests` spread tests | Yes |

@@ -1704,6 +1704,30 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "spread-arguments-keep-written-order",
+            Category = "collection-builtins",
+            Source = "Lo = 2\nHi = 4\nrange(Lo*, Hi*)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[2, 3, 4]",
+            ExpectedRaw = "L[2, 3, 4]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LProp("Lo", ".num 2"), LProp("Hi", ".num 4")],
+                [LCall("range", ".sequenceSpread (.resolve \"Lo\")", ".sequenceSpread (.resolve \"Hi\")")]),
+            Probes =
+            [
+                // Swapping the written slots swaps the supplied arguments, so the
+                // expanded argument order really is the written order.
+                new SpecProbe("Lo = 2\nHi = 4\nrange(Hi*, Lo*)", "ok raw=L[4, 3, 2] n=1"),
+                // One spread slot supplying both bounds keeps its items in order too.
+                new SpecProbe("Bounds = 2, 4\nrange(Bounds*)", "ok raw=L[2, 3, 4] n=1"),
+                new SpecProbe("Bounds = 4, 2\nrange(Bounds*)", "ok raw=L[4, 3, 2] n=1"),
+            ],
+            Notes = "The order companion of `spread-arguments-fail-left-to-right`: correcting the evaluation ORDER of spread argument slots must not reorder the expanded argument VALUES.",
+            Explanation = "Expanding spread argument slots preserves written order: each slot contributes its items in place, so `range(Lo*, Hi*)` supplies `Lo`'s item before `Hi`'s.",
+        },
+        new()
+        {
             Id = "atoms-recursive-flatten",
             Category = "collection-builtins",
             Source = "atoms(((1, 2), (3, 4)))",
@@ -2315,6 +2339,31 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "div0",
             LeanProgram = LProg([], [".binary .div (.num 1) (.num 0)"]),
             Explanation = "Division by zero is a runtime error.",
+        },
+        new()
+        {
+            Id = "spread-arguments-fail-left-to-right",
+            Category = "errors",
+            Source = "P = 1 / 0\nQ = 'x' + 1\nrange(P*, Q*)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            LeanProgram = LProg(
+                [LProp("P", ".binary .div (.num 1) (.num 0)"),
+                 LProp("Q", ".binary .add (.stringLiteral \"x\") (.num 1)")],
+                [LCall("range", ".sequenceSpread (.resolve \"P\")", ".sequenceSpread (.resolve \"Q\")")]),
+            Probes =
+            [
+                // The mirrored spelling: whichever spread slot is written FIRST is the
+                // one whose failure is reported.
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrange(Q*, P*)", "err type"),
+                // The same rule at other builtins that expand spread arguments.
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nif(P*, Q*, 0)", "err div0"),
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nif(Q*, P*, 0)", "err type"),
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(P*, Q*, 1)", "err div0"),
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(Q*, P*, 1)", "err type"),
+            ],
+            Notes = "Pins the forced-spread evaluation ORDER, not just the reported category: each spread-marked slot is forced exactly once, left to right, and expanding a spread slot is part of evaluating that slot. Non-spread slots remain builtin-lazy algorithms at this stage (SpreadArgumentEvaluationOrderTests pins the mixed spread/non-spread interaction).",
+            Explanation = "Spread-marked argument slots are forced exactly once in left-to-right written order, so the leftmost failing spread slot's error is the one reported; non-spread argument slots remain builtin-lazy and are evaluated or skipped by the builtin's own semantics.",
         },
         new()
         {

@@ -478,7 +478,33 @@ public static class Evaluator
             ? new EvalError.WithContext(CtxDotCall(target, name, ctx), result.Error) { Span = result.Error.Span }
             : result;
 
-    private static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
+    /// <summary>
+    /// The generic call-expression DIAGNOSTIC BOUNDARY, reusable by an optimizer that
+    /// evaluates a planned call without going through <see cref="EvalCallExpr"/> /
+    /// <see cref="EvalCallCountedExpr"/>. It is exactly the composition those two
+    /// dispatch sites apply — <see cref="WithCallCtx{T}"/> inside
+    /// <see cref="WithSpan{T}"/> — so a planned call reports the same context frame,
+    /// the same callee spelling, the same resource-limit exemption, and the same
+    /// span attribution as the expression it replaces.
+    /// <paramref name="callExpr"/> and <paramref name="callee"/> must be the ORIGINAL
+    /// planned expressions, so span/context attribution cannot drift from the generic
+    /// evaluator's.
+    /// </summary>
+    internal static EvalResult<T> WithPlannedCallBoundary<T>(
+        Expr callExpr,
+        Expr callee,
+        EvalCtx ctx,
+        EvalResult<T> result)
+        => WithSpan(callExpr.Span, WithCallCtx(CallDiagnosticName.FromExpression(callee), ctx, result));
+
+    /// <summary>
+    /// Attaches an expression's span to an error that does not already carry a more
+    /// specific one. Internal rather than private so an optimizer that ELIDES an
+    /// expression node can reproduce that node's span attribution point instead of
+    /// letting the error float up to an enclosing expression (see
+    /// <c>SequencePipelineOptimizer.WithContext</c> for the fused filter expression).
+    /// </summary>
+    internal static EvalResult<T> WithSpan<T>(SourceSpan? span, EvalResult<T> result) =>
         result.IsError ? AtSpanIfMissing(result.Error, span) : result;
 
     /// <summary>

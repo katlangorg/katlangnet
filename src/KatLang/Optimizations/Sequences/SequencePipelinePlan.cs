@@ -78,9 +78,18 @@ internal abstract record FilterCountSourcePlan
     public sealed record DirectRange(Evaluator.InclusiveRange Range) : FilterCountSourcePlan;
 }
 
+/// <summary>
+/// The recognized surface syntax of a filter-count pipeline.
+/// <para><paramref name="FilterExpression"/> is the ORIGINAL <c>filter(...)</c> /
+/// <c>....filter(...)</c> expression node that fusion elides. The generic evaluator
+/// dispatches that node through <c>WithSpan(filterExpr.Span, ...)</c>, so the fused
+/// pipeline must carry it to reproduce the same span attribution; without it a
+/// span-less stage error is stamped with the ENCLOSING <c>count(...)</c> span.</para>
+/// </summary>
 internal readonly record struct FilterCountPipelineSyntax(
     FilterCountPipelineForm Form,
     Expr Source,
+    Expr FilterExpression,
     Algorithm? DotFilterArgs,
     Expr? PlainFilterFunction,
     Algorithm? PlainFilterArgs);

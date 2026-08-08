@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 158
+- specification surface cases: 160
 - excluded parse-level cases (Lean has no surface parser): 5
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 152
-- probe observations (C#-only by design): 210
+- Lean-guarded cases: 154
+- probe observations (C#-only by design): 218
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -568,6 +568,11 @@ def case_range_single_value : Expr :=
   .block (alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 3, .num 3])])
 #guard obs case_range_single_value == "ok raw=L[3] n=1"
 
+-- spread-arguments-keep-written-order [collection-builtins]: Lo = 2 \n Hi = 4 \n range(Lo*, Hi*)
+def case_spread_arguments_keep_written_order : Expr :=
+  .block (alg [] [] [privateProp "Lo" (alg [] [] [] [.num 2]), privateProp "Hi" (alg [] [] [] [.num 4])] [.call (.resolve "range") (alg [] [] [] [.sequenceSpread (.resolve "Lo"), .sequenceSpread (.resolve "Hi")])])
+#guard obs case_spread_arguments_keep_written_order == "ok raw=L[2, 3, 4] n=1"
+
 -- atoms-recursive-flatten [collection-builtins]: atoms(((1, 2), (3, 4)))
 def case_atoms_recursive_flatten : Expr :=
   .block (alg [] [] [] [.call (.resolve "atoms") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))])])
@@ -743,6 +748,11 @@ def case_division_by_zero : Expr :=
   .block (alg [] [] [] [.binary .div (.num 1) (.num 0)])
 #guard obs case_division_by_zero == "err div0"
 
+-- spread-arguments-fail-left-to-right [errors]: P = 1 / 0 \n Q = 'x' + 1 \n range(P*, Q*)
+def case_spread_arguments_fail_left_to_right : Expr :=
+  .block (alg [] [] [privateProp "P" (alg [] [] [] [.binary .div (.num 1) (.num 0)]), privateProp "Q" (alg [] [] [] [.binary .add (.stringLiteral "x") (.num 1)])] [.call (.resolve "range") (alg [] [] [] [.sequenceSpread (.resolve "P"), .sequenceSpread (.resolve "Q")])])
+#guard obs case_spread_arguments_fail_left_to_right == "err div0"
+
 -- unresolved-implicit-parameter [errors]: Nope
 def case_unresolved_implicit_parameter : Expr :=
   .block (alg ["Nope"] [] [] [.param "Nope"])
@@ -858,7 +868,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 152 canonical Lean-guarded specification cases.
+-- 154 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -960,6 +970,7 @@ def specCaseIds : List String := [
   "order-sorts-atoms",
   "range-inclusive",
   "range-single-value",
+  "spread-arguments-keep-written-order",
   "atoms-recursive-flatten",
   "atoms-exact-list-result",
   "atoms-list-traversal",
@@ -995,6 +1006,7 @@ def specCaseIds : List String := [
   "scalar-op-rejects-sequence",
   "order-rejects-non-numeric",
   "division-by-zero",
+  "spread-arguments-fail-left-to-right",
   "unresolved-implicit-parameter",
   "string-equality-exact",
   "string-displays-unquoted",
@@ -1019,6 +1031,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 152
+#guard specCaseIds.length == 154
 
 end LanguageSpecCases

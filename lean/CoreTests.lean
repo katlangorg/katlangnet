@@ -4297,6 +4297,116 @@ def test33 : Bool :=
 #guard test33
 
 --------------------------------------------------------------------------------
+-- spread builtin-argument evaluation ORDER tests
+-- `expandSequenceSpreadBuiltinArguments`: SPREAD-MARKED argument slots are forced
+-- exactly once, in left-to-right written order, and expanding a spread slot is
+-- part of evaluating that slot. Non-spread slots keep their written position but
+-- remain builtin-lazy algorithms at this stage — the builtin decides whether and
+-- when to evaluate them (an unselected `if` branch never runs). The helper
+-- formerly recursed into the remaining slots BEFORE evaluating the current spread
+-- slot, so two failing spread arguments reported the RIGHTMOST failure while C#
+-- reported the leftmost. C# parity:
+-- tests/KatLang.Tests/SpreadArgumentEvaluationOrderTests.cs and the generated
+-- LanguageSpecCases guards `spread-arguments-fail-left-to-right` /
+-- `spread-arguments-keep-written-order`.
+--------------------------------------------------------------------------------
+
+-- Two spread slots failing with DIFFERENT errors: the reported error identifies
+-- which slot was evaluated first, so each shape is pinned in both spellings.
+def spreadBuiltinArgumentFailingProps : List (Prod String Algorithm) :=
+  [("P", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
+   ("Q", alg [] [] [] [.binary .add (.stringLiteral "x") (.num 1)])]
+
+def spreadBuiltinArgumentProgram (callee : String) (args : List KatLang.Expr) : KatLang.Expr :=
+  .block (algPrivate [] [] spreadBuiltinArgumentFailingProps [
+    .call (resolve callee) (alg [] [] [] args)
+  ])
+
+def spreadP : KatLang.Expr := sequenceSpread (resolve "P")
+def spreadQ : KatLang.Expr := sequenceSpread (resolve "Q")
+
+-- range(P*, Q*) → the leftmost slot's division by zero.
+def spreadBuiltinArgumentsRangeFailLeftToRight : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "range" [spreadP, spreadQ]) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+#guard spreadBuiltinArgumentsRangeFailLeftToRight
+
+-- range(Q*, P*) → the mirrored spelling reports the type mismatch instead, so this
+-- is an ORDER rule, not an error-precedence rule.
+def spreadBuiltinArgumentsRangeMirroredFailsFirstSlot : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "range" [spreadQ, spreadP]) with
+  | Except.error err => innermostIsAnyTypeMismatch err
+  | _ => false
+
+#guard spreadBuiltinArgumentsRangeMirroredFailsFirstSlot
+
+-- if(P*, Q*, 0) / if(Q*, P*, 0) — expansion runs before `if` selects a branch.
+def spreadBuiltinArgumentsIfFailLeftToRight : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "if" [spreadP, spreadQ, .num 0]) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+#guard spreadBuiltinArgumentsIfFailLeftToRight
+
+def spreadBuiltinArgumentsIfMirroredFailsFirstSlot : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "if" [spreadQ, spreadP, .num 0]) with
+  | Except.error err => innermostIsAnyTypeMismatch err
+  | _ => false
+
+#guard spreadBuiltinArgumentsIfMirroredFailsFirstSlot
+
+-- repeat(P*, Q*, 1) / repeat(Q*, P*, 1) — expansion runs before the loop's own
+-- step/count/state binding.
+def spreadBuiltinArgumentsRepeatFailLeftToRight : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadP, spreadQ, .num 1]) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+#guard spreadBuiltinArgumentsRepeatFailLeftToRight
+
+def spreadBuiltinArgumentsRepeatMirroredFailsFirstSlot : Bool :=
+  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadQ, spreadP, .num 1]) with
+  | Except.error err => innermostIsAnyTypeMismatch err
+  | _ => false
+
+#guard spreadBuiltinArgumentsRepeatMirroredFailsFirstSlot
+
+-- Correcting the evaluation ORDER must not reorder the expanded argument VALUES:
+-- each slot still contributes its items in place.
+def spreadBuiltinArgumentBoundsProps : List (Prod String Algorithm) :=
+  [("Lo", alg [] [] [] [.num 2]), ("Hi", alg [] [] [] [.num 4])]
+
+def spreadBuiltinArgumentsKeepWrittenOrder : Bool :=
+  match runFlat (.block (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
+    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Lo"), sequenceSpread (resolve "Hi")])
+  ])) with
+  | Except.ok [2, 3, 4] => true
+  | _ => false
+
+#guard spreadBuiltinArgumentsKeepWrittenOrder
+
+def spreadBuiltinArgumentsMirroredOrderSwapsArguments : Bool :=
+  match runFlat (.block (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
+    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Hi"), sequenceSpread (resolve "Lo")])
+  ])) with
+  | Except.ok [4, 3, 2] => true
+  | _ => false
+
+#guard spreadBuiltinArgumentsMirroredOrderSwapsArguments
+
+-- One spread slot supplying BOTH arguments keeps its items in order too.
+def spreadBuiltinArgumentsSingleSlotKeepsItemOrder : Bool :=
+  match runFlat (.block (algPrivate [] [] [("Bounds", alg [] [] [] [.num 2, .num 4])] [
+    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Bounds")])
+  ])) with
+  | Except.ok [2, 3, 4] => true
+  | _ => false
+
+#guard spreadBuiltinArgumentsSingleSlotKeepsItemOrder
+
+--------------------------------------------------------------------------------
 -- String literal tests (first-class string values)
 --------------------------------------------------------------------------------
 

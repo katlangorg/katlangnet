@@ -4623,15 +4623,26 @@ mutual
   partial def expandSequenceSpreadBuiltinArguments
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Algorithm) := do
+    -- Spread-marked argument slots are forced exactly once, in left-to-right written
+    -- order, and expanding a spread slot is part of evaluating that slot: evaluate and
+    -- expand the CURRENT spread slot before recursing into the remaining ones, then
+    -- place its expansion before theirs. Non-spread slots pass through untouched as
+    -- algorithms — they keep their written position and remain builtin-lazy, evaluated
+    -- or skipped later by the builtin's own semantics (an unselected `if` branch never
+    -- runs). Recursing first still produced the correct flattened argument order, but
+    -- it ran the spread slots' effects and reported their failures right to left, so
+    -- two failing spread slots reported the RIGHTMOST failure while the C# runtime
+    -- reported the leftmost.
     let rec loop : List ResolvedArgumentAlgorithm -> EvalM (List Algorithm)
       | [] => pure []
       | arg :: rest => do
-          let tail <- loop rest
           if arg.spreadsSequence then
             let counted <- evalAlgOutputCounted arg.algorithm ctx env
             let expanded := (countedTopLevelValues counted).map (fun value => countedArgAlgorithm (value, 1))
+            let tail <- loop rest
             pure (expanded ++ tail)
           else
+            let tail <- loop rest
             pure (arg.algorithm :: tail)
     loop args
 

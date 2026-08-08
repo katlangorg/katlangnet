@@ -18,7 +18,14 @@ internal abstract record LoopExprPlan(Expr Source)
 
     public sealed record Binary(Expr Source, BinaryOp Op, LoopExprPlan Left, LoopExprPlan Right) : LoopExprPlan(Source);
 
-    public sealed record If(Expr Source, LoopExprPlan Condition, LoopExprPlan TrueBranch, LoopExprPlan FalseBranch) : LoopExprPlan(Source);
+    /// <summary>
+    /// A planned <c>if</c> call. <paramref name="Callee"/> is the ORIGINAL callee
+    /// expression of <paramref name="Source"/>, retained so the planned evaluation can
+    /// reproduce the generic call boundary's diagnostic context and span attribution
+    /// (<see cref="Evaluator.WithPlannedCallBoundary{T}"/>) instead of reconstructing
+    /// them.
+    /// </summary>
+    public sealed record If(Expr Source, Expr Callee, LoopExprPlan Condition, LoopExprPlan TrueBranch, LoopExprPlan FalseBranch) : LoopExprPlan(Source);
 
     public sealed record Fallback(Expr Source, string Reason) : LoopExprPlan(Source);
 }
@@ -132,7 +139,7 @@ internal static partial class LoopOptimizer
                 if (func is Expr.Resolve { Name: "if" }
                     && Evaluator.ResolvesToBuiltinAlgorithm("if", BuiltinId.@if, ctx))
                 {
-                    return TryBuildLoopIfExprPlan(expr, argsAlg, stateNames, ctx, parentValEnv, tempPlans);
+                    return TryBuildLoopIfExprPlan(expr, func, argsAlg, stateNames, ctx, parentValEnv, tempPlans);
                 }
 
                 if (func is Expr.Resolve(var tempName) && TryFindLoopTempPlan(tempPlans, tempName, out var calledTempPlan))
@@ -262,6 +269,7 @@ internal static partial class LoopOptimizer
 
     private static LoopExprPlanTryBuildResult TryBuildLoopIfExprPlan(
         Expr source,
+        Expr callee,
         Algorithm argsAlg,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
@@ -287,7 +295,7 @@ internal static partial class LoopOptimizer
             return new LoopExprPlanTryBuildResult(null, $"unsupported if false branch: {falsePlan.FallbackReason}");
 
         return new LoopExprPlanTryBuildResult(
-            new LoopExprPlan.If(source, conditionPlan.Plan, truePlan.Plan, falsePlan.Plan),
+            new LoopExprPlan.If(source, callee, conditionPlan.Plan, truePlan.Plan, falsePlan.Plan),
             null);
     }
 
@@ -377,17 +385,19 @@ internal static partial class LoopOptimizer
             }
 
             case LoopExprPlan.If ifPlan:
-            {
-                var conditionR = EvalLoopExprPlan(ifPlan.Condition, frame);
-                if (conditionR.IsError) return conditionR.Error;
-                frame.Diagnostics?.RecordPlannedBuiltinOperation();
-
-                var truth = PlannedTruthValue(conditionR.Value);
-                if (truth is null)
-                    return new EvalError.BadArity() { Span = ifPlan.Source.Span };
-
-                return EvalLoopExprPlan(truth.Value ? ifPlan.TrueBranch : ifPlan.FalseBranch, frame);
-            }
+                // A planned `if` REPLACES an ordinary `if` call expression, so its
+                // failures must carry the same diagnostic boundary the generic call
+                // dispatch attaches (`EvalCallExpr`/`EvalCallCountedExpr` inside
+                // `WithSpan`) — for a failing condition, for the selected branch, and
+                // for the `if`'s own truth-value rejection alike. Only the RETURNED
+                // result is decorated, so branch laziness, planned-operation counts,
+                // budget charges, and cache state are untouched, and a nested planned
+                // `if` nests its own frame exactly like the generic composition.
+                return Evaluator.WithPlannedCallBoundary(
+                    ifPlan.Source,
+                    ifPlan.Callee,
+                    frame.IterationCtx,
+                    EvalLoopIfExprPlanBody(ifPlan, frame));
 
             case LoopExprPlan.Fallback fallback:
             {
@@ -400,6 +410,33 @@ internal static partial class LoopOptimizer
             default:
                 throw new InvalidOperationException($"Unhandled loop expression plan: {plan.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// The complete logical evaluation of a planned <c>if</c>, WITHOUT the call
+    /// boundary. Kept separate so the boundary in <see cref="EvalLoopExprPlan"/>
+    /// covers every failure of this evaluation rather than one branch.
+    /// </summary>
+    private static EvalResult<PlannedLoopValue> EvalLoopIfExprPlanBody(
+        LoopExprPlan.If ifPlan,
+        LoopRunFrame frame)
+    {
+        var conditionR = EvalLoopExprPlan(ifPlan.Condition, frame);
+        if (conditionR.IsError) return conditionR.Error;
+        frame.Diagnostics?.RecordPlannedBuiltinOperation();
+
+        var truth = PlannedTruthValue(conditionR.Value);
+        if (truth is null)
+        {
+            // UNSPANNED, exactly like the generic `if` builtin's truth-value
+            // rejection: the surrounding call boundary stamps only the context
+            // wrappers (AtSpanIfMissing), and the innermost error's span is public
+            // structured state, so pre-stamping it here would be an observable
+            // divergence from the generic error tree.
+            return new EvalError.BadArity();
+        }
+
+        return EvalLoopExprPlan(truth.Value ? ifPlan.TrueBranch : ifPlan.FalseBranch, frame);
     }
 
     private static bool? PlannedTruthValue(PlannedLoopValue value)

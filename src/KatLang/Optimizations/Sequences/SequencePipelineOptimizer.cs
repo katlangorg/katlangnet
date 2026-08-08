@@ -156,6 +156,7 @@ internal static class SequencePipelineOptimizer
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.DotFilterDotCount,
                 source,
+                FilterExpression: target,
                 filterArgs,
                 PlainFilterFunction: null,
                 PlainFilterArgs: null);
@@ -203,6 +204,7 @@ internal static class SequencePipelineOptimizer
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.PlainCountDotFilter,
                 dotSource,
+                FilterExpression: countSource,
                 dotFilterArgs,
                 PlainFilterFunction: null,
                 PlainFilterArgs: null);
@@ -218,6 +220,7 @@ internal static class SequencePipelineOptimizer
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.PlainCountPlainFilter,
                 plainSource,
+                FilterExpression: countSource,
                 DotFilterArgs: null,
                 filterFunction,
                 plainFilterArgs);
@@ -241,6 +244,7 @@ internal static class SequencePipelineOptimizer
                 syntax = new FilterCountPipelineSyntax(
                     FilterCountPipelineForm.PlainCountDotFilter,
                     dotSource,
+                    FilterExpression: candidate,
                     dotFilterArgs,
                     PlainFilterFunction: null,
                     PlainFilterArgs: null);
@@ -256,6 +260,7 @@ internal static class SequencePipelineOptimizer
                 syntax = new FilterCountPipelineSyntax(
                     FilterCountPipelineForm.PlainCountPlainFilter,
                     plainSource,
+                    FilterExpression: candidate,
                     DotFilterArgs: null,
                     filterFunction,
                     plainFilterArgs);
@@ -783,15 +788,29 @@ internal static class SequencePipelineOptimizer
             _ => throw new InvalidOperationException($"Unsupported filter-count pipeline form '{syntax.Form}'."),
         };
 
+    /// <summary>
+    /// Reproduces the DIAGNOSTIC BOUNDARY of the <c>filter</c> expression that fusion
+    /// elided. The generic evaluator dispatches that expression as
+    /// <c>WithSpan(filterExpr.Span, WithCallCtx/WithDotCallCtx(...))</c>; the fused
+    /// pipeline never evaluates the node, so both halves have to be applied here.
+    /// <para>Without the span half, a stage error that arrives with NO span (a callback
+    /// <see cref="EvalError.BadArity"/>, for example) floated up to the enclosing
+    /// <c>count(...)</c> expression and was stamped with the count span. It is
+    /// <c>AtSpanIfMissing</c> semantics, so an error that already carries a more
+    /// specific inner span (a division by zero inside the predicate) keeps it.</para>
+    /// <para>Resource-limit errors never get extra CONTEXT, matching the evaluator: the
+    /// limit belongs to the run, not to the pipeline stage that happened to reach it.
+    /// Span attribution is unconditional, exactly as in <c>Evaluator.WithSpan</c>.</para>
+    /// </summary>
     private static EvalResult<T> WithContext<T>(
         FilterCountPipelineSyntax syntax,
         Evaluator.EvalCtx ctx,
         EvalResult<T> result)
-        // Resource-limit errors never get extra context, matching the evaluator: the limit
-        // belongs to the run, not to the pipeline stage that happened to reach it.
-        => result.IsError && !result.Error.IsResourceLimit
-            ? new EvalError.WithContext(EvaluationContext(syntax, ctx), result.Error) { Span = result.Error.Span }
-            : result;
+        => Evaluator.WithSpan(
+            syntax.FilterExpression.Span,
+            result.IsError && !result.Error.IsResourceLimit
+                ? new EvalError.WithContext(EvaluationContext(syntax, ctx), result.Error) { Span = result.Error.Span }
+                : result);
 
     private static void RecordFilterCountFallback(
         SequencePipelineDiagnostics? diagnostics,
