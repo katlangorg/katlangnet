@@ -1514,6 +1514,29 @@ def explicitParamsWithoutOutputRejectedAtRun : Bool :=
 
 #guard explicitParamsWithoutOutputRejectedAtRun
 
+-- The stored Algorithm.mk field is the parameter-pattern LIST: a legal pattern
+-- with ZERO captures (sequenceValue []) is still one explicit parameter
+-- pattern, so an algorithm carrying it with empty output violates the
+-- invariant in both root and property placement. C# twin:
+-- ExplicitParameterOutputValidationTests (the C# walker must test the stored
+-- ParameterPatterns list, not the flattened capture list).
+def zeroCaptureAlg : Algorithm :=
+  .mk none [KatLang.ParameterPattern.sequenceValue []] [] [] []
+
+def zeroCapturePatternWithoutOutputRejectedAtRoot : Bool :=
+  match runResult (.block zeroCaptureAlg) with
+  | Except.error err => innermostIsExplicitParamsRequireOutput err
+  | Except.ok _ => false
+
+#guard zeroCapturePatternWithoutOutputRejectedAtRoot
+
+def zeroCapturePatternWithoutOutputRejectedInPropertyPosition : Bool :=
+  match runResult (.block (algPrivate [] [] [("G", zeroCaptureAlg)] [.num 7])) with
+  | Except.error err => innermostIsExplicitParamsRequireOutput err
+  | Except.ok _ => false
+
+#guard zeroCapturePatternWithoutOutputRejectedInPropertyPosition
+
 def parameterizedChildPropertyContainer : Algorithm :=
   algPrivate [] [] [("Prop", alg ["x", "y"] [] [] [.num 7])] []
 
@@ -3934,6 +3957,56 @@ def test24 : Bool :=
   .binary .lt (.num 7) (.num 6),
   .num 1
 ])))
+
+-- The `if` arity payload is NORMATIVE: `if` requires exactly three arguments,
+-- so every reachable `if` arity failure carries expected = 3 (never the
+-- generic-builtin placeholder 0) with actual = the assembled argument count.
+-- Dot-call reproducers (`A = 1` / `A.if(2)`): the receiver is one leading
+-- argument, so the assembled arities are 2 and 4. C# twin:
+-- IfBuiltinArityPayloadTests (`WrongBuiltinArity` populates expected 3 for
+-- `if` alone; other builtins keep the placeholder on both sides).
+def ifDotCallUnderArityProgram : KatLang.Expr :=
+  .block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 2]))
+  ])
+
+def ifDotCallUnderArityCarriesExpectedThree : Bool :=
+  match runResult ifDotCallUnderArityProgram with
+  | Except.error err =>
+      hasContext "while evaluating dotCall .if of A" err
+        && hasContext "expected 3 arguments" err
+        && innermostIsArityMismatch 3 2 err
+  | Except.ok _ => false
+
+#guard ifDotCallUnderArityCarriesExpectedThree
+#eval runResult ifDotCallUnderArityProgram
+
+def ifDotCallOverArityProgram : KatLang.Expr :=
+  .block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 2, .num 3, .num 4]))
+  ])
+
+def ifDotCallOverArityCarriesExpectedThree : Bool :=
+  match runResult ifDotCallOverArityProgram with
+  | Except.error err =>
+      hasContext "while evaluating dotCall .if of A" err
+        && hasContext "expected 3 arguments" err
+        && innermostIsArityMismatch 3 4 err
+  | Except.ok _ => false
+
+#guard ifDotCallOverArityCarriesExpectedThree
+#eval runResult ifDotCallOverArityProgram
+
+-- Exactly three assembled arguments through the same dot-call surface still
+-- dispatch: `A.if(20, 30)` is `if(A, 20, 30)` = `if(1, 20, 30)` → 20.
+def ifDotCallExactArityStillDispatches : Bool :=
+  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 20, .num 30]))
+  ])) with
+  | Except.ok [20] => true
+  | _ => false
+
+#guard ifDotCallExactArityStillDispatches
 
 -- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3)*` with a
 -- 3-arg if that selects the else branch → [1, 9, 3]

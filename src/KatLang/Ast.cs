@@ -1257,9 +1257,9 @@ internal static class AlgorithmValidation
         // instances are per-call, so the memo is run-scoped and never shared.
         private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
 
-        // This walker only inspects parameter COUNTS (via Parameters.Count below), never individual
-        // declarations, so skip the per-declaration loop. That keeps validation of a wide assignment
-        // deconstruction linear instead of O(N^2) across its N synthetic N-capture helpers.
+        // This walker only inspects parameter COUNTS (via ParameterPatterns.Count below), never
+        // individual declarations, so skip the per-declaration loop. That keeps validation of a wide
+        // assignment deconstruction linear instead of O(N^2) across its N synthetic N-capture helpers.
         protected override bool VisitsExplicitParameterDeclarations => false;
 
         public override void VisitAlgorithm(Algorithm algorithm)
@@ -1332,11 +1332,15 @@ internal static class AlgorithmValidation
 
         protected override void VisitUserAlgorithm(Algorithm.User algorithm)
         {
-            // Use Parameters.Count, not Params.Count: Params is a computed property that
+            // Test the STORED parameter-pattern list, Lean's actual Algorithm.mk field
+            // (validateExplicitParamOutputInvariant checks !parameterPatterns.isEmpty):
+            // a legal pattern may contain zero captures (SequenceValueParameterPattern([])),
+            // so the flattened Parameters list can be empty while an explicit parameter
+            // pattern exists. Not Params.Count either: Params is a computed property that
             // materializes a fresh O(N) name list on every access, so touching it once per
             // algorithm makes walking a wide assignment deconstruction's N synthetic helpers
-            // O(N^2). Params is derived from Parameters, so the counts are always equal.
-            if (algorithm.Parameters.Count > 0 && algorithm.Output.Count == 0)
+            // O(N^2). ParameterPatterns is a stored list, so this stays an O(1) count check.
+            if (algorithm.ParameterPatterns.Count > 0 && algorithm.Output.Count == 0)
             {
                 var span = algorithm.ExplicitParameters.FirstOrDefault()?.Span;
                 Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span));

@@ -553,7 +553,15 @@ def builtinArityDesc : Builtin -> String
           | _ => "?"
 
 def builtinArityError (b : Builtin) (actual : Nat) : Error :=
-  Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch 0 actual)
+  -- The numeric payload mirrors the C# `WrongBuiltinArity`: `if` is the one
+  -- builtin whose expected count is populated (it requires exactly 3
+  -- arguments); every other builtin still carries the placeholder 0 beside
+  -- the descriptive `builtinArityDesc` context.
+  let expected : Nat :=
+    match b with
+    | .ifBuiltin => 3
+    | _ => 0
+  Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch expected actual)
 
 --------------------------------------------------------------------------------
 -- Patterns (for clause heads and conditional algorithms)
