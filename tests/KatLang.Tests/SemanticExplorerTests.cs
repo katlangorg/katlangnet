@@ -140,7 +140,8 @@ public class SemanticExplorerTests
 
             var equal = internalObs.Outcome == surfaceObs.Outcome
                 && internalObs.Raw == surfaceObs.Raw
-                && internalObs.Emitted == surfaceObs.Emitted;
+                && internalObs.Emitted == surfaceObs.Emitted
+                && internalObs.ErrorCategory == surfaceObs.ErrorCategory;
 
             if (internalCase.Relation == InternalNodeRelation.IntentionallyEqual && !equal)
             {

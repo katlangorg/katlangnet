@@ -5156,14 +5156,26 @@ mutual
         callLexicalWithReceiverCounted name target argsOpt ctx env
     | .error e => .error e
 
+  /-- Evaluate a spread operand and supply its immediate items. Spreading an
+      operand that has no defined output is the spread-specific
+      `spreadMissingOutput` error on EVERY operand shape — the direct `.block`
+      specialization translates a missing-output failure exactly like the
+      generic arm, so `{A = 1}*` and `X = {A = 1}` / `X*` agree.
+      C#: `EvalSequenceSpreadOperandItems`. -/
   partial def evalSequenceSpreadOperandItems (e : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM (List Result) := do
     match e with
     | .block a =>
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
-          let value <- evalAlgOutput wired ctx env
-          pure value.spreadItems
+          match <- evalAttempt (evalAlgOutput wired ctx env) with
+          | .ok value =>
+              pure value.spreadItems
+          | .error err =>
+              if isMissingOutputError err then
+                .error Error.spreadMissingOutput
+              else
+                .error err
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ =>

@@ -73,6 +73,11 @@ def innermostIsNoMatchingBranch (target : String) : Error -> Bool
   | .noMatchingBranch name => name = target
   | _ => false
 
+def innermostIsNotAnAlgorithm (desc : String) : Error -> Bool
+  | .withContext _ inner => innermostIsNotAnAlgorithm desc inner
+  | .notAnAlgorithm actual => actual = desc
+  | _ => false
+
 def innermostIsAnyTypeMismatch : Error -> Bool
   | .withContext _ inner => innermostIsAnyTypeMismatch inner
   | .typeMismatch _ => true
@@ -1043,6 +1048,57 @@ def spreadSeqLiteralEqualsFlatLiteral : Bool :=
 
 #guard spreadSeqLiteralEqualsFlatLiteral
 
+-- Spreading a DIRECT written block whose output is missing reports the
+-- spread-specific error, exactly like the generic operand arm (T4-2, Aug
+-- 2026): `{X = 1}*` is `spreadMissingOutput`, never raw `missingOutput`,
+-- and the rule holds at every spread position — root row, list element,
+-- and call-argument slot. C#: `EvalSequenceSpreadOperandItems` Block arm.
+def directBlockSpreadMissingOutput : Bool :=
+  match runResult (.block (alg [] [] [] [sequenceSpread (.block noOutputGroupAlg)])) with
+  | Except.error err => innermostIsSpreadMissingOutput err
+  | _ => false
+
+#guard directBlockSpreadMissingOutput
+
+def directBlockSpreadInListMissingOutput : Bool :=
+  match runResult (.block (alg [] [] [] [.listLiteral [sequenceSpread (.block noOutputGroupAlg)]])) with
+  | Except.error err => innermostIsSpreadMissingOutput err
+  | _ => false
+
+#guard directBlockSpreadInListMissingOutput
+
+def directBlockSpreadCallArgMissingOutput : Bool :=
+  match runResult (.block (algPrivate [] [] [("F", alg ["a"] [] [] [.param "a"])] [
+    .call (.resolve "F") (alg [] [] [] [sequenceSpread (.block noOutputGroupAlg)])
+  ])) with
+  | Except.error err => innermostIsSpreadMissingOutput err
+  | _ => false
+
+#guard directBlockSpreadCallArgMissingOutput
+
+-- Control: the resolved-name operand keeps its established behavior —
+-- `Bad = {X = 1}` then `Bad*` reports the same spread-specific error, so
+-- the direct-block and resolved spellings agree.
+def resolvedSpreadMissingOutput : Bool :=
+  match runResult (.block (algPrivate [] [] [("Bad", noOutputGroupAlg)] [
+    sequenceSpread (.resolve "Bad")
+  ])) with
+  | Except.error err => innermostIsSpreadMissingOutput err
+  | _ => false
+
+#guard resolvedSpreadMissingOutput
+
+-- Control: only the missing-output failure is translated — any other
+-- error from a direct block spread operand propagates unchanged.
+def directBlockSpreadOtherErrorPropagates : Bool :=
+  match runResult (.block (alg [] [] [] [
+    sequenceSpread (.block (alg [] [] [] [.resolve "nope"]))
+  ])) with
+  | Except.error err => innermostIsUnknownName "nope" err && !innermostIsSpreadMissingOutput err
+  | _ => false
+
+#guard directBlockSpreadOtherErrorPropagates
+
 -- INTERNAL-NODE CONTAINMENT (July 2026 audit). `sequenceConstruct` is an
 -- internal join node — NOT the representation of written parentheses, which
 -- parse to zero-parameter blocks. Its value evaluation DROPS `()` leaves
@@ -1295,6 +1351,19 @@ def spreadThenJoinIsOneSequenceValueArgument : Bool :=
   | _ => false
 
 #guard spreadThenJoinIsOneSequenceValueArgument
+
+-- An internal `sequenceConstruct` node in call-FUNCTION position cannot
+-- resolve to an algorithm; the structured payload is exactly
+-- "sequence construct expression" on both sides of the differential
+-- (T4-3, Aug 2026 — the C# `ResolveAlg` description must match verbatim).
+def sequenceConstructCallFunctionNotAnAlgorithm : Bool :=
+  match runResult (.block (alg [] [] [] [
+    .call (.sequenceConstruct (.num 1) (.num 2)) (alg [] [] [] [.num 3])
+  ])) with
+  | Except.error err => innermostIsNotAnAlgorithm "sequence construct expression" err
+  | _ => false
+
+#guard sequenceConstructCallFunctionNotAnAlgorithm
 
 -- Source `1` followed by `depth` attached spread markers is the unary chain
 -- `sequenceSpread (sequenceSpread (... (num 1)))`. Built tail-recursively to
@@ -4161,11 +4230,12 @@ def test25g : Bool :=
 
 -- A spread of a no-output operand fails with the spread
 -- missing-output diagnostic: source `bad*` is `sequenceSpread bad`, whose
--- single operand produces no output.
+-- single operand produces no output. The direct `.block` operand reports
+-- the spread-specific error, exactly like a resolved operand (T4-2).
 def test25h : Bool :=
   let bad := .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
   match runFlat (sequenceSpread bad) with
-  | Except.error err => innermostIsMissingOutput err
+  | Except.error err => innermostIsSpreadMissingOutput err
   | _ => false
 
 #guard test25h

@@ -595,6 +595,21 @@ public static class SemanticExplorerCorpus
         ("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)",
             LProg([LCollectingF, LVal("A", List12)],
                 [LCall("F", ".sequenceSpread (.resolve \"A\")", ".num 9")])),
+        // Spread of a DIRECT written block whose output is missing: the
+        // operand stays syntactically a Block, so evaluation takes the
+        // specialized Block arm of the spread-operand evaluator on both
+        // sides (Lean `evalSequenceSpreadOperandItems` `.block`; C#
+        // `EvalSequenceSpreadOperandItems`). Pinned as the spread-specific
+        // error at every spread position, identical to the resolved-name
+        // spelling (T4-2 — this arm was previously uncovered).
+        ("spreadNoOutputBlockRoot", "{A = 1}*",
+            LProg([], [$".sequenceSpread {NoOutputBlock}"])),
+        ("spreadNoOutputBlockList", "[{A = 1}*]",
+            LProg([], [$".listLiteral [.sequenceSpread {NoOutputBlock}]"])),
+        ("spreadNoOutputBlockCallArg", "F(a) = a\nF({A = 1}*)",
+            LProg([LFixed], [LCall("F", $".sequenceSpread {NoOutputBlock}")])),
+        ("spreadNoOutputResolved", "X = {A = 1}\nX*",
+            LProg([$"privateProp \"X\" {NoOutputAlg}"], [".sequenceSpread (.resolve \"X\")"])),
         // C#-only parse-level cases (no comparable Lean program).
         ("trailingComma", "(3,)", null),
         ("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*", null),
@@ -615,6 +630,11 @@ public static class SemanticExplorerCorpus
     private const string List12 = "(.listLiteral [.num 1, .num 2])";
 
     private const string List34 = "(.listLiteral [.num 3, .num 4])";
+
+    /// <summary>`{A = 1}` — a written block with one private property and no output rows.</summary>
+    private const string NoOutputAlg = "(alg [] [] [privateProp \"A\" (alg [] [] [] [.num 1])] [])";
+
+    private const string NoOutputBlock = $"(.block {NoOutputAlg})";
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
     //
@@ -695,6 +715,17 @@ public static class SemanticExplorerCorpus
             () => ScCall("sum", Sc(ScNum(1), ScNum(2))),
             ".call (.resolve \"sum\") (alg [] [] [] [.sequenceConstruct (.num 1) (.num 2)])",
             "sum((1, 2))", InternalNodeRelation.IntentionallyEqual),
+        // Call-FUNCTION position: the internal node cannot resolve to an
+        // algorithm (structured payload "sequence construct expression",
+        // Lean-aligned — T4-3), while the surface control calls a zero-parameter
+        // property (whose body is the written pair) with one argument and therefore
+        // gets an ordinary arity error — the error KINDS intentionally differ.
+        new("sc_call_function", "SequenceConstruct in call-function position is notAnAlgorithm",
+            () => new Expr.Call(
+                Sc(ScNum(1), ScNum(2)),
+                new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [ScNum(3)])),
+            ".call (.sequenceConstruct (.num 1) (.num 2)) (alg [] [] [] [.num 3])",
+            "X = (1, 2)\nX(3)", InternalNodeRelation.IntentionallyDifferent),
     ];
 
     /// <summary>All generated cases (template x value cross product plus specials).</summary>

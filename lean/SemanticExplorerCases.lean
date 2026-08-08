@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1495
+- surface corpus cases: 1499
 - excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1464
-- internal-node cases: 13
-- total generated guards: 1477 case guards + 2 count guards
+- Lean-representable surface cases: 1468
+- internal-node cases: 14
+- total generated guards: 1482 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -7407,12 +7407,32 @@ def case_special__listCollectingSpreadCall : Expr :=
   .block (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A"), .num 9])])
 #guard obs case_special__listCollectingSpreadCall == "ok raw=L[1, 2, 9] n=1"
 
+-- special__spreadNoOutputBlockRoot: {A = 1}*
+def case_special__spreadNoOutputBlockRoot : Expr :=
+  .block (alg [] [] [] [.sequenceSpread (.block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))])
+#guard obs case_special__spreadNoOutputBlockRoot == "err spreadMissingOutput"
+
+-- special__spreadNoOutputBlockList: [{A = 1}*]
+def case_special__spreadNoOutputBlockList : Expr :=
+  .block (alg [] [] [] [.listLiteral [.sequenceSpread (.block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))]])
+#guard obs case_special__spreadNoOutputBlockList == "err spreadMissingOutput"
+
+-- special__spreadNoOutputBlockCallArg: F(a) = a \n F({A = 1}*)
+def case_special__spreadNoOutputBlockCallArg : Expr :=
+  .block (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.block (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))])])
+#guard obs case_special__spreadNoOutputBlockCallArg == "err spreadMissingOutput"
+
+-- special__spreadNoOutputResolved: X = {A = 1} \n X*
+def case_special__spreadNoOutputResolved : Expr :=
+  .block (alg [] [] [privateProp "X" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [.sequenceSpread (.resolve "X")])
+#guard obs case_special__spreadNoOutputResolved == "err spreadMissingOutput"
+
 -- special__listLoneCollectingAssignment: *items = [1, 2, 3]
 def case_special__listLoneCollectingAssignment : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [])
 #guard obs case_special__listLoneCollectingAssignment == "err missingOutput"
 
--- 1464 differential cases.
+-- 1468 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -8883,9 +8903,13 @@ def surfaceCaseIds : List String := [
   "special__listInSeqSpreadKeepsList",
   "special__listFixedCallBoundary",
   "special__listCollectingSpreadCall",
+  "special__spreadNoOutputBlockRoot",
+  "special__spreadNoOutputBlockList",
+  "special__spreadNoOutputBlockCallArg",
+  "special__spreadNoOutputResolved",
   "special__listLoneCollectingAssignment"
 ]
-#guard surfaceCaseIds.length == 1464
+#guard surfaceCaseIds.length == 1468
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -8960,6 +8984,11 @@ def case_internal__sc_sum_arg : Expr :=
   .block (alg [] [] [] [.call (.resolve "sum") (alg [] [] [] [.sequenceConstruct (.num 1) (.num 2)])])
 #guard obs case_internal__sc_sum_arg == "ok raw=3 n=1"
 
+-- internal__sc_call_function: SequenceConstruct in call-function position is notAnAlgorithm
+def case_internal__sc_call_function : Expr :=
+  .block (alg [] [] [] [.call (.sequenceConstruct (.num 1) (.num 2)) (alg [] [] [] [.num 3])])
+#guard obs case_internal__sc_call_function == "err notAnAlgorithm"
+
 /--
 Machine-checked internal-node partition count (see the surfaceCaseIds note).
 -/
@@ -8976,10 +9005,11 @@ def internalNodeCaseIds : List String := [
   "internal__sc_take_collection",
   "internal__sc_take_collection_empty",
   "internal__sc_take_block_leaf",
-  "internal__sc_sum_arg"
+  "internal__sc_sum_arg",
+  "internal__sc_call_function"
 ]
-#guard internalNodeCaseIds.length == 13
+#guard internalNodeCaseIds.length == 14
 
--- 13 internal-node cases.
--- Total: 1477 case guards (1464 surface + 13 internal-node).
+-- 14 internal-node cases.
+-- Total: 1482 case guards (1468 surface + 14 internal-node).
 end SemanticExplorerCases

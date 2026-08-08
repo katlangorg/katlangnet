@@ -5184,7 +5184,9 @@ public static class Evaluator
                 {
                     _ = e1;
                     _ = e2;
-                    return new EvalError.NotAnAlgorithm("sequence construction expression") { Span = expr.Span };
+                    // Lean: notAnAlgorithm "sequence construct expression" — the
+                    // description is structured payload and must match exactly.
+                    return new EvalError.NotAnAlgorithm("sequence construct expression") { Span = expr.Span };
                 }
 
             case Expr.SequenceSpread(var operand):

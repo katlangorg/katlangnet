@@ -238,6 +238,44 @@ public class SequenceConstructContainmentTests
         Assert.NotEqual(internalObs.Neutral, surfaceObs.Neutral);
     }
 
+    /// <summary>
+    /// A <see cref="Expr.SequenceConstruct"/> in call-FUNCTION position cannot
+    /// resolve to an algorithm, and the structured
+    /// <see cref="EvalError.NotAnAlgorithm"/> DESCRIPTION payload is exactly
+    /// <c>"sequence construct expression"</c> — verbatim the Lean
+    /// <c>resolveAlg</c> table entry (T4-3). Pinned on both the plain and the
+    /// counted evaluation paths; only the payload is pinned here — the
+    /// surrounding call-context WORDING is allowed to differ between Lean and
+    /// C# under the alignment policy.
+    /// </summary>
+    [Fact]
+    public void SequenceConstructAsCallFunction_IsNotAnAlgorithmWithLeanAlignedDescription()
+    {
+        var call = new Expr.Call(
+            Sc(N(1), N(2)),
+            new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [N(3)]));
+        var root = new Expr.Block(new Algorithm.User(
+            Parent: null, Parameters: [], Opens: [], Properties: [], Output: [call]));
+
+        static EvalError Innermost(EvalError error)
+        {
+            while (error is EvalError.WithContext context)
+                error = context.Inner;
+
+            return error;
+        }
+
+        var plain = Evaluator.Run(root);
+        Assert.True(plain.IsError);
+        var plainError = Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(plain.Error));
+        Assert.Equal("sequence construct expression", plainError.Description);
+
+        var counted = Evaluator.RunCounted(root);
+        Assert.True(counted.IsError);
+        var countedError = Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(counted.Error));
+        Assert.Equal("sequence construct expression", countedError.Description);
+    }
+
     // ----- 4. lone SequenceConstruct builtin argument ---------------------------
     //
     // A lone SequenceConstruct argument to a builtin is an ordinary value

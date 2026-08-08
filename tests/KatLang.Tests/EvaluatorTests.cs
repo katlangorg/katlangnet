@@ -13548,6 +13548,42 @@ public class EvaluatorTests
     }
 
     [Fact]
+    public void Eval_SequenceSpread_DirectBlockOperandWithoutOutput_IsSpreadMissingOutput()
+    {
+        // The spread operand is SYNTACTICALLY a written block (`Expr.Block`),
+        // so evaluation takes the direct Block arm of the spread-operand
+        // evaluator rather than the generic expression arm. A no-output block
+        // operand must report the SAME spread-specific structured error as a
+        // resolved-name operand — never raw MissingOutput (T4-2; the Lean
+        // `.block` arm translates identically). Root row: span is the block
+        // `{A = 1}` (line 1, columns 1-7).
+        AssertSpreadMissingOutput("{A = 1}*", 1, 1, 1, 7);
+
+        // The same rule inside a list literal element slot.
+        AssertSpreadMissingOutput("[{A = 1}*]", 1, 2, 1, 8);
+
+        // And inside a call-argument slot: the structured kind stays
+        // SpreadMissingOutput under the call's context wrapper.
+        var callResult = EvalFull("F(a) = a\nF({A = 1}*)");
+        Assert.True(callResult.IsError);
+        var callError = callResult.Error;
+        while (callError is EvalError.WithContext context)
+            callError = context.Inner;
+
+        var callSpread = Assert.IsType<EvalError.SpreadMissingOutput>(callError);
+        Assert.NotNull(callSpread.Span);
+        Assert.Equal(2, callSpread.Span!.StartLineNumber);
+        Assert.Equal(3, callSpread.Span.StartColumn);
+        Assert.Equal(2, callSpread.Span.EndLineNumber);
+        Assert.Equal(9, callSpread.Span.EndColumn);
+
+        // Resolved-name control: reaching the same no-output block through a
+        // property keeps the identical structured error, so the direct and
+        // resolved spellings agree.
+        AssertSpreadMissingOutput("X = {A = 1}\nX*", 2, 1, 2, 1);
+    }
+
+    [Fact]
     public void Eval_SequenceSpreadThenMissingAdjacentExpression_FailsOutsideSpread()
     {
         // `3*, Bad` is the two expression-list slots `3*` and `Bad`. The
