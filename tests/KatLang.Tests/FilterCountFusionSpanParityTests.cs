@@ -22,7 +22,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class FilterCountFusionSpanParityTests
 {
-    private static Expr Program(string source) => new Expr.Block(Parser.Parse(source).Root);
+    private static Expr Program(string source) => new Expr.Block(SourceProvenance.ParseValid(source).Root);
 
     private static (EvalResult<Result> Result, SequencePipelineDiagnosticsSnapshot Stats) Run(
         string source,

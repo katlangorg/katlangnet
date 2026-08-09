@@ -81,6 +81,8 @@ public class OpenVisibilityCorpusFidelityTests
             "openBuiltinNameCollision",             // builtin-name collision
             "openBuiltinTargetIsIllegal",
             "structuralDotSeesPrivateMember",       // structural access is not exposure
+            "openPrivateMemberIsNotASecondProvider",     // hidden members never add ambiguity
+            "openLocalOnlyMemberIsNotASecondProvider",
         ];
 
         foreach (var id in required)
@@ -97,7 +99,9 @@ public class OpenVisibilityCorpusFidelityTests
         var unmodelled = new Expr.SequenceConstruct(new Expr.Num(1), new Expr.Num(2));
         Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(unmodelled));
 
-        var conditional = new Algorithm.Conditional(Parent: null, Opens: [], Branches: []);
-        Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(conditional));
+        // Algorithm.User and Algorithm.Conditional are modelled; Algorithm.Builtin
+        // is not (a prelude member never appears inside a source program's AST).
+        var builtin = new Algorithm.Builtin(BuiltinId.count);
+        Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(builtin));
     }
 }

@@ -892,6 +892,34 @@ public static class SemanticExplorerCorpus
         // Pinning both spellings keeps the two rules from collapsing into one.
         ("structuralDotSeesPrivateMember", "Lib = {\n    X = 101\n}\nLib.X",
             LProg([LibPrivateX], ["(.dotCall (.resolve \"Lib\") \"X\" none)"])),
+
+        // A member `open` must not expose cannot become a SECOND provider.
+        // The single-provider spelling cannot see this: the front end has
+        // already turned the unresolvable name into an implicit parameter, so
+        // the evaluator's exposure filter is never consulted. Pairing the hidden
+        // member with a visible one makes the filter decide between "resolves"
+        // and "ambiguous" (Track 11 mutants A5-A8 survived the whole suite
+        // without these).
+        ("openPrivateMemberIsNotASecondProvider",
+            "Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
+                    "privateProp \"Lib\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202])] [])",
+                    "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        ("openLocalOnlyMemberIsNotASecondProvider",
+            "Pub = {\n    public X = 101\n}\nLib(p) = {\n    public X = p + 202\n    X\n}\nA = {\n    open Pub, Lib\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
+                    "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
+                    "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
+                        + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 202))])] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
     ];
 
     // ----- open/visibility shared fragments ------------------------------------

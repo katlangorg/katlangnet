@@ -12,7 +12,7 @@ public class SequenceCallbackArgumentTests
 {
     private static EvalResult<Result> Eval(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = SourceProvenance.ParseValid(source).Root;
         return Evaluator.Run(new Expr.Block(ast));
     }
 

@@ -280,7 +280,7 @@ public class OperationalMetamorphicTests
     [InlineData("'abc'")]
     public void PlainCountedAndEngine_ProduceTheSameValue(string source)
     {
-        var expr = new Expr.Block(Parser.Parse(source).Root);
+        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
         var plain = Evaluator.Run(expr);
         var counted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance);
         var engine = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
@@ -428,8 +428,14 @@ public class OperationalMetamorphicTests
     [InlineData(20)]
     public void MalformedRecoveryFamily_GrowsLinearly(int n)
     {
+        // ERROR-TOLERANT by design: the subject IS malformed source, so this
+        // must NOT use the strict parse helper (Track 13). The property under
+        // test is that parser RECOVERY stays linear, not that the source is
+        // legal.
         var source = string.Concat(Enumerable.Repeat("M(-2, 2) = (open(o\n", n));
-        Assert.True(CountNodes(Parser.Parse(source).Root) <= 40 * n + 200);
+        var recovered = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.True(recovered.HasFrontEndErrors, "This family is intentionally malformed.");
+        Assert.True(CountNodes(recovered.Root) <= 40 * n + 200);
     }
 
     [Fact]
@@ -528,7 +534,7 @@ public class OperationalMetamorphicTests
         static EvalError RunError(string source, EvaluationLimits limits)
         {
             var result = Evaluator.RunCounted(
-                new Expr.Block(Parser.Parse(source).Root),
+                new Expr.Block(SourceProvenance.ParseValid(source).Root),
                 UncachedZeroArgPropertyResultCache.Instance,
                 limits);
             Assert.True(result.IsError);

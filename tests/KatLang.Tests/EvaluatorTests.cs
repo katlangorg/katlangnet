@@ -11,11 +11,36 @@ public class EvaluatorTests
     private const decimal KatPi = 3.1415926535897932384626433833m;
     private const decimal KatE = 2.7182818284590452353602874714m;
 
-    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+    /// <summary>
+    /// STRICT-SOURCE: parses, REQUIRES a clean front end, then evaluates.
+    ///
+    /// <para>
+    /// Track 13: these helpers previously took <c>Parser.Parse(source).Root</c>
+    /// and discarded <c>Diagnostics</c>, so a test whose source the parser
+    /// rejected still evaluated the recovery tree and could pass on an
+    /// unrelated failure — which is exactly how a test named for the
+    /// <c>NotPublicProperty</c> evaluator branch passed without ever reaching
+    /// it. Tests that intend malformed source must not use these helpers; see
+    /// <see cref="SourceProvenance.ParseAllowingDiagnostics"/>.
+    /// </para>
+    /// </summary>
+    private static Algorithm ParseValidRoot(string source)
     {
-        var ast = Parser.Parse(source).Root;
-        return Evaluator.RunFlat(new Expr.Block(ast));
+        var parsed = Parser.Parse(source);
+        if (parsed.HasErrors)
+        {
+            Assert.Fail(
+                "Evaluator test source must parse and elaborate cleanly, but the front end reported:"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => "  - " + d.Message.Split('\n')[0]))
+                + Environment.NewLine + "Source:" + Environment.NewLine + source);
+        }
+
+        return parsed.Root;
     }
+
+    private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
+        => Evaluator.RunFlat(new Expr.Block(ParseValidRoot(source)));
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source, bool enableLoopOptimization)
     {
@@ -32,7 +57,7 @@ public class EvaluatorTests
     /// </summary>
     private static EvalResult<IReadOnlyList<decimal>> EvalAllPublic(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         return Evaluator.RunFlat(new Expr.Block(MakeAllPublic(ast)));
     }
 
@@ -258,13 +283,13 @@ public class EvaluatorTests
 
     private static EvalResult<Result> EvalFull(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         return Evaluator.Run(new Expr.Block(ast));
     }
 
     private static EvalResult<Result> EvalFull(string source, bool enableLoopOptimization)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         return Evaluator.Run(
             new Expr.Block(ast),
             new RunScopedZeroArgPropertyResultCache(),
@@ -276,7 +301,7 @@ public class EvaluatorTests
         bool enableLoopOptimization,
         bool enableSequencePipelineOptimization)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         return Evaluator.Run(
             new Expr.Block(ast),
             new RunScopedZeroArgPropertyResultCache(),
@@ -290,7 +315,7 @@ public class EvaluatorTests
         string source,
         bool enableLoopOptimization = true)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         var diagnostics = new LoopOptimizationDiagnostics();
         var result = Evaluator.Run(
             new Expr.Block(ast),
@@ -304,7 +329,7 @@ public class EvaluatorTests
         string source,
         bool enableSequencePipelineOptimization = true)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         var diagnostics = new SequencePipelineDiagnostics();
         var result = Evaluator.Run(
             new Expr.Block(ast),
@@ -344,7 +369,7 @@ public class EvaluatorTests
             bool enableLoopOptimization = true,
             bool enableSequencePipelineOptimization = true)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         var loopDiagnostics = new LoopOptimizationDiagnostics();
         var sequenceDiagnostics = new SequencePipelineDiagnostics();
         var result = Evaluator.Run(
@@ -457,6 +482,29 @@ public class EvaluatorTests
     {
         var result = Eval(source);
         return result.IsError ? result.Error : null;
+    }
+
+    /// <summary>
+    /// ERROR-TOLERANT: evaluates a source the FRONT END has already rejected,
+    /// to confirm the parser's recovery tree does not accidentally produce a
+    /// value. Callers must have asserted the front-end diagnostic first — the
+    /// parse failure is the real coverage; this is only a belt-and-braces check
+    /// that recovery does not fabricate a result.
+    ///
+    /// <para>
+    /// Deliberately separate from the STRICT-SOURCE helpers (Track 13): those
+    /// now refuse to evaluate parse-invalid source precisely so a test cannot
+    /// claim evaluator coverage it does not have.
+    /// </para>
+    /// </summary>
+    private static void AssertFrontEndRejectedAndRecoveryTreeAlsoFails(string source)
+    {
+        var parsed = Parser.Parse(source);
+        Assert.True(parsed.HasErrors, $"Expected a front-end diagnostic for:{Environment.NewLine}{source}");
+
+        var result = Evaluator.RunFlat(new Expr.Block(MakeAllPublic(parsed.Root)));
+        if (result.IsOk)
+            Assert.Fail($"Recovery tree unexpectedly evaluated to: [{string.Join(", ", result.Value)}]");
     }
 
     private static void AssertArityMismatchMessage(string source, string expectedMessage)
@@ -787,7 +835,7 @@ public class EvaluatorTests
             Values.count + Values.count
             """;
 
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
 
         var first = Evaluator.Run(new Expr.Block(ast));
         var second = Evaluator.Run(new Expr.Block(ast));
@@ -1552,11 +1600,33 @@ public class EvaluatorTests
         AssertEvalCounted(program, 3, ResultFromAtoms(1, 2, 3));
     }
 
-    [Fact]
-    public void Eval_DefinitionSeparatedCommaSlotSpreadContributionInCallArguments_PreservesTwoArguments()
+    /// <summary>
+    /// Track 13: these four sources put a property declaration (<c>P = 9</c>)
+    /// inside a call's parentheses. The delimiter model made that a PARSER
+    /// error ("A property declaration is not allowed inside parentheses"), so
+    /// the argument-grouping behavior they were written to describe is no
+    /// longer expressible. They kept passing only because the evaluator helper
+    /// ignored parser diagnostics and ran the recovery tree.
+    ///
+    /// <para>
+    /// The grouping semantics itself is still covered at ROOT, where a
+    /// definition row between slots IS legal — see
+    /// <see cref="Eval_DefinitionSeparatedCommaSlotSpreadContribution_PreservesCommaStructure"/>.
+    /// What remains true for the parenthesized spelling is the rejection, so
+    /// that is what these now assert.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\n\nF(\nA\nP = 9\nB, C*\n)")]
+    [InlineData("F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\nF(\nA*, B\nP = 9\nC\n)")]
+    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA*, ()\nP = 9\nC\n)")]
+    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA*\nP = 9\nC\n)")]
+    public void Eval_DefinitionInsideCallParentheses_IsRejectedByTheParser(string source)
     {
-        var program = "F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\n\nF(\nA\nP = 9\nB, C*\n)";
-        AssertEval(program, 6);
+        var diagnostics = SourceProvenance.ExpectFrontEndError(source);
+        Assert.Contains(
+            diagnostics,
+            d => d.Message.Contains("property declaration is not allowed inside parentheses", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1571,20 +1641,15 @@ public class EvaluatorTests
         // forms are the two output rows 10 and -1, never the subtraction 9.
         => AssertEvalCounted(source, 2, ResultFromAtoms(10, -1));
 
-    [Theory]
-    [InlineData("F(a, b, c) = a + b + c\nA = 1\nB = 2\nC = 3\nF(\nA*, B\nP = 9\nC\n)")]
-    public void Eval_PostfixSpreadThenLaterOutputInCall_IsOneSequenceValueArgument(string source)
-        => AssertEval(source, 6);
-
-    [Theory]
-    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA*, ()\nP = 9\nC\n)")]
-    public void Eval_PostfixSpreadThenEmptyThenLaterOutputInCall_IsOneSequenceValueArgument(string source)
-        => AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 3);
-
-    [Theory]
-    [InlineData("F(a, b) = a + b\nA = 1\nC = 2\nF(\nA*\nP = 9\nC\n)")]
-    public void Eval_PostfixSpreadThenLaterOutputInCall_StaysOneJoinedArgument(string source)
-        => AssertEval(source, 3);
+    // The three `PostfixSpreadThen...InCall` tests that lived here asserted
+    // argument grouping around a `P = 9` declaration written INSIDE a call's
+    // parentheses. The delimiter model made that spelling a parser error, so
+    // their sources became illegal and they only kept passing because the
+    // evaluator helper ignored parser diagnostics (Track 13). Their sources are
+    // preserved as rejection cases in
+    // Eval_DefinitionInsideCallParentheses_IsRejectedByTheParser, and the
+    // grouping semantics itself remains covered at root by
+    // Eval_DefinitionSeparatedCommaSlotSpreadContribution_PreservesCommaStructure.
 
     [Theory]
     [InlineData("P\n= 1\nP")]
@@ -1892,7 +1957,7 @@ public class EvaluatorTests
     /// </summary>
     private static void AssertIndexErrorAgreesAcrossEvaluators(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         var plain = Evaluator.Run(new Expr.Block(ast));
         var counted = Evaluator.RunCounted(new Expr.Block(ast));
 
@@ -8788,9 +8853,9 @@ public class EvaluatorTests
     public void Eval_Open_UserDefinedModule()
     {
         var source = """
+            open M
             M = { public X = 42
             X }
-            open M
             X
             """;
         AssertEvalAllPublic(source, 42);
@@ -8813,7 +8878,7 @@ public class EvaluatorTests
         var parseResult = Parser.Parse(source);
         Assert.True(parseResult.HasErrors);
 
-        AssertEvalAllPublicFails(source);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
@@ -8833,7 +8898,7 @@ public class EvaluatorTests
             parseResult.Diagnostics,
             d => d.Message.Contains("Invalid open form: 'spread' is not allowed in open declarations"));
 
-        AssertEvalAllPublicFails(source);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
@@ -8864,8 +8929,8 @@ public class EvaluatorTests
     public void Eval_Open_DirectFunctionOpen()
     {
         var source = """
-            Lib = { public F = x + 1 }
             open Lib
+            Lib = { public F = x + 1 }
             F(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -8974,11 +9039,11 @@ public class EvaluatorTests
     public void Eval_Open_PrivateMemberRemainsHidden()
     {
         var source = """
+            open Vec
             Vec = {
                 Hidden = 10
                 public Test = 1
             }
-            open Vec
             Hidden
             """;
         var result = Eval(source);
@@ -8989,13 +9054,13 @@ public class EvaluatorTests
     public void Eval_Open_PublicMemberAmbiguityRemainsAnError()
     {
         var source = """
+            open A, B
             A = {
                 public Test = 1
             }
             B = {
                 public Test = 2
             }
-            open A, B
             Test
             """;
         var result = Eval(source);
@@ -9020,10 +9085,10 @@ public class EvaluatorTests
     public void Eval_Open_LibraryOpenWithNestedResolve()
     {
         var source = """
+            open Lib
             Lib = { public Helper = x + 1
               public UseHelper = Helper(x)
             }
-            open Lib
             UseHelper(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -9068,11 +9133,11 @@ public class EvaluatorTests
     {
         // A library can reference its own properties (sibling resolution works).
         var source = """
+            open Lib
             Lib = {
               public Helper = x + 1
               public UseHelper = Helper(x)
             }
-            open Lib
             UseHelper(10)
             """;
         AssertEvalAllPublic(source, 11);
@@ -12344,9 +12409,9 @@ public class EvaluatorTests
     public void Eval_Open_MultipleOpens()
     {
         var source = """
+            open A, B
             A = { public X = 1 }
             B = { public Y = 2 }
-            open A, B
             X + Y
             """;
         AssertEvalAllPublic(source, 3);
@@ -12357,9 +12422,9 @@ public class EvaluatorTests
     {
         // open Lib2, Lib3 → two separate opens; Val3 resolves from Lib3
         var source = """
+            open Lib2, Lib3
             Lib2 = { public Val2 = 20 }
             Lib3 = { public Val3 = 30 }
-            open Lib2, Lib3
             Val3
             """;
         AssertEvalAllPublic(source, 30);
@@ -12370,9 +12435,9 @@ public class EvaluatorTests
     {
         // Both A and B provide X â†’ ambiguity â†’ should fail
         var source = """
+            open A, B
             A = { public X = 1 }
             B = { public X = 2 }
-            open A, B
             X
             """;
         AssertEvalAllPublicFails(source);
@@ -12383,8 +12448,8 @@ public class EvaluatorTests
     {
         // Local property takes priority over imported name
         var source = """
-            Lib = { public X = 99 }
             open Lib
+            Lib = { public X = 99 }
             X = 1
             X
             """;
@@ -12407,27 +12472,29 @@ public class EvaluatorTests
         var parseResult = Parser.Parse(source);
         Assert.True(parseResult.HasErrors);
 
-        AssertEvalAllPublicFails(source);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
     public void Eval_Open_CommaList_OpensBothLibraries()
         // Comma is the open-target separator: one open declaration with a
         // comma-separated list opens both libraries, so X + Y = 3.
-        => AssertEvalAllPublic("A = { public X = 1 }\nB = { public Y = 2 }\nopen A, B\nX + Y", 3);
+        // (`open` must precede the definitions it targets; a lexically visible
+        // head defined later in the same body is explicitly supported.)
+        => AssertEvalAllPublic("open A, B\nA = { public X = 1 }\nB = { public Y = 2 }\nX + Y", 3);
 
     [Theory]
-    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A, B, C\nX + Y + Z")]
-    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A,\nB,\nC\nX + Y + Z")]
-    [InlineData("A = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nopen A\n, B\n, C\nX + Y + Z")]
+    [InlineData("open A, B, C\nA = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nX + Y + Z")]
+    [InlineData("open A,\nB,\nC\nA = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nX + Y + Z")]
+    [InlineData("open A\n, B\n, C\nA = { public X = 1 }\nB = { public Y = 2 }\nC = { public Z = 4 }\nX + Y + Z")]
     public void Eval_Open_CommaContinuationAcrossLines_OpensAllTargets(string source)
         // Trailing- and leading-comma continuation are equivalent to the
         // single-line list: all three libraries open, so X + Y + Z = 7.
         => AssertEvalAllPublic(source, 7);
 
     [Theory]
-    [InlineData("Lib = { public Sub = { public V = 7 } }\nopen Lib.Sub\nV")]
-    [InlineData("Lib = { public Sub = { public V = 7 } }\nopen Lib\n.Sub\nV")]
+    [InlineData("open Lib.Sub\nLib = { public Sub = { public V = 7 } }\nV")]
+    [InlineData("open Lib\n.Sub\nLib = { public Sub = { public V = 7 } }\nV")]
     public void Eval_Open_DottedTargetWithLeadingDotContinuation_OpensSameTarget(string source)
         // A leading '.' continues the dotted open target across the line,
         // so both spellings open Lib.Sub and V resolves to 7.
@@ -12443,7 +12510,7 @@ public class EvaluatorTests
         var parseResult = Parser.Parse(source);
         Assert.True(parseResult.HasErrors);
 
-        AssertEvalAllPublicFails(source);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
@@ -12451,12 +12518,12 @@ public class EvaluatorTests
     {
         // Lib1's opens should not be visible to the opener
         var source = """
+            open Lib1
             Inner = { public Z = 42 }
             Lib1 = {
                 open Inner
                 W = Z
             }
-            open Lib1
             Z
             """;
         // Z is not transitively visible â†’ fail
@@ -12469,8 +12536,8 @@ public class EvaluatorTests
         // "self" is no longer a keyword — it's now just an identifier.
         // Using it in open position fails because there's no algorithm named "self".
         var source = """
-            HiddenLib = { X = 42 }
             open self.HiddenLib
+            HiddenLib = { X = 42 }
             X
             """;
         AssertEvalFails(source);
@@ -12531,18 +12598,18 @@ public class EvaluatorTests
         // Open should see the public one but not the private one.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
+            open Lib
             public Lib = { public X = 42
             Y = 99 }
-            open Lib
             X
             """;
         AssertEval(source, 42);
 
         // Now try Y (private) â€” should fail
         var sourceY = """
+            open Lib
             public Lib = { public X = 42
             Y = 99 }
-            open Lib
             Y
             """;
         AssertEvalFails(sourceY);
@@ -12554,13 +12621,32 @@ public class EvaluatorTests
         // open Lib.Sub where Sub exists but is private → NotPublicProperty.
         // Lib doesn't need public (it's in the ownership chain), but Sub must
         // be public because it's an intermediate on the open path.
+        //
+        // Track 12: this test previously used a source with `open` written AFTER
+        // a property, which the PARSER rejects. `EvalFull` ignores parser
+        // diagnostics, so the test passed on an unrelated recovery-AST failure
+        // and never reached the branch it names. It also needs the second,
+        // valid provider: without a name that falls through to the opens, open
+        // resolution never runs at all, and the obvious `X` reference is turned
+        // into an implicit parameter before evaluation. See
+        // OpenPathResolutionBranchTests for the full pre-emption story.
         var source = """
-            Lib = { Sub = { public X = 42
-            X } }
-            open Lib.Sub
-            X
+            Pub = { public Y = 7 }
+            Lib = { Sub = { public X = 42 } }
+            A = {
+                open Lib.Sub, Pub
+                Y
+            }
+            A
             """;
-        AssertEvalFails(source);
+
+        var result = EvalFull(source);
+        if (result.IsOk)
+            Assert.Fail($"Expected NotPublicProperty but got: {result.Value}");
+
+        var notPublic = Assert.IsType<EvalError.NotPublicProperty>(Innermost(result.Error));
+        Assert.Equal("Lib", notPublic.ObjectDesc);
+        Assert.Equal("Sub", notPublic.PropertyName);
     }
 
     // â”€â”€ Open normalization acceptance tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -12570,8 +12656,8 @@ public class EvaluatorTests
     {
         // Acceptance A: Lib.Sub in open â†’ prop-path resolves correctly
         var source = """
-            public Lib = { public Sub = { public X = 1 } }
             open Lib.Sub
+            public Lib = { public Sub = { public X = 1 } }
             X
             """;
         AssertEval(source, 1);
@@ -12596,9 +12682,9 @@ public class EvaluatorTests
     {
         // Acceptance C: multiple opens with comma-separated form
         var source = """
+            open Lib2, Lib3
             public Lib2 = { public Val = 2 }
             public Lib3 = { public Val2 = 3 }
-            open Lib2, Lib3
             Val2
             """;
         AssertEval(source, 3);
@@ -12609,8 +12695,8 @@ public class EvaluatorTests
     {
         // Acceptance D: private intermediate on open path
         var source = """
-            Lib = { Sub = { public X = 1 } }
             open Lib.Sub
+            Lib = { Sub = { public X = 1 } }
             X
             """;
         AssertEvalFails(source);
@@ -12643,15 +12729,15 @@ public class EvaluatorTests
     {
         // Two opens provide the same public name â†’ AmbiguousOpen error
         var source = """
+            open A, B
             A = { public X = 1 }
             B = { public X = 2 }
-            open A, B
             X
             """;
         AssertEvalAllPublicFails(source);
 
         // Verify it's specifically an AmbiguousOpen error
-        var ast = Parser.Parse(source).Root;
+        var ast = ParseValidRoot(source);
         var publicAst = MakeAllPublic(ast);
         var result = Evaluator.RunFlat(new Expr.Block(publicAst));
         Assert.True(result.IsError);
@@ -12669,8 +12755,8 @@ public class EvaluatorTests
         // Opening a user-defined library with default visibility should
         // not expose any properties through opens.
         var source = """
-            Lib = { X = 42 }
             open Lib
+            Lib = { X = 42 }
             X
             """;
         // Without MakeAllPublic, X should NOT be visible through opens
@@ -12683,8 +12769,8 @@ public class EvaluatorTests
     public void Eval_PublicKeyword_OpenCanSeePublicProperty()
     {
         var source = """
-            Lib = { public Val = 42 }
             open Lib
+            Lib = { public Val = 42 }
             Val
             """;
         // Lib itself must also be public for open resolution to find it
@@ -12697,8 +12783,8 @@ public class EvaluatorTests
         // Full end-to-end: public keyword makes property visible through opens.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = { public Val = 42 }
             open Lib
+            public Lib = { public Val = 42 }
             Val
             """;
         AssertEval(source, 42);
@@ -12710,18 +12796,18 @@ public class EvaluatorTests
         // Library with one public and one private property
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
+            open Lib
             public Lib = { public X = 1
             Y = 2 }
-            open Lib
             X
             """;
         AssertEval(source, 1);
 
         // Y is private, should fail
         var sourceY = """
+            open Lib
             public Lib = { public X = 1
             Y = 2 }
-            open Lib
             Y
             """;
         AssertEvalFails(sourceY);
@@ -12732,8 +12818,8 @@ public class EvaluatorTests
     {
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = {public Val = 42}
             open Lib
+            public Lib = {public Val = 42}
             Val
             """;
         AssertEval(source, 42);
@@ -12748,8 +12834,8 @@ public class EvaluatorTests
         // Lean: shouldTreatAsImplicitParam uses lookupLexical which includes opens.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = { public val = 42 }
             open Lib
+            public Lib = { public val = 42 }
             val
             """;
         AssertEval(source, 42);
@@ -12761,8 +12847,8 @@ public class EvaluatorTests
         // Opened lowercase function name: should stay as Resolve, not become param.
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = { public inc = x + 1 }
             open Lib
+            public Lib = { public inc = x + 1 }
             inc(5)
             """;
         AssertEval(source, 6);
@@ -12774,8 +12860,8 @@ public class EvaluatorTests
         // "val" in F's body is visible through parent's opens (not a param of F).
         // Lean: opens expose public members only (lookupOpens via lookupPublicProp).
         var source = """
-            public Lib = { public val = 42 }
             open Lib
+            public Lib = { public val = 42 }
             F = val + 1
             F
             """;
@@ -15268,14 +15354,24 @@ public class EvaluatorTests
     [Fact]
     public void Eval_Conditional_ExtraImplicitParam_Rejected()
     {
-        // F(1, a) = a + b — b is not bound by pattern and not a resolved name
-        // This must fail because b is not a pattern binder and not lexically resolvable.
+        // F(1, a) = a + b — b is not bound by pattern and not a resolved name.
+        //
+        // Track 13: the rejection is a FRONT-END diagnostic (clause bodies take
+        // binders only from their pattern, so a free identifier is an
+        // elaboration error, not an evaluator one). The test previously routed
+        // through a helper that ignored parser diagnostics and evaluated the
+        // recovery tree, so it asserted "something failed" without saying which
+        // layer decided. Assert the owning layer explicitly.
         var source = """
             F(1, a) = a + b
             F(1, 5)
             """;
-        var error = GetEvalError(source);
-        Assert.NotNull(error);
+
+        var diagnostics = SourceProvenance.ExpectFrontEndError(source);
+        Assert.Contains(
+            diagnostics,
+            d => d.Message.Contains("is used in conditional branch", StringComparison.Ordinal)
+                && d.Message.Contains("not declared in the branch pattern", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -27,7 +27,7 @@ public class SpreadArgumentEvaluationOrderTests
 {
     private const string FailingSlots = "P = 1 / 0\nQ = 'x' + 1\n";
 
-    private static Expr Program(string source) => new Expr.Block(Parser.Parse(source).Root);
+    private static Expr Program(string source) => new Expr.Block(SourceProvenance.ParseValid(source).Root);
 
     private static EvalResult<Result> Eval(string source) => Evaluator.Run(Program(source));
 

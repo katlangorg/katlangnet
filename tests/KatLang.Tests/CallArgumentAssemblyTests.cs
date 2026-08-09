@@ -36,7 +36,7 @@ public class CallArgumentAssemblyTests
     /// </summary>
     private static Result EvaluateAllModes(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = SourceProvenance.ParseValid(source).Root;
         var expr = new Expr.Block(ast);
 
         var plainOptimized = Evaluator.Run(
@@ -66,8 +66,8 @@ public class CallArgumentAssemblyTests
 
     private static EvalError AssertFails(string source)
     {
-        var plain = Evaluator.Run(new Expr.Block(Parser.Parse(source).Root));
-        var counted = Evaluator.RunCounted(new Expr.Block(Parser.Parse(source).Root));
+        var plain = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root));
+        var counted = Evaluator.RunCounted(new Expr.Block(SourceProvenance.ParseValid(source).Root));
         Assert.True(plain.IsError, "expected plain evaluation to fail");
         Assert.True(counted.IsError, "expected counted evaluation to fail");
         Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));

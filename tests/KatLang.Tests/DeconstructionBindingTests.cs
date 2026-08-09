@@ -135,7 +135,7 @@ public class DeconstructionBindingTests
         // targets there are. A re-evaluation regression (inlining the RHS into each
         // target, or hoisting one source per target) would produce zero shared sources
         // or several, which this catches without relying on runtime non-determinism.
-        var root = (Algorithm.User)Parser.Parse(source).Root;
+        var root = (Algorithm.User)SourceProvenance.ParseValid(source).Root;
 
         var shared = Assert.Single(
             root.Properties, p => p.Name.StartsWith("$deconstruct$", StringComparison.Ordinal));
@@ -289,7 +289,7 @@ public class DeconstructionBindingTests
         // A scalar right-hand side is a one-item supply; matching it against two
         // fixed targets is an arity mismatch (expected 2, actual 1), not a generic
         // shape/BadArity failure.
-        var result = Evaluator.Run(new Expr.Block(Parser.Parse("x, y = 1\nx").Root));
+        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid("x, y = 1\nx").Root));
 
         Assert.True(result.IsError);
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));

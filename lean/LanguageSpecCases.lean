@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 160
+- specification surface cases: 163
 - excluded parse-level cases (Lean has no surface parser): 5
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 154
-- probe observations (C#-only by design): 218
+- Lean-guarded cases: 157
+- probe observations (C#-only by design): 227
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -382,6 +382,21 @@ def case_redundant_call_parens_canonical : Expr :=
 def case_call_spread_into_conditional_clauses : Expr :=
   .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, ⟨.sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")]⟩]), privateProp "A" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))])] [.call (.resolve "F") (alg [] [] [] [.sequenceSpread (.resolve "A")])])
 #guard obs case_call_spread_into_conditional_clauses == "ok raw=3 n=1"
+
+-- patterned-user-call-is-one-value-boundary [item-supply-vs-value]: F((x)) = 1, 2 \n F((7))
+def case_patterned_user_call_is_one_value_boundary : Expr :=
+  .block (alg [] [] [privateProp "F" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }]] [] [] [.num 1, .num 2])] [.call (.resolve "F") (alg [] [] [] [(.block (alg [] [] [] [.num 7]))])])
+#guard obs case_patterned_user_call_is_one_value_boundary == "ok raw=S[1, 2] n=1"
+
+-- conditional-singleton-head-binds-its-argument-whole [conditionals]: F((x)) = x \n F(n) = 0 \n F([1, 2])
+def case_conditional_singleton_head_binds_its_argument_whole : Expr :=
+  .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "x"]], (alg [] [] [] [.param "x"])⟩, ⟨.bind "n", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") (alg [] [] [] [(.listLiteral [.num 1, .num 2])]))])
+#guard obs case_conditional_singleton_head_binds_its_argument_whole == "ok raw=L[1, 2] n=1"
+
+-- conditional-clause-head-rejects-extra-arguments [conditionals]: F(0) = 1 \n F(n) = 2 \n F(1, 2)
+def case_conditional_clause_head_rejects_extra_arguments : Expr :=
+  .block (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "F") (alg [] [] [] [.num 1, .num 2]))])
+#guard obs case_conditional_clause_head_rejects_extra_arguments == "err branch"
 
 -- call-spread-dispatches-before-clause-selection [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (0, 0) \n F(A*)
 def case_call_spread_dispatches_before_clause_selection : Expr :=
@@ -868,7 +883,7 @@ def case_list_builtin_collection : Expr :=
   .block (alg [] [] [] [.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 154 canonical Lean-guarded specification cases.
+-- 157 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -933,6 +948,9 @@ def specCaseIds : List String := [
   "supply-vs-value-patterns",
   "redundant-call-parens-canonical",
   "call-spread-into-conditional-clauses",
+  "patterned-user-call-is-one-value-boundary",
+  "conditional-singleton-head-binds-its-argument-whole",
+  "conditional-clause-head-rejects-extra-arguments",
   "call-spread-dispatches-before-clause-selection",
   "call-spread-into-patterned-callee",
   "wrapped-pair-collapses",
@@ -1031,6 +1049,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 154
+#guard specCaseIds.length == 157
 
 end LanguageSpecCases

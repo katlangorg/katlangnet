@@ -38,6 +38,7 @@ public static class LanguageSpecCorpus
         "errors",
         "strings",
         "lists",
+        "conditionals",
     ];
 
     // ----- Lean program text helpers (same encoding as SemanticExplorerCorpus:
@@ -1111,6 +1112,73 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "Explicit call-site spread has identical meaning for every callable shape: `F(A*)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.",
             IncludeInGeneratorPrompt = true,
+        },
+        new()
+        {
+            Id = "patterned-user-call-is-one-value-boundary",
+            Category = "item-supply-vs-value",
+            Source = "F((x)) = 1, 2\nF((7))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 2)",
+            ExpectedRaw = "S[1, 2]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFnPat("F", [".sequenceValue [.capture { name := \"x\" }]"], LNums(1, 2))],
+                [LCall("F", LBlock(".num 7"))]),
+            Probes =
+            [
+                new SpecProbe("F((x)) = x, x\nF((7))", "ok raw=S[7, 7] n=1"),
+                new SpecProbe("F((x, y)) = x, y\nF((1, 2))", "ok raw=S[1, 2] n=1"),
+                // The flat-parameter spelling must reach the same boundary.
+                new SpecProbe("F(x) = 1, 2\nF(7)", "ok raw=S[1, 2] n=1"),
+            ],
+            Explanation = "A user call is a VALUE boundary on every callee shape, including a sequence-value-patterned one: the body's multi-slot output is combined into one value and the emitted count is re-counted to that value's own count (1). Body/root output accumulation is not a value boundary, so without the re-count the call would leak its body's two-slot supply into the caller and emit two rows instead of one.",
+        },
+        new()
+        {
+            Id = "conditional-singleton-head-binds-its-argument-whole",
+            Category = "conditionals",
+            Source = "F((x)) = x\nF(n) = 0\nF([1, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]",
+            ExpectedRaw = "L[1, 2]",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                ["privateProp \"F\" (.conditional none [] [" +
+                     "⟨.sequenceValue [.sequenceValue [.bind \"x\"]], (alg [] [] [] [.param \"x\"])⟩, " +
+                     "⟨.bind \"n\", (alg [] [] [] [.num 0])⟩])"],
+                ["(.call (.resolve \"F\") (alg [] [] [] [(.listLiteral [.num 1, .num 2])]))"]),
+            Probes =
+            [
+                // A SINGLETON list is not opened either: `x` binds `[7]`, not 7.
+                new SpecProbe("F((x)) = x\nF(n) = 0\nF([7])", "ok raw=L[7] n=1"),
+                // Control: a two-item SEQUENCE value has arity 2 against a
+                // one-element pattern, so it falls through to the next clause.
+                new SpecProbe("F((x)) = x\nF(n) = 0\nF((1, 2))", "ok raw=0 n=1"),
+                new SpecProbe("F((x)) = x\nF(n) = 0\nF(7)", "ok raw=7 n=1"),
+            ],
+            Explanation = "A singleton sequence-value clause head `(x)` matches ANY one argument whole via the scalar one-item rule: singleton sequence structure canonicalizes away during construction, so the pattern must also accept a non-sequence result as if it were a one-element sequence. It never opens the argument — an exact list binds entire, including a singleton list. Only a sequence value of a different arity fails the head.",
+        },
+        new()
+        {
+            Id = "conditional-clause-head-rejects-extra-arguments",
+            Category = "conditionals",
+            Source = "F(0) = 1\nF(n) = 2\nF(1, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "branch",
+            LeanProgram = LProg(
+                ["privateProp \"F\" (.conditional none [] [" +
+                     "⟨.litInt 0, (alg [] [] [] [.num 1])⟩, " +
+                     "⟨.bind \"n\", (alg [] [] [] [.num 2])⟩])"],
+                ["(.call (.resolve \"F\") (alg [] [] [] [.num 1, .num 2]))"]),
+            Probes =
+            [
+                // A literal head must not match on the first argument alone.
+                new SpecProbe("F(0) = 1\nF(n) = 2\nF(0, 9)", "err branch"),
+                new SpecProbe("F(0) = 1\nF(n) = 2\nF()", "err branch"),
+                new SpecProbe("F(0) = 1\nF(n) = 2\nF(1)", "ok raw=2 n=1"),
+            ],
+            Explanation = "A non-sequence clause head consumes exactly ONE explicit argument slot. Surplus arguments are never dropped: no clause of a one-argument family matches a two-argument call, so the family reports no matching branch rather than silently binding the first argument and discarding the rest.",
         },
         new()
         {

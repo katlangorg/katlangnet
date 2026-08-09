@@ -18,7 +18,7 @@ public class DeepValueRobustnessTests
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = SourceProvenance.ParseValid(source).Root;
         return Evaluator.RunFlat(new Expr.Block(ast));
     }
 

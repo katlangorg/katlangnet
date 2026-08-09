@@ -37,7 +37,7 @@ public class CollectingBindingTests
     /// </summary>
     private static Result EvaluateAllModes(string source)
     {
-        var ast = Parser.Parse(source).Root;
+        var ast = SourceProvenance.ParseValid(source).Root;
         var expr = new Expr.Block(ast);
 
         var plainOptimized = Evaluator.Run(

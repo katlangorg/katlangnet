@@ -34,7 +34,7 @@ public class DottedReceiverEvaluationTests
         for (long n = 0; n <= 2_000; n++)
         {
             var limits = new EvaluationLimits { MaxMaterializedItems = n == 0 ? 1 : n };
-            var expr = new Expr.Block(Parser.Parse(source).Root);
+            var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
             var result = optimize
                 ? Evaluator.Run(expr, limits)
                 : Evaluator.Run(
@@ -50,7 +50,7 @@ public class DottedReceiverEvaluationTests
 
     private static Result Value(string source)
     {
-        var result = Evaluator.Run(new Expr.Block(Parser.Parse(source).Root));
+        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root));
         if (result.IsError)
             Assert.Fail($"`{source}` failed: {KatLangError.FromEvalError(result.Error).Message}");
         return result.Value;
@@ -217,7 +217,7 @@ public class DottedReceiverEvaluationTests
     [InlineData("B(x) = x > 5\nrange(1, 10).filter(B).count")]
     public void PlainCountedAndEngine_Agree(string source)
     {
-        var expr = new Expr.Block(Parser.Parse(source).Root);
+        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
         var plain = Evaluator.Run(expr);
         var counted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance);
         var engine = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
@@ -260,8 +260,8 @@ public class DottedReceiverEvaluationTests
         {
             var limits = new EvaluationLimits { MaxMaterializedItems = budget };
             Assert.Equal(
-                Evaluator.Run(new Expr.Block(Parser.Parse(ordinary).Root), limits).IsError,
-                Evaluator.Run(new Expr.Block(Parser.Parse(dotted).Root), limits).IsError);
+                Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(ordinary).Root), limits).IsError,
+                Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(dotted).Root), limits).IsError);
         }
     }
 
@@ -461,8 +461,8 @@ public class DottedReceiverEvaluationTests
         {
             var limits = new EvaluationLimits { MaxMaterializedItems = budget };
             Assert.Equal(
-                Evaluator.Run(new Expr.Block(Parser.Parse(ordinary).Root), limits).IsError,
-                Evaluator.Run(new Expr.Block(Parser.Parse(dotted).Root), limits).IsError);
+                Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(ordinary).Root), limits).IsError,
+                Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(dotted).Root), limits).IsError);
         }
     }
 

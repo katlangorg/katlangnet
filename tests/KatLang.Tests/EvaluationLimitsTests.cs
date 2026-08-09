@@ -18,7 +18,7 @@ public class EvaluationLimitsTests
     private const string CountDown = "f(0) = 0\nf(n) = f(n - 1)\n";
 
     private static EvalResult<Result> Eval(string source, EvaluationLimits? limits = null)
-        => Evaluator.Run(new Expr.Block(Parser.Parse(source).Root), limits);
+        => Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), limits);
 
     private static EvalError ErrorOf(string source, EvaluationLimits? limits = null)
     {
@@ -253,7 +253,7 @@ public class EvaluationLimitsTests
     /// <summary>Every entry point, reduced to "did this program complete?".</summary>
     private static IReadOnlyList<(string Entry, bool Completed)> AllEntryPoints(string source, EvaluationLimits? limits)
     {
-        var expr = new Expr.Block(Parser.Parse(source).Root);
+        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
         var options = new RunOptions { EvaluationLimits = limits };
 
         bool atomsCompleted;

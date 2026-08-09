@@ -63,10 +63,20 @@ public static class LeanAstEncoder
 
     public static string EncodeAlgorithm(Algorithm algorithm)
     {
+        if (algorithm is Algorithm.Conditional conditional)
+        {
+            var conditionalOpens = EncodeList(conditional.Opens, EncodeExpr);
+            var branches = EncodeList(
+                conditional.Branches,
+                branch => $"⟨{EncodePattern(branch.Pattern)}, {EncodeAlgorithm(branch.Body)}⟩");
+            return $"(.conditional none [{conditionalOpens}] [{branches}])";
+        }
+
         if (algorithm is not Algorithm.User user)
         {
             throw new NotSupportedException(
-                $"{nameof(LeanAstEncoder)} covers Algorithm.User only, not {algorithm.GetType().Name}.");
+                $"{nameof(LeanAstEncoder)} covers Algorithm.User and Algorithm.Conditional, " +
+                $"not {algorithm.GetType().Name}.");
         }
 
         foreach (var parameter in user.Parameters)
@@ -77,6 +87,17 @@ public static class LeanAstEncoder
                     $"{nameof(LeanAstEncoder)} covers normal parameters only ('{parameter.Name}' is {parameter.Kind}); " +
                     "a collecting or patterned parameter needs algWithParameters/algWithParameterPatterns.");
             }
+        }
+
+        // `Parameters` is the FLATTENED capture list, so a sequence-value
+        // parameter pattern such as `F((x))` would encode as the indistinguishable
+        // `alg ["x"]` and quietly assert a different program than the source
+        // means — exactly the Track 9 fidelity failure mode. Refuse instead.
+        if (user.ParameterPatterns.Any(static pattern => pattern is not CaptureParameterPattern))
+        {
+            throw new NotSupportedException(
+                $"{nameof(LeanAstEncoder)} cannot encode a non-capture parameter pattern; " +
+                "`alg [names]` would erase the pattern structure. Use algWithParameterPatterns by hand.");
         }
 
         var parameters = EncodeList(user.Parameters, static p => $"\"{p.Name}\"");
@@ -102,6 +123,22 @@ public static class LeanAstEncoder
             (true, var exposure) => $"publicLocalProp \"{property.Name}\" .{EncodeExposure(exposure)} {value}",
         };
     }
+
+    /// <summary>
+    /// Conditional clause head. Pattern SHAPE is load-bearing: a singleton
+    /// <c>sequenceValue [bind]</c> head (written <c>F((x))</c>) is a different
+    /// clause from a bare <c>bind</c> head (written <c>F(x)</c>), and only the
+    /// former exercises the documented whole-argument singleton rule.
+    /// </summary>
+    public static string EncodePattern(Pattern pattern) => pattern switch
+    {
+        Pattern.Bind(var name) => $".bind \"{name}\"",
+        Pattern.LitInt(var value) => $".litInt {EncodeNumber(value)}",
+        Pattern.LitString(var value) => $".litString \"{value}\"",
+        Pattern.SequenceValue(var items) => $".sequenceValue [{EncodeList(items, EncodePattern)}]",
+        _ => throw new NotSupportedException(
+            $"{nameof(LeanAstEncoder)} does not cover pattern {pattern.GetType().Name}."),
+    };
 
     private static string EncodeExposure(PropertyExposure exposure) => exposure switch
     {

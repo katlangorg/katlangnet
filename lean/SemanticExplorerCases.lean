@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1557
+- surface corpus cases: 1559
 - excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1526
+- Lean-representable surface cases: 1528
 - internal-node cases: 14
-- total generated guards: 1540 case guards + 2 count guards
+- total generated guards: 1542 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -7722,7 +7722,17 @@ def case_special__structuralDotSeesPrivateMember : Expr :=
   .block (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] [])] [(.dotCall (.resolve "Lib") "X" none)])
 #guard obs case_special__structuralDotSeesPrivateMember == "ok raw=101 n=1"
 
--- 1526 differential cases.
+-- special__openPrivateMemberIsNotASecondProvider: Pub = { \n     public X = 101 \n } \n Lib = { \n     X = 202 \n } \n A = { \n     open Pub, Lib \n     X \n } \n A
+def case_special__openPrivateMemberIsNotASecondProvider : Expr :=
+  .block (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openPrivateMemberIsNotASecondProvider == "ok raw=101 n=1"
+
+-- special__openLocalOnlyMemberIsNotASecondProvider: Pub = { \n     public X = 101 \n } \n Lib(p) = { \n     public X = p + 202 \n     X \n } \n A = { \n     open Pub, Lib \n     X \n } \n A
+def case_special__openLocalOnlyMemberIsNotASecondProvider : Expr :=
+  .block (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg ["p"] [] [publicLocalProp "X" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 202))])] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openLocalOnlyMemberIsNotASecondProvider == "ok raw=101 n=1"
+
+-- 1528 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -9255,9 +9265,11 @@ def surfaceCaseIds : List String := [
   "special__openHeadDefinedLater",
   "special__openBuiltinNameCollision",
   "special__openBuiltinTargetIsIllegal",
-  "special__structuralDotSeesPrivateMember"
+  "special__structuralDotSeesPrivateMember",
+  "special__openPrivateMemberIsNotASecondProvider",
+  "special__openLocalOnlyMemberIsNotASecondProvider"
 ]
-#guard surfaceCaseIds.length == 1526
+#guard surfaceCaseIds.length == 1528
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -9359,5 +9371,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 1540 case guards (1526 surface + 14 internal-node).
+-- Total: 1542 case guards (1528 surface + 14 internal-node).
 end SemanticExplorerCases

@@ -18,7 +18,7 @@ namespace KatLang.Tests;
 public class StringAndDisplayLimitsTests
 {
     private static EvalResult<Result> Eval(string source, EvaluationLimits? limits = null)
-        => Evaluator.Run(new Expr.Block(Parser.Parse(source).Root), limits);
+        => Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), limits);
 
     private static EvalError ErrorOf(string source, EvaluationLimits? limits = null)
     {
