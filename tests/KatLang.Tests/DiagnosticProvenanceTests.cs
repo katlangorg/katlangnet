@@ -98,6 +98,30 @@ public class DiagnosticProvenanceTests
         Assert.Equal(new Result.Atom(5), EvaluatesTo(source));
     }
 
+    /// <summary>
+    /// `open` must precede every property and output row in its algorithm — a
+    /// PARSER rule, and the one that 35 accidentally-invalid `EvaluatorTests`
+    /// sources were unknowingly relying on (Track 13 repaired them by moving
+    /// `open` to the front; Track 14 found the rule itself had no test at all).
+    ///
+    /// <para>
+    /// The counterpart is also pinned: a target defined LATER in the same body
+    /// is explicitly legal, which is why the repair preserved every test's
+    /// intent rather than changing what it asserted.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OpenMustPrecedePropertiesButMayTargetALaterDefinition()
+    {
+        var diagnostics = SourceProvenance.ExpectFrontEndError("A = { public X = 1 }\nopen A\nX");
+        Assert.Contains(
+            diagnostics,
+            d => d.Message.Contains("'open' declaration must appear before any properties", StringComparison.Ordinal));
+
+        // Same program, `open` first: legal, and the later definition resolves.
+        Assert.Equal(new Result.Atom(1), EvaluatesTo("open A\nA = { public X = 1 }\nX"));
+    }
+
     // ── Conditional accessed as a value ───────────────────────────────────────
 
     /// <summary>

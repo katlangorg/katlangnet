@@ -45,7 +45,7 @@ public class StringAndDisplayLimitsTests
 
     private static Expr BuildStringRepeatAst(string value, long count)
     {
-        var parsed = Parser.Parse($"Step(x) = 'placeholder'\nStep.repeat({count}, 0)").Root;
+        var parsed = SourceProvenance.ParseValid($"Step(x) = 'placeholder'\nStep.repeat({count}, 0)").Root;
         var properties = parsed.Properties.Select(property =>
         {
             if (property.Name != "Step") return property;

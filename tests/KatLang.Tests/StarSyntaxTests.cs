@@ -655,11 +655,11 @@ public class StarSyntaxTests
         // the ungrouped form is a Call with the spread as leading argument,
         // the grouped form is a DotCall whose target is the captured group.
         var ungrouped = Assert.IsType<Expr.Call>(
-            Assert.Single(Parser.Parse("F(*v) = v\nA = (1, 2)\nA*.F").Root.Output));
+            Assert.Single(SourceProvenance.ParseValid("F(*v) = v\nA = (1, 2)\nA*.F").Root.Output));
         Assert.IsType<Expr.SequenceSpread>(Assert.Single(ungrouped.Args.Output));
 
         var grouped = Assert.IsType<Expr.DotCall>(
-            Assert.Single(Parser.Parse("F(*v) = v\nA = (1, 2)\n(A*).F").Root.Output));
+            Assert.Single(SourceProvenance.ParseValid("F(*v) = v\nA = (1, 2)\n(A*).F").Root.Output));
         Assert.Equal("F", grouped.Name);
         var block = Assert.IsType<Expr.Block>(grouped.Target);
         Assert.IsType<Expr.SequenceSpread>(Assert.Single(block.Algorithm.Output));

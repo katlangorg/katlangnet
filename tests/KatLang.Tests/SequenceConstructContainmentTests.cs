@@ -142,7 +142,7 @@ public class SequenceConstructContainmentTests
     {
         static Expr SingleRootOutput(string source)
         {
-            var root = (Algorithm.User)Parser.Parse(source).Root;
+            var root = (Algorithm.User)SourceProvenance.ParseValid(source).Root;
             return Assert.Single(root.Output);
         }
 

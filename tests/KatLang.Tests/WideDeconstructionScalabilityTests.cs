@@ -33,7 +33,7 @@ public class WideDeconstructionScalabilityTests
     public void Elaboration_HoistsOneSharedSourceThenTargetsInWrittenOrder()
     {
         const int n = 400;
-        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nx0").Root;
+        var root = (Algorithm.User)SourceProvenance.ParseValid(WideSource(n, $"range(1, {n})") + "\nx0").Root;
 
         var expected = new List<string> { "$deconstruct$0" };
         for (var i = 0; i < n; i++)
@@ -48,7 +48,7 @@ public class WideDeconstructionScalabilityTests
     public void Elaboration_EachTargetBindsSharedSourceThroughFullPatternHelper()
     {
         const int n = 60;
-        var root = (Algorithm.User)Parser.Parse(WideSource(n, $"range(1, {n})") + "\nx0").Root;
+        var root = (Algorithm.User)SourceProvenance.ParseValid(WideSource(n, $"range(1, {n})") + "\nx0").Root;
 
         foreach (var i in new[] { 0, 23, n - 1 })
         {

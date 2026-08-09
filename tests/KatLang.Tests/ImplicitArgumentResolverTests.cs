@@ -3,7 +3,7 @@ namespace KatLang.Tests;
 public class ImplicitArgumentResolverTests
 {
     private static Algorithm Resolve(string source)
-        => Parser.Parse(source).Root;
+        => SourceProvenance.ParseValid(source).Root;
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
         => Evaluator.RunFlat(new Expr.Block(Resolve(source)));

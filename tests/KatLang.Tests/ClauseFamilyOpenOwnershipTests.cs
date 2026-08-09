@@ -119,7 +119,7 @@ public class ClauseFamilyOpenOwnershipTests
     [InlineData(40)]
     public void PathologicalFamily_ElaboratesWithLinearNodeCount(int n)
     {
-        var root = Parser.Parse(Case(n)).Root;
+        var root = SourceProvenance.ParseAllowingDiagnostics(Case(n)).Root;
         // Was 2^N (N=14 => 163,831). A generous linear bound catches any regression.
         Assert.True(TreeNodes(root) <= 40 * n + 200, $"Case({n}) elaborated to {TreeNodes(root)} nodes.");
     }
@@ -127,8 +127,8 @@ public class ClauseFamilyOpenOwnershipTests
     [Fact]
     public void PathologicalFamily_GrowthIsNotExponential()
     {
-        int a = TreeNodes(Parser.Parse(Case(10)).Root);
-        int b = TreeNodes(Parser.Parse(Case(20)).Root);
+        int a = TreeNodes(SourceProvenance.ParseAllowingDiagnostics(Case(10)).Root);
+        int b = TreeNodes(SourceProvenance.ParseAllowingDiagnostics(Case(20)).Root);
         // The lower bound proves the measurement follows the supplied family size instead
         // of passing vacuously on a constant/empty recovery tree; the upper bound excludes
         // the former ~2^10 amplification when N doubles.

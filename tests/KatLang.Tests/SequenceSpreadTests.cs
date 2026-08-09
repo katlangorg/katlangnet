@@ -776,7 +776,7 @@ public class SequenceSpreadTests
             """;
         AssertEval(collectingDef, 6m);
 
-        var defRoot = Parser.ParseSyntax(collectingDef).Root;
+        var defRoot = SourceProvenance.ParseSyntaxValidRoot(collectingDef);
         var sum = Assert.IsType<Algorithm.User>(defRoot.Properties.Single(property => property.Name == "Sum").Value);
         var capture = Assert.IsType<CaptureParameterPattern>(Assert.Single(sum.ParameterPatterns));
         Assert.Equal(ParameterKind.Collecting, capture.Kind);
@@ -790,7 +790,7 @@ public class SequenceSpreadTests
             """;
         AssertEval(useSiteSpread, 30m);
 
-        var useRoot = Parser.ParseSyntax(useSiteSpread).Root;
+        var useRoot = SourceProvenance.ParseSyntaxValidRoot(useSiteSpread);
         var call = Assert.IsType<Expr.Call>(useRoot.Output[^1]);
         var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
         Assert.Equal("Pair", Assert.IsType<Expr.Resolve>(spread.Operand).Name);

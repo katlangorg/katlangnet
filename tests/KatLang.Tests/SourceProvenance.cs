@@ -67,6 +67,36 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
     public static SourceProvenance ParseAllowingDiagnostics(string source)
         => new(source, Parser.Parse(source));
 
+    /// <summary>
+    /// Raw-syntax root for tests that inspect the pre-elaboration tree
+    /// (<c>Parser.ParseSyntax</c>, a different result type from
+    /// <c>Parser.Parse</c>). Same contract as <see cref="ParseValid"/>: a
+    /// syntax-shape test must still prove the parser accepted the source before
+    /// the tree is used as evidence. Returns the root directly because the raw
+    /// boundary has no elaboration stage to expose separately.
+    /// </summary>
+    public static Algorithm ParseSyntaxValidRoot(string source)
+    {
+        var parsed = Parser.ParseSyntax(source);
+        if (parsed.HasErrors)
+        {
+            Assert.Fail(
+                "Raw-syntax test requires a clean parse, but the parser reported:"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => "  - " + d.Message.Split('\n')[0]))
+                + Environment.NewLine + "Source:" + Environment.NewLine + source);
+        }
+
+        return parsed.Root;
+    }
+
+    /// <summary>
+    /// Raw-syntax root WITHOUT requiring a clean parse — for parser tests whose
+    /// subject is malformed input and recovery-tree shape.
+    /// </summary>
+    public static Algorithm ParseSyntaxAllowingDiagnosticsRoot(string source)
+        => Parser.ParseSyntax(source).Root;
+
     /// <summary>Evaluates the elaborated AST (stage 3).</summary>
     public EvalResult<Result> Evaluate() => Evaluator.Run(new Expr.Block(Root));
 

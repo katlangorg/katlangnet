@@ -227,12 +227,12 @@ public class ParserNestingDepthTests
     [InlineData("[[[[1]]]]")]
     [InlineData("((((1")]            // malformed (unclosed)
     public void NoSequenceConstruct_ShallowAndMalformed(string source)
-        => Assert.False(FindsSequenceConstruct(Parser.ParseSyntax(source).Root));
+        => Assert.False(FindsSequenceConstruct(SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot(source)));
 
     [Fact]
     public void NoSequenceConstruct_OverBudgetPlaceholder()
         => Assert.False(FindsSequenceConstruct(
-            Parser.ParseSyntax(Rep("(", 5000) + "1" + Rep(")", 5000)).Root));
+            SourceProvenance.ParseSyntaxAllowingDiagnosticsRoot(Rep("(", 5000) + "1" + Rep(")", 5000))));
 
     private static bool FindsSequenceConstruct(Algorithm root)
     {

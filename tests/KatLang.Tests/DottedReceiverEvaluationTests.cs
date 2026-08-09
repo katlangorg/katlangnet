@@ -288,8 +288,8 @@ public class DottedReceiverEvaluationTests
     public void ResourceLimitReachedByTheReceiver_IsReportedIdenticallyInBothForms()
     {
         var limits = new EvaluationLimits { MaxCollectionItems = 5 };
-        var ordinary = Evaluator.Run(new Expr.Block(Parser.Parse("count(range(1, 10))").Root), limits);
-        var dotted = Evaluator.Run(new Expr.Block(Parser.Parse("range(1, 10).count").Root), limits);
+        var ordinary = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid("count(range(1, 10))").Root), limits);
+        var dotted = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid("range(1, 10).count").Root), limits);
 
         // Spans differ because the two SOURCES differ; the structured payload must not.
         var ordinaryLimit = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ordinary.Error);
