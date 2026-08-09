@@ -41,7 +41,7 @@ public class ExprNameRendererTests
         Assert.Equal("1.5", Open(new Expr.Num(1.5m)));
         Assert.Equal("-2", Open(new Expr.Num(-2m)));
         Assert.Equal("'s'", Open(new Expr.StringLiteral("s")));
-        Assert.Equal("(inline library)", Open(new Expr.Block(new Algorithm.User(null, [], [], [], []))));
+        Assert.Equal("(inline library)", Open(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], []))));
         Assert.Equal("()", Open(new Expr.EmptySequence(0)));
         Assert.Equal("((()))", Open(new Expr.EmptySequence(2)));
         Assert.Equal("(nativeCall)", Open(new Expr.NativeCall("sin", ["x"])));
@@ -76,7 +76,7 @@ public class ExprNameRendererTests
         Assert.Equal("a:(b*)", Open(new Expr.Index(a, new Expr.SequenceSpread(b))));
 
         // Calls and dot-calls.
-        var emptyArgs = new Algorithm.User(null, [], [], [], []);
+        var emptyArgs = OutputBundle.Empty;
         Assert.Equal("f(...)", Open(new Expr.Call(new Expr.Resolve("f"), emptyArgs)));
         Assert.Equal("a.f", Open(new Expr.DotCall(a, "f", null)));
         Assert.Equal("a.f(...)", Open(new Expr.DotCall(a, "f", emptyArgs)));
@@ -111,8 +111,8 @@ public class ExprNameRendererTests
         // Zero-shape blocks render as one written sequence value over their outputs.
         Assert.Equal(
             "(1, 2)",
-            Diag(new Expr.Block(new Algorithm.User(null, [], [], [], [one, two]))));
-        Assert.Equal("()", Diag(new Expr.Block(new Algorithm.User(null, [], [], [], []))));
+            Diag(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [one, two]))));
+        Assert.Equal("()", Diag(new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], []))));
 
         // Internal joins render as one sequence value.
         Assert.Equal(
@@ -156,10 +156,10 @@ public class ExprNameRendererTests
                 "unary" => new Expr.Unary(UnaryOp.Minus, expr),
                 "index" => new Expr.Index(expr, new Expr.Num(0)),
                 "dotcall" => new Expr.DotCall(expr, "f", null),
-                "call" => new Expr.Call(expr, new Algorithm.User(null, [], [], [], [])),
+                "call" => new Expr.Call(expr, OutputBundle.Empty),
                 "gracePost" => new Expr.Grace(expr, 1),
                 "list" => new Expr.ListLiteral([expr]),
-                "blockOutput" => new Expr.Block(new Algorithm.User(null, [], [], [], [expr])),
+                "blockOutput" => new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [expr])),
                 _ => throw new InvalidOperationException(shape),
             };
         }
@@ -274,24 +274,25 @@ public class ExprNameRendererTests
     }
 
     [Fact]
-    public void WideCollections_AreConsumedLazilyWithinTheWorkBound()
+    public void WideCollections_RenderWithinTheOutputBound()
     {
-        // A public AST can carry any IReadOnlyList implementation. Count is
-        // intentionally enormous and high indexes throw: an eager reverse-push loop
-        // touches int.MaxValue - 1 before rendering one character, while the indexed
-        // cursor needs only the small visible prefix justified by the 512-unit cap.
-        var wideItems = new VirtualWideExprList();
+        // The list/output collections the renderer walks are OutputBundles,
+        // whose membership is snapshotted eagerly at construction — a lying or
+        // lazily-throwing IReadOnlyList can no longer reach the renderer
+        // through these surfaces at all (it fails at bundle construction, see
+        // OutputBundleOwnershipTests). What remains to pin here is the output
+        // bound itself: a genuinely wide collection renders no more than the
+        // 512-unit cap plus the truncation marker, in both renderer modes.
+        var wideItems = OutputBundle.TakeOwnership(
+            [.. Enumerable.Repeat<Expr>(new Expr.Num(1), 50_000)]);
         var list = Open(new Expr.ListLiteral(wideItems));
         Assert.EndsWith(ExprNameRenderer.TruncationMarker, list);
         Assert.True(list.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
-        Assert.InRange(wideItems.MaxAccessedIndex, 0, 1_000);
 
-        var wideOutput = new VirtualWideExprList();
-        var block = Diag(new Expr.Block(new Algorithm.User(
-            null, [], [], [], wideOutput)));
+        var block = Diag(new Expr.AlgorithmExpr(new Algorithm.User(
+            null, [], [], [], wideItems)));
         Assert.EndsWith(ExprNameRenderer.TruncationMarker, block);
         Assert.True(block.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
-        Assert.InRange(wideOutput.MaxAccessedIndex, 0, 1_000);
     }
 
     [Fact]
@@ -379,7 +380,7 @@ public class ExprNameRendererTests
         var observations = new EvaluationObservations();
 
         var (result, _) = Evaluator.RunCountedObserved(
-            new Expr.Block(parse.Root),
+            new Expr.AlgorithmExpr(parse.Root),
             enableOptimizations: true,
             sequenceDiagnostics: diagnostics,
             observations: observations);
@@ -470,36 +471,10 @@ public class ExprNameRendererTests
     {
         var receiver = JoinChain(joinCount);
         var callableDotExpression = new Expr.DotCall(receiver, "count", null);
-        return new Expr.Call(
-            callableDotExpression,
-            new Algorithm.User(null, [], [], [], []));
+        return new Expr.Call(callableDotExpression, OutputBundle.Empty);
     }
 
-    private static Algorithm Arguments(params Expr[] expressions)
-        => new Algorithm.User(null, [], [], [], expressions);
+    private static OutputBundle Arguments(params Expr[] expressions)
+        => expressions;
 
-    private sealed class VirtualWideExprList : IReadOnlyList<Expr>
-    {
-        public int MaxAccessedIndex { get; private set; } = -1;
-
-        public int Count => int.MaxValue;
-
-        public Expr this[int index]
-        {
-            get
-            {
-                if (index > 10_000)
-                    throw new InvalidOperationException("Renderer accessed beyond its bounded visible prefix.");
-
-                MaxAccessedIndex = Math.Max(MaxAccessedIndex, index);
-                return new Expr.Num(1);
-            }
-        }
-
-        public IEnumerator<Expr> GetEnumerator()
-            => throw new InvalidOperationException("Renderer must use the indexed bounded cursor.");
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
-            => GetEnumerator();
-    }
 }

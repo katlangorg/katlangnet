@@ -208,13 +208,13 @@ def receiver1 : Algorithm :=
   algPrivate [] [] [("X", propAlg)] []
 
 def test1 : Bool :=
-  match runFlat (.dotCall (.block receiver1) "X" none) with
+  match runFlat (.dotCall (.algorithmExpr receiver1) "X" none) with
   | Except.ok [42] => true
   | _ => false
 
 #guard test1
 -- EXPECTED: Except.ok [42]
-#eval runFlat (.dotCall (.block receiver1) "X" none)
+#eval runFlat (.dotCall (.algorithmExpr receiver1) "X" none)
 
 -- Test 2: Structural property with params, no args → arity mismatch (navigation-only)
 -- a.F where F(x) = x + 1, no args → error (no receiver injection)
@@ -225,31 +225,31 @@ def receiver2 : Algorithm :=
   algPrivate [] [] [("F", incAlg)] [.num 10]
 
 def test2a : Bool :=
-  match runResult (.dotCall (.block receiver2) "F" none) with
+  match runResult (.dotCall (.algorithmExpr receiver2) "F" none) with
   | Except.error _ => true   -- arity mismatch: F expects 1 arg, got 0
   | Except.ok _ => false
 
 #guard test2a
 -- EXPECTED: Except.error (arityMismatch 1 0)
-#eval runResult (.dotCall (.block receiver2) "F" none)
+#eval runResult (.dotCall (.algorithmExpr receiver2) "F" none)
 
 -- Test 2b: Structural property with explicit args → direct binding (navigation-only)
 -- a.F(10) where F(x) = x + 1 → 11
 def test2b : Bool :=
-  match runFlat (.dotCall (.block receiver2) "F" (some (alg [] [] [] [.num 10]))) with
+  match runFlat (.dotCall (.algorithmExpr receiver2) "F" (some [.num 10])) with
   | Except.ok [11] => true
   | _ => false
 
 #guard test2b
 -- EXPECTED: Except.ok [11]
-#eval runFlat (.dotCall (.block receiver2) "F" (some (alg [] [] [] [.num 10])))
+#eval runFlat (.dotCall (.algorithmExpr receiver2) "F" (some [.num 10]))
 
 -- Test 2c: Bare use of a parameterized property → arity mismatch with property context
 def receiver2c : Algorithm :=
   algPrivate [] [] [("A", alg ["x"] [] [] [.param "x"])] [.resolve "A"]
 
 def test2c : Bool :=
-  match runResult (.block receiver2c) with
+  match runResult (.algorithmExpr receiver2c) with
   | Except.error err =>
       hasContext "while evaluating property A" err
       && innermostIsArityMismatch 1 0 err
@@ -257,7 +257,7 @@ def test2c : Bool :=
 
 #guard test2c
 -- EXPECTED: Except.error (withContext "while evaluating property A" (arityMismatch 1 0))
-#eval runResult (.block receiver2c)
+#eval runResult (.algorithmExpr receiver2c)
 
 -- direct-call ordinary algorithm tests
 --------------------------------------------------------------------------------
@@ -267,11 +267,11 @@ def directCallAlg : Algorithm :=
 
 def directCallRoot : Algorithm :=
   algPrivate [] [] [("Algo", directCallAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+    .call (.resolve "Algo") [.num 6]
   ]
 
 def directCallWorks : Bool :=
-  match runFlat (.block directCallRoot) with
+  match runFlat (.algorithmExpr directCallRoot) with
   | Except.ok [7] => true
   | _ => false
 
@@ -279,11 +279,11 @@ def directCallWorks : Bool :=
 
 def directCallArityRoot : Algorithm :=
   algPrivate [] [] [("Algo", directCallAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [])
+    .call (.resolve "Algo") []
   ]
 
 def directCallUsesOwnArity : Bool :=
-  match runResult (.block directCallArityRoot) with
+  match runResult (.algorithmExpr directCallArityRoot) with
   | Except.error err =>
       hasContext "while evaluating call to Algo" err
       && innermostIsArityMismatch 1 0 err
@@ -296,11 +296,11 @@ def zeroArgOutputAlg : Algorithm :=
 
 def zeroArgOutputCallRoot : Algorithm :=
   algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [])
+    .call (.resolve "Algo") []
   ]
 
 def zeroArgOutputCallWorks : Bool :=
-  match runFlat (.block zeroArgOutputCallRoot) with
+  match runFlat (.algorithmExpr zeroArgOutputCallRoot) with
   | Except.ok [5] => true
   | _ => false
 
@@ -308,11 +308,11 @@ def zeroArgOutputCallWorks : Bool :=
 
 def zeroArgOutputRejectsExtraArgsRoot : Algorithm :=
   algPrivate [] [] [("Algo", zeroArgOutputAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+    .call (.resolve "Algo") [.num 6]
   ]
 
 def zeroArgOutputRejectsExtraArgs : Bool :=
-  match runResult (.block zeroArgOutputRejectsExtraArgsRoot) with
+  match runResult (.algorithmExpr zeroArgOutputRejectsExtraArgsRoot) with
   | Except.error err => innermostIsArityMismatch 0 1 err
   | Except.ok _ => false
 
@@ -324,7 +324,7 @@ def zeroArgPropertyCacheCountedOutputRoot : Algorithm :=
   ] [.resolve "A"]
 
 def zeroArgPropertyCachePreservesCountedOutput : Bool :=
-  match KatLang.runResultWithState (.block zeroArgPropertyCacheCountedOutputRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgPropertyCacheCountedOutputRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2], state) =>
       match state.zeroArgPropertyCache with
       | [(_, (Result.sequenceValue [Result.atom 1, Result.atom 2], 2))] => true
@@ -338,11 +338,11 @@ def zeroArgPropertyAndExplicitCallRoot : Algorithm :=
     ("A", alg [] [] [] [.binary .add (.num 1) (.num 2)])
   ] [
     .resolve "A",
-    .call (.resolve "A") (alg [] [] [] [])
+    .call (.resolve "A") []
   ]
 
 def zeroArgPropertyAndExplicitCallStillEvaluate : Bool :=
-  match KatLang.runResultWithState (.block zeroArgPropertyAndExplicitCallRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgPropertyAndExplicitCallRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 3, Result.atom 3], state) =>
       state.zeroArgPropertyCache.length == 1
   | _ => false
@@ -354,11 +354,11 @@ def zeroArgOuterFreshNestedPropertyStyleRoot : Algorithm :=
     ("A", alg [] [] [] [.num 3]),
     ("B", alg [] [] [] [.resolve "A", .resolve "A"])
   ] [
-    .call (.resolve "B") (alg [] [] [] [])
+    .call (.resolve "B") []
   ]
 
 def zeroArgOuterFreshCallKeepsNestedPropertyStyleCache : Bool :=
-  match KatLang.runResultWithState (.block zeroArgOuterFreshNestedPropertyStyleRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgOuterFreshNestedPropertyStyleRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 3, Result.atom 3], state) =>
       match state.zeroArgPropertyCache with
       | [(key, (Result.atom 3, 1))] =>
@@ -371,12 +371,12 @@ def zeroArgOuterFreshCallKeepsNestedPropertyStyleCache : Bool :=
 def zeroArgStructuralPropertyCacheRoot : Algorithm :=
   let box := alg [] [] [publicProp "A" (alg [] [] [] [.num 4])] []
   alg [] [] [] [
-    .dotCall (.block box) "A" none,
-    .dotCall (.block box) "A" none
+    .dotCall (.algorithmExpr box) "A" none,
+    .dotCall (.algorithmExpr box) "A" none
   ]
 
 def zeroArgStructuralPropertyAccessUsesCache : Bool :=
-  match KatLang.runResultWithState (.block zeroArgStructuralPropertyCacheRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgStructuralPropertyCacheRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 4, Result.atom 4], state) =>
       match state.zeroArgPropertyCache with
       | [(key, (Result.atom 4, 1))] =>
@@ -393,7 +393,7 @@ def zeroArgBuiltinPropertyCacheRoot : Algorithm :=
   ]
 
 def zeroArgBuiltinPropertyAccessUsesCache : Bool :=
-  match KatLang.runResultWithState (.block zeroArgBuiltinPropertyCacheRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgBuiltinPropertyCacheRoot) with
   | Except.ok (_, state) =>
       match state.zeroArgPropertyCache with
       | [(key, (Result.sequenceValue [], _))] =>
@@ -407,15 +407,15 @@ def zeroArgExplicitNestedFreshCallsRoot : Algorithm :=
   algPrivate [] [] [
     ("A", alg [] [] [] [.num 3]),
     ("C", alg [] [] [] [
-      .call (.resolve "A") (alg [] [] [] []),
-      .call (.resolve "A") (alg [] [] [] [])
+      .call (.resolve "A") [],
+      .call (.resolve "A") []
     ])
   ] [
-    .call (.resolve "C") (alg [] [] [] [])
+    .call (.resolve "C") []
   ]
 
 def zeroArgExplicitNestedCallsBypassDirectCache : Bool :=
-  match KatLang.runResultWithState (.block zeroArgExplicitNestedFreshCallsRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgExplicitNestedFreshCallsRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 3, Result.atom 3], state) =>
       state.zeroArgPropertyCache.isEmpty
   | _ => false
@@ -432,7 +432,7 @@ def zeroArgCacheKeyDistinguishesLexicalContextRoot : Algorithm :=
   ]
 
 def zeroArgCacheKeyDistinguishesLexicalContext : Bool :=
-  match KatLang.runResultWithState (.block zeroArgCacheKeyDistinguishesLexicalContextRoot) with
+  match KatLang.runResultWithState (.algorithmExpr zeroArgCacheKeyDistinguishesLexicalContextRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2], state) =>
       let aEntries := state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "A")
       aEntries.length == 2
@@ -447,11 +447,11 @@ def helperOutputAlg : Algorithm :=
 
 def helperDotCallRoot : Algorithm :=
   algPrivate [] [] [("Algo", helperOutputAlg)] [
-    .dotCall (.resolve "Algo") "Helper" (some (alg [] [] [] [.num 6]))
+    .dotCall (.resolve "Algo") "Helper" (some [.num 6])
   ]
 
 def helperDotCallStillWorks : Bool :=
-  match runFlat (.block helperDotCallRoot) with
+  match runFlat (.algorithmExpr helperDotCallRoot) with
   | Except.ok [12] => true
   | _ => false
 
@@ -467,11 +467,11 @@ def capturedLocalHelperAlg : Algorithm :=
 
 def capturedLocalHelperRoot : Algorithm :=
   algPrivate [] [] [("Algo", capturedLocalHelperAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+    .call (.resolve "Algo") [.num 6]
   ]
 
 def capturedLocalHelperStillWorks : Bool :=
-  match runFlat (.block capturedLocalHelperRoot) with
+  match runFlat (.algorithmExpr capturedLocalHelperRoot) with
   | Except.ok [14] => true
   | _ => false
 
@@ -491,7 +491,7 @@ def capturedLocalOnlyDotRoot : Algorithm :=
   ]
 
 def capturedLocalOnlyDotRejected : Bool :=
-  match runResult (.block capturedLocalOnlyDotRoot) with
+  match runResult (.algorithmExpr capturedLocalOnlyDotRoot) with
   | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
   | Except.ok _ => false
 
@@ -499,11 +499,11 @@ def capturedLocalOnlyDotRejected : Bool :=
 
 def capturedLocalOnlyDotCallRoot : Algorithm :=
   algPrivate [] [] [("Algo", capturedLocalOnlyAlg)] [
-    .dotCall (.resolve "Algo") "Prop" (some (alg [] [] [] [.num 6]))
+    .dotCall (.resolve "Algo") "Prop" (some [.num 6])
   ]
 
 def capturedLocalOnlyDotCallRejected : Bool :=
-  match runResult (.block capturedLocalOnlyDotCallRoot) with
+  match runResult (.algorithmExpr capturedLocalOnlyDotCallRoot) with
   | Except.error err => innermostIsLocalOnlyProperty "Algo" "Prop" .localCapturedAncestorParams err
   | Except.ok _ => false
 
@@ -511,11 +511,11 @@ def capturedLocalOnlyDotCallRejected : Bool :=
 
 def helperDirectCallStillFailsRoot : Algorithm :=
   algPrivate [] [] [("Algo", helperOutputAlg)] [
-    .call (.resolve "Algo") (alg [] [] [] [.num 6])
+    .call (.resolve "Algo") [.num 6]
   ]
 
 def helperDirectCallStillFails : Bool :=
-  match runResult (.block helperDirectCallStillFailsRoot) with
+  match runResult (.algorithmExpr helperDirectCallStillFailsRoot) with
   | Except.error err => innermostIsArityMismatch 0 1 err
   | Except.ok _ => false
 
@@ -527,7 +527,7 @@ def parametrizedValuePositionRoot : Algorithm :=
   ]
 
 def parametrizedValuePositionRejectsBareUse : Bool :=
-  match runResult (.block parametrizedValuePositionRoot) with
+  match runResult (.algorithmExpr parametrizedValuePositionRoot) with
   | Except.error err =>
       hasContext "while evaluating property Algo" err
       && innermostIsArityMismatch 1 0 err
@@ -540,17 +540,17 @@ def innerDirectAlg : Algorithm :=
 
 def outerDirectCallAlg : Algorithm :=
   algPrivate [] [] [("Inner", innerDirectAlg)] [
-    .call (.resolve "Inner") (alg [] [] [] [.num 5])
+    .call (.resolve "Inner") [.num 5]
   ]
 
 def nestedDirectCallRoot : Algorithm :=
   algPrivate [] [] [("Outer", outerDirectCallAlg)] [
     .resolve "Outer",
-    .dotCall (.resolve "Outer") "Inner" (some (alg [] [] [] [.num 5]))
+    .dotCall (.resolve "Outer") "Inner" (some [.num 5])
   ]
 
 def nestedDirectCallWorks : Bool :=
-  match runFlat (.block nestedDirectCallRoot) with
+  match runFlat (.algorithmExpr nestedDirectCallRoot) with
   | Except.ok [15, 15] => true
   | _ => false
 
@@ -575,7 +575,7 @@ def conditionalLocalInnerRoot : Algorithm :=
   ]
 
 def conditionalLocalInnerRejected : Bool :=
-  match runResult (.block conditionalLocalInnerRoot) with
+  match runResult (.algorithmExpr conditionalLocalInnerRoot) with
   | Except.error err => innermostIsLocalOnlyProperty "Outer" "Inner" .localConditional err
   | Except.ok _ => false
 
@@ -600,7 +600,7 @@ def conditionalSplitHelpersRoot : Algorithm :=
   ]
 
 def conditionalSplitHelpersRejected : Bool :=
-  match runResult (.block conditionalSplitHelpersRoot) with
+  match runResult (.algorithmExpr conditionalSplitHelpersRoot) with
   | Except.error err => innermostIsLocalOnlyProperty "Outer" "Second" .localConditional err
   | Except.ok _ => false
 
@@ -614,11 +614,11 @@ def outputNamedCallablePropertyAlg : Algorithm :=
 
 def outputDotCallOrdinaryRoot : Algorithm :=
   algPrivate [] [] [("Algo", outputNamedCallablePropertyAlg)] [
-    .dotCall (.resolve "Algo") "Output" (some (alg [] [] [] [.num 6]))
+    .dotCall (.resolve "Algo") "Output" (some [.num 6])
   ]
 
 def outputDotCallOrdinaryWorks : Bool :=
-  match runFlat (.block outputDotCallOrdinaryRoot) with
+  match runFlat (.algorithmExpr outputDotCallOrdinaryRoot) with
   | Except.ok [7] => true
   | _ => false
 
@@ -633,7 +633,7 @@ def bareOutputAccessOrdinaryRoot : Algorithm :=
   ]
 
 def bareOutputAccessOrdinaryWorks : Bool :=
-  match runFlat (.block bareOutputAccessOrdinaryRoot) with
+  match runFlat (.algorithmExpr bareOutputAccessOrdinaryRoot) with
   | Except.ok [9] => true
   | _ => false
 
@@ -645,7 +645,7 @@ def missingOutputMemberRoot : Algorithm :=
   ]
 
 def missingOutputMemberIsOrdinaryUnknownName : Bool :=
-  match runResult (.block missingOutputMemberRoot) with
+  match runResult (.algorithmExpr missingOutputMemberRoot) with
   | Except.error err => innermostIsUnknownName "Output" err
   | Except.ok _ => false
 
@@ -663,7 +663,7 @@ def stringOutputAlgSatisfiesInvariant : Bool :=
 
 def unresolvedLoadViolatesInvariant : Bool :=
   !KatLang.postElabInvariant
-    (.call (.resolve "load") (alg [] [] [] [.stringLiteral "https://katlang.org/lib.kat"]))
+    (.call (.resolve "load") [.stringLiteral "https://katlang.org/lib.kat"])
 
 #guard unresolvedLoadViolatesInvariant
 
@@ -688,21 +688,21 @@ def helperPropertySatisfiesInvariant : Bool :=
 -- missingOutput semantics tests
 --------------------------------------------------------------------------------
 
-def noOutputGroupAlg : Algorithm :=
+def noOutputBraceAlg : Algorithm :=
   algPrivate [] [] [("X", alg [] [] [] [.num 1])] []
 
 def missingOutputRootOnlyDefinitions : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] []
+  algPrivate [] [] [("A", noOutputBraceAlg)] []
 
 def missingOutputRootOnlyDefinitionsFails : Bool :=
-  match runResult (.block missingOutputRootOnlyDefinitions) with
+  match runResult (.algorithmExpr missingOutputRootOnlyDefinitions) with
   | Except.error err => innermostIsMissingOutput err
   | Except.ok _ => false
 
 #guard missingOutputRootOnlyDefinitionsFails
 
 def missingOutputRootWithTrailingOutput : Bool :=
-  match runFlat (.block (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
     .resolve "T"
   ])) with
   | Except.ok [4] => true
@@ -711,7 +711,7 @@ def missingOutputRootWithTrailingOutput : Bool :=
 #guard missingOutputRootWithTrailingOutput
 
 def missingOutputRootWithExplicitEmptyOutput : Bool :=
-  match runResult (.block (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
     .emptySequence 0
   ])) with
   | Except.ok (.sequenceValue []) => true
@@ -720,7 +720,7 @@ def missingOutputRootWithExplicitEmptyOutput : Bool :=
 #guard missingOutputRootWithExplicitEmptyOutput
 
 def missingOutputRootValueDoesNotEqualEmpty : Bool :=
-  match runFlat (.block (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("T", alg [] [] [] [.num 4])] [
     .binary .eq (.resolve "T") (.emptySequence 0)
   ])) with
   | Except.ok [0] => true
@@ -729,7 +729,7 @@ def missingOutputRootValueDoesNotEqualEmpty : Bool :=
 #guard missingOutputRootValueDoesNotEqualEmpty
 
 def missingOutputMultipleDefinitionsRoot : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Price", alg [] [] [] [.num 10]),
     ("Tax", alg [] [] [] [.num 2]),
     ("Total", alg [] [] [] [.binary .add (.resolve "Price") (.resolve "Tax")])
@@ -740,7 +740,7 @@ def missingOutputMultipleDefinitionsRoot : Bool :=
 #guard missingOutputMultipleDefinitionsRoot
 
 def missingOutputMultipleDefinitionsWithOutput : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Price", alg [] [] [] [.num 10]),
     ("Tax", alg [] [] [] [.num 2]),
     ("Total", alg [] [] [] [.binary .add (.resolve "Price") (.resolve "Tax")])
@@ -753,12 +753,12 @@ def missingOutputMultipleDefinitionsWithOutput : Bool :=
 #guard missingOutputMultipleDefinitionsWithOutput
 
 def missingOutputValid2Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [
+  algPrivate [] [] [("A", noOutputBraceAlg)] [
     .dotCall (.resolve "A") "X" none
   ]
 
 def missingOutputValid2 : Bool :=
-  match runFlat (.block missingOutputValid2Root) with
+  match runFlat (.algorithmExpr missingOutputValid2Root) with
   | Except.ok [1] => true
   | _ => false
 
@@ -766,7 +766,7 @@ def missingOutputValid2 : Bool :=
 
 def applyMissingOutputAlg : Algorithm :=
   alg ["f"] [] [] [
-    .call (.param "f") (alg [] [] [] [.num 4])
+    .call (.param "f") [.num 4]
   ]
 
 def incMissingOutputAlg : Algorithm :=
@@ -776,34 +776,34 @@ def incMissingOutputAlg : Algorithm :=
 
 def missingOutputValid3Root : Algorithm :=
   algPrivate [] [] [("Apply", applyMissingOutputAlg), ("Inc", incMissingOutputAlg)] [
-    .call (.resolve "Apply") (alg [] [] [] [.resolve "Inc"])
+    .call (.resolve "Apply") [.resolve "Inc"]
   ]
 
 def missingOutputValid3 : Bool :=
-  match runFlat (.block missingOutputValid3Root) with
+  match runFlat (.algorithmExpr missingOutputValid3Root) with
   | Except.ok [5] => true
   | _ => false
 
 #guard missingOutputValid3
 
 def holderMissingOutputAlg : Algorithm :=
-  algPrivate [] [] [("F", noOutputGroupAlg)] [.num 0]
+  algPrivate [] [] [("F", noOutputBraceAlg)] [.num 0]
 
 def missingOutputValid4Root : Algorithm :=
   algPrivate [] [] [("Holder", holderMissingOutputAlg)] [.resolve "Holder"]
 
 def missingOutputValid4 : Bool :=
-  match runFlat (.block missingOutputValid4Root) with
+  match runFlat (.algorithmExpr missingOutputValid4Root) with
   | Except.ok [0] => true
   | _ => false
 
 #guard missingOutputValid4
 
 def missingOutputError5Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [.resolve "A"]
+  algPrivate [] [] [("A", noOutputBraceAlg)] [.resolve "A"]
 
 def missingOutputError5 : Bool :=
-  match runResult (.block missingOutputError5Root) with
+  match runResult (.algorithmExpr missingOutputError5Root) with
   | Except.error err =>
       hasContext "while evaluating property A" err
       && innermostIsMissingOutput err
@@ -812,12 +812,12 @@ def missingOutputError5 : Bool :=
 #guard missingOutputError5
 
 def missingOutputError6Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [
-    .call (.resolve "A") (alg [] [] [] [])
+  algPrivate [] [] [("A", noOutputBraceAlg)] [
+    .call (.resolve "A") []
   ]
 
 def missingOutputError6 : Bool :=
-  match runResult (.block missingOutputError6Root) with
+  match runResult (.algorithmExpr missingOutputError6Root) with
   | Except.error err =>
       hasContext "while evaluating call to A" err
       && innermostIsMissingOutput err
@@ -826,12 +826,12 @@ def missingOutputError6 : Bool :=
 #guard missingOutputError6
 
 def missingOutputError6bRoot : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [
-    .call (.resolve "A") (alg [] [] [] [.num 6])
+  algPrivate [] [] [("A", noOutputBraceAlg)] [
+    .call (.resolve "A") [.num 6]
   ]
 
 def missingOutputError6b : Bool :=
-  match runResult (.block missingOutputError6bRoot) with
+  match runResult (.algorithmExpr missingOutputError6bRoot) with
   | Except.error err =>
       hasContext "while evaluating call to A" err
       && innermostIsMissingOutput err
@@ -840,12 +840,12 @@ def missingOutputError6b : Bool :=
 #guard missingOutputError6b
 
 def missingOutputError7Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [
+  algPrivate [] [] [("A", noOutputBraceAlg)] [
     .binary .add (.resolve "A") (.num 1)
   ]
 
 def missingOutputError7 : Bool :=
-  match runResult (.block missingOutputError7Root) with
+  match runResult (.algorithmExpr missingOutputError7Root) with
   | Except.error err =>
       hasContext "while evaluating property A" err
       && innermostIsMissingOutput err
@@ -854,12 +854,12 @@ def missingOutputError7 : Bool :=
 #guard missingOutputError7
 
 def missingOutputError8Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg)] [
+  algPrivate [] [] [("A", noOutputBraceAlg)] [
     .unary .minus (.resolve "A")
   ]
 
 def missingOutputError8 : Bool :=
-  match runResult (.block missingOutputError8Root) with
+  match runResult (.algorithmExpr missingOutputError8Root) with
   | Except.error err =>
       hasContext "while evaluating property A" err
       && innermostIsMissingOutput err
@@ -869,14 +869,14 @@ def missingOutputError8 : Bool :=
 
 def missingOutputError9Root : Algorithm :=
   algPrivate [] [] [
-    ("A", noOutputGroupAlg),
+    ("A", noOutputBraceAlg),
     ("B", alg [] [] [] [.resolve "A"])
   ] [
     .resolve "B"
   ]
 
 def missingOutputError9 : Bool :=
-  match runResult (.block missingOutputError9Root) with
+  match runResult (.algorithmExpr missingOutputError9Root) with
   | Except.error err => innermostIsMissingOutput err
   | Except.ok _ => false
 
@@ -886,12 +886,12 @@ def useMissingOutputAlg : Algorithm :=
   alg ["f"] [] [] [.num 0]
 
 def missingOutputValid10Root : Algorithm :=
-  algPrivate [] [] [("A", noOutputGroupAlg), ("Use", useMissingOutputAlg)] [
-    .call (.resolve "Use") (alg [] [] [] [.resolve "A"])
+  algPrivate [] [] [("A", noOutputBraceAlg), ("Use", useMissingOutputAlg)] [
+    .call (.resolve "Use") [.resolve "A"]
   ]
 
 def missingOutputValid10 : Bool :=
-  match runFlat (.block missingOutputValid10Root) with
+  match runFlat (.algorithmExpr missingOutputValid10Root) with
   | Except.ok [0] => true
   | _ => false
 
@@ -914,13 +914,13 @@ def sequenceSpread (expr : KatLang.Expr) : KatLang.Expr :=
   .sequenceSpread expr
 
 def sequenceSpreadReceiver (expr : KatLang.Expr) : KatLang.Expr :=
-  .block (alg [] [] [] [sequenceSpread expr])
+  .capture [sequenceSpread expr]
 
 def explicitEmptyOutputBody : KatLang.Expr :=
-  .block (alg [] [] [] [explicitEmptyExpr])
+  .algorithmExpr (alg [] [] [] [explicitEmptyExpr])
 
 def missingOutputBodyExpr : KatLang.Expr :=
-  .block (alg [] [] [] [])
+  .algorithmExpr (alg [] [] [] [])
 
 def explicitEmptyIsEvenAlg : Algorithm :=
   alg ["x"] [] [] [
@@ -938,11 +938,11 @@ def explicitEmptyProducesZeroValues : Bool :=
 #guard explicitEmptyProducesZeroValues
 
 def explicitEmptyCountsAsZero : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [explicitEmptyExpr])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [explicitEmptyExpr])] [
     .dotCall explicitEmptyExpr "count" none,
-    .call (.resolve "count") (alg [] [] [] [explicitEmptyExpr]),
+    .call (.resolve "count") [explicitEmptyExpr],
     .dotCall explicitEmptyOutputBody "count" none,
-    .dotCall (.block (alg [] [] [] [explicitEmptyExpr])) "count" none,
+    .dotCall (.algorithmExpr (alg [] [] [] [explicitEmptyExpr])) "count" none,
     .dotCall (.resolve "A") "count" none
   ])) with
   | Except.ok [0, 0, 0, 0, 0] => true
@@ -951,7 +951,7 @@ def explicitEmptyCountsAsZero : Bool :=
 #guard explicitEmptyCountsAsZero
 
 def explicitEmptyEquality : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .binary .eq explicitEmptyExpr explicitEmptyExpr,
     .binary .ne explicitEmptyExpr explicitEmptyExpr,
     .binary .eq explicitEmptyExpr explicitEmptyOutputBody,
@@ -959,19 +959,19 @@ def explicitEmptyEquality : Bool :=
     -- Collection builtins materialize exact lists, so an all-rejected filter
     -- and an all-skipped skip yield `[]`, which is NOT the empty sequence `()`.
     .binary .eq
-      (.call (.resolve "filter") (alg [] [] [] [
+      (.call (.resolve "filter") [
         .sequenceConstruct (.num 1) (.sequenceConstruct (.num 3) (.num 5)),
-        .block explicitEmptyIsEvenAlg
-      ]))
+        .algorithmExpr explicitEmptyIsEvenAlg
+      ])
       explicitEmptyExpr,
     .binary .eq
       explicitEmptyExpr
-      (.call (.resolve "filter") (alg [] [] [] [
+      (.call (.resolve "filter") [
         .sequenceConstruct (.num 1) (.sequenceConstruct (.num 3) (.num 5)),
-        .block explicitEmptyIsEvenAlg
-      ])),
+        .algorithmExpr explicitEmptyIsEvenAlg
+      ]),
     .binary .eq
-      (.dotCall (.num 0) "skip" (some (alg [] [] [] [.num 1])))
+      (.dotCall (.num 0) "skip" (some [.num 1]))
       explicitEmptyExpr
   ])) with
   | Except.ok [1, 0, 1, 1, 0, 0, 0] => true
@@ -1006,8 +1006,8 @@ def spreadOfEmptyContributesNoItems : Bool :=
 -- projection of `evalAlgOutputCountedCore` (July 2026 fix): the plain and
 -- counted evaluators must agree on value-position block output.
 def valuePositionSpreadWithSiblingSplices : Bool :=
-  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
-    .block (alg [] [] [] [sequenceSpread (.resolve "A"), .num 99])
+  match runResult (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
+    .capture [sequenceSpread (.resolve "A"), .num 99]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 99]) => true
   | _ => false
@@ -1017,7 +1017,7 @@ def valuePositionSpreadWithSiblingSplices : Bool :=
 -- The same splicing holds for the root program output observed through the
 -- plain `runResult` path: `A*, 99` is three root slots `1, 2, 99`.
 def rootSpreadWithSiblingSplices : Bool :=
-  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2])] [
     sequenceSpread (.resolve "A"), .num 99
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 99]) => true
@@ -1028,8 +1028,8 @@ def rootSpreadWithSiblingSplices : Bool :=
 -- Splicing spreads never erases a written non-spread `()` slot between them:
 -- `(1*, (), 2*)` keeps the empty sequence value as a visible item.
 def spreadSiblingsKeepWrittenEmptySlot : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .block (alg [] [] [] [sequenceSpread (.num 1), explicitEmptyExpr, sequenceSpread (.num 2)])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .capture [sequenceSpread (.num 1), explicitEmptyExpr, sequenceSpread (.num 2)]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .sequenceValue [], .atom 2]) => true
   | _ => false
@@ -1039,9 +1039,9 @@ def spreadSiblingsKeepWrittenEmptySlot : Bool :=
 -- Structural equality observes the spliced value through the plain
 -- (non-counted) evaluation path used for binary operands.
 def spreadSeqLiteralEqualsFlatLiteral : Bool :=
-  match runFlat (.block (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
-    .binary .eq (.block (alg [] [] [] [sequenceSpread (.resolve "P"), .num 99]))
-      (.block (alg [] [] [] [.num 1, .num 2, .num 99]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("P", alg [] [] [] [.num 1, .num 2])] [
+    .binary .eq (.capture [sequenceSpread (.resolve "P"), .num 99])
+      (.capture [.num 1, .num 2, .num 99])
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -1054,22 +1054,22 @@ def spreadSeqLiteralEqualsFlatLiteral : Bool :=
 -- and the rule holds at every spread position — root row, list element,
 -- and call-argument slot. C#: `EvalSequenceSpreadOperandItems` Block arm.
 def directBlockSpreadMissingOutput : Bool :=
-  match runResult (.block (alg [] [] [] [sequenceSpread (.block noOutputGroupAlg)])) with
+  match runResult (.algorithmExpr (alg [] [] [] [sequenceSpread (.algorithmExpr noOutputBraceAlg)])) with
   | Except.error err => innermostIsSpreadMissingOutput err
   | _ => false
 
 #guard directBlockSpreadMissingOutput
 
 def directBlockSpreadInListMissingOutput : Bool :=
-  match runResult (.block (alg [] [] [] [.listLiteral [sequenceSpread (.block noOutputGroupAlg)]])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [sequenceSpread (.algorithmExpr noOutputBraceAlg)]])) with
   | Except.error err => innermostIsSpreadMissingOutput err
   | _ => false
 
 #guard directBlockSpreadInListMissingOutput
 
 def directBlockSpreadCallArgMissingOutput : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", alg ["a"] [] [] [.param "a"])] [
-    .call (.resolve "F") (alg [] [] [] [sequenceSpread (.block noOutputGroupAlg)])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", alg ["a"] [] [] [.param "a"])] [
+    .call (.resolve "F") [sequenceSpread (.algorithmExpr noOutputBraceAlg)]
   ])) with
   | Except.error err => innermostIsSpreadMissingOutput err
   | _ => false
@@ -1080,7 +1080,7 @@ def directBlockSpreadCallArgMissingOutput : Bool :=
 -- `Bad = {X = 1}` then `Bad*` reports the same spread-specific error, so
 -- the direct-block and resolved spellings agree.
 def resolvedSpreadMissingOutput : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", noOutputGroupAlg)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", noOutputBraceAlg)] [
     sequenceSpread (.resolve "Bad")
   ])) with
   | Except.error err => innermostIsSpreadMissingOutput err
@@ -1091,8 +1091,8 @@ def resolvedSpreadMissingOutput : Bool :=
 -- Control: only the missing-output failure is translated — any other
 -- error from a direct block spread operand propagates unchanged.
 def directBlockSpreadOtherErrorPropagates : Bool :=
-  match runResult (.block (alg [] [] [] [
-    sequenceSpread (.block (alg [] [] [] [.resolve "nope"]))
+  match runResult (.algorithmExpr (alg [] [] [] [
+    sequenceSpread (.algorithmExpr (alg [] [] [] [.resolve "nope"]))
   ])) with
   | Except.error err => innermostIsUnknownName "nope" err && !innermostIsSpreadMissingOutput err
   | _ => false
@@ -1101,12 +1101,12 @@ def directBlockSpreadOtherErrorPropagates : Bool :=
 
 -- INTERNAL-NODE CONTAINMENT (July 2026 audit). `sequenceConstruct` is an
 -- internal join node — NOT the representation of written parentheses, which
--- parse to zero-parameter blocks. Its value evaluation DROPS `()` leaves
--- (join semantics: an empty contribution adds no items); written parentheses
--- always keep a non-spread `()` item visible. The guards below pin that
--- intentional difference structurally so any change to either side —
--- including a parser/desugaring change that routes surface syntax through
--- the internal node — is caught. C# twins live in
+-- parse to `capture` nodes since the OutputBundle split. Its value evaluation
+-- DROPS `()` leaves (join semantics: an empty contribution adds no items);
+-- written parentheses always keep a non-spread `()` item visible. The guards
+-- below pin that intentional difference structurally so any change to either
+-- side — including a parser/desugaring change that routes surface syntax
+-- through the internal node — is caught. C# twins live in
 -- SequenceConstructContainmentTests; Lean/C# agreement on these exact ASTs
 -- is enforced by the generated SemanticExplorerCases internal-node section.
 
@@ -1118,10 +1118,10 @@ def internalSequenceConstructDropsEmptyLeafAndCollapses : Bool :=
 
 #guard internalSequenceConstructDropsEmptyLeafAndCollapses
 
--- … while the written form `((), 1)` (a zero-parameter block) keeps the
+-- … while the written form `((), 1)` (a surviving capture) keeps the
 -- empty item visible. This pair is the intentional-difference contrast.
 def writtenParenthesesKeepEmptyItemVisible : Bool :=
-  match runResult (.block (alg [] [] [] [.emptySequence 0, .num 1])) with
+  match runResult (.capture [.emptySequence 0, .num 1]) with
   | Except.ok (.sequenceValue [.sequenceValue [], .atom 1]) => true
   | _ => false
 
@@ -1139,8 +1139,8 @@ def internalSequenceConstructBothEmptyLeavesDropToEmpty : Bool :=
 -- written `((1, 2), ())` keeps both items.
 def internalSequenceConstructDropsEmptyBesidePair : Bool :=
   match
-    runResult (.sequenceConstruct (.block (alg [] [] [] [.num 1, .num 2])) (.emptySequence 0)),
-    runResult (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2]), .emptySequence 0]))
+    runResult (.sequenceConstruct (.capture [.num 1, .num 2]) (.emptySequence 0)),
+    runResult (.algorithmExpr (alg [] [] [] [.capture [.capture [.num 1, .num 2], .emptySequence 0]]))
   with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]),
     Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .sequenceValue []]) => true
@@ -1159,26 +1159,26 @@ def internalSequenceConstructDropsEmptyBesidePair : Bool :=
 def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
   let loneScErrsLikeGroupedSurfaceForm :=
     match
-      runResult (.call (.resolve "take") (alg [] [] [] [
-        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)])),
-      runResult (.call (.resolve "take") (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2, .num 5])]))
+      runResult (.call (.resolve "take") [
+        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5)]),
+      runResult (.call (.resolve "take") [
+        .capture [.num 1, .num 2, .num 5]])
     with
     | Except.error scErr, Except.error groupedErr =>
         innermostIsArityMismatch 2 1 scErr && innermostIsArityMismatch 2 1 groupedErr
     | _, _ => false
   let scBindsLikeGroupedForm :=
     match
-      runResult (.call (.resolve "take") (alg [] [] [] [
-        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2])),
-      runResult (.call (.resolve "sum") (alg [] [] [] [
-        .sequenceConstruct (.num 1) (.num 2)]))
+      runResult (.call (.resolve "take") [
+        .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2]),
+      runResult (.call (.resolve "sum") [
+        .sequenceConstruct (.num 1) (.num 2)])
     with
     | Except.ok (.listValue [.atom 1, .atom 2]), Except.ok (.atom 3) => true
     | _, _ => false
   let scStillDropsEmptyLeaves :=
-    match runResult (.call (.resolve "sum") (alg [] [] [] [
-      .sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2)])) with
+    match runResult (.call (.resolve "sum") [
+      .sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2)]) with
     | Except.ok (.atom 3) => true
     | _ => false
   loneScErrsLikeGroupedSurfaceForm && scBindsLikeGroupedForm && scStillDropsEmptyLeaves
@@ -1187,7 +1187,7 @@ def internalSequenceConstructLoneBuiltinArgBindsLikeGroupedForm : Bool :=
 
 -- Repeated ordinary parentheses around the empty sequence canonicalize to `()`.
 def emptyVsNestedEmptyEquality : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .binary .eq (.emptySequence 0) (.emptySequence 0),
     .binary .eq (.emptySequence 0) (.emptySequence 1),
     .binary .ne (.emptySequence 0) (.emptySequence 1)
@@ -1199,9 +1199,9 @@ def emptyVsNestedEmptyEquality : Bool :=
 
 -- The empty sequence value has zero items; redundant empty nesting does too.
 def emptyAndNestedEmptyCount : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (.resolve "count") (alg [] [] [] [.emptySequence 0]),
-    .call (.resolve "count") (alg [] [] [] [.emptySequence 1])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (.resolve "count") [.emptySequence 0],
+    .call (.resolve "count") [.emptySequence 1]
   ])) with
   | Except.ok [0, 0] => true
   | _ => false
@@ -1218,7 +1218,7 @@ def nestedEmptyStructureCanonicalizes : Bool :=
 
 -- `empty` is no longer reserved: it is an ordinary identifier that can be defined.
 def emptyIsOrdinaryIdentifier : Bool :=
-  match runFlat (.block (algPrivate [] [] [("empty", alg [] [] [] [.num 123])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("empty", alg [] [] [] [.num 123])] [
     .resolve "empty"
   ])) with
   | Except.ok [123] => true
@@ -1232,9 +1232,9 @@ def blockOutputCanonicalizesNestedEmptyDepth : Bool :=
   match
     runResult (.emptySequence 0),
     runResult (.emptySequence 1),
-    runResult (.block (alg [] [] [] [.emptySequence 0])),
-    runResult (.block (alg [] [] [] [.emptySequence 1])),
-    runResult (.block (alg [] [] [] [.emptySequence 2]))
+    runResult (.algorithmExpr (alg [] [] [] [.emptySequence 0])),
+    runResult (.algorithmExpr (alg [] [] [] [.emptySequence 1])),
+    runResult (.algorithmExpr (alg [] [] [] [.emptySequence 2]))
   with
   | Except.ok (.sequenceValue []),
     Except.ok (.sequenceValue []),
@@ -1249,14 +1249,14 @@ def blockOutputCanonicalizesNestedEmptyDepth : Bool :=
 -- beside other outputs. (Only an explicit spread `()*` contributes zero items.) These would
 -- fail if evalAlgOutputCore dropped count-0 non-spread slots.
 def mixedOutputKeepsLeadingEmptySlot : Bool :=
-  match runResult (.block (alg [] [] [] [.emptySequence 0, .num 1])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.emptySequence 0, .num 1])) with
   | Except.ok (.sequenceValue [.sequenceValue [], .atom 1]) => true
   | _ => false
 
 #guard mixedOutputKeepsLeadingEmptySlot
 
 def mixedOutputKeepsMiddleEmptySlot : Bool :=
-  match runResult (.block (alg [] [] [] [.num 1, .emptySequence 0, .num 2])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.num 1, .emptySequence 0, .num 2])) with
   | Except.ok (.sequenceValue [.atom 1, .sequenceValue [], .atom 2]) => true
   | _ => false
 
@@ -1265,7 +1265,7 @@ def mixedOutputKeepsMiddleEmptySlot : Bool :=
 -- An explicit spread of `()` still contributes zero items, so it does NOT add a slot:
 -- `(()*, 1)` is just `1`.
 def mixedOutputSpreadOfEmptyContributesNoSlot : Bool :=
-  match runResult (.block (alg [] [] [] [sequenceSpread (.emptySequence 0), .num 1])) with
+  match runResult (.algorithmExpr (alg [] [] [] [sequenceSpread (.emptySequence 0), .num 1])) with
   | Except.ok (.atom 1) => true
   | _ => false
 
@@ -1273,45 +1273,40 @@ def mixedOutputSpreadOfEmptyContributesNoSlot : Bool :=
 
 -- Redundant empty nesting is not a surface way to construct a one-item
 -- collection containing `()`; collection builtins see it as the empty collection.
-def collectionBuiltinAlwaysTrue : KatLang.Expr := .block (alg ["x"] [] [] [.num 1])
+def collectionBuiltinAlwaysTrue : KatLang.Expr := .algorithmExpr (alg ["x"] [] [] [.num 1])
 
 def filterNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
-  match runResult (.call (.resolve "filter")
-      (alg [] [] [] [.emptySequence 1, collectionBuiltinAlwaysTrue])) with
+  match runResult (.call (.resolve "filter") [.emptySequence 1, collectionBuiltinAlwaysTrue]) with
   | Except.ok (.listValue []) => true
   | _ => false
 
 #guard filterNestedEmptyInputCanonicalizesToEmptyCollection
 
 def countFilterNestedEmptyInputCanonicalizesToZero : Bool :=
-  match runResult (.call (.resolve "count")
-      (alg [] [] [] [
-        .call (.resolve "filter") (alg [] [] [] [.emptySequence 1, collectionBuiltinAlwaysTrue])
-      ])) with
+  match runResult (.call (.resolve "count") [
+        .call (.resolve "filter") [.emptySequence 1, collectionBuiltinAlwaysTrue]
+      ]) with
   | Except.ok (.atom 0) => true
   | _ => false
 
 #guard countFilterNestedEmptyInputCanonicalizesToZero
 
 def takeNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
-  match runResult (.call (.resolve "take")
-      (alg [] [] [] [.emptySequence 1, .num 1])) with
+  match runResult (.call (.resolve "take") [.emptySequence 1, .num 1]) with
   | Except.ok (.listValue []) => true
   | _ => false
 
 #guard takeNestedEmptyInputCanonicalizesToEmptyCollection
 
 def skipNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
-  match runResult (.call (.resolve "skip")
-      (alg [] [] [] [.emptySequence 1, .num 0])) with
+  match runResult (.call (.resolve "skip") [.emptySequence 1, .num 0]) with
   | Except.ok (.listValue []) => true
   | _ => false
 
 #guard skipNestedEmptyInputCanonicalizesToEmptyCollection
 
 def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
-  match runResult (.call (.resolve "distinct")
-      (alg [] [] [] [.emptySequence 1])) with
+  match runResult (.call (.resolve "distinct") [.emptySequence 1]) with
   | Except.ok (.listValue []) => true
   | _ => false
 
@@ -1322,17 +1317,16 @@ def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
 -- singleton-boundary erasure to their list results — the kept sequence value
 -- stays one exact element (`[(1, 2)]` is a writable KatLang value).
 def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
-  let keepFirstPair : KatLang.Expr := .block (alg ["pair"] [] [] [
+  let keepFirstPair : KatLang.Expr := .algorithmExpr (alg ["pair"] [] [] [
     .binary .eq (.index (.param "pair") (.num 0)) (.num 1)
   ])
-  match runResult (.call (.resolve "filter")
-      (alg [] [] [] [
+  match runResult (.call (.resolve "filter") [
         sequenceItems [
-          .block (alg [] [] [] [.num 1, .num 2]),
-          .block (alg [] [] [] [.num 3, .num 4])
+          .capture [.num 1, .num 2],
+          .capture [.num 3, .num 4]
         ],
         keepFirstPair
-      ])) with
+      ]) with
   | Except.ok (.listValue [.sequenceValue [.atom 1, .atom 2]]) => true
   | _ => false
 
@@ -1344,9 +1338,9 @@ def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
 def spreadThenJoinIsOneSequenceValueArgument : Bool :=
   let useTwo := alg ["a", "b"] [] [] [.binary .add (.param "a") (.param "b")]
   let joined := algPrivate [] [] [("A", alg [] [] [] [.num 1]), ("F", useTwo)] [
-    .call (.resolve "F") (alg [] [] [] [.sequenceConstruct (sequenceSpread (.resolve "A")) (.num 2)])
+    .call (.resolve "F") [.sequenceConstruct (sequenceSpread (.resolve "A")) (.num 2)]
   ]
-  match runFlat (.block joined) with
+  match runFlat (.algorithmExpr joined) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
@@ -1357,8 +1351,8 @@ def spreadThenJoinIsOneSequenceValueArgument : Bool :=
 -- "sequence construct expression" on both sides of the differential
 -- (T4-3, Aug 2026 — the C# `ResolveAlg` description must match verbatim).
 def sequenceConstructCallFunctionNotAnAlgorithm : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (.sequenceConstruct (.num 1) (.num 2)) (alg [] [] [] [.num 3])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (.sequenceConstruct (.num 1) (.num 2)) [.num 3]
   ])) with
   | Except.error err => innermostIsNotAnAlgorithm "sequence construct expression" err
   | _ => false
@@ -1397,7 +1391,7 @@ def sequenceConstructEmitsOneConstructedSequenceValue : Bool :=
 
 def sequenceConstructCommaPriorityConstructsOneValue : Bool :=
   let joined := .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3)
-  match runResult (.block (alg [] [] [] [joined])),
+  match runResult (.algorithmExpr (alg [] [] [] [joined])),
         KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3]),
     Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3], 1) => true
@@ -1406,8 +1400,8 @@ def sequenceConstructCommaPriorityConstructsOneValue : Bool :=
 #guard sequenceConstructCommaPriorityConstructsOneValue
 
 def sequenceConstructExplicitSequenceValueBoundaryProtected : Bool :=
-  let joined := .sequenceConstruct (.block (alg [] [] [] [.num 1, .num 2])) (.num 3)
-  match runResult (.block (alg [] [] [] [joined])),
+  let joined := .sequenceConstruct (.capture [.num 1, .num 2]) (.num 3)
+  match runResult (.algorithmExpr (alg [] [] [] [joined])),
         KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
   | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3]),
     Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3], 1) => true
@@ -1416,10 +1410,10 @@ def sequenceConstructExplicitSequenceValueBoundaryProtected : Bool :=
 #guard sequenceConstructExplicitSequenceValueBoundaryProtected
 
 def sequenceConstructMaterializedCommaRows : Bool :=
-  let leftRow := .block (alg [] [] [] [.num 1, .num 2, .num 3])
-  let rightRow := .block (alg [] [] [] [.num 4, .num 5, .num 6])
+  let leftRow := .capture [.num 1, .num 2, .num 3]
+  let rightRow := .capture [.num 4, .num 5, .num 6]
   let table := .sequenceConstruct leftRow rightRow
-  match runResult (.block (alg [] [] [] [table])),
+  match runResult (.algorithmExpr (alg [] [] [] [table])),
         KatLang.runEvalM (KatLang.evalCounted table { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
   | Except.ok (.sequenceValue [
       .sequenceValue [.atom 1, .atom 2, .atom 3],
@@ -1436,7 +1430,7 @@ def sequenceConstructMaterializedCommaRows : Bool :=
 def sequenceConstructNestedAssociativeAtConstructedValueLevel : Bool :=
   let leftNested := .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3)
   let rightNested := .sequenceConstruct (.num 1) (.sequenceConstruct (.num 2) (.num 3))
-  match runResult (.block (alg [] [] [] [leftNested])), runResult (.block (alg [] [] [] [rightNested])) with
+  match runResult (.algorithmExpr (alg [] [] [] [leftNested])), runResult (.algorithmExpr (alg [] [] [] [rightNested])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3]),
     Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3]) => true
   | _, _ => false
@@ -1444,11 +1438,11 @@ def sequenceConstructNestedAssociativeAtConstructedValueLevel : Bool :=
 #guard sequenceConstructNestedAssociativeAtConstructedValueLevel
 
 def explicitSequenceValueTripleStaysOneTopLevelValue : Bool :=
-  let sequenceValueTriple := .block (alg [] [] [] [.num 1, .num 2, .num 3])
+  let sequenceValueTriple := .capture [.num 1, .num 2, .num 3]
   let constructedTriple := .sequenceConstruct (.num 1) (.sequenceConstruct (.num 2) (.num 3))
-  let sequenceValueCount := .call (.resolve "count") (alg [] [] [] [sequenceValueTriple])
-  let constructedCount := .call (.resolve "count") (alg [] [] [] [constructedTriple])
-  match runResult (.block (alg [] [] [] [sequenceValueTriple])), runFlat sequenceValueCount, runFlat constructedCount with
+  let sequenceValueCount := .call (.resolve "count") [sequenceValueTriple]
+  let constructedCount := .call (.resolve "count") [constructedTriple]
+  match runResult (.algorithmExpr (alg [] [] [] [sequenceValueTriple])), runFlat sequenceValueCount, runFlat constructedCount with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3]), Except.ok [3], Except.ok [3] => true
   | _, _, _ => false
 
@@ -1456,7 +1450,7 @@ def explicitSequenceValueTripleStaysOneTopLevelValue : Bool :=
 
 def mixedCommaSequenceConstructPreservesRootSlots : Bool :=
   let mixed := alg [] [] [] [.num 1, .sequenceConstruct (.num 2) (.num 3)]
-  match runResult (.block mixed) with
+  match runResult (.algorithmExpr mixed) with
   | Except.ok (.sequenceValue [.atom 1, .sequenceValue [.atom 2, .atom 3]]) => true
   | _ => false
 
@@ -1466,7 +1460,7 @@ def sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm : Bool :=
   let concise :=
     sequenceSpread (.sequenceConstruct (.num 1) (.num 2))
   let sequenceValue :=
-    sequenceSpread (.block (alg [] [] [] [.sequenceConstruct (.num 1) (.num 2)]))
+    sequenceSpread (.capture [.sequenceConstruct (.num 1) (.num 2)])
   match runFlat concise, runFlat sequenceValue with
   | Except.ok [1, 2], Except.ok [1, 2] => true
   | _, _ => false
@@ -1484,21 +1478,21 @@ def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :
   ]
   let multiB := alg [] [] [] [.num 2, .num 3]
   let explicitSpreadForm := algPrivate [] [] [("b", multiB), ("X", countValues)] [
-    .call (.resolve "X") (alg [] [] [] [
+    .call (.resolve "X") [
       sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b"))
-    ])
+    ]
   ]
   let constructedArgForm := algPrivate [] [] [("b", multiB), ("X", countValues)] [
-    .call (.resolve "X") (alg [] [] [] [
+    .call (.resolve "X") [
       .sequenceConstruct (.num 1) (.resolve "b")
-    ])
+    ]
   ]
   let explicitSpreadOk :=
-    match runFlat (.block explicitSpreadForm) with
+    match runFlat (.algorithmExpr explicitSpreadForm) with
     | Except.ok [2] => true
     | _ => false
   let constructedArgOk :=
-    match runFlat (.block constructedArgForm) with
+    match runFlat (.algorithmExpr constructedArgForm) with
     | Except.ok [1] => true
     | _ => false
   explicitSpreadOk && constructedArgOk
@@ -1506,7 +1500,7 @@ def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :
 #guard sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue
 
 def missingOutputBodyAsResultStillFails : Bool :=
-  match runResult (.block (alg [] [] [] [missingOutputBodyExpr])) with
+  match runResult (.algorithmExpr (alg [] [] [] [missingOutputBodyExpr])) with
   | Except.error err => innermostIsMissingOutput err
   | Except.ok _ => false
 
@@ -1518,7 +1512,7 @@ def missingOutputBodyCountStillFails : Bool :=
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   let plainCount :=
-    match runResult (.call (.resolve "count") (alg [] [] [] [missingOutputBodyExpr])) with
+    match runResult (.call (.resolve "count") [missingOutputBodyExpr]) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   dotCount && plainCount
@@ -1544,13 +1538,13 @@ def missingOutputBodyEqualityStillFails : Bool :=
 
 def missingOutputContainerPropertyStillFails : Bool :=
   let countFails :=
-    match runResult (.block (algPrivate [] [] [("Lib", explicitEmptyNoOutputContainer)] [
+    match runResult (.algorithmExpr (algPrivate [] [] [("Lib", explicitEmptyNoOutputContainer)] [
       .dotCall (.resolve "Lib") "count" none
     ])) with
     | Except.error err => innermostIsMissingOutput err
     | Except.ok _ => false
   let equalityFails :=
-    match runResult (.block (algPrivate [] [] [("Lib", explicitEmptyNoOutputContainer)] [
+    match runResult (.algorithmExpr (algPrivate [] [] [("Lib", explicitEmptyNoOutputContainer)] [
       .binary .eq (.resolve "Lib") explicitEmptyExpr
     ])) with
     | Except.error err => innermostIsMissingOutput err
@@ -1577,7 +1571,7 @@ def explicitParamsWithoutOutputRejected : Bool :=
 #guard explicitParamsWithoutOutputRejected
 
 def explicitParamsWithoutOutputRejectedAtRun : Bool :=
-  match runResult (.block (algPrivate [] [] [("Algo", invalidExplicitParamClauseAlg)] [.num 0])) with
+  match runResult (.algorithmExpr (algPrivate [] [] [("Algo", invalidExplicitParamClauseAlg)] [.num 0])) with
   | Except.error err => innermostIsExplicitParamsRequireOutput err
   | Except.ok _ => false
 
@@ -1593,14 +1587,14 @@ def zeroCaptureAlg : Algorithm :=
   .mk none [KatLang.ParameterPattern.sequenceValue []] [] [] []
 
 def zeroCapturePatternWithoutOutputRejectedAtRoot : Bool :=
-  match runResult (.block zeroCaptureAlg) with
+  match runResult (.algorithmExpr zeroCaptureAlg) with
   | Except.error err => innermostIsExplicitParamsRequireOutput err
   | Except.ok _ => false
 
 #guard zeroCapturePatternWithoutOutputRejectedAtRoot
 
 def zeroCapturePatternWithoutOutputRejectedInPropertyPosition : Bool :=
-  match runResult (.block (algPrivate [] [] [("G", zeroCaptureAlg)] [.num 7])) with
+  match runResult (.algorithmExpr (algPrivate [] [] [("G", zeroCaptureAlg)] [.num 7])) with
   | Except.error err => innermostIsExplicitParamsRequireOutput err
   | Except.ok _ => false
 
@@ -1610,8 +1604,8 @@ def parameterizedChildPropertyContainer : Algorithm :=
   algPrivate [] [] [("Prop", alg ["x", "y"] [] [] [.num 7])] []
 
 def parameterizedChildPropertyWithoutOuterParamsStillValid : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Algo", parameterizedChildPropertyContainer)] [
-    .dotCall (.resolve "Algo") "Prop" (some (alg [] [] [] [.num 1, .num 2]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Algo", parameterizedChildPropertyContainer)] [
+    .dotCall (.resolve "Algo") "Prop" (some [.num 1, .num 2])
   ])) with
   | Except.ok [7] => true
   | _ => false
@@ -1626,17 +1620,17 @@ def extAlg : Algorithm :=
 
 def outer3 : Algorithm :=
   algPrivate [] [] [("G", extAlg)] [
-    .dotCall (.block (alg [] [] [] [.num 5])) "G" none
+    .dotCall (.algorithmExpr (alg [] [] [] [.num 5])) "G" none
   ]
 
 def test3 : Bool :=
-  match runFlat (.block outer3) with
+  match runFlat (.algorithmExpr outer3) with
   | Except.ok [10] => true
   | _ => false
 
 #guard test3
 -- EXPECTED: Except.ok [10]
-#eval runFlat (.block outer3)
+#eval runFlat (.algorithmExpr outer3)
 
 def userCollectingDotCallCountItemsAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [
@@ -1645,7 +1639,7 @@ def userCollectingDotCallCountItemsAlg : Algorithm :=
 
 def userCollectingDotCallCountItemsRoot : Algorithm :=
   algPrivate [] [] [("CountItems", userCollectingDotCallCountItemsAlg)] [
-    .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "CountItems" none
+    .dotCall (.capture [.num 1, .num 2]) "CountItems" none
   ]
 
 -- Ordinary dot-call receiver injection: `(1, 2).CountItems` is
@@ -1653,7 +1647,7 @@ def userCollectingDotCallCountItemsRoot : Algorithm :=
 -- the collecting parameter collects `items = [(1, 2)]` and `items.count` is 1. To count the
 -- receiver's items, spread them: `((1, 2)*).CountItems`.
 def userCollectingDotCallReceiverIsOneCapturedSlot : Bool :=
-  match runFlat (.block userCollectingDotCallCountItemsRoot) with
+  match runFlat (.algorithmExpr userCollectingDotCallCountItemsRoot) with
   | Except.ok [1] => true
   | _ => false
 
@@ -1666,14 +1660,14 @@ def userCollectingDotCallMeanAlg : Algorithm :=
 
 def userCollectingDotCallMeanRoot : Algorithm :=
   algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
-    .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "Mean" none
+    .dotCall (.capture [.num 1, .num 2]) "Mean" none
   ]
 
 -- `(1, 2).Mean` binds `vector = [(1, 2)]` — one captured sequence element —
 -- so `vector.sum` hits the numeric element constraint. Summing the receiver's
 -- items requires an explicit spread (`((1, 2)*).Mean`).
 def userCollectingDotCallReceiverGroupedSumIsNumericConstraintError : Bool :=
-  match runResult (.block userCollectingDotCallMeanRoot) with
+  match runResult (.algorithmExpr userCollectingDotCallMeanRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -1686,11 +1680,11 @@ def userNonCollectingDotCallCountOneAlg : Algorithm :=
 
 def userNonCollectingDotCallCountOneRoot : Algorithm :=
   algPrivate [] [] [("CountOne", userNonCollectingDotCallCountOneAlg)] [
-    .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "CountOne" none
+    .dotCall (.capture [.num 1, .num 2]) "CountOne" none
   ]
 
 def userNonCollectingDotCallReceiverIsOneSequenceArgument : Bool :=
-  match runFlat (.block userNonCollectingDotCallCountOneRoot) with
+  match runFlat (.algorithmExpr userNonCollectingDotCallCountOneRoot) with
   | Except.ok [2] => true
   | _ => false
 
@@ -1704,18 +1698,18 @@ def flatCollectingSlotQmeanAlg : Algorithm :=
   ]
 
 def flatCollectingSlotVectorAlg : Algorithm :=
-  alg [] [] [] [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])]
+  alg [] [] [] [.call (.resolve "range") [.num 1, .num 3]]
 
 def flatCollectingSlotQmeanNormalRoot : Algorithm :=
   algPrivate [] [] [("Vector", flatCollectingSlotVectorAlg), ("Qmean", flatCollectingSlotQmeanAlg)] [
-    .call (.resolve "Qmean") (alg [] [] [] [.resolve "Vector"])
+    .call (.resolve "Qmean") [.resolve "Vector"]
   ]
 
 -- `Qmean(Vector)` supplies ONE grouped argument, so the collecting parameter collects
 -- `args = [Vector]` and `args.sum` hits the numeric element constraint.
 -- Supplying the items is the explicit-spread call `Qmean(Vector*)` below.
 def flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError : Bool :=
-  match runResult (.block flatCollectingSlotQmeanNormalRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotQmeanNormalRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -1723,13 +1717,13 @@ def flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError : Bool 
 
 def flatCollectingSlotQmeanExplicitRoot : Algorithm :=
   algPrivate [] [] [("Vector", flatCollectingSlotVectorAlg), ("Qmean", flatCollectingSlotQmeanAlg)] [
-    .call (.resolve "Qmean") (alg [] [] [] [sequenceSpread (.resolve "Vector")])
+    .call (.resolve "Qmean") [sequenceSpread (.resolve "Vector")]
   ]
 
 -- The explicit-spread call `Qmean(Vector*)` supplies Vector's items as
 -- separate argument slots, so `args = [1, 2, 3]` and the mean is 2.
 def flatCollectingSlotQmeanExplicitSpreadSuppliesItems : Bool :=
-  match runFlat (.block flatCollectingSlotQmeanExplicitRoot) with
+  match runFlat (.algorithmExpr flatCollectingSlotQmeanExplicitRoot) with
   | Except.ok [2] => true
   | _ => false
 
@@ -1744,7 +1738,7 @@ def flatCollectingSlotQmeanDotRoot : Algorithm :=
 -- slot, so the grouped-argument numeric-constraint error matches the plain
 -- call above.
 def flatCollectingSlotQmeanDotCallMatchesGroupedCall : Bool :=
-  match runResult (.block flatCollectingSlotQmeanDotRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotQmeanDotRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -1760,31 +1754,31 @@ def flatCollectingSlotValuesAlg : Algorithm :=
 
 def flatCollectingSlotCountValuesRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Count", flatCollectingSlotCountAlg)] [
-    .call (.resolve "Count") (alg [] [] [] [.resolve "Values"])
+    .call (.resolve "Count") [.resolve "Values"]
   ]
 
 -- `Count(Values)` with a multi-output property supplies ONE argument boundary
 -- (a property reference is a value boundary), so the collecting parameter collects
 -- `args = [(10, 20)]` and the count is 1; `Count(Values*)` supplies 2 items.
 def flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot : Bool :=
-  match runFlat (.block flatCollectingSlotCountValuesRoot) with
+  match runFlat (.algorithmExpr flatCollectingSlotCountValuesRoot) with
   | Except.ok [1] => true
   | _ => false
 
 #guard flatCollectingSlotMultiOutputPropertyIsOneCapturedSlot
 
 def flatCollectingSlotSequenceValuePairAlg : Algorithm :=
-  alg [] [] [] [.block (alg [] [] [] [.num 10, .num 20])]
+  alg [] [] [] [.capture [.num 10, .num 20]]
 
 def flatCollectingSlotCountSequenceValuePairRoot : Algorithm :=
   algPrivate [] [] [("Pair", flatCollectingSlotSequenceValuePairAlg), ("Count", flatCollectingSlotCountAlg)] [
-    .call (.resolve "Count") (alg [] [] [] [.resolve "Pair"])
+    .call (.resolve "Count") [.resolve "Pair"]
   ]
 
 -- A visible sequence-value property is likewise ONE captured argument slot:
 -- `Count(Pair)` collects `args = [(10, 20)]`, so the count is 1.
 def flatCollectingSlotVisibleSequenceValueIsOneCapturedSlot : Bool :=
-  match runFlat (.block flatCollectingSlotCountSequenceValuePairRoot) with
+  match runFlat (.algorithmExpr flatCollectingSlotCountSequenceValuePairRoot) with
   | Except.ok [1] => true
   | _ => false
 
@@ -1800,14 +1794,14 @@ def flatCollectingSlotSumAlg : Algorithm :=
 
 def flatCollectingSlotSumNormalRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
-    .call (.resolve "Sum") (alg [] [] [] [.resolve "Values", .num 7])
+    .call (.resolve "Sum") [.resolve "Values", .num 7]
   ]
 
 -- `Sum(Values, 7)`: the suffix takes `last = 7` and the collecting parameter collects the one
 -- grouped argument (`values = [(10, 20)]`), so `values.sum` hits the numeric
 -- element constraint. `Sum(Values*, 7)` below is the item-supplying form.
 def flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError : Bool :=
-  match runResult (.block flatCollectingSlotSumNormalRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotSumNormalRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -1815,11 +1809,11 @@ def flatCollectingSlotGroupedMiddleArgumentIsNumericConstraintError : Bool :=
 
 def flatCollectingSlotSumExplicitRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
-    .call (.resolve "Sum") (alg [] [] [] [sequenceSpread (.resolve "Values")])
+    .call (.resolve "Sum") [sequenceSpread (.resolve "Values")]
   ]
 
 def flatCollectingSlotExplicitSpreadCanSatisfySuffix : Bool :=
-  match runFlat (.block flatCollectingSlotSumExplicitRoot) with
+  match runFlat (.algorithmExpr flatCollectingSlotSumExplicitRoot) with
   | Except.ok [30] => true
   | _ => false
 
@@ -1827,14 +1821,14 @@ def flatCollectingSlotExplicitSpreadCanSatisfySuffix : Bool :=
 
 def flatCollectingSlotSumSingleNormalRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
-    .call (.resolve "Sum") (alg [] [] [] [.resolve "Values"])
+    .call (.resolve "Sum") [.resolve "Values"]
   ]
 
 -- Sum(*values, last) receives one sequence-valued argument. Function-call
 -- binding does not implicitly open it, so `last` receives the sequence value and
 -- the old numeric body no longer succeeds.
 def flatCollectingSlotNormalSegmentDoesNotSatisfySuffixBySpreading : Bool :=
-  match runResult (.block flatCollectingSlotSumSingleNormalRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotSumSingleNormalRoot) with
   | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
@@ -1848,7 +1842,7 @@ def flatCollectingSlotSumDotMissingSuffixRoot : Algorithm :=
 -- Same boundary through a dot-call receiver: Values.Sum passes the receiver as
 -- one leading argument unless explicit spread is used.
 def flatCollectingSlotDotReceiverDoesNotSatisfySuffixBySpreading : Bool :=
-  match runResult (.block flatCollectingSlotSumDotMissingSuffixRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotSumDotMissingSuffixRoot) with
   | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
@@ -1856,13 +1850,13 @@ def flatCollectingSlotDotReceiverDoesNotSatisfySuffixBySpreading : Bool :=
 
 def flatCollectingSlotSumDotSuffixRoot : Algorithm :=
   algPrivate [] [] [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
-    .dotCall (.resolve "Values") "Sum" (some (alg [] [] [] [.num 7]))
+    .dotCall (.resolve "Values") "Sum" (some [.num 7])
   ]
 
 -- `Values.Sum(7)` is `Sum(Values, 7)`: the receiver is one leading argument
 -- slot, so the grouped-middle numeric-constraint error matches the plain call.
 def flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall : Bool :=
-  match runResult (.block flatCollectingSlotSumDotSuffixRoot) with
+  match runResult (.algorithmExpr flatCollectingSlotSumDotSuffixRoot) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -1873,11 +1867,11 @@ def flatFixedSlotAddAlg : Algorithm :=
 
 def flatFixedSlotAddPairRoot : Algorithm :=
   algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
-    .call (.resolve "Add") (alg [] [] [] [.resolve "Pair"])
+    .call (.resolve "Add") [.resolve "Pair"]
   ]
 
 def flatFixedCallStillDoesNotAutoSpread : Bool :=
-  match runResult (.block flatFixedSlotAddPairRoot) with
+  match runResult (.algorithmExpr flatFixedSlotAddPairRoot) with
   | Except.error _ => true
   | Except.ok _ => false
 
@@ -1885,11 +1879,11 @@ def flatFixedCallStillDoesNotAutoSpread : Bool :=
 
 def flatFixedSlotAddPairExplicitRoot : Algorithm :=
   algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("Add", flatFixedSlotAddAlg)] [
-    .call (.resolve "Add") (alg [] [] [] [sequenceSpread (.resolve "Pair")])
+    .call (.resolve "Add") [sequenceSpread (.resolve "Pair")]
   ]
 
 def flatFixedCallExplicitSpreadStillWorks : Bool :=
-  match runFlat (.block flatFixedSlotAddPairExplicitRoot) with
+  match runFlat (.algorithmExpr flatFixedSlotAddPairExplicitRoot) with
   | Except.ok [30] => true
   | _ => false
 
@@ -1906,16 +1900,16 @@ def collectingForwardingCountItemsAlg : Algorithm :=
 -- collecting parameter collects the three items.
 def collectingForwardingUseValuesAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .call (.resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "values")])
+    .call (.resolve "CountItems") [sequenceSpread (.param "values")]
   ]
 
 def collectingForwardingTopLevelRoot : Algorithm :=
   algPrivate [] [] [("CountItems", collectingForwardingCountItemsAlg), ("Use", collectingForwardingUseValuesAlg)] [
-    .call (.resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 2, .num 3])])
+    .call (.resolve "Use") [sequenceSpread (sequenceItems [.num 1, .num 2, .num 3])]
   ]
 
 def collectingForwardingTopLevelCaptureStillWorks : Bool :=
-  match runFlat (.block collectingForwardingTopLevelRoot) with
+  match runFlat (.algorithmExpr collectingForwardingTopLevelRoot) with
   | Except.ok [3] => true
   | _ => false
 
@@ -1926,15 +1920,15 @@ def collectingForwardingTopLevelCaptureStillWorks : Bool :=
 -- items requires the explicit spread above.
 def collectingForwardingBareNameUseValuesAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .call (.resolve "CountItems") (alg [] [] [] [.param "values"])
+    .call (.resolve "CountItems") [.param "values"]
   ]
 
 def collectingForwardingBareNamePassesOneListArgument : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountItems", collectingForwardingCountItemsAlg),
     ("Use", collectingForwardingBareNameUseValuesAlg)
   ] [
-    .call (.resolve "Use") (alg [] [] [] [.num 1, .num 2, .num 3])
+    .call (.resolve "Use") [.num 1, .num 2, .num 3]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -1945,16 +1939,16 @@ def collectingForwardingUseSequenceValueHistoryAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "history", kind := .collecting }]
   ] [] [] [
-    .call (.resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "history")])
+    .call (.resolve "CountItems") [sequenceSpread (.param "history")]
   ]
 
 def collectingForwardingSequenceValueRoot : Algorithm :=
   algPrivate [] [] [("CountItems", collectingForwardingCountItemsAlg), ("Use", collectingForwardingUseSequenceValueHistoryAlg)] [
-    .call (.resolve "Use") (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])
+    .call (.resolve "Use") [.capture [.num 1, .num 2, .num 3]]
   ]
 
 def collectingForwardingSequenceValueCaptureStillWorks : Bool :=
-  match runFlat (.block collectingForwardingSequenceValueRoot) with
+  match runFlat (.algorithmExpr collectingForwardingSequenceValueRoot) with
   | Except.ok [3] => true
   | _ => false
 
@@ -1969,25 +1963,25 @@ def sequenceValueCollectingBoundaryCountSequenceValueAlg : Algorithm :=
 
 def sequenceValueCollectingBoundaryRoot : Algorithm :=
   algPrivate [] [] [("Pair", flatCollectingSlotValuesAlg), ("CountSequenceValue", sequenceValueCollectingBoundaryCountSequenceValueAlg)] [
-    .call (.resolve "CountSequenceValue") (alg [] [] [] [.resolve "Pair"])
+    .call (.resolve "CountSequenceValue") [.resolve "Pair"]
   ]
 
 def sequenceValueCollectingBoundaryDoesNotUseFlatSlotSpread : Bool :=
-  match runFlat (.block sequenceValueCollectingBoundaryRoot) with
+  match runFlat (.algorithmExpr sequenceValueCollectingBoundaryRoot) with
   | Except.ok [2] => true
   | _ => false
 
 #guard sequenceValueCollectingBoundaryDoesNotUseFlatSlotSpread
 
 def explicitCallSiteSequenceValue123 : Nat -> KatLang.Expr
-  | 0 => .block (alg [] [] [] [.num 1, .num 2, .num 3])
-  | Nat.succ depth => .block (alg [] [] [] [explicitCallSiteSequenceValue123 depth])
+  | 0 => .capture [.num 1, .num 2, .num 3]
+  | Nat.succ depth => .capture [explicitCallSiteSequenceValue123 depth]
 
 def explicitCallSiteSequenceValueLeftNested : KatLang.Expr :=
-  .block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2]), .num 3])
+  .capture [.capture [.num 1, .num 2], .num 3]
 
 def explicitCallSiteSequenceValueRightNested : KatLang.Expr :=
-  .block (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])
+  .capture [.num 1, .capture [.num 2, .num 3]]
 
 def explicitCallSiteSequenceValueCountSequenceValue1Alg : Algorithm :=
   algWithParameterPatterns [
@@ -2016,15 +2010,15 @@ def explicitCallSiteSequenceValueMatrixRoot : Algorithm :=
     ("CountSequenceValue2", explicitCallSiteSequenceValueCountSequenceValue2Alg),
     ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
   ] [
-    .call (.resolve "CountSequenceValue1") (alg [] [] [] [explicitCallSiteSequenceValue123 0]),
-    .call (.resolve "CountSequenceValue1") (alg [] [] [] [explicitCallSiteSequenceValue123 1]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValue123 0]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValue123 1]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValue123 2]),
-    .call (.resolve "CountSequenceValue3") (alg [] [] [] [explicitCallSiteSequenceValue123 1]),
-    .call (.resolve "CountSequenceValue3") (alg [] [] [] [explicitCallSiteSequenceValue123 2]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValueLeftNested]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [explicitCallSiteSequenceValueRightNested])
+    .call (.resolve "CountSequenceValue1") [explicitCallSiteSequenceValue123 0],
+    .call (.resolve "CountSequenceValue1") [explicitCallSiteSequenceValue123 1],
+    .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 0],
+    .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 1],
+    .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValue123 2],
+    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 1],
+    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 2],
+    .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValueLeftNested],
+    .call (.resolve "CountSequenceValue2") [explicitCallSiteSequenceValueRightNested]
   ]
 
 -- CountSequenceValue1 (flat collecting) collects the ONE grouped argument, so both
@@ -2033,17 +2027,17 @@ def explicitCallSiteSequenceValueMatrixRoot : Algorithm :=
 -- the spread items collect to a three-element collected list (count 3), while one
 -- EXTRA written level leaves a single grouped item in the collected list (count 1).
 def sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth : Bool :=
-  match runFlat (.block explicitCallSiteSequenceValueMatrixRoot) with
+  match runFlat (.algorithmExpr explicitCallSiteSequenceValueMatrixRoot) with
   | Except.ok [1, 1, 3, 1, 1, 3, 3, 2, 2] => true
   | _ => false
 
 #guard sequenceValueCollectingParameterRespectsExplicitCallSiteSequenceValueDepth
 
 def nestedSequenceValueCollectingParameterRejectsTooShallowExplicitSequenceValue : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("CountSequenceValue3", explicitCallSiteSequenceValueCountSequenceValue3Alg)
   ] [
-    .call (.resolve "CountSequenceValue3") (alg [] [] [] [explicitCallSiteSequenceValue123 0])
+    .call (.resolve "CountSequenceValue3") [explicitCallSiteSequenceValue123 0]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 3 err
   | _ => false
@@ -2055,9 +2049,9 @@ def explicitPropertyReferenceSequenceValueRoot : Algorithm :=
     ("Inner", alg [] [] [] [explicitCallSiteSequenceValue123 0]),
     ("CountSequenceValue2", explicitCallSiteSequenceValueCountSequenceValue2Alg)
   ] [
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [.resolve "Inner"]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [.block (alg [] [] [] [.resolve "Inner"])]),
-    .call (.resolve "CountSequenceValue2") (alg [] [] [] [.block (alg [] [] [] [.block (alg [] [] [] [.resolve "Inner"])])])
+    .call (.resolve "CountSequenceValue2") [.resolve "Inner"],
+    .call (.resolve "CountSequenceValue2") [.capture [.resolve "Inner"]],
+    .call (.resolve "CountSequenceValue2") [.capture [.capture [.resolve "Inner"]]]
   ]
 
 -- A bare property reference opens through the deconstruction pattern
@@ -2065,7 +2059,7 @@ def explicitPropertyReferenceSequenceValueRoot : Algorithm :=
 -- for the pattern's collecting binding (count 1): written grouping is not erased by segment
 -- collection.
 def explicitPropertyReferenceSequenceValueIsSourceBacked : Bool :=
-  match runFlat (.block explicitPropertyReferenceSequenceValueRoot) with
+  match runFlat (.algorithmExpr explicitPropertyReferenceSequenceValueRoot) with
   | Except.ok [3, 1, 1] => true
   | _ => false
 
@@ -2080,18 +2074,18 @@ def libB : Algorithm :=
   alg [] [] [publicProp "G" (alg ["x"] [] [] [.binary .add (.param "x") (.num 2)])] []
 
 def caller4 : Algorithm :=
-  alg [] [.block libA, .block libB] [] [
-    .dotCall (.block (alg [] [] [] [.num 5])) "G" none
+  alg [] [.algorithmExpr libA, .algorithmExpr libB] [] [
+    .dotCall (.algorithmExpr (alg [] [] [] [.num 5])) "G" none
   ]
 
 def test4 : Bool :=
-  match runResult (.block caller4) with
+  match runResult (.algorithmExpr caller4) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test4
 -- EXPECTED: Expect.error (Error.ambiguousOpen "G" [...])
-#eval runResult (.block caller4)
+#eval runResult (.algorithmExpr caller4)
 
 -- Open resolution regressions
 --------------------------------------------------------------------------------
@@ -2112,7 +2106,7 @@ def openPrivateHeadLaterRoot : Algorithm :=
   algPrivate [] [.resolve "Lib"] [("Lib", openPrivateHeadLib)] [.resolve "X"]
 
 def openPrivateHeadLaterWorks : Bool :=
-  match runFlat (.block openPrivateHeadLaterRoot) with
+  match runFlat (.algorithmExpr openPrivateHeadLaterRoot) with
   | Except.ok [1] => true
   | _ => false
 
@@ -2122,7 +2116,7 @@ def openDoesNotExposePrivateMemberRoot : Algorithm :=
   algPrivate [] [.resolve "Lib"] [("Lib", openPrivateHeadLib)] [.resolve "Hidden"]
 
 def openDoesNotExposePrivateMember : Bool :=
-  match runResult (.block openDoesNotExposePrivateMemberRoot) with
+  match runResult (.algorithmExpr openDoesNotExposePrivateMemberRoot) with
   | Except.error err => innermostIsUnknownName "Hidden" err
   | Except.ok _ => false
 
@@ -2132,7 +2126,7 @@ def openMissingHeadRoot : Algorithm :=
   alg [] [.resolve "Missing"] [] [.resolve "X"]
 
 def openMissingHeadStillErrors : Bool :=
-  match runResult (.block openMissingHeadRoot) with
+  match runResult (.algorithmExpr openMissingHeadRoot) with
   | Except.error err =>
       hasContext "while resolving open: Missing" err
       && innermostIsUnknownName "Missing" err
@@ -2144,7 +2138,7 @@ def openBuiltinTargetRoot : Algorithm :=
   alg [] [.resolve "if"] [] [.resolve "X"]
 
 def openBuiltinTargetStillIllegal : Bool :=
-  match runResult (.block openBuiltinTargetRoot) with
+  match runResult (.algorithmExpr openBuiltinTargetRoot) with
   | Except.error err =>
       hasContext "while resolving open: if" err
       && innermostIsIllegalInOpen "builtin 'if'" err
@@ -2156,7 +2150,7 @@ def openQualifiedPrivatePathRoot : Algorithm :=
   algPrivate [] [.dotCall (.resolve "Lib") "PrivateSub" none] [("Lib", openPrivateHeadLib)] [.resolve "Y"]
 
 def openQualifiedPrivatePathStillRestricted : Bool :=
-  match runResult (.block openQualifiedPrivatePathRoot) with
+  match runResult (.algorithmExpr openQualifiedPrivatePathRoot) with
   | Except.error err =>
       hasContext "while resolving open: Lib.PrivateSub" err
       && innermostIsNotPublicProperty "Lib" "PrivateSub" err
@@ -2172,7 +2166,7 @@ def publicWrapperPrivateHelperAlg : Algorithm :=
 
 def publicWrapperPrivateHelperApi : Algorithm :=
   alg ["N"] [] [] [
-    .call (.resolve "PrivateHelper") (alg [] [] [] [.param "N"])
+    .call (.resolve "PrivateHelper") [.param "N"]
   ]
 
 def publicWrapperPrivateHelperLib : Algorithm :=
@@ -2182,24 +2176,24 @@ def publicWrapperPrivateHelperLib : Algorithm :=
   ] []
 
 def publicWrapperPrivateHelperOpenRoot : Algorithm :=
-  alg [] [.block publicWrapperPrivateHelperLib] [] [
-    .call (.resolve "PublicApi") (alg [] [] [] [.num 5])
+  alg [] [.algorithmExpr publicWrapperPrivateHelperLib] [] [
+    .call (.resolve "PublicApi") [.num 5]
   ]
 
 def publicWrapperPrivateHelperImportsPublicApi : Bool :=
-  match runFlat (.block publicWrapperPrivateHelperOpenRoot) with
+  match runFlat (.algorithmExpr publicWrapperPrivateHelperOpenRoot) with
   | Except.ok [6] => true
   | _ => false
 
 #guard publicWrapperPrivateHelperImportsPublicApi
 
 def publicWrapperPrivateHelperHiddenRoot : Algorithm :=
-  alg [] [.block publicWrapperPrivateHelperLib] [] [
-    .call (.resolve "PrivateHelper") (alg [] [] [] [.num 5])
+  alg [] [.algorithmExpr publicWrapperPrivateHelperLib] [] [
+    .call (.resolve "PrivateHelper") [.num 5]
   ]
 
 def publicWrapperPrivateHelperKeepsPrivateHelperHidden : Bool :=
-  match runResult (.block publicWrapperPrivateHelperHiddenRoot) with
+  match runResult (.algorithmExpr publicWrapperPrivateHelperHiddenRoot) with
   | Except.error err => innermostIsUnknownName "PrivateHelper" err
   | Except.ok _ => false
 
@@ -2207,11 +2201,11 @@ def publicWrapperPrivateHelperKeepsPrivateHelperHidden : Bool :=
 
 def openedMemberBuiltinIfAlg : Algorithm :=
   alg ["x"] [] [] [
-    .call (.resolve "if") (alg [] [] [] [
+    .call (.resolve "if") [
       .binary .gt (.param "x") (.num 0),
       .num 1,
       .num 0
-    ])
+    ]
   ]
 
 def openedMemberBuiltinIfVec : Algorithm :=
@@ -2219,11 +2213,11 @@ def openedMemberBuiltinIfVec : Algorithm :=
 
 def openedMemberBuiltinIfRoot : Algorithm :=
   algPrivate [] [.resolve "Vec"] [("Vec", openedMemberBuiltinIfVec)] [
-    .call (.resolve "Test") (alg [] [] [] [.num 35])
+    .call (.resolve "Test") [.num 35]
   ]
 
 def openedMemberBuiltinIfWorks : Bool :=
-  match runFlat (.block openedMemberBuiltinIfRoot) with
+  match runFlat (.algorithmExpr openedMemberBuiltinIfRoot) with
   | Except.ok [1] => true
   | _ => false
 
@@ -2231,16 +2225,16 @@ def openedMemberBuiltinIfWorks : Bool :=
 
 def openedMemberBuiltinSumVec : Algorithm :=
   alg [] [] [publicProp "SumPair" (alg ["x", "y"] [] [] [
-    .dotCall (.block (alg [] [] [] [.param "x", .param "y"])) "sum" none
+    .dotCall (.capture [.param "x", .param "y"]) "sum" none
   ])] []
 
 def openedMemberBuiltinSumRoot : Algorithm :=
   algPrivate [] [.resolve "Vec"] [("Vec", openedMemberBuiltinSumVec)] [
-    .call (.resolve "SumPair") (alg [] [] [] [.num 3, .num 4])
+    .call (.resolve "SumPair") [.num 3, .num 4]
   ]
 
 def openedMemberBuiltinSumWorks : Bool :=
-  match runFlat (.block openedMemberBuiltinSumRoot) with
+  match runFlat (.algorithmExpr openedMemberBuiltinSumRoot) with
   | Except.ok [7] => true
   | _ => false
 
@@ -2248,16 +2242,16 @@ def openedMemberBuiltinSumWorks : Bool :=
 
 def inlineOpenedMemberBuiltinSumVec : Algorithm :=
   alg [] [] [publicProp "SumPair" (alg ["x", "y"] [] [] [
-    .dotCall (.block (alg [] [] [] [.param "x", .param "y"])) "sum" none
+    .dotCall (.capture [.param "x", .param "y"]) "sum" none
   ])] []
 
 def inlineOpenedMemberBuiltinSumRoot : Algorithm :=
-  alg [] [.block inlineOpenedMemberBuiltinSumVec] [] [
-    .call (.resolve "SumPair") (alg [] [] [] [.num 3, .num 4])
+  alg [] [.algorithmExpr inlineOpenedMemberBuiltinSumVec] [] [
+    .call (.resolve "SumPair") [.num 3, .num 4]
   ]
 
 def inlineOpenedMemberBuiltinSumWorks : Bool :=
-  match runFlat (.block inlineOpenedMemberBuiltinSumRoot) with
+  match runFlat (.algorithmExpr inlineOpenedMemberBuiltinSumRoot) with
   | Except.ok [7] => true
   | _ => false
 
@@ -2265,16 +2259,16 @@ def inlineOpenedMemberBuiltinSumWorks : Bool :=
 
 def inlineOpenedMemberBuiltinSumShadowVec : Algorithm :=
   alg [] [] [publicProp "Use" (alg [] [] [] [
-    .dotCall (.block (alg [] [] [] [.num 1, .num 2])) "sum" none
+    .dotCall (.capture [.num 1, .num 2]) "sum" none
   ])] []
 
 def inlineOpenedMemberBuiltinSumShadowRoot : Algorithm :=
-  algPrivate [] [.block inlineOpenedMemberBuiltinSumShadowVec] [
+  algPrivate [] [.algorithmExpr inlineOpenedMemberBuiltinSumShadowVec] [
     ("sum", alg [] [] [] [.num 99])
   ] [.resolve "Use"]
 
 def inlineOpenedMemberBuiltinSumIgnoresOpenerShadow : Bool :=
-  match runFlat (.block inlineOpenedMemberBuiltinSumShadowRoot) with
+  match runFlat (.algorithmExpr inlineOpenedMemberBuiltinSumShadowRoot) with
   | Except.ok [3] => true
   | _ => false
 
@@ -2287,7 +2281,7 @@ def openedMemberDefinitionSiteCaptureVec : Algorithm :=
 
 def openedMemberDefinitionSiteCaptureScope : Algorithm :=
   algPrivate [] [.resolve "Vec"] [("A", alg [] [] [] [.num 100])] [
-    .call (.resolve "Test") (alg [] [] [] [.num 5])
+    .call (.resolve "Test") [.num 5]
   ]
 
 def openedMemberDefinitionSiteCaptureRoot : Algorithm :=
@@ -2298,7 +2292,7 @@ def openedMemberDefinitionSiteCaptureRoot : Algorithm :=
   ] [.resolve "Scope"]
 
 def openedMemberUsesDefinitionSiteNotOpenerSite : Bool :=
-  match runFlat (.block openedMemberDefinitionSiteCaptureRoot) with
+  match runFlat (.algorithmExpr openedMemberDefinitionSiteCaptureRoot) with
   | Except.ok [15] => true
   | _ => false
 
@@ -2315,31 +2309,31 @@ def receiver5 : Algorithm :=
 
 def outer5 : Algorithm :=
   algPrivate [] [] [("G", localExt)] [
-    .dotCall (.block receiver5) "G" none
+    .dotCall (.algorithmExpr receiver5) "G" none
   ]
 
 def test5a : Bool :=
-  match runResult (.block outer5) with
+  match runResult (.algorithmExpr outer5) with
   | Except.error _ => true   -- structural G found but arity mismatch (no fallback to lexical)
   | Except.ok _ => false
 
 #guard test5a
 -- EXPECTED: Except.error (arityMismatch 1 0)
-#eval runResult (.block outer5)
+#eval runResult (.algorithmExpr outer5)
 
 -- Test 5b: Structural property with explicit args → navigation wins over lexical
 -- a.G(5) where structural G(x)=x+1 → 6 (not localExt which would give 500)
 def test5b : Bool :=
-  match runFlat (.block (algPrivate [] [] [("G", localExt)] [
-    .dotCall (.block receiver5) "G" (some (alg [] [] [] [.num 5]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("G", localExt)] [
+    .dotCall (.algorithmExpr receiver5) "G" (some [.num 5])
   ])) with
   | Except.ok [6] => true
   | _ => false
 
 #guard test5b
 -- EXPECTED: Except.ok [6] (structural incAlg wins, not localExt)
-#eval runFlat (.block (algPrivate [] [] [("G", localExt)] [
-    .dotCall (.block receiver5) "G" (some (alg [] [] [] [.num 5]))
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("G", localExt)] [
+    .dotCall (.algorithmExpr receiver5) "G" (some [.num 5])
   ]))
 
 -- Test 6: Numbers.count as algorithm argument to Repeat
@@ -2358,22 +2352,21 @@ def stepAlg : Algorithm :=
 -- Root algorithm that calls Repeat(step, Numbers.count, init)
 def repeatArityRoot : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg), ("Step", stepAlg)] [
-    .call (resolve "repeat")
-      (alg [] [] [] [
+    .call (resolve "repeat") [
         resolve "Step",
         .dotCall (resolve "Numbers") "count" none,
-        .block (alg [] [] [] [.num 0])
-      ])
+        .num 0
+      ]
   ]
 
 def test6 : Bool :=
-  match runFlat (.block repeatArityRoot) with
+  match runFlat (.algorithmExpr repeatArityRoot) with
   | Except.ok [3] => true
   | _ => false
 
 #guard test6
 -- EXPECTED: Except.ok [3] (step applied 3 times: 0→1→2→3)
-#eval runFlat (.block repeatArityRoot)
+#eval runFlat (.algorithmExpr repeatArityRoot)
 
 -- Test 7: Numbers.count as Repeat count (comprehensive)
 -- Uses 6 output expressions to verify correct count
@@ -2382,22 +2375,21 @@ def numbersAlg7 : Algorithm :=
 
 def testAlg7 : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg7)] [
-    .call (resolve "repeat")
-      (alg [] [] [] [
-        .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step: increment
+    .call (resolve "repeat") [
+        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step: increment
         .dotCall (resolve "Numbers") "count" none,                      -- count: 6
-        .block (alg [] [] [] [.num 0])                                   -- init: 0
-      ])
+        .num 0                                   -- init: 0
+      ]
   ]
 
 def test7 : Bool :=
-  match runFlat (.block testAlg7) with
+  match runFlat (.algorithmExpr testAlg7) with
   | Except.ok [6] => true
   | _ => false
 
 #guard test7
 -- EXPECTED: Except.ok [6] (step applied 6 times: 0→1→2→3→4→5→6)
-#eval runFlat (.block testAlg7)
+#eval runFlat (.algorithmExpr testAlg7)
 
 -- Test 8: 0-param structural property used as Algorithm argument
 -- a.X in algorithm position where X has 0 params, returns 42
@@ -2409,12 +2401,12 @@ def receiver8 : Algorithm :=
 
 -- Use Atoms to force evaluation of the arg algorithm
 def test8 : Bool :=
-  match runFlat (.call (.resolve "atoms") (alg [] [] [] [.dotCall (.block receiver8) "X" none])) with
+  match runFlat (.call (.resolve "atoms") [.dotCall (.algorithmExpr receiver8) "X" none]) with
   | Except.ok [42] => true
   | _ => false
 
 #guard test8
-#eval runFlat (.call (.resolve "atoms") (alg [] [] [] [.dotCall (.block receiver8) "X" none]))
+#eval runFlat (.call (.resolve "atoms") [.dotCall (.algorithmExpr receiver8) "X" none])
 
 -- Test 9: Structural property with params, no args → arity mismatch (navigation-only)
 -- a.Inc where Inc(x) = x + 1, no args → error
@@ -2425,22 +2417,22 @@ def receiver9 : Algorithm :=
   algPrivate [] [] [("Inc", incAlg9)] [.num 5]
 
 def test9a : Bool :=
-  match runResult (.dotCall (.block receiver9) "Inc" none) with
+  match runResult (.dotCall (.algorithmExpr receiver9) "Inc" none) with
   | Except.error _ => true   -- arity mismatch: Inc expects 1 arg, got 0
   | Except.ok _ => false
 
 #guard test9a
-#eval runResult (.dotCall (.block receiver9) "Inc" none)
+#eval runResult (.dotCall (.algorithmExpr receiver9) "Inc" none)
 
 -- Test 9b: Structural property with explicit args → direct binding
 -- a.Inc(5) where Inc(x) = x + 1 → 6
 def test9b : Bool :=
-  match runFlat (.dotCall (.block receiver9) "Inc" (some (alg [] [] [] [.num 5]))) with
+  match runFlat (.dotCall (.algorithmExpr receiver9) "Inc" (some [.num 5])) with
   | Except.ok [6] => true
   | _ => false
 
 #guard test9b
-#eval runFlat (.dotCall (.block receiver9) "Inc" (some (alg [] [] [] [.num 5])))
+#eval runFlat (.dotCall (.algorithmExpr receiver9) "Inc" (some [.num 5]))
 
 -- Test 10: dotCall with args (a.X(extra)) passed as builtin argument (navigation-only)
 -- Repeat(step, a.Count(bias), init)
@@ -2454,25 +2446,23 @@ def receiver10 : Algorithm :=
   algPrivate [] [] [("Count", countAlg)] [.num 99]
 
 def test10 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("R", receiver10)] [
-    .call (resolve "repeat")
-      (alg [] [] [] [
-        .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),  -- step
-        .dotCall (resolve "R") "Count" (some (alg [] [] [] [.num 1])),   -- count: R.Count(1) = 3
-        .block (alg [] [] [] [.num 0])                                     -- init
-      ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10)] [
+    .call (resolve "repeat") [
+        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),  -- step
+        .dotCall (resolve "R") "Count" (some [.num 1]),   -- count: R.Count(1) = 3
+        .num 0                                     -- init
+      ]
   ])) with
   | Except.ok [30] => true
   | _ => false
 
 #guard test10
-#eval runFlat (.block (algPrivate [] [] [("R", receiver10)] [
-  .call (resolve "repeat")
-    (alg [] [] [] [
-      .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),
-      .dotCall (resolve "R") "Count" (some (alg [] [] [] [.num 1])),
-      .block (alg [] [] [] [.num 0])
-    ])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10)] [
+  .call (resolve "repeat") [
+      .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),
+      .dotCall (resolve "R") "Count" (some [.num 1]),
+      .num 0
+    ]
 ]))
 
 -- Test 11: dotCall none syntax for count in Repeat argument position
@@ -2492,24 +2482,23 @@ def addAlg11 : Algorithm :=
 def testAlg11 : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg11), ("Add", addAlg11)] [
     .index
-      (.call (resolve "repeat")
-        (alg [] [] [] [
+      (.call (resolve "repeat") [
           resolve "Add",
           .dotCall (resolve "Numbers") "count" none,     -- ← no-arg dotCall
           .num 0,
           .num 0
-        ]))
+        ])
       (.num 1)
   ]
 
 def test11 : Bool :=
-  match runFlat (.block testAlg11) with
+  match runFlat (.algorithmExpr testAlg11) with
   | Except.ok [24] => true
   | _ => false
 
 #guard test11
 -- EXPECTED: Except.ok [24]
-#eval runFlat (.block testAlg11)
+#eval runFlat (.algorithmExpr testAlg11)
 
 -- Test 12: dotCall count as Repeat count (simple increment)
 -- Same as Test 7 but with dotCall none syntax
@@ -2519,22 +2508,21 @@ def numbersAlg12 : Algorithm :=
 
 def testAlg12 : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg12)] [
-    .call (resolve "repeat")
-      (alg [] [] [] [
-        .block (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step
+    .call (resolve "repeat") [
+        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step
         .dotCall (resolve "Numbers") "count" none,                       -- ← no-arg dotCall
-        .block (alg [] [] [] [.num 0])                                   -- init
-      ])
+        .num 0                                   -- init
+      ]
   ]
 
 def test12 : Bool :=
-  match runFlat (.block testAlg12) with
+  match runFlat (.algorithmExpr testAlg12) with
   | Except.ok [3] => true
   | _ => false
 
 #guard test12
 -- EXPECTED: Except.ok [3]
-#eval runFlat (.block testAlg12)
+#eval runFlat (.algorithmExpr testAlg12)
 
 -- Regression: recursive dot-call arguments bind both value and algorithm views,
 -- but builtin argument preparation must use the current parameter value when it
@@ -2545,12 +2533,12 @@ def test12 : Bool :=
 -- regression test.
 def recursiveDotCallListAlg : Algorithm :=
   alg [] [] [] [
-    .call (resolve "atoms") (alg [] [] [] [.param "values"])
+    .call (resolve "atoms") [.param "values"]
   ]
 
 def recursiveDotCallRestAlg : Algorithm :=
   alg [] [] [] [
-    .sequenceSpread (.dotCall (resolve "list") "skip" (some (alg [] [] [] [.num 1])))
+    .sequenceSpread (.dotCall (resolve "list") "skip" (some [.num 1]))
   ]
 
 def recursiveDotCallReduceCollectionAlg : Algorithm :=
@@ -2558,22 +2546,22 @@ def recursiveDotCallReduceCollectionAlg : Algorithm :=
     ("list", recursiveDotCallListAlg),
     ("rest", recursiveDotCallRestAlg)
   ] [
-    .call (resolve "if") (alg [] [] [] [
+    .call (resolve "if") [
       .binary .le (.dotCall (resolve "list") "count" none) (.num 1),
       resolve "list",
       .dotCall (resolve "rest") "reduceCollection" none
-    ])
+    ]
   ]
 
 def recursiveDotCallRoot : Algorithm :=
   algPrivate [] [] [("reduceCollection", recursiveDotCallReduceCollectionAlg)] [
-    .call (resolve "reduceCollection") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])
-    ])
+    .call (resolve "reduceCollection") [
+      .capture [.num 1, .num 2, .num 3, .num 4]
+    ]
   ]
 
 def test12a : Bool :=
-  match runFlat (.block recursiveDotCallRoot) with
+  match runFlat (.algorithmExpr recursiveDotCallRoot) with
   | Except.ok [4] => true
   | _ => false
 
@@ -2586,55 +2574,55 @@ def arityRemovedRoot13 : Algorithm :=
   ]
 
 def test13 : Bool :=
-  match runResult (.block arityRemovedRoot13) with
+  match runResult (.algorithmExpr arityRemovedRoot13) with
   | Except.error err => innermostIsUnknownName "arity" err
   | Except.ok _ => false
 
 #guard test13
-#eval runResult (.block arityRemovedRoot13)
+#eval runResult (.algorithmExpr arityRemovedRoot13)
 
 -- Test 14: inline sequence-value receiver no longer exposes arity
 def test14 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 7])) "arity" none) with
+  match runResult (.dotCall (.capture [.num 1, .num 7]) "arity" none) with
   | Except.error err => innermostIsUnknownName "arity" err
   | Except.ok _ => false
 
 #guard test14
-#eval runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 7])) "arity" none)
+#eval runResult (.dotCall (.capture [.num 1, .num 7]) "arity" none)
 
 -- Test 14a: extra sequence-value receiver layer no longer exposes arity
 def test14a : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 7])])) "arity" none) with
+  match runResult (.dotCall (.capture [.capture [.num 1, .num 7]]) "arity" none) with
   | Except.error err => innermostIsUnknownName "arity" err
   | Except.ok _ => false
 
 #guard test14a
-#eval runResult (.dotCall (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 7])])) "arity" none)
+#eval runResult (.dotCall (.capture [.capture [.num 1, .num 7]]) "arity" none)
 
 -- Test 14b: count still works for named, inline, and nested sequence-value receivers
 def countReceiverRoot14b : Algorithm :=
   algPrivate [] [] [("Data", alg [] [] [] [.num 1, .num 7])] [
     .dotCall (resolve "Data") "count" none,
-    .dotCall (.block (alg [] [] [] [.num 1, .num 7])) "count" none,
-    .dotCall (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 7])])) "count" none
+    .dotCall (.capture [.num 1, .num 7]) "count" none,
+    .dotCall (.capture [.capture [.num 1, .num 7]]) "count" none
   ]
 
 def test14b : Bool :=
-  match runFlat (.block countReceiverRoot14b) with
+  match runFlat (.algorithmExpr countReceiverRoot14b) with
   | Except.ok [2, 2, 2] => true
   | _ => false
 
 #guard test14b
-#eval runFlat (.block countReceiverRoot14b)
+#eval runFlat (.algorithmExpr countReceiverRoot14b)
 
 -- Test 14d: old length intrinsic name is no longer recognized
 def test14d : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none) with
+  match runResult (.dotCall (.capture [.num 1, .num 2]) "length" none) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test14d
-#eval runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "length" none)
+#eval runResult (.dotCall (.capture [.num 1, .num 2]) "length" none)
 
 -- Test 15: user-defined higher-order call keeps eager value ABI
 -- ApplyTwice(f, x) = f(f(x)); passing Inc as an algorithm argument should work.
@@ -2643,21 +2631,21 @@ def incAlg15 : Algorithm :=
 
 def applyTwiceAlg15 : Algorithm :=
   alg ["f", "x"] [] [] [
-    .call (.param "f") (alg [] [] [] [
-      .call (.param "f") (alg [] [] [] [.param "x"])
-    ])
+    .call (.param "f") [
+      .call (.param "f") [.param "x"]
+    ]
   ]
 
 def test15 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("ApplyTwice", applyTwiceAlg15)] [
-    .call (resolve "ApplyTwice") (alg [] [] [] [resolve "Inc", .num 10])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("ApplyTwice", applyTwiceAlg15)] [
+    .call (resolve "ApplyTwice") [resolve "Inc", .num 10]
   ])) with
   | Except.ok [12] => true
   | _ => false
 
 #guard test15
-#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("ApplyTwice", applyTwiceAlg15)] [
-  .call (resolve "ApplyTwice") (alg [] [] [] [resolve "Inc", .num 10])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("ApplyTwice", applyTwiceAlg15)] [
+  .call (resolve "ApplyTwice") [resolve "Inc", .num 10]
 ]))
 
 -- Test 16: higher-order args preserve flat fixed expression boundaries.
@@ -2667,16 +2655,19 @@ def test15 : Bool :=
 def usePairAlg16 : Algorithm :=
   alg ["f", "x", "y"] [] [] [
     .binary .add
-      (.call (.param "f") (alg [] [] [] [.param "x"]))
+      (.call (.param "f") [.param "x"])
       (.param "y")
   ]
 
 def pairArg16 : Algorithm :=
   alg [] [] [] [.num 10, .num 20]
 
+-- Source: `UsePair(Inc, Pair)` where Pair = 10, 20 — the named property's
+-- sequence value is ONE argument expression.
 def test16SequenceValueArgDoesNotUnpack : Bool :=
-  match runResult (.block (algPrivate [] [] [("Inc", incAlg15), ("UsePair", usePairAlg16)] [
-    .call (resolve "UsePair") (alg [] [] [] [resolve "Inc", .block pairArg16])
+  match runResult (.algorithmExpr (algPrivate [] []
+    [("Inc", incAlg15), ("UsePair", usePairAlg16), ("Pair", pairArg16)] [
+    .call (resolve "UsePair") [resolve "Inc", resolve "Pair"]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2687,15 +2678,17 @@ def test16SequenceValueArgDoesNotUnpack : Bool :=
 -- `Pair*` spreads the pair's two values into the x and y argument slots:
 -- Inc(10) + 20 = 31.
 def test16SpreadSpreadsValues : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("UsePair", usePairAlg16)] [
-    .call (resolve "UsePair") (alg [] [] [] [resolve "Inc", sequenceSpread (.block pairArg16)])
+  match runFlat (.algorithmExpr (algPrivate [] []
+    [("Inc", incAlg15), ("UsePair", usePairAlg16), ("Pair", pairArg16)] [
+    .call (resolve "UsePair") [resolve "Inc", sequenceSpread (resolve "Pair")]
   ])) with
   | Except.ok [31] => true
   | _ => false
 
 #guard test16SpreadSpreadsValues
-#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("UsePair", usePairAlg16)] [
-  .call (resolve "UsePair") (alg [] [] [] [resolve "Inc", sequenceSpread (.block pairArg16)])
+#eval runFlat (.algorithmExpr (algPrivate [] []
+  [("Inc", incAlg15), ("UsePair", usePairAlg16), ("Pair", pairArg16)] [
+  .call (resolve "UsePair") [resolve "Inc", sequenceSpread (resolve "Pair")]
 ]))
 
 -- Test 16a: ordinary dot-call fallback preserves receiver as one argument boundary.
@@ -2708,8 +2701,8 @@ def dotCallBoundaryPairReceiverAlg16a : Algorithm :=
   alg [] [] [] [.num 3, .num 7]
 
 def dotCallBoundaryNormalCallsStillWork16a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
-    .call (resolve "F") (alg [] [] [] [.num 3, .num 7])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .call (resolve "F") [.num 3, .num 7]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -2717,8 +2710,8 @@ def dotCallBoundaryNormalCallsStillWork16a : Bool :=
 #guard dotCallBoundaryNormalCallsStillWork16a
 
 def dotCallBoundarySequenceValueDirectCallDoesNotUnpack16a : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
-    .call (resolve "F") (alg [] [] [] [.block dotCallBoundaryPairReceiverAlg16a])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .call (resolve "F") [.algorithmExpr dotCallBoundaryPairReceiverAlg16a]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2726,8 +2719,8 @@ def dotCallBoundarySequenceValueDirectCallDoesNotUnpack16a : Bool :=
 #guard dotCallBoundarySequenceValueDirectCallDoesNotUnpack16a
 
 def dotCallBoundaryScalarReceiverStillWorks16a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
-    .dotCall (.num 3) "F" (some (alg [] [] [] [.num 7]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.num 3) "F" (some [.num 7])
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -2735,8 +2728,8 @@ def dotCallBoundaryScalarReceiverStillWorks16a : Bool :=
 #guard dotCallBoundaryScalarReceiverStillWorks16a
 
 def dotCallBoundaryMultiOutputReceiverNoArgsFails16a : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" none
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "F" none
   ])) with
   | Except.error _ => true
   | Except.ok _ => false
@@ -2744,8 +2737,8 @@ def dotCallBoundaryMultiOutputReceiverNoArgsFails16a : Bool :=
 #guard dotCallBoundaryMultiOutputReceiverNoArgsFails16a
 
 def dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" (some (alg [] [] [] []))
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "F" (some [])
   ])) with
   | Except.error _ => true
   | Except.ok _ => false
@@ -2753,9 +2746,9 @@ def dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a : Bool :=
 #guard dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a
 
 def dotCallBoundaryCountedPathDoesNotSpread16a : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
     .dotCall
-      (.dotCall (.block dotCallBoundaryPairReceiverAlg16a) "F" none)
+      (.dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "F" none)
       "count"
       none
   ])) with
@@ -2768,8 +2761,8 @@ def dotCallBoundarySequenceValueReceiverAlg16a : Algorithm :=
   alg ["x"] [] [] [.param "x"]
 
 def dotCallBoundaryOneParamGetsSequenceValueReceiver16a : Bool :=
-  match runResult (.block (algPrivate [] [] [("G", dotCallBoundarySequenceValueReceiverAlg16a)] [
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "G" none
+  match runResult (.algorithmExpr (algPrivate [] [] [("G", dotCallBoundarySequenceValueReceiverAlg16a)] [
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "G" none
   ])) with
   | Except.ok (.sequenceValue [.atom 3, .atom 7]) => true
   | _ => false
@@ -2782,10 +2775,10 @@ def dotCallBoundaryFinalExplicitSequenceValueArgDoesNotUnpack16a : Bool :=
       (.binary .add (.param "a") (.param "b"))
       (.param "c")
   ]
-  match runResult (.block (algPrivate [] [] [("H", hAlg)] [
-    .dotCall (.num 3) "H" (some (alg [] [] [] [
-      .block (alg [] [] [] [.num 4, .num 5])
-    ]))
+  match runResult (.algorithmExpr (algPrivate [] [] [("H", hAlg)] [
+    .dotCall (.num 3) "H" (some [
+      .capture [.num 4, .num 5]
+    ])
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2798,10 +2791,10 @@ def dotCallBoundarySequenceSpreadSpreadsExtraArgs16a : Bool :=
       (.binary .add (.param "a") (.param "b"))
       (.param "c")
   ]
-  match runFlat (.block (algPrivate [] [] [("H", hAlg)] [
-    .dotCall (.num 3) "H" (some (alg [] [] [] [
-      sequenceSpread (.block (alg [] [] [] [.num 4, .num 5]))
-    ]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("H", hAlg)] [
+    .dotCall (.num 3) "H" (some [
+      sequenceSpread (.capture [.num 4, .num 5])
+    ])
   ])) with
   | Except.ok [12] => true
   | _ => false
@@ -2812,7 +2805,7 @@ def flatFixedIssue101PairAlg : Algorithm :=
   alg [] [] [] [.num 10, .num 20]
 
 def flatFixedIssue101SequenceValuePairAlg : Algorithm :=
-  alg [] [] [] [.block flatFixedIssue101PairAlg]
+  alg [] [] [] [.algorithmExpr flatFixedIssue101PairAlg]
 
 def flatFixedIssue101AddAlg : Algorithm :=
   alg ["x", "y"] [] [] [.binary .add (.param "x") (.param "y")]
@@ -2825,8 +2818,8 @@ def flatFixedIssue101UseAlg : Algorithm :=
   ]
 
 def flatFixedIssue101PairDoesNotUnpack : Bool :=
-  match runResult (.block (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
-    .call (resolve "Add") (alg [] [] [] [resolve "Pair"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
+    .call (resolve "Add") [resolve "Pair"]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2834,8 +2827,8 @@ def flatFixedIssue101PairDoesNotUnpack : Bool :=
 #guard flatFixedIssue101PairDoesNotUnpack
 
 def flatFixedIssue101AtomsDoesNotSpread : Bool :=
-  match runResult (.block (algPrivate [] [] [("Pair", flatFixedIssue101SequenceValuePairAlg), ("Add", flatFixedIssue101AddAlg)] [
-    .call (resolve "Add") (alg [] [] [] [.dotCall (resolve "Pair") "atoms" none])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101SequenceValuePairAlg), ("Add", flatFixedIssue101AddAlg)] [
+    .call (resolve "Add") [.dotCall (resolve "Pair") "atoms" none]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2843,8 +2836,8 @@ def flatFixedIssue101AtomsDoesNotSpread : Bool :=
 #guard flatFixedIssue101AtomsDoesNotSpread
 
 def flatFixedIssue101SeparateArgsWork : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Add", flatFixedIssue101AddAlg)] [
-    .call (resolve "Add") (alg [] [] [] [.num 10, .num 20])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Add", flatFixedIssue101AddAlg)] [
+    .call (resolve "Add") [.num 10, .num 20]
   ])) with
   | Except.ok [30] => true
   | _ => false
@@ -2852,11 +2845,11 @@ def flatFixedIssue101SeparateArgsWork : Bool :=
 #guard flatFixedIssue101SeparateArgsWork
 
 def flatFixedIssue101ExplicitIndexingWorks : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
-    .call (resolve "Add") (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
+    .call (resolve "Add") [
       .index (resolve "Pair") (.num 0),
       .index (resolve "Pair") (.num 1)
-    ])
+    ]
   ])) with
   | Except.ok [30] => true
   | _ => false
@@ -2864,8 +2857,8 @@ def flatFixedIssue101ExplicitIndexingWorks : Bool :=
 #guard flatFixedIssue101ExplicitIndexingWorks
 
 def flatFixedIssue101MixedPrefixDoesNotUnpack : Bool :=
-  match runResult (.block (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
-    .call (resolve "Use") (alg [] [] [] [.num 1, resolve "Tail"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
+    .call (resolve "Use") [.num 1, resolve "Tail"]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
@@ -2875,8 +2868,8 @@ def flatFixedIssue101MixedPrefixDoesNotUnpack : Bool :=
 -- Source `Use(1, Tail*)`: a plain leading argument `1` followed by `Tail*`
 -- which spreads Tail's items 2, 3. Three call arguments → 1 + 2 + 3 = 6.
 def flatFixedIssue101SequenceSpreadSpreadsArgs : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
-    .call (resolve "Use") (alg [] [] [] [.num 1, sequenceSpread (resolve "Tail")])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
+    .call (resolve "Use") [.num 1, sequenceSpread (resolve "Tail")]
   ])) with
   | Except.ok [6] => true
   | _ => false
@@ -2889,11 +2882,11 @@ def collectingParameterForwardingCountItemAlg : Algorithm :=
     { name := "item", kind := .normal }
   ] [] [] [
     .dotCall
-      (.dotCall (.param "values") "filter" (some (alg [] [] [] [
-        .block (alg ["value"] [] [] [
+      (.dotCall (.param "values") "filter" (some [
+        .algorithmExpr (alg ["value"] [] [] [
           .binary .eq (.param "value") (.param "item")
         ])
-      ])))
+      ]))
       "count"
       none
   ]
@@ -2905,23 +2898,23 @@ def collectingParameterForwardingModeFreqsExpr : KatLang.Expr :=
   .dotCall
     (.dotCall (.param "values") "distinct" none)
     "map"
-    (some (alg [] [] [] [
-      .block (alg ["candidate"] [] [] [
-        .call (resolve "CountItem") (alg [] [] [] [sequenceSpread (.param "values"), .param "candidate"])
+    (some [
+      .algorithmExpr (alg ["candidate"] [] [] [
+        .call (resolve "CountItem") [sequenceSpread (.param "values"), .param "candidate"]
       ])
-    ]))
+    ])
 
 def collectingParameterForwardingDirectUseAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .call (resolve "CountItem") (alg [] [] [] [sequenceSpread (.param "values"), .num 1])
+    .call (resolve "CountItem") [sequenceSpread (.param "values"), .num 1]
   ]
 
 def collectingParameterForwardingDirectCall : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountItem", collectingParameterForwardingCountItemAlg),
     ("Use", collectingParameterForwardingDirectUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
+    .call (resolve "Use") [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -2934,11 +2927,11 @@ def collectingParameterForwardingFreqsAlg : Algorithm :=
   ]
 
 def collectingParameterForwardingCallbackBody : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountItem", collectingParameterForwardingCountItemAlg),
     ("Mode", collectingParameterForwardingFreqsAlg)
   ] [
-    .call (resolve "Mode") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
+    .call (resolve "Mode") [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])]
   ])) with
   | Except.ok [2, 1, 2] => true
   | _ => false
@@ -2953,21 +2946,21 @@ def collectingParameterForwardingModeAlg : Algorithm :=
     .dotCall
       (.dotCall (.param "values") "distinct" none)
       "filter"
-      (some (alg [] [] [] [
-        .block (alg ["candidate"] [] [] [
+      (some [
+        .algorithmExpr (alg ["candidate"] [] [] [
           .binary .eq
-            (.call (resolve "CountItem") (alg [] [] [] [sequenceSpread (.param "values"), .param "candidate"]))
+            (.call (resolve "CountItem") [sequenceSpread (.param "values"), .param "candidate"])
             (resolve "MaxFreq")
         ])
-      ]))
+      ])
   ]
 
 def collectingParameterForwardingFullMode : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountItem", collectingParameterForwardingCountItemAlg),
     ("Mode", collectingParameterForwardingModeAlg)
   ] [
-    .call (resolve "Mode") (alg [] [] [] [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])])
+    .call (resolve "Mode") [sequenceSpread (sequenceItems [.num 1, .num 1, .num 2, .num 4, .num 4])]
   ])) with
   | Except.ok [1, 4] => true
   | _ => false
@@ -2979,18 +2972,18 @@ def collectingParameterForwardingNonVariadicCollectAlg : Algorithm :=
 
 def collectingParameterForwardingNonVariadicUseAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .call (resolve "Collect") (alg [] [] [] [.param "values"])
+    .call (resolve "Collect") [.param "values"]
   ]
 
 -- Passing the collected list WITHOUT spread passes one list argument: `Collect(values)`
 -- binds the fixed parameter to the collected list, and `list.count` opens it
 -- (the ForwardAsOne shape).
 def collectingParameterForwardingNonVariadicCalleeConsumesCollectedList : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Collect", collectingParameterForwardingNonVariadicCollectAlg),
     ("Use", collectingParameterForwardingNonVariadicUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])])
+    .call (resolve "Use") [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -3004,18 +2997,18 @@ def collectingParameterForwardingCountSequenceValueAlg : Algorithm :=
 
 def collectingParameterForwardingSequenceValueUseAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .call (resolve "CountSequenceValue") (alg [] [] [] [.param "values"])
+    .call (resolve "CountSequenceValue") [.param "values"]
   ]
 
 -- A deconstruction-shaped callee (`CountSequenceValue((*values))`) opens a
 -- bare-forwarded collected LIST through its lone-structure rule, so the unspread
 -- forward still reaches the items.
 def collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountSequenceValue", collectingParameterForwardingCountSequenceValueAlg),
     ("Use", collectingParameterForwardingSequenceValueUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])])
+    .call (resolve "Use") [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -3023,7 +3016,7 @@ def collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior :
 #guard collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior
 
 def collectingParameterForwardingSequenceValueHistoryArg : KatLang.Expr :=
-  .block (alg [] [] [] [.num 1, .num 2, .num 3])
+  .capture [.num 1, .num 2, .num 3]
 
 def collectingParameterForwardingFindNextAlg : Algorithm :=
   algWithParameters [
@@ -3042,15 +3035,15 @@ def collectingParameterForwardingSequenceValueStepAlg : Algorithm :=
     .capture { name := "pre2", kind := .normal },
     .capture { name := "pre1", kind := .normal }
   ] [] [] [
-    .call (resolve "FindNext") (alg [] [] [] [sequenceSpread (.param "history"), .param "pre1", .param "pre2"])
+    .call (resolve "FindNext") [sequenceSpread (.param "history"), .param "pre1", .param "pre2"]
   ]
 
 def collectingParameterForwardingSequenceValueVariadicCaptureSpreadsCompatibleSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("FindNext", collectingParameterForwardingFindNextAlg),
     ("YSStep", collectingParameterForwardingSequenceValueStepAlg)
   ] [
-    .call (resolve "YSStep") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3])
+    .call (resolve "YSStep") [collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3]
   ])) with
   | Except.ok [8] => true
   | _ => false
@@ -3070,17 +3063,17 @@ def collectingParameterForwardingSequenceValueHistoryUseOtherNameAlg : Algorithm
     .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "last", kind := .normal }
   ] [] [] [
-    .call (resolve "CountItems") (alg [] [] [] [sequenceSpread (.param "history"), .param "last"])
+    .call (resolve "CountItems") [sequenceSpread (.param "history"), .param "last"]
   ]
 
 -- Spread forwarding is pure value semantics: the callee's collecting parameter may use any
 -- parameter name — there is no name-based or provenance-based special path.
 def collectingParameterForwardingSequenceValueCaptureSpreadForwardsUnderAnyName : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("CountItems", collectingParameterForwardingCountItemsByOtherNameAlg),
     ("Use", collectingParameterForwardingSequenceValueHistoryUseOtherNameAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 7])
+    .call (resolve "Use") [collectingParameterForwardingSequenceValueHistoryArg, .num 7]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -3092,15 +3085,15 @@ def collectingParameterForwardingSequenceValueHistoryNonVariadicUseAlg : Algorit
     .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "marker", kind := .normal }
   ] [] [] [
-    .call (resolve "Collect") (alg [] [] [] [.param "history"])
+    .call (resolve "Collect") [.param "history"]
   ]
 
 def collectingParameterForwardingSequenceValueCaptureForwardsSequenceValue : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Collect", collectingParameterForwardingNonVariadicCollectAlg),
     ("Use", collectingParameterForwardingSequenceValueHistoryNonVariadicUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 99])
+    .call (resolve "Use") [collectingParameterForwardingSequenceValueHistoryArg, .num 99]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -3120,15 +3113,15 @@ def collectingParameterForwardingSequenceValueHistoryTakeLastUseAlg : Algorithm 
     .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "marker", kind := .normal }
   ] [] [] [
-    .call (resolve "TakeLast") (alg [] [] [] [.num 0, .param "history"])
+    .call (resolve "TakeLast") [.num 0, .param "history"]
   ]
 
 def collectingParameterForwardingSequenceValueCaptureOnlyExpandsInTargetVariadicSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("TakeLast", collectingParameterForwardingTakeLastAlg),
     ("Use", collectingParameterForwardingSequenceValueHistoryTakeLastUseAlg)
   ] [
-    .call (resolve "Use") (alg [] [] [] [collectingParameterForwardingSequenceValueHistoryArg, .num 99])
+    .call (resolve "Use") [collectingParameterForwardingSequenceValueHistoryArg, .num 99]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -3141,20 +3134,20 @@ def collectingParameterForwardingSequenceValueLoopStepAlg : Algorithm :=
     .capture { name := "pre2", kind := .normal },
     .capture { name := "pre1", kind := .normal }
   ] [] [] [
-    .call (resolve "FindNext") (alg [] [] [] [sequenceSpread (.param "history"), .param "pre1", .param "pre2"]),
+    .call (resolve "FindNext") [sequenceSpread (.param "history"), .param "pre1", .param "pre2"],
     .param "pre1",
     .param "pre2"
   ]
 
 def collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("FindNext", collectingParameterForwardingFindNextAlg),
     ("YSStep", collectingParameterForwardingSequenceValueLoopStepAlg)
   ] [
     .index
-      (.dotCall (resolve "YSStep") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "YSStep") "repeat" (some [
         .num 1, collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3
-      ])))
+      ]))
       (.num 0)
   ])) with
   | Except.ok [8] => true
@@ -3162,29 +3155,29 @@ def collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSl
 
 #guard collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSlot
 
-def flatFixedIssue101NestedBlockBoundaryPreserved : Bool :=
-  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])] [
+def flatFixedIssue101NestedSequenceValueBoundaryPreserved : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1, .capture [.num 2, .num 3]])] [
     resolve "A"
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .sequenceValue [.atom 2, .atom 3]]) => true
   | _ => false
 
-#guard flatFixedIssue101NestedBlockBoundaryPreserved
+#guard flatFixedIssue101NestedSequenceValueBoundaryPreserved
 
-def flatFixedIssue101ExplicitOuterBodyBlockEquivalent : Bool :=
-  match runResult (.block (algPrivate [] [] [("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])])] [
+def flatFixedIssue101ExplicitOuterBodyGroupingEquivalent : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.capture [.num 1, .capture [.num 2, .num 3]]])] [
     resolve "A"
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .sequenceValue [.atom 2, .atom 3]]) => true
   | _ => false
 
-#guard flatFixedIssue101ExplicitOuterBodyBlockEquivalent
+#guard flatFixedIssue101ExplicitOuterBodyGroupingEquivalent
 
 -- Internal value shaped like sequence-value source `(1, (2, 3)*)`: a leading `1`
--- combined with a spread of the sequenceValue block (2, 3), whose items 2 and
+-- combined with a spread of the sequence value (2, 3), whose items 2 and
 -- 3 are flattened by the spread.
 def flatFixedIssue101SequenceSpreadFlattensNestedBlock : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.sequenceConstruct (.num 1) (sequenceSpread (.block (alg [] [] [] [.num 2, .num 3])))])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.sequenceConstruct (.num 1) (sequenceSpread (.capture [.num 2, .num 3]))])] [
     resolve "A"
   ])) with
   | Except.ok [1, 2, 3] => true
@@ -3193,7 +3186,7 @@ def flatFixedIssue101SequenceSpreadFlattensNestedBlock : Bool :=
 #guard flatFixedIssue101SequenceSpreadFlattensNestedBlock
 
 def flatFixedIssue101DotReceiverDoesNotUnpack : Bool :=
-  match runResult (.block (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .dotCall (resolve "Pair") "Add" none
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
@@ -3202,7 +3195,7 @@ def flatFixedIssue101DotReceiverDoesNotUnpack : Bool :=
 #guard flatFixedIssue101DotReceiverDoesNotUnpack
 
 def flatFixedIssue101SequenceSpreadDotReceiverDoesNotUnpack : Bool :=
-  match runResult (.block (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .dotCall (sequenceSpreadReceiver (resolve "Pair")) "Add" none
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
@@ -3211,11 +3204,11 @@ def flatFixedIssue101SequenceSpreadDotReceiverDoesNotUnpack : Bool :=
 #guard flatFixedIssue101SequenceSpreadDotReceiverDoesNotUnpack
 
 def dotCallBoundarySequenceBuiltinsStillExpand16a : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "sum" none,
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "count" none,
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "first" none,
-    .dotCall (.block dotCallBoundaryPairReceiverAlg16a) "last" none
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "sum" none,
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "count" none,
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "first" none,
+    .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "last" none
   ])) with
   | Except.ok [10, 2, 3, 7] => true
   | _ => false
@@ -3228,15 +3221,15 @@ def takeFuncAlg17 : Algorithm :=
   alg ["f"] [] [] [.num 0]
 
 def test17 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Inc", incAlg15), ("TakeFunc", takeFuncAlg17)] [
-    .call (resolve "TakeFunc") (alg [] [] [] [resolve "Inc", resolve "Inc"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("TakeFunc", takeFuncAlg17)] [
+    .call (resolve "TakeFunc") [resolve "Inc", resolve "Inc"]
   ])) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test17
-#eval runResult (.block (algPrivate [] [] [("Inc", incAlg15), ("TakeFunc", takeFuncAlg17)] [
-  .call (resolve "TakeFunc") (alg [] [] [] [resolve "Inc", resolve "Inc"])
+#eval runResult (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("TakeFunc", takeFuncAlg17)] [
+  .call (resolve "TakeFunc") [resolve "Inc", resolve "Inc"]
 ]))
 
 -- Test 18: structural property calls share higher-order binding semantics
@@ -3246,21 +3239,22 @@ def receiver18 : Algorithm :=
 
 def outer18 : Algorithm :=
   algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver18)] [
-    .dotCall (resolve "Receiver") "ApplyTwice" (some (alg [] [] [] [resolve "Inc", .num 10]))
+    .dotCall (resolve "Receiver") "ApplyTwice" (some [resolve "Inc", .num 10])
   ]
 
 def test18 : Bool :=
-  match runFlat (.block outer18) with
+  match runFlat (.algorithmExpr outer18) with
   | Except.ok [12] => true
   | _ => false
 
 #guard test18
-#eval runFlat (.block outer18)
+#eval runFlat (.algorithmExpr outer18)
 
--- Test 19: zero-parameter inline blocks passed to higher-order parameters are
--- treated uniformly as value/output structures.
--- Reading the parameter as a value works, but callability is not inferred from
--- having one output, and output count does not change that binding mode.
+-- Test 19: an inline algorithm block ALWAYS provides its contained Algorithm
+-- on the algorithm channel, regardless of parameter/declaration/output count —
+-- `{42}` is as much an Algorithm as `{a + 1}`. Reading the bound parameter as
+-- a value still observes the block's value; calling it invokes the algorithm.
+-- (A capture, by contrast, never crosses: see captureSuppressesCallableIdentity.)
 def constSevenAlg19 : Algorithm :=
   alg [] [] [] [.num 7]
 
@@ -3274,62 +3268,67 @@ def readInlineArgAlg19 : Algorithm :=
 
 def callInlineArgAlg19 : Algorithm :=
   alg ["f"] [] [] [
-    .call (.param "f") (alg [] [] [] [])
+    .call (.param "f") []
   ]
 
 def test19 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
-    .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+    .call (resolve "Apply") [.algorithmExpr constSevenAlg19]
   ])) with
   | Except.ok [7] => true
   | _ => false
 
 #guard test19
-#eval runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
-  .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+  .call (resolve "Apply") [.algorithmExpr constSevenAlg19]
 ]))
 
-def test19SingleOutputCallRejected : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
-    .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+-- `Call0({7})`: the zero-parameter inline block crosses the higher-order
+-- boundary and `f()` invokes it — exactly like a named zero-parameter
+-- property (`Call0(Const)`).
+def test19SingleOutputBlockCrossesHigherOrderBoundary : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+    .call (resolve "Apply") [.algorithmExpr constSevenAlg19]
   ])) with
-  | Except.error _ => true
+  | Except.ok [7] => true
   | _ => false
 
-#guard test19SingleOutputCallRejected
-#eval runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
-  .call (resolve "Apply") (alg [] [] [] [.block constSevenAlg19])
+#guard test19SingleOutputBlockCrossesHigherOrderBoundary
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+  .call (resolve "Apply") [.algorithmExpr constSevenAlg19]
 ]))
 
 def test19MultiOutput : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
-    .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+    .call (resolve "Apply") [.algorithmExpr twoValueAlg19]
   ])) with
   | Except.ok [1, 2] => true
   | _ => false
 
 #guard test19MultiOutput
-#eval runFlat (.block (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
-  .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Apply", readInlineArgAlg19)] [
+  .call (resolve "Apply") [.algorithmExpr twoValueAlg19]
 ]))
 
-def test19MultiOutputCallRejected : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
-    .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+-- Multi-output blocks cross identically: output count never gates algorithm
+-- identity, and `f()` emits the block algorithm's two outputs.
+def test19MultiOutputBlockCrossesHigherOrderBoundary : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+    .call (resolve "Apply") [.algorithmExpr twoValueAlg19]
   ])) with
-  | Except.error _ => true
+  | Except.ok [1, 2] => true
   | _ => false
 
-#guard test19MultiOutputCallRejected
-#eval runFlat (.block (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
-  .call (resolve "Apply") (alg [] [] [] [.block twoValueAlg19])
+#guard test19MultiOutputBlockCrossesHigherOrderBoundary
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Apply", callInlineArgAlg19)] [
+  .call (resolve "Apply") [.algorithmExpr twoValueAlg19]
 ]))
 
 -- Test 19a: same-name clause-group elaboration classifies a sole plain-binder
 -- clause as an ordinary algorithm, not a conditional.
 def applyClauseBody19a : Algorithm :=
   alg [] [] [] [
-    .call (.param "f") (alg [] [] [] [.param "x"])
+    .call (.param "f") [.param "x"]
   ]
 
 def applyClauseAlg19a : Algorithm :=
@@ -3346,8 +3345,8 @@ def test19aShape : Bool :=
 #guard test19aShape
 
 def test19aRun : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyClauseAlg19a)] [
-    .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyClauseAlg19a)] [
+    .call (resolve "Apply") [.num 9, resolve "Inc"]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -3371,8 +3370,8 @@ def test19aSingleBinderShape : Bool :=
 #guard test19aSingleBinderShape
 
 def test19aSingleBinderRun : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Id", idClauseAlg19a)] [
-    .call (resolve "Id") (alg [] [] [] [.num 7])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Id", idClauseAlg19a)] [
+    .call (resolve "Id") [.num 7]
   ])) with
   | Except.ok [7] => true
   | _ => false
@@ -3399,8 +3398,8 @@ def test19aMultiClauseShape : Bool :=
 #guard test19aMultiClauseShape
 
 def test19aMultiClauseRun : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", fallbackClauseAlg19a)] [
-    .call (resolve "F") (alg [] [] [] [.num 2])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", fallbackClauseAlg19a)] [
+    .call (resolve "F") [.num 2]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -3440,8 +3439,8 @@ def repeatedFlatClauseAlg : Algorithm :=
   }]
 
 def repeatedFlatClauseEqualArgumentsMatch : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", repeatedFlatClauseAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1, .num 1])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", repeatedFlatClauseAlg)] [
+    .call (resolve "F") [.num 1, .num 1]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -3449,8 +3448,8 @@ def repeatedFlatClauseEqualArgumentsMatch : Bool :=
 #guard repeatedFlatClauseEqualArgumentsMatch
 
 def repeatedFlatClauseUnequalArgumentsFail : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", repeatedFlatClauseAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1, .num 2])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", repeatedFlatClauseAlg)] [
+    .call (resolve "F") [.num 1, .num 2]
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -3470,16 +3469,16 @@ def repeatedSequenceValueClauseAlg : Algorithm :=
 
 def repeatedSequenceValueClauseMatchesOnlyEqualItems : Bool :=
   let equalCall :=
-    runFlat (.block (algPrivate [] [] [("F", repeatedSequenceValueClauseAlg)] [
-      .call (resolve "F") (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 1])
-      ])
+    runFlat (.algorithmExpr (algPrivate [] [] [("F", repeatedSequenceValueClauseAlg)] [
+      .call (resolve "F") [
+        .capture [.num 1, .num 1]
+      ]
     ]))
   let unequalCall :=
-    runResult (.block (algPrivate [] [] [("F", repeatedSequenceValueClauseAlg)] [
-      .call (resolve "F") (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2])
-      ])
+    runResult (.algorithmExpr (algPrivate [] [] [("F", repeatedSequenceValueClauseAlg)] [
+      .call (resolve "F") [
+        .capture [.num 1, .num 2]
+      ]
     ]))
   match equalCall, unequalCall with
   | Except.ok [1], Except.error err => innermostIsBadArity err
@@ -3498,18 +3497,18 @@ def repeatedAcrossNestedClauseAlg : Algorithm :=
 
 def repeatedAcrossNestedClauseMatchesOnlyEqualItems : Bool :=
   let equalCall :=
-    runFlat (.block (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
-      .call (resolve "F") (alg [] [] [] [
+    runFlat (.algorithmExpr (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
+      .call (resolve "F") [
         .num 1,
-        .block (alg [] [] [] [.num 1])
-      ])
+        .capture [.num 1]
+      ]
     ]))
   let unequalCall :=
-    runResult (.block (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
-      .call (resolve "F") (alg [] [] [] [
+    runResult (.algorithmExpr (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
+      .call (resolve "F") [
         .num 1,
-        .block (alg [] [] [] [.num 2])
-      ])
+        .capture [.num 2]
+      ]
     ]))
   match equalCall, unequalCall with
   | Except.ok [1], Except.error err => innermostIsBadArity err
@@ -3525,11 +3524,11 @@ def repeatedFlatClauseUsesStructuralSequenceValueEquality : Bool :=
     ]
     body := alg [] [] [] [.param "x"]
   }]
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2],
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok [1, 2] => true
   | _ => false
@@ -3552,14 +3551,14 @@ def repeatedAlgorithmOnlyArgumentsAreUnsupported : Bool :=
       KatLang.Pattern.bind "f"
     ]
     body := alg [] [] [] [
-      .call (.param "f") (alg [] [] [] [.num 1])
+      .call (.param "f") [.num 1]
     ]
   }]
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Inc", incAlg15),
     ("ApplySame", applySame)
   ] [
-    .call (resolve "ApplySame") (alg [] [] [] [resolve "Inc", resolve "Inc"])
+    .call (resolve "ApplySame") [resolve "Inc", resolve "Inc"]
   ])) with
   | Except.error err =>
       innermostIsTypeMismatch
@@ -3588,9 +3587,9 @@ def repeatedConditionalFallbackAlg : Algorithm :=
   ]
 
 def repeatedConditionalFallbackWorks : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Equal", repeatedConditionalFallbackAlg)] [
-    .call (resolve "Equal") (alg [] [] [] [.num 1, .num 1]),
-    .call (resolve "Equal") (alg [] [] [] [.num 1, .num 2])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Equal", repeatedConditionalFallbackAlg)] [
+    .call (resolve "Equal") [.num 1, .num 1],
+    .call (resolve "Equal") [.num 1, .num 2]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -3618,13 +3617,13 @@ def repeatedSequenceValueConditionalFallbackWorks : Bool :=
       body := alg [] [] [] [.num 0]
     }
   ]
-  match runFlat (.block (algPrivate [] [] [("SamePair", samePair)] [
-    .call (resolve "SamePair") (alg [] [] [] [
-      .block (alg [] [] [] [.num 5, .num 5])
-    ]),
-    .call (resolve "SamePair") (alg [] [] [] [
-      .block (alg [] [] [] [.num 5, .num 6])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("SamePair", samePair)] [
+    .call (resolve "SamePair") [
+      .capture [.num 5, .num 5]
+    ],
+    .call (resolve "SamePair") [
+      .capture [.num 5, .num 6]
+    ]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -3640,14 +3639,14 @@ def repeatedSequenceValueConditionalFallbackWorks : Bool :=
 -- Ordinary sequenceValue repeated binder reused as a map callback: equal pair items
 -- bind once and project the shared value.
 def repeatedSequenceValueBinderCallbackEqualItemsMap : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Same", repeatedSequenceValueClauseAlg)] [
-    .call (resolve "map") (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Same", repeatedSequenceValueClauseAlg)] [
+    .call (resolve "map") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 1]),
-        .block (alg [] [] [] [.num 2, .num 2])
+        .capture [.num 1, .num 1],
+        .capture [.num 2, .num 2]
       ],
       .resolve "Same"
-    ])
+    ]
   ])) with
   | Except.ok [1, 2] => true
   | _ => false
@@ -3657,14 +3656,14 @@ def repeatedSequenceValueBinderCallbackEqualItemsMap : Bool :=
 -- An unequal pair item fails the equality constraint with the same badArity
 -- shape as the direct-call path.
 def repeatedSequenceValueBinderCallbackUnequalItemMapFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("Same", repeatedSequenceValueClauseAlg)] [
-    .call (resolve "map") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Same", repeatedSequenceValueClauseAlg)] [
+    .call (resolve "map") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 3])
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 3]
       ],
       .resolve "Same"
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -3696,14 +3695,14 @@ def repeatedSequenceValueConditionalCallbackAlg : Algorithm :=
   ]
 
 def repeatedSequenceValueConditionalCallbackFallthroughMap : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Equal", repeatedSequenceValueConditionalCallbackAlg)] [
-    .call (resolve "map") (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Equal", repeatedSequenceValueConditionalCallbackAlg)] [
+    .call (resolve "map") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 1]),
-        .block (alg [] [] [] [.num 1, .num 2])
+        .capture [.num 1, .num 1],
+        .capture [.num 1, .num 2]
       ],
       .resolve "Equal"
-    ])
+    ]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -3726,15 +3725,15 @@ def callbackParamCollisionPickAlg : Algorithm :=
   ] [] [] [.param "x"]
 
 def callbackParamCollisionProgram : KatLang.Expr :=
-  .block (algPrivate [] [] [
+  .algorithmExpr (algPrivate [] [] [
     ("Wrap", callbackParamCollisionWrapAlg),
     ("Pick", callbackParamCollisionPickAlg)
   ] [
-    .call (resolve "Wrap") (alg [] [] [] [
+    .call (resolve "Wrap") [
       .dotCall
-        (.dotCall (sequenceItems [.num 1, .num 2]) "map" (some (alg [] [] [] [resolve "Pick"])))
+        (.dotCall (sequenceItems [.num 1, .num 2]) "map" (some [resolve "Pick"]))
         "sum" none
-    ])
+    ]
   ])
 
 -- The key property is termination: it returns a structured error rather than
@@ -3752,20 +3751,20 @@ def applyCondAlg19b : Algorithm :=
   .conditional none [] [
     ⟨ KatLang.Pattern.sequenceValue [KatLang.Pattern.bind "x", KatLang.Pattern.bind "f"],
       alg [] [] [] [
-        .call (.param "f") (alg [] [] [] [.param "x"])
+        .call (.param "f") [.param "x"]
       ] ⟩
   ]
 
 def test19b : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
-    .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
+    .call (resolve "Apply") [.num 9, resolve "Inc"]
   ])) with
   | Except.ok [10] => true
   | _ => false
 
 #guard test19b
-#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
-  .call (resolve "Apply") (alg [] [] [] [.num 9, resolve "Inc"])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("Apply", applyCondAlg19b)] [
+  .call (resolve "Apply") [.num 9, resolve "Inc"]
 ]))
 
 -- Test 19c: structural property call preserves higher-order args for the same subset
@@ -3773,15 +3772,15 @@ def receiver19c : Algorithm :=
   algPrivate [] [] [("Apply", applyCondAlg19b)] []
 
 def test19c : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
-    .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
+    .dotCall (resolve "Receiver") "Apply" (some [.num 9, resolve "Inc"])
   ])) with
   | Except.ok [10] => true
   | _ => false
 
 #guard test19c
-#eval runFlat (.block (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
-  .dotCall (resolve "Receiver") "Apply" (some (alg [] [] [] [.num 9, resolve "Inc"]))
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("Receiver", receiver19c)] [
+  .dotCall (resolve "Receiver") "Apply" (some [.num 9, resolve "Inc"])
 ]))
 
 -- Test 19d: sequenceValue eager values stay whole when a sibling argument binds only
@@ -3798,37 +3797,37 @@ def evenPredicateAlg19d : Algorithm :=
 def occurrenceCountAlg19d : Algorithm :=
   alg ["values", "predicate"] [] [] [
     .dotCall
-      (.call (.resolve "filter") (alg [] [] [] [.param "values", .param "predicate"]))
+      (.call (.resolve "filter") [.param "values", .param "predicate"])
       "count"
       none
   ]
 
 def test19d : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("OccurrenceCount", occurrenceCountAlg19d)
   ] [
-    .call (.resolve "OccurrenceCount") (alg [] [] [] [
+    .call (.resolve "OccurrenceCount") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 1, .num 3])
+        .capture [.num 1, .num 2],
+        .capture [.num 1, .num 3]
       ],
-      .block evenPredicateAlg19d
-    ])
+      .algorithmExpr evenPredicateAlg19d
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
 
 #guard test19d
-#eval runFlat (.block (algPrivate [] [] [
+#eval runFlat (.algorithmExpr (algPrivate [] [] [
   ("OccurrenceCount", occurrenceCountAlg19d)
 ] [
-  .call (.resolve "OccurrenceCount") (alg [] [] [] [
+  .call (.resolve "OccurrenceCount") [
     sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 3])
+      .capture [.num 1, .num 2],
+      .capture [.num 1, .num 3]
     ],
-    .block evenPredicateAlg19d
-  ])
+    .algorithmExpr evenPredicateAlg19d
+  ]
 ]))
 
 -- Test 19e: inline predicate captures an outer value parameter rather than
@@ -3841,40 +3840,40 @@ def test19d : Bool :=
 def occurrenceCountAlg19e : Algorithm :=
   alg ["target"] [] [] [
     .dotCall
-      (.call (.resolve "filter") (alg [] [] [] [
+      (.call (.resolve "filter") [
         sequenceItems [
-          .block (alg [] [] [] [.num 1, .num 10]),
-          .block (alg [] [] [] [.num 2, .num 20]),
-          .block (alg [] [] [] [.num 2, .num 30])
+          .capture [.num 1, .num 10],
+          .capture [.num 2, .num 20],
+          .capture [.num 2, .num 30]
         ],
-        .block (alg ["item"] [] [] [
+        .algorithmExpr (alg ["item"] [] [] [
           .binary .eq
             (.index (.param "item") (.num 1))
             (.index (.param "target") (.num 1))
         ])
-      ]))
+      ])
       "count"
       none
   ]
 
 def test19e : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("OccurrenceCount", occurrenceCountAlg19e)
   ] [
-    .call (.resolve "OccurrenceCount") (alg [] [] [] [
-      .block (alg [] [] [] [.num 2, .num 20])
-    ])
+    .call (.resolve "OccurrenceCount") [
+      .capture [.num 2, .num 20]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
 
 #guard test19e
-#eval runFlat (.block (algPrivate [] [] [
+#eval runFlat (.algorithmExpr (algPrivate [] [] [
   ("OccurrenceCount", occurrenceCountAlg19e)
 ] [
-  .call (.resolve "OccurrenceCount") (alg [] [] [] [
-    .block (alg [] [] [] [.num 2, .num 20])
-  ])
+  .call (.resolve "OccurrenceCount") [
+    .capture [.num 2, .num 20]
+  ]
 ]))
 
 -- if builtin tests
@@ -3884,22 +3883,22 @@ def test19e : Bool :=
 -- Test 20: 3-arg if true → produce then-branch value
 -- if(1, 5, 6) → [5]
 def test20 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6])) with
+  match runFlat (.call (resolve "if") [.num 1, .num 5, .num 6]) with
   | Except.ok [5] => true
   | _ => false
 
 #guard test20
-#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]))
+#eval runFlat (.call (resolve "if") [.num 1, .num 5, .num 6])
 
 -- Test 21: 3-arg if false → produce else-branch value
 -- if(0, 5, 6) → [6]
 def test21 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5, .num 6])) with
+  match runFlat (.call (resolve "if") [.num 0, .num 5, .num 6]) with
   | Except.ok [6] => true
   | _ => false
 
 #guard test21
-#eval runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 5, .num 6]))
+#eval runFlat (.call (resolve "if") [.num 0, .num 5, .num 6])
 
 --------------------------------------------------------------------------------
 -- Conditional algorithm tests
@@ -3916,15 +3915,15 @@ def kAlg : Algorithm :=
   ]
 
 def test34 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("K", kAlg)] [
-    .call (resolve "K") (alg [] [] [] [.num 10, .num 20])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", kAlg)] [
+    .call (resolve "K") [.num 10, .num 20]
   ])) with
   | Except.ok [10] => true
   | _ => false
 
 #guard test34
-#eval runFlat (.block (algPrivate [] [] [("K", kAlg)] [
-  .call (resolve "K") (alg [] [] [] [.num 10, .num 20])
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("K", kAlg)] [
+  .call (resolve "K") [.num 10, .num 20]
 ]))
 
 -- Test 35: Multiple branches with literal match
@@ -3940,8 +3939,8 @@ def elseAlg : Algorithm :=
 
 -- Else(1, (2, 3)) → first branch matches → a = 2
 def test35a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Else", elseAlg)] [
-    .call (resolve "Else") (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Else", elseAlg)] [
+    .call (resolve "Else") [.num 1, .capture [.num 2, .num 3]]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -3950,8 +3949,8 @@ def test35a : Bool :=
 
 -- Else(0, (2, 3)) → second branch matches → b = 3
 def test35b : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Else", elseAlg)] [
-    .call (resolve "Else") (alg [] [] [] [.num 0, .block (alg [] [] [] [.num 2, .num 3])])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Else", elseAlg)] [
+    .call (resolve "Else") [.num 0, .capture [.num 2, .num 3]]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -3967,8 +3966,8 @@ def signAlg : Algorithm :=
   ]
 
 def test36 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Sign", signAlg)] [
-    .call (resolve "Sign") (alg [] [] [] [.num 0])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Sign", signAlg)] [
+    .call (resolve "Sign") [.num 0]
   ])) with
   | Except.error _ => true    -- noMatchingBranch
   | Except.ok _    => false
@@ -3986,8 +3985,8 @@ def firstMatchAlg : Algorithm :=
   ]
 
 def test37 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", firstMatchAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", firstMatchAlg)] [
+    .call (resolve "F") [.num 1]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -3996,36 +3995,36 @@ def test37 : Bool :=
 
 -- Test 22: 2-arg if is rejected
 def test22 : Bool :=
-  match runResult (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])) with
+  match runResult (.call (resolve "if") [.num 1, .num 5]) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test22
-#eval runResult (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))
+#eval runResult (.call (resolve "if") [.num 1, .num 5])
 
 -- Test 23: 2-arg if in addition is rejected
 def test23 : Bool :=
-  match runResult (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5]))) with
+  match runResult (.binary .add (.num 10) (.call (resolve "if") [.num 1, .num 5])) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test23
-#eval runResult (.binary .add (.num 10) (.call (resolve "if") (alg [] [] [] [.num 1, .num 5])))
+#eval runResult (.binary .add (.num 10) (.call (resolve "if") [.num 1, .num 5]))
 
 -- Test 24: 2-arg if in multiplication is rejected
 def test24 : Bool :=
-  match runResult (.binary .mul (.num 10) (.call (resolve "if") (alg [] [] [] [
+  match runResult (.binary .mul (.num 10) (.call (resolve "if") [
     .binary .lt (.num 7) (.num 6),
     .num 1
-  ]))) with
+  ])) with
   | Except.error _ => true
   | Except.ok _ => false
 
 #guard test24
-#eval runResult (.binary .mul (.num 10) (.call (resolve "if") (alg [] [] [] [
+#eval runResult (.binary .mul (.num 10) (.call (resolve "if") [
   .binary .lt (.num 7) (.num 6),
   .num 1
-])))
+]))
 
 -- The `if` arity payload is NORMATIVE: `if` requires exactly three arguments,
 -- so every reachable `if` arity failure carries expected = 3 (never the
@@ -4035,8 +4034,8 @@ def test24 : Bool :=
 -- IfBuiltinArityPayloadTests (`WrongBuiltinArity` populates expected 3 for
 -- `if` alone; other builtins keep the placeholder on both sides).
 def ifDotCallUnderArityProgram : KatLang.Expr :=
-  .block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
-    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 2]))
+  .algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some [.num 2])
   ])
 
 def ifDotCallUnderArityCarriesExpectedThree : Bool :=
@@ -4051,8 +4050,8 @@ def ifDotCallUnderArityCarriesExpectedThree : Bool :=
 #eval runResult ifDotCallUnderArityProgram
 
 def ifDotCallOverArityProgram : KatLang.Expr :=
-  .block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
-    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 2, .num 3, .num 4]))
+  .algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some [.num 2, .num 3, .num 4])
   ])
 
 def ifDotCallOverArityCarriesExpectedThree : Bool :=
@@ -4069,8 +4068,8 @@ def ifDotCallOverArityCarriesExpectedThree : Bool :=
 -- Exactly three assembled arguments through the same dot-call surface still
 -- dispatch: `A.if(20, 30)` is `if(A, 20, 30)` = `if(1, 20, 30)` → 20.
 def ifDotCallExactArityStillDispatches : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
-    .dotCall (resolve "A") "if" (some (alg [] [] [] [.num 20, .num 30]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
+    .dotCall (resolve "A") "if" (some [.num 20, .num 30])
   ])) with
   | Except.ok [20] => true
   | _ => false
@@ -4080,12 +4079,12 @@ def ifDotCallExactArityStillDispatches : Bool :=
 -- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3)*` with a
 -- 3-arg if that selects the else branch → [1, 9, 3]
 def test25 : Bool :=
-  match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9]))) (.num 3))) with
+  match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.num 0, .num 2, .num 9])) (.num 3))) with
   | Except.ok [1, 9, 3] => true
   | _ => false
 
 #guard test25
-#eval runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") (alg [] [] [] [.num 0, .num 2, .num 9]))) (.num 3)))
+#eval runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.num 0, .num 2, .num 9])) (.num 3)))
 
 -- Internal sequence `(1, 2, 3, 4)*`: spread over the constructed sequence value.
 def sequenceSpread1234 : KatLang.Expr :=
@@ -4093,11 +4092,11 @@ def sequenceSpread1234 : KatLang.Expr :=
 
 def test25a : Bool :=
   let sequence1234 := .sequenceConstruct (.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3)) (.num 4)
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [sequence1234]),
-    .call (resolve "count") (alg [] [] [] [sequence1234]),
-    .call (resolve "first") (alg [] [] [] [sequence1234]),
-    .call (resolve "last") (alg [] [] [] [sequence1234])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [sequence1234],
+    .call (resolve "count") [sequence1234],
+    .call (resolve "first") [sequence1234],
+    .call (resolve "last") [sequence1234]
   ])) with
   | Except.ok [10, 4, 1, 4] => true
   | _ => false
@@ -4108,13 +4107,13 @@ def test25b : Bool :=
   -- Internal constructed-sequence variants of `count(((1, 2)*, 3))` and
   -- `count((1, (2, 3)*))`: a flattening spread contributes inside the one
   -- sequence-valued argument.
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [
-      sequenceItems [sequenceSpread (.block (alg [] [] [] [.num 1, .num 2])), .num 3]
-    ]),
-    .call (resolve "count") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.block (alg [] [] [] [.num 2, .num 3]))]
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [
+      sequenceItems [sequenceSpread (.capture [.num 1, .num 2]), .num 3]
+    ],
+    .call (resolve "count") [
+      sequenceItems [.num 1, sequenceSpread (.capture [.num 2, .num 3])]
+    ]
   ])) with
   | Except.ok [3, 3] => true
   | _ => false
@@ -4122,9 +4121,9 @@ def test25b : Bool :=
 #guard test25b
 
 def test25bNestedSequenceValues : Bool :=
-  let nestedLeft := .sequenceConstruct (sequenceSpread (.block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]))) (.num 3)
-  let nestedMiddle := .sequenceConstruct (sequenceSpread (.block (alg [] [] [] [.num 1, .block (alg [] [] [] [.num 2, .num 3])]))) (.num 4)
-  match runResult (.block (alg [] [] [] [nestedLeft, nestedMiddle])) with
+  let nestedLeft := .sequenceConstruct (sequenceSpread (.capture [.capture [.num 1, .num 2]])) (.num 3)
+  let nestedMiddle := .sequenceConstruct (sequenceSpread (.capture [.num 1, .capture [.num 2, .num 3]])) (.num 4)
+  match runResult (.algorithmExpr (alg [] [] [] [nestedLeft, nestedMiddle])) with
   | Except.ok value =>
       value == Result.sequenceValue [
         Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3],
@@ -4135,8 +4134,8 @@ def test25bNestedSequenceValues : Bool :=
 #guard test25bNestedSequenceValues
 
 def sequenceSpreadNamedSequenceValueOperandPreservesBoundary : Bool :=
-  match runResult (.block (algPrivate [] [] [
-    ("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])])
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("A", alg [] [] [] [.capture [.num 1, .num 2]])
   ] [
     .sequenceConstruct (sequenceSpread (resolve "A")) (.num 3)
   ])) with
@@ -4146,7 +4145,7 @@ def sequenceSpreadNamedSequenceValueOperandPreservesBoundary : Bool :=
 #guard sequenceSpreadNamedSequenceValueOperandPreservesBoundary
 
 def test25bCommaSimilarity : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 1, .num 2]),
     ("B", alg [] [] [] [sequenceSpread (.sequenceConstruct (.num 1) (.num 2))])
   ] [
@@ -4162,9 +4161,9 @@ def test25c : Bool :=
   -- Internal sequence `(P*, 3, 4, 5)` where P = 1, 2 is ONE collection argument,
   -- opened by the post-binding one-level collection view; sum 15.
   let pThenMore := sequenceItems [sequenceSpread (resolve "P"), .num 3, .num 4, .num 5]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("P", alg [] [] [] [.num 1, .num 2]),
-    ("X", alg [] [] [] [.call (resolve "sum") (alg [] [] [] [pThenMore])])
+    ("X", alg [] [] [] [.call (resolve "sum") [pThenMore]])
   ] [
     resolve "X"
   ])) with
@@ -4174,7 +4173,7 @@ def test25c : Bool :=
 #guard test25c
 
 def test25dResultShape : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 1, .num 2]),
     ("F", alg ["a"] [] [] [.param "a", .num 3])
   ] [
@@ -4187,7 +4186,7 @@ def test25dResultShape : Bool :=
 #guard test25dResultShape
 
 def test25e : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 1, .num 2]),
     ("F", alg ["a"] [] [] [.sequenceConstruct (sequenceSpread (.param "a")) (.num 3)])
   ] [
@@ -4201,7 +4200,7 @@ def test25e : Bool :=
 def test25f : Bool :=
   let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.num 10]
   let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] [.num 20]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", a),
     ("B", b),
     ("C", alg [] [] [] [.sequenceConstruct (sequenceSpread (resolve "A")) (sequenceSpread (resolve "B"))])
@@ -4216,7 +4215,7 @@ def test25f : Bool :=
 def test25g : Bool :=
   let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.num 10]
   let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] [.num 20]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", a),
     ("B", b),
     ("C", alg [] [] [] [.sequenceConstruct (sequenceSpread (resolve "A")) (sequenceSpread (resolve "B"))])
@@ -4230,10 +4229,10 @@ def test25g : Bool :=
 
 -- A spread of a no-output operand fails with the spread
 -- missing-output diagnostic: source `bad*` is `sequenceSpread bad`, whose
--- single operand produces no output. The direct `.block` operand reports
+-- single operand produces no output. The direct `.algorithmExpr` operand reports
 -- the spread-specific error, exactly like a resolved operand (T4-2).
 def test25h : Bool :=
-  let bad := .block (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
+  let bad := .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 1])] [])
   match runFlat (sequenceSpread bad) with
   | Except.error err => innermostIsSpreadMissingOutput err
   | _ => false
@@ -4245,7 +4244,7 @@ def test25h : Bool :=
 def test25j : Bool :=
   let a := alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []
   let b := alg [] [] [publicProp "Y" (alg [] [] [] [.num 2])] []
-  match runFlat (.block (algPrivate [] [sequenceSpread (resolve "A")] [
+  match runFlat (.algorithmExpr (algPrivate [] [sequenceSpread (resolve "A")] [
     ("A", a),
     ("B", b)
   ] [
@@ -4259,11 +4258,11 @@ def test25j : Bool :=
 -- Test 26: Nested 3-arg if uses the selected inner branch
 -- if(1, if(1, 5, 6), 9) → [5]
 def test26 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [
+  match runFlat (.call (resolve "if") [
     .num 1,
-    .call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]),
+    .call (resolve "if") [.num 1, .num 5, .num 6],
     .num 9
-  ])) with
+  ]) with
   | Except.ok [5] => true
   | _ => false
 
@@ -4272,11 +4271,11 @@ def test26 : Bool :=
 -- Test 27: Nested 3-arg if uses the outer else branch
 -- if(0, if(1, 5, 6), 9) → [9]
 def test27 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [
+  match runFlat (.call (resolve "if") [
     .num 0,
-    .call (resolve "if") (alg [] [] [] [.num 1, .num 5, .num 6]),
+    .call (resolve "if") [.num 1, .num 5, .num 6],
     .num 9
-  ])) with
+  ]) with
   | Except.ok [9] => true
   | _ => false
 
@@ -4284,7 +4283,7 @@ def test27 : Bool :=
 
 -- Test 28: 3-arg if still works — if(1, 10, 20) → [10]
 def test28 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 1, .num 10, .num 20])) with
+  match runFlat (.call (resolve "if") [.num 1, .num 10, .num 20]) with
   | Except.ok [10] => true
   | _ => false
 
@@ -4292,7 +4291,7 @@ def test28 : Bool :=
 
 -- Test 29: 3-arg if false → if(0, 10, 20) → [20]
 def test29 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 0, .num 10, .num 20])) with
+  match runFlat (.call (resolve "if") [.num 0, .num 10, .num 20]) with
   | Except.ok [20] => true
   | _ => false
 
@@ -4301,7 +4300,7 @@ def test29 : Bool :=
 -- Test 30: 3-arg if with non-zero condition → true
 -- if(42, 7, 9) → [7]
 def test30 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num 42, .num 7, .num 9])) with
+  match runFlat (.call (resolve "if") [.num 42, .num 7, .num 9]) with
   | Except.ok [7] => true
   | _ => false
 
@@ -4310,7 +4309,7 @@ def test30 : Bool :=
 -- Test 31: 3-arg if with negative condition → true
 -- if(-1, 7, 9) → [7]
 def test31 : Bool :=
-  match runFlat (.call (resolve "if") (alg [] [] [] [.num (-1), .num 7, .num 9])) with
+  match runFlat (.call (resolve "if") [.num (-1), .num 7, .num 9]) with
   | Except.ok [7] => true
   | _ => false
 
@@ -4323,17 +4322,17 @@ def test31 : Bool :=
 -- Test 52: string intrinsic on positive integer via algorithm
 -- (block [123]).string → Result.str "123"
 def test52 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num 123])) "string" none) with
+  match runResult (.dotCall (.algorithmExpr (alg [] [] [] [.num 123])) "string" none) with
   | Except.ok (Result.str "123") => true
   | _ => false
 
 #guard test52
-#eval runResult (.dotCall (.block (alg [] [] [] [.num 123])) "string" none)
+#eval runResult (.dotCall (.algorithmExpr (alg [] [] [] [.num 123])) "string" none)
 
 -- Test 53: string intrinsic on zero
 -- (block [0]).string → Result.str "0"
 def test53 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num 0])) "string" none) with
+  match runResult (.dotCall (.algorithmExpr (alg [] [] [] [.num 0])) "string" none) with
   | Except.ok (Result.str "0") => true
   | _ => false
 
@@ -4342,7 +4341,7 @@ def test53 : Bool :=
 -- Test 54: string intrinsic on negative integer
 -- (block [-5]).string → Result.str "-5"
 def test54 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num (-5)])) "string" none) with
+  match runResult (.dotCall (.algorithmExpr (alg [] [] [] [.num (-5)])) "string" none) with
   | Except.ok (Result.str "-5") => true
   | _ => false
 
@@ -4354,7 +4353,7 @@ def test55 : Bool :=
   let innerAlg := algPrivate [] [] [("A", alg [] [] [] [.num 123])] [
     .dotCall (.resolve "A") "string" none
   ]
-  match runResult (.block innerAlg) with
+  match runResult (.algorithmExpr innerAlg) with
   | Except.ok (Result.str "123") => true
   | _ => false
 
@@ -4381,7 +4380,7 @@ def test57 : Bool :=
 -- Test 58: string intrinsic on multi-output → typeMismatch error
 -- (1, 2).string -> Error (sequence value is not a numeric atom)
 def test58 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [.num 1, .num 2])) "string" none) with
+  match runResult (.dotCall (.capture [.num 1, .num 2]) "string" none) with
   | Except.error _ => true
   | _ => false
 
@@ -4393,7 +4392,7 @@ def test58 : Bool :=
 
 -- Test 59: ascending inclusive range
 def test59 : Bool :=
-  match runFlat (.call (resolve "range") (alg [] [] [] [.num 1, .num 10])) with
+  match runFlat (.call (resolve "range") [.num 1, .num 10]) with
   | Except.ok [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] => true
   | _ => false
 
@@ -4401,7 +4400,7 @@ def test59 : Bool :=
 
 -- Test 60: descending inclusive range
 def test60 : Bool :=
-  match runFlat (.call (resolve "range") (alg [] [] [] [.num 10, .num 1])) with
+  match runFlat (.call (resolve "range") [.num 10, .num 1]) with
   | Except.ok [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] => true
   | _ => false
 
@@ -4409,7 +4408,7 @@ def test60 : Bool :=
 
 -- Test 61: equal bounds produce a singleton
 def test61 : Bool :=
-  match runFlat (.call (resolve "range") (alg [] [] [] [.num 5, .num 5])) with
+  match runFlat (.call (resolve "range") [.num 5, .num 5]) with
   | Except.ok [5] => true
   | _ => false
 
@@ -4417,7 +4416,7 @@ def test61 : Bool :=
 
 -- Test 62: negative to positive bounds remain inclusive and ordered
 def test62 : Bool :=
-  match runFlat (.call (resolve "range") (alg [] [] [] [.num (-2), .num 2])) with
+  match runFlat (.call (resolve "range") [.num (-2), .num 2]) with
   | Except.ok [-2, -1, 0, 1, 2] => true
   | _ => false
 
@@ -4425,7 +4424,7 @@ def test62 : Bool :=
 
 -- Test 32: Unary / binary composition with 2-arg if is rejected
 def test32 : Bool :=
-  match runResult (.binary .add (.num 10) (.unary .minus (.call (resolve "if") (alg [] [] [] [.num 0, .num 5])))) with
+  match runResult (.binary .add (.num 10) (.unary .minus (.call (resolve "if") [.num 0, .num 5]))) with
   | Except.error _ => true
   | Except.ok _ => false
 
@@ -4433,7 +4432,7 @@ def test32 : Bool :=
 
 -- Test 33: if arity mismatch — 1 arg → error
 def test33 : Bool :=
-  match runResult (.call (resolve "if") (alg [] [] [] [.num 1])) with
+  match runResult (.call (resolve "if") [.num 1]) with
   | Except.error _ => true
   | Except.ok _ => false
 
@@ -4461,8 +4460,8 @@ def spreadBuiltinArgumentFailingProps : List (Prod String Algorithm) :=
    ("Q", alg [] [] [] [.binary .add (.stringLiteral "x") (.num 1)])]
 
 def spreadBuiltinArgumentProgram (callee : String) (args : List KatLang.Expr) : KatLang.Expr :=
-  .block (algPrivate [] [] spreadBuiltinArgumentFailingProps [
-    .call (resolve callee) (alg [] [] [] args)
+  .algorithmExpr (algPrivate [] [] spreadBuiltinArgumentFailingProps [
+    .call (resolve callee) args
   ])
 
 def spreadP : KatLang.Expr := sequenceSpread (resolve "P")
@@ -4522,8 +4521,8 @@ def spreadBuiltinArgumentBoundsProps : List (Prod String Algorithm) :=
   [("Lo", alg [] [] [] [.num 2]), ("Hi", alg [] [] [] [.num 4])]
 
 def spreadBuiltinArgumentsKeepWrittenOrder : Bool :=
-  match runFlat (.block (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
-    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Lo"), sequenceSpread (resolve "Hi")])
+  match runFlat (.algorithmExpr (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
+    .call (resolve "range") [sequenceSpread (resolve "Lo"), sequenceSpread (resolve "Hi")]
   ])) with
   | Except.ok [2, 3, 4] => true
   | _ => false
@@ -4531,8 +4530,8 @@ def spreadBuiltinArgumentsKeepWrittenOrder : Bool :=
 #guard spreadBuiltinArgumentsKeepWrittenOrder
 
 def spreadBuiltinArgumentsMirroredOrderSwapsArguments : Bool :=
-  match runFlat (.block (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
-    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Hi"), sequenceSpread (resolve "Lo")])
+  match runFlat (.algorithmExpr (algPrivate [] [] spreadBuiltinArgumentBoundsProps [
+    .call (resolve "range") [sequenceSpread (resolve "Hi"), sequenceSpread (resolve "Lo")]
   ])) with
   | Except.ok [4, 3, 2] => true
   | _ => false
@@ -4541,8 +4540,8 @@ def spreadBuiltinArgumentsMirroredOrderSwapsArguments : Bool :=
 
 -- One spread slot supplying BOTH arguments keeps its items in order too.
 def spreadBuiltinArgumentsSingleSlotKeepsItemOrder : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Bounds", alg [] [] [] [.num 2, .num 4])] [
-    .call (resolve "range") (alg [] [] [] [sequenceSpread (resolve "Bounds")])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Bounds", alg [] [] [] [.num 2, .num 4])] [
+    .call (resolve "range") [sequenceSpread (resolve "Bounds")]
   ])) with
   | Except.ok [2, 3, 4] => true
   | _ => false
@@ -4626,7 +4625,7 @@ def numericScalarModRightSequenceValueMessage : String :=
 -- Test 45a: sequenceValue left operand in a numeric operator reports scalar shape
 def test45a : Bool :=
   match runResult (.binary .mod
-    (.block (alg [] [] [] [.num 3, .num 4, .num 5, .num 6]))
+    (.capture [.num 3, .num 4, .num 5, .num 6])
     (.num 2)) with
   | Except.error err =>
       hasContext "while evaluating `(3, 4, 5, 6) mod 2`" err &&
@@ -4639,7 +4638,7 @@ def test45a : Bool :=
 def test45b : Bool :=
   match runResult (.binary .mod
     (.num 2)
-    (.block (alg [] [] [] [.num 3, .num 4, .num 5, .num 6]))) with
+    (.capture [.num 3, .num 4, .num 5, .num 6])) with
   | Except.error err =>
       hasContext "while evaluating `2 mod (3, 4, 5, 6)`" err &&
       innermostIsTypeMismatch numericScalarModRightSequenceValueMessage err
@@ -4654,10 +4653,10 @@ def test45b : Bool :=
 -- raising a type mismatch. Arithmetic and ordering keep the numeric-scalar path
 -- (Test 45a/45b above already cover sequence-operand rejection for `mod`).
 
--- Helper: a multi-output block materializes as one sequence value in operand
--- position, e.g. `seqVal [1, 2]` stands in for `(1, 2)`.
+-- Helper: a written sequence-value group in operand position,
+-- e.g. `seqVal [1, 2]` stands in for `(1, 2)`.
 def seqVal (xs : List Int) : KatLang.Expr :=
-  .block (alg [] [] [] (xs.map (fun n => KatLang.Expr.num n)))
+  .capture (xs.map (fun n => KatLang.Expr.num n))
 
 -- Test 45c: structurally identical sequence values compare equal.
 def sequenceValueEqualitySameElements : Bool :=
@@ -4685,8 +4684,8 @@ def sequenceValueEqualityDifferentLength : Bool :=
 
 -- Test 45f: nested sequence values compare recursively (equal).
 def nestedSequenceValueEqualityEqual : Bool :=
-  let left  := .block (alg [] [] [] [.num 1, seqVal [2, 3]])
-  let right := .block (alg [] [] [] [.num 1, seqVal [2, 3]])
+  let left  := .capture [.num 1, seqVal [2, 3]]
+  let right := .capture [.num 1, seqVal [2, 3]]
   match runFlat (.binary .eq left right) with
   | Except.ok [1] => true
   | _ => false
@@ -4695,8 +4694,8 @@ def nestedSequenceValueEqualityEqual : Bool :=
 
 -- Test 45g: nested sequence values compare recursively (unequal inner element).
 def nestedSequenceValueEqualityDifferentInner : Bool :=
-  let left  := .block (alg [] [] [] [.num 1, seqVal [2, 3]])
-  let right := .block (alg [] [] [] [.num 1, seqVal [2, 4]])
+  let left  := .capture [.num 1, seqVal [2, 3]]
+  let right := .capture [.num 1, seqVal [2, 4]]
   match runFlat (.binary .eq left right) with
   | Except.ok [0] => true
   | _ => false
@@ -4773,8 +4772,8 @@ def arithmeticSequenceValueOperandStillRejected : Bool :=
 -- values. `(1, (2, 3))` has shape [1, [2, 3]] and `((1, 2), 3)` has shape
 -- [[1, 2], 3]; they flatten to the same atoms but are structurally unequal.
 def nestedSequenceValueEqualityDoesNotFlatten : Bool :=
-  let left  := .block (alg [] [] [] [.num 1, seqVal [2, 3]])
-  let right := .block (alg [] [] [] [seqVal [1, 2], .num 3])
+  let left  := .capture [.num 1, seqVal [2, 3]]
+  let right := .capture [seqVal [1, 2], .num 3]
   match runFlat (.binary .eq left right) with
   | Except.ok [0] => true
   | _ => false
@@ -4792,7 +4791,7 @@ def sequenceValueEqualityIsOrderSensitive : Bool :=
 -- Test 45p: empty sequence equality is stable across independently bound properties.
 -- A = (); B = (); A == B → 1.
 def emptyPropertyToPropertyEquality : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
       ("A", alg [] [] [] [.emptySequence 0]),
       ("B", alg [] [] [] [.emptySequence 0])
     ] [
@@ -4812,8 +4811,8 @@ def priceAlg : Algorithm :=
   ]
 
 def test46 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Price", priceAlg)] [
-    .call (resolve "Price") (alg [] [] [] [.stringLiteral "apples"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Price", priceAlg)] [
+    .call (resolve "Price") [.stringLiteral "apples"]
   ])) with
   | Except.ok [80] => true
   | _ => false
@@ -4822,8 +4821,8 @@ def test46 : Bool :=
 
 -- Test 47: Conditional algorithm with string pattern — no match
 def test47 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Price", priceAlg)] [
-    .call (resolve "Price") (alg [] [] [] [.stringLiteral "bananas"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Price", priceAlg)] [
+    .call (resolve "Price") [.stringLiteral "bananas"]
   ])) with
   | Except.error _ => true   -- noMatchingBranch
   | Except.ok _    => false
@@ -4834,8 +4833,8 @@ def test47 : Bool :=
 -- Echo = x, Echo('hello') → 'hello'
 def echoAlg : Algorithm := alg ["x"] [] [] [.param "x"]
 def test48 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Echo", echoAlg)] [
-    .call (resolve "Echo") (alg [] [] [] [.stringLiteral "hello"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("Echo", echoAlg)] [
+    .call (resolve "Echo") [.stringLiteral "hello"]
   ])) with
   | Except.ok (.str "hello") => true
   | _ => false
@@ -4846,7 +4845,7 @@ def test48 : Bool :=
 -- Name = 'KatLang', output = Name
 def test49 : Bool :=
   let nameAlg := alg [] [] [] [.stringLiteral "KatLang"]
-  match runResult (.block (algPrivate [] [] [("Name", nameAlg)] [resolve "Name"])) with
+  match runResult (.algorithmExpr (algPrivate [] [] [("Name", nameAlg)] [resolve "Name"])) with
   | Except.ok (.str "KatLang") => true
   | _ => false
 
@@ -4868,7 +4867,7 @@ def test50d : Bool := !Pattern.isMatchEquivalent (.litString "a") (.bind "x")
 -- produce unresolvedImplicitParams, not arityMismatch.
 def test51 : Bool :=
   -- param "x" makes the block have params=["x"]
-  match runResult (.block (alg ["x"] [] [] [.param "x"])) with
+  match runResult (.algorithmExpr (alg ["x"] [] [] [.param "x"])) with
   | Except.error (Error.unresolvedImplicitParams ["x"]) => true
   | _ => false
 
@@ -4939,25 +4938,25 @@ def badMultiTrueAlg69 : Algorithm :=
   alg ["x"] [] [] [.num 5, .num 0]
 
 def badSequenceValueAlg70 : Algorithm :=
-  alg ["x"] [] [] [.block (alg [] [] [] [.num 1, .num 0])]
+  alg ["x"] [] [] [.capture [.num 1, .num 0]]
 
 -- `take(x, 0)` returns the exact list `[]`: one value, but a list has no truth
 -- value, so a predicate built from a collection builtin is rejected.
 def listTruthAlg71 : Algorithm :=
   alg ["x"] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+    .call (resolve "take") [
       .param "x",
       .num 0
-    ])
+    ]
   ]
 
 -- Test 63: plain-call filter iterates emitted range items
 def test63 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("KeepTenSequenceValue", keepTenSequenceValueAlg66b)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 10]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("KeepTenSequenceValue", keepTenSequenceValueAlg66b)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 10],
       .resolve "KeepTenSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -4966,11 +4965,11 @@ def test63 : Bool :=
 
 -- Test 64: descending ranges iterate emitted items in plain-call filter
 def test64 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("KeepTenSequenceValue", keepTenSequenceValueAlg66b)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 10, .num 1]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("KeepTenSequenceValue", keepTenSequenceValueAlg66b)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 10, .num 1],
       .resolve "KeepTenSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -4979,11 +4978,11 @@ def test64 : Bool :=
 
 -- Test 65: a sequence-value-only predicate does not match scalar emitted range items
 def test65 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 4],
       .resolve "KeepFourSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -4992,11 +4991,11 @@ def test65 : Bool :=
 
 -- Test 66: a sequence-value-only rejection predicate keeps scalar emitted range items
 def test66 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("RejectFourSequenceValue", rejectFourSequenceValueAlg66d)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("RejectFourSequenceValue", rejectFourSequenceValueAlg66d)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 4],
       .resolve "RejectFourSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3, 4] => true
   | _ => false
@@ -5011,12 +5010,12 @@ def test66 : Bool :=
 -- supplies three arguments where `filter(collection, predicate)` expects two, so the call
 -- reports an ordinary arity error (never a silently merged collection).
 def sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 3, .num 6]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 3, .num 6],
       .num 8,
       .resolve "IsEven"
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 3 err
   | Except.ok _ => false
@@ -5027,11 +5026,11 @@ def sequenceBoundaryLawFilterCommaRangeSourcePreservesBoundary : Bool :=
 -- one-level collection view opens it, so filter's collection is [3, 4, 5, 6, 8] and keeps
 -- the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg63)] [
-    .call (resolve "filter") (alg [] [] [] [
-      sequenceItems [sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 3, .num 6])), .num 8],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg63)] [
+    .call (resolve "filter") [
+      sequenceItems [sequenceSpread (.call (resolve "range") [.num 3, .num 6]), .num 8],
       .resolve "IsEven"
-    ])
+    ]
   ])) with
   | Except.ok [4, 6, 8] => true
   | _ => false
@@ -5041,14 +5040,14 @@ def sequenceBoundaryLawFilterSequenceSpreadRangeSourceExpands : Bool :=
 -- A named multi-output source `Data` is ONE collection argument; the post-binding one-level
 -- collection view opens it, so filter's collection is [3, 4, 5, 6].
 def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
     ("Data", alg [] [] [] [.num 3, .num 4, .num 5, .num 6])
   ] [
-    .call (resolve "filter") (alg [] [] [] [
+    .call (resolve "filter") [
       .resolve "Data",
       .resolve "IsEven"
-    ])
+    ]
   ])) with
   | Except.ok [4, 6] => true
   | _ => false
@@ -5058,11 +5057,11 @@ def sequenceBoundaryLawFilterNamedSingleSourcePreservesBoundary : Bool :=
 -- A dot-call receiver `Data` binds the fixed collection parameter; the post-binding
 -- one-level collection view opens it, so filter iterates [3, 4, 5, 6].
 def sequenceBoundaryLawFilterDotReceiverExpands : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
     ("Data", alg [] [] [] [.num 3, .num 4, .num 5, .num 6])
   ] [
-    .dotCall (.resolve "Data") "filter" (some (alg [] [] [] [.resolve "IsEven"]))
+    .dotCall (.resolve "Data") "filter" (some [.resolve "IsEven"])
   ])) with
   | Except.ok [4, 6] => true
   | _ => false
@@ -5073,15 +5072,15 @@ def sequenceBoundaryLawFilterDotReceiverExpands : Bool :=
 -- and 8), so `filter(collection, predicate)` receives three arguments and reports an
 -- ordinary arity error (sibling preservation, never silent flattening).
 def sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
     ("Data", alg [] [] [] [.num 3, .num 4, .num 5, .num 6])
   ] [
-    .call (resolve "filter") (alg [] [] [] [
+    .call (resolve "filter") [
       .resolve "Data",
       .num 8,
       .resolve "IsEven"
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 3 err
   | Except.ok _ => false
@@ -5092,14 +5091,14 @@ def sequenceBoundaryLawFilterCommaNamedSourcePreservesBoundary : Bool :=
 -- post-binding one-level collection view, so filter's collection is [3, 4, 5, 6, 8]
 -- and keeps the even items [4, 6, 8].
 def sequenceBoundaryLawFilterSequenceSpreadNamedSourceExpands : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("IsEven", isEvenAlg63),
     ("Data", alg [] [] [] [.num 3, .num 4, .num 5, .num 6])
   ] [
-    .call (resolve "filter") (alg [] [] [] [
+    .call (resolve "filter") [
       sequenceItems [sequenceSpread (.resolve "Data"), .num 8],
       .resolve "IsEven"
-    ])
+    ]
   ])) with
   | Except.ok [4, 6, 8] => true
   | _ => false
@@ -5108,14 +5107,14 @@ def sequenceBoundaryLawFilterSequenceSpreadNamedSourceExpands : Bool :=
 
 -- Test 67: filtering an already-empty sequence-value boundary stays empty
 def test67 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c), ("RejectFourSequenceValue", rejectFourSequenceValueAlg66d)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c), ("RejectFourSequenceValue", rejectFourSequenceValueAlg66d)] [
+    .call (resolve "filter") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "RejectFourSequenceValue"
-      ]),
+      ],
       .resolve "KeepFourSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -5124,14 +5123,14 @@ def test67 : Bool :=
 
 -- Test 68: kept sequence values are preserved whole and in order as exact list elements
 def test68 : Bool :=
-  match runResult (.block (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
-    .call (resolve "filter") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 10]),
-      .block (alg [] [] [] [.num 2, .num 20]),
-      .block (alg [] [] [] [.num 3, .num 30]),
-      .block (alg [] [] [] [.num 4, .num 40])],
+  match runResult (.algorithmExpr (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
+    .call (resolve "filter") [sequenceItems [
+      .capture [.num 1, .num 10],
+      .capture [.num 2, .num 20],
+      .capture [.num 3, .num 30],
+      .capture [.num 4, .num 40]],
       .resolve "KeepPair"
-    ])
+    ]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 2, .atom 20],
@@ -5143,11 +5142,11 @@ def test68 : Bool :=
 
 -- Test 69: multi-output predicate starting with 0 is rejected
 def test69 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", badMultiFalseAlg68)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badMultiFalseAlg68)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
@@ -5156,11 +5155,11 @@ def test69 : Bool :=
 
 -- Test 70: multi-output predicate starting with nonzero is also rejected
 def test70 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", badMultiTrueAlg69)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badMultiTrueAlg69)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
@@ -5169,11 +5168,11 @@ def test70 : Bool :=
 
 -- Test 71: sequenceValue predicate result is rejected
 def test71 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", badSequenceValueAlg70)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", badSequenceValueAlg70)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
@@ -5183,11 +5182,11 @@ def test71 : Bool :=
 -- Test 72: exact-list predicate result is rejected (a collection builtin used
 -- as a filter predicate returns a list, never an atomic numeric value)
 def test72 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", listTruthAlg71)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", listTruthAlg71)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
@@ -5196,11 +5195,11 @@ def test72 : Bool :=
 
 -- Test 73: string predicate result is rejected
 def test73 : Bool :=
-  match runResult (.block (algPrivate [] [] [("BadTruth", badTruthAlg66)] [
-    .call (resolve "filter") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("BadTruth", badTruthAlg66)] [
+    .call (resolve "filter") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "BadTruth"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "filter predicate must return exactly one atomic numeric value" err && innermostIsBadArity err
   | _ => false
@@ -5209,7 +5208,7 @@ def test73 : Bool :=
 
 -- Test 74: builtin arity mismatch still follows normal conventions
 def test74 : Bool :=
-  match runResult (.call (resolve "filter") (alg [] [] [] [])) with
+  match runResult (.call (resolve "filter") []) with
   | Except.error _ => true
   | _ => false
 
@@ -5218,9 +5217,9 @@ def test74 : Bool :=
 -- Test 75: filter predicate arity mismatch explains the implicit item argument
 def test75 : Bool :=
   match runResult (.dotCall
-    (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+    (.call (resolve "range") [.num 1, .num 5])
     "filter"
-    (some (alg [] [] [] [.num 1]))) with
+    (some [.num 1])) with
   | Except.error err =>
       hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
       innermostIsArityMismatch 0 1 err
@@ -5269,10 +5268,10 @@ def reduceSequenceValueItemAlg79 : Algorithm :=
 
 def reduceStatsAlg80 : Algorithm :=
   alg ["x", "acc"] [] [] [
-    .block (alg [] [] [] [
+    .capture [
       .binary .add (.dotCall (.param "x") "count" none) (.index (.param "acc") (.num 0)),
       .binary .add (.index (.param "acc") (.num 1)) (.num 1)
-    ])
+    ]
   ]
 
 def reduceEmptyBoundaryAlg80a : Algorithm :=
@@ -5284,12 +5283,12 @@ def reduceEmptyBoundaryAlg80a : Algorithm :=
 
 def reduceEmptyBoundarySequenceValueAccAlg80b : Algorithm :=
   alg ["x", "acc"] [] [] [
-    .block (alg [] [] [] [
+    .capture [
       .binary .add
         (.binary .add (.index (.param "acc") (.num 0)) (.num 100))
         (.dotCall (.param "x") "count" none),
       .binary .add (.index (.param "acc") (.num 1)) (.num 1)
-    ])
+    ]
   ]
 
 def addItemCountAlg80c : Algorithm :=
@@ -5310,45 +5309,45 @@ def reduceMultiAlg82 : Algorithm :=
 def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
   algPrivate ["element", "tt"] [] [
     ("T", alg [] [] [] [
-      .call (resolve "atoms") (alg [] [] [] [.param "tt"])
+      .call (resolve "atoms") [.param "tt"]
     ])
   ] [
-    .block (alg [] [] [] [
+    .capture [
       .dotCall (resolve "T") "first" none,
       .binary .add
         (.index (resolve "T") (.num 1))
-        (.call (resolve "if") (alg [] [] [] [
+        (.call (resolve "if") [
           .binary .eq (.param "element") (.dotCall (resolve "T") "first" none),
           .num 1,
           .num 0
-        ]))
-    ])
+        ])
+    ]
   ]
 
 -- Exact AoC-style regression: Right is a named multi-output property bound as
 -- reduce's collection argument, so the collection view must iterate its items.
 def sequenceBoundaryLawAocNamedReduceSource : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Left", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]),
     ("Right", alg [] [] [] [.num 4, .num 3, .num 5, .num 3, .num 9, .num 3]),
     ("CountMatchStep", sequenceBoundaryLawAocCountMatchStepAlg),
     ("MatchCount", alg ["value"] [] [] [
       .index
-        (.call (resolve "reduce") (alg [] [] [] [
+        (.call (resolve "reduce") [
           resolve "Right",
           resolve "CountMatchStep",
-          .block (alg [] [] [] [.param "value", .num 0])
-        ]))
+          .capture [.param "value", .num 0]
+        ])
         (.num 1)
     ]),
     ("SimilarityAt", alg ["value"] [] [] [
       .binary .mul
         (.param "value")
-        (.call (resolve "MatchCount") (alg [] [] [] [.param "value"]))
+        (.call (resolve "MatchCount") [.param "value"])
     ]),
     ("Part2", alg [] [] [] [
       .dotCall
-        (.dotCall (resolve "Left") "map" (some (alg [] [] [] [resolve "SimilarityAt"])))
+        (.dotCall (resolve "Left") "map" (some [resolve "SimilarityAt"]))
         "sum"
         none
     ])
@@ -5362,11 +5361,11 @@ def sequenceBoundaryLawAocNamedReduceSource : Bool :=
 
 -- Test 76: dot-call reduce over range with additive step
 def test76 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Add", addAlg76)] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "reduce"
-      (some (alg [] [] [] [.resolve "Add", .num 0]))
+      (some [.resolve "Add", .num 0])
   ])) with
   | Except.ok [15] => true
   | _ => false
@@ -5375,12 +5374,12 @@ def test76 : Bool :=
 
 -- Test 77: plain-call reduce iterates emitted range items
 def test77 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Mul", mulAlg77)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Mul", mulAlg77)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 1, .num 4],
       .resolve "Mul",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok [11111] => true
   | _ => false
@@ -5389,12 +5388,12 @@ def test77 : Bool :=
 
 -- Test 77a: plain-call reduce can still observe sequence-value range content explicitly
 def test77a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 3, .num 6]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 3, .num 6],
       .resolve "AddItemCount",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -5403,12 +5402,12 @@ def test77a : Bool :=
 
 -- Test 78: sequence-value-only reduce branches do not match scalar emitted range items
 def test78 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Digits", digitsAlg78)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Digits", digitsAlg78)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 1, .num 4],
       .resolve "Digits",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -5417,15 +5416,15 @@ def test78 : Bool :=
 
 -- Test 79: reducing an empty plain-call collection returns the initial accumulator
 def test79 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("MarkEmptyBoundary", reduceEmptyBoundaryAlg80a)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("MarkEmptyBoundary", reduceEmptyBoundaryAlg80a)] [
+    .call (resolve "reduce") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]),
+      ],
       .resolve "MarkEmptyBoundary",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok (.atom 0) => true
   | _ => false
@@ -5434,15 +5433,15 @@ def test79 : Bool :=
 
 -- Test 80: sequence-value accumulators also stay unchanged when reducing an empty collection
 def test80 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("MarkEmptyBoundary", reduceEmptyBoundarySequenceValueAccAlg80b)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("MarkEmptyBoundary", reduceEmptyBoundarySequenceValueAccAlg80b)] [
+    .call (resolve "reduce") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]),
+      ],
       .resolve "MarkEmptyBoundary",
-      .block (alg [] [] [] [.num 7, .num 9])
-    ])
+      .capture [.num 7, .num 9]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 7, .atom 9]) => true
   | _ => false
@@ -5451,14 +5450,14 @@ def test80 : Bool :=
 
 -- Test 81: sequenceValue collection elements are passed to the step as whole values
 def test81 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("TakeValue", reduceSequenceValueItemAlg79)] [
-    .call (resolve "reduce") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 10]),
-      .block (alg [] [] [] [.num 2, .num 20]),
-      .block (alg [] [] [] [.num 3, .num 30])],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("TakeValue", reduceSequenceValueItemAlg79)] [
+    .call (resolve "reduce") [sequenceItems [
+      .capture [.num 1, .num 10],
+      .capture [.num 2, .num 20],
+      .capture [.num 3, .num 30]],
       .resolve "TakeValue",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [60] => true
   | _ => false
@@ -5467,12 +5466,12 @@ def test81 : Bool :=
 
 -- Test 82: sequence-value accumulators keep their shape while emitted range items are reduced
 def test82 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Stats", reduceStatsAlg80)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Stats", reduceStatsAlg80)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 1, .num 4],
       .resolve "Stats",
-      .block (alg [] [] [] [.num 0, .num 0])
-    ])
+      .capture [.num 0, .num 0]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 4, .atom 4]) => true
   | _ => false
@@ -5481,12 +5480,12 @@ def test82 : Bool :=
 
 -- Test 83: reduce step must not return an empty result
 def test83 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", reduceEmptyAlg81)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", reduceEmptyAlg81)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad",
       .num 0
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
   | _ => false
@@ -5495,12 +5494,12 @@ def test83 : Bool :=
 
 -- Test 84: reduce step must not return multiple top-level outputs
 def test84 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", reduceMultiAlg82)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", reduceMultiAlg82)] [
+    .call (resolve "reduce") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad",
       .num 0
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
   | _ => false
@@ -5510,10 +5509,10 @@ def test84 : Bool :=
 -- Test 84a: reduce is an ordinary fixed-arity callable — reduce(1) supplies one
 -- argument where `reduce(collection, reducer, initial)` expects three.
 def test84a : Bool :=
-  match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
-    .call (resolve "reduce") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Add", addAlg76)] [
+    .call (resolve "reduce") [
       .num 1
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 3 1 err
   | _ => false
@@ -5524,11 +5523,11 @@ def test84a : Bool :=
 -- an ordinary arity error, with no suffix-binding reinterpretation of the
 -- argument list.
 def test84b : Bool :=
-  match runResult (.block (algPrivate [] [] [("Add", addAlg76)] [
-    .call (resolve "reduce") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Add", addAlg76)] [
+    .call (resolve "reduce") [
       sequenceItems [.num 1, .num 2, .num 3],
       .resolve "Add"
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 3 2 err
   | _ => false
@@ -5539,10 +5538,10 @@ def test84b : Bool :=
 -- parameterized reducer. An ordinary value in the sole control slot follows
 -- the fixed signature and reports the ordinary three-versus-two arity error.
 def test84c : Bool :=
-  match runResult (.block (algPrivate [] [] [("Values", alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [
     sequenceItems [.num 1, .num 2, .num 3]
   ])] [
-    .dotCall (resolve "Values") "reduce" (some (alg [] [] [] [.num 0]))
+    .dotCall (resolve "Values") "reduce" (some [.num 0])
   ])) with
   | Except.error err => innermostIsArityMismatch 3 2 err
   | _ => false
@@ -5590,14 +5589,14 @@ def pairWithSquareAlg90 : Algorithm :=
   .conditional none [] [
     ⟨ .sequenceValue [.sequenceValue [.bind "first", .bind "middle", .bind "last"]],
       alg [] [] [] [
-        .block (alg [] [] [] [
+        .capture [
           .param "first",
           .param "last"
-        ])
+        ]
       ] ⟩,
     ⟨ .bind "x",
       alg [] [] [] [
-        .block (alg [] [] [] [.num 0, .num 0])
+        .capture [.num 0, .num 0]
       ] ⟩
   ]
 
@@ -5614,11 +5613,11 @@ def mapMultiAlg92 : Algorithm :=
 
 -- Test 85: dot-call map doubles each range element left-to-right
 def test85 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Double", doubleAlg85)] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "map"
-      (some (alg [] [] [] [.resolve "Double"]))
+      (some [.resolve "Double"])
   ])) with
   | Except.ok [2, 4, 6, 8, 10] => true
   | _ => false
@@ -5627,23 +5626,23 @@ def test85 : Bool :=
 
 def factorialMapAlg85a : Algorithm :=
   alg ["n"] [] [] [
-    .call (resolve "if") (alg [] [] [] [
+    .call (resolve "if") [
       .binary .eq (.param "n") (.num 0),
       .num 1,
       .binary .mul
-        (.call (resolve "Factorial") (alg [] [] [] [
+        (.call (resolve "Factorial") [
           .binary .sub (.param "n") (.num 1)
-        ]))
+        ])
         (.param "n")
-    ])
+    ]
   ]
 
 def test85a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Factorial", factorialMapAlg85a)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Factorial", factorialMapAlg85a)] [
     .dotCall
-      (.block (alg [] [] [] [.num 0, .num 1, .num 2, .num 3, .num 4]))
+      (.capture [.num 0, .num 1, .num 2, .num 3, .num 4])
       "map"
-      (some (alg [] [] [] [.resolve "Factorial"]))
+      (some [.resolve "Factorial"])
   ])) with
   | Except.ok [1, 1, 2, 6, 24] => true
   | _ => false
@@ -5652,11 +5651,11 @@ def test85a : Bool :=
 
 -- Test 86: plain-call map iterates emitted range items
 def test86 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("TakeMiddle", takeMiddleSequenceValueAlg85a)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("TakeMiddle", takeMiddleSequenceValueAlg85a)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 1, .num 5],
       .resolve "TakeMiddle"
-    ])
+    ]
   ])) with
   | Except.ok [0, 0, 0, 0, 0] => true
   | _ => false
@@ -5665,11 +5664,11 @@ def test86 : Bool :=
 
 -- Test 86a: plain-call map applies scalar transforms to emitted range items
 def test86a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Double", doubleAlg85)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 1, .num 5],
       .resolve "Double"
-    ])
+    ]
   ])) with
   | Except.ok [2, 4, 6, 8, 10] => true
   | _ => false
@@ -5678,11 +5677,11 @@ def test86a : Bool :=
 
 -- Test 87: sequence-value-only map branches do not match scalar emitted range items
 def test87 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Tag", tagAlg87)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Tag", tagAlg87)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 5, .num 1],
       .resolve "Tag"
-    ])
+    ]
   ])) with
   | Except.ok [0, 0, 0, 0, 0] => true
   | _ => false
@@ -5691,14 +5690,14 @@ def test87 : Bool :=
 
 -- Test 88: mapping over an empty filter-result list yields the exact empty list `[]`
 def test88 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("CountMembers", countMembersAlg88a)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a), ("CountMembers", countMembersAlg88a)] [
+    .call (resolve "map") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]),
+      ],
       .resolve "CountMembers"
-    ])
+    ]
   ])) with
   | Except.ok (.listValue []) => true
   | _ => false
@@ -5707,13 +5706,13 @@ def test88 : Bool :=
 
 -- Test 89: sequenceValue collection elements are passed to the transform as whole values
 def test89 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("TakeValue", takePairValueAlg89)] [
-    .call (resolve "map") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 10]),
-      .block (alg [] [] [] [.num 2, .num 20]),
-      .block (alg [] [] [] [.num 3, .num 30])],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("TakeValue", takePairValueAlg89)] [
+    .call (resolve "map") [sequenceItems [
+      .capture [.num 1, .num 10],
+      .capture [.num 2, .num 20],
+      .capture [.num 3, .num 30]],
       .resolve "TakeValue"
-    ])
+    ]
   ])) with
   | Except.ok [10, 20, 30] => true
   | _ => false
@@ -5722,11 +5721,11 @@ def test89 : Bool :=
 
 -- Test 90: sequence-value mapped results are accepted for emitted range items
 def test90 : Bool :=
-  match runResult (.block (algPrivate [] [] [("PairWithSquare", pairWithSquareAlg90)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("PairWithSquare", pairWithSquareAlg90)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "PairWithSquare"
-    ])
+    ]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 0, .atom 0],
@@ -5739,11 +5738,11 @@ def test90 : Bool :=
 
 -- Test 91: map transform must not return an empty result
 def test91 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", mapEmptyAlg91)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", mapEmptyAlg91)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
   | _ => false
@@ -5752,11 +5751,11 @@ def test91 : Bool :=
 
 -- Test 92: map transform must not return multiple top-level outputs
 def test92 : Bool :=
-  match runResult (.block (algPrivate [] [] [("Bad", mapMultiAlg92)] [
-    .call (resolve "map") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", mapMultiAlg92)] [
+    .call (resolve "map") [
+      .call (resolve "range") [.num 1, .num 3],
       .resolve "Bad"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
   | _ => false
@@ -5774,10 +5773,10 @@ def isEvenAlg93 : Algorithm :=
 
 -- Test 93: plain-call sum adds expanded range items
 def test93 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [15] => true
   | _ => false
@@ -5786,9 +5785,9 @@ def test93 : Bool :=
 
 -- Test 94: dot-call sum uses receiver injection with no explicit args
 def test94 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "sum"
       none
   ])) with
@@ -5799,10 +5798,10 @@ def test94 : Bool :=
 
 -- Test 95: descending ranges also expand for plain-call sum
 def test95 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [
+      .call (resolve "range") [.num 5, .num 1]
+    ]
   ])) with
   | Except.ok [15] => true
   | _ => false
@@ -5811,12 +5810,12 @@ def test95 : Bool :=
 
 -- Test 96: sum composes with filter and preserves strict top-level semantics
 def test96 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        (.call (resolve "range") [.num 1, .num 10])
         "filter"
-        (some (alg [] [] [] [.resolve "IsEven"])))
+        (some [.resolve "IsEven"]))
       "sum"
       none
   ])) with
@@ -5827,12 +5826,12 @@ def test96 : Bool :=
 
 -- Test 97: sum composes with map and sums the mapped top-level elements
 def test97 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Square", squareAlg86)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Square", squareAlg86)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        (.call (resolve "range") [.num 1, .num 4])
         "map"
-        (some (alg [] [] [] [.resolve "Square"])))
+        (some [.resolve "Square"]))
       "sum"
       none
   ])) with
@@ -5843,13 +5842,13 @@ def test97 : Bool :=
 
 -- Test 98: plain-call sum of an empty collection returns zero
 def test98 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "sum") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "sum") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -5858,8 +5857,8 @@ def test98 : Bool :=
 
 -- Test 99: a single atomic value is treated as a one-element collection
 def test99 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [.num 5]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -5868,12 +5867,12 @@ def test99 : Bool :=
 
 -- Test 100: sequenceValue top-level elements are rejected rather than flattened
 def test100 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [sequenceValuePairs]
   ])) with
   | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -5882,8 +5881,8 @@ def test100 : Bool :=
 
 -- Test 101: string elements are rejected by sum
 def test101 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [.stringLiteral "hello"])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [.stringLiteral "hello"]
   ])) with
   | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
@@ -5896,10 +5895,10 @@ def test101 : Bool :=
 
 -- Test 102: plain-call count counts expanded range items
 def test102 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -5908,9 +5907,9 @@ def test102 : Bool :=
 
 -- Test 103: dot-call count uses receiver injection with no explicit args
 def test103 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "count"
       none
   ])) with
@@ -5923,18 +5922,18 @@ def test103 : Bool :=
 def countReceiverNormalizationRoot103a : Algorithm :=
   algPrivate [] [] [
     ("Data1", alg [] [] [] [.num 1, .num 7]),
-    ("Data2", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 7])])
+    ("Data2", alg [] [] [] [.capture [.num 1, .num 7]])
   ] [
     .dotCall (.resolve "Data1") "count" none,
     .dotCall (.resolve "Data2") "count" none,
-    .dotCall (.block (alg [] [] [] [.num 1, .num 7])) "count" none,
-    .dotCall (.block (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 7])
-    ])) "count" none
+    .dotCall (.capture [.num 1, .num 7]) "count" none,
+    .dotCall (.capture [
+      .capture [.num 1, .num 7]
+    ]) "count" none
   ]
 
 def test103a : Bool :=
-  match runFlat (.block countReceiverNormalizationRoot103a) with
+  match runFlat (.algorithmExpr countReceiverNormalizationRoot103a) with
   | Except.ok [2, 2, 2, 2] => true
   | _ => false
 
@@ -5942,13 +5941,13 @@ def test103a : Bool :=
 
 -- Test 103b: nested sequence-value receiver boundaries are preserved after one strip
 def test103b : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runFlat (.block (alg [] [] [] [
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall sequenceValuePairs "count" none,
-    .dotCall (.block (alg [] [] [] [sequenceValuePairs])) "count" none
+    .dotCall (.capture [sequenceValuePairs]) "count" none
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -5957,10 +5956,10 @@ def test103b : Bool :=
 
 -- Test 104: descending ranges still count all expanded top-level items
 def test104 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [
+      .call (resolve "range") [.num 5, .num 1]
+    ]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -5969,12 +5968,12 @@ def test104 : Bool :=
 
 -- Test 105: count composes with filter over kept top-level elements
 def test105 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        (.call (resolve "range") [.num 1, .num 10])
         "filter"
-        (some (alg [] [] [] [.resolve "IsEven"])))
+        (some [.resolve "IsEven"]))
       "count"
       none
   ])) with
@@ -5985,12 +5984,12 @@ def test105 : Bool :=
 
 -- Test 106: count composes with map and counts mapped top-level elements
 def test106 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Square", squareAlg86)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Square", squareAlg86)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        (.call (resolve "range") [.num 1, .num 4])
         "map"
-        (some (alg [] [] [] [.resolve "Square"])))
+        (some [.resolve "Square"]))
       "count"
       none
   ])) with
@@ -6001,13 +6000,13 @@ def test106 : Bool :=
 
 -- Test 107: plain-call count of an empty collection is zero
 def test107 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "count") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "count") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -6016,12 +6015,12 @@ def test107 : Bool :=
 
 -- Test 107a: dot-call count of an empty filtered receiver is zero
 def test107a : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .dotCall
       (.dotCall
-        (.block (alg [] [] [] [.num 1, .num 5, .num 3]))
+        (.capture [.num 1, .num 5, .num 3])
         "filter"
-        (some (alg [] [] [] [.resolve "AlwaysFalse"])))
+        (some [.resolve "AlwaysFalse"]))
       "count"
       none
   ])) with
@@ -6034,8 +6033,8 @@ def test107a : Bool :=
 -- call is an arity error — absence of an argument is never an empty collection
 -- (the explicit empty-collection call `count(())` counts zero).
 def test107b : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") []
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | _ => false
@@ -6053,19 +6052,19 @@ def test107b : Bool :=
 -- multi-item calls and empty calls are ordinary arity errors.
 def builtinSumTakesOneCollectionArgument : Bool :=
   let inlineErrs :=
-    match runResult (.block (alg [] [] [] [
-      .call (resolve "sum") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+    match runResult (.algorithmExpr (alg [] [] [] [
+      .call (resolve "sum") [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]
     ])) with
     | Except.error err => innermostIsArityMismatch 1 6 err
     | _ => false
   let grouped :=
-    match runFlat (.block (alg [] [] [] [
-      .call (resolve "sum") (alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])])
+    match runFlat (.algorithmExpr (alg [] [] [] [
+      .call (resolve "sum") [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]]
     ])) with
     | Except.ok [16] => true
     | _ => false
   let emptyErrs :=
-    match runResult (.block (alg [] [] [] [.call (resolve "sum") (alg [] [] [] [])])) with
+    match runResult (.algorithmExpr (alg [] [] [] [.call (resolve "sum") []])) with
     | Except.error err => innermostIsArityMismatch 1 0 err
     | _ => false
   inlineErrs && grouped && emptyErrs
@@ -6078,25 +6077,25 @@ def builtinSumTakesOneCollectionArgument : Bool :=
 -- rewrite groups the spreads into ONE collection argument: sum((*A, *B)) = 10.
 def builtinSumSiblingsNotFlattened : Bool :=
   let siblingsErr :=
-    match runResult (.block (algPrivate [] [] [
+    match runResult (.algorithmExpr (algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4])
-    ] [ .call (resolve "sum") (alg [] [] [] [resolve "A", resolve "B"]) ])) with
+    ] [ .call (resolve "sum") [resolve "A", resolve "B"] ])) with
     | Except.error err => innermostIsArityMismatch 1 2 err
     | _ => false
   let spreadSiblingsErr :=
-    match runResult (.block (algPrivate [] [] [
+    match runResult (.algorithmExpr (algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4])
-    ] [ .call (resolve "sum") (alg [] [] [] [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")]) ])) with
+    ] [ .call (resolve "sum") [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")] ])) with
     | Except.error err => innermostIsArityMismatch 1 4 err
     | _ => false
   let groupedConcatenates :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4])
-    ] [ .call (resolve "sum") (alg [] [] [] [
-          .block (alg [] [] [] [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")])]) ])) with
+    ] [ .call (resolve "sum") [
+          .capture [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")]] ])) with
     | Except.ok [10] => true
     | _ => false
   siblingsErr && spreadSiblingsErr && groupedConcatenates
@@ -6107,14 +6106,14 @@ def builtinSumSiblingsNotFlattened : Bool :=
 -- item. The inline multi-item call is an arity error; the grouped form binds.
 def builtinContainsTakesCollectionAndItem : Bool :=
   let inlineErrs :=
-    match runResult (.block (alg [] [] [] [
-      .call (resolve "contains") (alg [] [] [] [.num 1, .num 2, .num 3, .num 2])
+    match runResult (.algorithmExpr (alg [] [] [] [
+      .call (resolve "contains") [.num 1, .num 2, .num 3, .num 2]
     ])) with
     | Except.error err => innermostIsArityMismatch 2 4 err
     | _ => false
   let grouped :=
-    match runFlat (.block (alg [] [] [] [
-      .call (resolve "contains") (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3]), .num 2])
+    match runFlat (.algorithmExpr (alg [] [] [] [
+      .call (resolve "contains") [.capture [.num 1, .num 2, .num 3], .num 2]
     ])) with
     | Except.ok [1] => true
     | _ => false
@@ -6128,14 +6127,14 @@ def builtinContainsTakesCollectionAndItem : Bool :=
 -- builtin twin.
 def builtinFixedArityDiffersFromUserVariadic : Bool :=
   let builtinInlineErrs :=
-    match runResult (.block (alg [] [] [] [
-      .call (resolve "sum") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+    match runResult (.algorithmExpr (alg [] [] [] [
+      .call (resolve "sum") [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]
     ])) with
     | Except.error err => innermostIsArityMismatch 1 6 err
     | _ => false
   let builtinGrouped :=
-    match runFlat (.block (alg [] [] [] [
-      .call (resolve "sum") (alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])])
+    match runFlat (.algorithmExpr (alg [] [] [] [
+      .call (resolve "sum") [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]]
     ])) with
     | Except.ok [16] => true
     | _ => false
@@ -6144,8 +6143,8 @@ def builtinFixedArityDiffersFromUserVariadic : Bool :=
       .dotCall (.param "values") "sum" none
     ]
   let viaUser :=
-    match runFlat (.block (algPrivate [] [] [("G", userSumAlg)] [
-      .call (resolve "G") (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])
+    match runFlat (.algorithmExpr (algPrivate [] [] [("G", userSumAlg)] [
+      .call (resolve "G") [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]
     ])) with
     | Except.ok [16] => true
     | _ => false
@@ -6156,12 +6155,12 @@ def builtinFixedArityDiffersFromUserVariadic : Bool :=
 -- Test 108: count's one bound sequence-valued argument is opened by the
 -- one-level collection view — two nested pairs are two items.
 def test108 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [sequenceValuePairs]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -6171,13 +6170,13 @@ def test108 : Bool :=
 -- Test 108a: plain-call `count(filter(X, pred))` destructures the one filtered
 -- sequence argument and counts its kept items.
 def test108aPlainCountFilterCountsOneSequenceValueResult : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
-    .call (resolve "count") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .call (resolve "count") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "IsEven"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -6186,8 +6185,8 @@ def test108aPlainCountFilterCountsOneSequenceValueResult : Bool :=
 
 -- Test 109: a single atomic value is treated as a one-element collection
 def test109 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [.num 5]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6196,8 +6195,8 @@ def test109 : Bool :=
 
 -- Test 110: string elements are valid top-level elements for count
 def test110 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [.stringLiteral "hello"])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [.stringLiteral "hello"]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6206,11 +6205,11 @@ def test110 : Bool :=
 
 -- Test 110a: plain-call contains searches expanded range items
 def test110a : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "contains") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [
+      .call (resolve "range") [.num 1, .num 5],
       .num 3
-    ])
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6219,11 +6218,11 @@ def test110a : Bool :=
 
 -- Test 110b: contains returns zero when no top-level item matches
 def test110b : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "contains") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5]),
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [
+      .call (resolve "range") [.num 1, .num 5],
       .num 9
-    ])
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -6232,11 +6231,11 @@ def test110b : Bool :=
 
 -- Test 110c: dot-call contains matches plain-call receiver semantics
 def test110c : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "contains"
-      (some (alg [] [] [] [.num 4]))
+      (some [.num 4])
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6245,14 +6244,14 @@ def test110c : Bool :=
 
 -- Test 110d: contains compares sequence-value top-level elements structurally
 def test110d : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "contains") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
       ],
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6261,16 +6260,16 @@ def test110d : Bool :=
 
 -- Test 110e: contains searches top-level items only, not nested sequence elements
 def test110e : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
   let nestedCollection := sequenceItems [sequenceValuePairs, .num 0]
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "contains") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [
       nestedCollection,
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -6281,19 +6280,19 @@ def test110e : Bool :=
 def containsProjectionRoot110f : Algorithm :=
   algPrivate [] [] [
     ("Data", alg [] [] [] [
-      .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
+      .capture [.num 7, .num 6, .num 4, .num 2, .num 1],
+      .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
     ])
   ] [
-    .call (resolve "contains") (alg [] [] [] [
+    .call (resolve "contains") [
       .index (.resolve "Data") (.num 0),
       .num 4
-    ]),
-    .dotCall (.index (.resolve "Data") (.num 0)) "contains" (some (alg [] [] [] [.num 4]))
+    ],
+    .dotCall (.index (.resolve "Data") (.num 0)) "contains" (some [.num 4])
   ]
 
 def test110f : Bool :=
-  match runFlat (.block containsProjectionRoot110f) with
+  match runFlat (.algorithmExpr containsProjectionRoot110f) with
   | Except.ok [1, 1] => true
   | _ => false
 
@@ -6302,13 +6301,13 @@ def test110f : Bool :=
 -- Test 110g: contains's item argument stays outside the collection — a
 -- multi-output helper bound to `item` is compared as one grouped value.
 def test110g : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Item", alg [] [] [] [.num 1, .num 2])
   ] [
-    .call (resolve "contains") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
+    .call (resolve "contains") [
+      .capture [.num 1, .num 2],
       .resolve "Item"
-    ])
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -6326,10 +6325,10 @@ def negateAlg111 : Algorithm :=
 
 -- Test 111: plain-call min compares expanded range items
 def test111 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6338,9 +6337,9 @@ def test111 : Bool :=
 
 -- Test 112: dot-call min uses receiver injection with no explicit args
 def test112 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "min"
       none
   ])) with
@@ -6351,10 +6350,10 @@ def test112 : Bool :=
 
 -- Test 113: descending ranges also expand for plain-call min
 def test113 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [
+      .call (resolve "range") [.num 5, .num 1]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6363,12 +6362,12 @@ def test113 : Bool :=
 
 -- Test 114: min composes with filter over kept top-level elements
 def test114 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        (.call (resolve "range") [.num 1, .num 10])
         "filter"
-        (some (alg [] [] [] [.resolve "IsEven"])))
+        (some [.resolve "IsEven"]))
       "min"
       none
   ])) with
@@ -6379,12 +6378,12 @@ def test114 : Bool :=
 
 -- Test 115: min composes with map and compares mapped top-level elements
 def test115 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Negate", negateAlg111)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Negate", negateAlg111)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        (.call (resolve "range") [.num 1, .num 4])
         "map"
-        (some (alg [] [] [] [.resolve "Negate"])))
+        (some [.resolve "Negate"]))
       "min"
       none
   ])) with
@@ -6395,13 +6394,13 @@ def test115 : Bool :=
 
 -- Test 116: plain-call min requires a non-empty collection
 def test116 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "min") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "min") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "min requires a non-empty collection" err && innermostIsBadArity err
   | _ => false
@@ -6410,8 +6409,8 @@ def test116 : Bool :=
 
 -- Test 117: a single atomic value is treated as a one-element collection
 def test117 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [.num 5]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6420,12 +6419,12 @@ def test117 : Bool :=
 
 -- Test 118: sequenceValue top-level elements are rejected rather than flattened
 def test118 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [sequenceValuePairs]
   ])) with
   | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -6434,8 +6433,8 @@ def test118 : Bool :=
 
 -- Test 119: string elements are rejected by min
 def test119 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [.stringLiteral "hello"])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [.stringLiteral "hello"]
   ])) with
   | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
@@ -6448,10 +6447,10 @@ def test119 : Bool :=
 
 -- Test 120: plain-call max compares expanded range items
 def test120 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6460,9 +6459,9 @@ def test120 : Bool :=
 
 -- Test 121: dot-call max uses receiver injection with no explicit args
 def test121 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "max"
       none
   ])) with
@@ -6473,10 +6472,10 @@ def test121 : Bool :=
 
 -- Test 122: descending ranges also expand for plain-call max
 def test122 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [
+      .call (resolve "range") [.num 5, .num 1]
+    ]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6485,12 +6484,12 @@ def test122 : Bool :=
 
 -- Test 123: max composes with filter over kept top-level elements
 def test123 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        (.call (resolve "range") [.num 1, .num 10])
         "filter"
-        (some (alg [] [] [] [.resolve "IsEven"])))
+        (some [.resolve "IsEven"]))
       "max"
       none
   ])) with
@@ -6501,12 +6500,12 @@ def test123 : Bool :=
 
 -- Test 124: max composes with map and compares mapped top-level elements
 def test124 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Negate", negateAlg111)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Negate", negateAlg111)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        (.call (resolve "range") [.num 1, .num 4])
         "map"
-        (some (alg [] [] [] [.resolve "Negate"])))
+        (some [.resolve "Negate"]))
       "max"
       none
   ])) with
@@ -6517,13 +6516,13 @@ def test124 : Bool :=
 
 -- Test 125: plain-call max requires a non-empty collection
 def test125 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "max") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "max") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "max requires a non-empty collection" err && innermostIsBadArity err
   | _ => false
@@ -6532,8 +6531,8 @@ def test125 : Bool :=
 
 -- Test 126: a single atomic value is treated as a one-element collection
 def test126 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [.num 5]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6542,12 +6541,12 @@ def test126 : Bool :=
 
 -- Test 127: sequenceValue top-level elements are rejected rather than flattened
 def test127 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [sequenceValuePairs]
   ])) with
   | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -6556,8 +6555,8 @@ def test127 : Bool :=
 
 -- Test 128: string elements are rejected by max
 def test128 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [.stringLiteral "hello"])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [.stringLiteral "hello"]
   ])) with
   | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
@@ -6566,10 +6565,10 @@ def test128 : Bool :=
 
 -- Test 129: plain-call avg averages expanded range items
 def test129 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -6578,9 +6577,9 @@ def test129 : Bool :=
 
 -- Test 130: dot-call avg uses receiver injection with no explicit args
 def test130 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "avg"
       none
   ])) with
@@ -6591,10 +6590,10 @@ def test130 : Bool :=
 
 -- Test 131: descending ranges also expand for plain-call avg
 def test131 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 5, .num 1])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [
+      .call (resolve "range") [.num 5, .num 1]
+    ]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -6603,12 +6602,12 @@ def test131 : Bool :=
 
 -- Test 132: avg composes with filter over kept top-level elements
 def test132 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 10]))
+        (.call (resolve "range") [.num 1, .num 10])
         "filter"
-        (some (alg [] [] [] [.resolve "IsEven"])))
+        (some [.resolve "IsEven"]))
       "avg"
       none
   ])) with
@@ -6619,12 +6618,12 @@ def test132 : Bool :=
 
 -- Test 133: avg composes with map and averages mapped top-level elements
 def test133 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Double", doubleAlg85)] [
     .dotCall
       (.dotCall
-        (.call (resolve "range") (alg [] [] [] [.num 1, .num 4]))
+        (.call (resolve "range") [.num 1, .num 4])
         "map"
-        (some (alg [] [] [] [.resolve "Double"])))
+        (some [.resolve "Double"]))
       "avg"
       none
   ])) with
@@ -6635,13 +6634,13 @@ def test133 : Bool :=
 
 -- Test 134: plain-call avg requires a non-empty collection
 def test134 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "avg") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "avg") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "avg requires a non-empty collection" err && innermostIsBadArity err
   | _ => false
@@ -6650,8 +6649,8 @@ def test134 : Bool :=
 
 -- Test 135: a single atomic value is treated as a one-element collection
 def test135 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [.num 5]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6660,12 +6659,12 @@ def test135 : Bool :=
 
 -- Test 136: sequenceValue top-level elements are rejected rather than flattened
 def test136 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [sequenceValuePairs]
   ])) with
   | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -6674,8 +6673,8 @@ def test136 : Bool :=
 
 -- Test 137: string elements are rejected by avg
 def test137 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [.stringLiteral "hello"])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [.stringLiteral "hello"]
   ])) with
   | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
@@ -6688,15 +6687,15 @@ def test137 : Bool :=
 
 -- Test 138: ordinary builtin-call order sorts direct multi-argument inputs ascending and preserves duplicates
 def test138 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [sequenceItems [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [sequenceItems [
       .num 3,
       .num 4,
       .num 2,
       .num 1,
       .num 3,
       .num 3
-    ]])
+    ]]
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
   | _ => false
@@ -6705,7 +6704,7 @@ def test138 : Bool :=
 
 -- Test 139: dot-call order sorts property output ascending
 def test139 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
     .dotCall (.resolve "Values") "order" none
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
@@ -6715,7 +6714,7 @@ def test139 : Bool :=
 
 -- Test 140: dot-call orderDesc sorts descending and preserves duplicates
 def test140 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
     .dotCall (.resolve "Values") "orderDesc" none
   ])) with
   | Except.ok [4, 3, 3, 3, 2, 1] => true
@@ -6725,9 +6724,9 @@ def test140 : Bool :=
 
 -- Test 141: sorting a descending range returns ascending output for order
 def test141 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 5, .num 1]))
+      (.call (resolve "range") [.num 5, .num 1])
       "order"
       none
   ])) with
@@ -6738,12 +6737,12 @@ def test141 : Bool :=
 
 -- Test 142: dot-call order preserves empty receiver outputs
 def test142 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .dotCall
-      (.call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      (.call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]))
+      ])
       "order"
       none
   ])) with
@@ -6754,10 +6753,10 @@ def test142 : Bool :=
 
 -- Test 143: unsupported sortable elements are rejected by order
 def test143 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .stringLiteral "hello"])
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [
+      .capture [.num 1, .stringLiteral "hello"]
+    ]
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was string value \"hello\"" err && innermostIsBadArity err
   | _ => false
@@ -6770,10 +6769,10 @@ def test143 : Bool :=
 
 -- Test 144: plain-call first returns the first expanded range item
 def test144 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "first") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "first") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -6782,9 +6781,9 @@ def test144 : Bool :=
 
 -- Test 145: dot-call first uses receiver injection with no explicit args
 def test145 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "first"
       none
   ])) with
@@ -6795,10 +6794,10 @@ def test145 : Bool :=
 
 -- Test 146: plain-call last returns the last expanded range item
 def test146 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "last") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 5])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "last") [
+      .call (resolve "range") [.num 1, .num 5]
+    ]
   ])) with
   | Except.ok [5] => true
   | _ => false
@@ -6807,9 +6806,9 @@ def test146 : Bool :=
 
 -- Test 147: dot-call last uses receiver injection with no explicit args
 def test147 : Bool :=
-  match runFlat (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
     .dotCall
-      (.call (resolve "range") (alg [] [] [] [.num 1, .num 5]))
+      (.call (resolve "range") [.num 1, .num 5])
       "last"
       none
   ])) with
@@ -6820,12 +6819,12 @@ def test147 : Bool :=
 
 -- Test 148: first returns the first item of the grouped collection (opened by the one-level collection view)
 def test148 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "first") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "first") [sequenceValuePairs]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -6834,12 +6833,12 @@ def test148 : Bool :=
 
 -- Test 149: last returns the last item of the grouped collection (opened by the one-level collection view)
 def test149 : Bool :=
-  let sequenceValuePairs := .block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "last") (alg [] [] [] [sequenceValuePairs])
+  let sequenceValuePairs := .capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "last") [sequenceValuePairs]
   ])) with
   | Except.ok (.sequenceValue [.atom 3, .atom 4]) => true
   | _ => false
@@ -6848,13 +6847,13 @@ def test149 : Bool :=
 
 -- Test 150: plain-call first requires a non-empty collection
 def test150 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "first") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "first") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "first requires a non-empty collection" err && innermostIsBadArity err
   | _ => false
@@ -6863,13 +6862,13 @@ def test150 : Bool :=
 
 -- Test 151: plain-call last requires a non-empty collection
 def test151 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "last") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "last") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "last requires a non-empty collection" err && innermostIsBadArity err
   | _ => false
@@ -6879,8 +6878,8 @@ def test151 : Bool :=
 -- Additional sequence-input builtin regression tests
 
 def test151a : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [sequenceItems [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [sequenceItems [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]]
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
   | _ => false
@@ -6888,8 +6887,8 @@ def test151a : Bool :=
 #guard test151a
 
 def test151b : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [sequenceItems [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "orderDesc") [sequenceItems [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]]
   ])) with
   | Except.ok [4, 3, 3, 3, 2, 1] => true
   | _ => false
@@ -6897,8 +6896,8 @@ def test151b : Bool :=
 #guard test151b
 
 def test151c : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2])] [
-    .call (resolve "order") (alg [] [] [] [sequenceItems [sequenceSpread (.resolve "Values"), .num 1, .num 3]])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2])] [
+    .call (resolve "order") [sequenceItems [sequenceSpread (.resolve "Values"), .num 1, .num 3]]
   ])) with
   | Except.ok [1, 2, 3, 3, 4] => true
   | _ => false
@@ -6906,11 +6905,11 @@ def test151c : Bool :=
 #guard test151c
 
 def test151d : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ]])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
+    ]]
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -6918,11 +6917,11 @@ def test151d : Bool :=
 #guard test151d
 
 def test151e : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ]])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "orderDesc") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
+    ]]
   ])) with
   | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -6930,11 +6929,11 @@ def test151e : Bool :=
 #guard test151e
 
 def test151f : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "first") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ]])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "first") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
+    ]]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -6942,11 +6941,11 @@ def test151f : Bool :=
 #guard test151f
 
 def test151g : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "last") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ]])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "last") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
+    ]]
   ])) with
   | Except.ok (.sequenceValue [.atom 3, .atom 4]) => true
   | _ => false
@@ -6954,8 +6953,8 @@ def test151g : Bool :=
 #guard test151g
 
 def test151h : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [sequenceItems [.num 10, .num 20, .num 30]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [sequenceItems [.num 10, .num 20, .num 30]]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -6963,11 +6962,11 @@ def test151h : Bool :=
 #guard test151h
 
 def test151i : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
-    ]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
+    ]]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -6975,8 +6974,8 @@ def test151i : Bool :=
 #guard test151i
 
 def test151j : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [sequenceItems [.num 10, .num 20, .num 30]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [sequenceItems [.num 10, .num 20, .num 30]]
   ])) with
   | Except.ok [60] => true
   | _ => false
@@ -6984,8 +6983,8 @@ def test151j : Bool :=
 #guard test151j
 
 def test151k : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [sequenceItems [.num 10, .num 4, .num 7]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [sequenceItems [.num 10, .num 4, .num 7]]
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -6993,8 +6992,8 @@ def test151k : Bool :=
 #guard test151k
 
 def test151l : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [sequenceItems [.num 10, .num 4, .num 7]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [sequenceItems [.num 10, .num 4, .num 7]]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -7002,8 +7001,8 @@ def test151l : Bool :=
 #guard test151l
 
 def test151m : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [sequenceItems [.num 10, .num 20, .num 30]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [sequenceItems [.num 10, .num 20, .num 30]]
   ])) with
   | Except.ok [20] => true
   | _ => false
@@ -7011,11 +7010,11 @@ def test151m : Bool :=
 #guard test151m
 
 def test151n : Bool :=
-  match runFlat (.block (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c)] [
-    .call (resolve "filter") (alg [] [] [] [
-      sequenceItems [.num 1, .num 2, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 3, .num 6]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("KeepFourSequenceValue", keepFourSequenceValueAlg66c)] [
+    .call (resolve "filter") [
+      sequenceItems [.num 1, .num 2, sequenceSpread (.call (resolve "range") [.num 3, .num 6])],
       .resolve "KeepFourSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7023,11 +7022,11 @@ def test151n : Bool :=
 #guard test151n
 
 def test151o : Bool :=
-  match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
-    .call (resolve "map") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 2, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
+    .call (resolve "map") [
+      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "MarkThreeSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [0, 0, 0, 0] => true
   | _ => false
@@ -7037,11 +7036,11 @@ def test151o : Bool :=
 -- SequenceValue source `map((1, range(2, 4)*), MarkThreeSequenceValue)`: spread
 -- contributes inside the single grouped value, opened by the collection view.
 def test151ob : Bool :=
-  match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
-    .call (resolve "map") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 2, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
+    .call (resolve "map") [
+      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "MarkThreeSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [0, 0, 0, 0] => true
   | _ => false
@@ -7051,11 +7050,11 @@ def test151ob : Bool :=
 -- SequenceValue source `filter((1, range(2, 4)*), MarkThreeSequenceValue)`: spread
 -- contributes inside the single grouped value, opened by the collection view.
 def test151oc : Bool :=
-  match runFlat (.block (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
-    .call (resolve "filter") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 2, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkThreeSequenceValue", markThreeSequenceValueAlg66e)] [
+    .call (resolve "filter") [
+      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "MarkThreeSequenceValue"
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7073,10 +7072,10 @@ def markSequenceValueRangeDirectCallAlg151oa : Algorithm :=
 -- match sequence values only (list patterns are deferred), so the list argument
 -- takes the fallback clause.
 def test151oa : Bool :=
-  match runFlat (.block (algPrivate [] [] [("MarkSequenceValueRange", markSequenceValueRangeDirectCallAlg151oa)] [
-    .call (resolve "MarkSequenceValueRange") (alg [] [] [] [
-      .call (resolve "range") (alg [] [] [] [.num 1, .num 3])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("MarkSequenceValueRange", markSequenceValueRangeDirectCallAlg151oa)] [
+    .call (resolve "MarkSequenceValueRange") [
+      .call (resolve "range") [.num 1, .num 3]
+    ]
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -7084,12 +7083,12 @@ def test151oa : Bool :=
 #guard test151oa
 
 def test151p : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      sequenceItems [.num 1, .num 2, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 3, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AddItemCount", addItemCountAlg80c)] [
+    .call (resolve "reduce") [
+      sequenceItems [.num 1, .num 2, sequenceSpread (.call (resolve "range") [.num 3, .num 4])],
       .resolve "AddItemCount",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -7105,12 +7104,12 @@ def addSequenceValueRangeAlg151pb : Algorithm :=
   ]
 
 def test151pb : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 2, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
+    .call (resolve "reduce") [
+      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "AddSequenceValueRange",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -7120,12 +7119,12 @@ def test151pb : Bool :=
 -- SequenceValue source `reduce((1, range(2, 4)*), AddSequenceValueRange, 0)`:
 -- the spread marker contributes inside the single grouped value, opened by the collection view.
 def test151pc : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
-    .call (resolve "reduce") (alg [] [] [] [
-      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 2, .num 4]))],
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AddSequenceValueRange", addSequenceValueRangeAlg151pb)] [
+    .call (resolve "reduce") [
+      sequenceItems [.num 1, sequenceSpread (.call (resolve "range") [.num 2, .num 4])],
       .resolve "AddSequenceValueRange",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -7133,10 +7132,10 @@ def test151pc : Bool :=
 #guard test151pc
 
 def test151q : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [
-      sequenceItems [.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]), .num 0]
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [
+      sequenceItems [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3], .num 0]
+    ]
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7144,8 +7143,8 @@ def test151q : Bool :=
 #guard test151q
 
 def test151r : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
-    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+    .call (resolve "order") [.resolve "Values"]
   ])) with
   | Except.ok [1, 2, 3, 3, 3, 4] => true
   | _ => false
@@ -7153,8 +7152,8 @@ def test151r : Bool :=
 #guard test151r
 
 def test151s : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2])])] [
-    .call (resolve "order") (alg [] [] [] [.resolve "Values"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.capture [.num 3, .num 4, .num 2]])] [
+    .call (resolve "order") [.resolve "Values"]
   ])) with
   | Except.ok [2, 3, 4] => true
   | _ => false
@@ -7162,10 +7161,10 @@ def test151s : Bool :=
 #guard test151s
 
 def test151t : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [
-      sequenceItems [.block (alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3]), .num 0]
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "orderDesc") [
+      sequenceItems [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3], .num 0]
+    ]
   ])) with
   | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7173,8 +7172,8 @@ def test151t : Bool :=
 #guard test151t
 
 def test151u : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
-    .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3])] [
+    .call (resolve "orderDesc") [.resolve "Values"]
   ])) with
   | Except.ok [4, 3, 3, 3, 2, 1] => true
   | _ => false
@@ -7182,8 +7181,8 @@ def test151u : Bool :=
 #guard test151u
 
 def test151v : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Values", alg [] [] [] [.block (alg [] [] [] [.num 3, .num 4, .num 2])])] [
-    .call (resolve "orderDesc") (alg [] [] [] [.resolve "Values"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Values", alg [] [] [] [.capture [.num 3, .num 4, .num 2]])] [
+    .call (resolve "orderDesc") [.resolve "Values"]
   ])) with
   | Except.ok [4, 3, 2] => true
   | _ => false
@@ -7191,10 +7190,10 @@ def test151v : Bool :=
 #guard test151v
 
 def test151w : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "count") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "count") [
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -7202,10 +7201,10 @@ def test151w : Bool :=
 #guard test151w
 
 def test151x : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "first") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "first") [
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok (.atom 1) => true
   | _ => false
@@ -7213,10 +7212,10 @@ def test151x : Bool :=
 #guard test151x
 
 def test151y : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "last") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "last") [
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.ok (.atom 2) => true
   | _ => false
@@ -7226,17 +7225,17 @@ def test151y : Bool :=
 -- Additional uniform sequence-extraction wrapper regressions
 
 def test152 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("KeepSecondEven", evenPredicateAlg19d),
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 3])
+      .capture [.num 1, .num 2],
+      .capture [.num 1, .num 3]
     ])
   ] [
-    .call (resolve "filter") (alg [] [] [] [
+    .call (resolve "filter") [
       .resolve "Values",
       .resolve "KeepSecondEven"
-    ])
+    ]
   ])) with
   -- One sequence-valued item is kept; the exact-list materializer keeps it as one
   -- list element, so the result is `[(1, 2)]` (never erased to the item itself).
@@ -7246,17 +7245,17 @@ def test152 : Bool :=
 #guard test152
 
 def test153 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("TakeValue", takePairValueAlg89),
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
-    .call (resolve "map") (alg [] [] [] [
+    .call (resolve "map") [
       .resolve "Values",
       .resolve "TakeValue"
-    ])
+    ]
   ])) with
   | Except.ok [2, 4] => true
   | _ => false
@@ -7264,18 +7263,18 @@ def test153 : Bool :=
 #guard test153
 
 def test154 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("AddValue", reduceSequenceValueItemAlg79),
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
-    .call (resolve "reduce") (alg [] [] [] [
+    .call (resolve "reduce") [
       .resolve "Values",
       .resolve "AddValue",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [6] => true
   | _ => false
@@ -7283,12 +7282,12 @@ def test154 : Bool :=
 #guard test154
 
 def test155 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3])
+      .capture [.num 1, .num 2, .num 3]
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "count") [.resolve "Values"]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -7296,10 +7295,10 @@ def test155 : Bool :=
 #guard test155
 
 def test156 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 1, .num 2, .num 3])
   ] [
-    .call (resolve "count") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "count") [.resolve "Values"]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -7307,12 +7306,12 @@ def test156 : Bool :=
 #guard test156
 
 def test157 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2])
+      .capture [.num 1, .num 2]
     ])
   ] [
-    .call (resolve "first") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "first") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 1) => true
   | _ => false
@@ -7320,12 +7319,12 @@ def test157 : Bool :=
 #guard test157
 
 def test158 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2])
+      .capture [.num 1, .num 2]
     ])
   ] [
-    .call (resolve "last") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "last") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 2) => true
   | _ => false
@@ -7333,12 +7332,12 @@ def test158 : Bool :=
 #guard test158
 
 def test159 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
+      .capture [.num 10, .num 20, .num 30]
     ])
   ] [
-    .call (resolve "sum") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "sum") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 60) => true
   | _ => false
@@ -7346,12 +7345,12 @@ def test159 : Bool :=
 #guard test159
 
 def test160 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
+      .capture [.num 10, .num 20, .num 30]
     ])
   ] [
-    .call (resolve "min") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "min") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 10) => true
   | _ => false
@@ -7359,12 +7358,12 @@ def test160 : Bool :=
 #guard test160
 
 def test161 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
+      .capture [.num 10, .num 20, .num 30]
     ])
   ] [
-    .call (resolve "max") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "max") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 30) => true
   | _ => false
@@ -7372,12 +7371,12 @@ def test161 : Bool :=
 #guard test161
 
 def test162 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
+      .capture [.num 10, .num 20, .num 30]
     ])
   ] [
-    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "avg") [.resolve "Values"]
   ])) with
   | Except.ok (.atom 20) => true
   | _ => false
@@ -7385,10 +7384,10 @@ def test162 : Bool :=
 #guard test162
 
 def test163 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 10, .num 20, .num 30])
   ] [
-    .call (resolve "sum") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "sum") [.resolve "Values"]
   ])) with
   | Except.ok [60] => true
   | _ => false
@@ -7396,10 +7395,10 @@ def test163 : Bool :=
 #guard test163
 
 def test164 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 10, .num 4, .num 7])
   ] [
-    .call (resolve "min") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "min") [.resolve "Values"]
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -7407,10 +7406,10 @@ def test164 : Bool :=
 #guard test164
 
 def test165 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 10, .num 4, .num 7])
   ] [
-    .call (resolve "max") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "max") [.resolve "Values"]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -7418,10 +7417,10 @@ def test165 : Bool :=
 #guard test165
 
 def test166 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 10, .num 20, .num 30])
   ] [
-    .call (resolve "avg") (alg [] [] [] [.resolve "Values"])
+    .call (resolve "avg") [.resolve "Values"]
   ])) with
   | Except.ok [20] => true
   | _ => false
@@ -7429,12 +7428,12 @@ def test166 : Bool :=
 #guard test166
 
 def test167 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .dotCall
-      (.call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      (.call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]))
+      ])
       "orderDesc"
       none
   ])) with
@@ -7447,8 +7446,8 @@ def test167 : Bool :=
 -- exact fractional average (1.5) instead; the integer result is a Lean model
 -- limitation, not the C# runtime contract.
 def test168 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [sequenceItems [.num 1, .num 2]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [sequenceItems [.num 1, .num 2]]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -7459,8 +7458,8 @@ def test168 : Bool :=
 -- division convention of `div`/`mod`: avg(-1, -2) = (-3).tdiv 2 = -1.
 -- The decimal runtime keeps the exact fractional average (-1.5) instead.
 def test169 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [sequenceItems [.num (-1), .num (-2)]])
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [sequenceItems [.num (-1), .num (-2)]]
   ])) with
   | Except.ok [-1] => true
   | _ => false
@@ -7468,11 +7467,11 @@ def test169 : Bool :=
 #guard test169
 
 def test170 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "order") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "order") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7480,11 +7479,11 @@ def test170 : Bool :=
 #guard test170
 
 def test171 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "orderDesc") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "orderDesc") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7492,11 +7491,11 @@ def test171 : Bool :=
 #guard test171
 
 def test172 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "min") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "min") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7504,11 +7503,11 @@ def test172 : Bool :=
 #guard test172
 
 def test173 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "max") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "max") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7516,11 +7515,11 @@ def test173 : Bool :=
 #guard test173
 
 def test174 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "sum") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "sum") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7528,11 +7527,11 @@ def test174 : Bool :=
 #guard test174
 
 def test175 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "avg") (alg [] [] [] [sequenceItems [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "avg") [sequenceItems [
       .num 1,
-      .block (alg [] [] [] [.num 2, .num 3])
-    ]])
+      .capture [.num 2, .num 3]
+    ]]
   ])) with
   | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
   | _ => false
@@ -7540,11 +7539,11 @@ def test175 : Bool :=
 #guard test175
 
 def test176 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [
       sequenceItems [.num 1, .num 2, .num 3, .num 4, .num 5],
       .num 3
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -7552,11 +7551,11 @@ def test176 : Bool :=
 #guard test176
 
 def test177 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 1, .num 2, .num 3, .num 4, .num 5],
       .num 3
-    ])
+    ]
   ])) with
   | Except.ok [4, 5] => true
   | _ => false
@@ -7564,11 +7563,11 @@ def test177 : Bool :=
 #guard test177
 
 def test178 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7576,11 +7575,11 @@ def test178 : Bool :=
 #guard test178
 
 def test179 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -7588,11 +7587,11 @@ def test179 : Bool :=
 #guard test179
 
 def test180 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num (-2)
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7600,11 +7599,11 @@ def test180 : Bool :=
 #guard test180
 
 def test181 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num (-2)
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -7612,11 +7611,11 @@ def test181 : Bool :=
 #guard test181
 
 def test182 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num 10
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -7624,11 +7623,11 @@ def test182 : Bool :=
 #guard test182
 
 def test183 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 1, .num 2, .num 3],
       .num 10
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7636,14 +7635,14 @@ def test183 : Bool :=
 #guard test183
 
 def test184 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "take") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "take") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]),
+      ],
       .num 3
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7651,14 +7650,14 @@ def test184 : Bool :=
 #guard test184
 
 def test185 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "skip") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "skip") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ]),
+      ],
       .num 3
-    ])
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -7666,12 +7665,12 @@ def test185 : Bool :=
 #guard test185
 
 def test186 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])],
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]],
       .num 1
-    ])
+    ]
   ])) with
   -- Taking one sequence-valued item keeps it as one exact list element:
   -- the result is `[(1, 2)]` (`first` still selects the item itself).
@@ -7681,12 +7680,12 @@ def test186 : Bool :=
 #guard test186
 
 def test187 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])],
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]],
       .num 1
-    ])
+    ]
   ])) with
   -- Skipping to one remaining sequence-valued item keeps it as one exact list
   -- element: the result is `[(3, 4)]` (`last` still selects the item itself).
@@ -7701,15 +7700,15 @@ def test187 : Bool :=
 -- form `((1, 2))`), and counted as ONE kept item by `count(T)` and `T.count`
 -- alike (count opens exactly the one list boundary).
 def takeSingleKeptItemProgram (output : KatLang.Expr) : KatLang.Expr :=
-  .block (algPrivate [] [] [
+  .algorithmExpr (algPrivate [] [] [
     ("T", alg [] [] [] [
-      .call (resolve "take") (alg [] [] [] [
+      .call (resolve "take") [
         sequenceItems [
-          .block (alg [] [] [] [.num 1, .num 2]),
-          .block (alg [] [] [] [.num 3, .num 4])
+          .capture [.num 1, .num 2],
+          .capture [.num 3, .num 4]
         ],
         .num 1
-      ])
+      ]
     ])
   ] [output])
 
@@ -7722,7 +7721,7 @@ def takeSingleKeptItemIsExactListValue : Bool :=
 
 def takeSingleKeptItemCount : Bool :=
   match runResult (takeSingleKeptItemProgram
-      (.call (resolve "count") (alg [] [] [] [.resolve "T"]))) with
+      (.call (resolve "count") [.resolve "T"])) with
   | Except.ok (.atom 1) => true
   | _ => false
 
@@ -7754,7 +7753,7 @@ def takeSingleKeptItemNotEqualFlatLiteral : Bool :=
 def takeSingleKeptItemNotEqualWrappedLiteral : Bool :=
   match runResult (takeSingleKeptItemProgram
       (.binary .eq (.resolve "T")
-        (.block (alg [] [] [] [sequenceItems [.num 1, .num 2]])))) with
+        (.capture [sequenceItems [.num 1, .num 2]]))) with
   | Except.ok (.atom 0) => true
   | _ => false
 
@@ -7766,25 +7765,23 @@ def takeSingleKeptItemNotEqualWrappedLiteral : Bool :=
 -- (count 1) — never erased to `()` itself. The ungrouped spelling
 -- `distinct((), ())` is a two-argument arity error under `distinct(collection)`.
 def distinctSingleKeptEmptyItemStaysExactElement : Bool :=
-  match runResult (.call (resolve "distinct")
-      (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])])) with
+  match runResult (.call (resolve "distinct") [.capture [.emptySequence 0, .emptySequence 0]]) with
   | Except.ok (.listValue [.sequenceValue []]) => true
   | _ => false
 
 #guard distinctSingleKeptEmptyItemStaysExactElement
 
 def distinctTwoEmptyArgumentsIsArityError : Bool :=
-  match runResult (.call (resolve "distinct")
-      (alg [] [] [] [.emptySequence 0, .emptySequence 0])) with
+  match runResult (.call (resolve "distinct") [.emptySequence 0, .emptySequence 0]) with
   | Except.error err => innermostIsArityMismatch 1 2 err
   | _ => false
 
 #guard distinctTwoEmptyArgumentsIsArityError
 
 def distinctSingleKeptEmptyItemCountsOne : Bool :=
-  match runResult (.call (resolve "count") (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])])
-  ])) with
+  match runResult (.call (resolve "count") [
+    .call (resolve "distinct") [.capture [.emptySequence 0, .emptySequence 0]]
+  ]) with
   | Except.ok (.atom 1) => true
   | _ => false
 
@@ -7792,7 +7789,7 @@ def distinctSingleKeptEmptyItemCountsOne : Bool :=
 
 def distinctSingleKeptEmptyItemNotEqualEmpty : Bool :=
   match runResult (.binary .eq
-      (.call (resolve "distinct") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0])]))
+      (.call (resolve "distinct") [.capture [.emptySequence 0, .emptySequence 0]])
       (.emptySequence 0)) with
   | Except.ok (.atom 0) => true
   | _ => false
@@ -7803,17 +7800,16 @@ def distinctSingleKeptEmptyItemNotEqualEmpty : Bool :=
 -- elements. `take(((), ()), 2)` is the two-element list `[(), ()]` with count 2 —
 -- the materializer is exact and never collapses or drops meaningful sibling items.
 def takeMultipleEmptyItemsPreservesSiblingBoundaries : Bool :=
-  match runResult (.call (resolve "take")
-      (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0]), .num 2])) with
+  match runResult (.call (resolve "take") [.capture [.emptySequence 0, .emptySequence 0], .num 2]) with
   | Except.ok (.listValue [.sequenceValue [], .sequenceValue []]) => true
   | _ => false
 
 #guard takeMultipleEmptyItemsPreservesSiblingBoundaries
 
 def takeMultipleEmptyItemsCountsTwo : Bool :=
-  match runResult (.call (resolve "count") (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [.block (alg [] [] [] [.emptySequence 0, .emptySequence 0]), .num 2])
-  ])) with
+  match runResult (.call (resolve "count") [
+    .call (resolve "take") [.capture [.emptySequence 0, .emptySequence 0], .num 2]
+  ]) with
   | Except.ok (.atom 2) => true
   | _ => false
 
@@ -7835,15 +7831,15 @@ def takeMultipleEmptyItemsCountsTwo : Bool :=
   == (Result.listValue [.listValue [.atom 1]], 1)
 
 def test188 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3])
+      .capture [.num 1, .num 2, .num 3]
     ])
   ] [
-    .call (resolve "take") (alg [] [] [] [
+    .call (resolve "take") [
       .resolve "Values",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok (.listValue [.atom 1]) => true
   | _ => false
@@ -7851,13 +7847,13 @@ def test188 : Bool :=
 #guard test188
 
 def test189 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 1, .num 2, .num 3])
   ] [
-    .call (resolve "take") (alg [] [] [] [
+    .call (resolve "take") [
       .resolve "Values",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -7865,15 +7861,15 @@ def test189 : Bool :=
 #guard test189
 
 def test190 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3])
+      .capture [.num 1, .num 2, .num 3]
     ])
   ] [
-    .call (resolve "skip") (alg [] [] [] [
+    .call (resolve "skip") [
       .resolve "Values",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok [2, 3] => true
   | _ => false
@@ -7881,13 +7877,13 @@ def test190 : Bool :=
 #guard test190
 
 def test191 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 1, .num 2, .num 3])
   ] [
-    .call (resolve "skip") (alg [] [] [] [
+    .call (resolve "skip") [
       .resolve "Values",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok [2, 3] => true
   | _ => false
@@ -7895,14 +7891,14 @@ def test191 : Bool :=
 #guard test191
 
 def test192 : Bool :=
-  match runResult (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "take") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "take") [
       sequenceItems [.num 1, .num 2],
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
   | _ => false
@@ -7910,11 +7906,11 @@ def test192 : Bool :=
 #guard test192
 
 def test193 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "take") (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "take") [
       sequenceItems [.num 3, .num 4],
-      .block (alg [] [] [] [.num 1, .num 2])
-    ])
+      .capture [.num 1, .num 2]
+    ]
   ])) with
   | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
   | _ => false
@@ -7922,11 +7918,11 @@ def test193 : Bool :=
 #guard test193
 
 def test194 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 1, .num 2],
       .stringLiteral "hello"
-    ])
+    ]
   ])) with
   | Except.error err => hasContext "skip count must be exactly one whole-number value" err && innermostIsBadArity err
   | _ => false
@@ -7934,11 +7930,11 @@ def test194 : Bool :=
 #guard test194
 
 def test195 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "skip") (alg [] [] [] [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "skip") [
       sequenceItems [.num 3, .num 4, .num 1],
       .num 2
-    ])
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -7946,15 +7942,15 @@ def test195 : Bool :=
 #guard test195
 
 def test196 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [sequenceItems [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "distinct") [sequenceItems [
       .num 3,
       .num 1,
       .num 3,
       .num 2,
       .num 1,
       .num 2]
-    ])
+    ]
   ])) with
   | Except.ok [3, 1, 2] => true
   | _ => false
@@ -7962,13 +7958,13 @@ def test196 : Bool :=
 #guard test196
 
 def test197 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [sequenceItems [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "distinct") [sequenceItems [
       .num 4,
       .num 4,
       .num 4,
       .num 4]
-    ])
+    ]
   ])) with
   | Except.ok [4] => true
   | _ => false
@@ -7976,12 +7972,12 @@ def test197 : Bool :=
 #guard test197
 
 def test198 : Bool :=
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [sequenceItems [
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "distinct") [sequenceItems [
       .num 1,
       .num 2,
       .num 3]
-    ])
+    ]
   ])) with
   | Except.ok [1, 2, 3] => true
   | _ => false
@@ -7989,13 +7985,13 @@ def test198 : Bool :=
 #guard test198
 
 def test199 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
-    .call (resolve "distinct") (alg [] [] [] [
-      .call (resolve "filter") (alg [] [] [] [
-        .call (resolve "range") (alg [] [] [] [.num 1, .num 4]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
+    .call (resolve "distinct") [
+      .call (resolve "filter") [
+        .call (resolve "range") [.num 1, .num 4],
         .resolve "AlwaysFalse"
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [] => true
   | _ => false
@@ -8003,12 +7999,12 @@ def test199 : Bool :=
 #guard test199
 
 def test200 : Bool :=
-  match runResult (.block (alg [] [] [] [
-    .call (resolve "distinct") (alg [] [] [] [sequenceItems [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])]
-    ])
+  match runResult (.algorithmExpr (alg [] [] [] [
+    .call (resolve "distinct") [sequenceItems [
+      .capture [.num 1, .num 2],
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]]
+    ]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
@@ -8019,18 +8015,18 @@ def test200 : Bool :=
 #guard test200
 
 def test201 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ]
     ])
   ] [
-    .call (resolve "distinct") (alg [] [] [] [
+    .call (resolve "distinct") [
       .resolve "Values"
-    ])
+    ]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
@@ -8041,16 +8037,16 @@ def test201 : Bool :=
 #guard test201
 
 def test202 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
-    .call (resolve "distinct") (alg [] [] [] [
+    .call (resolve "distinct") [
       .resolve "Values"
-    ])
+    ]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 1, .atom 2],
@@ -8061,96 +8057,96 @@ def test202 : Bool :=
 #guard test202
 
 def test203 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 3,
     .num 5,
     .num 3,
     .num 6,
     .num 3
-  ])) "order" none) with
+  ]) "order" none) with
   | Except.ok [3, 3, 3, 5, 6] => true
   | _ => false
 
 #guard test203
 
 def test204 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 3,
     .num 5,
     .num 3,
     .num 6,
     .num 3
-  ])) "orderDesc" none) with
+  ]) "orderDesc" none) with
   | Except.ok [6, 5, 3, 3, 3] => true
   | _ => false
 
 #guard test204
 
 def test205 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 3,
     .num 5,
     .num 3,
     .num 6,
     .num 3
-  ])) "count" none) with
+  ]) "count" none) with
   | Except.ok [5] => true
   | _ => false
 
 #guard test205
 
 def test206 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 3,
     .num 5,
     .num 3
-  ])) "sum" none) with
+  ]) "sum" none) with
   | Except.ok [11] => true
   | _ => false
 
 #guard test206
 
 def test207 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 1,
     .num 2,
     .num 1,
     .num 3
-  ])) "distinct" none) with
+  ]) "distinct" none) with
   | Except.ok [1, 2, 3] => true
   | _ => false
 
 #guard test207
 
 def test208 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 1,
     .num 2,
     .num 3
-  ])) "take" (some (alg [] [] [] [.num 2]))) with
+  ]) "take" (some [.num 2])) with
   | Except.ok [1, 2] => true
   | _ => false
 
 #guard test208
 
 def test209 : Bool :=
-  match runFlat (.dotCall (.block (alg [] [] [] [
+  match runFlat (.dotCall (.capture [
     .num 1,
     .num 2,
     .num 3
-  ])) "skip" (some (alg [] [] [] [.num 1]))) with
+  ]) "skip" (some [.num 1])) with
   | Except.ok [2, 3] => true
   | _ => false
 
 #guard test209
 
 def test210 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Double", doubleAlg85)] [
-    .dotCall (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Double", doubleAlg85)] [
+    .dotCall (.capture [
       .num 1,
       .num 2,
       .num 3
-    ])) "map" (some (alg [] [] [] [.resolve "Double"]))
+    ]) "map" (some [.resolve "Double"])
   ])) with
   | Except.ok [2, 4, 6] => true
   | _ => false
@@ -8158,13 +8154,13 @@ def test210 : Bool :=
 #guard test210
 
 def test211 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("IsEven", isEvenAlg93)] [
-    .dotCall (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("IsEven", isEvenAlg93)] [
+    .dotCall (.capture [
       .num 1,
       .num 2,
       .num 3,
       .num 4
-    ])) "filter" (some (alg [] [] [] [.resolve "IsEven"]))
+    ]) "filter" (some [.resolve "IsEven"])
   ])) with
   | Except.ok [2, 4] => true
   | _ => false
@@ -8172,15 +8168,15 @@ def test211 : Bool :=
 #guard test211
 
 def test212 : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Add", addAlg76)] [
-    .dotCall (.block (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Add", addAlg76)] [
+    .dotCall (.capture [
       .num 1,
       .num 2,
       .num 3
-    ])) "reduce" (some (alg [] [] [] [
+    ]) "reduce" (some [
       .resolve "Add",
       .num 0
-    ]))
+    ])
   ])) with
   | Except.ok [6] => true
   | _ => false
@@ -8188,7 +8184,7 @@ def test212 : Bool :=
 #guard test212
 
 def test213 : Bool :=
-  match runFlat (.dotCall (.block (algPrivate [] [] [
+  match runFlat (.dotCall (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [.num 3, .num 1, .num 2])
   ] [
     .resolve "Values"
@@ -8199,16 +8195,16 @@ def test213 : Bool :=
 #guard test213
 
 def test214 : Bool :=
-  let inlineReceiver := .block (alg [] [] [] [
+  let inlineReceiver := .capture [
     .num 3,
     .num 5,
     .num 3,
     .num 6,
     .num 3
-  ])
-  let sequenceValueReceiver := .block (alg [] [] [] [inlineReceiver])
+  ]
+  let sequenceValueReceiver := .capture [inlineReceiver]
   let namedSequenceValueWorks :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Data", alg [] [] [] [inlineReceiver])
     ] [
       .dotCall (.resolve "Data") "order" none
@@ -8228,15 +8224,15 @@ def test214 : Bool :=
 #guard test214
 
 def test215 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Data", alg [] [] [] [
-      .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
+      .capture [.num 7, .num 6, .num 4, .num 2, .num 1],
+      .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [.index (.resolve "Data") (.num 0)]),
+    .call (resolve "count") [.index (.resolve "Data") (.num 0)],
     .dotCall (.index (.resolve "Data") (.num 0)) "count" none
-    , .call (resolve "order") (alg [] [] [] [.index (.resolve "Data") (.num 0)])
+    , .call (resolve "order") [.index (.resolve "Data") (.num 0)]
     , .dotCall (.index (.resolve "Data") (.num 0)) "order" none
   ])) with
   | Except.ok [5, 5, 1, 2, 4, 6, 7, 1, 2, 4, 6, 7] => true
@@ -8245,7 +8241,7 @@ def test215 : Bool :=
 #guard test215
 
 def test215a : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 7, .num 8])
   ] [
     .index (.resolve "A") (.num 0)
@@ -8256,10 +8252,10 @@ def test215a : Bool :=
 #guard test215a
 
 def test215b : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
     .index (.resolve "A") (.num 0)
@@ -8270,13 +8266,13 @@ def test215b : Bool :=
 #guard test215b
 
 def test215c : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [.index (.resolve "A") (.num 0)]),
+    .call (resolve "count") [.index (.resolve "A") (.num 0)],
     .dotCall (.index (.resolve "A") (.num 0)) "count" none
   ])) with
   | Except.ok [2, 2] => true
@@ -8285,17 +8281,17 @@ def test215c : Bool :=
 #guard test215c
 
 def test215cWrappedProjectionBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ]),
     ("Projected", alg [] [] [] [
       .index (.resolve "A") (.num 0)
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [.index (.resolve "A") (.num 0)]),
-    .call (resolve "count") (alg [] [] [] [.resolve "Projected"])
+    .call (resolve "count") [.index (.resolve "A") (.num 0)],
+    .call (resolve "count") [.resolve "Projected"]
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -8303,16 +8299,16 @@ def test215cWrappedProjectionBoundary : Bool :=
 #guard test215cWrappedProjectionBoundary
 
 def test215d : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ]),
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 5, .num 6]),
-        .block (alg [] [] [] [.num 7, .num 8])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ],
+      .capture [
+        .capture [.num 5, .num 6],
+        .capture [.num 7, .num 8]
+      ]
     ])
   ] [
     .index (.resolve "A") (.num 0)
@@ -8326,16 +8322,16 @@ def test215d : Bool :=
 #guard test215d
 
 def test215e : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ]),
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 5, .num 6]),
-        .block (alg [] [] [] [.num 7, .num 8])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ],
+      .capture [
+        .capture [.num 5, .num 6],
+        .capture [.num 7, .num 8]
+      ]
     ])
   ] [
     .index (.index (.resolve "A") (.num 0)) (.num 1)
@@ -8346,20 +8342,20 @@ def test215e : Bool :=
 #guard test215e
 
 def test215f : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ]),
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 5, .num 6]),
-        .block (alg [] [] [] [.num 7, .num 8])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ],
+      .capture [
+        .capture [.num 5, .num 6],
+        .capture [.num 7, .num 8]
+      ]
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [.index (.resolve "A") (.num 0)]),
-    .call (resolve "count") (alg [] [] [] [.index (.index (.resolve "A") (.num 0)) (.num 1)])
+    .call (resolve "count") [.index (.resolve "A") (.num 0)],
+    .call (resolve "count") [.index (.index (.resolve "A") (.num 0)) (.num 1)]
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -8367,19 +8363,19 @@ def test215f : Bool :=
 #guard test215f
 
 def test215g : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ]),
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 5, .num 6]),
-        .block (alg [] [] [] [.num 7, .num 8])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ],
+      .capture [
+        .capture [.num 5, .num 6],
+        .capture [.num 7, .num 8]
+      ]
     ])
   ] [
-    .call (resolve "sum") (alg [] [] [] [.index (.resolve "A") (.num 0)])
+    .call (resolve "sum") [.index (.resolve "A") (.num 0)]
   ])) with
   | Except.error err =>
       hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
@@ -8389,16 +8385,16 @@ def test215g : Bool :=
 #guard test215g
 
 def test216 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", alg [] [] [] [
-      .block (alg [] [] [] [.num 4, .num 5, .num 4, .num 6])
+      .capture [.num 4, .num 5, .num 4, .num 6]
     ])
   ] [
     .dotCall (.resolve "Values") "first" none,
     .dotCall (.resolve "Values") "last" none,
     .dotCall (.resolve "Values") "distinct" none,
-    .dotCall (.resolve "Values") "take" (some (alg [] [] [] [.num 2])),
-    .dotCall (.resolve "Values") "skip" (some (alg [] [] [] [.num 1]))
+    .dotCall (.resolve "Values") "take" (some [.num 2]),
+    .dotCall (.resolve "Values") "skip" (some [.num 1])
   ])) with
   | Except.ok (.sequenceValue [
       .atom 4,
@@ -8413,9 +8409,9 @@ def test216 : Bool :=
 
 def test217 : Bool :=
   let runBuiltin := fun (name : String) =>
-    runResult (.block (algPrivate [] [] [
+    runResult (.algorithmExpr (algPrivate [] [] [
       ("Values", alg [] [] [] [
-        .block (alg [] [] [] [.num 10, .num 20, .num 30])
+        .capture [.num 10, .num 20, .num 30]
       ])
     ] [
       .dotCall (.resolve "Values") name none
@@ -8466,34 +8462,34 @@ def test218 : Bool :=
         (.param "acc")
     ]
   let filterResult :=
-    runResult (.block (algPrivate [] [] [
+    runResult (.algorithmExpr (algPrivate [] [] [
       ("Values", alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 1, .num 3])
+        .capture [.num 1, .num 2],
+        .capture [.num 1, .num 3]
       ]),
       ("KeepSecondEven", keepSecondEven)
     ] [
-      .dotCall (.resolve "Values") "filter" (some (alg [] [] [] [.resolve "KeepSecondEven"]))
+      .dotCall (.resolve "Values") "filter" (some [.resolve "KeepSecondEven"])
     ]))
   let mapResult :=
-    runResult (.block (algPrivate [] [] [
+    runResult (.algorithmExpr (algPrivate [] [] [
       ("Values", alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2, .num 3]),
-        .block (alg [] [] [] [.num 4, .num 5, .num 6])
+        .capture [.num 1, .num 2, .num 3],
+        .capture [.num 4, .num 5, .num 6]
       ]),
       ("TakeFirst", takeFirstAlg)
     ] [
-      .dotCall (.resolve "Values") "map" (some (alg [] [] [] [.resolve "TakeFirst"]))
+      .dotCall (.resolve "Values") "map" (some [.resolve "TakeFirst"])
     ]))
   let reduceResult :=
-    runFlat (.block (algPrivate [] [] [
+    runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2, .num 3]),
-        .block (alg [] [] [] [.num 4, .num 5, .num 6])
+        .capture [.num 1, .num 2, .num 3],
+        .capture [.num 4, .num 5, .num 6]
       ]),
       ("AddItemCount", addItemCount)
     ] [
-      .dotCall (.resolve "Values") "reduce" (some (alg [] [] [] [.resolve "AddItemCount", .num 0]))
+      .dotCall (.resolve "Values") "reduce" (some [.resolve "AddItemCount", .num 0])
     ]))
   let filterOk :=
     match filterResult with
@@ -8514,10 +8510,10 @@ def test218 : Bool :=
 #guard test218
 
 def test219 : Bool :=
-  match runResult (.dotCall (.block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])) "sum" none) with
+  match runResult (.dotCall (.capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]) "sum" none) with
   | Except.error err =>
       hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
         && innermostIsBadArity err
@@ -8530,25 +8526,25 @@ def test219 : Bool :=
 --------------------------------------------------------------------------------
 
 def test228 : Bool :=
-  match runFlat (.call (resolve "count") (alg [] [] [] [
-    sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7]
-  ])) with
+  match runFlat (.call (resolve "count") [
+    sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") [.num 1, .num 5]), .num 7]
+  ]) with
   | Except.ok [8] => true
   | _ => false
 
 #guard test228
 
 def test229 : Bool :=
-  let sequenceValueRange := .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
-  match runFlat (.block (alg [] [] [] [
-    .call (resolve "contains") (alg [] [] [] [
-      sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7],
+  let sequenceValueRange := .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
+  match runFlat (.algorithmExpr (alg [] [] [] [
+    .call (resolve "contains") [
+      sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") [.num 1, .num 5]), .num 7],
       .num 5
-    ]),
-    .call (resolve "contains") (alg [] [] [] [
-      sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7],
+    ],
+    .call (resolve "contains") [
+      sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") [.num 1, .num 5]), .num 7],
       sequenceValueRange
-    ])
+    ]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -8556,28 +8552,28 @@ def test229 : Bool :=
 #guard test229
 
 def test230 : Bool :=
-  match runFlat (.call (resolve "order") (alg [] [] [] [
-    sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") (alg [] [] [] [.num 1, .num 5])), .num 7]
-  ])) with
+  match runFlat (.call (resolve "order") [
+    sequenceItems [.num 3, .num 4, sequenceSpread (.call (resolve "range") [.num 1, .num 5]), .num 7]
+  ]) with
   | Except.ok [1, 2, 3, 3, 4, 4, 5, 7] => true
   | _ => false
 
 #guard test230
 
     def test231 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Data", alg [] [] [] [
-      .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
+      .capture [.num 7, .num 6, .num 4, .num 2, .num 1],
+      .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
     ])
   ] [
-    .call (resolve "count") (alg [] [] [] [
+    .call (resolve "count") [
       .index (.resolve "Data") (.num 0)
-    ]),
+    ],
     .dotCall (.index (.resolve "Data") (.num 0)) "count" none,
-    .call (resolve "order") (alg [] [] [] [
+    .call (resolve "order") [
       .index (.resolve "Data") (.num 0)
-    ]),
+    ],
     .dotCall (.index (.resolve "Data") (.num 0)) "order" none
   ])) with
   | Except.ok [5, 5, 1, 2, 4, 6, 7, 1, 2, 4, 6, 7] => true
@@ -8586,8 +8582,8 @@ def test230 : Bool :=
 #guard test231
 
 def test232 : Bool :=
-  let firstReport := .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1])
-  let secondReport := .block (alg [] [] [] [.num 1, .num 2, .num 7, .num 8, .num 9])
+  let firstReport := .capture [.num 7, .num 6, .num 4, .num 2, .num 1]
+  let secondReport := .capture [.num 1, .num 2, .num 7, .num 8, .num 9]
   let safeReportProjected : Algorithm :=
     let report := .param "report"
     let itemAt (i : Int) := .index report (.num i)
@@ -8608,13 +8604,13 @@ def test232 : Bool :=
     alg ["report"] [] [] [
       .binary .and descendingChecks stepChecks
     ]
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("IsSafe", safeReportProjected)
   ] [
-    .call (resolve "filter") (alg [] [] [] [
+    .call (resolve "filter") [
       sequenceItems [firstReport, secondReport],
       .resolve "IsSafe"
-    ])
+    ]
   ])) with
   -- Only the first report is kept; the exact-list result keeps it as one element,
   -- so the result is `[(7, 6, 4, 2, 1)]`.
@@ -8628,15 +8624,15 @@ def test233 : Bool :=
     alg ["report"] [] [] [
       .index (.param "report") (.num 0)
     ]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("TakeFirst", takeFirstProjected)
   ] [
-    .call (resolve "map") (alg [] [] [] [
+    .call (resolve "map") [
       sequenceItems [
-        .block (alg [] [] [] [.num 7, .num 6, .num 4, .num 2, .num 1]),
-        .block (alg [] [] [] [.num 1, .num 2, .num 7, .num 8, .num 9])],
+        .capture [.num 7, .num 6, .num 4, .num 2, .num 1],
+        .capture [.num 1, .num 2, .num 7, .num 8, .num 9]],
       .resolve "TakeFirst"
-    ])
+    ]
   ])) with
   | Except.ok [7, 1] => true
   | _ => false
@@ -8648,17 +8644,17 @@ def test234 : Bool :=
     alg ["x"] [] [] [
       .dotCall (.param "x") "count" none
     ]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Items", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3]),
-      .block (alg [] [] [] [.num 7, .num 8, .num 9])
+      .capture [.num 1, .num 2, .num 3],
+      .capture [.num 7, .num 8, .num 9]
     ]),
     ("CountItem", countItem)
   ] [
     .dotCall (.resolve "Items") "count" none,
     .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
     .dotCall (.index (.resolve "Items") (.num 1)) "count" none,
-    .dotCall (.resolve "Items") "map" (some (alg [] [] [] [.resolve "CountItem"]))
+    .dotCall (.resolve "Items") "map" (some [.resolve "CountItem"])
   ])) with
   | Except.ok [2, 3, 3, 3, 3] => true
   | _ => false
@@ -8676,17 +8672,17 @@ def test235 : Bool :=
         (.dotCall (.param "x") "count" none)
         (.num 3)
     ]
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Items", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3]),
-      .block (alg [] [] [] [.num 7, .num 8, .num 9])
+      .capture [.num 1, .num 2, .num 3],
+      .capture [.num 7, .num 8, .num 9]
     ]),
     ("TakeFirst", takeFirstProjected),
     ("HasThreeItems", hasThreeItems)
   ] [
-    .dotCall (.resolve "Items") "map" (some (alg [] [] [] [.resolve "TakeFirst"])),
+    .dotCall (.resolve "Items") "map" (some [.resolve "TakeFirst"]),
     .dotCall
-      (.dotCall (.resolve "Items") "filter" (some (alg [] [] [] [.resolve "HasThreeItems"])))
+      (.dotCall (.resolve "Items") "filter" (some [.resolve "HasThreeItems"]))
       "count"
       none
   ])) with
@@ -8719,36 +8715,36 @@ def reduceCurrentOneLevelSignatureAlg237 : Algorithm :=
 
 def reduceAccumulatorAsymmetryAlg238 : Algorithm :=
   alg ["current", "acc"] [] [] [
-    .block (alg [] [] [] [
+    .capture [
       .binary .add
         (.binary .mul (.index (.param "acc") (.num 0)) (.num 100))
         (.binary .add
           (.binary .mul (.dotCall (.param "current") "count" none) (.num 10))
           (.dotCall (.param "acc") "count" none)),
       .dotCall (.param "acc") "count" none
-    ])
+    ]
   ]
 
 def test236 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Signature", reduceCurrentSelectionSignatureAlg236),
     ("Items", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
     .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
     .dotCall (.index (.resolve "Items") (.num 0)) "sum" none,
     .dotCall (.index (.resolve "Items") (.num 1)) "count" none,
     .dotCall (.index (.resolve "Items") (.num 1)) "sum" none,
-    .dotCall (.resolve "Items") "reduce" (some (alg [] [] [] [.resolve "Signature", .num 0])),
-    .call (.resolve "reduce") (alg [] [] [] [
+    .dotCall (.resolve "Items") "reduce" (some [.resolve "Signature", .num 0]),
+    .call (.resolve "reduce") [
       sequenceItems [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])],
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]],
       .resolve "Signature",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [2, 3, 2, 7, 2327, 2327] => true
   | _ => false
@@ -8756,25 +8752,25 @@ def test236 : Bool :=
 #guard test236
 
 def test237 : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Signature", reduceCurrentOneLevelSignatureAlg237),
     ("Items", alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ])
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ]
     ])
   ] [
     .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
-    .dotCall (.resolve "Items") "reduce" (some (alg [] [] [] [.resolve "Signature", .num 0])),
-    .call (.resolve "reduce") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
-        .block (alg [] [] [] [.num 3, .num 4])
-      ]),
+    .dotCall (.resolve "Items") "reduce" (some [.resolve "Signature", .num 0]),
+    .call (.resolve "reduce") [
+      .capture [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ],
       .resolve "Signature",
       .num 0
-    ])
+    ]
   ])) with
   | Except.ok [2, 2121, 2121] => true
   | _ => false
@@ -8782,17 +8778,17 @@ def test237 : Bool :=
 #guard test237
 
 def test238 : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Signature", reduceAccumulatorAsymmetryAlg238),
     ("Items", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ])
   ] [
-    .dotCall (.resolve "Items") "reduce" (some (alg [] [] [] [
+    .dotCall (.resolve "Items") "reduce" (some [
       .resolve "Signature",
-      .block (alg [] [] [] [.num 0, .num 9, .num 8])
-    ]))
+      .capture [.num 0, .num 9, .num 8]
+    ])
   ])) with
   | Except.ok (.sequenceValue [.atom 2322, .atom 2]) => true
   | _ => false
@@ -8801,7 +8797,7 @@ def test238 : Bool :=
 
 def reduceVariadicAppendAlg239 : Algorithm :=
   algWithParameters [{ name := "item" }, { name := "history", kind := .collecting }] [] [] [
-    .block (alg [] [] [] [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")])
+    .capture [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")]
   ]
 
 def reduceScalarSumAlg241 : Algorithm :=
@@ -8811,16 +8807,16 @@ def reduceScalarSumAlg241 : Algorithm :=
 
 def reduceStructuralAppendAlg242 : Algorithm :=
   alg ["item", "history"] [] [] [
-    .block (alg [] [] [] [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")])
+    .capture [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")]
   ]
 
 def reduceVariadicAccumulatorStateFlattens : Bool :=
-  match runResult (.block (algPrivate [] [] [("Append", reduceVariadicAppendAlg239)] [
-    .call (resolve "reduce") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Append", reduceVariadicAppendAlg239)] [
+    .call (resolve "reduce") [
       sequenceItems [.num 2, .num 3, .num 4],
       .resolve "Append",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
   | _ => false
@@ -8828,12 +8824,12 @@ def reduceVariadicAccumulatorStateFlattens : Bool :=
 #guard reduceVariadicAccumulatorStateFlattens
 
 def reduceScalarReducerBehaviorRemainsUnchanged : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Sum", reduceScalarSumAlg241)] [
-    .call (resolve "reduce") (alg [] [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Sum", reduceScalarSumAlg241)] [
+    .call (resolve "reduce") [
       sequenceItems [.num 2, .num 3, .num 4],
       .resolve "Sum",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok [10] => true
   | _ => false
@@ -8841,12 +8837,12 @@ def reduceScalarReducerBehaviorRemainsUnchanged : Bool :=
 #guard reduceScalarReducerBehaviorRemainsUnchanged
 
 def reduceNonVariadicAccumulatorPreservesStructuralAccumulator : Bool :=
-  match runResult (.block (algPrivate [] [] [("Append", reduceStructuralAppendAlg242)] [
-    .call (resolve "reduce") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Append", reduceStructuralAppendAlg242)] [
+    .call (resolve "reduce") [
       sequenceItems [.num 2, .num 3, .num 4],
       .resolve "Append",
       .num 1
-    ])
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
   | _ => false
@@ -8861,7 +8857,7 @@ private def dotSweepAtomsAlg (xs : List Int) : Algorithm :=
   alg [] [] [] (xs.map (fun value => .num value))
 
 private def dotSweepSequenceValueExpr (xs : List Int) : KatLang.Expr :=
-  KatLang.block (dotSweepAtomsAlg xs)
+  KatLang.algorithmExpr (dotSweepAtomsAlg xs)
 
 private def dotSweepSequenceValueAlg (xs : List Int) : Algorithm :=
   alg [] [] [] [dotSweepSequenceValueExpr xs]
@@ -8893,17 +8889,17 @@ private def dotSweepAddAlg : Algorithm :=
 
 def sequenceBuiltinDotCallCountSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
   ] [
     .dotCall (resolve "Values") "count" none,
-    .call (resolve "count") (alg [] [] [] [resolve "Values"]),
+    .call (resolve "count") [resolve "Values"],
     .dotCall (resolve "SequenceValue") "count" none,
-    .call (resolve "count") (alg [] [] [] [resolve "SequenceValue"]),
+    .call (resolve "count") [resolve "SequenceValue"],
     .dotCall data0 "count" none,
-    .call (resolve "count") (alg [] [] [] [data0])
+    .call (resolve "count") [data0]
   ])) with
   | Except.ok [3, 3, 3, 3, 3, 3] => true
   | _ => false
@@ -8912,17 +8908,17 @@ def sequenceBuiltinDotCallCountSweep : Bool :=
 
 def sequenceBuiltinDotCallContainsSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
   ] [
-    .dotCall (resolve "Values") "contains" (some (alg [] [] [] [.num 2])),
-    .call (resolve "contains") (alg [] [] [] [resolve "Values", .num 2]),
-    .dotCall (resolve "SequenceValue") "contains" (some (alg [] [] [] [.num 2])),
-    .dotCall (resolve "SequenceValue") "contains" (some (alg [] [] [] [dotSweepSequenceValueExpr [1, 2, 3]])),
-    .dotCall data0 "contains" (some (alg [] [] [] [.num 2])),
-    .call (resolve "contains") (alg [] [] [] [data0, .num 2])
+    .dotCall (resolve "Values") "contains" (some [.num 2]),
+    .call (resolve "contains") [resolve "Values", .num 2],
+    .dotCall (resolve "SequenceValue") "contains" (some [.num 2]),
+    .dotCall (resolve "SequenceValue") "contains" (some [dotSweepSequenceValueExpr [1, 2, 3]]),
+    .dotCall data0 "contains" (some [.num 2]),
+    .call (resolve "contains") [data0, .num 2]
   ])) with
   | Except.ok [1, 1, 1, 0, 1, 1] => true
   | _ => false
@@ -8931,16 +8927,16 @@ def sequenceBuiltinDotCallContainsSweep : Bool :=
 
 def sequenceBuiltinDotCallOrderSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [3, 1, 2]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
   ] [
     .dotCall (resolve "Values") "order" none,
     .dotCall (resolve "Values") "orderDesc" none,
     .dotCall data0 "order" none,
-    .call (resolve "order") (alg [] [] [] [data0]),
+    .call (resolve "order") [data0],
     .dotCall data0 "orderDesc" none,
-    .call (resolve "orderDesc") (alg [] [] [] [data0])
+    .call (resolve "orderDesc") [data0]
   ])) with
   | Except.ok [1, 2, 3, 3, 2, 1, 1, 2, 3, 1, 2, 3, 3, 2, 1, 3, 2, 1] => true
   | _ => false
@@ -8949,23 +8945,23 @@ def sequenceBuiltinDotCallOrderSweep : Bool :=
 
 def sequenceBuiltinDotCallOrderBoundarySweep : Bool :=
   let orderValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [3, 1, 2])
     ] [
-      .call (resolve "order") (alg [] [] [] [resolve "Values"])
+      .call (resolve "order") [resolve "Values"]
     ])) with
     | Except.ok [1, 2, 3] => true
     | _ => false
   let orderDescValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [3, 1, 2])
     ] [
-      .call (resolve "orderDesc") (alg [] [] [] [resolve "Values"])
+      .call (resolve "orderDesc") [resolve "Values"]
     ])) with
     | Except.ok [3, 2, 1] => true
     | _ => false
   let sequenceValueOrder :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [3, 1, 2])
     ] [
       .dotCall (resolve "SequenceValue") "order" none
@@ -8973,7 +8969,7 @@ def sequenceBuiltinDotCallOrderBoundarySweep : Bool :=
     | Except.ok [1, 2, 3] => true
     | _ => false
   let sequenceValueOrderDesc :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [3, 1, 2])
     ] [
       .dotCall (resolve "SequenceValue") "orderDesc" none
@@ -8986,16 +8982,16 @@ def sequenceBuiltinDotCallOrderBoundarySweep : Bool :=
 
 def sequenceBuiltinDotCallFirstLastSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [5, 6, 7]),
     ("Data", dotSweepPairAlg [9, 8, 7] [3, 2, 1])
   ] [
     .dotCall (resolve "Values") "first" none,
     .dotCall (resolve "Values") "last" none,
     .dotCall data0 "first" none,
-    .call (resolve "first") (alg [] [] [] [data0]),
+    .call (resolve "first") [data0],
     .dotCall data0 "last" none,
-    .call (resolve "last") (alg [] [] [] [data0])
+    .call (resolve "last") [data0]
   ])) with
   | Except.ok [5, 7, 9, 9, 7, 7] => true
   | _ => false
@@ -9003,13 +8999,13 @@ def sequenceBuiltinDotCallFirstLastSweep : Bool :=
 #guard sequenceBuiltinDotCallFirstLastSweep
 
 def sequenceBuiltinDotCallFirstLastSequenceValueSweep : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("SequenceValue", dotSweepSequenceValueAlg [5, 6, 7])
   ] [
     .dotCall (resolve "SequenceValue") "first" none,
-    .call (resolve "first") (alg [] [] [] [resolve "SequenceValue"]),
+    .call (resolve "first") [resolve "SequenceValue"],
     .dotCall (resolve "SequenceValue") "last" none,
-    .call (resolve "last") (alg [] [] [] [resolve "SequenceValue"])
+    .call (resolve "last") [resolve "SequenceValue"]
   ])) with
   | Except.ok (.sequenceValue [
       .atom 5,
@@ -9023,13 +9019,13 @@ def sequenceBuiltinDotCallFirstLastSequenceValueSweep : Bool :=
 
 def sequenceBuiltinDotCallDistinctSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 1, 3]),
     ("Data", dotSweepPairAlg [1, 2, 1, 3] [9, 8, 9])
   ] [
     .dotCall (resolve "Values") "distinct" none,
     .dotCall data0 "distinct" none,
-    .call (resolve "distinct") (alg [] [] [] [data0])
+    .call (resolve "distinct") [data0]
   ])) with
   | Except.ok [1, 2, 3, 1, 2, 3, 1, 2, 3] => true
   | _ => false
@@ -9037,11 +9033,11 @@ def sequenceBuiltinDotCallDistinctSweep : Bool :=
 #guard sequenceBuiltinDotCallDistinctSweep
 
 def sequenceBuiltinDotCallDistinctSequenceValueSweep : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 1, 3])
   ] [
     .dotCall (resolve "SequenceValue") "distinct" none,
-    .call (resolve "distinct") (alg [] [] [] [resolve "SequenceValue"])
+    .call (resolve "distinct") [resolve "SequenceValue"]
   ])) with
   | Except.ok (.sequenceValue [
       .listValue [.atom 1, .atom 2, .atom 3],
@@ -9053,18 +9049,18 @@ def sequenceBuiltinDotCallDistinctSequenceValueSweep : Bool :=
 
 def sequenceBuiltinDotCallTakeSkipSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [7, 6, 4, 2, 1] [1, 2, 3, 4, 5])
   ] [
-    .dotCall (resolve "Values") "take" (some (alg [] [] [] [.num 2])),
-    .call (resolve "take") (alg [] [] [] [resolve "Values", .num 2]),
-    .dotCall (resolve "Values") "skip" (some (alg [] [] [] [.num 1])),
-    .call (resolve "skip") (alg [] [] [] [resolve "Values", .num 1]),
-    .dotCall data0 "take" (some (alg [] [] [] [.num 2])),
-    .call (resolve "take") (alg [] [] [] [data0, .num 2]),
-    .dotCall data0 "skip" (some (alg [] [] [] [.num 2])),
-    .call (resolve "skip") (alg [] [] [] [data0, .num 2])
+    .dotCall (resolve "Values") "take" (some [.num 2]),
+    .call (resolve "take") [resolve "Values", .num 2],
+    .dotCall (resolve "Values") "skip" (some [.num 1]),
+    .call (resolve "skip") [resolve "Values", .num 1],
+    .dotCall data0 "take" (some [.num 2]),
+    .call (resolve "take") [data0, .num 2],
+    .dotCall data0 "skip" (some [.num 2]),
+    .call (resolve "skip") [data0, .num 2]
   ])) with
   | Except.ok [1, 2, 1, 2, 2, 3, 2, 3, 7, 6, 7, 6, 4, 2, 1, 4, 2, 1] => true
   | _ => false
@@ -9073,11 +9069,11 @@ def sequenceBuiltinDotCallTakeSkipSweep : Bool :=
 
 def sequenceBuiltinDotCallTakeSkipSequenceValueSweep : Bool :=
   let takeOk :=
-    match runResult (.block (algPrivate [] [] [
+    match runResult (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
-      .dotCall (resolve "SequenceValue") "take" (some (alg [] [] [] [.num 2])),
-      .call (resolve "take") (alg [] [] [] [resolve "SequenceValue", .num 2])
+      .dotCall (resolve "SequenceValue") "take" (some [.num 2]),
+      .call (resolve "take") [resolve "SequenceValue", .num 2]
     ])) with
     | Except.ok (.sequenceValue [
         .listValue [.atom 1, .atom 2],
@@ -9085,18 +9081,18 @@ def sequenceBuiltinDotCallTakeSkipSequenceValueSweep : Bool :=
       ]) => true
     | _ => false
   let skipDotOk :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
-      .dotCall (resolve "SequenceValue") "skip" (some (alg [] [] [] [.num 1]))
+      .dotCall (resolve "SequenceValue") "skip" (some [.num 1])
     ])) with
     | Except.ok [2, 3] => true
     | _ => false
   let skipPlainOk :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
-      .call (resolve "skip") (alg [] [] [] [resolve "SequenceValue", .num 1])
+      .call (resolve "skip") [resolve "SequenceValue", .num 1]
     ])) with
     | Except.ok [2, 3] => true
     | _ => false
@@ -9106,28 +9102,28 @@ def sequenceBuiltinDotCallTakeSkipSequenceValueSweep : Bool :=
 
 def sequenceBuiltinDotCallNamedReceiverBoundarySweep : Bool :=
   let namedMulti :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("A", dotSweepAtomsAlg [1, 2, 3])
     ] [
-      .dotCall (resolve "A") "take" (some (alg [] [] [] [.num 2])),
+      .dotCall (resolve "A") "take" (some [.num 2]),
       .dotCall (resolve "A") "count" none
     ])) with
     | Except.ok [1, 2, 3] => true
     | _ => false
   let namedSequenceValue :=
-    match runResult (.block (algPrivate [] [] [
+    match runResult (.algorithmExpr (algPrivate [] [] [
       ("A", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
-      .dotCall (resolve "A") "take" (some (alg [] [] [] [.num 2])),
+      .dotCall (resolve "A") "take" (some [.num 2]),
       .dotCall (resolve "A") "count" none
     ])) with
     | Except.ok (.sequenceValue [.listValue [.atom 1, .atom 2], .atom 3]) => true
     | _ => false
   let spread :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("A", alg [] [] [] [sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3))])
     ] [
-      .dotCall (resolve "A") "take" (some (alg [] [] [] [.num 2]))
+      .dotCall (resolve "A") "take" (some [.num 2])
     ])) with
     | Except.ok [1, 2] => true
     | _ => false
@@ -9137,13 +9133,13 @@ def sequenceBuiltinDotCallNamedReceiverBoundarySweep : Bool :=
 
 def sequenceBuiltinDotCallUserAndConditionalReceiverBoundarySweep : Bool :=
   let userCall :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("F", alg ["x"] [] [] [.param "x", .binary .add (.param "x") (.num 1), .binary .add (.param "x") (.num 2)]),
-      ("G", alg ["x"] [] [] [.block (alg [] [] [] [.param "x", .binary .add (.param "x") (.num 1), .binary .add (.param "x") (.num 2)])])
+      ("G", alg ["x"] [] [] [.capture [.param "x", .binary .add (.param "x") (.num 1), .binary .add (.param "x") (.num 2)]])
     ] [
-      .dotCall (.call (resolve "F") (alg [] [] [] [.num 1])) "count" none,
-      .dotCall (.call (resolve "F") (alg [] [] [] [.num 1])) "take" (some (alg [] [] [] [.num 2])),
-      .dotCall (.call (resolve "G") (alg [] [] [] [.num 1])) "count" none
+      .dotCall (.call (resolve "F") [.num 1]) "count" none,
+      .dotCall (.call (resolve "F") [.num 1]) "take" (some [.num 2]),
+      .dotCall (.call (resolve "G") [.num 1]) "count" none
     ])) with
     | Except.ok [3, 1, 2, 3] => true
     | _ => false
@@ -9155,15 +9151,15 @@ def sequenceBuiltinDotCallUserAndConditionalReceiverBoundarySweep : Bool :=
       ]
     let chooseSequenceValue : Algorithm :=
       .conditional none [] [
-        { pattern := KatLang.Pattern.litInt 1, body := alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])] },
-        { pattern := KatLang.Pattern.bind "x", body := alg [] [] [] [.block (alg [] [] [] [.num 4, .num 5, .num 6])] }
+        { pattern := KatLang.Pattern.litInt 1, body := alg [] [] [] [.capture [.num 1, .num 2, .num 3]] },
+        { pattern := KatLang.Pattern.bind "x", body := alg [] [] [] [.capture [.num 4, .num 5, .num 6]] }
       ]
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("ChooseMulti", chooseMulti),
       ("ChooseSequenceValue", chooseSequenceValue)
     ] [
-      .dotCall (.call (resolve "ChooseMulti") (alg [] [] [] [.num 1])) "take" (some (alg [] [] [] [.num 2])),
-      .dotCall (.call (resolve "ChooseSequenceValue") (alg [] [] [] [.num 1])) "count" none
+      .dotCall (.call (resolve "ChooseMulti") [.num 1]) "take" (some [.num 2]),
+      .dotCall (.call (resolve "ChooseSequenceValue") [.num 1]) "count" none
     ])) with
     | Except.ok [1, 2, 3] => true
     | _ => false
@@ -9172,26 +9168,26 @@ def sequenceBuiltinDotCallUserAndConditionalReceiverBoundarySweep : Bool :=
 #guard sequenceBuiltinDotCallUserAndConditionalReceiverBoundarySweep
 
 def sequenceBuiltinDotCallInlineReceiverSweep : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("AddOne", dotSweepAddOneAlg),
     ("IsLarge", dotSweepIsGreaterThanOneAlg),
     ("Add", dotSweepAddAlg)
   ] [
     .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "count" none,
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "contains" (some (alg [] [] [] [.num 2])),
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "contains" (some [.num 2]),
     .dotCall (dotSweepSequenceValueExpr [3, 1, 2]) "order" none,
     .dotCall (dotSweepSequenceValueExpr [5, 6, 7]) "first" none,
     .dotCall (dotSweepSequenceValueExpr [5, 6, 7]) "last" none,
     .dotCall (dotSweepSequenceValueExpr [1, 2, 1, 3]) "distinct" none,
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "take" (some (alg [] [] [] [.num 2])),
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "skip" (some (alg [] [] [] [.num 1])),
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "take" (some [.num 2]),
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "skip" (some [.num 1]),
     .dotCall (dotSweepSequenceValueExpr [10, 4, 7]) "min" none,
     .dotCall (dotSweepSequenceValueExpr [10, 4, 7]) "max" none,
     .dotCall (dotSweepSequenceValueExpr [3, 5, 3]) "sum" none,
     .dotCall (dotSweepSequenceValueExpr [10, 4, 7]) "avg" none,
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "map" (some (alg [] [] [] [resolve "AddOne"])),
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3, 4]) "filter" (some (alg [] [] [] [resolve "IsLarge"])),
-    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "reduce" (some (alg [] [] [] [resolve "Add", .num 0]))
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "map" (some [resolve "AddOne"]),
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3, 4]) "filter" (some [resolve "IsLarge"]),
+    .dotCall (dotSweepSequenceValueExpr [1, 2, 3]) "reduce" (some [resolve "Add", .num 0])
   ])) with
   | Except.ok [3, 1, 1, 2, 3, 5, 7, 1, 2, 3, 1, 2, 2, 3, 4, 10, 11, 7, 2, 3, 4, 2, 3, 4, 6] => true
   | _ => false
@@ -9200,7 +9196,7 @@ def sequenceBuiltinDotCallInlineReceiverSweep : Bool :=
 
 def sequenceBuiltinDotCallNumericAggregationSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
   ] [
@@ -9209,13 +9205,13 @@ def sequenceBuiltinDotCallNumericAggregationSweep : Bool :=
     .dotCall (resolve "Values") "min" none,
     .dotCall (resolve "Values") "max" none,
     .dotCall data0 "sum" none,
-    .call (resolve "sum") (alg [] [] [] [data0]),
+    .call (resolve "sum") [data0],
     .dotCall data0 "avg" none,
-    .call (resolve "avg") (alg [] [] [] [data0]),
+    .call (resolve "avg") [data0],
     .dotCall data0 "min" none,
-    .call (resolve "min") (alg [] [] [] [data0]),
+    .call (resolve "min") [data0],
     .dotCall data0 "max" none,
-    .call (resolve "max") (alg [] [] [] [data0])
+    .call (resolve "max") [data0]
   ])) with
   | Except.ok [6, 2, 1, 3, 6, 6, 2, 2, 1, 1, 3, 3] => true
   | _ => false
@@ -9224,15 +9220,15 @@ def sequenceBuiltinDotCallNumericAggregationSweep : Bool :=
 
 def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
   let sumValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [1, 2, 3])
     ] [
-      .call (resolve "sum") (alg [] [] [] [resolve "Values"])
+      .call (resolve "sum") [resolve "Values"]
     ])) with
     | Except.ok [6] => true
     | _ => false
   let sumSequenceValue :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
       .dotCall (resolve "SequenceValue") "sum" none
@@ -9240,15 +9236,15 @@ def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
     | Except.ok [6] => true
     | _ => false
   let avgValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [1, 2, 3])
     ] [
-      .call (resolve "avg") (alg [] [] [] [resolve "Values"])
+      .call (resolve "avg") [resolve "Values"]
     ])) with
     | Except.ok [2] => true
     | _ => false
   let avgSequenceValue :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
       .dotCall (resolve "SequenceValue") "avg" none
@@ -9256,15 +9252,15 @@ def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
     | Except.ok [2] => true
     | _ => false
   let minValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [1, 2, 3])
     ] [
-      .call (resolve "min") (alg [] [] [] [resolve "Values"])
+      .call (resolve "min") [resolve "Values"]
     ])) with
     | Except.ok [1] => true
     | _ => false
   let minSequenceValue :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
       .dotCall (resolve "SequenceValue") "min" none
@@ -9272,15 +9268,15 @@ def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
     | Except.ok [1] => true
     | _ => false
   let maxValues :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Values", dotSweepAtomsAlg [1, 2, 3])
     ] [
-      .call (resolve "max") (alg [] [] [] [resolve "Values"])
+      .call (resolve "max") [resolve "Values"]
     ])) with
     | Except.ok [3] => true
     | _ => false
   let maxSequenceValue :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3])
     ] [
       .dotCall (resolve "SequenceValue") "max" none
@@ -9293,19 +9289,19 @@ def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
 
 def sequenceBuiltinDotCallMapSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("ItemCount", dotSweepTopLevelItemCountAlg),
     ("AddOne", dotSweepAddOneAlg),
     ("Items", alg [] [] [] [dotSweepSequenceValueExpr [1, 2, 3], .num 7]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [1, 2, 3] [4, 5, 6])
   ] [
-    .dotCall (resolve "Items") "map" (some (alg [] [] [] [resolve "ItemCount"])),
-    .call (resolve "map") (alg [] [] [] [resolve "Items", resolve "ItemCount"]),
-    .dotCall (resolve "SequenceValue") "map" (some (alg [] [] [] [resolve "ItemCount"])),
-    .call (resolve "map") (alg [] [] [] [resolve "SequenceValue", resolve "ItemCount"]),
-    .dotCall data0 "map" (some (alg [] [] [] [resolve "AddOne"])),
-    .call (resolve "map") (alg [] [] [] [data0, resolve "AddOne"])
+    .dotCall (resolve "Items") "map" (some [resolve "ItemCount"]),
+    .call (resolve "map") [resolve "Items", resolve "ItemCount"],
+    .dotCall (resolve "SequenceValue") "map" (some [resolve "ItemCount"]),
+    .call (resolve "map") [resolve "SequenceValue", resolve "ItemCount"],
+    .dotCall data0 "map" (some [resolve "AddOne"]),
+    .call (resolve "map") [data0, resolve "AddOne"]
   ])) with
   | Except.ok [3, 1, 3, 1, 1, 1, 1, 1, 1, 1, 2, 3, 4, 2, 3, 4] => true
   | _ => false
@@ -9314,19 +9310,19 @@ def sequenceBuiltinDotCallMapSweep : Bool :=
 
 def sequenceBuiltinDotCallFilterSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("KeepCountThree", dotSweepKeepCountThreeAlg),
     ("IsLarge", dotSweepIsGreaterThanOneAlg),
     ("Items", alg [] [] [] [dotSweepSequenceValueExpr [1, 2, 3], dotSweepSequenceValueExpr [4, 5, 6], .num 7]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [1, 2, 3] [4, 5, 6])
   ] [
-    .dotCall (.dotCall (resolve "Items") "filter" (some (alg [] [] [] [resolve "KeepCountThree"]))) "count" none,
-    .dotCall (.call (resolve "filter") (alg [] [] [] [resolve "Items", resolve "KeepCountThree"])) "count" none,
-    .dotCall (.dotCall (resolve "SequenceValue") "filter" (some (alg [] [] [] [resolve "KeepCountThree"]))) "count" none,
-    .dotCall (.call (resolve "filter") (alg [] [] [] [resolve "SequenceValue", resolve "KeepCountThree"])) "count" none,
-    .dotCall (.dotCall data0 "filter" (some (alg [] [] [] [resolve "IsLarge"]))) "count" none,
-    .dotCall (.call (resolve "filter") (alg [] [] [] [data0, resolve "IsLarge"])) "count" none
+    .dotCall (.dotCall (resolve "Items") "filter" (some [resolve "KeepCountThree"])) "count" none,
+    .dotCall (.call (resolve "filter") [resolve "Items", resolve "KeepCountThree"]) "count" none,
+    .dotCall (.dotCall (resolve "SequenceValue") "filter" (some [resolve "KeepCountThree"])) "count" none,
+    .dotCall (.call (resolve "filter") [resolve "SequenceValue", resolve "KeepCountThree"]) "count" none,
+    .dotCall (.dotCall data0 "filter" (some [resolve "IsLarge"])) "count" none,
+    .dotCall (.call (resolve "filter") [data0, resolve "IsLarge"]) "count" none
   ])) with
   | Except.ok [2, 2, 0, 0, 2, 2] => true
   | _ => false
@@ -9335,19 +9331,19 @@ def sequenceBuiltinDotCallFilterSweep : Bool :=
 
 def sequenceBuiltinDotCallReduceSweep : Bool :=
   let data0 := .index (resolve "Data") (.num 0)
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("AddItemCount", dotSweepAddTopLevelItemCountAlg),
     ("Add", dotSweepAddAlg),
     ("Items", alg [] [] [] [dotSweepSequenceValueExpr [1, 2, 3], .num 7]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [1, 2, 3] [4, 5, 6])
   ] [
-    .dotCall (resolve "Items") "reduce" (some (alg [] [] [] [resolve "AddItemCount", .num 0])),
-    .call (resolve "reduce") (alg [] [] [] [resolve "Items", resolve "AddItemCount", .num 0]),
-    .dotCall (resolve "SequenceValue") "reduce" (some (alg [] [] [] [resolve "AddItemCount", .num 0])),
-    .call (resolve "reduce") (alg [] [] [] [resolve "SequenceValue", resolve "AddItemCount", .num 0]),
-    .dotCall data0 "reduce" (some (alg [] [] [] [resolve "Add", .num 0])),
-    .call (resolve "reduce") (alg [] [] [] [data0, resolve "Add", .num 0])
+    .dotCall (resolve "Items") "reduce" (some [resolve "AddItemCount", .num 0]),
+    .call (resolve "reduce") [resolve "Items", resolve "AddItemCount", .num 0],
+    .dotCall (resolve "SequenceValue") "reduce" (some [resolve "AddItemCount", .num 0]),
+    .call (resolve "reduce") [resolve "SequenceValue", resolve "AddItemCount", .num 0],
+    .dotCall data0 "reduce" (some [resolve "Add", .num 0]),
+    .call (resolve "reduce") [data0, resolve "Add", .num 0]
   ])) with
   | Except.ok [4, 4, 3, 3, 6, 6] => true
   | _ => false
@@ -9379,14 +9375,14 @@ def variadicSimpleRoot : Algorithm :=
 -- `Arg.Collect` is `Collect(Arg)`: the receiver is ONE captured argument
 -- slot, so the collecting parameter collects `list = [(1, 2, 3)]` and its count is 1.
 def variadicDotCallReceiverIsOneCapturedSlot : Bool :=
-  match runFlat (.block variadicSimpleRoot) with
+  match runFlat (.algorithmExpr variadicSimpleRoot) with
   | Except.ok [1] => true
   | _ => false
 
 #guard variadicDotCallReceiverIsOneCapturedSlot
 
 def normalParameterStillPreservesBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Collect", normalCollectAlg)
   ] [
@@ -9400,19 +9396,19 @@ def normalParameterStillPreservesBoundary : Bool :=
 def variadicNestedSequenceValuesRoot : Algorithm :=
   algPrivate [] [] [
     ("Arg", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ]),
     ("Collect", variadicCollectAlg)
   ] [
     .dotCall (.dotCall (resolve "Arg") "Collect" none) "count" none,
-    .dotCall (.call (resolve "atoms") (alg [] [] [] [.dotCall (resolve "Arg") "Collect" none])) "count" none
+    .dotCall (.call (resolve "atoms") [.dotCall (resolve "Arg") "Collect" none]) "count" none
   ]
 
 -- The one captured receiver slot keeps its nested structure intact: `atoms`
 -- still reaches all four numeric leaves through the collected list.
 def variadicPreservesNestedSequenceValues : Bool :=
-  match runFlat (.block variadicNestedSequenceValuesRoot) with
+  match runFlat (.algorithmExpr variadicNestedSequenceValuesRoot) with
   | Except.ok [1, 4] => true
   | _ => false
 
@@ -9420,9 +9416,9 @@ def variadicPreservesNestedSequenceValues : Bool :=
 
 def variadicScaleAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }, { name := "factor" }] [] [] [
-    .dotCall (.param "values") "map" (some (alg [] [] [] [
-      .block (alg ["n"] [] [] [.binary .mul (.param "n") (.param "factor")])
-    ]))
+    .dotCall (.param "values") "map" (some [
+      .algorithmExpr (alg ["n"] [] [] [.binary .mul (.param "n") (.param "factor")])
+    ])
   ]
 
 def variadicTotalWithFeeAlg : Algorithm :=
@@ -9446,7 +9442,7 @@ def variadicCountAlg : Algorithm :=
 
 def variadicAtomsCountAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
-    .dotCall (.call (resolve "atoms") (alg [] [] [] [.param "values"])) "count" none
+    .dotCall (.call (resolve "atoms") [.param "values"]) "count" none
   ]
 
 def ordinaryCountAlg : Algorithm :=
@@ -9458,7 +9454,7 @@ def ordinaryCountAlg : Algorithm :=
 -- call `Mean(Arg*)` / the parenthesized-spread receiver `(Arg*).Mean`;
 -- both then agree with the builtin sum/count pipeline.
 def variadicMeanMatchesBuiltinSumCount : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Mean", variadicMeanAlg),
     ("Direct", alg [] [] [] [
@@ -9467,8 +9463,8 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
         (.dotCall (resolve "Arg") "count" none)
     ])
   ] [
-    .call (resolve "Mean") (alg [] [] [] [sequenceSpread (resolve "Arg")]),
-    .dotCall (.block (alg [] [] [] [sequenceSpread (resolve "Arg")])) "Mean" none,
+    .call (resolve "Mean") [sequenceSpread (resolve "Arg")],
+    .dotCall (.capture [sequenceSpread (resolve "Arg")]) "Mean" none,
     resolve "Direct"
   ])) with
   | Except.ok [2, 2, 2] => true
@@ -9481,18 +9477,18 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
 -- `Arg.count` opens the bound value (count 2); `atoms` recursively reaches
 -- all four numeric leaves through the collected list.
 def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ]),
     ("CountViaVariadic", variadicCountAlg),
     ("CountAtoms", variadicAtomsCountAlg)
   ] [
-    .call (resolve "CountViaVariadic") (alg [] [] [] [resolve "Arg"]),
+    .call (resolve "CountViaVariadic") [resolve "Arg"],
     .dotCall (resolve "Arg") "CountViaVariadic" none,
     .dotCall (resolve "Arg") "count" none,
-    .call (resolve "CountAtoms") (alg [] [] [] [resolve "Arg"])
+    .call (resolve "CountAtoms") [resolve "Arg"]
   ])) with
   | Except.ok [1, 1, 2, 4] => true
   | _ => false
@@ -9503,7 +9499,7 @@ def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
 -- builtin opens it (count 3); a collecting parameter collects the receiver as one
 -- list element (count 1). The two shapes are observably different.
 def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Ordinary", ordinaryCountAlg),
     ("Variadic", variadicCountAlg)
@@ -9520,12 +9516,12 @@ def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
 -- `(Arg*).Scale(10)`: the explicit spread feeds the leading collecting parameter,
 -- while the suffix binds the factor.
 def variadicBeforeSuffixSupportsDotCall : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Scale", variadicScaleAlg)
   ] [
-    .dotCall (.block (alg [] [] [] [sequenceSpread (resolve "Arg")]))
-      "Scale" (some (alg [] [] [] [.num 10]))
+    .dotCall (.capture [sequenceSpread (resolve "Arg")])
+      "Scale" (some [.num 10])
   ])) with
   | Except.ok [10, 20, 30] => true
   | _ => false
@@ -9537,11 +9533,11 @@ def variadicBeforeSuffixSupportsDotCall : Bool :=
 -- suffix the call supplies four items; the variadic captures [10, 20, 30] and
 -- `fee` binds 5, giving sum 60 + 5 = 65.
 def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("TotalWithFee", variadicTotalWithFeeAlg)
   ] [
-    .dotCall (.block (alg [] [] [] [sequenceSpread1230]))
-      "TotalWithFee" (some (alg [] [] [] [.num 5]))
+    .dotCall (.capture [sequenceSpread1230])
+      "TotalWithFee" (some [.num 5])
   ])) with
   | Except.ok (.atom 65) => true
   | _ => false
@@ -9553,11 +9549,11 @@ def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
 -- hits the numeric element constraint — unlike the pre-expanding
 -- parenthesized-spread receiver above.
 def collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
     ("TotalWithFee", variadicTotalWithFeeAlg)
   ] [
-    .dotCall (resolve "Data") "TotalWithFee" (some (alg [] [] [] [.num 5]))
+    .dotCall (resolve "Data") "TotalWithFee" (some [.num 5])
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -9569,21 +9565,21 @@ def collectingNamedMultiOutputDotCallWithSuffixIsGroupedArgument : Bool :=
 -- items and evaluates: the two receiver shapes are distinct argument streams.
 def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
   let named :=
-    match runResult (.block (algPrivate [] [] [
+    match runResult (.algorithmExpr (algPrivate [] [] [
       ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
       ("TotalWithFee", variadicTotalWithFeeAlg)
     ] [
-      .dotCall (resolve "Data") "TotalWithFee" (some (alg [] [] [] [.num 5]))
+      .dotCall (resolve "Data") "TotalWithFee" (some [.num 5])
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
   let spreadReceiver :=
-    match runFlat (.block (algPrivate [] [] [
+    match runFlat (.algorithmExpr (algPrivate [] [] [
       ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
       ("TotalWithFee", variadicTotalWithFeeAlg)
     ] [
-      .dotCall (.block (alg [] [] [] [sequenceSpread1230]))
-        "TotalWithFee" (some (alg [] [] [] [.num 5]))
+      .dotCall (.capture [sequenceSpread1230])
+        "TotalWithFee" (some [.num 5])
     ])) with
     | Except.ok [65] => true
     | _ => false
@@ -9595,12 +9591,12 @@ def variadicInlineTupleSpreadReceiverDiffersFromNamedReceiver : Bool :=
 -- argument slot: the collected list holds the sequence value, so `values.sum`
 -- hits the numeric element constraint.
 def variadicNestedInlineTupleDotCallIsGroupedArgument : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("TotalWithFee", variadicTotalWithFeeAlg)
   ] [
-    .dotCall (.block (alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
-    ])) "TotalWithFee" (some (alg [] [] [] [.num 5]))
+    .dotCall (.capture [
+      .capture [.num 10, .num 20, .num 30]
+    ]) "TotalWithFee" (some [.num 5])
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -9608,10 +9604,10 @@ def variadicNestedInlineTupleDotCallIsGroupedArgument : Bool :=
 #guard variadicNestedInlineTupleDotCallIsGroupedArgument
 
 def ordinaryInlineTupleDotCallStillPreservesReceiverBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Collect", ordinaryCountAlg)
   ] [
-    .dotCall (.block (alg [] [] [] [.num 10, .num 20, .num 30])) "Collect" none
+    .dotCall (.capture [.num 10, .num 20, .num 30]) "Collect" none
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -9620,11 +9616,11 @@ def ordinaryInlineTupleDotCallStillPreservesReceiverBoundary : Bool :=
 
 def sequenceBuiltinInlineTupleDotCallBehaviorUnchanged : Bool :=
   let inlineSum :=
-    .dotCall (.block (alg [] [] [] [.num 10, .num 20, .num 30])) "sum" none
+    .dotCall (.capture [.num 10, .num 20, .num 30]) "sum" none
   let nestedSum :=
-    .dotCall (.block (alg [] [] [] [
-      .block (alg [] [] [] [.num 10, .num 20, .num 30])
-    ])) "sum" none
+    .dotCall (.capture [
+      .capture [.num 10, .num 20, .num 30]
+    ]) "sum" none
   let inlineWorks :=
     match runFlat inlineSum with
     | Except.ok [60] => true
@@ -9641,17 +9637,17 @@ def sequenceBuiltinInlineTupleDotCallBehaviorUnchanged : Bool :=
 -- constructed pair of the spread-receiver variadic scale and the builtin map;
 -- both produce the same scaled items.
 def variadicScaleMatchesBuiltinMap : Bool :=
-  let builtinMap := .dotCall (resolve "Arg") "map" (some (alg [] [] [] [
-    .block (alg ["n"] [] [] [.binary .mul (.param "n") (.num 10)])
-  ]))
-  match runFlat (.block (algPrivate [] [] [
+  let builtinMap := .dotCall (resolve "Arg") "map" (some [
+    .algorithmExpr (alg ["n"] [] [] [.binary .mul (.param "n") (.num 10)])
+  ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Scale", variadicScaleAlg)
   ] [
     sequenceSpread
       (.sequenceConstruct
-        (.dotCall (.block (alg [] [] [] [sequenceSpread (resolve "Arg")]))
-          "Scale" (some (alg [] [] [] [.num 10])))
+        (.dotCall (.capture [sequenceSpread (resolve "Arg")])
+          "Scale" (some [.num 10]))
         builtinMap)
   ])) with
   | Except.ok [10, 20, 30, 10, 20, 30] => true
@@ -9665,14 +9661,14 @@ def collectingBindingErrorRoot : Algorithm :=
       .param "first", .param "rest", .param "last"
     ])
   ] [
-    .call (resolve "F") (alg [] [] [] [.num 1])
+    .call (resolve "F") [.num 1]
   ]
 
 def collectingBindingErrorWhenNormalParamsCannotBind : Bool :=
   -- F(first, *rest, last) is a deconstruction parameter list. F(1) supplies one
   -- scalar item, which is not opened (rule 5); the matcher needs at least the two
   -- fixed bindings (first, last), so it reports arityMismatch 2 1.
-  match runResult (.block collectingBindingErrorRoot) with
+  match runResult (.algorithmExpr collectingBindingErrorRoot) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
@@ -9700,10 +9696,10 @@ def sequenceValueCollectingMixedAlg : Algorithm :=
   ]
 
 def sequenceValueCollectingCapturesImmediateSequenceValueItems : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2, .num 3]
+    ]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -9711,13 +9707,13 @@ def sequenceValueCollectingCapturesImmediateSequenceValueItems : Bool :=
 #guard sequenceValueCollectingCapturesImmediateSequenceValueItems
 
 def sequenceValueCollectingRemovesOnlyOneSequenceValueBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2],
         .num 3
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -9725,13 +9721,13 @@ def sequenceValueCollectingRemovesOnlyOneSequenceValueBoundary : Bool :=
 #guard sequenceValueCollectingRemovesOnlyOneSequenceValueBoundary
 
 def sequenceValueCollectingPreservesNestedSequenceValueItem : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingFirstAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingFirstAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2],
         .num 3
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -9739,8 +9735,8 @@ def sequenceValueCollectingPreservesNestedSequenceValueItem : Bool :=
 #guard sequenceValueCollectingPreservesNestedSequenceValueItem
 
 def sequenceValueCollectingRequiresSequenceValueSlot : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingCountAlg)] [
+    .call (resolve "F") [.num 1, .num 2, .num 3]
   ])) with
   | Except.error err => innermostIsArityMismatch 1 3 err
   | Except.ok _ => false
@@ -9748,12 +9744,12 @@ def sequenceValueCollectingRequiresSequenceValueSlot : Bool :=
 #guard sequenceValueCollectingRequiresSequenceValueSlot
 
 def sequenceValueCollectingWithMixedTopLevelParameters : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingMixedAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingMixedAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2, .num 3],
       .num 4,
       .num 5
-    ])
+    ]
   ])) with
   | Except.ok [3, 4, 5] => true
   | _ => false
@@ -9770,12 +9766,12 @@ def sequenceValueSeparateVariadicsDifferentLevelsAlg : Algorithm :=
   ]
 
 def sequenceValueSeparateVariadicsDifferentLevelsBindIndependently : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueSeparateVariadicsDifferentLevelsAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSeparateVariadicsDifferentLevelsAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2],
       .num 3,
       .num 4
-    ])
+    ]
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -9794,10 +9790,10 @@ def sequenceValueHeadTailAlg : Algorithm :=
   ]
 
 def sequenceValueHeadTailPatternBindsWithinOneSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueHeadTailAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueHeadTailAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2, .num 3, .num 4]
+    ]
   ])) with
   | Except.ok [1, 3] => true
   | _ => false
@@ -9818,10 +9814,10 @@ def sequenceValueFirstMiddleLastAlg : Algorithm :=
   ]
 
 def sequenceValueFirstMiddleLastPatternBindsWithinOneSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueFirstMiddleLastAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueFirstMiddleLastAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
+    ]
   ])) with
   | Except.ok [1, 3, 5] => true
   | _ => false
@@ -9842,11 +9838,11 @@ def sequenceValueCollectingWithSuffixInsideSequenceValueAlg : Algorithm :=
   ]
 
 def sequenceValueCollectingWithSuffixInsideSequenceValueBindsWithinOneSlot : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2, .num 3]),
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
+    .call (resolve "F") [
+      .capture [.num 1, .num 2, .num 3],
       .num 4
-    ])
+    ]
   ])) with
   | Except.ok [2, 3, 4] => true
   | _ => false
@@ -9854,11 +9850,11 @@ def sequenceValueCollectingWithSuffixInsideSequenceValueBindsWithinOneSlot : Boo
 #guard sequenceValueCollectingWithSuffixInsideSequenceValueBindsWithinOneSlot
 
 def sequenceValueCollectingWithSuffixInsideSequenceValueRequiresSuffixValue : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] []),
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueCollectingWithSuffixInsideSequenceValueAlg)] [
+    .call (resolve "F") [
+      .emptySequence 0,
       .num 4
-    ])
+    ]
   ])) with
   | Except.error _ => true
   | Except.ok _ => false
@@ -9876,16 +9872,16 @@ def sequenceValuePairFirstAlg : Algorithm :=
     sequence value `(5)` that would compare unequal to `5`. Mirrors assignment
     deconstruction of the same right-hand side. -/
 def sequenceValuePatternParenScalarPropertyItemIsNotOrphan : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 5]),
     ("F", sequenceValuePairFirstAlg)
   ] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.resolve "A"]),
+    .call (resolve "F") [
+      .capture [
+        .capture [.resolve "A"],
         .num 6
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok (.atom 5) => true
   | _ => false
@@ -9895,16 +9891,16 @@ def sequenceValuePatternParenScalarPropertyItemIsNotOrphan : Bool :=
 /-- Regression: `F(((A), 6))` with `A = (1, 2)`. The grouped property reference
     supplies the canonical `(1, 2)` as one item -- not an orphan `((1, 2))`. -/
 def sequenceValuePatternParenSequencePropertyItemStaysCanonical : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 1, .num 2]),
     ("F", sequenceValuePairFirstAlg)
   ] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.resolve "A"]),
+    .call (resolve "F") [
+      .capture [
+        .capture [.resolve "A"],
         .num 6
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -9915,13 +9911,13 @@ def sequenceValuePatternParenSequencePropertyItemStaysCanonical : Bool :=
     exactly as in ordinary sequence-value construction, so the pattern sees
     `((), 6)` and binds `x` to the empty sequence value. -/
 def sequenceValuePatternEmptySequenceSiblingItemIsPreserved : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [
+      .capture [
         .emptySequence 0,
         .num 6
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok (.sequenceValue []) => true
   | _ => false
@@ -9932,16 +9928,16 @@ def sequenceValuePatternEmptySequenceSiblingItemIsPreserved : Bool :=
     with `E = ()` spreads away the empty value, so the pattern sees the single
     item `6`. -/
 def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("E", alg [] [] [] [.emptySequence 0]),
     ("F", sequenceValueCollectingCountAlg)
   ] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
+    .call (resolve "F") [
+      .capture [
         .sequenceSpread (.resolve "E"),
         .num 6
-      ])
-    ])
+      ]
+    ]
   ])) with
   | Except.ok [1] => true
   | _ => false
@@ -9949,13 +9945,13 @@ def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
 #guard sequenceValuePatternSpreadOfEmptyStillContributesNoItems
 
 /-- The shared prepared output pass retains the exact written-slot view while constructing
-    the combined counted value: a nested zero-parameter block stays one grouped item, a list
+    the combined counted value: a nested written group stays one grouped item, a list
     stays opaque, and only the explicit spread contributes its immediate items. Patterned call
-    assembly consumes this pair directly instead of evaluating the block a second time. -/
+    assembly consumes this pair directly instead of evaluating the group a second time. -/
 def preparedAlgorithmOutputRetainsWrittenSlots : Bool :=
-  let nested := KatLang.Expr.block (alg [] [] [] [.num 1, .num 2])
+  let nested := KatLang.Expr.capture [.num 1, .num 2]
   let spreadPair := KatLang.Expr.sequenceSpread
-    (KatLang.Expr.block (alg [] [] [] [.num 5, .num 6]))
+    (KatLang.Expr.capture [.num 5, .num 6])
   let output := alg [] [] [] [nested, .listLiteral [.num 3, .num 4], spreadPair]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
@@ -9980,10 +9976,10 @@ def preparedAlgorithmOutputRetainsWrittenSlots : Bool :=
     recovering the slot view by decomposing the combined counted value would present
     `[1, 2]`; the retained accumulator keeps the one written slot `[(1, 2)]`. -/
 def preparedAlgorithmOutputKeepsMultiEmittingSlotWhole : Bool :=
-  let pairOfPairs := KatLang.Expr.block (alg [] [] [] [
-    .block (alg [] [] [] [.num 1, .num 2]),
-    .block (alg [] [] [] [.num 3, .num 4])
-  ])
+  let pairOfPairs := KatLang.Expr.capture [
+    .capture [.num 1, .num 2],
+    .capture [.num 3, .num 4]
+  ]
   let output := alg [] [] [] [.index pairOfPairs (.num 0)]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
@@ -10006,16 +10002,16 @@ def sequenceValueSingletonFirstAlg : Algorithm :=
     around a lone postfix expression, so this written group is exercised on the AST
     channel, mirroring `PatternedCallSingleEvaluationTests`.) -/
 def sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("S", alg [] [] [] [
-      .block (alg [] [] [] [.num 1, .num 2]),
-      .block (alg [] [] [] [.num 3, .num 4])
+      .capture [.num 1, .num 2],
+      .capture [.num 3, .num 4]
     ]),
     ("F", sequenceValueSingletonFirstAlg)
   ] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.index (resolve "S") (.num 0)])
-    ])
+    .call (resolve "F") [
+      .capture [.index (resolve "S") (.num 0)]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -10029,12 +10025,12 @@ def sequenceValueSingletonPatternKeepsMultiEmittingWrittenSlotWhole : Bool :=
     pattern arguments: binding neither mints an orphan `((1, 2))` nor silently
     opens the single written item. -/
 def sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2])
-      ])
-    ])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2]
+      ]
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
@@ -10045,14 +10041,14 @@ def sequenceValuePatternLiteralWrappedPairReportsWrittenSlotArity : Bool :=
     level, so `F((((1, 2))))` still writes exactly one slot -- the canonical
     `(1, 2)` -- and reports the same `arityMismatch 2 1`. -/
 def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [
-          .block (alg [] [] [] [.num 1, .num 2])
-        ])
-      ])
-    ])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [
+          .capture [.num 1, .num 2]
+        ]
+      ]
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
@@ -10064,11 +10060,11 @@ def sequenceValuePatternDeeplyWrappedPairReportsWrittenSlotArity : Bool :=
     pattern, so `F((x, y)) = x` binds `x = 1`. No hidden orphan `((1, 2))`
     distinguishes the stored value from the writable literal `(1, 2)`. -/
 def sequenceValuePatternPropertyStoredWrappedPairOpensCanonically : Bool :=
-  match runResult (.block (algPrivate [] [] [
-    ("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]),
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("A", alg [] [] [] [.capture [.num 1, .num 2]]),
     ("F", sequenceValuePairFirstAlg)
   ] [
-    .call (resolve "F") (alg [] [] [] [.resolve "A"])
+    .call (resolve "F") [.resolve "A"]
   ])) with
   | Except.ok (.atom 1) => true
   | _ => false
@@ -10085,13 +10081,13 @@ def sequenceValuePairFirstWithFixedSuffixAlg : Algorithm :=
     trailing fixed argument binds normally; the sequence-value pattern still
     receives one written slot for `((1, 2))` and reports `arityMismatch 2 1`. -/
 def sequenceValuePatternWrappedPairWithFixedSuffixReportsWrittenSlotArity : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2])
-      ]),
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstWithFixedSuffixAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2]
+      ],
       .num 3
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
@@ -10109,12 +10105,12 @@ def sequenceValueSingleCaptureAlg : Algorithm :=
     materializes a literal-unwritable orphan `((1, 2))` around it. The
     structural match pins the exact shape. -/
 def sequenceValuePatternSingleCaptureBindsWrappedPairAsCanonicalItem : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2])
-      ])
-    ])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2]
+      ]
+    ]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -10130,12 +10126,12 @@ def sequenceValueSingleCaptureCountAlg : Algorithm :=
     for the `IdSeq(((1, 2)))` binding is 2, matching the structural shape
     `(1, 2)` (an orphan `((1, 2))` would count 1). -/
 def sequenceValuePatternSingleCaptureWrappedPairCountsItems : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", sequenceValueSingleCaptureCountAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2])
-      ])
-    ])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureCountAlg)] [
+    .call (resolve "F") [
+      .capture [
+        .capture [.num 1, .num 2]
+      ]
+    ]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -10146,10 +10142,10 @@ def sequenceValuePatternSingleCaptureWrappedPairCountsItems : Bool :=
     `F(((), ()))` writes two items, so the pair pattern binds both empties
     positionally and `x` is the real empty sequence value. -/
 def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
-    .call (resolve "F") (alg [] [] [] [
-      .block (alg [] [] [] [.emptySequence 0, .emptySequence 0])
-    ])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValuePairFirstAlg)] [
+    .call (resolve "F") [
+      .capture [.emptySequence 0, .emptySequence 0]
+    ]
   ])) with
   | Except.ok (.sequenceValue []) => true
   | _ => false
@@ -10158,25 +10154,25 @@ def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
 
 def sequenceValueCollectingIsNotTopLevelVariadic : Bool :=
   let sequenceValueCall :=
-    runFlat (.block (algPrivate [] [] [("F", algWithParameterPatterns [
+    runFlat (.algorithmExpr (algPrivate [] [] [("F", algWithParameterPatterns [
       .sequenceValue [.capture { name := "xs", kind := .collecting }], .capture { name := "y" }
     ] [] [] [
       .dotCall (.param "xs") "count" none,
       .param "y"
     ])] [
-      .call (resolve "F") (alg [] [] [] [
-        .block (alg [] [] [] [.num 1, .num 2]),
+      .call (resolve "F") [
+        .capture [.num 1, .num 2],
         .num 3
-      ])
+      ]
     ]))
   let flatCall :=
-    runResult (.block (algPrivate [] [] [("F", algWithParameterPatterns [
+    runResult (.algorithmExpr (algPrivate [] [] [("F", algWithParameterPatterns [
       .sequenceValue [.capture { name := "xs", kind := .collecting }], .capture { name := "y" }
     ] [] [] [
       .dotCall (.param "xs") "count" none,
       .param "y"
     ])] [
-      .call (resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3])
+      .call (resolve "F") [.num 1, .num 2, .num 3]
     ]))
   match sequenceValueCall, flatCall with
   | Except.ok [2, 3], Except.error err => innermostIsArityMismatch 2 3 err
@@ -10187,7 +10183,7 @@ def sequenceValueCollectingIsNotTopLevelVariadic : Bool :=
 -- Source `Step((*history), previous) = (history*, previous + 1), previous + 1`,
 -- matching the C# regression `Eval_LoopStep_SequenceValueCommaHistorySlotUsesExplicitSpreadAcrossRepeat`.
 -- The first output slot is the written sequence value `(history*, previous + 1)`:
--- a block whose comma outputs are `history*` (an explicit spread opening the
+-- a written group whose comma rows are `history*` (an explicit spread opening the
 -- captured history one level) and `previous + 1`. The written spread splices its
 -- items before the sibling slot — the same `(A*, 99)` = `(1, 2, 99)` rule as
 -- every written sequence value — so the history slot GROWS FLAT by one item per
@@ -10204,16 +10200,16 @@ def sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat : Bool :=
     .sequenceValue [.capture { name := "history", kind := .collecting }],
     .capture { name := "previous" }
   ] [] [] [
-    .block (alg [] [] [] [sequenceSpread (.param "history"), .binary .add (.param "previous") (.num 1)]),
+    .capture [sequenceSpread (.param "history"), .binary .add (.param "previous") (.num 1)],
     .binary .add (.param "previous") (.num 1)
   ]
-  match runResult (.block (algPrivate [] [] [("Step", step)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", step)] [
     .index
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 2,
-        .block (alg [] [] [] [.num 1, .num 2]),
+        .capture [.num 1, .num 2],
         .num 2
-      ])))
+      ]))
       (.num 0)
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
@@ -10223,7 +10219,7 @@ def sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat : Bool :=
 
 -- Source `Step((*history, previous), current) = (history*, current), current`.
 -- Same shape as `sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat`: the first output
--- slot is the sequence-value pair `(history*, current)` — a block whose comma outputs are
+-- slot is the sequence-value pair `(history*, current)` — a written group whose comma rows are
 -- `history*` (sequence-spread) and `current` — so it is one next-state slot.
 -- (Contrast a spread over `sequenceConstruct history current`, which is a different shape.)
 def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateShape : Bool :=
@@ -10234,7 +10230,7 @@ def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateSh
     ],
     .capture { name := "current" }
   ] [] [] [
-    .block (alg [] [] [] [sequenceSpread (.param "history"), .param "current"]),
+    .capture [sequenceSpread (.param "history"), .param "current"],
     .param "current"
   ]
   -- Exact structural check. Here the sequence-value pattern `(*history, previous)`
@@ -10245,13 +10241,13 @@ def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateSh
   -- variadic-only `(*history)` capture in
   -- `sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat`, which accumulates).
   -- Asserting the exact `Result` pins this flat shape.
-  match runResult (.block (algPrivate [] [] [("Step", step)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", step)] [
     .index
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 2,
-        .block (alg [] [] [] [.num 1, .num 2]),
+        .capture [.num 1, .num 2],
         .num 3
-      ])))
+      ]))
       (.num 0)
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 3]) => true
@@ -10260,7 +10256,7 @@ def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateSh
 #guard sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateShape
 
 def loopVariadicHistoryLastExpr : KatLang.Expr :=
-  .dotCall (.call (resolve "atoms") (alg [] [] [] [.param "history"])) "last" none
+  .dotCall (.call (resolve "atoms") [.param "history"]) "last" none
 
 def loopVariadicNextExpr : KatLang.Expr :=
   .binary .add loopVariadicHistoryLastExpr (.num 1)
@@ -10271,11 +10267,11 @@ def loopVariadicAppendNextAlg : Algorithm :=
   ]
 
 def loopVariadicContinueFlagExpr : KatLang.Expr :=
-  .call (resolve "if") (alg [] [] [] [
+  .call (resolve "if") [
     .binary .lt loopVariadicNextExpr (.num 6),
     .num 1,
     .num 0
-  ])
+  ]
 
 def loopVariadicWhileAppendNextAlg : Algorithm :=
   algWithParameters [{ name := "history", kind := .collecting }] [] [] [
@@ -10288,11 +10284,11 @@ def loopVariadicInitialState : Algorithm :=
   alg [] [] [] [.num 1, .num 2, .num 4]
 
 def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [
       .num 1,
       sequenceItems [.num 1, .num 2, .num 4]
-    ]))
+    ])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5]) => true
   | _ => false
@@ -10300,11 +10296,11 @@ def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
 #guard variadicLoopStepRepeatOneIterationCapturesStateItems
 
 def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [
       .num 2,
       sequenceItems [.num 1, .num 2, .num 4]
-    ]))
+    ])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -10312,10 +10308,10 @@ def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
 #guard variadicLoopStepRepeatTwoIterationsKeepsExpandedState
 
 def variadicLoopStepWhileUsesExpandedState : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopVariadicWhileAppendNextAlg)] [
-    .dotCall (resolve "Step") "while" (some (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileAppendNextAlg)] [
+    .dotCall (resolve "Step") "while" (some [
       sequenceItems [.num 1, .num 2, .num 4]
-    ]))
+    ])
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -10323,14 +10319,14 @@ def variadicLoopStepWhileUsesExpandedState : Bool :=
 #guard variadicLoopStepWhileUsesExpandedState
 
 def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 3,
         sequenceItems [.num 1, .num 2, .num 4]
-      ])))
+      ]))
       "take"
-      (some (alg [] [] [] [.num 5]))
+      (some [.num 5])
   ])) with
   | Except.ok [1, 2, 4, 5, 6] => true
   | _ => false
@@ -10368,8 +10364,8 @@ def loopVariadicPrefixMiddleSuffixIncrementAlg : Algorithm :=
 -- Extra middle: 4 state slots bind first=10/last=40 from the ends, middle = [20, 30]
 -- (count 2). Mirrors C# Eval_VariadicLoopStep_WithPrefixMiddleSuffix_PreservesDeclarationOrderBindings.
 def variadicLoopStepCapturesExtraMiddleStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10, .num 20, .num 30, .num 40]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20, .num 30, .num 40])
   ])) with
   | Except.ok [10, 2, 40] => true
   | _ => false
@@ -10378,8 +10374,8 @@ def variadicLoopStepCapturesExtraMiddleStateSlots : Bool :=
 
 -- Exact structural count: 3 state slots bind first=10/last=30 and middle = [20] (count 1).
 def variadicLoopStepExactStructuralCountBinds : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10, .num 20, .num 30]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20, .num 30])
   ])) with
   | Except.ok [10, 1, 30] => true
   | _ => false
@@ -10390,8 +10386,8 @@ def variadicLoopStepExactStructuralCountBinds : Bool :=
 -- collects ZERO middle slots (middle = [], count 0) — the same empty-segment rule
 -- as every other collecting binding.
 def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10, .num 20]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20])
   ])) with
   | Except.ok [10, 0, 20] => true
   | _ => false
@@ -10401,8 +10397,8 @@ def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
 -- Fixed-minimum failure: only 1 state slot cannot satisfy the two FIXED
 -- parameters first + last, so this is arityMismatch 2 1.
 def variadicLoopStepBelowFixedMinimumFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 10]))
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10])
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
@@ -10415,8 +10411,8 @@ def variadicLoopStepBelowFixedMinimumFails : Bool :=
 -- `.sequenceSpread (.param "middle")`),
 -- yields 2, 5, 5, 12 (previously rejected by Lean as arityMismatch 3 4).
 def variadicLoopStepExtraMiddleRepeatsTwice : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixIncrementAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 2, .num 0, .num 5, .num 5, .num 10]))
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixIncrementAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 2, .num 0, .num 5, .num 5, .num 10])
   ])) with
   | Except.ok [2, 5, 5, 12] => true
   | _ => false
@@ -10449,25 +10445,25 @@ def loopBoundaryPairWhileStepAlg : Algorithm :=
 
 def loopBoundarySequenceValueRepeatStepAlg : Algorithm :=
   alg ["x"] [] [] [
-    .block (alg [] [] [] [.param "x", .binary .add (.param "x") (.num 1)])
+    .capture [.param "x", .binary .add (.param "x") (.num 1)]
   ]
 
 def loopBoundarySequenceValueWhileStepAlg : Algorithm :=
   alg ["x"] [] [] [
-    .block (alg [] [] [] [.param "x", .binary .add (.param "x") (.num 1)]),
+    .capture [.param "x", .binary .add (.param "x") (.num 1)],
     .num 0
   ]
 
 def sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 1,
         .num 1,
         .num 2
-      ])))
+      ]))
       "take"
-      (some (alg [] [] [] [.num 1]))
+      (some [.num 1])
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -10475,13 +10471,13 @@ def sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots : Bool :=
 #guard sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots
 
 def sequenceBuiltinDotCallRepeatReceiverCountUsesFinalStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 1,
         .num 1,
         .num 2
-      ])))
+      ]))
       "count"
       none
   ])) with
@@ -10491,12 +10487,12 @@ def sequenceBuiltinDotCallRepeatReceiverCountUsesFinalStateSlots : Bool :=
 #guard sequenceBuiltinDotCallRepeatReceiverCountUsesFinalStateSlots
 
 def sequenceBuiltinDotCallRepeatSequenceValueStateCountsOneItem : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundarySequenceValueRepeatStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundarySequenceValueRepeatStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "repeat" (some [
         .num 1,
         .num 1
-      ])))
+      ]))
       "count"
       none
   ])) with
@@ -10506,14 +10502,14 @@ def sequenceBuiltinDotCallRepeatSequenceValueStateCountsOneItem : Bool :=
 #guard sequenceBuiltinDotCallRepeatSequenceValueStateCountsOneItem
 
 def sequenceBuiltinDotCallWhileReceiverTakeUsesFinalStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "while" (some [
         .num 0,
         .num 0
-      ])))
+      ]))
       "take"
-      (some (alg [] [] [] [.num 1]))
+      (some [.num 1])
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -10521,12 +10517,12 @@ def sequenceBuiltinDotCallWhileReceiverTakeUsesFinalStateSlots : Bool :=
 #guard sequenceBuiltinDotCallWhileReceiverTakeUsesFinalStateSlots
 
 def sequenceBuiltinDotCallWhileReceiverCountUsesFinalStateSlots : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "while" (some [
         .num 0,
         .num 0
-      ])))
+      ]))
       "count"
       none
   ])) with
@@ -10536,11 +10532,11 @@ def sequenceBuiltinDotCallWhileReceiverCountUsesFinalStateSlots : Bool :=
 #guard sequenceBuiltinDotCallWhileReceiverCountUsesFinalStateSlots
 
 def sequenceBuiltinDotCallWhileSequenceValueStateCountsOneItem : Bool :=
-  match runFlat (.block (algPrivate [] [] [("Step", loopBoundarySequenceValueWhileStepAlg)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundarySequenceValueWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some (alg [] [] [] [
+      (.dotCall (resolve "Step") "while" (some [
         .num 1
-      ])))
+      ]))
       "count"
       none
   ])) with
@@ -10562,9 +10558,9 @@ def loopBoundaryVariadicIdentityAlg : Algorithm :=
 
 def loopBoundarySequenceValueHistoryStepAlg : Algorithm :=
   alg ["history"] [] [] [
-    .block (alg [] [] [] [
+    .capture [
       .sequenceConstruct (sequenceSpread (.param "history")) loopVariadicNextExpr
-    ])
+    ]
   ]
 
 def loopBoundarySpreadHistoryStepAlg : Algorithm :=
@@ -10573,8 +10569,8 @@ def loopBoundarySpreadHistoryStepAlg : Algorithm :=
   ]
 
 def loopInitialManyExplicitArgsCreateManySlots : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 1, .num 2]))
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2])
   ])) with
   | Except.ok (.sequenceValue [.atom 2, .atom 3]) => true
   | _ => false
@@ -10586,8 +10582,8 @@ def loopInitialManyExplicitArgsCreateManySlots : Bool :=
 -- values = [1, 2, 3] (one exact list) rather than rejecting the extra slots as the
 -- old strict path did.
 def loopInitialExplicitVariadicStepCapturesManySlots : Bool :=
-  match runResult (.block (algPrivate [] [] [("Step", loopBoundaryVariadicIdentityAlg)] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, .num 1, .num 2, .num 3]))
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryVariadicIdentityAlg)] [
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2, .num 3])
   ])) with
   | Except.ok (.listValue [.atom 1, .atom 2, .atom 3]) => true
   | _ => false
@@ -10595,11 +10591,11 @@ def loopInitialExplicitVariadicStepCapturesManySlots : Bool :=
 #guard loopInitialExplicitVariadicStepCapturesManySlots
 
 def loopInitialSequenceValuePropertyArgIsOneSlot : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundaryIdentityAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, resolve "List"]))
+    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "List"])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false
@@ -10607,11 +10603,11 @@ def loopInitialSequenceValuePropertyArgIsOneSlot : Bool :=
 #guard loopInitialSequenceValuePropertyArgIsOneSlot
 
 def loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundarySumPairStepAlg),
     ("Pair", alg [] [] [] [.num 1, .num 2])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, resolve "Pair"]))
+    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "Pair"])
   ])) with
   | Except.error err => innermostIsArityMismatch 1 0 err
   | _ => false
@@ -10619,15 +10615,15 @@ def loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams : Bool :=
 #guard loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams
 
 def loopInitialExplicitSelectionsSplitSequenceValueArg : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundarySumPairStepAlg),
     ("Pair", alg [] [] [] [.num 1, .num 2])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+    .dotCall (resolve "Step") "repeat" (some [
       .num 1,
       .index (resolve "Pair") (.num 0),
       .index (resolve "Pair") (.num 1)
-    ]))
+    ])
   ])) with
   | Except.ok (.atom 3) => true
   | _ => false
@@ -10635,11 +10631,11 @@ def loopInitialExplicitSelectionsSplitSequenceValueArg : Bool :=
 #guard loopInitialExplicitSelectionsSplitSequenceValueArg
 
 def loopInitialSequenceValueHistorySlotCanBePreservedAcrossRepeat : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundarySequenceValueHistoryStepAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 2, resolve "List"]))
+    .dotCall (resolve "Step") "repeat" (some [.num 2, resolve "List"])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -10647,11 +10643,11 @@ def loopInitialSequenceValueHistorySlotCanBePreservedAcrossRepeat : Bool :=
 #guard loopInitialSequenceValueHistorySlotCanBePreservedAcrossRepeat
 
 def loopInitialSpreadStepOutputStillBecomesNextStateSlots : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundarySpreadHistoryStepAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 2, resolve "List"]))
+    .dotCall (resolve "Step") "repeat" (some [.num 2, resolve "List"])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -10659,11 +10655,11 @@ def loopInitialSpreadStepOutputStillBecomesNextStateSlots : Bool :=
 #guard loopInitialSpreadStepOutputStillBecomesNextStateSlots
 
 def loopInitialMultiOutputPropertyArgIsOneSlot : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundaryIdentityAlg),
     ("Values", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [.num 1, resolve "Values"]))
+    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "Values"])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false
@@ -10674,16 +10670,16 @@ def loopInitialMultiOutputPropertyArgIsOneSlot : Bool :=
 -- bound by the single-collecting step as its item supply (Aspect 2: matches C#), so the
 -- three split slots are collected as values = [1, 2, 4] instead of being rejected.
 def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Step", loopBoundaryVariadicIdentityAlg),
     ("Values", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some (alg [] [] [] [
+    .dotCall (resolve "Step") "repeat" (some [
       .num 1,
       .index (resolve "Values") (.num 0),
       .index (resolve "Values") (.num 1),
       .index (resolve "Values") (.num 2)
-    ]))
+    ])
   ])) with
   | Except.ok (.listValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false
@@ -10769,9 +10765,9 @@ def valueAccessConditionalAlg : Algorithm :=
 
 -- Sanity: calling the conditional still selects branches normally.
 def conditionalDirectCallStillSelectsBranch : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 0]),
-    .call (resolve "F") (alg [] [] [] [.num 7])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
+    .call (resolve "F") [.num 0],
+    .call (resolve "F") [.num 7]
   ])) with
   | Except.ok [0, 1] => true
   | _ => false
@@ -10781,7 +10777,7 @@ def conditionalDirectCallStillSelectsBranch : Bool :=
 -- Bare property-style reference must raise noMatchingBranch, not return a
 -- silently cached empty sequence value.
 def bareConditionalPropertyReferenceFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
     resolve "F"
   ])) with
   | Except.error err => innermostIsNoMatchingBranch "F" err
@@ -10791,7 +10787,7 @@ def bareConditionalPropertyReferenceFails : Bool :=
 
 -- Dot-call access without arguments agrees with the bare reference.
 def dotCallConditionalWithoutArgsFails : Bool :=
-  match runResult (.dotCall (.block (algPrivate [] [] [
+  match runResult (.dotCall (.algorithmExpr (algPrivate [] [] [
     ("F", valueAccessConditionalAlg)
   ] [.num 0])) "F" none) with
   | Except.error err => innermostIsNoMatchingBranch "F" err
@@ -10802,8 +10798,8 @@ def dotCallConditionalWithoutArgsFails : Bool :=
 -- Forcing a conditional through a sequence-builtin collection argument also
 -- fails instead of silently contributing nothing.
 def conditionalCollectionArgumentFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
-    .call (resolve "sum") (alg [] [] [] [resolve "F"])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", valueAccessConditionalAlg)] [
+    .call (resolve "sum") [resolve "F"]
   ])) with
   | Except.error err => innermostIsNoMatchingBranch "conditional" err
   | _ => false
@@ -10813,11 +10809,11 @@ def conditionalCollectionArgumentFails : Bool :=
 -- A conditional bound as a higher-order argument fails when referenced as a
 -- bare zero-argument thunk inside the callee body.
 def conditionalHigherOrderThunkReferenceFails : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("F", valueAccessConditionalAlg),
     ("Apply", alg ["f"] [] [] [.param "f"])
   ] [
-    .call (resolve "Apply") (alg [] [] [] [resolve "F"])
+    .call (resolve "Apply") [resolve "F"]
   ])) with
   | Except.error err => innermostIsNoMatchingBranch "f" err
   | _ => false
@@ -10837,9 +10833,9 @@ def singletonSequenceValueConditionalAlg : Algorithm :=
   ]
 
 def singletonSequenceValuePatternMatchesDirectCall : Bool :=
-  match runFlat (.block (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
-    .call (resolve "G") (alg [] [] [] [.num 0]),
-    .call (resolve "G") (alg [] [] [] [.num 5])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
+    .call (resolve "G") [.num 0],
+    .call (resolve "G") [.num 5]
   ])) with
   | Except.ok [100, 5] => true
   | _ => false
@@ -10848,8 +10844,8 @@ def singletonSequenceValuePatternMatchesDirectCall : Bool :=
 
 -- The same conditional must accept the same shapes through map callbacks.
 def singletonSequenceValuePatternMatchesMapCallback : Bool :=
-  match runFlat (.block (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
-    .call (resolve "map") (alg [] [] [] [sequenceItems [.num 0, .num 5], resolve "G"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
+    .call (resolve "map") [sequenceItems [.num 0, .num 5], resolve "G"]
   ])) with
   | Except.ok [100, 5] => true
   | _ => false
@@ -10864,8 +10860,8 @@ def multiMemberSequenceValuePatternStillRejectsScalars : Bool :=
       ⟨ .sequenceValue [.sequenceValue [.bind "a", .bind "b"]], alg [] [] [] [.num 1] ⟩,
       ⟨ .sequenceValue [.bind "x"], alg [] [] [] [.num 2] ⟩
     ]
-  match runFlat (.block (algPrivate [] [] [("H", pairFirst)] [
-    .call (resolve "H") (alg [] [] [] [.num 9])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("H", pairFirst)] [
+    .call (resolve "H") [.num 9]
   ])) with
   | Except.ok [2] => true
   | _ => false
@@ -10918,7 +10914,7 @@ def receiverSymmetrySumAlg : Algorithm :=
 
 -- Pair = (10, 20): one sequence value.
 def sequenceValuePairReceiverProp : Prod String Algorithm :=
-  ("Pair", alg [] [] [] [.block (alg [] [] [] [.num 10, .num 20])])
+  ("Pair", alg [] [] [] [.capture [.num 10, .num 20]])
 
 -- Values = 10, 20: two emitted top-level values.
 def multiOutputValuesReceiverProp : Prod String Algorithm :=
@@ -10926,7 +10922,7 @@ def multiOutputValuesReceiverProp : Prod String Algorithm :=
 
 def runReceiverSymmetryCase (receiverProp calleeProp : Prod String Algorithm)
     (out : KatLang.Expr) : Except Error (List Int) :=
-  runFlat (.block (algPrivate [] [] [receiverProp, calleeProp] [out]))
+  runFlat (.algorithmExpr (algPrivate [] [] [receiverProp, calleeProp] [out]))
 
 -- Pair normalizes to the two-item sequence it contains; ordinary receiver and
 -- canonical call agree on that ONE sequence-valued slot, which the collecting parameter
@@ -10936,7 +10932,7 @@ def sequenceValueReceiverLeadingVariadicIsOneSlot : Bool :=
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (resolve "Pair") "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "NItems") (alg [] [] [] [resolve "Pair"]))) [1]
+    (.call (resolve "NItems") [resolve "Pair"])) [1]
 
 #guard sequenceValueReceiverLeadingVariadicIsOneSlot
 
@@ -10947,7 +10943,7 @@ def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "NItems" none)) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "NItems") (alg [] [] [] [sequenceSpread (resolve "Pair")]))) [2]
+    (.call (resolve "NItems") [sequenceSpread (resolve "Pair")])) [2]
 
 #guard sequenceValueReceiverSpreadFeedsItemSupply
 
@@ -10958,15 +10954,15 @@ def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
 -- observably different; dot-call and canonical call agree within each shape.
 def sequenceValueReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
-  let suffixArgs := alg [] [] [] [.num 99]
+  let suffixArgs : List KatLang.Expr := [.num 99]
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (resolve "Pair") "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "BeforeLastCount") (alg [] [] [] [resolve "Pair", .num 99]))) [1] &&
+    (.call (resolve "BeforeLastCount") [resolve "Pair", .num 99])) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "BeforeLastCount" (some suffixArgs))) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "BeforeLastCount") (alg [] [] [] [sequenceSpread (resolve "Pair"), .num 99]))) [2]
+    (.call (resolve "BeforeLastCount") [sequenceSpread (resolve "Pair"), .num 99])) [2]
 
 #guard sequenceValueReceiverWithSuffixMatchesCanonicalCalls
 
@@ -10978,11 +10974,11 @@ def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (resolve "Values") "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "NItems") (alg [] [] [] [resolve "Values"]))) [1] &&
+    (.call (resolve "NItems") [resolve "Values"])) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Values")) "NItems" none)) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "NItems") (alg [] [] [] [sequenceSpread (resolve "Values")]))) [2]
+    (.call (resolve "NItems") [sequenceSpread (resolve "Values")])) [2]
 
 #guard multiOutputReceiverCountsMatchCanonicalCalls
 
@@ -10992,15 +10988,15 @@ def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
 -- count 2). Dot-call and canonical call agree within each shape.
 def multiOutputReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
-  let suffixArgs := alg [] [] [] [.num 99]
+  let suffixArgs : List KatLang.Expr := [.num 99]
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (resolve "Values") "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "BeforeLastCount") (alg [] [] [] [resolve "Values", .num 99]))) [1] &&
+    (.call (resolve "BeforeLastCount") [resolve "Values", .num 99])) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Values")) "BeforeLastCount" (some suffixArgs))) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "BeforeLastCount") (alg [] [] [] [sequenceSpread (resolve "Values"), .num 99]))) [2]
+    (.call (resolve "BeforeLastCount") [sequenceSpread (resolve "Values"), .num 99])) [2]
 
 #guard multiOutputReceiverWithSuffixMatchesCanonicalCalls
 
@@ -11012,7 +11008,7 @@ def ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation : Bool :=
   expectInnermostTypeMismatch (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (resolve "Values") "SumPlusLast" none)) &&
   expectInnermostTypeMismatch (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "SumPlusLast") (alg [] [] [] [resolve "Values"])))
+    (.call (resolve "SumPlusLast") [resolve "Values"]))
 
 #guard ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation
 
@@ -11024,7 +11020,7 @@ def spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation : Bool :=
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpreadReceiver (resolve "Values")) "SumPlusLast" none)) [30] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "SumPlusLast") (alg [] [] [] [sequenceSpread (resolve "Values")]))) [30]
+    (.call (resolve "SumPlusLast") [sequenceSpread (resolve "Values")])) [30]
 
 #guard spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation
 
@@ -11032,10 +11028,10 @@ def spreadMultiOutputReceiverPreExpandsBeforeSuffixAllocation : Bool :=
 -- argument slot for the leading collecting parameter (count 1). Only the parenthesized-spread
 -- receiver `(...)*` pre-expands into separate items.
 def inlineBlockReceiverIsOneCapturedSlotForLeadingVariadic : Bool :=
-  expectFlat (runFlat (.block (algPrivate [] [] [
+  expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [
     ("NItems", receiverSymmetryNItemsAlg)
   ] [
-    .dotCall (.block (alg [] [] [] [.num 10, .num 20])) "NItems" none
+    .dotCall (.capture [.num 10, .num 20]) "NItems" none
   ]))) [1]
 
 #guard inlineBlockReceiverIsOneCapturedSlotForLeadingVariadic
@@ -11054,13 +11050,13 @@ def deconstructSumAlg : Algorithm :=
     .binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z")
   ]
 
-def deconstructFiveArg : Algorithm :=
-  alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]
+def deconstructFiveItems : List KatLang.Expr := [.num 1, .num 2, .num 3, .num 4, .num 5]
+def deconstructFiveArg : Algorithm := alg [] [] [] deconstructFiveItems
 
 -- F(1, 2, 3, 4, 5): five direct item slots.
 def deconstructionDirectItemSupply : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
-    .call (resolve "F") deconstructFiveArg
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSumAlg)] [
+    .call (resolve "F") deconstructFiveItems
   ])) with
   | Except.ok [15] => true
   | _ => false
@@ -11071,8 +11067,8 @@ def deconstructionDirectItemSupply : Bool :=
 -- Function-call binding does not implicitly open it, so the mixed fixed/variadic
 -- shape is under-supplied.
 def deconstructionSingleGroupedArgumentRequiresSpread : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
-    .call (resolve "F") (alg [] [] [] [resolve "A"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
+    .call (resolve "F") [resolve "A"]
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
@@ -11081,8 +11077,8 @@ def deconstructionSingleGroupedArgumentRequiresSpread : Bool :=
 
 -- F(A*): explicit spread supplies five slots.
 def deconstructionSpreadArgument : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
-    .call (resolve "F") (alg [] [] [] [sequenceSpread (resolve "A")])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("F", deconstructSumAlg)] [
+    .call (resolve "F") [sequenceSpread (resolve "A")]
   ])) with
   | Except.ok [15] => true
   | _ => false
@@ -11091,8 +11087,8 @@ def deconstructionSpreadArgument : Bool :=
 
 -- F(1, 2): the collecting parameter collects zero items, so x = 1, y = [], z = 2 and y.sum = 0.
 def deconstructionEmptyRest : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1, .num 2])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSumAlg)] [
+    .call (resolve "F") [.num 1, .num 2]
   ])) with
   | Except.ok [3] => true
   | _ => false
@@ -11109,8 +11105,8 @@ def deconstructionMatchAlg : Algorithm :=
   ]
 
 def deconstructionMatchingAlgorithm : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", deconstructionMatchAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6, .num 7])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructionMatchAlg)] [
+    .call (resolve "F") [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6, .num 7]
   ])) with
   | Except.ok [1, 2, 3, 6, 7] => true
   | _ => false
@@ -11125,8 +11121,8 @@ def deconstructFirstTailAlg : Algorithm :=
   ]
 
 def deconstructionScalarArgument : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", deconstructFirstTailAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructFirstTailAlg)] [
+    .call (resolve "F") [.num 1]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -11143,8 +11139,8 @@ def deconstructSequenceValueFirstTailAlg : Algorithm :=
   ]
 
 def sequenceValuePatternScalarArgument : Bool :=
-  match runFlat (.block (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
-    .call (resolve "F") (alg [] [] [] [.num 1])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
+    .call (resolve "F") [.num 1]
   ])) with
   | Except.ok [1, 0] => true
   | _ => false
@@ -11158,11 +11154,11 @@ def sequenceValuePatternScalarArgument : Bool :=
 -- deconstruct each scalar into first/tail. This keeps the counted callback path from
 -- accepting callback deconstruction before the C# path does.
 def sequenceValueDeconstructionCallbackOnScalarFails : Bool :=
-  match runResult (.block (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
-    .call (resolve "map") (alg [] [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
+    .call (resolve "map") [
       sequenceItems [.num 1, .num 2, .num 3],
       .resolve "F"
-    ])
+    ]
   ])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
@@ -11182,11 +11178,11 @@ def deconstructionRowsAlg : Algorithm :=
   ]
 
 def deconstructionCallbackOnSequenceValueRows : Bool :=
-  match runFlat (.block (algPrivate [] [] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Rows", deconstructionRowsAlg),
     ("F", deconstructSumAlg)
   ] [
-    .dotCall (resolve "Rows") "map" (some (alg [] [] [] [resolve "F"]))
+    .dotCall (resolve "Rows") "map" (some [resolve "F"])
   ])) with
   | Except.ok [6, 15] => true
   | _ => false
@@ -11204,14 +11200,14 @@ def restOnlyCollectAlg : Algorithm :=
 
 def restOnlyConsumesItemSupply : Bool :=
   let singleGroupedArg :=
-    match runResult (.block (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
-      .call (resolve "Sum") (alg [] [] [] [resolve "A"])
+    match runResult (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
+      .call (resolve "Sum") [resolve "A"]
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
   let multipleSlots :=
-    match runFlat (.block (algPrivate [] [] [("Sum", restOnlyCollectAlg)] [
-      .call (resolve "Sum") (alg [] [] [] [.num 1, .num 2, .num 3])
+    match runFlat (.algorithmExpr (algPrivate [] [] [("Sum", restOnlyCollectAlg)] [
+      .call (resolve "Sum") [.num 1, .num 2, .num 3]
     ])) with
     | Except.ok [6] => true
     | _ => false
@@ -11224,10 +11220,10 @@ def restOnlyConsumesItemSupply : Bool :=
 -- algorithm channel. C#: `BindParameterPatternList` (same kind; the C#
 -- message additionally names the collecting parameter).
 def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("G", algWithParameters [{ name := "fs", kind := .collecting }] [] [] [.param "fs"])
   ] [
-    .call (resolve "G") (alg [] [] [] [resolve "sum"])
+    .call (resolve "G") [resolve "sum"]
   ])) with
   | Except.error err =>
       innermostIsTypeMismatch
@@ -11241,11 +11237,11 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
 -- (`Algorithm.isFunctionShaped`): the genuine evaluation error surfaces
 -- through the collecting binding instead of the function diagnostic.
 def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
-  match runResult (.block (algPrivate [] [] [
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
     ("G", algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])
   ] [
-    .call (resolve "G") (alg [] [] [] [resolve "Bad"])
+    .call (resolve "G") [resolve "Bad"]
   ])) with
   | Except.error err => innermostIsDivByZero err
   | _ => false
@@ -11259,8 +11255,8 @@ def mixedVariadicBoundaryAlg : Algorithm :=
   ]
 
 def mixedVariadicPlainSequenceArgumentPreservesBoundary : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
-    .call (resolve "G") (alg [] [] [] [resolve "A"])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
+    .call (resolve "G") [resolve "A"]
   ])) with
   | Except.ok [2, 0] => true
   | _ => false
@@ -11268,8 +11264,8 @@ def mixedVariadicPlainSequenceArgumentPreservesBoundary : Bool :=
 #guard mixedVariadicPlainSequenceArgumentPreservesBoundary
 
 def mixedVariadicExplicitSpreadOpensSequenceArgument : Bool :=
-  match runFlat (.block (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
-    .call (resolve "G") (alg [] [] [] [sequenceSpread (resolve "A")])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1, .num 2]), ("G", mixedVariadicBoundaryAlg)] [
+    .call (resolve "G") [sequenceSpread (resolve "A")]
   ])) with
   | Except.ok [1, 1] => true
   | _ => false
@@ -11286,29 +11282,29 @@ def itemSupplySumAlg : Algorithm :=
 -- constraint error), while `G(A*)` and separate slots supply the items and
 -- sum to 15.
 def restOnlyItemSupplyDistinguishesGroupedFromSpread : Bool :=
-  let sumsTo15 (args : Algorithm) : Bool :=
-    match runFlat (.block (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
+  let sumsTo15 (args : List KatLang.Expr) : Bool :=
+    match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
       .call (resolve "G") args
     ])) with
     | Except.ok [15] => true
     | _ => false
-  let groupedFails (args : Algorithm) : Bool :=
-    match runResult (.block (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
+  let groupedFails (args : List KatLang.Expr) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
       .call (resolve "G") args
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
-  groupedFails (alg [] [] [] [resolve "A"])
-    && sumsTo15 (alg [] [] [] [sequenceSpread (resolve "A")])
-    && sumsTo15 deconstructFiveArg
-    && groupedFails (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
+  groupedFails [resolve "A"]
+    && sumsTo15 [sequenceSpread (resolve "A")]
+    && sumsTo15 deconstructFiveItems
+    && groupedFails [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
 
 #guard restOnlyItemSupplyDistinguishesGroupedFromSpread
 
 -- An empty call binds an empty item supply (min arity 0): `G()` sums to 0.
 def restOnlyEmptyCallSumsToZero : Bool :=
-  match runFlat (.block (algPrivate [] [] [("G", itemSupplySumAlg)] [
-    .call (resolve "G") (alg [] [] [] [])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("G", itemSupplySumAlg)] [
+    .call (resolve "G") []
   ])) with
   | Except.ok [0] => true
   | _ => false
@@ -11329,13 +11325,13 @@ def restOnlyPreservesSiblingGroupedValues : Bool :=
       ("A", alg [] [] [] [.num 1, .num 2]),
       ("B", alg [] [] [] [.num 3, .num 4]),
       ("G", itemSupplyCountAlg)
-    ] [ .call (resolve "G") (alg [] [] [] argExprs) ]
+    ] [ .call (resolve "G") argExprs ]
   let preserved :=
-    match runFlat (.block (twoItemRoot [resolve "A", resolve "B"])) with
+    match runFlat (.algorithmExpr (twoItemRoot [resolve "A", resolve "B"])) with
     | Except.ok [2] => true
     | _ => false
   let opened :=
-    match runFlat (.block (twoItemRoot [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")])) with
+    match runFlat (.algorithmExpr (twoItemRoot [sequenceSpread (resolve "A"), sequenceSpread (resolve "B")])) with
     | Except.ok [4] => true
     | _ => false
   preserved && opened
@@ -11347,24 +11343,24 @@ def restPrefixSumAlg : Algorithm :=
     .binary .add (.dotCall (.param "x") "sum" none) (.param "y")
   ]
 
--- `(((1, 2, 3, 4, 5)))` is a doubly-nested singleton sequence value: a block whose
--- single output is a block whose output is the five items.
+-- `(((1, 2, 3, 4, 5)))` is a doubly-nested singleton sequence value: a capture
+-- whose single row is a capture of the five items.
 def nestedSingletonFive : KatLang.Expr :=
-  .block (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5])])
+  .capture [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
 
 -- Repeated singleton grouping is useful-structure canonicalized as a value, but
 -- a function call still receives one argument unless `value*` /
 -- `value*` is written.
 def repeatedSingletonBoundaryDoesNotImplicitlyOpenCallArgument : Bool :=
   let plainMixed :=
-    match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
-      .call (resolve "F") (alg [] [] [] [nestedSingletonFive])
+    match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSumAlg)] [
+      .call (resolve "F") [nestedSingletonFive]
     ])) with
     | Except.error err => innermostIsArityMismatch 2 1 err
     | _ => false
   let spreadMixed :=
-    match runFlat (.block (algPrivate [] [] [("F", deconstructSumAlg)] [
-      .call (resolve "F") (alg [] [] [] [sequenceSpread nestedSingletonFive])
+    match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSumAlg)] [
+      .call (resolve "F") [sequenceSpread nestedSingletonFive]
     ])) with
     | Except.ok [15] => true
     | _ => false
@@ -11385,8 +11381,8 @@ def branchInputArityMismatchIsRejected : Bool :=
     ⟨ .litInt 0, alg [] [] [] [.num 1] ⟩,
     ⟨ .sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")] ⟩
   ]
-  match runResult (.block (algPrivate [] [] [("F", cond)] [
-    .call (resolve "F") (alg [] [] [] [.num 0])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", cond)] [
+    .call (resolve "F") [.num 0]
   ])) with
   | Except.error err => innermostIsBranchArityMismatch "F" 1 2 err
   | _ => false
@@ -11399,8 +11395,8 @@ def branchOutputArityMismatchIsRejected : Bool :=
     ⟨ .litInt 0, alg [] [] [] [.num 1] ⟩,
     ⟨ .bind "x", alg [] [] [] [.num 1, .num 2] ⟩
   ]
-  match runResult (.block (algPrivate [] [] [("F", cond)] [
-    .call (resolve "F") (alg [] [] [] [.num 0])
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", cond)] [
+    .call (resolve "F") [.num 0]
   ])) with
   | Except.error err => innermostIsBranchOutputArityMismatch "F" 1 2 err
   | _ => false
@@ -11414,9 +11410,9 @@ def sequenceValuePatternsWithSameTopLevelArityPass : Bool :=
     ⟨ .sequenceValue [.sequenceValue [.litInt 0, .bind "y"]], alg [] [] [] [.param "y"] ⟩,
     ⟨ .sequenceValue [.sequenceValue [.bind "x", .bind "y"]], alg [] [] [] [.binary .add (.param "x") (.param "y")] ⟩
   ]
-  match runFlat (.block (algPrivate [] [] [("F", cond)] [
-    .call (resolve "F") (alg [] [] [] [.block (alg [] [] [] [.num 0, .num 5])]),
-    .call (resolve "F") (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", cond)] [
+    .call (resolve "F") [.capture [.num 0, .num 5]],
+    .call (resolve "F") [.capture [.num 1, .num 2]]
   ])) with
   | Except.ok [5, 3] => true
   | _ => false
@@ -11429,9 +11425,9 @@ def uniformBranchOutputArityPasses : Bool :=
     ⟨ .litInt 0, alg [] [] [] [.num 1, .num 2] ⟩,
     ⟨ .bind "x", alg [] [] [] [.param "x", .param "x"] ⟩
   ]
-  match runFlat (.block (algPrivate [] [] [("F", cond)] [
-    .call (resolve "F") (alg [] [] [] [.num 0]),
-    .call (resolve "F") (alg [] [] [] [.num 7])
+  match runFlat (.algorithmExpr (algPrivate [] [] [("F", cond)] [
+    .call (resolve "F") [.num 0],
+    .call (resolve "F") [.num 7]
   ])) with
   | Except.ok [1, 2, 7, 7] => true
   | _ => false
@@ -11447,7 +11443,7 @@ def nestedUnusedConditionalIsStillValidated : Bool :=
     ⟨ .sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.param "x"] ⟩
   ]
   let outer : Algorithm := algPrivate [] [] [("Bad", badCond)] [.num 1]
-  match runResult (.block (algPrivate [] [] [("Outer", outer)] [.num 42])) with
+  match runResult (.algorithmExpr (algPrivate [] [] [("Outer", outer)] [.num 42])) with
   | Except.error err => innermostIsBranchArityMismatch "Bad" 1 2 err
   | _ => false
 
@@ -11666,7 +11662,7 @@ def builtinProbeMultiOutputArg : Algorithm := alg [] [] [] [.num 1, .num 2]
 
 /-- Branch emitting one sequence value. -/
 def builtinProbeSequenceValueOutputArg : Algorithm :=
-  alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]
+  alg [] [] [] [.capture [.num 1, .num 2]]
 
 /-- Branch with no output: forcing it raises `missingOutput`. -/
 def builtinProbeEmptyOutputArg : Algorithm := alg [] [] [] []
@@ -11742,7 +11738,7 @@ def ifBranchThreeOutputsAlt : Algorithm := alg [] [] [] [.num 10, .num 20, .num 
 
 /-- Already-grouped branch property (`X = (1, 2, 3)`). -/
 def ifBranchSequenceValue : Algorithm :=
-  alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])]
+  alg [] [] [] [.capture [.num 1, .num 2, .num 3]]
 
 /-- Run counted `if` with an integer condition and two branch algorithms. -/
 def ifCountedResult (cond : Int) (t e : Algorithm) : Except KatLang.Error KatLang.CountedResult :=
@@ -11820,7 +11816,7 @@ def ifSpreadArgumentOpensIntoThreeArguments : Bool :=
 -- `(1, 2, 3)*`: the spread supplies its items, so the argument still expands to
 -- three slots. This mirrors the C# engine test for `TrueResult = (1, 2, 3)`.
 def ifSpreadGroupedOperandArg : KatLang.ResolvedArgumentAlgorithm :=
-  { algorithm := alg [] [] [] [.sequenceSpread (.block ifBranchThreeOutputs)],
+  { algorithm := alg [] [] [] [.sequenceSpread (.algorithmExpr ifBranchThreeOutputs)],
     spreadsSequence := true }
 
 def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
@@ -11848,7 +11844,7 @@ def runCountedProgram (e : KatLang.Expr) : Except KatLang.Error KatLang.CountedR
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg], algEnv := [] }
   KatLang.runEvalM
     (match e with
-     | .block a =>
+     | .algorithmExpr a =>
          let wired := KatLang.wireToCaller ctx a
          if (KatLang.Algorithm.params wired).length = 0 then
            KatLang.evalAlgOutputCounted wired ctx []
@@ -11862,10 +11858,10 @@ def boundaryVariadicReturnAlg : Algorithm :=
 
 def boundaryVariadicReturnRoot (body : List KatLang.Expr) : Algorithm :=
   algPrivate [] [] [("F", algWithParameters [{ name := "a", kind := .collecting }] [] [] body)]
-    [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9])]
+    [.call (.resolve "F") [.num 5, .num 9]]
 
 def boundaryVariadicReturnIsOneValue : Bool :=
-  match runCountedProgram (.block (boundaryVariadicReturnRoot [.param "a"])) with
+  match runCountedProgram (.algorithmExpr (boundaryVariadicReturnRoot [.param "a"])) with
   | .ok (Result.listValue [Result.atom 5, Result.atom 9], 1) => true
   | _ => false
 
@@ -11874,7 +11870,7 @@ def boundaryVariadicReturnIsOneValue : Bool :=
 /-- `F(*a) = a*` then `F(5, 9)` -- the body spread opens the capture, but the
     call boundary still returns one value. -/
 def boundaryVariadicBodySpreadIsOneValue : Bool :=
-  match runCountedProgram (.block (boundaryVariadicReturnRoot [sequenceSpread (.param "a")])) with
+  match runCountedProgram (.algorithmExpr (boundaryVariadicReturnRoot [sequenceSpread (.param "a")])) with
   | .ok (Result.sequenceValue [Result.atom 5, Result.atom 9], 1) => true
   | _ => false
 
@@ -11882,7 +11878,7 @@ def boundaryVariadicBodySpreadIsOneValue : Bool :=
 
 /-- `F(*a) = a, 0` then `F(5, 9)` -- the collected list stays one nested list value. -/
 def boundaryVariadicCommaSlotGroupsCapture : Bool :=
-  match runCountedProgram (.block (boundaryVariadicReturnRoot [.param "a", .num 0])) with
+  match runCountedProgram (.algorithmExpr (boundaryVariadicReturnRoot [.param "a", .num 0])) with
   | .ok (Result.sequenceValue [Result.listValue [Result.atom 5, Result.atom 9], Result.atom 0], 1) => true
   | _ => false
 
@@ -11890,7 +11886,7 @@ def boundaryVariadicCommaSlotGroupsCapture : Bool :=
 
 /-- `F(*a) = a*, 0` then `F(5, 9)` -- body spread flattens, boundary still one value. -/
 def boundaryVariadicBodySpreadThenSlotIsOneFlatValue : Bool :=
-  match runCountedProgram (.block (boundaryVariadicReturnRoot [sequenceSpread (.param "a"), .num 0])) with
+  match runCountedProgram (.algorithmExpr (boundaryVariadicReturnRoot [sequenceSpread (.param "a"), .num 0])) with
   | .ok (Result.sequenceValue [Result.atom 5, Result.atom 9, Result.atom 0], 1) => true
   | _ => false
 
@@ -11898,8 +11894,8 @@ def boundaryVariadicBodySpreadThenSlotIsOneFlatValue : Bool :=
 
 /-- `F(*a) = a` then `F(5, 9)*` -- caller-site spread turns the returned value back into an item supply. -/
 def boundaryCallerSpreadOpensReturnedValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("F", boundaryVariadicReturnAlg)]
-      [sequenceSpread (.call (.resolve "F") (alg [] [] [] [.num 5, .num 9]))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("F", boundaryVariadicReturnAlg)]
+      [sequenceSpread (.call (.resolve "F") [.num 5, .num 9])])) with
   | .ok (Result.sequenceValue [Result.atom 5, Result.atom 9], 2) => true
   | _ => false
 
@@ -11910,15 +11906,15 @@ def boundaryCallerSpreadOpensReturnedValue : Bool :=
 def boundaryMultiOutputProp : Algorithm := alg [] [] [] [.num 1, .num 2, .num 3]
 
 def boundaryLexicalAccessIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundaryMultiOutputProp)] [.resolve "X"])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundaryMultiOutputProp)] [.resolve "X"])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryLexicalAccessIsOneValue
 
 def boundaryExplicitZeroArgCallIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundaryMultiOutputProp)]
-      [.call (.resolve "X") (alg [] [] [] [])])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundaryMultiOutputProp)]
+      [.call (.resolve "X") []])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
@@ -11929,7 +11925,7 @@ def boundaryStructuralHolder : Algorithm :=
   alg [] [] [publicProp "P" boundaryMultiOutputProp] [.num 0]
 
 def boundaryStructuralDotAccessIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("M", boundaryStructuralHolder)]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("M", boundaryStructuralHolder)]
       [.dotCall (.resolve "M") "P" none])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
@@ -11939,7 +11935,7 @@ def boundaryStructuralDotAccessIsOneValue : Bool :=
 /-- Collection-producing builtin `order` returns one exact list value; spread
     opens it. -/
 def boundaryOrderIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 3, .num 1, .num 2])]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", alg [] [] [] [.num 3, .num 1, .num 2])]
       [.dotCall (.resolve "X") "order" none])) with
   | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
@@ -11947,7 +11943,7 @@ def boundaryOrderIsOneValue : Bool :=
 #guard boundaryOrderIsOneValue
 
 def boundaryOrderSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 3, .num 1, .num 2])]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", alg [] [] [] [.num 3, .num 1, .num 2])]
       [sequenceSpread (.dotCall (.resolve "X") "order" none)])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 3) => true
   | _ => false
@@ -11957,8 +11953,8 @@ def boundaryOrderSpreadOpensItems : Bool :=
 /-- `range(1, 3)` is a collection-producing builtin: one exact list value,
     opened by spread. -/
 def boundaryRangeIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] []
-      [.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] []
+      [.call (.resolve "range") [.num 1, .num 3]])) with
   | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
@@ -11967,10 +11963,10 @@ def boundaryRangeIsOneValue : Bool :=
 /-- `F(*a) = a.sum` sums the exact collected list through the builtin's
     post-binding collection view. -/
 def boundaryVariadicForwardingUsesCollectedListView : Bool :=
-  match runCountedProgram (.block (algPrivate [] []
+  match runCountedProgram (.algorithmExpr (algPrivate [] []
       [("F", algWithParameters [{ name := "a", kind := .collecting }] [] []
         [.dotCall (.param "a") "sum" none])]
-      [.call (.resolve "F") (alg [] [] [] [.num 5, .num 9])])) with
+      [.call (.resolve "F") [.num 5, .num 9]])) with
   | .ok (Result.atom 14, 1) => true
   | _ => false
 
@@ -11978,7 +11974,7 @@ def boundaryVariadicForwardingUsesCollectedListView : Bool :=
 
 /-- Regression: root output is NOT a call boundary and stays multi-output. -/
 def boundaryRootOutputStaysMultiOutput : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [] [.num 1, .num 2, .num 3])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [] [.num 1, .num 2, .num 3])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 3) => true
   | _ => false
 
@@ -11987,7 +11983,7 @@ def boundaryRootOutputStaysMultiOutput : Bool :=
 /-- Regression: redundant empty sequence nesting canonicalizes before the
     boundary re-count observes it. -/
 def boundaryCanonicalizesNestedEmptySequence : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("F", alg [] [] [] [.emptySequence 1])] [.resolve "F"])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("F", alg [] [] [] [.emptySequence 1])] [.resolve "F"])) with
   | .ok (Result.sequenceValue [], 1) => true
   | _ => false
 
@@ -12003,7 +11999,7 @@ def boundary123 : Algorithm := alg [] [] [] [.num 1, .num 2, .num 3]
 
 /-- `X.orderDesc` is one value; `X.orderDesc*` opens it. -/
 def boundaryOrderDescIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundaryDesc312)]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundaryDesc312)]
       [.dotCall (.resolve "X") "orderDesc" none])) with
   | .ok (Result.listValue [Result.atom 3, Result.atom 2, Result.atom 1], 1) => true
   | _ => false
@@ -12011,7 +12007,7 @@ def boundaryOrderDescIsOneValue : Bool :=
 #guard boundaryOrderDescIsOneValue
 
 def boundaryOrderDescSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundaryDesc312)]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundaryDesc312)]
       [sequenceSpread (.dotCall (.resolve "X") "orderDesc" none)])) with
   | .ok (Result.sequenceValue [Result.atom 3, Result.atom 2, Result.atom 1], 3) => true
   | _ => false
@@ -12020,7 +12016,7 @@ def boundaryOrderDescSpreadOpensItems : Bool :=
 
 /-- `X.distinct` is one value; `X.distinct*` opens it. -/
 def boundaryDistinctIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
       [.dotCall (.resolve "X") "distinct" none])) with
   | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
@@ -12028,7 +12024,7 @@ def boundaryDistinctIsOneValue : Bool :=
 #guard boundaryDistinctIsOneValue
 
 def boundaryDistinctSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", alg [] [] [] [.num 1, .num 1, .num 2, .num 3])]
       [sequenceSpread (.dotCall (.resolve "X") "distinct" none)])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 3) => true
   | _ => false
@@ -12037,8 +12033,8 @@ def boundaryDistinctSpreadOpensItems : Bool :=
 
 /-- `X.take(2)` is one value. -/
 def boundaryTakeIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
-      [.dotCall (.resolve "X") "take" (some (alg [] [] [] [.num 2]))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundary123)]
+      [.dotCall (.resolve "X") "take" (some [.num 2])])) with
   | .ok (Result.listValue [Result.atom 1, Result.atom 2], 1) => true
   | _ => false
 
@@ -12046,16 +12042,16 @@ def boundaryTakeIsOneValue : Bool :=
 
 /-- `X.skip(1)` is one value; `X.skip(1)*` opens it. -/
 def boundarySkipIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
-      [.dotCall (.resolve "X") "skip" (some (alg [] [] [] [.num 1]))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundary123)]
+      [.dotCall (.resolve "X") "skip" (some [.num 1])])) with
   | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundarySkipIsOneValue
 
 def boundarySkipSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("X", boundary123)]
-      [sequenceSpread (.dotCall (.resolve "X") "skip" (some (alg [] [] [] [.num 1])))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", boundary123)]
+      [sequenceSpread (.dotCall (.resolve "X") "skip" (some [.num 1]))])) with
   | .ok (Result.sequenceValue [Result.atom 2, Result.atom 3], 2) => true
   | _ => false
 
@@ -12065,16 +12061,16 @@ def boundarySkipSpreadOpensItems : Bool :=
 def boundaryFilterPredicate : Algorithm := alg ["x"] [] [] [.binary .gt (.param "x") (.num 1)]
 
 def boundaryFilterIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]
-      [.dotCall (.resolve "X") "filter" (some (alg [] [] [] [.resolve "IsBig"]))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]
+      [.dotCall (.resolve "X") "filter" (some [.resolve "IsBig"])])) with
   | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
 #guard boundaryFilterIsOneValue
 
 def boundaryFilterSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]
-      [sequenceSpread (.dotCall (.resolve "X") "filter" (some (alg [] [] [] [.resolve "IsBig"])))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("IsBig", boundaryFilterPredicate), ("X", boundary123)]
+      [sequenceSpread (.dotCall (.resolve "X") "filter" (some [.resolve "IsBig"]))])) with
   | .ok (Result.sequenceValue [Result.atom 2, Result.atom 3], 2) => true
   | _ => false
 
@@ -12084,16 +12080,16 @@ def boundaryFilterSpreadOpensItems : Bool :=
 def boundaryMapTransform : Algorithm := alg ["x"] [] [] [.binary .mul (.param "x") (.num 2)]
 
 def boundaryMapIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("Double", boundaryMapTransform), ("X", boundary123)]
-      [.dotCall (.resolve "X") "map" (some (alg [] [] [] [.resolve "Double"]))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("Double", boundaryMapTransform), ("X", boundary123)]
+      [.dotCall (.resolve "X") "map" (some [.resolve "Double"])])) with
   | .ok (Result.listValue [Result.atom 2, Result.atom 4, Result.atom 6], 1) => true
   | _ => false
 
 #guard boundaryMapIsOneValue
 
 def boundaryMapSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] [("Double", boundaryMapTransform), ("X", boundary123)]
-      [sequenceSpread (.dotCall (.resolve "X") "map" (some (alg [] [] [] [.resolve "Double"])))])) with
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] [("Double", boundaryMapTransform), ("X", boundary123)]
+      [sequenceSpread (.dotCall (.resolve "X") "map" (some [.resolve "Double"]))])) with
   | .ok (Result.sequenceValue [Result.atom 2, Result.atom 4, Result.atom 6], 3) => true
   | _ => false
 
@@ -12101,10 +12097,10 @@ def boundaryMapSpreadOpensItems : Bool :=
 
 /-- `atoms((1, (2, 3)))` is ONE exact list value `[1, 2, 3]`;
     `atoms(...)*` opens the one list boundary into three items. -/
-def boundaryAtomsArg : Algorithm := alg [] [] [] [sequenceItems [.num 1, sequenceItems [.num 2, .num 3]]]
+def boundaryAtomsArg : List KatLang.Expr := [sequenceItems [.num 1, sequenceItems [.num 2, .num 3]]]
 
 def boundaryAtomsIsOneValue : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] []
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] []
       [.call (.resolve "atoms") boundaryAtomsArg])) with
   | .ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3], 1) => true
   | _ => false
@@ -12112,7 +12108,7 @@ def boundaryAtomsIsOneValue : Bool :=
 #guard boundaryAtomsIsOneValue
 
 def boundaryAtomsSpreadOpensItems : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] []
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] []
       [sequenceSpread (.call (.resolve "atoms") boundaryAtomsArg)])) with
   | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3], 3) => true
   | _ => false
@@ -12130,7 +12126,7 @@ def boundaryAtomsSpreadOpensItems : Bool :=
 -- changes any `if` outcome — see the truth-value non-regression guards below.
 
 def atomsCallOn (argBody : List KatLang.Expr) : KatLang.Expr :=
-  .block (algPrivate [] [] [] [.call (.resolve "atoms") (alg [] [] [] argBody)])
+  .algorithmExpr (algPrivate [] [] [] [.call (.resolve "atoms") argBody])
 
 def atomsNumberIsSingletonList : Bool :=
   match runCountedProgram (atomsCallOn [.num 7]) with
@@ -12180,7 +12176,7 @@ def atomsNestedListsFlatten : Bool :=
 -- atoms([(1, 2), [3, [4]], 5]) → [1, 2, 3, 4, 5]
 def atomsMixedStructuresFlatten : Bool :=
   match runCountedProgram (atomsCallOn [.listLiteral [
-      .block (alg [] [] [] [.num 1, .num 2]),
+      .capture [.num 1, .num 2],
       .listLiteral [.num 3, .listLiteral [.num 4]],
       .num 5]]) with
   | .ok (Result.listValue
@@ -12193,7 +12189,7 @@ def atomsMixedStructuresFlatten : Bool :=
 def atomsPreservesLeftToRightOrder : Bool :=
   match runCountedProgram (atomsCallOn [.listLiteral [
       .num 3,
-      .block (alg [] [] [] [.num 1, .listLiteral [.num 4, .num 2]])]]) with
+      .capture [.num 1, .listLiteral [.num 4, .num 2]]]]) with
   | .ok (Result.listValue [Result.atom 3, Result.atom 1, Result.atom 4, Result.atom 2], 1) => true
   | _ => false
 
@@ -12201,9 +12197,9 @@ def atomsPreservesLeftToRightOrder : Bool :=
 
 -- [1, 2, 3].skip(1).atoms → [2, 3] (builtin-produced lists compose directly)
 def atomsComposesWithListProducingBuiltins : Bool :=
-  match runCountedProgram (.block (algPrivate [] [] []
+  match runCountedProgram (.algorithmExpr (algPrivate [] [] []
       [.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "skip"
-          (some (alg [] [] [] [.num 1]))) "atoms" none])) with
+          (some [.num 1])) "atoms" none])) with
   | .ok (Result.listValue [Result.atom 2, Result.atom 3], 1) => true
   | _ => false
 
@@ -12227,7 +12223,7 @@ def atomViewSeparationValue : Result :=
 -- no truth value, and list elements inside sequence conditions are skipped.
 
 def truthIfCall (cond : KatLang.Expr) : KatLang.Expr :=
-  .call (.resolve "if") (alg [] [] [] [cond, .num 10, .num 20])
+  .call (.resolve "if") [cond, .num 10, .num 20]
 
 def ifListConditionStillInvalid : Bool :=
   match runFlat (truthIfCall (.listLiteral [.num 1])) with
@@ -12259,7 +12255,7 @@ def ifNestedListConditionStillInvalid : Bool :=
 
 -- if((1, [2]), 10, 20) → 10: the list element is skipped, first atom 1 decides
 def ifMixedConditionReadsFirstNumericAtom : Bool :=
-  match runFlat (truthIfCall (.block (alg [] [] [] [.num 1, .listLiteral [.num 2]]))) with
+  match runFlat (truthIfCall (.capture [.num 1, .listLiteral [.num 2]])) with
   | Except.ok [10] => true
   | _ => false
 
@@ -12267,7 +12263,7 @@ def ifMixedConditionReadsFirstNumericAtom : Bool :=
 
 -- if(([1], 0), 10, 20) → 20: the leading list is skipped, first atom 0 decides
 def ifMixedConditionSkipsLeadingListElement : Bool :=
-  match runFlat (truthIfCall (.block (alg [] [] [] [.listLiteral [.num 1], .num 0]))) with
+  match runFlat (truthIfCall (.capture [.listLiteral [.num 1], .num 0])) with
   | Except.ok [20] => true
   | _ => false
 
@@ -12276,8 +12272,7 @@ def ifMixedConditionSkipsLeadingListElement : Bool :=
 -- if(atoms((1, 2)), 10, 20) is invalid: the atoms result is a list like any
 -- other, so `atoms` introduces no list truthiness.
 def ifAtomsResultConditionInvalid : Bool :=
-  match runFlat (truthIfCall (.call (.resolve "atoms")
-      (alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])]))) with
+  match runFlat (truthIfCall (.call (.resolve "atoms") [.capture [.num 1, .num 2]])) with
   | Except.error err => innermostIsBadArity err
   | _ => false
 
@@ -12318,7 +12313,7 @@ def dotCallParityProg : Algorithm :=
     ("NItems", receiverSymmetryNItemsAlg),
     ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg),
     ("FixedPairCount", alg ["values", "t"] [] [] [.dotCall (.param "values") "count" none]),
-    ("Pair", alg [] [] [] [.block (alg [] [] [] [.num 10, .num 20])]),
+    ("Pair", alg [] [] [] [.capture [.num 10, .num 20]]),
     ("Values", alg [] [] [] [.num 10, .num 20]),
     ("Value", alg [] [] [] [.num 42]),
     ("Receiver", alg [] [] [] [.num 1]),
@@ -12329,19 +12324,19 @@ def dotCallParityProg : Algorithm :=
   ] [.num 0]
 
 -- Inline `(…)` receivers expose their top-level output items.
-def dotCallParityData123 : KatLang.Expr := .block (alg [] [] [] [.num 1, .num 2, .num 3])
-def dotCallParityData312 : KatLang.Expr := .block (alg [] [] [] [.num 3, .num 1, .num 2])
+def dotCallParityData123 : KatLang.Expr := .capture [.num 1, .num 2, .num 3]
+def dotCallParityData312 : KatLang.Expr := .capture [.num 3, .num 1, .num 2]
 def dotCallParityDataMixedSigns : KatLang.Expr :=
-  .block (alg [] [] [] [.num (-1), .num 2, .num (-3)])
+  .capture [.num (-1), .num 2, .num (-3)]
 
-def dotCallArgs (items : List KatLang.Expr) : Option Algorithm :=
-  some (alg [] [] [] items)
+def dotCallArgs (items : List KatLang.Expr) : Option (List KatLang.Expr) :=
+  some items
 
 structure DotCallParityCase where
   label : String
   target : KatLang.Expr
   name : String
-  argsOpt : Option Algorithm := none
+  argsOpt : Option (List KatLang.Expr) := none
   expected : BuiltinApplyOutcome := .succeeded
   expectedAtoms : Option (List Int) := none
 
@@ -12486,7 +12481,7 @@ def dotCallParityCacheCasesWriteCache : Bool :=
 
 -- `[1, 2, 3]` constructs ONE exact list value.
 def listLiteralConstructsExactValue : Bool :=
-  match runResult (.block (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
   | _ => false
 
@@ -12495,11 +12490,11 @@ def listLiteralConstructsExactValue : Bool :=
 -- `[]`, `[7]`, and `[[7]]` keep exact cardinality and nesting: no singleton
 -- erasure and no empty canonicalization applies to list structure.
 def listExactnessPreserved : Bool :=
-  (match runResult (.block (alg [] [] [] [.listLiteral []])) with
+  (match runResult (.algorithmExpr (alg [] [] [] [.listLiteral []])) with
    | Except.ok (Result.listValue []) => true | _ => false) &&
-  (match runResult (.block (alg [] [] [] [.listLiteral [.num 7]])) with
+  (match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 7]])) with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
-  (match runResult (.block (alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])) with
+  (match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])) with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 7]]) => true | _ => false)
 
 #guard listExactnessPreserved
@@ -12507,11 +12502,11 @@ def listExactnessPreserved : Bool :=
 -- Equality is structural, recursive, and kind-exact: a list never equals a
 -- sequence value or the lone item it contains.
 def listEqualityIsKindExact : Bool :=
-  expectFlat (runFlat (.block (alg [] [] [] [
+  expectFlat (runFlat (.algorithmExpr (alg [] [] [] [
     .binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2]),
     .binary .eq (.listLiteral []) (.emptySequence 0),
     .binary .eq (.listLiteral [.num 7]) (.num 7),
-    .binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))])))
+    .binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])])))
     [1, 0, 0, 0]
 
 #guard listEqualityIsKindExact
@@ -12519,7 +12514,7 @@ def listEqualityIsKindExact : Bool :=
 -- Ordinary parentheses stay a redundant SEQUENCE grouping around lists:
 -- `([1, 2])` canonicalizes to the exact list itself.
 def redundantParensAroundListCanonicalize : Bool :=
-  match runResult (.block (alg [] [] [] [.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 1, .num 2]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
@@ -12527,7 +12522,7 @@ def redundantParensAroundListCanonicalize : Bool :=
 
 -- A non-spread `()` element stays one visible list element.
 def listKeepsVisibleEmptyElement : Bool :=
-  match runResult (.block (alg [] [] [] [.listLiteral [.num 1, .emptySequence 0, .num 2]])) with
+  match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 1, .emptySequence 0, .num 2]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.sequenceValue [], Result.atom 2]) => true
   | _ => false
 
@@ -12536,7 +12531,7 @@ def listKeepsVisibleEmptyElement : Bool :=
 -- Spread opens exactly ONE list boundary; capturing the spread yields
 -- the canonical sequence of the elements.
 def spreadCaptureConvertsListToSequence : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]]),
      ("B", alg [] [] [] [sequenceSpread (.resolve "A")])]
     [.resolve "B"])) with
@@ -12548,13 +12543,13 @@ def spreadCaptureConvertsListToSequence : Bool :=
 -- Spread edge cases: `[]*` supplies zero items (captures as `()`),
 -- `[7]*` supplies the item, `[[7]]*` supplies the inner list intact.
 def listSpreadEdgeCasesOpenOneBoundary : Bool :=
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral []])] [sequenceSpread (.resolve "A")])) with
    | Except.ok (Result.sequenceValue []) => true | _ => false) &&
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.num 7]])] [sequenceSpread (.resolve "A")])) with
    | Except.ok (Result.atom 7) => true | _ => false) &&
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])] [sequenceSpread (.resolve "A")])) with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false)
 
@@ -12563,7 +12558,7 @@ def listSpreadEdgeCasesOpenOneBoundary : Bool :=
 -- List-literal elements use the ordinary expression-list model: spread
 -- elements insert their item supply into the constructed list.
 def listLiteralSpreadElements : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("A", alg [] [] [] [.num 1, .num 2, .num 3])]
     [.listLiteral [.num 0, sequenceSpread (.resolve "A"), .num 4]])) with
   | Except.ok (Result.listValue
@@ -12574,10 +12569,10 @@ def listLiteralSpreadElements : Bool :=
 
 -- Empty spreads contribute no elements; a NON-spread `[]` stays one element.
 def emptyListSpreadIsNeutralInListLiteral : Bool :=
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.listLiteral [.num 1, sequenceSpread (.listLiteral []), .num 2]])) with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.listLiteral [.num 1, .listLiteral [], .num 2]])) with
    | Except.ok (Result.listValue [Result.atom 1, Result.listValue [], Result.atom 2]) => true
    | _ => false)
@@ -12586,10 +12581,10 @@ def emptyListSpreadIsNeutralInListLiteral : Bool :=
 
 -- Calls preserve list boundaries: a list without spread is ONE argument.
 def callPreservesListBoundary : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("F", alg ["a"] [] [] [.param "a"]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
-    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])) with
+    [.call (.resolve "F") [.resolve "A"]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
@@ -12597,11 +12592,11 @@ def callPreservesListBoundary : Bool :=
 
 -- Explicit spread supplies the elements as separate arguments.
 def spreadOpensListIntoCallArguments : Bool :=
-  expectFlat (runFlat (.block (algPrivate [] []
+  expectFlat (runFlat (.algorithmExpr (algPrivate [] []
     [("F", alg ["a", "b", "c"] [] []
         [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
-    [.call (.resolve "F") (alg [] [] [] [sequenceSpread (.resolve "A")])]))) [6]
+    [.call (.resolve "F") [sequenceSpread (.resolve "A")]]))) [6]
 
 #guard spreadOpensListIntoCallArguments
 
@@ -12612,22 +12607,22 @@ def spreadOpensListIntoCallArguments : Bool :=
 -- pre-existing payload shape shared by `F(5)` and `F('xy')`; the C# runtime
 -- reports the full signature counts (`3 1`). Both are category `arity`.
 def callDoesNotImplicitlyOpenList : Bool :=
-  expectInnermostArityMismatch 2 0 (runFlat (.block (algPrivate [] []
+  expectInnermostArityMismatch 2 0 (runFlat (.algorithmExpr (algPrivate [] []
     [("F", alg ["a", "b", "c"] [] []
         [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
-    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])))
+    [.call (.resolve "F") [.resolve "A"]])))
 
 #guard callDoesNotImplicitlyOpenList
 
 -- Mixed fixed/variadic call: a lone list argument stays whole — `first` receives
 -- the entire list, `rest` captures nothing.
 def mixedVariadicCallKeepsLoneListWhole : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("F", algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] []
         [.param "first"]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
-    [.call (.resolve "F") (alg [] [] [] [.resolve "A"])])) with
+    [.call (.resolve "F") [.resolve "A"]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
@@ -12636,24 +12631,24 @@ def mixedVariadicCallKeepsLoneListWhole : Bool :=
 -- Deconstruction (the sequence-value parameter pattern) opens a lone LIST
 -- exactly like a lone sequence value: `x, y, z = [1, 2, 3]` binds elementwise.
 def deconstructionOpensLoneList : Bool :=
-  let helper := KatLang.Expr.block (algWithParameterPatterns
+  let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
     [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]]
     [] [] [.param "y"])
-  expectFlat (runFlat (.block (algPrivate [] []
+  expectFlat (runFlat (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
-    [.call helper (alg [] [] [] [.resolve "d"])]))) [2]
+    [.call helper [.resolve "d"]]))) [2]
 
 #guard deconstructionOpensLoneList
 
 -- Collecting binding in deconstruction COLLECTS the remaining items as one exact
 -- immutable list: `x, *rest = [1, 2, 3]` binds `rest = [2, 3]`.
 def listCollectingCaptureCollectsExactList : Bool :=
-  let helper := KatLang.Expr.block (algWithParameterPatterns
+  let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
     [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
     [] [] [.param "rest"])
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
-    [.call helper (alg [] [] [] [.resolve "d"])])) with
+    [.call helper [.resolve "d"]])) with
   | Except.ok (Result.listValue [Result.atom 2, Result.atom 3]) => true
   | _ => false
 
@@ -12661,12 +12656,12 @@ def listCollectingCaptureCollectsExactList : Bool :=
 
 -- Deconstruction opens only the OUTER lone structure: nested lists stay whole.
 def deconstructionDoesNotOpenListRecursively : Bool :=
-  let helper := KatLang.Expr.block (algWithParameterPatterns
+  let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
     [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]
     [] [] [.param "x"])
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]
-    [.call helper (alg [] [] [] [.resolve "d"])])) with
+    [.call helper [.resolve "d"]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
@@ -12676,8 +12671,8 @@ def deconstructionDoesNotOpenListRecursively : Bool :=
 -- the shared collection-item view opens ONE outer sequence or list boundary,
 -- so `count([1, 2, 3])` counts three items.
 def builtinLoneListCollectionOpens : Bool :=
-  expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])])))
+  expectFlat (runFlat (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [.listLiteral [.num 1, .num 2, .num 3]]])))
     [3]
 
 #guard builtinLoneListCollectionOpens
@@ -12687,22 +12682,19 @@ def builtinLoneListCollectionOpens : Bool :=
 -- is a two-argument arity error, and a nested list inside an opened lone list
 -- stays one opaque item (`count([1, [2], 3])` is 3).
 def builtinSiblingListsCountAsItems : Bool :=
-  expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] []
-      [.block (alg [] [] [] [.listLiteral [], .listLiteral []])])])))
+  expectFlat (runFlat (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [.capture [.listLiteral [], .listLiteral []]]])))
     [2] &&
-  (match runResult (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] []
-      [.listLiteral [], .listLiteral []])])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [.listLiteral [], .listLiteral []]])) with
    | Except.error err => innermostIsArityMismatch 1 2 err
    | _ => false)
 
 #guard builtinSiblingListsCountAsItems
 
 def builtinNestedListStaysOneItem : Bool :=
-  expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] []
-      [.listLiteral [.num 1, .listLiteral [.num 2], .num 3]])])))
+  expectFlat (runFlat (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [.listLiteral [.num 1, .listLiteral [.num 2], .num 3]]])))
     [3]
 
 #guard builtinNestedListStaysOneItem
@@ -12714,17 +12706,16 @@ def builtinNestedListStaysOneItem : Bool :=
 -- unspread `count([1, 2, 3])` stays the direct form (see
 -- builtinLoneListCollectionOpens above).
 def builtinSpreadListFollowsFixedArity : Bool :=
-  (match runResult (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])]])) with
    | Except.error err => innermostIsArityMismatch 1 3 err
    | _ => false) &&
-  (match runResult (.block (alg [] [] []
-    [.call (.resolve "sum") (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+    [.call (.resolve "sum") [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])]])) with
    | Except.error err => innermostIsArityMismatch 1 3 err
    | _ => false) &&
-  expectFlat (runFlat (.block (alg [] [] []
-    [.call (.resolve "count") (alg [] [] []
-      [.block (alg [] [] [] [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])])]))) [3]
+  expectFlat (runFlat (.algorithmExpr (alg [] [] []
+    [.call (.resolve "count") [.capture [sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])]]]))) [3]
 
 #guard builtinSpreadListFollowsFixedArity
 
@@ -12732,8 +12723,8 @@ def builtinSpreadListFollowsFixedArity : Bool :=
 -- ITEM from a sequence preserves the list (projection does not erase
 -- listness).
 def indexingPreservesSelectedList : Bool :=
-  match runResult (.block (algPrivate [] []
-    [("A", alg [] [] [] [.block (alg [] [] [] [.num 0, .listLiteral [.num 1, .num 2]])])]
+  match runResult (.algorithmExpr (algPrivate [] []
+    [("A", alg [] [] [] [.capture [.num 0, .listLiteral [.num 1, .num 2]]])]
     [.index (.resolve "A") (.num 1)])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
@@ -12744,16 +12735,16 @@ def indexingPreservesSelectedList : Bool :=
 -- sequence target (`Result.projectionItems`): `[1, 2, 3]:0` is `1`, `[7]:0`
 -- is `7`, and the selected element keeps its exact kind.
 def listIndexingSelectsElement : Bool :=
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 0)])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 1)])) with
    | Except.ok (Result.atom 2) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 2)])) with
    | Except.ok (Result.atom 3) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 7]) (.num 0)])) with
    | Except.ok (Result.atom 7) => true | _ => false)
 
@@ -12762,11 +12753,11 @@ def listIndexingSelectsElement : Bool :=
 -- A selected LIST element stays one exact opaque list (no flattening, no
 -- sequence conversion): `[[1, 2], [3, 4]]:0` is `[1, 2]` and `[[]]:0` is `[]`.
 def listIndexingNestedElementStaysList : Bool :=
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral
         [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) (.num 0)])) with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.listLiteral []]) (.num 0)])) with
    | Except.ok (Result.listValue []) => true | _ => false)
 
@@ -12774,7 +12765,7 @@ def listIndexingNestedElementStaysList : Bool :=
 
 -- Chained projection peels one boundary per `:`: `[[1, 2], [3, 4]]:1:0` is `3`.
 def listIndexingChainedSelectsOneLevelAtATime : Bool :=
-  match runResult (.block (alg [] [] []
+  match runResult (.algorithmExpr (alg [] [] []
     [.index (.index (.listLiteral
       [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) (.num 1)) (.num 0)])) with
   | Except.ok (Result.atom 3) => true
@@ -12786,12 +12777,12 @@ def listIndexingChainedSelectsOneLevelAtATime : Bool :=
 -- count, exactly like the sequence-target twin; a selected `()` element stays
 -- one visible empty row at root.
 def listIndexingSequenceElementProjectsCounted : Bool :=
-  (match runCountedProgram (.block (alg [] [] []
+  (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.listLiteral
-        [.block (alg [] [] [] [.num 1, .num 2]),
-         .block (alg [] [] [] [.num 3, .num 4])]) (.num 0)])) with
+        [.capture [.num 1, .num 2],
+         .capture [.num 3, .num 4]]) (.num 0)])) with
    | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 2) => true | _ => false) &&
-  (match runCountedProgram (.block (alg [] [] []
+  (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.emptySequence 0]) (.num 0)])) with
    | .ok (Result.sequenceValue [], 1) => true | _ => false)
 
@@ -12804,23 +12795,23 @@ def listIndexingSequenceElementProjectsCounted : Bool :=
 -- the unbounded-Int model — the twin of the C# int-cast guard — for both
 -- target kinds.
 def listIndexingOutOfRangeIsBadIndex : Bool :=
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral []) (.num 0)])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.num 2)])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.num 100)])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.num (-1))])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 3000000000)])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
-  (match runResult (.block (alg [] [] []
-      [.index (.block (alg [] [] [] [.num 1, .num 2, .num 3])) (.num 3000000000)])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+      [.index (.capture [.num 1, .num 2, .num 3]) (.num 3000000000)])) with
    | Except.error err => innermostIsBadIndex err | _ => false)
 
 #guard listIndexingOutOfRangeIsBadIndex
@@ -12829,10 +12820,10 @@ def listIndexingOutOfRangeIsBadIndex : Bool :=
 -- never coerces to a number (badArity), and a string selector stays the
 -- string type mismatch — identical to sequence targets.
 def listIndexingSelectorValidationUnchanged : Bool :=
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 0])])) with
    | Except.error err => innermostIsBadArity err | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.stringLiteral "0")])) with
    | Except.error err => innermostIsTypeMismatch "Expected a number, got a string" err | _ => false)
 
@@ -12868,7 +12859,7 @@ def indexDiagnosticNameParenthesizesRebindingOperands : Bool :=
   (KatLang.exprDiagnosticName (.index (.resolve "A") (.dotCall (.resolve "B") "C" none)) == "A:(B.C)") &&
   (KatLang.exprDiagnosticName (.index (.resolve "A") (.index (.resolve "B") (.resolve "C")))
     == "A:(B:C)") &&
-  (KatLang.exprDiagnosticName (.index (.resolve "A") (.call (.resolve "f") (alg [] [] [] [.num 0])))
+  (KatLang.exprDiagnosticName (.index (.resolve "A") (.call (.resolve "f") [.num 0]))
     == "A:(f(...))") &&
   -- A bare negative literal is not selector syntax at all (`A:-1` is a parse
   -- error), so it keeps parentheses.
@@ -12914,15 +12905,14 @@ def openExprNameRendersIndexSourceFaithfully : Bool :=
 -- Collection-producing builtin results are directly indexable:
 -- `range(1, 3):2` is `3` and `[3, 1, 2].order:0` is `1`.
 def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
-  (match runResult (.block (alg [] [] []
-      [.index (.call (.resolve "range") (alg [] [] [] [.num 1, .num 3])) (.num 2)])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+      [.index (.call (.resolve "range") [.num 1, .num 3]) (.num 2)])) with
    | Except.ok (Result.atom 3) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
+  (match runResult (.algorithmExpr (alg [] [] []
       [.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) (.num 0)])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
-  (match runResult (.block (alg [] [] []
-      [.index (.call (.resolve "take")
-        (alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3], .num 2])) (.num 1)])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+      [.index (.call (.resolve "take") [.listLiteral [.num 1, .num 2, .num 3], .num 2]) (.num 1)])) with
    | Except.ok (Result.atom 2) => true | _ => false)
 
 #guard listIndexingBuiltinResultsDirectlyIndexable
@@ -12934,36 +12924,36 @@ def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
 -- chain opens one more list boundary per written star, while a multi-item
 -- supply is a fixed point (see the dedicated guards below).
 def stackedSpreadAgreesWithGroupedCompositionalForm : Bool :=
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])]
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
    | Except.ok (Result.atom 7) => true | _ => false) &&
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2]]])]
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
    | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  (match runResult (.block (algPrivate [] []
-      [("A", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2])])]
+  (match runResult (.algorithmExpr (algPrivate [] []
+      [("A", alg [] [] [] [.capture [.num 1, .num 2]])]
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
    | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false)
 
 #guard stackedSpreadAgreesWithGroupedCompositionalForm
 
 -- The multi-item fixed point, asserted as DIRECT equality between the
--- stacked spelling `A**` and the grouped spelling `(A*)*` (a zero-parameter
--- block is the written-parentheses capture boundary), plus the pinned value:
--- the two inner lists survive unopened. This guard is what stops a future
--- refactor from replacing capture-law composition with a concatMap-style
--- per-item lift, which would flatten to S[1, 2, 3, 4] here.
+-- stacked spelling `A**` and the grouped spelling `(A*)*` (`.capture` is the
+-- written-parentheses boundary), plus the pinned value: the two inner lists
+-- survive unopened. This guard is what stops a future refactor from
+-- replacing capture-law composition with a concatMap-style per-item lift,
+-- which would flatten to S[1, 2, 3, 4] here.
 def stackedSpreadMultiItemFixedPoint : Bool :=
   let multiA : KatLang.Expr -> KatLang.Expr := fun output =>
-    .block (algPrivate [] []
+    .algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral
         [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]])]
       [output])
   let stacked := runResult (multiA (.sequenceSpread (.sequenceSpread (.resolve "A"))))
   let grouped := runResult (multiA
-    (.sequenceSpread (.block (alg [] [] [] [.sequenceSpread (.resolve "A")]))))
+    (.sequenceSpread (.capture [.sequenceSpread (.resolve "A")])))
   match stacked, grouped with
   | Except.ok s, Except.ok g =>
       s == g &&
@@ -12978,7 +12968,7 @@ def stackedSpreadMultiItemFixedPoint : Bool :=
 -- re-spreads the captured pair; it does not selectively open the structured
 -- member.
 def stackedSpreadMixedSupplyStaysUnopened : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
       [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]
       [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
   | Except.ok r =>
@@ -12998,7 +12988,7 @@ def stackedSpreadMixedSupplyStaysUnopened : Bool :=
 -- inline sequence-value parameter pattern over the shared RHS value.
 def collectDeconHelper (targets : List KatLang.ParameterPattern) (observed : String)
     : KatLang.Expr :=
-  .block (algWithParameterPatterns [.sequenceValue targets] [] [] [.param observed])
+  .algorithmExpr (algWithParameterPatterns [.sequenceValue targets] [] [] [.param observed])
 
 def collectFix (name : String) : KatLang.ParameterPattern :=
   .capture { name := name }
@@ -13010,8 +13000,8 @@ def runCollectDecon (targets : List KatLang.ParameterPattern) (observed : String
     (rhs : List KatLang.Expr) : Except KatLang.Error Result :=
   -- Mirror parser elaboration: the RHS is evaluated once into a shared
   -- property, and the pattern helper opens that single shared value.
-  runResult (.block (algPrivate [] [] [("sharedRhs", alg [] [] [] rhs)]
-    [.call (collectDeconHelper targets observed) (alg [] [] [] [resolve "sharedRhs"])]))
+  runResult (.algorithmExpr (algPrivate [] [] [("sharedRhs", alg [] [] [] rhs)]
+    [.call (collectDeconHelper targets observed) [resolve "sharedRhs"]]))
 
 -- Empty, singleton, and multi-item collection: `head, *rest = [1] / [1, 2] / [1, 2, 3]`.
 def deconCollectingCollectsEmptySingletonMultiple : Bool :=
@@ -13057,7 +13047,7 @@ def deconCollectingPreservesStructuredSingletons : Bool :=
    | _ => false) &&
   -- first, *rest = 1, (2, 3)  =>  rest = [(2, 3)]
   (match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
-      [.num 1, .block (alg [] [] [] [.num 2, .num 3])] with
+      [.num 1, .capture [.num 2, .num 3]] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
   -- first, *rest = 1, []  =>  rest = [[]]
@@ -13091,11 +13081,11 @@ def deconCollectingImplicitOpeningMatchesSpread : Bool :=
 -- deconstruction receiver then opens the row into `x = 1`, `y = 2`.
 def deconSpreadCaptureCanOpenSingletonStructuredElementFurther : Bool :=
   (match runCollectDecon [collectFix "x", collectFix "y"] "x"
-      [.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]] with
+      [.listLiteral [.capture [.num 1, .num 2]]] with
    | Except.error err => innermostIsArityMismatch 2 1 err
    | _ => false) &&
   (match runCollectDecon [collectFix "x", collectFix "y"] "x"
-      [.sequenceSpread (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])])] with
+      [.sequenceSpread (.listLiteral [.capture [.num 1, .num 2]])] with
    | Except.ok (Result.atom 1) => true
    | _ => false)
 
@@ -13107,7 +13097,7 @@ def deconCollectingProvenanceIndependent : Bool :=
   match runCollectDecon [collectFix "first", collectVar "rest"] "rest"
       [.num 1,
        .sequenceSpread (.listLiteral [.num 2, .num 3]),
-       .sequenceSpread (.block (alg [] [] [] [.num 4, .num 5]))] with
+       .sequenceSpread (.capture [.num 4, .num 5])] with
   | Except.ok (Result.listValue [Result.atom 2, Result.atom 3, Result.atom 4, Result.atom 5]) =>
       true
   | _ => false
@@ -13118,8 +13108,8 @@ def collectInspectAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]
 
 def runCollectInspect (args : List KatLang.Expr) : Except KatLang.Error Result :=
-  runResult (.block (algPrivate [] [] [("Inspect", collectInspectAlg)]
-    [.call (resolve "Inspect") (alg [] [] [] args)]))
+  runResult (.algorithmExpr (algPrivate [] [] [("Inspect", collectInspectAlg)]
+    [.call (resolve "Inspect") args]))
 
 -- Variadic capture matrix: Inspect(*items) = items.
 def variadicCaptureCollectsExactList : Bool :=
@@ -13137,10 +13127,10 @@ def variadicCaptureCollectsExactList : Bool :=
   (match runCollectInspect [.sequenceSpread (.listLiteral [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
   -- Inspect((1, 2)) => [(1, 2)]; Inspect((1, 2)*) => [1, 2]
-  (match runCollectInspect [.block (alg [] [] [] [.num 1, .num 2])] with
+  (match runCollectInspect [.capture [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
-  (match runCollectInspect [.sequenceSpread (.block (alg [] [] [] [.num 1, .num 2]))] with
+  (match runCollectInspect [.sequenceSpread (.capture [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false)
 
 #guard variadicCaptureCollectsExactList
@@ -13172,17 +13162,17 @@ def collectMiddleAlg : Algorithm :=
     [] [] [.param "middle"]
 
 def runCollectMiddle (args : List KatLang.Expr) : Except KatLang.Error Result :=
-  runResult (.block (algPrivate [] [] [("Middle", collectMiddleAlg)]
-    [.call (resolve "Middle") (alg [] [] [] args)]))
+  runResult (.algorithmExpr (algPrivate [] [] [("Middle", collectMiddleAlg)]
+    [.call (resolve "Middle") args]))
 
 def middleVariadicGroupedAndSpreadDirectCall : Bool :=
   (match runCollectMiddle
-      [.num 10, .block (alg [] [] [] [.num 20, .num 30]), .num 40] with
+      [.num 10, .capture [.num 20, .num 30], .num 40] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 20, Result.atom 30]]) =>
        true
    | _ => false) &&
   (match runCollectMiddle
-      [.num 10, .sequenceSpread (.block (alg [] [] [] [.num 20, .num 30])), .num 40] with
+      [.num 10, .sequenceSpread (.capture [.num 20, .num 30]), .num 40] with
    | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true | _ => false)
 
 #guard middleVariadicGroupedAndSpreadDirectCall
@@ -13194,13 +13184,13 @@ def collectTargetAlg : Algorithm :=
 
 def collectForwardAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [
-    .call (resolve "Target") (alg [] [] [] [sequenceSpread (.param "items")])
+    .call (resolve "Target") [sequenceSpread (.param "items")]
   ]
 
 def runCollectForward (args : List KatLang.Expr) : Except KatLang.Error Result :=
-  runResult (.block (algPrivate [] []
+  runResult (.algorithmExpr (algPrivate [] []
     [("Target", collectTargetAlg), ("Forward", collectForwardAlg)]
-    [.call (resolve "Forward") (alg [] [] [] args)]))
+    [.call (resolve "Forward") args]))
 
 def collectingForwardingRoundTripsExactList : Bool :=
   (match runCollectForward [] with
@@ -13220,12 +13210,12 @@ def collectingForwardingRoundTripsExactList : Bool :=
 -- Forwarding the collected list WITHOUT spread passes one list argument:
 -- TargetOne(item) = item; ForwardAsOne(*items) = TargetOne(items).
 def variadicForwardAsOnePassesWholeList : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("TargetOne", alg ["item"] [] [] [.param "item"]),
      ("ForwardAsOne", algWithParameters [{ name := "items", kind := .collecting }] [] [] [
-       .call (resolve "TargetOne") (alg [] [] [] [.param "items"])
+       .call (resolve "TargetOne") [.param "items"]
      ])]
-    [.call (resolve "ForwardAsOne") (alg [] [] [] [.num 1, .num 2])])) with
+    [.call (resolve "ForwardAsOne") [.num 1, .num 2]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
@@ -13236,11 +13226,11 @@ def variadicForwardAsOnePassesWholeList : Bool :=
 -- items — for lists and sequence values alike.
 def variadicReceiverDistinctionObservable : Bool :=
   let inspect (arg : KatLang.Expr) : Except KatLang.Error Result :=
-    runResult (.block (algPrivate [] []
+    runResult (.algorithmExpr (algPrivate [] []
       [("Inspect", collectInspectAlg),
        ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]]),
-       ("B", alg [] [] [] [.block (alg [] [] [] [.num 1, .num 2, .num 3])])]
-      [.call (resolve "Inspect") (alg [] [] [] [arg])]))
+       ("B", alg [] [] [] [.capture [.num 1, .num 2, .num 3]])]
+      [.call (resolve "Inspect") [arg]]))
   (match inspect (resolve "A") with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]]) =>
        true
@@ -13261,7 +13251,7 @@ def variadicReceiverDistinctionObservable : Bool :=
 -- Dotted receiver injection: `A.Inspect` is `Inspect(A)` — the receiver is one
 -- captured argument slot, so the collected list is `[[1, 2]]`.
 def variadicDotReceiverCollectsOneSlot : Bool :=
-  match runResult (.block (algPrivate [] []
+  match runResult (.algorithmExpr (algPrivate [] []
     [("Inspect", collectInspectAlg),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2]])]
     [.dotCall (resolve "A") "Inspect" none])) with
@@ -13273,17 +13263,17 @@ def variadicDotReceiverCollectsOneSlot : Bool :=
 -- Equality: collected results are exact list values, unequal to sequence values
 -- and to differently-nested lists.
 def collectedSegmentEqualityIsKindExact : Bool :=
-  expectFlat (runFlat (.block (algPrivate [] [] [("Inspect", collectInspectAlg)] [
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [])) (.listLiteral []),
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [.num 7])) (.listLiteral [.num 7]),
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [.num 1, .num 2]))
+  expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [("Inspect", collectInspectAlg)] [
+    .binary .eq (.call (resolve "Inspect") []) (.listLiteral []),
+    .binary .eq (.call (resolve "Inspect") [.num 7]) (.listLiteral [.num 7]),
+    .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
       (.listLiteral [.num 1, .num 2]),
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [.listLiteral [.num 1, .num 2]]))
+    .binary .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
       (.listLiteral [.listLiteral [.num 1, .num 2]]),
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [.listLiteral [.num 1, .num 2]]))
+    .binary .eq (.call (resolve "Inspect") [.listLiteral [.num 1, .num 2]])
       (.listLiteral [.num 1, .num 2]),
-    .binary .eq (.call (resolve "Inspect") (alg [] [] [] [.num 1, .num 2]))
-      (.block (alg [] [] [] [.num 1, .num 2]))
+    .binary .eq (.call (resolve "Inspect") [.num 1, .num 2])
+      (.capture [.num 1, .num 2])
   ]))) [1, 1, 1, 1, 0, 0]
 
 #guard collectedSegmentEqualityIsKindExact
@@ -13292,21 +13282,20 @@ def collectedSegmentEqualityIsKindExact : Bool :=
 -- fixed-collection builtins exactly like a builtin-produced list.
 def collectedSegmentComposesWithCollectionBuiltins : Bool :=
   let tailAlg : Algorithm := alg ["source"] [] [] [
-    .call (collectDeconHelper [collectFix "first", collectVar "rest"] "rest")
-      (alg [] [] [] [.param "source"])
+    .call (collectDeconHelper [collectFix "first", collectVar "rest"] "rest") [.param "source"]
   ]
   let rows : KatLang.Expr :=
     .listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]
-  (match runResult (.block (algPrivate [] [] [("Tail", tailAlg)]
-      [.call (resolve "Tail") (alg [] [] [] [rows])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("Tail", tailAlg)]
+      [.call (resolve "Tail") [rows]])) with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 3, Result.atom 4]]) => true
    | _ => false) &&
-  (match runResult (.block (algPrivate [] [] [("Tail", tailAlg)]
-      [.dotCall (.call (resolve "Tail") (alg [] [] [] [rows])) "count" none])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("Tail", tailAlg)]
+      [.dotCall (.call (resolve "Tail") [rows]) "count" none])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
   -- skip([[1, 2], [3, 4]], 1) agrees with the collected segment of the same source.
-  (match runResult (.block (alg [] [] []
-      [.call (resolve "skip") (alg [] [] [] [rows, .num 1])])) with
+  (match runResult (.algorithmExpr (alg [] [] []
+      [.call (resolve "skip") [rows, .num 1]])) with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 3, Result.atom 4]]) => true
    | _ => false)
 
@@ -13324,11 +13313,11 @@ def deconCollectingScalarRhsCollectsEmptyList : Bool :=
 -- value, and `x = [1, 2, 3]*` re-captures the spread items as a sequence —
 -- capture and collect stay distinct operations.
 def ordinaryCaptureStaysCanonicalSequence : Bool :=
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("x", alg [] [] [] [.num 1, .num 2, .num 3])] [resolve "x"])) with
    | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
    | _ => false) &&
-  (match runResult (.block (algPrivate [] []
+  (match runResult (.algorithmExpr (algPrivate [] []
       [("x", alg [] [] [] [.sequenceSpread (.listLiteral [.num 1, .num 2, .num 3])])]
       [resolve "x"])) with
    | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
@@ -13352,8 +13341,8 @@ def callbackCollectAlg : Algorithm :=
 
 def runCallbackMap (props : List (String × Algorithm)) (collection : KatLang.Expr)
     (callbackName : String) : Except KatLang.Error Result :=
-  runResult (.block (algPrivate [] [] props
-    [.call (resolve "map") (alg [] [] [] [collection, resolve callbackName])]))
+  runResult (.algorithmExpr (algPrivate [] [] props
+    [.call (resolve "map") [collection, resolve callbackName]]))
 
 -- [7].map(Collect) => [[7]]; [7, 8].map(Collect) => [[7], [8]].
 def restOnlyMapCallbackCollectsOneElementSlot : Bool :=
@@ -13377,7 +13366,7 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
        true
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
-      (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]) "Collect" with
+      (.listLiteral [.capture [.num 1, .num 2]]) "Collect" with
    | Except.ok (Result.listValue [Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]]) =>
        true
    | _ => false) &&
@@ -13394,8 +13383,8 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
 
 -- Dotted receiver form agrees: [7].map(Collect) via dotCall.
 def restOnlyMapCallbackDottedReceiverAgrees : Bool :=
-  match runResult (.block (algPrivate [] [] [("Collect", callbackCollectAlg)]
-    [.dotCall (.listLiteral [.num 7]) "map" (some (alg [] [] [] [resolve "Collect"]))])) with
+  match runResult (.algorithmExpr (algPrivate [] [] [("Collect", callbackCollectAlg)]
+    [.dotCall (.listLiteral [.num 7]) "map" (some [resolve "Collect"])])) with
   | Except.ok (Result.listValue [Result.listValue [Result.atom 7]]) => true
   | _ => false
 
@@ -13415,8 +13404,8 @@ def mixedVariadicMapCallbackBindsRowSlots : Bool :=
     [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]
   let initFlat : Algorithm := algWithParameters
     [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]
-  let row4 : KatLang.Expr := .listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]
-  let row3 : KatLang.Expr := .listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3])]
+  let row4 : KatLang.Expr := .listLiteral [.capture [.num 1, .num 2, .num 3, .num 4]]
+  let row3 : KatLang.Expr := .listLiteral [.capture [.num 1, .num 2, .num 3]]
   -- [(1, 2, 3, 4)].map(F) with F(first, *middle, last) = middle => [[2, 3]]
   (match runCallbackMap [("F", middleFlat)] row4 "F" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
@@ -13448,13 +13437,11 @@ def restOnlyFilterCallbackIsKindSensitive : Bool :=
   let isSingleSevenList : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }] [] []
     [.binary .eq (.param "items") (.listLiteral [.listLiteral [.num 7]])]
-  (match runResult (.block (algPrivate [] [] [("IsSingleSeven", isSingleSeven)]
-      [.call (resolve "filter") (alg [] [] []
-        [.listLiteral [.num 7, .num 8], resolve "IsSingleSeven"])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("IsSingleSeven", isSingleSeven)]
+      [.call (resolve "filter") [.listLiteral [.num 7, .num 8], resolve "IsSingleSeven"]])) with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
-  (match runResult (.block (algPrivate [] [] [("P", isSingleSevenList)]
-      [.call (resolve "filter") (alg [] [] []
-        [.listLiteral [.listLiteral [.num 7], .listLiteral [.num 8]], resolve "P"])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("P", isSingleSevenList)]
+      [.call (resolve "filter") [.listLiteral [.listLiteral [.num 7], .listLiteral [.num 8]], resolve "P"]])) with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 7]]) => true | _ => false)
 
 #guard restOnlyFilterCallbackIsKindSensitive
@@ -13467,17 +13454,15 @@ def reducerElementSideVariadicCollects : Bool :=
     [.binary .eq (.param "items") (.listLiteral [.num 10])]
   let track : Algorithm := algWithParameters
     [{ name := "items", kind := .collecting }, { name := "acc" }] [] []
-    [.block (alg [] [] [] [.sequenceSpread (.param "acc"), .param "items"])]
+    [.capture [.sequenceSpread (.param "acc"), .param "items"]]
   -- reduce([10], R, 99) => 1: the single step observes items = [10], not 10.
-  (match runResult (.block (algPrivate [] [] [("R", eqTen)]
-      [.call (resolve "reduce") (alg [] [] []
-        [.listLiteral [.num 10], resolve "R", .num 99])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("R", eqTen)]
+      [.call (resolve "reduce") [.listLiteral [.num 10], resolve "R", .num 99]])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
   -- reduce((10, 20), R, ()) with R(*items, acc) = (acc*, items)
   -- => (10, [20]): each step appends the collected [element].
-  (match runResult (.block (algPrivate [] [] [("R", track)]
-      [.call (resolve "reduce") (alg [] [] []
-        [.block (alg [] [] [] [.num 10, .num 20]), resolve "R", .emptySequence 1])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("R", track)]
+      [.call (resolve "reduce") [.capture [.num 10, .num 20], resolve "R", .emptySequence 1]])) with
    | Except.ok (Result.sequenceValue [Result.atom 10, Result.listValue [Result.atom 20]]) => true
    | _ => false)
 
@@ -13487,14 +13472,12 @@ def reducerElementSideVariadicCollects : Bool :=
 -- element and accumulator, and collects both through the same shared binder.
 -- This intentional widening follows the ordinary variadic call rule.
 def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
-  (match runResult (.block (algPrivate [] [] [("R", callbackCollectAlg)]
-      [.call (resolve "reduce") (alg [] [] []
-        [.listLiteral [.num 10], resolve "R", .num 99])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("R", callbackCollectAlg)]
+      [.call (resolve "reduce") [.listLiteral [.num 10], resolve "R", .num 99]])) with
    | Except.ok (Result.listValue [Result.atom 10, Result.atom 99]) => true
    | _ => false) &&
-  (match runResult (.block (algPrivate [] [] [("R", callbackCollectAlg)]
-      [.call (resolve "reduce") (alg [] [] []
-        [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "R", .listLiteral []])])) with
+  (match runResult (.algorithmExpr (algPrivate [] [] [("R", callbackCollectAlg)]
+      [.call (resolve "reduce") [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "R", .listLiteral []]])) with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2],
        Result.listValue []]) => true
    | _ => false)
@@ -13509,17 +13492,17 @@ def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
 -- exactly these two elaborated forms from the source binding kind.
 def forwardingElaborationKindsObservable : Bool :=
   let useOrdinary : Algorithm := alg ["items"] [] [] [
-    .call (resolve "Target") (alg [] [] [] [.param "items"])
+    .call (resolve "Target") [.param "items"]
   ]
   let run (useAlg : Algorithm) (args : List KatLang.Expr) : Except KatLang.Error Result :=
-    runResult (.block (algPrivate [] []
+    runResult (.algorithmExpr (algPrivate [] []
       [("Target", collectTargetAlg), ("Use", useAlg)]
-      [.call (resolve "Use") (alg [] [] [] args)]))
+      [.call (resolve "Use") args]))
   -- Use(items) = Target(items): Use([1, 2]) => [[1, 2]]; Use((1, 2)) => [(1, 2)].
   (match run useOrdinary [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
-  (match run useOrdinary [.block (alg [] [] [] [.num 1, .num 2])] with
+  (match run useOrdinary [.capture [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match run useOrdinary [.num 7] with
@@ -13530,5 +13513,191 @@ def forwardingElaborationKindsObservable : Bool :=
    | _ => false)
 
 #guard forwardingElaborationKindsObservable
+
+--------------------------------------------------------------------------------
+-- OutputBundle split: algorithmExpr vs capture
+--------------------------------------------------------------------------------
+-- These guards pin the split itself: a capture is a normalized value boundary
+-- over an OutputBundle, an algorithmExpr exposes algorithm identity, and the
+-- two coincide observationally exactly on declaration-free content.
+
+/-- A capture row captures its bundle canonically: `(1, 2)` grouping
+    still observes the pair. -/
+def captureValueBoundaryObservesPair : Bool :=
+  match runResult (.algorithmExpr (alg [] [] [] [.capture [.num 1, .num 2]])) with
+  | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true
+  | _ => false
+
+#guard captureValueBoundaryObservesPair
+
+/-- An empty bundle captures the empty sequence value (host-only shape:
+    written `()` parses to the emptySequence node). -/
+def emptyCaptureIsEmptySequence : Bool :=
+  match runResult (.algorithmExpr (alg [] [] [] [.capture []])) with
+  | .ok (Result.sequenceValue []) => true
+  | _ => false
+
+#guard emptyCaptureIsEmptySequence
+
+/-- Declaration-free content evaluates identically through both constructors —
+    the shared output-row loop is the single implementation. -/
+def captureAndZeroDeclBlockCoincide : Bool :=
+  let rows : List KatLang.Expr := [.num 1, .capture [.num 2, .num 3], .emptySequence 0]
+  match runResult (.algorithmExpr (alg [] [] [] [.capture rows])),
+        runResult (.algorithmExpr (alg [] [] [] [.algorithmExpr (alg [] [] [] rows)])) with
+  | .ok a, .ok b => a == b
+  | _, _ => false
+
+#guard captureAndZeroDeclBlockCoincide
+
+/-- Capture is not algorithm identity: a grouped named callable argument stays
+    on the value channel, so evaluating `(Increment)` calls the one-parameter
+    property with zero arguments and fails with that arity error — Increment's
+    callable identity never crosses the capture boundary. -/
+def captureSuppressesCallableIdentity : Bool :=
+  let increment := alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+  let apply := alg ["f"] [] [] [.call (.param "f") [.num 9]]
+  let root := algPrivate [] [] [("Apply", apply), ("Increment", increment)]
+    [.call (resolve "Apply") [.capture [.resolve "Increment"]]]
+  match runResult (.algorithmExpr root) with
+  | .error e => innermostIsArityMismatch 1 0 e
+  | _ => false
+
+#guard captureSuppressesCallableIdentity
+
+/-- The algorithm channel sees only a zero-parameter value thunk for a capture:
+    calling a captured expression as a function is an arity error against the
+    thunk, never a call of the inner algorithm. -/
+def captureCalleeIsAValueThunk : Bool :=
+  let f := alg ["x"] [] [] [.param "x"]
+  let root := algPrivate [] [] [("F", f)]
+    [.call (.capture [.resolve "F"]) [.num 1]]
+  match runResult (.algorithmExpr root) with
+  | .error e => innermostIsArityMismatch 0 1 e
+  | _ => false
+
+#guard captureCalleeIsAValueThunk
+
+/-- `open` consumes algorithm/namespace identity, and a capture is a value
+    boundary that never exposes the identity of what it encloses: a captured
+    open target is rejected with the structured badOpenForm error (exactly
+    like a spread-marked target), while a direct algorithm target opens. -/
+def openCaptureTargetIsRejected : Bool :=
+  let m := alg [] [] [] [.num 5]
+  let lib := Algorithm.mk none [] [] [publicProp "C" (alg [] [] [] [.num 5])] []
+  let direct := algPrivate [] [.algorithmExpr lib] [("M", m)] [.resolve "C"]
+  let viaCapture := algPrivate [] [.capture [.resolve "M"]] [("M", m)] [.resolve "C"]
+  (match runResult (.algorithmExpr direct) with
+   | .ok (Result.atom 5) => true | _ => false) &&
+  (match runResult (.algorithmExpr viaCapture) with
+   | .error (Error.badOpenForm _) => true
+   | .error (Error.withContext _ (Error.badOpenForm _)) => true
+   | _ => false)
+
+#guard openCaptureTargetIsRejected
+
+--------------------------------------------------------------------------------
+-- Boundary-policy contrast pins: capture never exposes enclosed identity
+-- (open targets, higher-order arguments, receivers); algorithm blocks always
+-- expose their contained algorithm.
+--------------------------------------------------------------------------------
+
+/-- `open ((M))` — a NESTED capture target is rejected identically: no
+    capture depth restores the enclosed algorithm identity. -/
+def openNestedCaptureTargetIsRejected : Bool :=
+  let m := alg [] [] [] [.num 5]
+  let viaNested := algPrivate [] [.capture [.capture [.resolve "M"]]] [("M", m)] [.resolve "C"]
+  match runResult (.algorithmExpr viaNested) with
+  | .error (Error.badOpenForm _) => true
+  | .error (Error.withContext _ (Error.badOpenForm _)) => true
+  | _ => false
+
+#guard openNestedCaptureTargetIsRejected
+
+/-- Nested grouping suppresses callable identity at every depth:
+    `Apply(((Increment)))` fails with the same arity error as
+    `Apply((Increment))` — the inner identity never crosses any capture layer. -/
+def nestedCaptureStillSuppressesCallableIdentity : Bool :=
+  let increment := alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+  let apply := alg ["f"] [] [] [.call (.param "f") [.num 9]]
+  let root := algPrivate [] [] [("Apply", apply), ("Increment", increment)]
+    [.call (resolve "Apply") [.capture [.capture [.resolve "Increment"]]]]
+  match runResult (.algorithmExpr root) with
+  | .error e => innermostIsArityMismatch 1 0 e
+  | _ => false
+
+#guard nestedCaptureStillSuppressesCallableIdentity
+
+/-- `(Obj).V` — a capture receiver exposes NO structural members. Structural
+    lookup sees only the capture's value thunk (which owns nothing), the
+    lexical fallback finds no `V`, and the member stays unresolved — capture
+    is not algorithm identity on the receiver channel either. C# parity: the
+    probe matrix pins the same failure ("Property 'V' was not found ...").
+    Direct dot access on the NAMED property (`Obj.V`) still reaches the
+    member. -/
+def captureReceiverDoesNotExposeStructuralMembers : Bool :=
+  let obj := Algorithm.mk none [] [] [publicProp "V" (alg [] [] [] [.num 7])] []
+  let direct := algPrivate [] [] [("Obj", obj)] [.dotCall (.resolve "Obj") "V" none]
+  let grouped := algPrivate [] [] [("Obj", obj)] [.dotCall (.capture [.resolve "Obj"]) "V" none]
+  (match runResult (.algorithmExpr direct) with
+   | .ok (Result.atom 7) => true | _ => false) &&
+  (match runResult (.algorithmExpr grouped) with
+   | .error _ => true
+   | .ok _ => false)
+
+#guard captureReceiverDoesNotExposeStructuralMembers
+
+/-- The named/inline zero-parameter agreement family: a NAMED zero-parameter
+    property crosses the higher-order boundary, the INLINE algorithm block
+    crosses identically (test19SingleOutputBlockCrossesHigherOrderBoundary),
+    and a CAPTURE of the named property does not cross — identity is
+    structural (node kind), never a declaration-count taxonomy. -/
+def namedZeroParamAlgorithmCrossesHigherOrderBoundary : Bool :=
+  let apply := alg ["f"] [] [] [.call (.param "f") []]
+  match runFlat (.algorithmExpr (algPrivate [] []
+    [("Apply", apply), ("Const", alg [] [] [] [.num 42])] [
+    .call (resolve "Apply") [.resolve "Const"]
+  ])) with
+  | Except.ok [42] => true
+  | _ => false
+
+#guard namedZeroParamAlgorithmCrossesHigherOrderBoundary
+
+def capturedNamedZeroParamAlgorithmDoesNotCross : Bool :=
+  let apply := alg ["f"] [] [] [.call (.param "f") []]
+  match runResult (.algorithmExpr (algPrivate [] []
+    [("Apply", apply), ("Const", alg [] [] [] [.num 42])] [
+    .call (resolve "Apply") [.capture [.resolve "Const"]]
+  ])) with
+  | Except.error e => innermostIsNotAnAlgorithm "param(f)" e
+  | _ => false
+
+#guard capturedNamedZeroParamAlgorithmDoesNotCross
+
+/-- Host-AST core invariant: a capture AROUND an algorithm block still
+    suppresses the block's identity — source parentheses around braces
+    normalize away, so this boundary is only reachable on the AST channel,
+    and it must behave like every other capture. -/
+def capturedAlgorithmExprDoesNotExposeInnerIdentity : Bool :=
+  let apply := alg ["f"] [] [] [.call (.param "f") []]
+  match runResult (.algorithmExpr (algPrivate [] [] [("Apply", apply)] [
+    .call (resolve "Apply") [.capture [.algorithmExpr (alg [] [] [] [.num 42])]]
+  ])) with
+  | Except.error e => innermostIsNotAnAlgorithm "param(f)" e
+  | _ => false
+
+#guard capturedAlgorithmExprDoesNotExposeInnerIdentity
+
+/-- Host-AST open invariant: a capture around an algorithm block is not an
+    openable target either — the outer capture is the semantic boundary. -/
+def openCapturedAlgorithmExprIsRejected : Bool :=
+  let lib := Algorithm.mk none [] [] [publicProp "C" (alg [] [] [] [.num 5])] []
+  let viaCapture := algPrivate [] [.capture [.algorithmExpr lib]] [] [.resolve "C"]
+  match runResult (.algorithmExpr viaCapture) with
+  | .error (Error.badOpenForm _) => true
+  | .error (Error.withContext _ (Error.badOpenForm _)) => true
+  | _ => false
+
+#guard openCapturedAlgorithmExprIsRejected
 
 end KatLangTests

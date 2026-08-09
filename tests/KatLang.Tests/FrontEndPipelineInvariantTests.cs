@@ -43,9 +43,10 @@ public class FrontEndPipelineInvariantTests
                 case Expr.SequenceSpread(var o): WalkExpr(o); break;
                 case Expr.Grace(var i, _): WalkExpr(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) WalkExpr(it); break;
-                case Expr.Block(var alg): Walk(alg); break;
-                case Expr.Call(var f, var args): WalkExpr(f); Walk(args); break;
-                case Expr.DotCall dc: WalkExpr(dc.Target); if (dc.Args is { } ar) Walk(ar); break;
+                case Expr.AlgorithmExpr(var alg): Walk(alg); break;
+                case Expr.Capture(var captureBody): foreach (var row in captureBody) WalkExpr(row); break;
+                case Expr.Call(var f, var args): WalkExpr(f); foreach (var a in args) WalkExpr(a); break;
+                case Expr.DotCall dc: WalkExpr(dc.Target); if (dc.Args is { } ar) { foreach (var a in ar) WalkExpr(a); } break;
             }
         }
     }

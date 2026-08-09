@@ -257,8 +257,8 @@ public class PropertyExposureResolverTests
             PropertyExposure.Exported,
             Assert.Single(algorithm.Properties, property => property.Name == "OwnedBrace").Exposure);
         // A brace block that closes over the ancestor parameter `x` still marks
-        // the containing property local-only: the parametrized scope boundary
-        // owns `y` but not `x`.
+        // the containing property local-only: the brace algorithm's scope
+        // boundary owns `y` but not `x`.
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
             Assert.Single(algorithm.Properties, property => property.Name == "CapturedBrace").Exposure);

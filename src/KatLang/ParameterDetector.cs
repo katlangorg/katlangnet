@@ -2,7 +2,7 @@ namespace KatLang;
 
 /// <summary>
 /// Walks a parsed AST and classifies identifiers as parameters vs. algorithm references.
-/// For each parametrized algorithm, identifiers not matching any local property name
+/// For each algorithm scope, identifiers not matching any local property name
     /// or any property name visible from a parent scope or any opened algorithm are converted from
     /// <see cref="Expr.Resolve"/> to <see cref="Expr.Param"/>, and added to the algorithm's
     /// <see cref="Algorithm.Parameters"/> list.
@@ -92,30 +92,25 @@ public static class ParameterDetector
         var graceWeights = new Dictionary<string, int>();
         var hasExplicitParameterList = alg.ExplicitParameterPatterns.Count > 0;
 
-        if (alg.IsParametrized)
+        // Ordinary nested algorithms close over already-known outer params.
+        // These should rewrite to Expr.Param but must not become new local params.
+        var boundNames = UnionNames(capturedParamNames, alg.Params);
+
+        if (hasExplicitParameterList)
         {
-            // Ordinary nested algorithms close over already-known outer params.
-            // These should rewrite to Expr.Param but must not become new local params.
-            var boundNames = UnionNames(capturedParamNames, alg.Params);
+            ReportUndeclaredExplicitParameterNames(alg.Output, scope, boundNames, diagnostics);
+        }
+        else
+        {
+            CollectFreeParams(alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights);
 
-            if (hasExplicitParameterList)
-            {
-                ReportUndeclaredExplicitParameterNames(alg.Output, scope, boundNames, diagnostics);
-            }
-            else
-            {
-                CollectFreeParams(alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights);
-
-                if (graceWeights.Count > 0)
-                    ApplyGraceReordering(paramOrder, graceWeights);
-            }
+            if (graceWeights.Count > 0)
+                ApplyGraceReordering(paramOrder, graceWeights);
         }
 
-        var nestedCapturedParamNames = alg.IsParametrized
-            ? UnionNames(capturedParamNames, paramOrder)
-            : new HashSet<string>(capturedParamNames);
+        var nestedCapturedParamNames = UnionNames(capturedParamNames, paramOrder);
 
-        // Process properties recursively (each property body is a parametrized algorithm)
+        // Process properties recursively (each property body is an algorithm scope)
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
@@ -157,21 +152,6 @@ public static class ParameterDetector
                     DeclarationSpans = prop.DeclarationSpans
                 });
             }
-        }
-
-        if (!alg.IsParametrized)
-        {
-            // Non-parametrized: just process nested blocks, no param detection
-            var newOutput = new List<Expr>(alg.Output.Count);
-            foreach (var expr in alg.Output)
-                newOutput.Add(ProcessExpr(expr, scope, nestedCapturedParamNames));
-
-            return alg with
-            {
-                Opens = newOpens,
-                Properties = newProperties,
-                Output = newOutput,
-            };
         }
 
         // Rewrite Resolve → Param for detected parameters
@@ -224,14 +204,24 @@ public static class ParameterDetector
     {
         switch (expr)
         {
-            case Expr.Block(var algorithm):
-                return new Expr.Block(ProcessAlgorithm(algorithm, openParentScope, [], diagnostics)) { Span = expr.Span };
+            case Expr.AlgorithmExpr(var algorithm):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(algorithm, openParentScope, [], diagnostics)) { Span = expr.Span };
+
+            case Expr.Capture(var captureBody):
+                // A capture target owns no scope: its rows are processed in the
+                // open-target parent scope (the pre-split transparent wrapper
+                // added only an empty lookup level here).
+                return new Expr.Capture(new OutputBundle(
+                    captureBody.Select(row => ProcessExpr(row, openParentScope, [])).ToList()))
+                { Span = expr.Span };
 
             case Expr.DotCall(var target, var name, var args):
                 return new Expr.DotCall(
                     ProcessOpenExpr(target, openParentScope, diagnostics),
                     name,
-                    args is not null ? ProcessAlgorithm(args, openParentScope, [], diagnostics) : null)
+                    args is not null
+                        ? new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())
+                        : null)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan,
@@ -258,7 +248,7 @@ public static class ParameterDetector
             case Expr.Call(var function, var args):
                 return new Expr.Call(
                     ProcessOpenExpr(function, openParentScope, diagnostics),
-                    ProcessAlgorithm(args, openParentScope, [], diagnostics)) { Span = expr.Span };
+                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())) { Span = expr.Span };
 
             default:
                 return expr;
@@ -441,71 +431,42 @@ public static class ParameterDetector
             case Expr.DotCall(var target, var name, var dotArgs):
             {
                 var rewrittenTarget = RewriteBinderRefs(target, binderNames, scope, capturedParamNames);
-                var nestedCapturedParamNames = UnionNames(capturedParamNames, binderNames);
-                if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, scope, nestedCapturedParamNames))
-                    {
-                        Span = expr.Span,
-                        MemberSpan = ((Expr.DotCall)expr).MemberSpan
-                    };
-                var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
-                foreach (var argExpr in dotArgs.Output)
-                    rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
-                var processedProps = new List<Property>(dotArgs.Properties.Count);
-                foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, nestedCapturedParamNames), prop.IsPublic, prop.Exposure)
-                    {
-                        DeclarationSpans = prop.DeclarationSpans
-                    });
-                return new Expr.DotCall(rewrittenTarget, name,
-                    dotArgs with { Output = rewrittenOutput, Properties = processedProps })
+                // Argument bundles own no scope: slots rewrite in the enclosing
+                // binder scope, exactly like capture rows.
+                var rewrittenArgs = new List<Expr>(dotArgs.Count);
+                foreach (var argExpr in dotArgs)
+                    rewrittenArgs.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
+                return new Expr.DotCall(rewrittenTarget, name, new OutputBundle(rewrittenArgs))
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
                 };
             }
 
-            case Expr.Block(var alg):
-                if (alg.IsParametrized)
+            case Expr.AlgorithmExpr(var alg):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, scope, UnionNames(capturedParamNames, binderNames))) { Span = expr.Span };
+
+            case Expr.Capture(var captureBody):
                 {
-                    return new Expr.Block(ProcessAlgorithm(alg, scope, UnionNames(capturedParamNames, binderNames))) { Span = expr.Span };
-                }
-                else
-                {
-                    var rewrittenOutput = new List<Expr>(alg.Output.Count);
-                    foreach (var argExpr in alg.Output)
-                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
-                    var processedProps = new List<Property>(alg.Properties.Count);
-                    foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, UnionNames(capturedParamNames, binderNames)), prop.IsPublic, prop.Exposure)
-                        {
-                            DeclarationSpans = prop.DeclarationSpans
-                        });
-                    return new Expr.Block(alg with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                    // Captures are transparent: rows rewrite in the enclosing
+                    // binder scope (no scope of their own, no properties).
+                    var rewrittenRows = new List<Expr>(captureBody.Count);
+                    foreach (var row in captureBody)
+                        rewrittenRows.Add(RewriteBinderRefs(row, binderNames, scope, capturedParamNames));
+                    return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
                 }
 
             case Expr.Call(var func, var args):
-                if (args.IsParametrized)
-                {
-                    return new Expr.Call(
-                        RewriteBinderRefs(func, binderNames, scope, capturedParamNames),
-                        ProcessAlgorithm(args, scope, UnionNames(capturedParamNames, binderNames))) { Span = expr.Span };
-                }
-                else
-                {
-                    var rewrittenOutput = new List<Expr>(args.Output.Count);
-                    foreach (var argExpr in args.Output)
-                        rewrittenOutput.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
-                    var processedProps = new List<Property>(args.Properties.Count);
-                    foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, UnionNames(capturedParamNames, binderNames)), prop.IsPublic, prop.Exposure)
-                        {
-                            DeclarationSpans = prop.DeclarationSpans
-                        });
-                    return new Expr.Call(
-                        RewriteBinderRefs(func, binderNames, scope, capturedParamNames),
-                        args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
-                }
+            {
+                // Argument bundles own no scope: slots rewrite in the enclosing
+                // binder scope.
+                var rewrittenArgs = new List<Expr>(args.Count);
+                foreach (var argExpr in args)
+                    rewrittenArgs.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
+                return new Expr.Call(
+                    RewriteBinderRefs(func, binderNames, scope, capturedParamNames),
+                    new OutputBundle(rewrittenArgs)) { Span = expr.Span };
+            }
 
             default:
                 return expr;
@@ -598,24 +559,26 @@ public static class ParameterDetector
 
             case Expr.DotCall(var target, _, var dotArgs):
                 CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                if (dotArgs is not null && !dotArgs.IsParametrized)
-                    CollectFreeParams(dotArgs.Output, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                if (dotArgs is not null)
+                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
 
-            case Expr.Block(var alg):
-                // Non-parametrized blocks (e.g. double-parens parenthesized expressions) are transparent:
-                // free identifiers bubble up to the enclosing param scope.
-                // Parametrized blocks have their own scope — don't collect.
-                if (!alg.IsParametrized)
-                    CollectFreeParams(alg.Output, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+            case Expr.Capture(var captureBody):
+                // Captures are transparent: free identifiers bubble up to the
+                // enclosing param scope.
+                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                break;
+
+            case Expr.AlgorithmExpr:
+                // Scope-owning algorithm expressions own their names — don't collect.
                 break;
 
             case Expr.Call(var func, var args):
                 CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                // Non-parametrized args (parenthesized call): free identifiers belong to the
-                // enclosing algorithm. Parametrized args ({} block call): own param scope.
-                if (!args.IsParametrized)
-                    CollectFreeParams(args.Output, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                // Argument bundles are transparent: free identifiers inside
+                // argument slots belong to the enclosing algorithm. (A brace
+                // block argument is an AlgorithmExpr slot and owns its names.)
+                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
 
             // Num, Param — no free names
@@ -747,75 +710,42 @@ public static class ParameterDetector
             case Expr.DotCall(var target, var name, var dotArgs):
             {
                 var rewrittenTarget = RewriteParams(target, paramNames, scope, capturedParamNames);
-                var nestedCapturedParamNames = UnionNames(capturedParamNames, paramNames);
-                if (dotArgs.IsParametrized)
-                    return new Expr.DotCall(rewrittenTarget, name, ProcessAlgorithm(dotArgs, scope, nestedCapturedParamNames))
-                    {
-                        Span = expr.Span,
-                        MemberSpan = ((Expr.DotCall)expr).MemberSpan
-                    };
-                var rewrittenOutput = new List<Expr>(dotArgs.Output.Count);
-                foreach (var argExpr in dotArgs.Output)
-                    rewrittenOutput.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
-                var processedProps = new List<Property>(dotArgs.Properties.Count);
-                foreach (var prop in dotArgs.Properties)
-                    processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, nestedCapturedParamNames), prop.IsPublic, prop.Exposure)
-                    {
-                        DeclarationSpans = prop.DeclarationSpans
-                    });
-                return new Expr.DotCall(rewrittenTarget, name,
-                    dotArgs with { Output = rewrittenOutput, Properties = processedProps })
+                // Argument bundles own no scope: slots rewrite in the enclosing
+                // param context.
+                var rewrittenArgs = new List<Expr>(dotArgs.Count);
+                foreach (var argExpr in dotArgs)
+                    rewrittenArgs.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
+                return new Expr.DotCall(rewrittenTarget, name, new OutputBundle(rewrittenArgs))
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
                 };
             }
 
-            case Expr.Block(var alg):
-                if (alg.IsParametrized)
+            case Expr.AlgorithmExpr(var alg):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, scope, UnionNames(capturedParamNames, paramNames))) { Span = expr.Span };
+
+            case Expr.Capture(var captureBody):
                 {
-                    return new Expr.Block(ProcessAlgorithm(alg, scope, UnionNames(capturedParamNames, paramNames))) { Span = expr.Span };
-                }
-                else
-                {
-                    // Non-parametrized block (double-parens parenthesized expression): rewrite in enclosing param scope
-                    var rewrittenOutput = new List<Expr>(alg.Output.Count);
-                    foreach (var argExpr in alg.Output)
-                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
-                    var processedProps = new List<Property>(alg.Properties.Count);
-                    foreach (var prop in alg.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, UnionNames(capturedParamNames, paramNames)), prop.IsPublic, prop.Exposure)
-                        {
-                            DeclarationSpans = prop.DeclarationSpans
-                        });
-                    return new Expr.Block(alg with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
+                    // Captures are transparent: rewrite rows in the enclosing param scope.
+                    var rewrittenRows = new List<Expr>(captureBody.Count);
+                    foreach (var row in captureBody)
+                        rewrittenRows.Add(RewriteParams(row, paramNames, scope, capturedParamNames));
+                    return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
                 }
 
             case Expr.Call(var func, var args):
-                if (args.IsParametrized)
-                {
-                    // Parametrized args ({} block): process as independent algorithm
-                    return new Expr.Call(
-                        RewriteParams(func, paramNames, scope, capturedParamNames),
-                        ProcessAlgorithm(args, scope, UnionNames(capturedParamNames, paramNames))) { Span = expr.Span };
-                }
-                else
-                {
-                    // Non-parametrized args (parenthesized call): rewrite output in enclosing
-                    // param context, then process any nested properties/blocks within args.
-                    var rewrittenOutput = new List<Expr>(args.Output.Count);
-                    foreach (var argExpr in args.Output)
-                        rewrittenOutput.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
-                    var processedProps = new List<Property>(args.Properties.Count);
-                    foreach (var prop in args.Properties)
-                        processedProps.Add(new Property(prop.Name, ProcessAlgorithm(prop.Value, scope, UnionNames(capturedParamNames, paramNames)), prop.IsPublic, prop.Exposure)
-                        {
-                            DeclarationSpans = prop.DeclarationSpans
-                        });
-                    return new Expr.Call(
-                        RewriteParams(func, paramNames, scope, capturedParamNames),
-                        args with { Output = rewrittenOutput, Properties = processedProps }) { Span = expr.Span };
-                }
+            {
+                // Argument bundles own no scope: slots rewrite in the enclosing
+                // param context. (A brace block argument is an AlgorithmExpr
+                // slot and processes as an independent algorithm.)
+                var rewrittenArgs = new List<Expr>(args.Count);
+                foreach (var argExpr in args)
+                    rewrittenArgs.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
+                return new Expr.Call(
+                    RewriteParams(func, paramNames, scope, capturedParamNames),
+                    new OutputBundle(rewrittenArgs)) { Span = expr.Span };
+            }
 
             default:
                 return expr;
@@ -823,7 +753,8 @@ public static class ParameterDetector
     }
 
     /// <summary>
-    /// Processes an expression in a non-parametrized context: just recurse into nested algorithms.
+    /// Processes an expression in a transparent context (capture rows, list elements,
+    /// argument slots): just recurse into nested algorithms.
     /// </summary>
     private static Expr ProcessExpr(
         Expr expr,
@@ -833,11 +764,14 @@ public static class ParameterDetector
         return expr switch
         {
             Expr.Grace(var inner, _) => ProcessExpr(inner, scope, capturedParamNames),
-            Expr.Block(var alg) => new Expr.Block(
+            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
                 ProcessAlgorithm(alg, scope, capturedParamNames)) { Span = expr.Span },
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody.Select(row => ProcessExpr(row, scope, capturedParamNames)).ToList()))
+            { Span = expr.Span },
             Expr.Call(var func, var args) => new Expr.Call(
                 ProcessExpr(func, scope, capturedParamNames),
-                ProcessAlgorithm(args, scope, capturedParamNames)) { Span = expr.Span },
+                new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames)).ToList())) { Span = expr.Span },
             Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
                 ProcessExpr(l, scope, capturedParamNames),
                 ProcessExpr(r, scope, capturedParamNames)) { Span = expr.Span },
@@ -861,7 +795,9 @@ public static class ParameterDetector
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExpr(t, scope, capturedParamNames),
                 n,
-                da is not null ? ProcessAlgorithm(da, scope, capturedParamNames) : null)
+                da is not null
+                    ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames)).ToList())
+                    : null)
             {
                 Span = expr.Span,
                 MemberSpan = ((Expr.DotCall)expr).MemberSpan
@@ -909,9 +845,10 @@ public static class ParameterDetector
             Expr.SequenceConstruct(var l, var r) => FindResolveSpan(l, name) ?? FindResolveSpan(r, name),
             Expr.SequenceSpread(var operand) => FindResolveSpan(operand, name),
             Expr.ListLiteral(var items) => FindResolveSpan(items, name),
-            Expr.DotCall(var t, _, var da) => FindResolveSpan(t, name) ?? (da is not null ? FindResolveSpan(da.Output, name) : null),
-            Expr.Block(var alg) => FindResolveSpan(alg.Output, name),
-            Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args.Output, name),
+            Expr.DotCall(var t, _, var da) => FindResolveSpan(t, name) ?? (da is not null ? FindResolveSpan(da, name) : null),
+            Expr.AlgorithmExpr(var alg) => FindResolveSpan(alg.Output, name),
+            Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name),
+            Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args, name),
             _ => null,
         };
     }

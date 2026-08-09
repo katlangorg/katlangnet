@@ -173,17 +173,25 @@ public abstract class AstWalker
                 if (expr is Expr.DotCall dotCall && dotCall.MemberSpan is { } memberSpan)
                     VisitDotMemberIdentifier(dotCall, memberSpan);
                 if (args is not null)
-                    VisitAlgorithm(args);
+                {
+                    foreach (var argExpr in args)
+                        VisitExpr(argExpr);
+                }
                 break;
             case Expr.Grace(var inner, _):
                 VisitExpr(inner);
                 break;
-            case Expr.Block(var algorithm):
+            case Expr.AlgorithmExpr(var algorithm):
                 VisitAlgorithm(algorithm);
+                break;
+            case Expr.Capture(var body):
+                foreach (var item in body)
+                    VisitExpr(item);
                 break;
             case Expr.Call(var function, var args):
                 VisitExpr(function);
-                VisitAlgorithm(args);
+                foreach (var argExpr in args)
+                    VisitExpr(argExpr);
                 break;
             // Childless leaves: nothing to recurse into.
             case Expr.NativeCall:

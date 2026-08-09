@@ -215,7 +215,7 @@ public class LookupTwinEquivalenceTests
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
-        var result = Evaluator.Run(new Expr.Block(parsed.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsError, $"Expected an evaluation failure for:\n{source}");
         return KatLangError.FromEvalError(result.Error).Message;
     }

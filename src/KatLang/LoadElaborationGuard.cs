@@ -71,7 +71,8 @@ internal static class LoadElaborationGuard
             if (expr.TryGetUnresolvedLoadArguments(out var args))
             {
                 onLoad(expr.Span);
-                VisitAlgorithm(args);
+                foreach (var argExpr in args)
+                    VisitExpr(argExpr);
                 return;
             }
 

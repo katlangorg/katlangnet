@@ -58,8 +58,8 @@ count 1 (`collectSegment` / `CollectSegment`), and forwarding is ordinary list
 spread: `sum(a)` passes the bound list as the one collection argument, and
 `a.spread` re-spreads exactly the collected items.)*
 
-**Construction.** Parenthesized lists parse to zero-parameter blocks whose
-output slots keep `()` items visible; slots are combined with the shallow
+**Construction.** Surviving parenthesized lists parse to `Capture` bundles whose
+written slots keep `()` items visible; slots are combined with the shallow
 `CombineOutputSlots` (1 slot -> the slot itself, else one sequence value).
 Written singleton parens are transparent (`(1)` = `1`, `(())` = `()`,
 `(((1,2)))` = `(1,2)`). Deep `Result.Normalize` is applied only at
@@ -287,7 +287,7 @@ are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
 
-- Parenthesized lists are emitted as zero-parameter blocks (`.block (alg [] [] [] [...])`),
+- Parenthesized lists are emitted as capture bundles (`.capture [...]`),
   mirroring the C# parser. They are **not** emitted as `.sequenceConstruct`
   chains: `sequenceConstruct` is an internal/test form on both sides (its
   evaluation drops `()` leaves, and the C# parser never produces it for
@@ -426,8 +426,8 @@ holds today; the change delivered is the validator that keeps it holding.
 semantic AST compatibility with the Lean model; surface spreading is the
 named `spread` intrinsic (`Expr.SequenceSpread`) and never builds it. It is
 **not** the AST representation of
-written parenthesized sequence values — those parse to zero-parameter
-`Expr.Block`s (and `()` to `Expr.EmptySequence`).
+written parenthesized sequence values — surviving groups parse to
+`Expr.Capture` nodes (and `()` to `Expr.EmptySequence`).
 
 **Provenance (origin vs rebuild).** Precise terminology matters here: an
 *origin site* can introduce the node into an AST that did not already contain
@@ -503,7 +503,7 @@ cases):
 | Purpose documented at definition/eval sites | doc comments on `Ast.cs` `SequenceConstruct`, `EvalSequenceConstructCounted`, Lean `Expr.sequenceConstruct`, `evalSequenceConstructCounted` |
 
 **Guidance for future syntax work:** do not reuse this node for written
-sequence syntax; parenthesized lists are blocks. If a new internal join is
+sequence syntax; surviving parenthesized lists are captures. If a new internal join is
 ever needed, prefer extending the explorer's internal-node corpus in the
 same change.
 

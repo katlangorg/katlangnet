@@ -25,7 +25,7 @@ BenchmarkDotNet writes summaries under `BenchmarkDotNet.Artifacts/results/`.
 ## What Is Measured
 
 - `ParseAndEvaluateBenchmarks` measures `KatLangEngine.EvaluateToAtoms(source)`, so parse, front-end elaboration, and evaluation are all included.
-- `PreparedEvaluationBenchmarks` parses and elaborates each checked-in scenario once outside the timed benchmark and then measures `Evaluator.RunFlat(new Expr.Block(root))`.
+- `PreparedEvaluationBenchmarks` parses and elaborates each checked-in scenario once outside the timed benchmark and then measures `Evaluator.RunFlat(new Expr.AlgorithmExpr(root))`.
 - The baseline method in each class is `RepeatedZeroArgPropertyReuse`, so BenchmarkDotNet's ratio columns compare the other scenarios against that same repeated zero-arg property reuse scenario for each benchmark mode.
 - `LoopMode=Generic` disables the internal optimized loop path; `LoopMode=Optimized` enables it. This makes loop-heavy scenarios compare before/after behavior without changing KatLang source semantics.
 - `SequencePipelineMode=Generic` disables sequence filter-count fusion; `SequencePipelineMode=Optimized` enables Stage S2 direct range iteration while keeping loop optimization enabled in the sequence pipeline benchmarks.

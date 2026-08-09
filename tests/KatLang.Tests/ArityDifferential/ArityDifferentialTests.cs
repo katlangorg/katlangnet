@@ -226,7 +226,7 @@ public class ArityDifferentialTests
             $"probe program must parse: {string.Join(" | ", parsed.Diagnostics.Select(d => d.Message))}");
         for (long budget = 1; budget <= 512; budget++)
         {
-            var result = Evaluator.Run(new Expr.Block(parsed.Root), new EvaluationLimits { MaxMaterializedItems = budget });
+            var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root), new EvaluationLimits { MaxMaterializedItems = budget });
             if (!result.IsError)
                 return budget;
         }

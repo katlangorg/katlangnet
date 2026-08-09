@@ -53,7 +53,7 @@ internal static class BenchmarkLoopStatsDiagnosticRunner
 		var diagnostics = new LoopOptimizationDiagnostics();
 		var stopwatch = Stopwatch.StartNew();
 		var result = Evaluator.Run(
-			new Expr.Block(scenario.PreparedRoot),
+			new Expr.AlgorithmExpr(scenario.PreparedRoot),
 			new RunScopedZeroArgPropertyResultCache(),
 			enableLoopOptimization: loopMode == BenchmarkLoopMode.Optimized,
 			loopDiagnostics: diagnostics);

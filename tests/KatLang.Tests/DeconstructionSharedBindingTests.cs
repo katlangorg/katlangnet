@@ -42,7 +42,7 @@ public class DeconstructionSharedBindingTests
             "expected a parseable program: " + string.Join("; ", frontEnd.Diagnostics.Select(d => d.Message)));
 
         var observations = new EvaluationObservations();
-        _ = Evaluator.RunCountedObserved(new Expr.Block(frontEnd.ElaboratedRoot), observations: observations);
+        _ = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(frontEnd.ElaboratedRoot), observations: observations);
         return observations.DeconstructionFullBindCount;
     }
 

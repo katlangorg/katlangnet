@@ -79,10 +79,10 @@ public class ConditionalBranchArityValidationTests
 
     /// <summary>Program block with one property <c>F</c> and the given output rows.</summary>
     private static Expr ProgramWithF(Algorithm f, params Expr[] outputRows) =>
-        new Expr.Block(new Algorithm.User(null, [], [], [new Property("F", f)], [.. outputRows]));
+        new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("F", f)], [.. outputRows]));
 
     private static Expr CallF(params Expr[] args) =>
-        new Expr.Call(new Expr.Resolve("F"), new Algorithm.User(null, [], [], [], [.. args]));
+        new Expr.Call(new Expr.Resolve("F"), [.. args]);
 
     private static EvalError.BranchArityMismatch AssertBranchArityMismatch<T>(
         EvalResult<T> result, string name, int expected, int actual)
@@ -197,7 +197,7 @@ public class ConditionalBranchArityValidationTests
         // nothing ever references it, so the program cannot evaluate to 42.
         var outer = new Algorithm.User(
             null, [], [], [new Property("Bad", InputArityMismatchConditional())], [new Expr.Num(1)]);
-        var uncalled = Evaluator.Run(new Expr.Block(new Algorithm.User(
+        var uncalled = Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("Outer", outer)], [new Expr.Num(42)])));
         AssertBranchArityMismatch(uncalled, "Bad", expected: 1, actual: 2);
     }
@@ -223,11 +223,11 @@ public class ConditionalBranchArityValidationTests
         var explicitParamViolation = new Property(
             "B", new Algorithm.User(null, [new ParameterDeclaration("p")], [], [], []));
 
-        var branchFirst = Evaluator.Run(new Expr.Block(new Algorithm.User(
+        var branchFirst = Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [branchViolation, explicitParamViolation], [new Expr.Num(42)])));
         AssertBranchOutputArityMismatch(branchFirst, "A", expected: 1, actual: 2);
 
-        var explicitParamFirst = Evaluator.Run(new Expr.Block(new Algorithm.User(
+        var explicitParamFirst = Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [explicitParamViolation, branchViolation], [new Expr.Num(42)])));
         Assert.True(explicitParamFirst.IsError);
         Assert.IsType<EvalError.ExplicitParametersRequireOutput>(explicitParamFirst.Error);
@@ -270,8 +270,8 @@ public class ConditionalBranchArityValidationTests
     public void CallTraversal_VisitsFunctionBeforeArgumentAlgorithm()
     {
         var expression = new Expr.Call(
-            new Expr.Block(OutputArityMismatchConditional()),
-            InputArityMismatchConditional());
+            new Expr.AlgorithmExpr(OutputArityMismatchConditional()),
+            [new Expr.AlgorithmExpr(InputArityMismatchConditional())]);
 
         AssertBranchOutputArityMismatch(
             Evaluator.Run(expression), "conditional", expected: 1, actual: 2);
@@ -283,7 +283,7 @@ public class ConditionalBranchArityValidationTests
         var expression = new Expr.DotCall(
             new Expr.Num(1),
             "Missing",
-            InputArityMismatchConditional());
+            new OutputBundle([new Expr.AlgorithmExpr(InputArityMismatchConditional())]));
 
         AssertBranchArityMismatch(
             Evaluator.Run(expression), "conditional", expected: 1, actual: 2);
@@ -297,8 +297,8 @@ public class ConditionalBranchArityValidationTests
         // Lean's expression walker validates a block's algorithm under the default
         // label "conditional" — the enclosing property name does not flow through
         // expression descent.
-        var propertyBody = Body(new Expr.Block(InputArityMismatchConditional()));
-        var program = new Expr.Block(new Algorithm.User(
+        var propertyBody = Body(new Expr.AlgorithmExpr(InputArityMismatchConditional()));
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("Outer", propertyBody)], [new Expr.Num(42)]));
         AssertBranchArityMismatch(Evaluator.Run(program), "conditional", expected: 1, actual: 2);
     }
@@ -456,7 +456,7 @@ public class ConditionalBranchArityValidationTests
     {
         var parsed = Parser.Parse("F(0) = 1\nF(x) = x + 1\nF(0), F(5)");
         Assert.False(parsed.HasErrors);
-        var result = Evaluator.RunFlat(new Expr.Block(parsed.Root));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(parsed.Root));
         Assert.False(result.IsError);
         Assert.Equal([1m, 6m], result.Value);
     }

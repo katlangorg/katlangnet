@@ -46,7 +46,7 @@ public class AtomsBuiltinTests
         Assert.False(
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-        var result = Evaluator.RunCounted(new Expr.Block(parseResult.Root));
+        var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(parseResult.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
         return (result.Value.Value, result.Value.EmittedCount);
@@ -247,7 +247,7 @@ public class AtomsBuiltinTests
     {
         var parseResult = Parser.Parse("atoms('text'):0");
         Assert.False(parseResult.HasErrors);
-        var result = Evaluator.Run(new Expr.Block(parseResult.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
         Assert.True(result.IsError, "Expected BadIndex but evaluation succeeded.");
         Assert.IsType<EvalError.BadIndex>(Innermost(result.Error));
     }
@@ -298,8 +298,8 @@ public class AtomsBuiltinTests
         var parseResult = Parser.Parse(source);
         Assert.False(parseResult.HasErrors);
 
-        var plain = Evaluator.Run(new Expr.Block(parseResult.Root));
-        var counted = Evaluator.RunCounted(new Expr.Block(parseResult.Root));
+        var plain = Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
+        var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(parseResult.Root));
         Assert.False(plain.IsError, $"plain path failed: {(plain.IsError ? plain.Error : null)}");
         Assert.False(counted.IsError, $"counted path failed: {(counted.IsError ? counted.Error : null)}");
 

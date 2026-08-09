@@ -29,8 +29,15 @@ try {
     Push-Location $repoRoot
     $enteredRepo = $true
 
+    # Full-solution build FIRST: `dotnet test` only builds test projects and
+    # their dependency closure, so a compile break in a non-test project
+    # (benchmarks, DemoApp) would otherwise pass validation undetected — as
+    # happened during the Track A gate review.
+    Write-Section "Full solution build"
+    Invoke-Native -FilePath "dotnet" -Arguments @("build", ".\KatLang.slnx", "-p:UseSharedCompilation=false")
+
     Write-Section "C# test suite"
-    Invoke-Native -FilePath "dotnet" -Arguments @("test", ".\KatLang.slnx", "-p:UseSharedCompilation=false")
+    Invoke-Native -FilePath "dotnet" -Arguments @("test", ".\KatLang.slnx", "-p:UseSharedCompilation=false", "--no-build")
 
     Write-Section "Git diff check"
     Invoke-Native -FilePath "git" -Arguments @("diff", "--check")

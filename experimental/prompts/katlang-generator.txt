@@ -134,7 +134,7 @@ Output shaping:
 
 The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot with zero items. Repeated ordinary parentheses around the empty sequence are redundant grouping and canonicalize to `()`. KatLang does not expose higher-order empty sequence values through `(())` or `((()))`. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
 
-`{}` is an empty parametrized body with no defined output. It is not a value: using it where a value is required (including comparing it with `()`) is a missing-output error.
+`{}` is an empty algorithm body with no defined output. It is not a value: using it where a value is required (including comparing it with `()`) is a missing-output error.
 
 Examples:
     A = ()
@@ -442,7 +442,7 @@ Braces:
 - free identifiers inside become parameters of that block
 - work anywhere an expression-valued algorithm is allowed, including as a call argument
 
-Do not wrap simple property bodies in `{ ... }` or `( ... )`; simple property bodies are already implicitly parametrized.
+Do not wrap simple property bodies in `{ ... }` or `( ... )`; simple property bodies already own their parameters.
 
 Nested properties:
     Outer = {
@@ -1041,7 +1041,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (45 of the 163-case canonical language specification,
+Verified reference examples (47 of the 167-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1266,6 +1266,27 @@ Regenerate this block from the repo root with:
     1
     (2, 3)
     4
+
+[zero-param-block-higher-order] An algorithm block always provides its contained algorithm on the higher-order channel, regardless of parameter or output count: `Call0({42})` invokes the brace algorithm exactly like the named zero-parameter `Call0(Const)`, redundant parentheses around braces normalize away, and a multi-output block's call emits its outputs as one captured sequence value.
+
+    Call0 = f()
+    Call0({42})
+
+  Displays:
+    42
+
+[open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
+
+    M = {
+        public C = 5
+    }
+    R = {
+        open (M)
+        C
+    }
+    R
+
+  Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
 
 [take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.
 

@@ -159,25 +159,20 @@ public class BuiltinRuntimeParityTests
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
 
-        return Evaluator.Run(new Expr.Block(parseResult.Root));
+        return Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
     private static EvalResult<Result> EvalBuiltinCall(BuiltinId builtinId, params Expr[] arguments)
     {
-        var argumentAlgorithm = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: arguments);
+        OutputBundle argumentBundle = arguments;
         var root = new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
             Properties: [],
-            Output: [new Expr.Call(new Expr.Block(new Algorithm.Builtin(builtinId)), argumentAlgorithm)]);
+            Output: [new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(builtinId)), argumentBundle)]);
 
-        return Evaluator.Run(new Expr.Block(root));
+        return Evaluator.Run(new Expr.AlgorithmExpr(root));
     }
 
     private static void AssertEval(string source, params decimal[] expected)

@@ -19,7 +19,7 @@ public class WideValueRobustnessTests
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
     {
         var ast = SourceProvenance.ParseValid(source).Root;
-        return Evaluator.RunFlat(new Expr.Block(ast));
+        return Evaluator.RunFlat(new Expr.AlgorithmExpr(ast));
     }
 
     private static void AssertEval(string source, params decimal[] expected)

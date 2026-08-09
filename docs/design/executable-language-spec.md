@@ -100,8 +100,8 @@ After any regeneration: review the diff, then run the corresponding
    the runner tell you if the implementation disagrees. Do not paste observed
    output without checking it against the documented rules first.
 2. Decide the partition. Prefer authoring the `LeanProgram` (helpers
-   `LProg`/`LProp`/`LFn`/`LFnP`/`LFnPat`/`LCall`/`LBlock`/`LDecon` cover most
-   shapes; parenthesized lists are zero-parameter blocks, `()` is
+   `LProg`/`LProp`/`LFn`/`LFnP`/`LFnPat`/`LCall`/`LCapture`/`LDecon` cover most
+   shapes; surviving parenthesized lists are `.capture` bundles, `()` is
    `.emptySequence 0`, never `.sequenceConstruct`). If you must defer the
    encoding, set `LeanExclusionReason` explaining why.
 3. `dotnet test --filter LanguageSpec` — the runner verifies the C# side.

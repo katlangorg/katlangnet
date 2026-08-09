@@ -179,7 +179,7 @@ public class SourceProvenanceEnforcementTests
     [Theory]
     [InlineData("        var ast = Parser.Parse(source).Root;", true)]
     [InlineData("        var root = Parser.Parse(\"1 + 2\").Root;", true)]
-    [InlineData("        return new Expr.Block(Parser.Parse(src).Root);", true)]
+    [InlineData("        return new Expr.AlgorithmExpr(Parser.Parse(src).Root);", true)]
     [InlineData("        var r = Parser.ParseSyntax(source).Root;", true)]
     [InlineData("        var ast = SourceProvenance.ParseValid(source).Root;", false)]
     [InlineData("        var ast = SourceProvenance.ParseAllowingDiagnostics(source).Root;", false)]

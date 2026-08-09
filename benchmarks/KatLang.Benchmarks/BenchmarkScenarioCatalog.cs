@@ -292,7 +292,7 @@ internal static class BenchmarkScenarioCatalog
 
 		AssertExpectedAtoms(id, "parse+eval", expectedAtoms, fullRunAtoms);
 
-		var preparedRun = Evaluator.RunFlat(new Expr.Block(parseResult.Root));
+		var preparedRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(parseResult.Root));
 		if (preparedRun.IsError)
 		{
 			throw new InvalidOperationException(

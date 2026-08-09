@@ -163,9 +163,10 @@ internal static class FrontEndStageProbe
                     case Expr.SequenceConstruct(var l, var r): exprs.Push(l); exprs.Push(r); break;
                     case Expr.Grace(var i, _): exprs.Push(i); break;
                     case Expr.ListLiteral(var items): foreach (var it in items) exprs.Push(it); break;
-                    case Expr.Block(var alg): algs.Push(alg); break;
-                    case Expr.Call(var fn, var args): exprs.Push(fn); algs.Push(args); break;
-                    case Expr.DotCall dc: exprs.Push(dc.Target); if (dc.Args is { } a2) algs.Push(a2); break;
+                    case Expr.AlgorithmExpr(var alg): algs.Push(alg); break;
+                    case Expr.Capture(var captureBody): foreach (var row in captureBody) exprs.Push(row); break;
+                    case Expr.Call(var fn, var args): exprs.Push(fn); foreach (var a in args) exprs.Push(a); break;
+                    case Expr.DotCall dc: exprs.Push(dc.Target); if (dc.Args is { } a2) foreach (var row in a2) exprs.Push(row); break;
                 }
             }
         }
@@ -200,9 +201,10 @@ internal static class FrontEndStageProbe
                 case Expr.SequenceConstruct(var l, var r): Ex(l); Ex(r); break;
                 case Expr.Grace(var i, _): Ex(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) Ex(it); break;
-                case Expr.Block(var alg): Alg(alg); break;
-                case Expr.Call(var fn, var args): Ex(fn); Alg(args); break;
-                case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) Alg(a2); break;
+                case Expr.AlgorithmExpr(var alg): Alg(alg); break;
+                case Expr.Capture(var captureBody): foreach (var row in captureBody) Ex(row); break;
+                case Expr.Call(var fn, var args): Ex(fn); foreach (var a in args) Ex(a); break;
+                case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) foreach (var row in a2) Ex(row); break;
             }
         }
     }

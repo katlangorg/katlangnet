@@ -442,7 +442,7 @@ internal static class MetamorphicSurfaces
 
     // ── Shared helpers ──────────────────────────────────────────────────────
 
-    private static bool TryParse(string source, ref string reason, out Expr.Block block)
+    private static bool TryParse(string source, ref string reason, out Expr.AlgorithmExpr block)
     {
         var parsed = Parser.Parse(source);
         if (parsed.HasErrors)
@@ -452,7 +452,7 @@ internal static class MetamorphicSurfaces
             return false;
         }
 
-        block = new Expr.Block(parsed.Root);
+        block = new Expr.AlgorithmExpr(parsed.Root);
         return true;
     }
 

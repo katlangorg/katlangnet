@@ -135,16 +135,16 @@ internal static partial class LoopOptimizer
 
                 return new LoopExprPlanTryBuildResult(null, $"unsupported local property reference: {name}");
 
-            case Expr.Call(var func, var argsAlg):
+            case Expr.Call(var func, var callArgs):
                 if (func is Expr.Resolve { Name: "if" }
                     && Evaluator.ResolvesToBuiltinAlgorithm("if", BuiltinId.@if, ctx))
                 {
-                    return TryBuildLoopIfExprPlan(expr, func, argsAlg, stateNames, ctx, parentValEnv, tempPlans);
+                    return TryBuildLoopIfExprPlan(expr, func, callArgs, stateNames, ctx, parentValEnv, tempPlans);
                 }
 
                 if (func is Expr.Resolve(var tempName) && TryFindLoopTempPlan(tempPlans, tempName, out var calledTempPlan))
                 {
-                    if (IsLoopTempCallShape(argsAlg, calledTempPlan))
+                    if (IsLoopTempCallShape(callArgs, calledTempPlan))
                         return new LoopExprPlanTryBuildResult(new LoopExprPlan.TempSlot(expr, calledTempPlan.Index, tempName), null);
 
                     return new LoopExprPlanTryBuildResult(null, $"unsupported local property call shape: {tempName}");
@@ -155,8 +155,11 @@ internal static partial class LoopOptimizer
             case Expr.DotCall(var target, var name, _):
                 return new LoopExprPlanTryBuildResult(null, $"unsupported dot-call: {Evaluator.OpenExprName(target)}.{name}");
 
-            case Expr.Block:
+            case Expr.AlgorithmExpr:
                 return new LoopExprPlanTryBuildResult(null, "unsupported block expression");
+
+            case Expr.Capture:
+                return new LoopExprPlanTryBuildResult(null, "unsupported capture expression");
 
             case Expr.Index:
                 return new LoopExprPlanTryBuildResult(null, "unsupported index expression");
@@ -250,17 +253,14 @@ internal static partial class LoopOptimizer
         return false;
     }
 
-    private static bool IsLoopTempCallShape(Algorithm argsAlg, LoopTempPlan tempPlan)
+    private static bool IsLoopTempCallShape(OutputBundle args, LoopTempPlan tempPlan)
     {
-        if (argsAlg.Params.Count != 0 || argsAlg.Properties.Count != 0 || argsAlg.Opens.Count != 0)
+        if (args.Count != tempPlan.ParameterNames.Count)
             return false;
 
-        if (argsAlg.Output.Count != tempPlan.ParameterNames.Count)
-            return false;
-
-        for (var i = 0; i < argsAlg.Output.Count; i++)
+        for (var i = 0; i < args.Count; i++)
         {
-            if (argsAlg.Output[i] is not Expr.Param(var name) || name != tempPlan.ParameterNames[i])
+            if (args[i] is not Expr.Param(var name) || name != tempPlan.ParameterNames[i])
                 return false;
         }
 
@@ -270,27 +270,24 @@ internal static partial class LoopOptimizer
     private static LoopExprPlanTryBuildResult TryBuildLoopIfExprPlan(
         Expr source,
         Expr callee,
-        Algorithm argsAlg,
+        OutputBundle callArgs,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
         IReadOnlyList<(string Name, Result Value)> parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans)
     {
-        if (argsAlg.Params.Count != 0 || argsAlg.Properties.Count != 0 || argsAlg.Opens.Count != 0)
-            return new LoopExprPlanTryBuildResult(null, "unsupported if argument shape");
+        if (callArgs.Count != 3)
+            return new LoopExprPlanTryBuildResult(null, $"unsupported if arity: {callArgs.Count}");
 
-        if (argsAlg.Output.Count != 3)
-            return new LoopExprPlanTryBuildResult(null, $"unsupported if arity: {argsAlg.Output.Count}");
-
-        var conditionPlan = TryBuildLoopExprPlan(argsAlg.Output[0], stateNames, ctx, parentValEnv, tempPlans);
+        var conditionPlan = TryBuildLoopExprPlan(callArgs[0], stateNames, ctx, parentValEnv, tempPlans);
         if (conditionPlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if condition: {conditionPlan.FallbackReason}");
 
-        var truePlan = TryBuildLoopExprPlan(argsAlg.Output[1], stateNames, ctx, parentValEnv, tempPlans);
+        var truePlan = TryBuildLoopExprPlan(callArgs[1], stateNames, ctx, parentValEnv, tempPlans);
         if (truePlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if true branch: {truePlan.FallbackReason}");
 
-        var falsePlan = TryBuildLoopExprPlan(argsAlg.Output[2], stateNames, ctx, parentValEnv, tempPlans);
+        var falsePlan = TryBuildLoopExprPlan(callArgs[2], stateNames, ctx, parentValEnv, tempPlans);
         if (falsePlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if false branch: {falsePlan.FallbackReason}");
 

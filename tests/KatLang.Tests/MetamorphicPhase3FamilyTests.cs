@@ -660,7 +660,7 @@ public class MetamorphicPhase3FamilyTests
             Assert.Equal(observed.MaterializedStringChars, withEvidence.MaterializedStringChars);
             Assert.Equal(observed.PeakDynamicDepth, withEvidence.PeakDynamicDepth);
 
-            var block = new Expr.Block(SourceProvenance.ParseValid(source.Source).Root);
+            var block = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source.Source).Root);
             var counted = Evaluator.RunCounted(block, new RunScopedZeroArgPropertyResultCache());
             Assert.Equal(observed.Semantic.Outcome == "err", counted.IsError);
             if (!counted.IsError)

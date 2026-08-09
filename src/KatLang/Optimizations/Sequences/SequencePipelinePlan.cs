@@ -17,15 +17,15 @@ internal readonly record struct SequencePipelineInvocation(
     SequencePipelineInvocationKind Kind,
     Expr? DotTarget,
     string? DotName,
-    Algorithm? DotArgs,
+    OutputBundle? DotArgs,
     Expr? PlainFunction,
-    Algorithm? PlainArgs,
+    OutputBundle? PlainArgs,
     Algorithm? PlainCallee)
 {
     internal static SequencePipelineInvocation DotCall(
         Expr target,
         string name,
-        Algorithm? args)
+        OutputBundle? args)
         => new(
             SequencePipelineInvocationKind.DotCall,
             DotTarget: target,
@@ -37,7 +37,7 @@ internal readonly record struct SequencePipelineInvocation(
 
     internal static SequencePipelineInvocation PlainCall(
         Expr function,
-        Algorithm args,
+        OutputBundle args,
         Algorithm callee)
         => new(
             SequencePipelineInvocationKind.PlainCall,
@@ -53,9 +53,9 @@ internal readonly record struct SequencePipelineEvaluationServices(
     Func<Expr, string, BuiltinId, string?> GetDotCallLexicalBuiltinFallbackReason,
     Func<Expr, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateDotReceiverIterationItems,
     Func<IReadOnlyList<Algorithm>, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateSequenceIterationItems,
-    Func<Algorithm, EvalResult<IReadOnlyList<Algorithm>>> ResolveArgumentAlgorithms,
+    Func<OutputBundle, EvalResult<IReadOnlyList<Algorithm>>> ResolveArgumentAlgorithms,
     Func<Expr, EvalResult<Algorithm>> ResolveAlgorithm,
-    Func<Expr, Algorithm, SourceSpan?, EvalResult<Evaluator.InclusiveRange>> EvaluateRangeCallArguments);
+    Func<Expr, OutputBundle, SourceSpan?, EvalResult<Evaluator.InclusiveRange>> EvaluateRangeCallArguments);
 
 internal readonly record struct SequencePipelineRangeSourceEvaluation(
     bool IsDirectRange,
@@ -90,9 +90,9 @@ internal readonly record struct FilterCountPipelineSyntax(
     FilterCountPipelineForm Form,
     Expr Source,
     Expr FilterExpression,
-    Algorithm? DotFilterArgs,
+    OutputBundle? DotFilterArgs,
     Expr? PlainFilterFunction,
-    Algorithm? PlainFilterArgs);
+    OutputBundle? PlainFilterArgs);
 
 internal sealed record FilterCountPipelinePlan(
     Expr Source,

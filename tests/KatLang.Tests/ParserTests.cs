@@ -105,7 +105,7 @@ public class ParserTests
     {
         var brace = Parser.ParseSyntax("{}");
         Assert.False(brace.HasErrors);
-        var braceBlock = Assert.IsType<Expr.Block>(Assert.Single(brace.Root.Output));
+        var braceBlock = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(brace.Root.Output));
         Assert.Empty(braceBlock.Algorithm.Output);
     }
 
@@ -403,31 +403,29 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var func = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("F", func.Name);
-        Assert.Equal(2, call.Args.Output.Count);
+        Assert.Equal(2, call.Args.Count);
     }
 
     [Fact]
     public void Parse_CallWithBraces_WrapsInBlock()
     {
         // F{x + 1} desugars to F({x + 1}) — the brace content becomes an
-        // Expr.Block inside a non-parametrized outer args algorithm.
+        // Expr.AlgorithmExpr argument row in the call's args bundle.
         var result = Parser.ParseSyntax("F{x + 1}");
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.False(call.Args.IsParametrized);
-        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
-        Assert.True(block.Algorithm.IsParametrized);
+        Assert.IsType<Expr.AlgorithmExpr>(call.Args[0]);
     }
 
     [Fact]
-    public void Parse_CallWithParens_NotParametrized()
+    public void Parse_CallWithParens_ProducesArgsBundle()
     {
         var result = Parser.ParseSyntax("F(1)");
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.False(call.Args.IsParametrized);
+        Assert.Single(call.Args);
     }
 
     [Fact]
@@ -454,8 +452,7 @@ public class ParserTests
         var filterCall = Assert.IsType<Expr.DotCall>(countCall.Target);
         Assert.Equal("filter", filterCall.Name);
         Assert.NotNull(filterCall.Args);
-        var predicateBlock = Assert.IsType<Expr.Block>(Assert.Single(filterCall.Args!.Output));
-        Assert.True(predicateBlock.Algorithm.IsParametrized);
+        Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(filterCall.Args!));
     }
 
     [Fact]
@@ -484,7 +481,7 @@ public class ParserTests
         var target = Assert.IsType<Expr.Resolve>(dotCall.Target);
         Assert.Equal("A", target.Name);
         Assert.NotNull(dotCall.Args);
-        Assert.Equal(2, dotCall.Args!.Output.Count);
+        Assert.Equal(2, dotCall.Args!.Count);
     }
 
     [Fact]
@@ -513,7 +510,7 @@ public class ParserTests
         Assert.Equal("Add", dotCall.Name);
         Assert.IsType<Expr.Num>(dotCall.Target);
         Assert.NotNull(dotCall.Args);
-        Assert.Single(dotCall.Args!.Output);
+        Assert.Single(dotCall.Args!);
     }
 
     [Fact]
@@ -550,8 +547,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("{1}");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        Assert.True(block.Algorithm.IsParametrized);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(result.Root.Output[0]);
+        Assert.IsType<Algorithm.User>(block.Algorithm);
     }
 
     [Fact]
@@ -570,8 +567,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("(Inner)");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Resolve>(Assert.Single(block.Algorithm.Output));
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.Resolve>(Assert.Single(capture.Body));
         Assert.Equal("Inner", inner.Name);
     }
 
@@ -581,9 +578,9 @@ public class ParserTests
         var result = Parser.ParseSyntax("((Inner))");
 
         Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Block>(Assert.Single(outer.Algorithm.Output));
-        var reference = Assert.IsType<Expr.Resolve>(Assert.Single(inner.Algorithm.Output));
+        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
+        var reference = Assert.IsType<Expr.Resolve>(Assert.Single(inner.Body));
         Assert.Equal("Inner", reference.Name);
     }
 
@@ -751,7 +748,7 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.Equal("x", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
         Assert.Equal("y", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
@@ -768,7 +765,7 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.Equal("x", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
         Assert.Equal("y", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
@@ -784,8 +781,8 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(block.Algorithm.Output));
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
         Assert.Equal("x", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
         Assert.Equal("y", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
@@ -801,8 +798,8 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(block.Algorithm.Output));
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
         Assert.Equal("x", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
         Assert.Equal("y", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
@@ -822,9 +819,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("(A*)");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        Assert.False(block.Algorithm.IsParametrized);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(block.Algorithm.Output));
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -834,9 +830,9 @@ public class ParserTests
         var result = Parser.ParseSyntax("((A*))");
 
         Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Block>(Assert.Single(outer.Algorithm.Output));
-        Assert.IsType<Expr.SequenceSpread>(Assert.Single(inner.Algorithm.Output));
+        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(inner.Body));
     }
 
     [Fact]
@@ -859,8 +855,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("(1, 2)");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        Assert.Equal(2, block.Algorithm.Output.Count);
+        var capture = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        Assert.Equal(2, capture.Body.Count);
     }
 
     [Fact]
@@ -869,9 +865,9 @@ public class ParserTests
         var result = Parser.ParseSyntax("((1, 2))");
 
         Assert.False(result.HasErrors);
-        var outer = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        var inner = Assert.IsType<Expr.Block>(Assert.Single(outer.Algorithm.Output));
-        Assert.Equal(2, inner.Algorithm.Output.Count);
+        var outer = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        var inner = Assert.IsType<Expr.Capture>(Assert.Single(outer.Body));
+        Assert.Equal(2, inner.Body.Count);
     }
 
     [Fact]
@@ -942,8 +938,8 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         Assert.Equal(1m, Assert.IsType<Expr.Num>(result.Root.Output[0]).Value);
-        var group = Assert.IsType<Expr.Block>(result.Root.Output[1]);
-        Assert.Equal([2m, 3m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+        var group = Assert.IsType<Expr.Capture>(result.Root.Output[1]);
+        Assert.Equal([2m, 3m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
 
     [Fact]
@@ -988,7 +984,7 @@ public class ParserTests
             """);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         Assert.Equal(3, block.Algorithm.Output.Count);
         Assert.Equal([1m, 2m, 3m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
@@ -1005,7 +1001,7 @@ public class ParserTests
             """);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         Assert.Equal(3, block.Algorithm.Output.Count);
         Assert.Equal([1m, 2m, 3m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
@@ -1022,7 +1018,7 @@ public class ParserTests
             """);
 
         AssertUnsupportedSemicolonDiagnostic(result);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         Assert.Equal(2, block.Algorithm.Output.Count);
         Assert.Equal([1m, 2m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
@@ -1059,8 +1055,8 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal([1m, 2m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal([1m, 2m], capture.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
 
     [Theory]
@@ -1071,7 +1067,7 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         Assert.Equal(2, block.Algorithm.Output.Count);
         Assert.Equal([1m, 2m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
@@ -1082,9 +1078,9 @@ public class ParserTests
         var result = Parser.ParseSyntax("{ (1, 2) }");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        var group = Assert.IsType<Expr.Block>(Assert.Single(block.Algorithm.Output));
-        Assert.Equal([1m, 2m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(block.Algorithm.Output));
+        Assert.Equal([1m, 2m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
 
     [Theory]
@@ -1105,8 +1101,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("(1, 2, 3)");
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal([1m, 2m, 3m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal([1m, 2m, 3m], capture.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
 
     [Theory]
@@ -1121,8 +1117,8 @@ public class ParserTests
         {
             Assert.Equal(2, result.Root.Output.Count);
             Assert.Equal(1m, Assert.IsType<Expr.Num>(result.Root.Output[0]).Value);
-            var group = Assert.IsType<Expr.Block>(result.Root.Output[1]);
-            Assert.Equal([2m, 3m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            var group = Assert.IsType<Expr.Capture>(result.Root.Output[1]);
+            Assert.Equal([2m, 3m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
         else
         {
@@ -1170,8 +1166,8 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
-        var sequenceValueBlock = Assert.IsType<Expr.Block>(result.Root.Output[1]);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(sequenceValueBlock.Algorithm.Output));
+        var sequenceValueCapture = Assert.IsType<Expr.Capture>(result.Root.Output[1]);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(sequenceValueCapture.Body));
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -1270,10 +1266,10 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, block.Algorithm.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(block.Algorithm.Output[0]).Name);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(block.Algorithm.Output[1]);
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal(2, capture.Body.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(capture.Body[0]).Name);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(capture.Body[1]);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -1286,9 +1282,9 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -1299,9 +1295,9 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -1313,10 +1309,10 @@ public class ParserTests
         var twoArgs = Parser.ParseSyntax("F(X*, Y)");
         Assert.False(twoArgs.HasErrors);
         var call2 = Assert.IsType<Expr.Call>(Assert.Single(twoArgs.Root.Output));
-        Assert.Equal(2, call2.Args.Output.Count);
+        Assert.Equal(2, call2.Args.Count);
         Assert.Equal("X", Assert.IsType<Expr.Resolve>(
-            Assert.IsType<Expr.SequenceSpread>(call2.Args.Output[0]).Operand).Name);
-        Assert.Equal("Y", Assert.IsType<Expr.Resolve>(call2.Args.Output[1]).Name);
+            Assert.IsType<Expr.SequenceSpread>(call2.Args[0]).Operand).Name);
+        Assert.Equal("Y", Assert.IsType<Expr.Resolve>(call2.Args[1]).Name);
 
         // Without the comma the star is followed by a same-line
         // expression-start token, so it is infix multiplication:
@@ -1324,7 +1320,7 @@ public class ParserTests
         var oneArg = Parser.ParseSyntax("F(X* Y)");
         Assert.False(oneArg.HasErrors);
         var call1 = Assert.IsType<Expr.Call>(Assert.Single(oneArg.Root.Output));
-        var product = Assert.IsType<Expr.Binary>(Assert.Single(call1.Args.Output));
+        var product = Assert.IsType<Expr.Binary>(Assert.Single(call1.Args));
         Assert.Equal(BinaryOp.Mul, product.Op);
         Assert.Equal("X", Assert.IsType<Expr.Resolve>(product.Left).Name);
         Assert.Equal("Y", Assert.IsType<Expr.Resolve>(product.Right).Name);
@@ -1338,9 +1334,9 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, block.Algorithm.Output.Count);
-        Assert.Equal([1m, 2m], block.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal(2, capture.Body.Count);
+        Assert.Equal([1m, 2m], capture.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
     }
 
     [Theory]
@@ -1356,13 +1352,13 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
         if (source.Contains("((1, 2))", StringComparison.Ordinal))
         {
-            var group = Assert.IsType<Expr.Block>(Assert.Single(call.Args.Output));
-            Assert.Equal([1m, 2m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            var group = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
+            Assert.Equal([1m, 2m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
         else
         {
-            Assert.Equal(2, call.Args.Output.Count);
-            Assert.Equal([1m, 2m], call.Args.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            Assert.Equal(2, call.Args.Count);
+            Assert.Equal([1m, 2m], call.Args.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
     }
 
@@ -1376,7 +1372,7 @@ public class ParserTests
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        Assert.Equal(2, call.Args.Output.Count);
+        Assert.Equal(2, call.Args.Count);
     }
 
     [Theory]
@@ -1389,7 +1385,7 @@ public class ParserTests
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        var argument = Assert.IsType<Expr.Block>(Assert.Single(call.Args.Output));
+        var argument = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(call.Args));
         Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(argument.Algorithm.Output)).Value);
     }
 
@@ -1404,7 +1400,7 @@ public class ParserTests
         var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Output));
         Assert.Equal("B", dotCall.Name);
         Assert.NotNull(dotCall.Args);
-        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(dotCall.Args!.Output)).Value);
+        Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(dotCall.Args!)).Value);
     }
 
     [Theory]
@@ -1418,7 +1414,7 @@ public class ParserTests
         var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(result.Root.Output));
         Assert.Equal("B", dotCall.Name);
         Assert.NotNull(dotCall.Args);
-        var argument = Assert.IsType<Expr.Block>(Assert.Single(dotCall.Args!.Output));
+        var argument = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(dotCall.Args!));
         Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(argument.Algorithm.Output)).Value);
     }
 
@@ -1453,8 +1449,8 @@ public class ParserTests
         Assert.False(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
         Assert.Equal("Add", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
-        var group = Assert.IsType<Expr.Block>(result.Root.Output[1]);
-        Assert.Equal(2, group.Algorithm.Output.Count);
+        var group = Assert.IsType<Expr.Capture>(result.Root.Output[1]);
+        Assert.Equal(2, group.Body.Count);
     }
 
     [Fact]
@@ -1597,9 +1593,9 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        Assert.IsType<Expr.Unary>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        Assert.IsType<Expr.Unary>(call.Args[1]);
     }
 
     [Theory]
@@ -1886,10 +1882,10 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
-        var group = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, group.Algorithm.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(group.Algorithm.Output[0]).Name);
-        Assert.IsType<Expr.Unary>(group.Algorithm.Output[1]);
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal(2, group.Body.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(group.Body[0]).Name);
+        Assert.IsType<Expr.Unary>(group.Body[1]);
     }
 
     [Theory]
@@ -1955,7 +1951,7 @@ public class ParserTests
         Assert.True(result.Root.Output[0] is Expr.Resolve or Expr.DotCall);
         if (result.Root.Output[0] is Expr.DotCall dotCall)
             Assert.Null(dotCall.Args);
-        var block = Assert.IsType<Expr.Block>(result.Root.Output[1]);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(result.Root.Output[1]);
         Assert.Equal(1, Assert.IsType<Expr.Num>(Assert.Single(block.Algorithm.Output)).Value);
     }
 
@@ -1983,8 +1979,8 @@ public class ParserTests
         Assert.Equal("P", property.Name);
         var body = Assert.IsType<Algorithm.User>(property.Value);
         Assert.Equal("F", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
-        var row = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, row.Algorithm.Output.Count);
+        var row = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal(2, row.Body.Count);
     }
 
     [Fact]
@@ -2003,8 +1999,8 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         Assert.Equal("Identity", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
         Assert.Equal(2, result.Root.Output.Count);
-        var row = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(row.Algorithm.Output)).Name);
+        var row = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(row.Body)).Name);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
     }
 
@@ -2022,7 +2018,7 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
         Assert.Equal("Identity", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(call.Args.Output)).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(call.Args)).Name);
     }
 
     [Theory]
@@ -2040,7 +2036,7 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
         Assert.Equal("Identity", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(call.Args.Output)).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(call.Args)).Name);
     }
 
     [Theory]
@@ -2054,8 +2050,8 @@ public class ParserTests
         if (source.StartsWith('('))
         {
             Assert.Equal(2, result.Root.Output.Count);
-            var group = Assert.IsType<Expr.Block>(result.Root.Output[0]);
-            Assert.Equal([1m, 2m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            var group = Assert.IsType<Expr.Capture>(result.Root.Output[0]);
+            Assert.Equal([1m, 2m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
             Assert.Equal(3m, Assert.IsType<Expr.Num>(result.Root.Output[1]).Value);
         }
         else
@@ -2074,10 +2070,10 @@ public class ParserTests
         Assert.False(adjacency.HasErrors);
         Assert.False(commaSeparated.HasErrors);
         var adjacencyCall = Assert.IsType<Expr.Call>(Assert.Single(adjacency.Root.Output));
-        Assert.Equal(2, adjacencyCall.Args.Output.Count);
+        Assert.Equal(2, adjacencyCall.Args.Count);
         var commaCall = Assert.IsType<Expr.Call>(Assert.Single(commaSeparated.Root.Output));
-        Assert.Equal(2, commaCall.Args.Output.Count);
-        Assert.DoesNotContain(commaCall.Args.Output, static expr => expr is Expr.SequenceConstruct);
+        Assert.Equal(2, commaCall.Args.Count);
+        Assert.DoesNotContain(commaCall.Args, static expr => expr is Expr.SequenceConstruct);
     }
 
     [Theory]
@@ -2091,15 +2087,15 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
         if (source.Contains("(2, 3)", StringComparison.Ordinal))
         {
-            Assert.Equal(2, call.Args.Output.Count);
-            Assert.Equal(1m, Assert.IsType<Expr.Num>(call.Args.Output[0]).Value);
-            var group = Assert.IsType<Expr.Block>(call.Args.Output[1]);
-            Assert.Equal([2m, 3m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            Assert.Equal(2, call.Args.Count);
+            Assert.Equal(1m, Assert.IsType<Expr.Num>(call.Args[0]).Value);
+            var group = Assert.IsType<Expr.Capture>(call.Args[1]);
+            Assert.Equal([2m, 3m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
         else
         {
-            Assert.Equal(3, call.Args.Output.Count);
-            Assert.Equal([1m, 2m, 3m], call.Args.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            Assert.Equal(3, call.Args.Count);
+            Assert.Equal([1m, 2m, 3m], call.Args.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
     }
 
@@ -2126,8 +2122,8 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         if (source.Contains('('))
         {
-            var group = Assert.IsType<Expr.Block>(Assert.Single(body.Output));
-            Assert.Equal([1m, 2m], group.Algorithm.Output.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
+            var group = Assert.IsType<Expr.Capture>(Assert.Single(body.Output));
+            Assert.Equal([1m, 2m], group.Body.Select(static expr => Assert.IsType<Expr.Num>(expr).Value));
         }
         else
         {
@@ -2293,9 +2289,9 @@ public class ParserTests
 
         AssertUnsupportedSemicolonDiagnostic(result);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.Equal("a", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
         Assert.Equal("b", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
     }
 
@@ -2314,7 +2310,7 @@ public class ParserTests
         AssertUnsupportedSemicolonDiagnostic(result);
 
         IReadOnlyList<Expr> slots = source.StartsWith("X", StringComparison.Ordinal)
-            ? Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output)).Args.Output
+            ? Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output)).Args
             : result.Root.Output;
         Assert.Equal(2, slots.Count);
         Assert.IsType<Expr.SequenceSpread>(slots[0]);
@@ -2327,10 +2323,10 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args.Output[0]);
+        Assert.Equal(2, call.Args.Count);
+        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(call.Args[0]);
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
-        Assert.Equal("b", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
+        Assert.Equal("b", Assert.IsType<Expr.Resolve>(call.Args[1]).Name);
     }
 
     [Fact]
@@ -2343,10 +2339,10 @@ public class ParserTests
             """);
 
         Assert.False(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, block.Algorithm.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(block.Algorithm.Output[0]).Name);
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(block.Algorithm.Output[1]).Name);
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(result.Root.Output));
+        Assert.Equal(2, capture.Body.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(capture.Body[0]).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(capture.Body[1]).Name);
     }
 
     [Fact]
@@ -2362,9 +2358,9 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(call.Args[1]).Name);
     }
 
     [Fact]
@@ -2449,8 +2445,8 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        var target = Assert.IsType<Expr.Block>(dotCall.Target);
-        Assert.Equal(3, target.Algorithm.Output.Count);
+        var target = Assert.IsType<Expr.Capture>(dotCall.Target);
+        Assert.Equal(3, target.Body.Count);
         Assert.Null(dotCall.Args);
     }
 
@@ -2461,11 +2457,11 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        var outer = Assert.IsType<Expr.Block>(dotCall.Target);
-        Assert.Single(outer.Algorithm.Output);
+        var outer = Assert.IsType<Expr.Capture>(dotCall.Target);
+        Assert.Single(outer.Body);
 
-        var inner = Assert.IsType<Expr.Block>(outer.Algorithm.Output[0]);
-        Assert.Equal(3, inner.Algorithm.Output.Count);
+        var inner = Assert.IsType<Expr.Capture>(outer.Body[0]);
+        Assert.Equal(3, inner.Body.Count);
         Assert.Null(dotCall.Args);
     }
 
@@ -2476,8 +2472,7 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        var target = Assert.IsType<Expr.Block>(dotCall.Target);
-        Assert.True(target.Algorithm.IsParametrized);
+        var target = Assert.IsType<Expr.AlgorithmExpr>(dotCall.Target);
         Assert.Equal(3, target.Algorithm.Output.Count);
         Assert.Null(dotCall.Args);
     }
@@ -2489,23 +2484,9 @@ public class ParserTests
 
         Assert.False(result.HasErrors);
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
-        var target = Assert.IsType<Expr.Block>(dotCall.Target);
+        var target = Assert.IsType<Expr.AlgorithmExpr>(dotCall.Target);
         Assert.Equal(3, target.Algorithm.Output.Count);
         Assert.Null(dotCall.Args);
-    }
-
-    [Fact]
-    public void Parse_RootAlgorithm_IsParametrized()
-    {
-        var result = Parser.ParseSyntax("x + 1");
-        Assert.True(result.Root.IsParametrized);
-    }
-
-    [Fact]
-    public void Parse_PropertyBody_IsParametrized()
-    {
-        var result = Parser.ParseSyntax("X = x + 1");
-        Assert.True(result.Root.Properties[0].Value.IsParametrized);
     }
 
     [Fact]
@@ -2516,8 +2497,8 @@ public class ParserTests
         Assert.False(result.HasErrors);
         var pair = result.Root.Properties[0].Value;
         Assert.Single(pair.Output);
-        var block = Assert.IsType<Expr.Block>(pair.Output[0]);
-        Assert.Equal(2, block.Algorithm.Output.Count);
+        var capture = Assert.IsType<Expr.Capture>(pair.Output[0]);
+        Assert.Equal(2, capture.Body.Count);
     }
 
     [Fact]
@@ -2796,7 +2777,7 @@ public class ParserTests
         Assert.Equal(1, grace.Weight);
         var resolve = Assert.IsType<Expr.Resolve>(grace.Inner);
         Assert.Equal("predicate", resolve.Name);
-        var arg = Assert.IsType<Expr.Resolve>(call.Args.Output[0]);
+        var arg = Assert.IsType<Expr.Resolve>(call.Args[0]);
         Assert.Equal("x", arg.Name);
     }
 
@@ -3020,8 +3001,8 @@ public class ParserTests
         var fn = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("load", fn.Name);
         Assert.Null(fn.Span);
-        Assert.Single(call.Args.Output);
-        var strLit = Assert.IsType<Expr.StringLiteral>(call.Args.Output[0]);
+        Assert.Single(call.Args);
+        var strLit = Assert.IsType<Expr.StringLiteral>(call.Args[0]);
         Assert.Equal("https://katlang.org/algorithm.kat", strLit.Value);
     }
 
@@ -3973,7 +3954,7 @@ public class ParserTests
         var middle = Assert.Single(result.Root.Properties, property => property.Name == "middle");
         var body = Assert.IsType<Algorithm.User>(middle.Value);
         var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
-        var helperBlock = Assert.IsType<Expr.Block>(call.Function);
+        var helperBlock = Assert.IsType<Expr.AlgorithmExpr>(call.Function);
         var sequence = Assert.IsType<SequenceValueParameterPattern>(
             Assert.Single(helperBlock.Algorithm.ParameterPatterns));
         var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
@@ -4271,9 +4252,9 @@ public class ParserTests
         var result = Parser.ParseSyntax("F((a + b) mod 2, c)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(2, call.Args.Output.Count);
+        Assert.Equal(2, call.Args.Count);
         // First arg should be binary mod expression
-        var modExpr = Assert.IsType<Expr.Binary>(call.Args.Output[0]);
+        var modExpr = Assert.IsType<Expr.Binary>(call.Args[0]);
         Assert.Equal(BinaryOp.Mod, modExpr.Op);
     }
 
@@ -4283,7 +4264,7 @@ public class ParserTests
         var result = Parser.ParseSyntax("if((a + b) mod 2 == 0, 1, 0)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(3, call.Args.Output.Count);
+        Assert.Equal(3, call.Args.Count);
     }
 
     [Fact]
@@ -4307,10 +4288,10 @@ public class ParserTests
         var result = Parser.ParseSyntax("while(Step, x, 0)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(3, call.Args.Output.Count);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[0]);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[1]);
-        Assert.IsType<Expr.Num>(call.Args.Output[2]);
+        Assert.Equal(3, call.Args.Count);
+        Assert.IsType<Expr.Resolve>(call.Args[0]);
+        Assert.IsType<Expr.Resolve>(call.Args[1]);
+        Assert.IsType<Expr.Num>(call.Args[2]);
     }
 
     [Fact]
@@ -4320,8 +4301,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("while(Step, init)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.IsType<Expr.Resolve>(call.Args[1]);
     }
 
     [Fact]
@@ -4330,11 +4311,11 @@ public class ParserTests
         var result = Parser.ParseSyntax("repeat(Step, n, x, 0)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(4, call.Args.Output.Count);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[0]);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[1]);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[2]);
-        Assert.IsType<Expr.Num>(call.Args.Output[3]);
+        Assert.Equal(4, call.Args.Count);
+        Assert.IsType<Expr.Resolve>(call.Args[0]);
+        Assert.IsType<Expr.Resolve>(call.Args[1]);
+        Assert.IsType<Expr.Resolve>(call.Args[2]);
+        Assert.IsType<Expr.Num>(call.Args[3]);
     }
 
     [Fact]
@@ -4344,8 +4325,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("repeat(Step, n, init)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(3, call.Args.Output.Count);
-        Assert.IsType<Expr.Resolve>(call.Args.Output[2]);
+        Assert.Equal(3, call.Args.Count);
+        Assert.IsType<Expr.Resolve>(call.Args[2]);
     }
 
     [Fact]
@@ -4355,8 +4336,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("first(x, y, z)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(3, call.Args.Output.Count);
-        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Resolve>(expression));
+        Assert.Equal(3, call.Args.Count);
+        Assert.All(call.Args, expression => Assert.IsType<Expr.Resolve>(expression));
     }
 
     [Fact]
@@ -4366,8 +4347,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("last(x, y, z)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(3, call.Args.Output.Count);
-        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Resolve>(expression));
+        Assert.Equal(3, call.Args.Count);
+        Assert.All(call.Args, expression => Assert.IsType<Expr.Resolve>(expression));
     }
 
     [Fact]
@@ -4377,11 +4358,11 @@ public class ParserTests
         Assert.False(result.HasErrors);
 
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(4, call.Args.Output.Count);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
-        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args.Output[2]).Name);
-        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args.Output[3]).Name);
+        Assert.Equal(4, call.Args.Count);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args[1]).Name);
+        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args[2]).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args[3]).Name);
     }
 
     [Fact]
@@ -4391,11 +4372,11 @@ public class ParserTests
         Assert.False(result.HasErrors);
 
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(4, call.Args.Output.Count);
-        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args.Output[0]).Name);
-        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args.Output[1]).Name);
-        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args.Output[2]).Name);
-        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args.Output[3]).Name);
+        Assert.Equal(4, call.Args.Count);
+        Assert.Equal("x", Assert.IsType<Expr.Resolve>(call.Args[0]).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Resolve>(call.Args[1]).Name);
+        Assert.Equal("z", Assert.IsType<Expr.Resolve>(call.Args[2]).Name);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(call.Args[3]).Name);
     }
 
     [Fact]
@@ -4407,8 +4388,8 @@ public class ParserTests
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
         Assert.Equal("take", dotCall.Name);
         Assert.NotNull(dotCall.Args);
-        Assert.Single(dotCall.Args!.Output);
-        Assert.Equal("n", Assert.IsType<Expr.Resolve>(dotCall.Args.Output[0]).Name);
+        Assert.Single(dotCall.Args!);
+        Assert.Equal("n", Assert.IsType<Expr.Resolve>(dotCall.Args[0]).Name);
     }
 
     [Fact]
@@ -4420,7 +4401,7 @@ public class ParserTests
         var dotCall = Assert.IsType<Expr.DotCall>(result.Root.Output[0]);
         Assert.Equal("while", dotCall.Name);
         Assert.NotNull(dotCall.Args);
-        Assert.Equal(2, dotCall.Args!.Output.Count);
+        Assert.Equal(2, dotCall.Args!.Count);
     }
 
     // ── if arity validation ─────────────────────────────────────────────────
@@ -4442,7 +4423,7 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("if", resolve.Name);
-        Assert.Equal(3, call.Args.Output.Count);
+        Assert.Equal(3, call.Args.Count);
     }
 
     [Fact]
@@ -4486,7 +4467,7 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("if", resolve.Name);
-        var argument = Assert.Single(call.Args.Output);
+        var argument = Assert.Single(call.Args);
         var spread = Assert.IsType<Expr.SequenceSpread>(argument);
         Assert.IsType<Expr.Resolve>(spread.Operand);
     }
@@ -4499,8 +4480,8 @@ public class ParserTests
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
         var resolve = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("if", resolve.Name);
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.IsType<Expr.SequenceSpread>(call.Args.Output[1]);
+        Assert.Equal(2, call.Args.Count);
+        Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
     }
 
     // A bare grouped value used without spread is still one structural argument,
@@ -4533,8 +4514,8 @@ public class ParserTests
         var result = Parser.ParseSyntax("if(A*, B*)");
         Assert.False(result.HasErrors);
         var call = Assert.IsType<Expr.Call>(result.Root.Output[0]);
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.All(call.Args.Output, argument => Assert.IsType<Expr.SequenceSpread>(argument));
+        Assert.Equal(2, call.Args.Count);
+        Assert.All(call.Args, argument => Assert.IsType<Expr.SequenceSpread>(argument));
     }
 
     // ── Clause definition classification ────────────────────────────────────
@@ -4914,8 +4895,8 @@ public class ParserTests
         var user = Assert.IsType<Algorithm.User>(result.Root.Properties[0].Value);
         var body = user;
         Assert.Single(body.Output);
-        var block = Assert.IsType<Expr.Block>(body.Output[0]);
-        Assert.Equal(2, block.Algorithm.Output.Count);
+        var capture = Assert.IsType<Expr.Capture>(body.Output[0]);
+        Assert.Equal(2, capture.Body.Count);
     }
 
     [Fact]

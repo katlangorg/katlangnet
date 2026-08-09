@@ -46,7 +46,7 @@ public class CollectionBuiltinBindingTests
         int actual,
         int expectedLine)
     {
-        var eval = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root));
+        var eval = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.True(eval.IsError, "Expected an arity failure.");
 
         var error = eval.Error;

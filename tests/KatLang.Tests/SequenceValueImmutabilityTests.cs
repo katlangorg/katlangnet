@@ -364,7 +364,7 @@ public class SequenceValueImmutabilityTests
 
     private static EvalResult<Result> RunWithSequenceOptimization(Algorithm root, bool enabled)
         => Evaluator.Run(
-            new Expr.Block(root),
+            new Expr.AlgorithmExpr(root),
             new Evaluation.Caching.RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: true,
             loopDiagnostics: null,

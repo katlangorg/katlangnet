@@ -68,6 +68,31 @@ public class SemanticExplorerTests
             + string.Join("\n", lines));
     }
 
+    [Fact]
+    public void LeanValueEncoder_MirrorsParserParenthesisNormalization()
+    {
+        var values = SemanticExplorerCorpus.Values.ToDictionary(v => v.Id, v => v.Value);
+
+        // These written wrappers are erased by Parser.ShouldUnwrapParenthesizedPrimary.
+        Assert.Equal("(.num 1)", values["p1"].LeanExpr);
+        Assert.Equal("(.emptySequence 0)", values["ppe"].LeanExpr);
+        Assert.Equal("(.num 1)", values["pp1"].LeanExpr);
+        Assert.Equal("(.listLiteral [(.num 1)])", values["pl1"].LeanExpr);
+
+        // Multi-item grouping survives, and each additional wrapper around an
+        // already-captured value contributes one more Capture boundary.
+        Assert.Equal("(.capture [(.num 1), (.num 2)])", values["p12"].LeanExpr);
+        Assert.Equal(
+            "(.capture [(.capture [(.capture [(.num 1), (.num 2)])])])",
+            values["ppp12"].LeanExpr);
+
+        var cases = SemanticExplorerCorpus.AllCases().ToDictionary(c => c.Id);
+        Assert.DoesNotContain(".capture [(.num 1)]", cases["seqWrapSolo__n1"].LeanProgram);
+        Assert.Contains(
+            ".capture [(.capture [(.num 1), (.num 2)])]",
+            cases["seqWrapSolo__p12"].LeanProgram);
+    }
+
     // ----- Finding computation ------------------------------------------------
 
     private static List<Finding> ComputeFindings()

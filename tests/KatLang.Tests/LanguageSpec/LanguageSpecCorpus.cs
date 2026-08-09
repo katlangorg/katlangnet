@@ -42,11 +42,12 @@ public static class LanguageSpecCorpus
     ];
 
     // ----- Lean program text helpers (same encoding as SemanticExplorerCorpus:
-    // parenthesized lists are zero-parameter blocks, `()` is the empty-sequence
-    // node; the parser never produces .sequenceConstruct) -------------------
+    // surviving parenthesized lists are `.capture` bundles, braces and roots
+    // are `.algorithmExpr`, `()` is the empty-sequence node; the parser never
+    // produces .sequenceConstruct) ------------------------------------------
 
     private static string LProg(IEnumerable<string> props, IEnumerable<string> outputs)
-        => $".block (alg [] [] [{string.Join(", ", props)}] [{string.Join(", ", outputs)}])";
+        => $".algorithmExpr (alg [] [] [{string.Join(", ", props)}] [{string.Join(", ", outputs)}])";
 
     private static string LProp(string name, params string[] outputs)
         => $"privateProp \"{name}\" (alg [] [] [] [{string.Join(", ", outputs)}])";
@@ -61,10 +62,10 @@ public static class LanguageSpecCorpus
         => $"privateProp \"{name}\" (algWithParameterPatterns [{string.Join(", ", patterns)}] [] [] [{string.Join(", ", outputs)}])";
 
     private static string LCall(string callee, params string[] args)
-        => $".call (.resolve \"{callee}\") (alg [] [] [] [{string.Join(", ", args)}])";
+        => $".call (.resolve \"{callee}\") [{string.Join(", ", args)}]";
 
-    private static string LBlock(params string[] outputs)
-        => $"(.block (alg [] [] [] [{string.Join(", ", outputs)}]))";
+    private static string LCapture(params string[] outputs)
+        => $"(.capture [{string.Join(", ", outputs)}])";
 
     private static string LNums(params int[] ns) => string.Join(", ", ns.Select(n => $".num {n}"));
 
@@ -86,12 +87,12 @@ public static class LanguageSpecCorpus
             ? $".capture {{ name := \"{t}\", kind := .collecting }}"
             : $".capture {{ name := \"{t}\" }}");
         var pattern = $".sequenceValue [{string.Join(", ", captures)}]";
-        var helper = $".block (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
-        return $"privateProp \"{observed}\" (alg [] [] [] [.call ({helper}) (alg [] [] [] [.resolve \"{sharedProp}\"])])";
+        var helper = $".algorithmExpr (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
+        return $"privateProp \"{observed}\" (alg [] [] [] [.call ({helper}) [.resolve \"{sharedProp}\"]])";
     }
 
     private const string PairOfPairs =
-        "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))";
+        "(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])";
 
     // ----- The corpus -------------------------------------------------------
 
@@ -121,7 +122,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             LeanProgram = LProg(
                 [LProp("Answer", ".num 42")],
-                [".resolve \"Answer\"", ".call (.resolve \"Answer\") (alg [] [] [] [])"]),
+                [".resolve \"Answer\"", ".call (.resolve \"Answer\") []"]),
             Explanation = "Property-style access `Answer` and the explicit call `Answer()` observe the same value; the call shape only controls the zero-argument cache.",
         },
         new()
@@ -170,7 +171,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "()",
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LEmpty)]),
+            LeanProgram = LProg([], [LEmpty]),
             Probes =
             [
                 new SpecProbe("count((()))", "ok raw=0 n=1"),
@@ -187,7 +188,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "()",
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LBlock(LEmpty))]),
+            LeanProgram = LProg([], [LEmpty]),
             Explanation = "Canonicalization is not depth-limited: `((()))` is still `()`.",
         },
         new()
@@ -199,7 +200,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "7",
             ExpectedRaw = "7",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(".num 7")]),
+            LeanProgram = LProg([], [".num 7"]),
             Probes =
             [
                 new SpecProbe("(7) == 7", "ok raw=1 n=1"),
@@ -216,7 +217,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "7",
             ExpectedRaw = "7",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LBlock(LBlock(".num 7")))]),
+            LeanProgram = LProg([], [".num 7"]),
             Explanation = "Singleton sequence boundaries normalize away at every depth; `(((7)))` is the atom `7`.",
         },
         new()
@@ -231,10 +232,10 @@ public static class LanguageSpecCorpus
             LeanProgram = LProg([],
             [
                 $".binary .eq {LEmpty} {LEmpty}",
-                $".binary .eq {LEmpty} {LBlock(LEmpty)}",
-                $".binary .ne {LEmpty} {LBlock(LEmpty)}",
+                $".binary .eq {LEmpty} {LEmpty}",
+                $".binary .ne {LEmpty} {LEmpty}",
                 LCall("count", LEmpty),
-                LCall("count", LBlock(LEmpty)),
+                LCall("count", LEmpty),
             ]),
             Explanation = "Equality is structural on canonical values, so `()` and `(())` are the same value, and both count zero items.",
         },
@@ -280,7 +281,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "(2, 4, 6)",
             ExpectedRaw = "S[2, 4, 6]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(
+            LeanProgram = LProg([], [LCapture(
                 ".binary .add (.num 1) (.num 1)",
                 ".binary .add (.num 2) (.num 2)",
                 ".binary .add (.num 3) (.num 3)")]),
@@ -387,7 +388,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LProp("A", "(.listLiteral [.num 1, .num 2, .num 3])")],
-                [$".dotCall {LBlock(".sequenceSpread (.resolve \"A\")")} \"count\" none"]),
+                [$".dotCall {LCapture(".sequenceSpread (.resolve \"A\")")} \"count\" none"]),
             Probes =
             [
                 new SpecProbe("A = [1, 2, 3]\nA*.count", "err arity"),
@@ -409,7 +410,7 @@ public static class LanguageSpecCorpus
                  LProp("A", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
                 [LCall("Collect", ".sequenceSpread (.resolve \"A\")"),
                  LCall("Collect", ".sequenceSpread (.sequenceSpread (.resolve \"A\"))"),
-                 LCall("Collect", $".sequenceSpread {LBlock(".sequenceSpread (.resolve \"A\")")}")]),
+                 LCall("Collect", $".sequenceSpread {LCapture(".sequenceSpread (.resolve \"A\")")}")]),
             Probes =
             [
                 new SpecProbe("Collect(*items) = items\nCollect([[1, 2], 3]*)", "ok raw=L[L[1, 2], 3] n=1"),
@@ -468,8 +469,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
                 [LProp("A", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
-                [$".sequenceSpread {LBlock(".index (.resolve \"A\") (.num 0)")}",
-                 $".index {LBlock(".sequenceSpread (.resolve \"A\")")} (.num 0)"]),
+                [$".sequenceSpread {LCapture(".index (.resolve \"A\") (.num 0)")}",
+                 $".index {LCapture(".sequenceSpread (.resolve \"A\")")} (.num 0)"]),
             Probes =
             [
                 new SpecProbe("A = [[1, 2], [3, 4]]\nA:0*", "ok raw=S[1, 2] n=2"),
@@ -536,7 +537,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("count", LBlock(LEmpty, LEmpty))]),
+            LeanProgram = LProg([], [LCall("count", LCapture(LEmpty, LEmpty))]),
             Probes =
             [
                 new SpecProbe("count((), ())", "err arity"),
@@ -596,7 +597,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "99",
             ExpectedRaw = "99",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock($".sequenceSpread {LEmpty}", ".num 99")]),
+            LeanProgram = LProg([], [LCapture($".sequenceSpread {LEmpty}", ".num 99")]),
             Explanation = "Inside a written sequence value, `()*` contributes zero items, leaving one item — and a one-item construction is the item itself, not a wrapper.",
         },
         new()
@@ -608,7 +609,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "((), 99)",
             ExpectedRaw = "S[S[], 99]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LEmpty, ".num 99")]),
+            LeanProgram = LProg([], [LCapture(LEmpty, ".num 99")]),
             Explanation = "A written non-spread `()` stays a visible sequence item: `((), 99)` keeps two items.",
         },
         new()
@@ -904,7 +905,7 @@ public static class LanguageSpecCorpus
                  LFnP("UseVariadic", [LVar("items")],
                      LCall("Target", ".sequenceSpread (.param \"items\")"))],
                 [LCall("Use", "(.listLiteral [.num 1, .num 2])"),
-                 LCall("Use", LBlock(LNums(1, 2))),
+                 LCall("Use", LCapture(LNums(1, 2))),
                  LCall("UseVariadic", ".num 1", ".num 2")]),
             Probes =
             [
@@ -982,9 +983,9 @@ public static class LanguageSpecCorpus
                  LFnP("Tail", [LFix("first"), LVar("rest")], ".param \"rest\""),
                  LFnP("Init", [LVar("init"), LFix("last")], ".param \"init\""),
                  LFnP("Last", [LVar("init"), LFix("last")], ".param \"last\"")],
-                [LCall("Head", ".num 1", LBlock(LNums(2, 3))),
-                 LCall("Tail", ".num 1", LBlock(LNums(2, 3))),
-                 LCall("Init", LBlock(LNums(1, 2)), ".num 3"),
+                [LCall("Head", ".num 1", LCapture(LNums(2, 3))),
+                 LCall("Tail", ".num 1", LCapture(LNums(2, 3))),
+                 LCall("Init", LCapture(LNums(1, 2)), ".num 3"),
                  LCall("Last", ".resolve \"Arg\"", ".num 3")]),
             Explanation = "Grouped arguments are single slots: a collected segment of one grouped value is the one-element list holding it (never the value itself), and fixed captures bind whole argument boundaries.",
         },
@@ -1018,7 +1019,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnP("H", [LFix("h"), LVar("t")], ".param \"t\"")],
-                [LCall("H", LBlock(LNums(1, 2)))]),
+                [LCall("H", LCapture(LNums(1, 2)))]),
             Probes =
             [
                 new SpecProbe("H(h, *t) = t\nH((1, 2)*)", "ok raw=L[2] n=1"),
@@ -1035,7 +1036,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[2, 4]",
             ExpectedEmittedCount = 2,
             LeanProgram = LProg(
-                [LProp("Arg", $"{LBlock(LNums(1, 2))}, {LBlock(LNums(3, 4))}"),
+                [LProp("Arg", $"{LCapture(LNums(1, 2))}, {LCapture(LNums(3, 4))}"),
                  LFnP("Many", [LVar("values")], ".dotCall (.param \"values\") \"count\" none"),
                  LProp("Flattened", $".dotCall ({LCall("atoms", ".resolve \"Arg\"")}) \"count\" none")],
                 [LCall("Many", ".sequenceSpread (.resolve \"Arg\")"), ".resolve \"Flattened\""]),
@@ -1058,10 +1059,10 @@ public static class LanguageSpecCorpus
                 [LFnP("CountValues", [LVar("values")], ".dotCall (.param \"values\") \"count\" none"),
                  LFnPat("CountSequenceValue", [".sequenceValue [.capture { name := \"values\", kind := .collecting }]"],
                      ".dotCall (.param \"values\") \"count\" none")],
-                [".call (.resolve \"CountValues\") (alg [] [] [] [])",
+                [".call (.resolve \"CountValues\") []",
                  LCall("CountValues", LNums(1, 2, 3)),
-                 LCall("CountValues", LBlock(LNums(1, 2, 3))),
-                 LCall("CountSequenceValue", LBlock(LNums(1, 2, 3)))]),
+                 LCall("CountValues", LCapture(LNums(1, 2, 3))),
+                 LCall("CountSequenceValue", LCapture(LNums(1, 2, 3)))]),
             Explanation = "Top-level `*values` collects the call's argument slots — a grouped `(1, 2, 3)` is ONE collected element — while the sequence-value pattern `(*values)` consumes exactly one grouped argument and opens it during binding, collecting its three items.",
         },
         new()
@@ -1074,16 +1075,16 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[3, 1, 1, 3, 3]",
             ExpectedEmittedCount = 5,
             LeanProgram = LProg(
-                [LProp("Inner", LBlock(LNums(1, 2, 3))),
+                [LProp("Inner", LCapture(LNums(1, 2, 3))),
                  LFnPat("CountSequenceValue", [".sequenceValue [.capture { name := \"values\", kind := .collecting }]"],
                      ".dotCall (.param \"values\") \"count\" none"),
                  LFnPat("NestedCount", [".sequenceValue [.sequenceValue [.capture { name := \"values\", kind := .collecting }]]"],
                      ".dotCall (.param \"values\") \"count\" none")],
                 [LCall("CountSequenceValue", ".resolve \"Inner\""),
-                 LCall("CountSequenceValue", LBlock(".resolve \"Inner\"")),
-                 LCall("CountSequenceValue", LBlock(LBlock(LNums(1, 2, 3)))),
-                 LCall("NestedCount", LBlock(LBlock(LNums(1, 2, 3)))),
-                 LCall("NestedCount", LBlock(LBlock(LBlock(LNums(1, 2, 3)))))]),
+                 LCall("CountSequenceValue", LCapture(".resolve \"Inner\"")),
+                 LCall("CountSequenceValue", LCapture(LCapture(LNums(1, 2, 3)))),
+                 LCall("NestedCount", LCapture(LCapture(LNums(1, 2, 3)))),
+                 LCall("NestedCount", LCapture(LCapture(LCapture(LNums(1, 2, 3)))))]),
             Probes =
             [
                 new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
@@ -1104,7 +1105,7 @@ public static class LanguageSpecCorpus
                 ["privateProp \"F\" (.conditional none [] [" +
                      "⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, " +
                      "⟨.sequenceValue [.bind \"x\", .bind \"y\"], alg [] [] [] [.binary .add (.param \"x\") (.param \"y\")]⟩])",
-                 LProp("A", LBlock(LNums(1, 2)))],
+                 LProp("A", LCapture(LNums(1, 2)))],
                 [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
             Probes =
             [
@@ -1124,7 +1125,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnPat("F", [".sequenceValue [.capture { name := \"x\" }]"], LNums(1, 2))],
-                [LCall("F", LBlock(".num 7"))]),
+                [LCall("F", ".num 7")]),
             Probes =
             [
                 new SpecProbe("F((x)) = x, x\nF((7))", "ok raw=S[7, 7] n=1"),
@@ -1147,7 +1148,7 @@ public static class LanguageSpecCorpus
                 ["privateProp \"F\" (.conditional none [] [" +
                      "⟨.sequenceValue [.sequenceValue [.bind \"x\"]], (alg [] [] [] [.param \"x\"])⟩, " +
                      "⟨.bind \"n\", (alg [] [] [] [.num 0])⟩])"],
-                ["(.call (.resolve \"F\") (alg [] [] [] [(.listLiteral [.num 1, .num 2])]))"]),
+                ["(.call (.resolve \"F\") [(.listLiteral [.num 1, .num 2])])"]),
             Probes =
             [
                 // A SINGLETON list is not opened either: `x` binds `[7]`, not 7.
@@ -1170,7 +1171,7 @@ public static class LanguageSpecCorpus
                 ["privateProp \"F\" (.conditional none [] [" +
                      "⟨.litInt 0, (alg [] [] [] [.num 1])⟩, " +
                      "⟨.bind \"n\", (alg [] [] [] [.num 2])⟩])"],
-                ["(.call (.resolve \"F\") (alg [] [] [] [.num 1, .num 2]))"]),
+                ["(.call (.resolve \"F\") [.num 1, .num 2])"]),
             Probes =
             [
                 // A literal head must not match on the first argument alone.
@@ -1193,7 +1194,7 @@ public static class LanguageSpecCorpus
                 ["privateProp \"F\" (.conditional none [] [" +
                      "⟨.sequenceValue [.litInt 0, .litInt 0], alg [] [] [] [.num 100]⟩, " +
                      "⟨.sequenceValue [.bind \"x\", .bind \"y\"], alg [] [] [] [.binary .add (.param \"x\") (.param \"y\")]⟩])",
-                 LProp("A", LBlock(LNums(0, 0)))],
+                 LProp("A", LCapture(LNums(0, 0)))],
                 [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
             Explanation = "Clause selection happens strictly AFTER spread expansion: `F(A*)` with A = (0, 0) supplies the two literal-matching slots, so the literal clause wins. A catch-all clause can never absorb a spread argument as one closed value.",
         },
@@ -1208,7 +1209,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnP("F", [LFix("x"), LFix("x")], ".binary .add (.param \"x\") (.num 1)"),
-                 LProp("A", LBlock(LNums(7, 7)))],
+                 LProp("A", LCapture(LNums(7, 7)))],
                 [LCall("F", ".sequenceSpread (.resolve \"A\")")]),
             Probes =
             [
@@ -1228,7 +1229,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "(1, 2)",
             ExpectedRaw = "S[1, 2]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LBlock(LNums(1, 2)))]),
+            LeanProgram = LProg([], [LCapture(LCapture(LNums(1, 2)))]),
             Probes =
             [
                 new SpecProbe("((1, 2)) == (1, 2)", "ok raw=1 n=1"),
@@ -1263,7 +1264,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "((1, 2), ())",
             ExpectedRaw = "S[S[1, 2], S[]]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(LBlock(LNums(1, 2)), LEmpty)]),
+            LeanProgram = LProg([], [LCapture(LCapture(LNums(1, 2)), LEmpty)]),
             Explanation = "A written `()` item inside a sequence value stays visible.",
         },
         new()
@@ -1276,8 +1277,8 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[1, 2, 99]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
-                [LProp("x", LBlock(LNums(1, 2)))],
-                [LBlock(".sequenceSpread (.resolve \"x\")", ".num 99")]),
+                [LProp("x", LCapture(LNums(1, 2)))],
+                [LCapture(".sequenceSpread (.resolve \"x\")", ".num 99")]),
             Explanation = "Spread inside a written sequence value splices exactly one layer of items beside the sibling slots.",
         },
         new()
@@ -1289,7 +1290,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "(1, (), 2)",
             ExpectedRaw = "S[1, S[], 2]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LBlock(".sequenceSpread (.num 1)", LEmpty, ".sequenceSpread (.num 2)")]),
+            LeanProgram = LProg([], [LCapture(".sequenceSpread (.num 1)", LEmpty, ".sequenceSpread (.num 2)")]),
             Explanation = "Spreading a scalar contributes the scalar itself; the written `()` slot between the spreads stays a visible item.",
         },
         new()
@@ -1302,7 +1303,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[1, 2, 99]",
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
-                [LProp("A", LBlock(LNums(1, 2)))],
+                [LProp("A", LCapture(LNums(1, 2)))],
                 [".sequenceSpread (.resolve \"A\")", ".num 99"]),
             Explanation = "At root output a spread slot contributes its spread items as rows beside the other slots.",
         },
@@ -1344,7 +1345,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "1\n(2, 3)\n4",
             ExpectedRaw = "S[1, S[2, 3], 4]",
             ExpectedEmittedCount = 3,
-            LeanProgram = LProg([], [$".sequenceSpread {LBlock(".num 1", LBlock(LNums(2, 3)))}", ".num 4"]),
+            LeanProgram = LProg([], [$".sequenceSpread {LCapture(".num 1", LCapture(LNums(2, 3)))}", ".num 4"]),
             IncludeInGeneratorPrompt = true,
             Explanation = "Spread opens exactly one level: the inner `(2, 3)` stays intact, and `4` is a separate expression-list slot (the comma after the spread is required — `(1, (2, 3))* 4` would be multiplication).",
         },
@@ -1371,6 +1372,77 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "zero-param-block-higher-order",
+            Category = "access-boundaries",
+            Source = "Call0 = f()\nCall0({42})",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "42",
+            ExpectedRaw = "42",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFn("Call0", ["f"], ".call (.param \"f\") []")],
+                [LCall("Call0", ".algorithmExpr (alg [] [] [] [.num 42])")]),
+            Probes =
+            [
+                new SpecProbe("Const = 42\nCall0 = f()\nCall0(Const)", "ok raw=42 n=1"),
+                new SpecProbe("Call0 = f()\nCall0(({42}))", "ok raw=42 n=1"),
+                new SpecProbe("Call0 = f()\nCall0({1, 2})", "ok raw=S[1, 2] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "An algorithm block always provides its contained algorithm on the higher-order channel, regardless of parameter or output count: `Call0({42})` invokes the brace algorithm exactly like the named zero-parameter `Call0(Const)`, redundant parentheses around braces normalize away, and a multi-output block's call emits its outputs as one captured sequence value.",
+        },
+        new()
+        {
+            Id = "open-capture-target-rejected",
+            Category = "access-boundaries",
+            Source = "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "a parenthesized group is a captured value, not an algorithm",
+            Probes =
+            [
+                new SpecProbe("M = {\n    public C = 5\n}\nR = {\n    open M\n    C\n}\nR", "ok raw=5 n=1"),
+                new SpecProbe("R = {\n    open ({public C = 6})\n    C\n}\nR", "ok raw=6 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.",
+        },
+        new()
+        {
+            Id = "capture-suppresses-higher-order-identity",
+            Category = "access-boundaries",
+            Source = "Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            LeanProgram = LProg(
+                [LFn("Apply", ["f"], ".call (.param \"f\") [.num 9]"),
+                 LFn("Increment", ["x"], ".binary .add (.param \"x\") (.num 1)")],
+                [LCall("Apply", LCapture(".resolve \"Increment\""))]),
+            Probes =
+            [
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(Increment)", "ok raw=10 n=1"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))", "err arity"),
+            ],
+            Explanation = "A capture supplies only a zero-parameter value thunk on the algorithm channel. Grouping a named callable therefore suppresses its callable identity instead of forwarding it to the higher-order parameter.",
+        },
+        new()
+        {
+            Id = "capture-suppresses-structural-members",
+            Category = "access-boundaries",
+            Source = "Obj = {public V = 7}\n(Obj).V",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unknownName",
+            LeanProgram = LProg(
+                ["privateProp \"Obj\" (alg [] [] [publicProp \"V\" (alg [] [] [] [.num 7])] [])"],
+                [$".dotCall {LCapture(".resolve \"Obj\"")} \"V\" none"]),
+            Probes =
+            [
+                new SpecProbe("Obj = {public V = 7}\nObj.V", "ok raw=7 n=1"),
+                new SpecProbe("F2(x, y) = x + y\nX = 3\n(X).F2(4)", "ok raw=7 n=1"),
+            ],
+            Explanation = "A capture receiver has no structural members. Dot access therefore falls back lexically and injects the captured receiver as the leading argument; without a lexical member name, lookup fails.",
+        },
+        new()
+        {
             Id = "output-dotted-access-ordinary",
             Category = "access-boundaries",
             Source = "A = {\n    Output = 9\n}\n\nA.Output",
@@ -1394,7 +1466,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LProp("P", LNums(1, 2, 3))],
-                [".call (.resolve \"P\") (alg [] [] [] [])"]),
+                [".call (.resolve \"P\") []"]),
             Probes =
             [
                 new SpecProbe("P = 1, 2, 3\nP.count", "ok raw=3 n=1"),
@@ -1411,7 +1483,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[1, 2]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
-                [LProp("x", LCall("take", LBlock(LNums(1, 2, 3)), ".num 2"))],
+                [LProp("x", LCall("take", LCapture(LNums(1, 2, 3)), ".num 2"))],
                 [".resolve \"x\""]),
             Probes =
             [
@@ -1433,7 +1505,7 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "arity",
             LeanProgram = LProg(
                 [LFn("Add", ["a", "b"], ".binary .add (.param \"a\") (.param \"b\")")],
-                [".resolve \"Add\"", LBlock(LNums(1, 2))]),
+                [".resolve \"Add\"", LCapture(LNums(1, 2))]),
             Explanation = "A physical newline never continues a closed expression into a call: `Add` alone is a zero-argument access of a two-parameter callable (an arity error), and `(1, 2)` is a separate row.",
         },
 
@@ -1447,7 +1519,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2, 3]",
             ExpectedRaw = "L[1, 2, 3]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("take", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3")]),
+            LeanProgram = LProg([], [LCall("take", LCapture(LNums(1, 2, 3, 4, 5)), ".num 3")]),
             Explanation = "`take` keeps the first `count` items and materializes them as one exact immutable list value.",
         },
         new()
@@ -1478,7 +1550,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[]",
             ExpectedRaw = "L[]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("take", LBlock(LNums(1, 2, 3)), ".num 0")]),
+            LeanProgram = LProg([], [LCall("take", LCapture(LNums(1, 2, 3)), ".num 0")]),
             Explanation = "Zero kept items form the empty list `[]` — one visible value, distinct from the empty sequence value `()`.",
         },
         new()
@@ -1490,7 +1562,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[4, 5]",
             ExpectedRaw = "L[4, 5]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("skip", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3")]),
+            LeanProgram = LProg([], [LCall("skip", LCapture(LNums(1, 2, 3, 4, 5)), ".num 3")]),
             Probes =
             [
                 new SpecProbe("skip(((1, 2), (3, 4)), 1)", "ok raw=L[S[3, 4]] n=1"),
@@ -1509,7 +1581,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("IsEven", ["x"], ".binary .eq (.binary .mod (.param \"x\") (.num 2)) (.num 0)")],
-                [LCall("filter", LBlock(LNums(1, 2, 3, 4, 5, 6)), ".resolve \"IsEven\"")]),
+                [LCall("filter", LCapture(LNums(1, 2, 3, 4, 5, 6)), ".resolve \"IsEven\"")]),
             Explanation = "`filter` keeps items whose predicate result is one nonzero atomic value, returning one exact list value.",
         },
         new()
@@ -1523,7 +1595,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("Big", ["a"], ".binary .gt (.param \"a\") (.num 2)")],
-                [LCall("filter", LBlock(LNums(1, 2, 3)), ".resolve \"Big\"")]),
+                [LCall("filter", LCapture(LNums(1, 2, 3)), ".resolve \"Big\"")]),
             Explanation = "One surviving item forms the exact one-element list `[3]` — list results never erase the one-item boundary.",
         },
         new()
@@ -1537,7 +1609,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("No", ["a"], ".num 0")],
-                [LCall("filter", LBlock(LNums(1, 2, 3)), ".resolve \"No\"")]),
+                [LCall("filter", LCapture(LNums(1, 2, 3)), ".resolve \"No\"")]),
             Probes =
             [
                 new SpecProbe("No(a) = 0\nfilter((1, 2, 3), No) == ()", "ok raw=0 n=1"),
@@ -1556,7 +1628,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("Double", ["x"], ".binary .mul (.param \"x\") (.num 2)")],
-                [LCall("map", LBlock(LNums(1, 2, 3)), ".resolve \"Double\"")]),
+                [LCall("map", LCapture(LNums(1, 2, 3)), ".resolve \"Double\"")]),
             Explanation = "`map` replaces each top-level item with the callback result, preserving order and count, and materializes the mapped items as one exact list.",
         },
         new()
@@ -1570,7 +1642,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFn("M", ["a"], ".param \"a\"")],
-                [LCall("map", LBlock(".num 7"), ".resolve \"M\"")]),
+                [LCall("map", ".num 7", ".resolve \"M\"")]),
             Explanation = "`(7)` is the atom 7 (singleton parens are transparent), so the supply has one item — and the exact list result keeps it as the one-element list `[7]`.",
         },
         new()
@@ -1583,7 +1655,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[S[2, 1], S[4, 3]]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
-                [LFn("Swap", ["a", "b"], LBlock(".param \"b\", .param \"a\""))],
+                [LFn("Swap", ["a", "b"], LCapture(".param \"b\", .param \"a\""))],
                 [LCall("map", PairOfPairs, ".resolve \"Swap\"")]),
             Explanation = "Sequence-value callback items are projected one level to the callback's parameters; the callback must return exactly one value per item, and each captured result stays one exact list element (never flattened).",
         },
@@ -1598,9 +1670,9 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
                 [LFnP("Collect", [LVar("items")], ".param \"items\"")],
-                [".dotCall (.listLiteral [.num 7]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))",
-                 ".dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2])]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))",
-                 ".dotCall (.listLiteral [.listLiteral [.num 1, .num 2]]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"]),
+                [".dotCall (.listLiteral [.num 7]) \"map\" (some [.resolve \"Collect\"])",
+                 ".dotCall (.listLiteral [.capture [.num 1, .num 2]]) \"map\" (some [.resolve \"Collect\"])",
+                 ".dotCall (.listLiteral [.listLiteral [.num 1, .num 2]]) \"map\" (some [.resolve \"Collect\"])"]),
             Probes =
             [
                 new SpecProbe("Collect(*items) = items\n[[]].map(Collect)", "ok raw=L[L[L[]]] n=1"),
@@ -1624,8 +1696,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnP("F", [LFix("first"), LVar("middle"), LFix("last")], ".param \"middle\""),
-                 LProp("Rows", "(.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])])")],
-                [".dotCall (.resolve \"Rows\") \"map\" (some (alg [] [] [] [.resolve \"F\"]))"]),
+                 LProp("Rows", "(.listLiteral [.capture [.num 1, .num 2, .num 3, .num 4]])")],
+                [".dotCall (.resolve \"Rows\") \"map\" (some [.resolve \"F\"])"]),
             Probes =
             [
                 new SpecProbe("F((first, *middle, last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)", "ok raw=L[L[2, 3]] n=1"),
@@ -1644,7 +1716,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[3, 1, 2]",
             ExpectedRaw = "L[3, 1, 2]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("distinct", LBlock(LNums(3, 1, 3, 2, 1, 2)))]),
+            LeanProgram = LProg([], [LCall("distinct", LCapture(LNums(3, 1, 3, 2, 1, 2)))]),
             Explanation = "`distinct` keeps the first occurrence of each structurally-equal item.",
         },
         new()
@@ -1657,7 +1729,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[S[1, 2], S[3, 4]]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall("distinct",
-                LBlock(LBlock(LNums(1, 2)), LBlock(LNums(1, 2)), LBlock(LNums(3, 4))))]),
+                LCapture(LCapture(LNums(1, 2)), LCapture(LNums(1, 2)), LCapture(LNums(3, 4))))]),
             Explanation = "Deduplication uses structural equality on whole sequence-value items.",
         },
         new()
@@ -1670,9 +1742,9 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[L[1, 2, 3], L[S[1, 2]], L[1, 2]]",
             ExpectedEmittedCount = 3,
             LeanProgram = LProg([],
-                [LCall("take", LBlock(LNums(1, 2, 3, 4, 5)), ".num 3"),
+                [LCall("take", LCapture(LNums(1, 2, 3, 4, 5)), ".num 3"),
                  LCall("take", PairOfPairs, ".num 1"),
-                 $".dotCall ({LCall("range", ".num 1", ".num 5")}) \"take\" (some (alg [] [] [] [.num 2]))"]),
+                 $".dotCall ({LCall("range", ".num 1", ".num 5")}) \"take\" (some [.num 2])"]),
             Explanation = "The tutorial's `take` examples: a plain prefix list, the single-survivor case (the exact one-element list `[(1, 2)]`), and the dot-call form over a `range` list receiver.",
         },
         new()
@@ -1686,8 +1758,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
                 [LProp("Values", LNums(3, 1, 3, 2, 1, 2))],
-                [LCall("distinct", LBlock(LNums(3, 1, 3, 2, 1, 2))),
-                 LCall("distinct", LBlock(LBlock(LNums(1, 2)), LBlock(LNums(1, 2)), LBlock(LNums(3, 4)))),
+                [LCall("distinct", LCapture(LNums(3, 1, 3, 2, 1, 2))),
+                 LCall("distinct", LCapture(LCapture(LNums(1, 2)), LCapture(LNums(1, 2)), LCapture(LNums(3, 4)))),
                  ".dotCall (.resolve \"Values\") \"distinct\" none"]),
             Explanation = "The tutorial's `distinct` examples: atom dedup, structural pair dedup, and the dot-call form over a captured multi-item body.",
         },
@@ -1701,9 +1773,9 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[1, 2, 3, 1, S[2, 3], 1, S[2, 3], 4]",
             ExpectedEmittedCount = 8,
             LeanProgram = LProg([],
-                [$".sequenceSpread {LBlock(LNums(1, 2))}", ".num 3",
-                 ".sequenceSpread (.num 1)", LBlock(LNums(2, 3)),
-                 $".sequenceSpread {LBlock(".num 1", LBlock(LNums(2, 3)))}", ".num 4"]),
+                [$".sequenceSpread {LCapture(LNums(1, 2))}", ".num 3",
+                 ".sequenceSpread (.num 1)", LCapture(LNums(2, 3)),
+                 $".sequenceSpread {LCapture(".num 1", LCapture(LNums(2, 3)))}", ".num 4"]),
             Explanation = "Spread projects exactly one immediate level, and a comma is required between a spread and a following same-line slot (a star with a right operand is multiplication): each line contributes its spread items plus the trailing slot as root rows.",
         },
         new()
@@ -1715,7 +1787,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[()]",
             ExpectedRaw = "L[S[]]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("distinct", LBlock(LEmpty, LEmpty))]),
+            LeanProgram = LProg([], [LCall("distinct", LCapture(LEmpty, LEmpty))]),
             Probes =
             [
                 new SpecProbe("distinct((), ())", "err arity"),
@@ -1731,7 +1803,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2, 3, 3, 3, 4]",
             ExpectedRaw = "L[1, 2, 3, 3, 3, 4]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("order", LBlock(LNums(3, 4, 2, 1, 3, 3)))]),
+            LeanProgram = LProg([], [LCall("order", LCapture(LNums(3, 4, 2, 1, 3, 3)))]),
             Probes =
             [
                 new SpecProbe("order(5)", "ok raw=L[5] n=1"),
@@ -1860,7 +1932,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall(
                 "atoms",
-                $".listLiteral [{LBlock(".num 1", ".num 2")}, .listLiteral [.num 3, .listLiteral [.num 4]]]")]),
+                $".listLiteral [{LCapture(".num 1", ".num 2")}, .listLiteral [.num 3, .listLiteral [.num 4]]]")]),
             Probes =
             [
                 new SpecProbe("atoms([3, (1, [4, 2])])", "ok raw=L[3, 1, 4, 2] n=1"),
@@ -1878,7 +1950,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[2, 3]",
             ExpectedRaw = "L[2, 3]",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [".dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) \"skip\" (some (alg [] [] [] [.num 1]))) \"atoms\" none"]),
+            LeanProgram = LProg([], [".dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) \"skip\" (some [.num 1])) \"atoms\" none"]),
             Probes =
             [
                 new SpecProbe("range(1, 3).atoms", "ok raw=L[1, 2, 3] n=1"),
@@ -1898,7 +1970,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([], [LCall(
                 "if",
-                LBlock(".num 1", ".listLiteral [.num 2]"),
+                LCapture(".num 1", ".listLiteral [.num 2]"),
                 ".num 10",
                 ".num 20")]),
             Probes =
@@ -1937,13 +2009,13 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[0, 0, 5, 3, 8, 6, 2, 5]",
             ExpectedEmittedCount = 8,
             LeanProgram = LProg(
-                [LProp("Data", $"{LBlock(LNums(7, 6, 4, 2, 1))}, {LBlock(LNums(1, 2, 3, 4, 5))}")],
+                [LProp("Data", $"{LCapture(LNums(7, 6, 4, 2, 1))}, {LCapture(LNums(1, 2, 3, 4, 5))}")],
                 [LCall("count", LEmpty),
-                 LCall("count", LBlock(LEmpty)),
+                 LCall("count", LEmpty),
                  LCall("count", LCall("range", ".num 1", ".num 5")),
-                 LCall("count", LBlock(LNums(10, 20, 30))),
-                 LCall("count", LBlock(".num 3", ".num 4", $".sequenceSpread ({LCall("range", ".num 1", ".num 5")})", ".num 7")),
-                 LCall("count", LBlock($".sequenceSpread ({LCall("range", ".num 1", ".num 5")})", ".num 7")),
+                 LCall("count", LCapture(LNums(10, 20, 30))),
+                 LCall("count", LCapture(".num 3", ".num 4", $".sequenceSpread ({LCall("range", ".num 1", ".num 5")})", ".num 7")),
+                 LCall("count", LCapture($".sequenceSpread ({LCall("range", ".num 1", ".num 5")})", ".num 7")),
                  LCall("count", PairOfPairs),
                  ".dotCall (.index (.resolve \"Data\") (.num 0)) \"count\" none"]),
             Explanation = "`count` counts top-level items after the builtin collection binding opens a single grouped value: `()` counts 0, spreads splice before counting, nested pairs count as whole items, and a projected item counts its own contents.",
@@ -1974,7 +2046,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[3, 3, 3]",
             ExpectedEmittedCount = 3,
             LeanProgram = LProg(
-                [LProp("T", LBlock(LNums(1, 2, 3))), LProp("A", LNums(1, 2, 3))],
+                [LProp("T", LCapture(LNums(1, 2, 3))), LProp("A", LNums(1, 2, 3))],
                 [".dotCall (.resolve \"T\") \"count\" none",
                  ".dotCall (.resolve \"A\") \"count\" none",
                  LCall("count", ".resolve \"A\"")]),
@@ -2007,7 +2079,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
-            LeanProgram = LProg([], [LCall("count", LBlock(LNums(1, 2, 3)))]),
+            LeanProgram = LProg([], [LCall("count", LCapture(LNums(1, 2, 3)))]),
             Probes =
             [
                 new SpecProbe("count(1, 2, 3)", "err arity"),
@@ -2034,8 +2106,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnP("Append", [LFix("item"), LVar("history")],
-                    LBlock(".sequenceSpread (.param \"history\")", ".param \"item\""))],
-                [LCall("reduce", LBlock(LNums(2, 3, 4)), ".resolve \"Append\"", ".num 1")]),
+                    LCapture(".sequenceSpread (.param \"history\")", ".param \"item\""))],
+                [LCall("reduce", LCapture(LNums(2, 3, 4)), ".resolve \"Append\"", ".num 1")]),
             Probes =
             [
                 new SpecProbe("Append(item, *history) = (history*, item)\nreduce(2, 3, 4, Append, 1)", "err arity"),
@@ -2076,8 +2148,8 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "1",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
-                [LProp("A", $".num 1, {LBlock(LNums(2, 3))}"),
-                 LProp("B", $".num 1, {LBlock(LNums(2, 3))}")],
+                [LProp("A", $".num 1, {LCapture(LNums(2, 3))}"),
+                 LProp("B", $".num 1, {LCapture(LNums(2, 3))}")],
                 [".binary .eq (.resolve \"A\") (.resolve \"B\")"]),
             Probes =
             [
@@ -2110,7 +2182,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[1, 2]",
             ExpectedEmittedCount = 2,
             LeanProgram = LProg(
-                [LProp("Pairs", $"{LBlock(LNums(1, 2))}, {LBlock(LNums(3, 4))}")],
+                [LProp("Pairs", $"{LCapture(LNums(1, 2))}, {LCapture(LNums(3, 4))}")],
                 [".index (.resolve \"Pairs\") (.num 0)"]),
             Probes =
             [
@@ -2130,7 +2202,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 4,
             LeanProgram = LProg(
                 [LProp("Bags",
-                    $"{LBlock(LBlock(LNums(1, 2)), LBlock(LNums(3, 4)))}, {LBlock(LBlock(LNums(5, 6)), LBlock(LNums(7, 8)))}")],
+                    $"{LCapture(LCapture(LNums(1, 2)), LCapture(LNums(3, 4)))}, {LCapture(LCapture(LNums(5, 6)), LCapture(LNums(7, 8)))}")],
                 [".index (.resolve \"Bags\") (.num 0)",
                  ".index (.index (.resolve \"Bags\") (.num 0)) (.num 1)"]),
             Notes = "Root emitted count is 4 (each projection emits 2) while the accumulated root value has two items — display rows follow the value items; the projection supply is observable only for a lone root row.",
@@ -2146,7 +2218,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
-                [LProp("x", LBlock(LEmpty, LEmpty))],
+                [LProp("x", LCapture(LEmpty, LEmpty))],
                 [".index (.resolve \"x\") (.num 0)"]),
             Explanation = "Selecting a `()` item shows one `()` row: the empty value is a real selectable item.",
         },
@@ -2158,7 +2230,7 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "index",
             LeanProgram = LProg(
-                [LProp("x", LBlock(LNums(1, 2)))],
+                [LProp("x", LCapture(LNums(1, 2)))],
                 [".index (.resolve \"x\") (.num 9)"]),
             Explanation = "Indexing past the last item is an index error, not an empty result.",
         },
@@ -2175,7 +2247,7 @@ public static class LanguageSpecCorpus
                 [LProp("x", PairOfPairs),
                  LProp("y", ".index (.resolve \"x\") (.num 0)"),
                  ],
-                [".binary .eq (.resolve \"y\") " + LBlock(LNums(1, 2))]),
+                [".binary .eq (.resolve \"y\") " + LCapture(LNums(1, 2))]),
             Explanation = "A captured projection re-materializes as the canonical selected value and compares structurally equal to the written literal.",
         },
 
@@ -2309,7 +2381,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [LFnP("X", [LVar("vals")], ".dotCall (.param \"vals\") \"count\" none"),
-                 LProp("b", LBlock(LNums(1, 2)))],
+                 LProp("b", LCapture(LNums(1, 2)))],
                 [LCall("X", ".num 7", ".sequenceSpread (.resolve \"b\")")]),
             Explanation = "A spread expression is one whole expression-list slot: `X(7 b*)` is `X(7, b*)`.",
         },
@@ -2323,7 +2395,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "12",
             ExpectedEmittedCount = 1,
             LeanProgram = LProg([],
-                [$".dotCall (.dotCall {LBlock(LNums(1, 2, 3))} \"map\" (some (alg [] [] [] [.block (alg [\"n\"] [] [] [.binary .mul (.param \"n\") (.num 2)])]))) \"sum\" none"]),
+                [$".dotCall (.dotCall {LCapture(LNums(1, 2, 3))} \"map\" (some [.algorithmExpr (alg [\"n\"] [] [] [.binary .mul (.param \"n\") (.num 2)])])) \"sum\" none"]),
             Explanation = "A leading `.` is the supported method-chain continuation across lines.",
         },
 
@@ -2365,7 +2437,7 @@ public static class LanguageSpecCorpus
             Source = "count({})",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "missingOutput",
-            LeanProgram = LProg([], [LCall("count", "(.block (alg [] [] [] []))")]),
+            LeanProgram = LProg([], [LCall("count", "(.algorithmExpr (alg [] [] [] []))")]),
             Explanation = "`{}` where a value is required is a missing-output error, not `0`.",
         },
         new()
@@ -2375,7 +2447,7 @@ public static class LanguageSpecCorpus
             Source = "(1, 2) + 1",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "type",
-            LeanProgram = LProg([], [$".binary .add {LBlock(LNums(1, 2))} (.num 1)"]),
+            LeanProgram = LProg([], [$".binary .add {LCapture(LNums(1, 2))} (.num 1)"]),
             Probes =
             [
                 new SpecProbe("() > 1", "ok raw=1 n=1"),
@@ -2391,7 +2463,7 @@ public static class LanguageSpecCorpus
             Source = "order((1, 'hello'))",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
-            LeanProgram = LProg([], [LCall("order", LBlock(".num 1", "(.stringLiteral \"hello\")"))]),
+            LeanProgram = LProg([], [LCall("order", LCapture(".num 1", "(.stringLiteral \"hello\")"))]),
             Probes =
             [
                 new SpecProbe("order(((1, 2), (3, 4)))", "err arity"),
@@ -2440,7 +2512,7 @@ public static class LanguageSpecCorpus
             Source = "Nope",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "unresolvedImplicitParams",
-            LeanProgram = ".block (alg [\"Nope\"] [] [] [.param \"Nope\"])",
+            LeanProgram = ".algorithmExpr (alg [\"Nope\"] [] [] [.param \"Nope\"])",
             Explanation = "An undefined name becomes an implicit parameter; running a program whose root still needs parameters is an error.",
         },
 
@@ -2530,7 +2602,7 @@ public static class LanguageSpecCorpus
             LeanProgram = LProg(
                 [],
                 [".binary .eq (.listLiteral []) (.emptySequence 0)",
-                 ".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"]),
+                 ".binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])"]),
             IncludeInGeneratorPrompt = true,
             Explanation = "Lists and sequence values are different value kinds: equal elements never make a list equal a sequence, and `[]` is not `()`.",
         },
@@ -2621,7 +2693,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             LeanProgram = LProg(
                 [],
-                [".binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])"]),
+                [".binary .eq (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 1, .num 2])"]),
             Probes =
             [
                 new SpecProbe("(([1]))", "ok raw=L[1] n=1"),
@@ -2710,7 +2782,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "S[L[S[1, 2], 5], L[1, 2, 5]]",
             ExpectedEmittedCount = 2,
             LeanProgram = LProg(
-                [LProp("S", LBlock(LBlock(LNums(1, 2)), LBlock(LNums(3, 4))))],
+                [LProp("S", LCapture(LCapture(LNums(1, 2)), LCapture(LNums(3, 4))))],
                 [".listLiteral [.index (.resolve \"S\") (.num 0), .num 5]",
                  ".listLiteral [.sequenceSpread (.index (.resolve \"S\") (.num 0)), .num 5]"]),
             Probes =

@@ -16,7 +16,7 @@ namespace KatLang.Tests;
 public class CollectionMaterializationLimitsTests
 {
     private static EvalResult<Result> Eval(string source, EvaluationLimits? limits = null)
-        => Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), limits);
+        => Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), limits);
 
     private static EvalError ErrorOf(string source, EvaluationLimits? limits = null)
     {
@@ -35,7 +35,7 @@ public class CollectionMaterializationLimitsTests
         EvaluationLimits? limits = null,
         bool optimized = true)
         => Evaluator.RunCountedObserved(
-            new Expr.Block(SourceProvenance.ParseValid(source).Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
             limits,
             enableOptimizations: optimized);
 
@@ -92,9 +92,9 @@ public class CollectionMaterializationLimitsTests
         Assert.Throws<KatLangException>(() => KatLangEngine.EvaluateToAtoms(source));
         Assert.Contains("Collection size limit", KatLangEngine.EvaluateToString(source));
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(
-            Evaluator.RunFlat(new Expr.Block(SourceProvenance.ParseValid(source).Root)).Error);
+            Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Error);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(
-            Evaluator.RunCounted(new Expr.Block(SourceProvenance.ParseValid(source).Root), UncachedZeroArgPropertyResultCache.Instance).Error);
+            Evaluator.RunCounted(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), UncachedZeroArgPropertyResultCache.Instance).Error);
     }
 
     // ── Range: exact boundary and bounds handling ────────────────────────────
@@ -285,7 +285,7 @@ public class CollectionMaterializationLimitsTests
         {
             var diagnostics = new LoopOptimizationDiagnostics();
             var result = Evaluator.Run(
-                new Expr.Block(SourceProvenance.ParseValid(source).Root),
+                new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
                 new RunScopedZeroArgPropertyResultCache(),
                 enableLoopOptimization: true,
                 diagnostics,
@@ -379,7 +379,7 @@ public class CollectionMaterializationLimitsTests
 
     private static EvalResult<Result> EvalWithOptimizations(string source, EvaluationLimits limits, bool optimized)
         => Evaluator.Run(
-            new Expr.Block(SourceProvenance.ParseValid(source).Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
             UncachedZeroArgPropertyResultCache.Instance,
             enableLoopOptimization: optimized,
             loopDiagnostics: null,

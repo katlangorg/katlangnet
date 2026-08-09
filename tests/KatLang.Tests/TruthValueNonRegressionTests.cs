@@ -19,7 +19,7 @@ public class TruthValueNonRegressionTests
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
 
-        return Evaluator.Run(new Expr.Block(parseResult.Root));
+        return Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
     private static void AssertEval(string source, params decimal[] expected)

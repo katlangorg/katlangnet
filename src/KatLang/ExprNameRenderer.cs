@@ -286,10 +286,21 @@ internal static class ExprNameRenderer
             case ExprNameMode.DiagnosticName:
                 switch (node)
                 {
-                    // A zero-shape block renders as one written sequence value over its
+                    // A capture renders as one written sequence value over its
+                    // body slots.
+                    case Expr.Capture(var captureBody):
+                    {
+                        pending.Push(new Piece(")"));
+                        pending.Push(new Piece(
+                            captureBody, 0, ExprNameMode.DiagnosticName));
+                        pending.Push(new Piece("("));
+                        return true;
+                    }
+
+                    // A zero-shape scoped block renders the same way over its
                     // output slots. Parameters.Count equals the derived Params.Count by
                     // construction, without materializing the name list.
-                    case Expr.Block(var algorithm) when algorithm.Parameters.Count == 0
+                    case Expr.AlgorithmExpr(var algorithm) when algorithm.Parameters.Count == 0
                         && algorithm.Opens.Count == 0
                         && algorithm.Properties.Count == 0:
                     {
@@ -417,7 +428,7 @@ internal static class ExprNameRenderer
 
                 return true;
 
-            case Expr.Block:
+            case Expr.AlgorithmExpr or Expr.Capture:
                 return Append(builder, "(inline library)");
 
             // SequenceConstruct is an internal value node; ';' is not surface

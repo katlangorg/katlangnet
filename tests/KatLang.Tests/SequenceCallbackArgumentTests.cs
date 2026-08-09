@@ -13,7 +13,7 @@ public class SequenceCallbackArgumentTests
     private static EvalResult<Result> Eval(string source)
     {
         var ast = SourceProvenance.ParseValid(source).Root;
-        return Evaluator.Run(new Expr.Block(ast));
+        return Evaluator.Run(new Expr.AlgorithmExpr(ast));
     }
 
     private static IReadOnlyList<decimal> Atoms(string source)

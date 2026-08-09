@@ -25,7 +25,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class LoopPlannedIfDiagnosticParityTests
 {
-    private static Expr Program(string source) => new Expr.Block(SourceProvenance.ParseValid(source).Root);
+    private static Expr Program(string source) => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
     private static EvalResult<Result> Run(string source, bool enableLoopOptimization)
         => Evaluator.Run(

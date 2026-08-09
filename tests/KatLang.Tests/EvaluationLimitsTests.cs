@@ -18,7 +18,7 @@ public class EvaluationLimitsTests
     private const string CountDown = "f(0) = 0\nf(n) = f(n - 1)\n";
 
     private static EvalResult<Result> Eval(string source, EvaluationLimits? limits = null)
-        => Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), limits);
+        => Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), limits);
 
     private static EvalError ErrorOf(string source, EvaluationLimits? limits = null)
     {
@@ -222,7 +222,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void PlainAndCountedEvaluators_AgreeOnLimitOutcome()
     {
-        var expr = new Expr.Block(SourceProvenance.ParseValid($"{CountDown}f(40)").Root);
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"{CountDown}f(40)").Root);
         var plain = Evaluator.Run(expr, Depth(8));
         var counted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance, Depth(8));
         Assert.IsType<EvalError.EvaluationDepthExceeded>(plain.Error);
@@ -232,14 +232,14 @@ public class EvaluationLimitsTests
     [Fact]
     public void RunFlat_AppliesConfiguredDepthLimit()
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
-            Evaluator.RunFlat(new Expr.Block(SourceProvenance.ParseValid($"{CountDown}f(40)").Root), Depth(8)).Error);
+            Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"{CountDown}f(40)").Root), Depth(8)).Error);
 
     [Fact]
     public void LowLevelEvaluatorDefaults_AreBoundedNotUnlimited()
     {
         // The parameterless public overloads must not be an unguarded back door.
-        Assert.True(Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid("f(x) = f(x)\nf(1)").Root)).IsError);
-        Assert.True(Evaluator.RunFlat(new Expr.Block(SourceProvenance.ParseValid("f(x) = f(x)\nf(1)").Root)).IsError);
+        Assert.True(Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("f(x) = f(x)\nf(1)").Root)).IsError);
+        Assert.True(Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("f(x) = f(x)\nf(1)").Root)).IsError);
     }
 
     // ── Entry-point x configuration depth matrix ─────────────────────────────
@@ -253,7 +253,7 @@ public class EvaluationLimitsTests
     /// <summary>Every entry point, reduced to "did this program complete?".</summary>
     private static IReadOnlyList<(string Entry, bool Completed)> AllEntryPoints(string source, EvaluationLimits? limits)
     {
-        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
         var options = new RunOptions { EvaluationLimits = limits };
 
         bool atomsCompleted;
@@ -459,7 +459,7 @@ public class EvaluationLimitsTests
         // count cannot depend on whether an optimization applied to this shape.
         var budgeted = Eval("Inc = x + 1\nInc.repeat(500, 0)", Steps(100_000));
         var generic = Evaluator.Run(
-            new Expr.Block(SourceProvenance.ParseValid("Inc = x + 1\nInc.repeat(500, 0)").Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Inc = x + 1\nInc.repeat(500, 0)").Root),
             UncachedZeroArgPropertyResultCache.Instance,
             enableLoopOptimization: false);
 

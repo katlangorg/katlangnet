@@ -101,8 +101,20 @@ internal static class ElaboratedScopeLookup
                 return null;
             }
 
-            case Expr.Block(var algorithm):
+            case Expr.AlgorithmExpr(var algorithm):
                 return algorithm;
+
+            case Expr.Capture:
+                // RECOVERY TOLERANCE: the parser rejects capture open targets
+                // (`open (M)` is a captured value, not an algorithm — the
+                // evaluator's open resolution errors with BadOpenForm), so a
+                // capture open reaches frontend lookup only through a
+                // diagnostic-bearing recovery tree. It contributes no names —
+                // an empty scope keeps recovery lookup stable without
+                // pretending the capture exposes any enclosed identity.
+                return new Algorithm.User(
+                    Parent: null, Parameters: [], Opens: [],
+                    Properties: [], Output: OutputBundle.Empty);
 
             default:
                 return null;
@@ -154,7 +166,7 @@ internal static class ElaboratedScopeLookup
     /// <c>Evaluator.ResolveAllOpens</c> and Lean <c>resolveAllOpens</c>.
     /// </summary>
     private static string OpenTargetDedupKey(Expr openExpr, int index)
-        => openExpr is Expr.Block
+        => openExpr is Expr.AlgorithmExpr or Expr.Capture
             ? $"(inline#{index})"
             : Evaluator.OpenExprName(openExpr);
 

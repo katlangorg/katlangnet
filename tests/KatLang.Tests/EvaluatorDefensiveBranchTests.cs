@@ -40,13 +40,13 @@ public class EvaluatorDefensiveBranchTests
         return Innermost(result.Error);
     }
 
-    private static Expr.Block Program(Algorithm.User root) => new(root);
+    private static Expr.AlgorithmExpr Program(Algorithm.User root) => new(root);
 
     private static Algorithm.User Root(
         IReadOnlyList<Expr>? opens = null,
         IReadOnlyList<Property>? properties = null,
-        IReadOnlyList<Expr>? output = null)
-        => new(Parent: null, Parameters: [], Opens: opens ?? [], Properties: properties ?? [], Output: output ?? []);
+        OutputBundle? output = null)
+        => new(Parent: null, Parameters: [], Opens: opens ?? [], Properties: properties ?? [], Output: output ?? OutputBundle.Empty);
 
     private static Algorithm.User Value(decimal n)
         => new(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(n)]);
@@ -155,7 +155,7 @@ public class EvaluatorDefensiveBranchTests
             Properties: [new Property("Q", Value(1))], Output: []);
 
         var error = FailsWith(Program(Root(
-            output: [new Expr.SequenceSpread(new Expr.Block(outputless))])));
+            output: [new Expr.SequenceSpread(new Expr.AlgorithmExpr(outputless))])));
 
         Assert.IsType<EvalError.SpreadMissingOutput>(error);
     }
@@ -170,7 +170,7 @@ public class EvaluatorDefensiveBranchTests
         var parsed = Parser.Parse("A = {\n    Q = 1\n}\nA*");
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
-        var result = Evaluator.Run(new Expr.Block(parsed.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsError);
         Assert.IsType<EvalError.SpreadMissingOutput>(Innermost(result.Error));
     }

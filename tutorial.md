@@ -55,7 +55,7 @@
     - [Fibonacci Sequence](#fibonacci-sequence)
 11. [Higher-Order Algorithms](#higher-order-algorithms)
     - [Algorithm as Argument](#algorithm-as-argument)
-    - [Parametrized vs non-parametrized algorithms](#parametrized-vs-non-parametrized-algorithms)
+    - [Algorithms vs grouped expressions](#algorithms-vs-grouped-expressions)
 12. [Spread with the Postfix Star](#spread-with-the-postfix-star)
     - [Capture Parentheses](#capture-parentheses)
     - [Repeated Spread Is Composition](#repeated-spread-is-composition)
@@ -834,7 +834,7 @@ count((()))   # 0
 
 #### `()` versus a no-output body
 
-`()` is a value. A no-output body is not a value at all: empty braces `{}` are an empty parametrized body with no defined output.
+`()` is a value. A no-output body is not a value at all: empty braces `{}` are an empty algorithm body with no defined output.
 
 ```
 A = {
@@ -2586,9 +2586,21 @@ Apply(Increment)
 
 **Result:** `10`
 
+An algorithm needs no parameters to cross a higher-order boundary — `{42}` is as much an algorithm as `{a + 1}`, and a zero-argument call invokes it:
+
+<!-- spec:zero-param-block-higher-order -->
+```
+Call0 = f()
+Call0({42})
+```
+
+**Result:** `42`
+
+Grouping is different: parentheses capture a *value*, and a captured value never carries the algorithm identity of what it encloses, so `Apply((Increment))` and `Call0((Const))` fail even though the bare names work. (Parentheses directly around a brace block simply normalize away, so `Call0(({42}))` behaves exactly like `Call0({42})`.)
+
 Sequence builtins `filter`, `map`, and `reduce` are a special higher-order case. Their per-item callback argument behaves like `S:i` for the traversed sequence `S`, so sequence-value current items expose their immediate members without recursive flattening. This rule is local to those builtins; ordinary higher-order calls such as `Apply(Increment)` still use ordinary argument binding.
 
-### Parametrized vs non-parametrized algorithms
+### Algorithms vs grouped expressions
 
 The distinction between braces, parentheses, and square brackets is critical. Their roles are:
 
@@ -2596,10 +2608,10 @@ The distinction between braces, parentheses, and square brackets is critical. Th
 |---|---|
 | `( ... )` | Expression grouping/capture, or call-argument syntax after a callable — no new parameter scope and no declarations |
 | `[ ... ]` | Exact immutable list construction — element expressions only, no declarations |
-| `{ ... }` | Parametrized algorithm value — a new lexical scope that owns its inferred parameters, local declarations, and `open` |
-| `{a + 1}` | Parametrized algorithm with parameter `a`, passable as an argument |
+| `{ ... }` | Algorithm value — a new lexical scope that owns its inferred parameters, local declarations, and `open` |
+| `{a + 1}` | Algorithm with parameter `a`, passable as an argument |
 
-`{}` braces mark the passed algorithm as **parametrized** — it owns its own parameters (`a` in the example above). A **non-parametrized** `()` expression has no parameter scope of its own — any free names are absorbed by the enclosing algorithm instead.
+`{}` braces create an **algorithm** — a computation with its own identity and scope, which owns whatever parameters its body needs (`a` in the example above; an algorithm with zero parameters is still an algorithm). A `()` expression is **grouping**, not an algorithm — it has no scope of its own, so any free names inside it belong to the enclosing algorithm instead.
 
 Only `{ ... }` creates an algorithm-level lexical scope, so only brace blocks (and the root) own declarations. Parentheses may group and compose output expressions, but an `open` declaration or a property/function definition inside `( ... )` is a parse error pointing you at braces:
 
@@ -2650,9 +2662,9 @@ When a block has defined output and no free parameters, `{...}` and `(...)` prod
 3
 ```
 
-With no contents, `()` is the empty sequence value (a real value, displayed as `()`), while `{}` is an empty parametrized body with no defined output. They are not interchangeable: `()` is a value you can store, count, compare, and spread, whereas `{}` produces no value at all and is an error when used where a value is required.
+With no contents, `()` is the empty sequence value (a real value, displayed as `()`), while `{}` is an empty algorithm body with no defined output. They are not interchangeable: `()` is a value you can store, count, compare, and spread, whereas `{}` produces no value at all and is an error when used where a value is required.
 
-An algorithm — parametrized or not — is a computation that can produce zero or more outputs. A sequence value is what you get when produced outputs are **captured** as one value: `(1, 2)` captures two outputs into one value. Call-argument parentheses do not capture — they are call syntax, and the argument list's slots become the call's separate arguments. Capturing happens one level in, when you write an extra pair of parentheses inside the argument list:
+An algorithm — with or without parameters — is a computation that can produce zero or more outputs. A sequence value is what you get when produced outputs are **captured** as one value: `(1, 2)` captures two outputs into one value. Call-argument parentheses do not capture — they are call syntax, and the argument list's slots become the call's separate arguments. Capturing happens one level in, when you write an extra pair of parentheses inside the argument list:
 
 ```
 Add(x, y) = x + y
@@ -3654,7 +3666,7 @@ Double(5)
 open LibA, LibB
 ```
 
-String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
+String targets use single quotes and mix freely with names: `open 'https://example.org/lib.kat', LibA`. Comma is the only separator — `open A ; B` and `open A B` are parse errors asking for a comma, never two targets. An open target must provide algorithm identity: a parenthesized target such as `open (LibA)` is a parse error, because parentheses capture a value and a captured value never exposes the algorithm inside it — open the algorithm directly, or use a brace block (`open ({ ... })` works because parentheses around braces normalize away). The first target must begin on the same line as `open`. Comma keeps its normal explicit line-continuation behavior, so a long list may span lines with a trailing or leading comma:
 
 ```
 open LibA,

@@ -64,7 +64,7 @@ public class ListValueTests
             Assert.Fail($"Expected parse success but got diagnostics:{Environment.NewLine}{message}");
         }
 
-        var result = Evaluator.RunCounted(new Expr.Block(parseResult.Root));
+        var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(parseResult.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -564,7 +564,7 @@ public class ListValueTests
 
     private static EvalResult<Result> RunWithSequenceOptimization(Algorithm root, bool enabled)
         => Evaluator.Run(
-            new Expr.Block(root),
+            new Expr.AlgorithmExpr(root),
             new Evaluation.Caching.RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: true,
             loopDiagnostics: null,

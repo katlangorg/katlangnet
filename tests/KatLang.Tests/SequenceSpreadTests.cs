@@ -11,7 +11,7 @@ public class SequenceSpreadTests
             Assert.Fail($"Expected parse success but got diagnostics:{Environment.NewLine}{message}");
         }
 
-        return Evaluator.RunFlat(new Expr.Block(parseResult.Root));
+        return Evaluator.RunFlat(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
     private static EvalResult<Result> EvalFull(string source)
@@ -23,7 +23,7 @@ public class SequenceSpreadTests
             Assert.Fail($"Expected parse success but got diagnostics:{Environment.NewLine}{message}");
         }
 
-        return Evaluator.Run(new Expr.Block(parseResult.Root));
+        return Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
     }
 
     private static void AssertEval(string source, params decimal[] expected)
@@ -792,7 +792,7 @@ public class SequenceSpreadTests
 
         var useRoot = SourceProvenance.ParseSyntaxValidRoot(useSiteSpread);
         var call = Assert.IsType<Expr.Call>(useRoot.Output[^1]);
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.Equal("Pair", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
     }
 }

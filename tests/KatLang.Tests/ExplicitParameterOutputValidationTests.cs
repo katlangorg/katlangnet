@@ -33,9 +33,9 @@ public class ExplicitParameterOutputValidationTests
         (Algorithm.User)new Algorithm.User(null, [], [], [], [])
             .WithParameterPatterns([new SequenceValueParameterPattern([])]);
 
-    private static Expr RootPlacement() => new Expr.Block(ZeroCaptureNoOutput());
+    private static Expr RootPlacement() => new Expr.AlgorithmExpr(ZeroCaptureNoOutput());
 
-    private static Expr PropertyPlacement() => new Expr.Block(
+    private static Expr PropertyPlacement() => new Expr.AlgorithmExpr(
         new Algorithm.User(
             null,
             [],
@@ -44,7 +44,7 @@ public class ExplicitParameterOutputValidationTests
             [new Expr.Num(7)]));
 
     private static Expr CallG(params Expr[] args) =>
-        new Expr.Call(new Expr.Resolve("G"), new Algorithm.User(null, [], [], [], [.. args]));
+        new Expr.Call(new Expr.Resolve("G"), [.. args]);
 
     /// <summary>
     /// Full structured comparison: exactly the bare validation error — the
@@ -160,7 +160,7 @@ public class ExplicitParameterOutputValidationTests
         // Control first: the spy counts requests when evaluation actually runs
         // (lexical property-style access `H` goes through the per-run cache), so
         // the zero-interaction assertions below cannot pass vacuously.
-        var control = new Expr.Block(new Algorithm.User(
+        var control = new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [],
             [new Property("H", new Algorithm.User(null, [], [], [], [new Expr.Num(7)]))],
             [new Expr.Resolve("H")]));
@@ -209,12 +209,12 @@ public class ExplicitParameterOutputValidationTests
     {
         var identity = (Algorithm.User)new Algorithm.User(null, [], [], [], [new Expr.Param("x")])
             .WithParameterPatterns([new CaptureParameterPattern("x")]);
-        var program = new Expr.Block(new Algorithm.User(
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(
             null,
             [],
             [],
             [new Property("F", identity)],
-            [new Expr.Call(new Expr.Resolve("F"), new Algorithm.User(null, [], [], [], [new Expr.Num(41)]))]));
+            [new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(41)])]));
 
         Assert.Empty(AlgorithmValidation.FindExplicitParameterOutputViolations(identity));
 
@@ -236,7 +236,7 @@ public class ExplicitParameterOutputValidationTests
 
         Assert.Empty(AlgorithmValidation.FindExplicitParameterOutputViolations(zeroCaptureWithOutput));
 
-        Expr Program(params Expr[] outputRows) => new Expr.Block(new Algorithm.User(
+        Expr Program(params Expr[] outputRows) => new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("G", zeroCaptureWithOutput)], [.. outputRows]));
 
         var matched = Evaluator.RunFlat(Program(CallG(new Expr.EmptySequence(0))));

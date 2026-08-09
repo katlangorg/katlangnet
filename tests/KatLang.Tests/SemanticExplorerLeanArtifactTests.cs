@@ -219,7 +219,7 @@ public class SemanticExplorerLeanArtifactTests
         {
             var observation = SemanticExplorerHarness.ObserveAst(internalCase.Id, internalCase.RootOutput());
             builder.Append($"-- internal__{internalCase.Id}: {internalCase.Description}\n");
-            builder.Append($"def case_internal__{internalCase.Id} : Expr :=\n  .block (alg [] [] [] [{internalCase.LeanRootExpr}])\n");
+            builder.Append($"def case_internal__{internalCase.Id} : Expr :=\n  .algorithmExpr (alg [] [] [] [{internalCase.LeanRootExpr}])\n");
             builder.Append($"#guard obs case_internal__{internalCase.Id} == \"{observation.Neutral}\"\n\n");
             internalIds.Add($"internal__{internalCase.Id}");
         }

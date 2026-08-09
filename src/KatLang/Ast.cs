@@ -96,6 +96,97 @@ public sealed record SourceSpan(
     int StartLineNumber, int StartColumn,
     int EndLineNumber, int EndColumn);
 
+// ── OutputBundle (Lean: OutputBundle) ───────────────────────────────────────
+
+/// <summary>
+/// An ordered sequence of original written <see cref="Expr"/> slots with no
+/// lexical ownership of its own: no parent scope, no parameters, no
+/// properties, no <c>open</c>, and no declaration namespace. It is intensional
+/// syntax — how the slots contribute values or items is determined entirely by
+/// the RECEIVER that consumes the bundle:
+/// <list type="bullet">
+///   <item>Algorithm output evaluation preserves per-row emitted-count
+///     semantics (<see cref="Algorithm.Output"/>).</item>
+///   <item><see cref="Expr.Capture"/> performs canonical sequence capture
+///     (singleton/empty normalization) over the bundle.</item>
+///   <item><see cref="Expr.ListLiteral"/> collects the slots as one exact
+///     immutable list value.</item>
+/// </list>
+/// It deliberately does NOT encode a fixed runtime consumption policy and is
+/// NOT a list of evaluated results.
+/// <para>OWNERSHIP: a bundle snapshots its ordered expression membership at
+/// construction (the contained <see cref="Expr"/> records are shared, not
+/// deep-cloned) and never exposes mutable backing storage, so
+/// <c>Count</c>, indexing, and enumeration order are stable for the bundle's
+/// lifetime — mirroring Lean's persistent <c>List Expr</c>. Bundle equality
+/// is reference identity, like every other AST collection.</para>
+/// Lean: <c>OutputBundle := List Expr</c>.
+/// </summary>
+[System.Runtime.CompilerServices.CollectionBuilder(typeof(OutputBundle), nameof(Create))]
+public sealed class OutputBundle : IReadOnlyList<Expr>
+{
+    /// <summary>The shared empty bundle (membership-stable like every bundle).</summary>
+    public static OutputBundle Empty { get; } = new([], ownedStorage: true);
+
+    // Exclusively bundle-owned storage: no caller-supplied collection is ever
+    // aliased, and no public member hands this array out, so the bundle's
+    // ordered membership cannot change after construction.
+    private readonly Expr[] _items;
+
+    /// <summary>
+    /// Snapshots the ordered slot membership of <paramref name="items"/> at
+    /// construction. Mutating the source collection afterwards never changes
+    /// this bundle; the <see cref="Expr"/> instances themselves are shared,
+    /// not deep-cloned (they are immutable records). An existing
+    /// <see cref="OutputBundle"/> input shares its already-stable storage
+    /// without copying. Membership is materialized eagerly, so a virtual
+    /// collection is fully enumerated here, once.
+    /// </summary>
+    public OutputBundle(IReadOnlyList<Expr> items)
+        => _items = items is OutputBundle bundle ? bundle._items : [.. items];
+
+    private OutputBundle(Expr[] items, bool ownedStorage)
+    {
+        System.Diagnostics.Debug.Assert(ownedStorage);
+        _items = items;
+    }
+
+    /// <summary>Collection-expression builder (<c>[a, b]</c> literals); copies the span.</summary>
+    public static OutputBundle Create(ReadOnlySpan<Expr> items)
+        => items.Length == 0 ? Empty : new(items.ToArray(), ownedStorage: true);
+
+    /// <summary>
+    /// Returns <paramref name="items"/> itself when it already is a bundle
+    /// (its membership is already stable — no copy); otherwise snapshots it
+    /// like the constructor.
+    /// </summary>
+    public static OutputBundle From(IReadOnlyList<Expr> items)
+        => items as OutputBundle ?? (items.Count == 0 ? Empty : new(items));
+
+    /// <summary>
+    /// TRUSTED zero-copy construction over a freshly built array whose
+    /// exclusive ownership transfers to the bundle: the caller must hold no
+    /// other reference and must never mutate the array afterwards. Mirrors
+    /// <see cref="Result.ListValue.TakeOwnership"/>; used only by runtime
+    /// reification paths that build a private array per call.
+    /// </summary>
+    internal static OutputBundle TakeOwnership(Expr[] items)
+        => items.Length == 0 ? Empty : new(items, ownedStorage: true);
+
+    public static implicit operator OutputBundle(List<Expr> items) => From(items);
+
+    public static implicit operator OutputBundle(Expr[] items)
+        => items.Length == 0 ? Empty : new(items.AsSpan().ToArray(), ownedStorage: true);
+
+    public int Count => _items.Length;
+
+    public Expr this[int index] => _items[index];
+
+    public IEnumerator<Expr> GetEnumerator() => ((IEnumerable<Expr>)_items).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _items.GetEnumerator();
+}
+
 /// <summary>
 /// Algorithm parameter metadata.
 /// Source spans are populated for explicit clause binders that elaborate to an
@@ -290,8 +381,8 @@ public abstract record Expr
     ///
     /// This is NOT the AST representation of written sequence-value syntax:
     /// the parser and all production transformations have ZERO ORIGIN SITES
-    /// for it — parenthesized lists parse to <see cref="Block"/> and <c>()</c>
-    /// to <see cref="EmptySequence"/>; elaboration visitors may REBUILD an
+    /// for it — surviving parenthesized lists parse to <see cref="Capture"/>
+    /// and <c>()</c> to <see cref="EmptySequence"/>; elaboration visitors may REBUILD an
     /// existing node but cannot introduce one into an AST that did not
     /// already contain it. This public constructor (with the public
     /// <c>Evaluator.Run(Expr)</c>) is the intentional EXTERNAL origin
@@ -340,15 +431,17 @@ public abstract record Expr
 
     /// <summary>
     /// Surface list literal <c>[e1, ..., en]</c>. Evaluates to exactly ONE
-    /// exact immutable list value (<see cref="Result.ListValue"/>). Element
-    /// slots follow the same expression-list rules as written parentheses (an
-    /// explicit spread slot opens its operand's immediate items, a non-spread
-    /// <c>()</c> slot stays one visible element), but the collected elements
-    /// are stored EXACTLY: no singleton erasure and no empty canonicalization,
-    /// so <c>[7]</c>, <c>[[7]]</c>, and <c>[]</c> are all distinct values.
-    /// Lean: <c>listLiteral : List Expr → Expr</c>.
+    /// exact immutable list value (<see cref="Result.ListValue"/>). The
+    /// element slots form a transparent <see cref="OutputBundle"/> — the same
+    /// expression-list body language as written parentheses (an explicit
+    /// spread slot opens its operand's immediate items, a non-spread <c>()</c>
+    /// slot stays one visible element; free identifiers belong to the
+    /// enclosing algorithm) — but the LIST RECEIVER collects the elements
+    /// EXACTLY: no singleton erasure and no empty canonicalization, so
+    /// <c>[7]</c>, <c>[[7]]</c>, and <c>[]</c> are all distinct values.
+    /// Lean: <c>listLiteral : OutputBundle → Expr</c>.
     /// </summary>
-    public sealed record ListLiteral(IReadOnlyList<Expr> Items) : Expr;
+    public sealed record ListLiteral(OutputBundle Items) : Expr;
 
     /// <summary>Resolves a named algorithm by lexical lookup.</summary>
     public sealed record Resolve(string Name) : Expr;
@@ -356,9 +449,14 @@ public abstract record Expr
     /// <summary>
     /// Extension call syntax. <c>DotCall(a, "f", args?)</c> represents <c>a.f</c> or <c>a.f(args)</c>
     /// with smart resolution: property access when f has 0 params, otherwise call with receiver.
-    /// Lean: <c>dotCall : Expr → Ident → Option Algorithm → Expr</c>.
+    /// <c>Args</c> is an ordered <see cref="OutputBundle"/> of the original written
+    /// argument expressions, evaluated transparently in the caller's lexical
+    /// context. <c>null</c> means NO argument-list syntax (property-style access
+    /// <c>a.f</c>); <see cref="OutputBundle.Empty"/> means an explicit empty
+    /// list (<c>a.f()</c>) — the two remain distinct.
+    /// Lean: <c>dotCall : Expr → Ident → Option OutputBundle → Expr</c>.
     /// </summary>
-    public sealed record DotCall(Expr Target, string Name, Algorithm? Args = null) : Expr
+    public sealed record DotCall(Expr Target, string Name, OutputBundle? Args = null) : Expr
     {
         /// <summary>
         /// Exact span of the member identifier to the right of the dot when the
@@ -375,14 +473,45 @@ public abstract record Expr
     public sealed record Grace(Expr Inner, int Weight) : Expr;
 
     /// <summary>
-    /// An algorithm used in expression position. Surface forms include <c>{ }</c> algorithm
-    /// literals and surviving parenthesized output groups; front-end and host code may also
-    /// wrap synthetic or core algorithms in a block.
+    /// An algorithm used in expression position, exposing ALGORITHM IDENTITY:
+    /// the contained algorithm owns its lexical scope (parameters, properties,
+    /// <c>open</c>, declaration namespace) according to ordinary algorithm
+    /// rules, and the expression participates in value interpretation,
+    /// algorithm/callable interpretation, and namespace/<c>open</c>
+    /// interpretation. Surface forms are <c>{ }</c> brace algorithm literals;
+    /// front-end elaboration also uses it for elaborated modules and synthetic
+    /// scoped helpers, and parser error recovery uses it to retain rejected
+    /// algorithm-level declarations written inside parentheses.
+    /// Lean: <c>Expr.algorithmExpr</c>.
     /// </summary>
-    public sealed record Block(Algorithm Algorithm) : Expr;
+    public sealed record AlgorithmExpr(Algorithm Algorithm) : Expr;
 
-    /// <summary>Algorithm application. <c>Call(f, args)</c> applies <c>f</c> to outputs of <c>args</c>.</summary>
-    public sealed record Call(Expr Function, Algorithm Args) : Expr;
+    /// <summary>
+    /// A surviving parenthesized capture boundary over an
+    /// <see cref="OutputBundle"/>: the normalized value/output boundary that
+    /// written parentheses perform (<c>capture : Supply → Value</c>). The
+    /// bundle owns no lexical scope — free identifiers inside it belong to the
+    /// nearest enclosing scope-owning algorithm — and CAPTURE IS NOT ALGORITHM
+    /// IDENTITY: resolving a capture on the algorithm channel yields only a
+    /// zero-parameter output thunk over the bundle, never the algorithm
+    /// identity of any inner expression. Redundant parentheses normalize away
+    /// at parse time; only meaningful boundaries survive as this node
+    /// (multi-slot groups, spread groups, grouped references, and nested
+    /// captures).
+    /// Lean: <c>Expr.capture</c>.
+    /// </summary>
+    public sealed record Capture(OutputBundle Body) : Expr;
+
+    /// <summary>
+    /// Algorithm application. <c>Call(f, args)</c> applies <c>f</c> to the
+    /// argument slots of <c>args</c> — an ordered <see cref="OutputBundle"/> of
+    /// the original written argument expressions. The bundle owns no lexical
+    /// scope: each slot is evaluated transparently in the caller's context, and
+    /// each original expression can independently participate in the value
+    /// channel and, where permitted, the algorithm channel (dual-view binding).
+    /// Lean: <c>call : Expr → OutputBundle → Expr</c>.
+    /// </summary>
+    public sealed record Call(Expr Function, OutputBundle Args) : Expr;
 
     /// <summary>
     /// Native function call. Evaluates a C# function using parameter values from the environment.
@@ -858,8 +987,13 @@ public abstract record Algorithm
     /// <summary>Lean: Algorithm.props. Returns [] for Builtin.</summary>
     public virtual IReadOnlyList<Property> Properties { get; init; } = [];
 
-    /// <summary>Lean: Algorithm.output. Returns [] for Builtin and Conditional.</summary>
-    public virtual IReadOnlyList<Expr> Output { get; init; } = [];
+    /// <summary>
+    /// The algorithm's output as an <see cref="OutputBundle"/> — ordered
+    /// original written expression rows. The algorithm is the scope-owning
+    /// DEFINITION of this bundle; the bundle itself owns no scope.
+    /// Lean: Algorithm.output. Returns the empty bundle for Builtin and Conditional.
+    /// </summary>
+    public virtual OutputBundle Output { get; init; } = OutputBundle.Empty;
 
     /// <summary>Lean: Algorithm.branches. Returns [] for non-Conditional algorithms.</summary>
     public virtual IReadOnlyList<CondBranch> Branches { get; init; } = [];
@@ -914,23 +1048,6 @@ public abstract record Algorithm
         }
         return false;
     }
-
-    /// <summary>
-    /// C# front-end elaboration annotation for <see cref="User"/> algorithms: true when the
-    /// algorithm owns parameter detection/elaboration at its own level — the root, <c>{ }</c>
-    /// brace blocks, and property bodies. Distinct from having parameters: <c>{ 1 }</c> is
-    /// parametrized with zero parameters. False means a <see cref="User"/> algorithm is
-    /// transparent to parameter elaboration. Common parser-created examples are call and
-    /// dot-call argument bundles and surviving parenthesized groups; free identifiers in those
-    /// surface forms belong to the nearest enclosing parametrized algorithm. Under the delimiter
-    /// model, diagnostic-free surface-derived non-parametrized algorithms carry output rows only;
-    /// invalid recovery trees may retain rejected declarations, and synthetic/internal carriers
-    /// need not have that surface shape. Consumed by front-end elaboration and parser unwrap
-    /// decisions, never by the evaluator; effectively inert on
-    /// <see cref="Conditional"/>, whose clause semantics are handled by algorithm type and
-    /// pattern matching. Not part of the Lean specification.
-    /// </summary>
-    internal virtual bool IsParametrized { get; init; }
 
     /// <summary>
     /// Replace the explicit parameter list of a user-defined algorithm.
@@ -1075,7 +1192,7 @@ public abstract record Algorithm
             IReadOnlyList<ParameterDeclaration> Parameters,
             IReadOnlyList<Expr> Opens,
             IReadOnlyList<Property> Properties,
-            IReadOnlyList<Expr> Output)
+            OutputBundle Output)
         {
             this.Parent = Parent;
             this.Parameters = Parameters;
@@ -1091,8 +1208,7 @@ public abstract record Algorithm
         public override IReadOnlyList<string> Params => ParameterNames(Parameters);
         public override IReadOnlyList<Expr> Opens { get; init; } = [];
         public override IReadOnlyList<Property> Properties { get; init; } = [];
-        public override IReadOnlyList<Expr> Output { get; init; } = [];
-        internal override bool IsParametrized { get; init; }
+        public override OutputBundle Output { get; init; } = OutputBundle.Empty;
 
         /// <summary>
         /// True for the synthetic inline helper the parser elaborates an

@@ -84,8 +84,9 @@ public sealed record SpecCase
 
     /// <summary>
     /// Lean AST construction equivalent to <see cref="Source"/> (the same
-    /// encoding the semantic-explorer corpus uses: parenthesized lists are
-    /// zero-parameter blocks, never <c>.sequenceConstruct</c>). Non-null iff
+    /// encoding the semantic-explorer corpus uses: surviving parenthesized
+    /// lists are <c>.capture</c> bundles, never <c>.sequenceConstruct</c>).
+    /// Non-null iff
     /// the case is in the Lean-guarded partition.
     /// </summary>
     public string? LeanProgram { get; init; }

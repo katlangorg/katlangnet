@@ -51,7 +51,7 @@ internal static class BenchmarkSequenceStatsDiagnosticRunner
 		var diagnostics = new SequencePipelineDiagnostics();
 		var stopwatch = Stopwatch.StartNew();
 		var result = Evaluator.Run(
-			new Expr.Block(scenario.PreparedRoot),
+			new Expr.AlgorithmExpr(scenario.PreparedRoot),
 			new RunScopedZeroArgPropertyResultCache(),
 			enableLoopOptimization: true,
 			loopDiagnostics: null,

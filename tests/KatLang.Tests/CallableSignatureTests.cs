@@ -25,7 +25,7 @@ public class CallableSignatureTests
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
 
-        var result = Evaluator.RunFlat(new Expr.Block(parseResult.Root));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(parseResult.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -39,7 +39,7 @@ public class CallableSignatureTests
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(static diagnostic => diagnostic.Message)));
 
-        var result = Evaluator.Run(new Expr.Block(parseResult.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 

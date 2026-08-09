@@ -98,7 +98,7 @@ public sealed record SourceProvenance(string Source, ParseResult Parsed)
         => Parser.ParseSyntax(source).Root;
 
     /// <summary>Evaluates the elaborated AST (stage 3).</summary>
-    public EvalResult<Result> Evaluate() => Evaluator.Run(new Expr.Block(Root));
+    public EvalResult<Result> Evaluate() => Evaluator.Run(new Expr.AlgorithmExpr(Root));
 
     /// <summary>The innermost evaluator error, with context frames unwrapped.</summary>
     public EvalError ExpectEvaluationError()

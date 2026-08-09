@@ -213,13 +213,12 @@ internal static class PropertyDependencyGraphBuilder
         ancestorOwnedForChildren.UnionWith(ownedHere);
 
         // Ownership attribution follows the same transparency model as
-        // ParameterDetector: a non-parametrized algorithm (call/dot-call
+        // ParameterDetector: transparent OutputBundle content (call/dot-call
         // argument bundles, surviving parenthesized groups) owns no names, so
-        // its opens/output walk uses the same owned-name set as a parametrized
-        // scope — `ownedHere`, which is naturally empty for valid transparent
-        // algorithms. A parameter reference inside such a layer therefore seeds
-        // the same ancestor-capture requirement as the identical reference
-        // written directly in the enclosing owner; the final
+        // its walk uses the enclosing algorithm's owned-name set. A parameter
+        // reference inside such a layer therefore seeds the same
+        // ancestor-capture requirement as the identical reference written
+        // directly in the enclosing owner; the final
         // RemoveRequiredAncestorOwnedParameterNames strip below keeps each
         // algorithm's self-owned parameters out of the summary it returns.
 
@@ -388,19 +387,35 @@ internal static class PropertyDependencyGraphBuilder
                 return seed;
             }
 
-            case Expr.Block(var algorithm):
+            case Expr.AlgorithmExpr(var algorithm):
                 return CollectSummarySeed(
                     algorithm,
                     ancestorOwnedForChildren,
                     CreateNameSet());
 
+            case Expr.Capture(var captureBody):
+                // A capture owns no names: its rows walk with an empty
+                // owned-here set and an empty local-summary map — exactly what
+                // the pre-split transparent wrapper algorithm's output walk did
+                // (the same attribution as call-argument bundles).
+                return CollectSummarySeed(
+                    captureBody,
+                    new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+                    CreateNameSet(),
+                    ancestorOwnedForChildren);
+
             case Expr.Call(var function, var args):
             {
+                // An argument bundle owns no names: slots walk with an empty
+                // owned-here set and an empty local-summary map — the same
+                // attribution as capture rows (and as the pre-Track-B empty
+                // transparent args wrapper).
                 var seed = CollectSummarySeed(function, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
                 seed.UnionWith(CollectSummarySeed(
                     args,
-                    ancestorOwnedForChildren,
-                    CreateNameSet()));
+                    new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+                    CreateNameSet(),
+                    ancestorOwnedForChildren));
                 return seed;
             }
 
@@ -411,8 +426,9 @@ internal static class PropertyDependencyGraphBuilder
                 {
                     seed.UnionWith(CollectSummarySeed(
                         argsOpt,
-                        ancestorOwnedForChildren,
-                        CreateNameSet()));
+                        new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
+                        CreateNameSet(),
+                        ancestorOwnedForChildren));
                 }
 
                 return seed;
@@ -518,7 +534,7 @@ internal static class PropertyDependencyGraphBuilder
                 CollectSiblingDependencyIndices(inner, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition);
                 break;
 
-            case Expr.Block:
+            case Expr.AlgorithmExpr or Expr.Capture:
                 break;
 
             default:
@@ -527,16 +543,13 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     private static void CollectArgumentSiblingDependencyIndices(
-        Algorithm args,
+        OutputBundle args,
         HashSet<string> siblingNames,
         IReadOnlyDictionary<string, int> propertyNameToIndex,
         HashSet<int> dependencyIndices,
         int propertyIndex)
     {
-        if (args.IsParametrized)
-            return;
-
-        foreach (var expression in args.Output)
+        foreach (var expression in args)
         {
             CollectSiblingDependencyIndices(
                 expression,

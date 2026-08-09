@@ -238,7 +238,7 @@ public sealed class Parser
         try
         {
             parser.GuardNestingDepth();
-            root = parser.ParseAlgorithm(isParametrized: true);
+            root = parser.ParseScopedAlgorithm();
             if (parser.Current.Kind != TokenKind.EndOfFile)
             {
                 parser.ReportError($"Expected end of input, got '{parser.Current.Kind}'.");
@@ -505,22 +505,79 @@ public sealed class Parser
     private const string PropertyDeclarationInParenthesesDiagnostic =
         "A property declaration is not allowed inside parentheses. Use a `{ ... }` block for a scoped algorithm.";
 
-    // Parses both roles of a User algorithm; the two share the same output-row
-    // grammar (comma/adjacency/newline expression lists) and recovery shape.
-    //   true  — a scope-owning (parametrized) algorithm: the root, brace
-    //           blocks, and property bodies. It owns declarations, and the
-    //           front end later detects/validates its parameters at this
-    //           level.
-    //   false — a transparent (non-parametrized) algorithm: expression groups
-    //           and call argument lists. This is a genuine final AST structure
-    //           (every call's Args, surviving parenthesized groups), not a
-    //           temporary parser artifact; it does not own parameter
-    //           elaboration at this level, so free identifiers inside it belong
-    //           to the nearest enclosing parametrized algorithm. Declarations
-    //           (open, properties, clause definitions, deconstruction bindings)
-    //           are rejected there with the targeted diagnostics above; each is
-    //           still parsed and retained so error recovery keeps a truthful tree.
-    private Algorithm ParseAlgorithm(bool isParametrized)
+    // Scoped algorithm bodies and parenthesized expression lists share the
+    // same output-row grammar (comma/adjacency/newline expression lists) and
+    // the same declaration productions, so one low-level body loop collects
+    // rows and declarations into syntactic PARTS without constructing a
+    // semantic Algorithm. The two semantic entry points lower the parts
+    // differently:
+    //   ParseScopedAlgorithm        — the root, brace blocks, and trailing
+    //                                 brace call arguments: the parts become
+    //                                 an Algorithm.User that owns its
+    //                                 declarations and its parameter
+    //                                 analysis.
+    //   ParseParenthesizedBodyParts — expression groups and call argument
+    //                                 lists: declarations (open, properties,
+    //                                 clause definitions, deconstruction
+    //                                 bindings) report the targeted
+    //                                 diagnostics above inline, and each is
+    //                                 still parsed and retained in the parts
+    //                                 so error recovery keeps a truthful
+    //                                 tree. Valid groups lower to
+    //                                 Expr.Capture over the rows, call
+    //                                 argument lists lower to the
+    //                                 OutputBundle of those rows, and
+    //                                 declaration-carrying recovery lowers to
+    //                                 a scope-owning recovery
+    //                                 Expr.AlgorithmExpr (in both contexts).
+    //                                 No Algorithm exists for a valid
+    //                                 parenthesized body — free identifiers
+    //                                 inside groups and argument bundles
+    //                                 belong to the nearest enclosing
+    //                                 algorithm scope.
+    private readonly record struct ParsedAlgorithmBody(
+        List<Expr> Opens,
+        List<Property> Properties,
+        List<Expr> Output)
+    {
+        public bool HasDeclarations => Opens.Count != 0 || Properties.Count != 0;
+    }
+
+    /// <summary>
+    /// Parses a scope-owning algorithm body — the root, brace blocks, and
+    /// trailing brace call arguments — where declarations are legal and owned
+    /// by the produced algorithm.
+    /// </summary>
+    private Algorithm.User ParseScopedAlgorithm()
+        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true));
+
+    /// <summary>
+    /// Parses a parenthesized expression-list body — expression groups and
+    /// call argument lists — where every declaration reports the targeted
+    /// parenthesized-declaration diagnostic and is retained in the parts for
+    /// recovery. The caller lowers the parts: a capture or argument bundle
+    /// for a declaration-free body, one recovery algorithm block when
+    /// declarations were retained.
+    /// </summary>
+    private ParsedAlgorithmBody ParseParenthesizedBodyParts()
+        => ParseAlgorithmBodyParts(declarationsAllowed: false);
+
+    /// <summary>
+    /// Constructs the semantic algorithm for parsed body parts. Used by the
+    /// scoped entry point and by the declaration-carrying recovery lowering
+    /// in parenthesized contexts — the recovery algorithm genuinely owns the
+    /// retained declarations, which is the shape the diagnostic tells the
+    /// user to write (<c>{ ... }</c>).
+    /// </summary>
+    private static Algorithm.User CreateAlgorithm(ParsedAlgorithmBody body)
+        => new(
+            Parent: null,
+            Parameters: [],
+            Opens: body.Opens,
+            Properties: body.Properties,
+            Output: body.Output);
+
+    private ParsedAlgorithmBody ParseAlgorithmBodyParts(bool declarationsAllowed)
     {
         var opens = new List<Expr>();
         var hasOpenDeclaration = false;
@@ -561,7 +618,7 @@ public sealed class Parser
                 ReportError($"Property '{name}' is already defined.");
             }
 
-            if (!isParametrized)
+            if (!declarationsAllowed)
             {
                 ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
             }
@@ -641,7 +698,7 @@ public sealed class Parser
                 Advance(); // consume 'open'
                 var openExprs = ParseOpenTargetList();
                 NormalizeAndValidateOpenForms(openExprs);
-                if (!isParametrized)
+                if (!declarationsAllowed)
                 {
                     // The span covers the whole declaration, keyword through
                     // the last parsed target.
@@ -669,7 +726,7 @@ public sealed class Parser
                     ReportError($"Property '{name}' is already defined.");
                 }
 
-                if (!isParametrized)
+                if (!declarationsAllowed)
                 {
                     ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
                 }
@@ -700,7 +757,7 @@ public sealed class Parser
                     ReportError($"Property '{name}' is already defined.");
                 }
 
-                if (!isParametrized)
+                if (!declarationsAllowed)
                 {
                     ReportError(PropertyDeclarationInParenthesesDiagnostic, TokenSpan(nameToken));
                 }
@@ -720,7 +777,7 @@ public sealed class Parser
             else if ((Current.Kind is TokenKind.Identifier or TokenKind.Star)
                 && LookaheadIsBindingPatternAssignment())
             {
-                ParseBindingPatternAssignment(properties, clauseGroups, declaredPropertyNames, isParametrized);
+                ParseBindingPatternAssignment(properties, clauseGroups, declaredPropertyNames, declarationsAllowed);
             }
             // Clause definition: Name(pattern) = body
             else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
@@ -824,15 +881,7 @@ public sealed class Parser
             });
         }
 
-        return new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: opens,
-            Properties: properties,
-            Output: output)
-        {
-            IsParametrized = isParametrized
-        };
+        return new ParsedAlgorithmBody(opens, properties, output);
     }
 
     private static SourceSpan? CombineSpans(SourceSpan? left, SourceSpan? right)
@@ -1022,10 +1071,7 @@ public sealed class Parser
     private static Expr CreateLoadOpenTarget(string url, SourceSpan? span)
     {
         var urlExpr = new Expr.StringLiteral(url) { Span = span };
-        var loadArgs = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [],
-            Properties: [], Output: [urlExpr])
-        { IsParametrized = false };
+        OutputBundle loadArgs = [urlExpr];
         // This synthetic load has no identifier token in source, so it must
         // stay spanless. Borrowing the quoted URL span would make downstream
         // source-backed semantic models report an identifier on a string token.
@@ -1166,16 +1212,16 @@ public sealed class Parser
     /// repeated star) reports a targeted diagnostic and binds the name as an
     /// ordinary fixed target — malformed recovery never creates a collecting
     /// binding.
-    /// <paramref name="isParametrized"/> is the enclosing
-    /// <see cref="ParseAlgorithm"/> context flag: deconstruction declares
-    /// properties, so inside a parenthesized (non-parametrized) context the
-    /// binding pattern reports the property-in-parentheses diagnostic.
+    /// <paramref name="declarationsAllowed"/> is the enclosing body context
+    /// (see <see cref="ParseAlgorithmBodyParts"/>): deconstruction declares
+    /// properties, so inside a parenthesized body the binding pattern reports
+    /// the property-in-parentheses diagnostic.
     /// </summary>
     private void ParseBindingPatternAssignment(
         List<Property> properties,
         Dictionary<string, List<CondBranch>> clauseGroups,
         HashSet<string> declaredPropertyNames,
-        bool isParametrized)
+        bool declarationsAllowed)
     {
         var targets = new List<BindingTarget>();
         while (true)
@@ -1231,7 +1277,7 @@ public sealed class Parser
             break;
         }
 
-        if (!isParametrized)
+        if (!declarationsAllowed)
         {
             // The span covers the whole binding pattern, first marker/name
             // through the last binding name.
@@ -1330,28 +1376,19 @@ public sealed class Parser
                 ParameterPatterns = [seqPattern],
                 ExplicitParameterPatterns = [seqPattern],
                 ExplicitParameters = explicitParameters,
-                IsParametrized = true,
                 IsAssignmentDeconstructionHelper = true,
                 AssignmentDeconstructionGroup = deconstructionGroup,
                 AssignmentDeconstructionTargetIndex = targetIndex,
             };
 
-            var args = new Algorithm.User(
-                Parent: null,
-                Parameters: [],
-                Opens: [],
-                Properties: [],
-                Output: [new Expr.Resolve(sourceName)]);
+            OutputBundle args = [new Expr.Resolve(sourceName)];
 
             var propertyBody = new Algorithm.User(
                 Parent: null,
                 Parameters: [],
                 Opens: [],
                 Properties: [],
-                Output: [new Expr.Call(new Expr.Block(helper), args)])
-            {
-                IsParametrized = true,
-            };
+                Output: [new Expr.Call(new Expr.AlgorithmExpr(helper), args)]);
 
             properties.Add(new Property(target.Name, propertyBody)
             {
@@ -1522,15 +1559,18 @@ public sealed class Parser
                     break;
                 case Expr.DotCall(var target, _, var args):
                     if (args is not null)
-                        PushInReverse(pending, args.Output);
+                        PushInReverse(pending, args);
                     pending.Push(target);
                     break;
                 case Expr.Call(var function, var args):
-                    PushInReverse(pending, args.Output);
+                    PushInReverse(pending, args);
                     pending.Push(function);
                     break;
-                case Expr.Block(var algorithm):
+                case Expr.AlgorithmExpr(var algorithm):
                     PushInReverse(pending, algorithm.Output);
+                    break;
+                case Expr.Capture(var body):
+                    PushInReverse(pending, body);
                     break;
             }
         }
@@ -1875,23 +1915,21 @@ public sealed class Parser
         var exprs = ParseOutputLineExprs(
             allowNewlineImplicitExpressionListSeparator: false);
 
-        // Unwrap only algorithm-valued blocks (brace blocks, blocks with
-        // declarations/opens, or elaborated module blocks). Preserve plain
-        // parenthesized sequence values like (a, b) as one top-level block value.
+        // Unwrap only scope-owning algorithm expressions (brace blocks and
+        // recovery blocks with declarations/opens): `X = { ... }` merges the
+        // brace algorithm into the property body. A plain parenthesized
+        // capture such as `X = (a, b)` stays one captured value boundary —
+        // the distinction is now structural (AlgorithmExpr vs Capture).
         if (exprs.Count == 1
-            && exprs[0] is Expr.Block(var innerAlg)
-            && innerAlg.ShouldUnwrapSingleBlockPropertyBody())
-            return innerAlg with { IsParametrized = true };
+            && exprs[0] is Expr.AlgorithmExpr(var innerAlg))
+            return innerAlg;
 
         return new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
             Properties: [],
-            Output: exprs)
-        {
-            IsParametrized = true
-        };
+            Output: exprs);
     }
 
     /// <summary>
@@ -1913,13 +1951,23 @@ public sealed class Parser
 
         foreach (var expr in exprs)
         {
-            if (!IsOpenForm(expr))
+            if (expr is Expr.Capture)
+            {
+                // A parenthesized group is a captured VALUE boundary, not an
+                // algorithm: `open` consumes algorithm/namespace identity, and
+                // a capture never exposes the identity of what it encloses.
+                ReportOpenFormError(CapturedOpenTargetDiagnostic, expr);
+            }
+            else if (!IsOpenForm(expr))
             {
                 var kind = OpenExprKind(expr);
                 ReportOpenFormError($"Invalid open form: '{kind}' is not allowed in open declarations.", expr);
             }
         }
     }
+
+    internal const string CapturedOpenTargetDiagnostic =
+        "Invalid open form: a parenthesized group is a captured value, not an algorithm. Open the algorithm directly (open M) or use a `{ ... }` block.";
 
     // Open-form diagnostics must point at the offending open target, not at
     // whatever token follows the open declaration.
@@ -1935,7 +1983,7 @@ public sealed class Parser
     /// Recursively normalizes an open expression:
     /// - DotCall(obj, name, null) is the canonical no-arg form (kept as-is)
     /// - DotCall(obj, name, args) → report error (call-like syntax not allowed in opens)
-    /// - Recurse through the DotCall target; Block is kept as-is.
+    /// - Recurse through the DotCall target; AlgorithmExpr/Capture nodes are kept as-is.
     /// A SequenceSpread target falls through unchanged (never rebuilt here,
     /// which would bypass CreateSequenceSpread) and is rejected by the
     /// open-form validation that follows.
@@ -1958,8 +2006,11 @@ public sealed class Parser
                 // Return as-is; validation will also flag it
                 return expr;
 
-            case Expr.Block(var alg):
-                // Block in open position: normalize opens within the block's own opens
+            case Expr.AlgorithmExpr or Expr.Capture:
+                // Inline algorithm targets stay as-is and are valid open
+                // forms. A capture target such as `open (M)` also stays as-is
+                // structurally, but the open-form validation that follows
+                // rejects it: a capture is a value boundary, not an algorithm.
                 return expr;
 
             default:
@@ -1969,18 +2020,20 @@ public sealed class Parser
 
     /// <summary>
     /// Predicate for valid open forms at parse time.
-    /// Lean: Expr.openForm? — only Block, Resolve, and argumentless DotCall
-    /// post-elaboration. Spread is NOT an open form (a spread-marked target
-    /// such as `open A*` is rejected here).
+    /// Lean: Expr.openForm? — only AlgorithmExpr, Resolve, and
+    /// argumentless DotCall post-elaboration. Spread is NOT an open form (a
+    /// spread-marked target such as `open A*` is rejected here), and a
+    /// Capture is NOT an open form (`open (M)` is a captured value target,
+    /// rejected with the targeted captured-open diagnostic above).
     /// DotCall with args is NOT a valid open form.
     /// load calls (Call(Resolve("load"), _)) are allowed as *surface* open forms because
-    /// the load elaboration pass will rewrite them to Block nodes before open resolution.
-    /// After elaboration, no load calls or StringLiteral nodes remain —
+    /// the load elaboration pass will rewrite them to AlgorithmExpr nodes before open
+    /// resolution. After elaboration, no load calls or StringLiteral nodes remain —
     /// see Lean postElabInvariant (rejects both structurally).
     /// load is NOT a core Expr constructor; it is surface syntax only.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.Block
+        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.AlgorithmExpr
         || e.TryGetUnresolvedLoadArguments(out _);
 
     /// <summary>
@@ -2352,7 +2405,7 @@ public sealed class Parser
                     if (IsCallArgumentStart())
                     {
                         // expr.Name(args) → DotCall(expr, Name, args)
-                        // Lean: dotCall : Expr → Ident → Option Algorithm → Expr
+                        // Lean: dotCall : Expr → Ident → Option OutputBundle → Expr
                         var args = ParseCallArgs();
                         var dotCall = new Expr.DotCall(lhs, propName, args)
                         {
@@ -2480,22 +2533,9 @@ public sealed class Parser
     {
         var callee = new Expr.Resolve(memberToken.StringValue!) { Span = memberSpan };
 
-        Algorithm args;
-        if (IsCallArgumentStart())
-        {
-            var parsedArgs = ParseCallArgs();
-            args = parsedArgs is Algorithm.User userArgs
-                ? userArgs with { Output = [spreadReceiver, .. userArgs.Output] }
-                : new Algorithm.User(
-                    Parent: null, Parameters: [], Opens: [],
-                    Properties: [], Output: [spreadReceiver]);
-        }
-        else
-        {
-            args = new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [],
-                Properties: [], Output: [spreadReceiver]);
-        }
+        OutputBundle args = IsCallArgumentStart()
+            ? [spreadReceiver, .. ParseCallArgs()]
+            : [spreadReceiver];
 
         // The leading spread argument slot always defers `if` arity to the
         // evaluator's spread expansion, exactly like `if(X*)`.
@@ -2517,41 +2557,57 @@ public sealed class Parser
             && MayContinueClosedExpression(Current.Kind);
 
     /// <summary>
-    /// Parses call arguments: <c>(algorithm)</c> or <c>{algorithm}</c>.
+    /// Parses call arguments to an <see cref="OutputBundle"/> of the original
+    /// written argument expressions: <c>(args)</c> or a trailing brace block.
+    /// No transparent argument <see cref="Algorithm"/> is created — the
+    /// receiver-owning call consumes the bundle directly and each slot
+    /// evaluates in the caller's lexical context.
     /// Ordinary parentheses still mean ordinary parenthesized expression syntax. For scalar and other
     /// single-expression cases, <c>((expr))</c> behaves like <c>(expr)</c>.
-    /// When the inner parenthesized expression is itself a non-parametrized block
-    /// value, the parser preserves the extra outer layer so dot-call receiver
-    /// normalization can distinguish <c>(1, 2).count</c> from
-    /// <c>((1, 2)).count</c> without changing ordinary evaluation.
+    /// When an inner parenthesized expression survives as a
+    /// <see cref="Expr.Capture"/>, the parser preserves the extra outer layer
+    /// so dot-call receiver normalization can distinguish <c>(1, 2).count</c>
+    /// from <c>((1, 2)).count</c> without changing ordinary evaluation.
     /// </summary>
-    private Algorithm ParseCallArgs()
+    private OutputBundle ParseCallArgs()
     {
         if (Current.Kind == TokenKind.LParen)
         {
+            var start = Current;
             Advance(); // consume '('
             // Heavy production: call argument lists run the call + algorithm
             // machinery each nesting level (see the recursion-budget notes).
+            // The parenthesized parse mode is shared with ordinary parens so
+            // algorithm-level declarations keep the same targeted rejection
+            // diagnostics and recovery.
             EnterHeavyNesting(CallArgsNestingSurcharge);
-            Algorithm alg;
+            ParsedAlgorithmBody body;
             try
             {
                 GuardNestingDepth();
-                alg = ParseAlgorithm(isParametrized: false);
+                body = ParseParenthesizedBodyParts();
             }
             finally { _nestingDepth -= CallArgsNestingSurcharge; }
 
             Expect(TokenKind.RParen);
-            return alg;
+            if (!body.HasDeclarations)
+                return OutputBundle.From(body.Output);
+
+            // Error recovery only: declarations inside call arguments were
+            // already rejected with the targeted parenthesized-declaration
+            // diagnostic. Retain them for downstream tooling as one recovery
+            // AlgorithmExpr argument — the same recovery shape parenthesized
+            // primaries use — instead of silently discarding the declarations.
+            return [new Expr.AlgorithmExpr(CreateAlgorithm(body)) { Span = MakeSpan(start) }];
         }
         else
         {
             // Trailing brace-block: Algo{e} → Algo({e})
-            // The brace content is a parametrized algorithm that becomes a single
-            // Expr.Block argument inside a non-parametrized wrapper, so the block
-            // is resolvable as an algorithm by ResolveAlg(.block ...). Charges the
-            // call surcharge PLUS the block surcharge: this form runs both
-            // machineries per level.
+            // The brace content is a scope-owning algorithm that becomes the
+            // single Expr.AlgorithmExpr argument slot, so the block is
+            // resolvable as an algorithm by ResolveAlg(.algorithmExpr ...).
+            // Charges the call surcharge PLUS the block surcharge: this form
+            // runs both machineries per level.
             var start = Current;
             Advance(); // consume '{'
             EnterHeavyNesting(CallArgsNestingSurcharge + BlockNestingSurcharge);
@@ -2559,45 +2615,41 @@ public sealed class Parser
             try
             {
                 GuardNestingDepth();
-                innerAlg = ParseAlgorithm(isParametrized: true);
+                innerAlg = ParseScopedAlgorithm();
             }
             finally { _nestingDepth -= CallArgsNestingSurcharge + BlockNestingSurcharge; }
 
             Expect(TokenKind.RBrace);
-            var blockExpr = new Expr.Block(innerAlg) { Span = MakeSpan(start) };
-            return new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [],
-                Properties: [], Output: [blockExpr]);
+            var blockExpr = new Expr.AlgorithmExpr(innerAlg) { Span = MakeSpan(start) };
+            return [blockExpr];
         }
     }
 
     // ── Primary expressions ─────────────────────────────────────────────────
 
-    // A bare expression group is a non-parametrized parenthesized algorithm with
-    // no declarations — just an expression list. Empty/empty-nested groups in this
-    // shape construct empty sequence values.
-    private static bool IsBareExpressionGroup(Algorithm alg)
-        => alg is Algorithm.User { Parameters.Count: 0, Opens.Count: 0, Properties.Count: 0 };
-
-    private static bool ShouldUnwrapParenthesizedPrimary(Algorithm alg)
+    private static bool ShouldUnwrapParenthesizedPrimary(ParsedAlgorithmBody body)
     {
         // Declarations inside parentheses are a parse error (reported at the
-        // declaration by ParseAlgorithm), so a group carrying opens or
-        // properties only reaches this point during error recovery. Keeping
-        // its algorithm layer preserves the parsed declarations for
+        // declaration by the parenthesized body parser), so parts carrying
+        // opens or properties only reach this point during error recovery.
+        // Keeping an algorithm layer preserves the parsed declarations for
         // downstream tooling instead of silently discarding them.
-        if (alg.Opens.Count != 0 || alg.Properties.Count != 0 || alg.Output.Count != 1)
+        if (body.HasDeclarations || body.Output.Count != 1)
             return false;
 
-        return alg.Output[0] switch
+        return body.Output[0] switch
         {
             Expr.SequenceConstruct => false,
             Expr.SequenceSpread => false,
             Expr.EmptySequence => false,
-            // A parenthesized reference keeps its block layer so sequence dot-call
+            // A parenthesized reference keeps its capture layer so sequence dot-call
             // receiver normalization can observe `(items).builtin` vs the bare name.
             Expr.Resolve => false,
-            Expr.Block(var innerAlg) => innerAlg.IsParametrized,
+            // Redundant parentheses around a scope-owning algorithm expression
+            // normalize away (`({...})` is `{...}`); a nested capture keeps its
+            // written boundary (`((1, 2))` stays two layers).
+            Expr.AlgorithmExpr => true,
+            Expr.Capture => false,
             _ => true,
         };
     }
@@ -2676,11 +2728,11 @@ public sealed class Parser
                     // machinery, so it carries a calibrated surcharge on the shared
                     // cumulative recursion budget.
                     EnterHeavyNesting(GroupNestingSurcharge);
-                    Algorithm alg;
+                    ParsedAlgorithmBody body;
                     try
                     {
                         GuardNestingDepth();
-                        alg = ParseAlgorithm(isParametrized: false);
+                        body = ParseParenthesizedBodyParts();
                     }
                     finally { _nestingDepth -= GroupNestingSurcharge; }
 
@@ -2689,22 +2741,36 @@ public sealed class Parser
                     // Empty parentheses `()` construct the empty sequence value.
                     // Repeated ordinary parentheses around it are redundant grouping
                     // and canonicalize to the same empty sequence value.
-                    if (IsBareExpressionGroup(alg))
+                    if (!body.HasDeclarations)
                     {
-                        if (alg.Output.Count == 0)
+                        if (body.Output.Count == 0)
                             return new Expr.EmptySequence(0) { Span = MakeSpan(start) };
-                        if (alg.Output.Count == 1 && alg.Output[0] is Expr.EmptySequence)
+                        if (body.Output.Count == 1 && body.Output[0] is Expr.EmptySequence)
                             return new Expr.EmptySequence(0) { Span = MakeSpan(start) };
                     }
 
                     // Ordinary parenthesized expressions usually unwrap to the inner
-                    // expression. Preserve an extra non-parametrized block layer so
-                    // sequence dot-call receiver normalization can observe
+                    // expression. Preserve an extra capture layer so sequence
+                    // dot-call receiver normalization can observe
                     // `(items).builtin` vs `((items)).builtin`.
-                    if (ShouldUnwrapParenthesizedPrimary(alg))
-                        return alg.Output[0];
+                    if (ShouldUnwrapParenthesizedPrimary(body))
+                        return body.Output[0];
 
-                    return new Expr.Block(alg) { Span = MakeSpan(start) };
+                    // Declarations inside parentheses are a parse error (reported
+                    // at the declaration by the parenthesized body parser), so
+                    // parts carrying opens or properties only reach this point
+                    // during error recovery. The recovery tree keeps the parsed
+                    // declarations truthfully as a scope-owning algorithm
+                    // expression — the form the diagnostic tells the user to
+                    // write (`{ ... }`) — because a Capture's OutputBundle is
+                    // declaration-free by construction.
+                    if (body.HasDeclarations)
+                        return new Expr.AlgorithmExpr(CreateAlgorithm(body)) { Span = MakeSpan(start) };
+
+                    // A surviving parenthesized group is a normalized capture
+                    // boundary over its ordered written expression slots — a
+                    // value/output boundary, not an algorithm.
+                    return new Expr.Capture(OutputBundle.From(body.Output)) { Span = MakeSpan(start) };
                 }
 
             case TokenKind.LBrace:
@@ -2717,12 +2783,12 @@ public sealed class Parser
                     try
                     {
                         GuardNestingDepth();
-                        alg = ParseAlgorithm(isParametrized: true);
+                        alg = ParseScopedAlgorithm();
                     }
                     finally { _nestingDepth -= BlockNestingSurcharge; }
 
                     Expect(TokenKind.RBrace);
-                    return new Expr.Block(alg) { Span = MakeSpan(start) };
+                    return new Expr.AlgorithmExpr(alg) { Span = MakeSpan(start) };
                 }
 
             case TokenKind.LBracket:
@@ -2815,7 +2881,7 @@ public sealed class Parser
     /// repeat/while initial-state arguments are intentionally left intact here:
     /// the evaluator preserves each explicit init argument as one state slot.
     /// </summary>
-    private static Algorithm MaybeLowerBuiltinDirectCallArgs(Expr callee, Algorithm args)
+    private static OutputBundle MaybeLowerBuiltinDirectCallArgs(Expr callee, OutputBundle args)
         => args;
 
     /// <summary>
@@ -2833,14 +2899,14 @@ public sealed class Parser
     /// the whole offending call, the same span the caller assigns to the
     /// resulting <see cref="Expr.Call"/> node.
     /// </summary>
-    private void ValidateIfArity(Expr callee, Algorithm args, SourceSpan callSpan)
+    private void ValidateIfArity(Expr callee, OutputBundle args, SourceSpan callSpan)
     {
         if (callee is Expr.Resolve("if"))
         {
-            if (args.Output.Any(static arg => arg is Expr.SequenceSpread))
+            if (args.Any(static arg => arg is Expr.SequenceSpread))
                 return;
 
-            var argCount = args.Output.Count;
+            var argCount = args.Count;
             if (argCount != 3)
             {
                 ReportError($"Builtin 'if' expects 3 arguments: condition, whenTrue, whenFalse. Got {argCount}.", callSpan);

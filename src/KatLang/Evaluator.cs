@@ -340,7 +340,8 @@ public static class Evaluator
         Expr.SequenceSpread => "spread",
         Expr.ListLiteral => "listLiteral",
         Expr.Resolve => "resolve",
-        Expr.Block => "block",
+        Expr.AlgorithmExpr => "algorithmExpr",
+        Expr.Capture => "capture",
         Expr.Call => "call",
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
@@ -350,11 +351,16 @@ public static class Evaluator
 
     /// <summary>
     /// Predicate defining which expression forms are allowed in open position.
-    /// Only structural references to libraries are permitted.
+    /// Only structural references to libraries are permitted. A Capture is NOT
+    /// an open form: a capture is a value boundary, never algorithm/namespace
+    /// identity, so `open (M)` fails open validation with BadOpenForm exactly
+    /// like a spread-marked target (the parser also rejects it in source; the
+    /// <see cref="ResolveAlgForOpen"/> capture arm covers dotted heads and
+    /// prebuilt ASTs).
     /// Lean: Expr.isOpenForm.
     /// </summary>
     private static bool IsOpenForm(Expr e) => e is
-        Expr.Block or Expr.Resolve or Expr.DotCall(_, _, null);
+        Expr.AlgorithmExpr or Expr.Resolve or Expr.DotCall(_, _, null);
 
     /// <summary>
     /// Extract a descriptive name from an open expression for error messages.
@@ -605,7 +611,7 @@ public static class Evaluator
         for (var i = 0; i < alg.Opens.Count; i++)
         {
             var openExpr = alg.Opens[i];
-            var key = openExpr is Expr.Block
+            var key = openExpr is Expr.AlgorithmExpr or Expr.Capture
                 ? $"(inline#{i})"  // unique per original position, never deduped
                 : OpenExprName(openExpr);
             if (seen.Add(key))
@@ -1483,11 +1489,24 @@ public static class Evaluator
         if (alg is Algorithm.User { Output.Count: 0 })
             return new EvalError.MissingOutput();
 
+        return EvalExplicitSequenceValueRowSlots(alg.Output, ctx.Push(alg), valEnv);
+    }
+
+    /// <summary>
+    /// The shared written-slot loop over ordered bundle rows: each row
+    /// contributes its explicit written slots. Algorithm-shaped groupings reach
+    /// it after pushing their own scope; a <see cref="Expr.Capture"/> body
+    /// reaches it directly (captures own no scope).
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueRowSlots(
+        IReadOnlyList<Expr> rows,
+        EvalCtx rowCtx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
         var slots = new List<Result>();
-        var pushedCtx = ctx.Push(alg);
-        foreach (var expr in alg.Output)
+        foreach (var expr in rows)
         {
-            var exprSlotsR = EvalExplicitSequenceValueExprSlots(expr, pushedCtx, valEnv);
+            var exprSlotsR = EvalExplicitSequenceValueExprSlots(expr, rowCtx, valEnv);
             if (exprSlotsR.IsError) return exprSlotsR.Error;
             slots.AddRange(exprSlotsR.Value);
         }
@@ -1500,17 +1519,26 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (expr is Expr.Block(var algorithm))
+        // A nested written grouping level materializes exactly one item,
+        // combined with the same shallow singleton-erasing rule as ordinary
+        // capture evaluation (CombineOutputSlots). A singleton group such as
+        // `(A)` IS its single already-evaluated item and an all-spread-empty
+        // group is `()` — never a literal-unwritable orphan such as `(5)`.
+        // Both node kinds keep this written-slot view: a capture body directly,
+        // and a zero-parameter scoped block through its algorithm.
+        if (expr is Expr.Capture(var captureBody))
+        {
+            var nestedItemsR = EvalExplicitSequenceValueRowSlots(captureBody, ctx, valEnv);
+            if (nestedItemsR.IsError) return nestedItemsR.Error;
+
+            return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
+        }
+
+        if (expr is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
             {
-                // A nested zero-parameter block is one written grouping level: it
-                // materializes exactly one item, combined with the same shallow
-                // singleton-erasing rule as ordinary block evaluation
-                // (CombineOutputSlots). A singleton group such as `(A)` IS its
-                // single already-evaluated item and an all-spread-empty group is
-                // `()` — never a literal-unwritable orphan such as `(5)`.
                 var nestedItemsR = EvalExplicitSequenceValueItems(wired, ctx, valEnv);
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
@@ -1780,7 +1808,7 @@ public static class Evaluator
 
     private static EvalResult<UserCallBindings> BindPatternedUserCall(
         Algorithm callee,
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -1794,7 +1822,7 @@ public static class Evaluator
             ctx.Observations?.RecordDeconstructionFullBind();
 
         var inputsR = BuildCallArgumentInputs(
-            wiredArgs,
+            args,
             ctx,
             valEnv,
             preserveArgBoundaries,
@@ -1849,7 +1877,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result>? TryProjectSharedDeconstructionTarget(
         Algorithm.User helper,
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -1869,7 +1897,7 @@ public static class Evaluator
             execution,
             () =>
             {
-                var bindingsR = BindPatternedUserCall(helper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+                var bindingsR = BindPatternedUserCall(helper, args, ctx, valEnv, calleeName, preserveArgBoundaries);
                 if (bindingsR.IsError)
                     return bindingsR.Error;
 
@@ -1928,30 +1956,32 @@ public static class Evaluator
     /// Lean: <c>collectVariadicCallItems</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries = null,
         bool includeExplicitSequenceValueItems = false)
     {
-        var argExprs = wiredArgs.Output;
-        var maybeAlgsR = TryResolveArgAlgs(wiredArgs, ctx);
+        var maybeAlgsR = TryResolveArgAlgs(args, ctx);
         if (maybeAlgsR.IsError) return maybeAlgsR.Error;
 
+        // Argument slots evaluate directly in the CALLER's context: the bundle
+        // owns no scope, so there is no argument-level lexical frame to push.
+        // (An argument frame would necessarily be empty and caller-wired, so
+        // lookup behavior is identical to pushing one — none exists.)
         var maybeAlgs = maybeAlgsR.Value;
-        var argEvalCtx = ctx.Push(wiredArgs);
         var inputs = new List<ParameterPatternInput>();
 
-        for (var index = 0; index < argExprs.Count; index++)
+        for (var index = 0; index < args.Count; index++)
         {
-            var argExpr = argExprs[index];
+            var argExpr = args[index];
             var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
             var preserveArgBoundary = PreserveCallArgBoundary(preserveArgBoundaries, index);
             var isDotReceiverSegment = IsInjectedDotCallReceiverSegment(preserveArgBoundaries, index);
 
             if (argExpr is Expr.SequenceSpread && !preserveArgBoundary)
             {
-                var suppliedR = EvalCounted(argExpr, argEvalCtx, valEnv);
+                var suppliedR = EvalCounted(argExpr, ctx, valEnv);
                 if (suppliedR.IsError)
                     return suppliedR.Error;
 
@@ -1964,7 +1994,6 @@ public static class Evaluator
             var preparedR = PrepareCallArgumentEvaluation(
                 argExpr,
                 ctx,
-                argEvalCtx,
                 valEnv,
                 isDotReceiverSegment,
                 includeExplicitSequenceValueItems);
@@ -1992,30 +2021,41 @@ public static class Evaluator
 
     /// <summary>
     /// Evaluates one non-expanded call argument. Patterned calls need an additional written-slot
-    /// view for a zero-parameter parenthesized block; that view is captured by
-    /// <see cref="EvalAlgOutputPreparedCore"/> during the SAME output pass that constructs the
-    /// counted argument value. Multi-parameter blocks stay on the ordinary dual-channel fallback
-    /// and are never forced merely to request explicit pattern items.
+    /// view for a capture or a zero-parameter AlgorithmExpr; that view is captured by the
+    /// corresponding prepared-output evaluator during the SAME output pass that constructs the
+    /// counted argument value. Multi-parameter algorithms stay on the ordinary dual-channel
+    /// fallback and are never forced merely to request explicit pattern items.
     /// </summary>
     private static EvalResult<PreparedCallArgumentEvaluation> PrepareCallArgumentEvaluation(
         Expr argExpr,
         EvalCtx ctx,
-        EvalCtx argEvalCtx,
         IReadOnlyList<(string, Result)> valEnv,
         bool isDotReceiverSegment,
         bool includeExplicitSequenceValueItems)
     {
-        if (includeExplicitSequenceValueItems && argExpr is Expr.Block(var algorithm))
+        if (includeExplicitSequenceValueItems && argExpr is Expr.Capture(var captureBody))
         {
-            // An injected dotted receiver is evaluated in the receiver's caller context; an
-            // ordinary written argument is evaluated beneath the wired argument algorithm.
-            // Whichever context owns the value evaluation also owns its explicit-slot view.
-            var blockCtx = isDotReceiverSegment ? ctx : argEvalCtx;
-            var wired = WireToCaller(blockCtx, algorithm);
+            // The caller context owns the value evaluation and its
+            // explicit-slot view (argument bundles have no scope of their own).
+            var captureSpan = argExpr.Span ?? FirstSpan(captureBody);
+            var capturePreparedR = WithSpan(captureSpan, EvalCapturePreparedCore(captureBody, ctx, valEnv));
+            if (capturePreparedR.IsError) return capturePreparedR.Error;
+
+            var captureCounted = isDotReceiverSegment
+                ? capturePreparedR.Value.Counted
+                : ReCountValueBoundary(capturePreparedR.Value.Counted);
+            return EvalResult<PreparedCallArgumentEvaluation>.Ok(new(
+                captureCounted,
+                capturePreparedR.Value.OutputSlots));
+        }
+
+        if (includeExplicitSequenceValueItems && argExpr is Expr.AlgorithmExpr(var algorithm))
+        {
+            var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
             {
                 var blockSpan = argExpr.Span ?? FirstSpan(wired.Output);
-                var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, blockCtx, valEnv));
+                var preparedR = WithSpan(blockSpan, EvalAlgOutputPreparedCore(wired, ctx, valEnv));
                 if (preparedR.IsError) return preparedR.Error;
 
                 var counted = isDotReceiverSegment
@@ -2028,8 +2068,8 @@ public static class Evaluator
         }
 
         var evaluatedR = isDotReceiverSegment
-            ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, argEvalCtx, valEnv)
-            : EvalCounted(argExpr, argEvalCtx, valEnv);
+            ? EvalDotReceiverCallSegmentCounted(argExpr, ctx, valEnv)
+            : EvalCounted(argExpr, ctx, valEnv);
         return evaluatedR.IsError
             ? evaluatedR.Error
             : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
@@ -2044,17 +2084,22 @@ public static class Evaluator
     private static EvalResult<CountedResult> EvalDotReceiverCallSegmentCounted(
         Expr receiver,
         EvalCtx ctx,
-        EvalCtx argEvalCtx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (receiver is Expr.Block(var algorithm))
+        // A grouped receiver keeps its multi-item emitted count as the injected
+        // leading argument segment (no value-boundary re-count), for both the
+        // capture form and a zero-parameter scoped block.
+        if (receiver is Expr.Capture(var captureBody))
+            return WithSpan(receiver.Span ?? FirstSpan(captureBody), EvalCaptureCountedCore(captureBody, ctx, valEnv));
+
+        if (receiver is Expr.AlgorithmExpr(var algorithm))
         {
             var wired = WireToCaller(ctx, algorithm);
             if (wired.Params.Count == 0)
                 return WithSpan(receiver.Span ?? FirstSpan(wired.Output), EvalAlgOutputCounted(wired, ctx, valEnv));
         }
 
-        return EvalCounted(receiver, argEvalCtx, valEnv);
+        return EvalCounted(receiver, ctx, valEnv);
     }
 
     private static EvalError VariadicBindingArityMismatch(
@@ -2107,13 +2152,13 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<UserCallBindings> BindDeconstructionUserCall(
         Algorithm callee,
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries = null)
     {
-        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, preserveArgBoundaries);
         if (inputsR.IsError) return inputsR.Error;
 
         // A deconstruction parameter list always carries a collecting binding, so a
@@ -2160,7 +2205,7 @@ public static class Evaluator
         Algorithm callee,
         CallDiagnosticName calleeName,
         IReadOnlyList<string> parameterNames,
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -2170,7 +2215,7 @@ public static class Evaluator
         // any arity checking). Dot-call fixed receivers that must stay one
         // boundary are wrapped before this path, so they do not arrive here as
         // Expr.SequenceSpread.
-        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv);
         if (inputsR.IsError) return inputsR.Error;
 
         var slots = inputsR.Value
@@ -2355,16 +2400,15 @@ public static class Evaluator
 
         public Expr Complete()
             => IsSequence
-                ? new Expr.Block(new Algorithm.User(
-                    Parent: null,
-                    Parameters: [],
-                    Opens: [],
-                    Properties: [],
-                    Output: Converted))
+                // A reified sequence value is a capture of its already-evaluated
+                // items — a value boundary, not an algorithm. Converted is this
+                // frame's exclusively owned fresh array, so ownership transfers
+                // without a snapshot copy.
+                ? new Expr.Capture(OutputBundle.TakeOwnership(Converted))
                 // Exact list values reify as list literals so they round-trip
                 // losslessly (a reified `()` element stays one visible list
                 // element).
-                : new Expr.ListLiteral(Converted);
+                : new Expr.ListLiteral(OutputBundle.TakeOwnership(Converted));
     }
 
     /// <summary>
@@ -2393,14 +2437,6 @@ public static class Evaluator
             current = items[0];
         }
     }
-
-    /// <summary>Lean: <c>Algorithm.ofExpr</c>.</summary>
-    private static Algorithm AlgorithmOfExpr(Expr expr) => new Algorithm.User(
-        Parent: null,
-        Parameters: [],
-        Opens: [],
-        Properties: [],
-        Output: [expr]);
 
     /// <summary>
     /// Counted evaluation result: the normalized value paired with the number of
@@ -2769,11 +2805,12 @@ public static class Evaluator
     /// </summary>
     private static Algorithm CountedArgAlgorithm(CountedResult arg, EvalCtx ctx)
     {
-        IReadOnlyList<Expr> output = arg.EmittedCount switch
+        OutputBundle output = arg.EmittedCount switch
         {
             0 => [EmptyResultExpr()],
             1 => [ResultToExpr(arg.Value)],
-            _ => arg.Value.ToItems().Select(ResultToExpr).ToList(),
+            // Freshly materialized here, so ownership transfers copy-free.
+            _ => OutputBundle.TakeOwnership(arg.Value.ToItems().Select(ResultToExpr).ToArray()),
         };
 
         var algorithm = new Algorithm.User(
@@ -3216,13 +3253,32 @@ public static class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        var innerCtx = ctx.Push(alg);
+        return EvalOutputRowsPreparedCore(alg.Output, ctx.Push(alg), ctx, valEnv);
+    }
+
+    /// <summary>
+    /// The ONE shared output-row supply loop: evaluates ordered
+    /// <see cref="OutputBundle"/> rows left to right (a spread row contributes
+    /// its supplied items, a non-spread row contributes exactly one slot) and
+    /// combines the collected slots into one canonical value
+    /// (<see cref="CombineOutputSlots"/>). Algorithm output evaluation reaches
+    /// it after pushing the algorithm's own scope; <see cref="Expr.Capture"/>
+    /// evaluation reaches it directly with the surrounding context, because a
+    /// capture owns no scope. Both receivers therefore share exactly the same
+    /// supply semantics rather than duplicating them.
+    /// </summary>
+    private static EvalResult<PreparedAlgorithmOutput> EvalOutputRowsPreparedCore(
+        IReadOnlyList<Expr> rows,
+        EvalCtx rowCtx,
+        EvalCtx reserveCtx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
         var results = new List<Result>();
         var emittedCount = 0;
 
-        foreach (var expr in alg.Output)
+        foreach (var expr in rows)
         {
-            var countedR = EvalCounted(expr, innerCtx, valEnv);
+            var countedR = EvalCounted(expr, rowCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
 
             if (expr is Expr.SequenceSpread)
@@ -3242,12 +3298,71 @@ public static class Evaluator
         // Output-slot capture is a persistent collection: spread can expand it well beyond
         // any single input (`(A*, A*)` doubles), so the reservation happens
         // here, before the sequence value is built.
-        if (ReserveSequenceCapture(ctx, results.Count, FirstSpan(alg.Output)) is { } capturedLimitError)
+        if (ReserveSequenceCapture(reserveCtx, results.Count, FirstSpan(rows)) is { } capturedLimitError)
             return capturedLimitError;
 
         var counted = new CountedResult(CombineOutputSlots(results), emittedCount);
         return EvalResult<PreparedAlgorithmOutput>.Ok(new(counted, results));
     }
+
+    /// <summary>
+    /// Evaluates a <see cref="Expr.Capture"/> body's rows in the surrounding
+    /// context (a capture owns no scope, so nothing is pushed) through the
+    /// shared output-row supply loop. The multi-item emitted count is
+    /// preserved here; value-position consumers re-count at the capture's
+    /// value boundary (<see cref="Result.ValueCount"/>). An empty bundle
+    /// captures the empty sequence value.
+    /// Lean: <c>evalCapturePreparedCore</c>.
+    /// </summary>
+    private static EvalResult<PreparedAlgorithmOutput> EvalCapturePreparedCore(
+        OutputBundle body,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+        => EvalOutputRowsPreparedCore(body, ctx, ctx, valEnv);
+
+    private static EvalResult<CountedResult> EvalCaptureCountedCore(
+        OutputBundle body,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var preparedR = EvalCapturePreparedCore(body, ctx, valEnv);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
+    }
+
+    /// <summary>
+    /// Evaluates a capture body to its single canonical captured value.
+    /// </summary>
+    private static EvalResult<Result> EvalCaptureValue(
+        OutputBundle body,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var countedR = EvalCaptureCountedCore(body, ctx, valEnv);
+        return countedR.IsError
+            ? countedR.Error
+            : EvalResult<Result>.Ok(countedR.Value.Value);
+    }
+
+    /// <summary>
+    /// The algorithm-channel adapter for a capture: a fresh zero-parameter
+    /// output-only thunk over the bundle, wired to the caller scope. CAPTURE IS
+    /// NOT ALGORITHM IDENTITY — this never exposes the algorithm identity of
+    /// any expression inside the bundle (a captured named algorithm stays
+    /// suppressed, exactly like the pre-split transparent wrapper); it only
+    /// lets algorithm-channel consumers evaluate the capture's value lazily.
+    /// Lean: <c>captureValueThunk</c>.
+    /// </summary>
+    private static Algorithm CaptureValueThunk(OutputBundle body, EvalCtx ctx)
+        => WireToCaller(
+            ctx,
+            new Algorithm.User(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties: [],
+                Output: body));
 
     private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
         Algorithm alg,
@@ -3705,7 +3820,7 @@ public static class Evaluator
     /// a non-spread leaf whose value is <c>()</c> contributes NO item (an
     /// empty join contribution), a spread leaf splices its operand's items,
     /// and the result is recursively normalized. Written parentheses parse to
-    /// <see cref="Expr.Block"/> and always keep a non-spread <c>()</c> item
+    /// <see cref="Expr.Capture"/> and always keep a non-spread <c>()</c> item
     /// visible — surface syntax must never route through this node
     /// (enforced by <c>SequenceConstructContainmentTests</c>).
     /// Lean: <c>evalSequenceConstructCounted</c>; plain evaluation is this
@@ -3761,7 +3876,19 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        if (expr is Expr.Block(var alg))
+        if (expr is Expr.Capture(var captureBody))
+        {
+            var captureSpan = expr.Span ?? FirstSpan(captureBody);
+            var captureR = WithSpan(captureSpan, EvalCaptureValue(captureBody, ctx, valEnv));
+            if (captureR.IsError)
+                return IsMissingOutputError(captureR.Error)
+                    ? SpreadMissingOutput(captureSpan)
+                    : captureR.Error;
+
+            return EvalResult<IReadOnlyList<Result>>.Ok(captureR.Value.SpreadItems());
+        }
+
+        if (expr is Expr.AlgorithmExpr(var alg))
         {
             var wired = WireToCaller(ctx, alg);
             var blockSpan = expr.Span ?? FirstSpan(wired.Output);
@@ -5111,8 +5238,16 @@ public static class Evaluator
                     return new EvalError.BadOpenForm("spread expressions cannot be opened") { Span = expr.Span };
                 }
 
-            case Expr.Block(var alg):
+            case Expr.AlgorithmExpr(var alg):
                 return EvalResult<Algorithm>.Ok(WireOpenBlockToGlobalScope(alg, ctx));
+
+            case Expr.Capture:
+                // A capture is a value boundary, never algorithm/namespace
+                // identity: `open` consumes algorithm identity, so a captured
+                // target such as `open (M)` is not openable. The parser
+                // rejects this form in source; this arm is the prebuilt-AST
+                // defense, mirroring the spread arm above.
+                return new EvalError.BadOpenForm("captured value groups cannot be opened") { Span = expr.Span };
 
             case Expr.Resolve(var name):
                 {
@@ -5195,8 +5330,16 @@ public static class Evaluator
                     return new EvalError.NotAnAlgorithm("spread expression") { Span = expr.Span };
                 }
 
-            case Expr.Block(var alg):
+            case Expr.AlgorithmExpr(var alg):
                 return EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg));
+
+            case Expr.Capture(var captureBody):
+                // Capture is not algorithm identity: the algorithm channel sees
+                // only a zero-parameter value thunk over the bundle, exactly as
+                // the pre-split transparent wrapper behaved. `(F)(1)` therefore
+                // stays an arity error and `Apply((Increment))` never receives
+                // Increment's callable identity.
+                return EvalResult<Algorithm>.Ok(CaptureValueThunk(captureBody, ctx));
 
             case Expr.Resolve(var name):
                 return ResolveNamedAlgorithm(name, expr.Span, ctx);
@@ -6370,7 +6513,7 @@ public static class Evaluator
                         : EvalResult<Result>.Ok(listLiteralR.Value.Value);
                 }
 
-            case Expr.Block(var alg):
+            case Expr.AlgorithmExpr(var alg):
                 {
                     var wired = WireToCaller(ctx, alg);
                     if (wired.Params.Count == 0)
@@ -6378,6 +6521,9 @@ public static class Evaluator
                     var blockSpan = expr.Span ?? FirstSpan(wired.Output);
                     return MissingImplicitArguments<Result>(wired.Params, blockSpan);
                 }
+
+            case Expr.Capture(var captureBody):
+                return WithSpan(expr.Span ?? FirstSpan(captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
 
             case Expr.Resolve(var name):
                 {
@@ -6413,9 +6559,9 @@ public static class Evaluator
                 return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
                     EvalDotCall(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
-            case Expr.Call(var func, var argsAlg):
+            case Expr.Call(var func, var callArgs):
                 return WithSpan(expr.Span,
-                    EvalCallExpr(func, argsAlg, ctx, valEnv));
+                    EvalCallExpr(func, callArgs, ctx, valEnv));
 
             case Expr.Index:
                 {
@@ -6496,7 +6642,7 @@ public static class Evaluator
                     return EvalResult<CountedResult>.Ok(new CountedResult(emptyValue, emptyValue.ValueCount()));
                 }
 
-            case Expr.Block(var alg):
+            case Expr.AlgorithmExpr(var alg):
                 {
                     var wired = WireToCaller(ctx, alg);
                     if (wired.Params.Count == 0)
@@ -6508,6 +6654,16 @@ public static class Evaluator
 
                     var blockSpan = expr.Span ?? FirstSpan(wired.Output);
                     return MissingImplicitArguments<CountedResult>(wired.Params, blockSpan);
+                }
+
+            case Expr.Capture(var captureBody):
+                {
+                    // A capture in value position is a value boundary: the body's
+                    // supply is captured to one canonical value and re-counted as
+                    // that value's ValueCount.
+                    var captureR = WithSpan(expr.Span ?? FirstSpan(captureBody), EvalCaptureValue(captureBody, ctx, valEnv));
+                    if (captureR.IsError) return captureR.Error;
+                    return EvalResult<CountedResult>.Ok(new CountedResult(captureR.Value, captureR.Value.ValueCount()));
                 }
 
             case Expr.Resolve(var name):
@@ -6547,9 +6703,9 @@ public static class Evaluator
                 return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
                     EvalDotCallCounted(dotTarget, dotName, dotArgs, ctx, valEnv)));
 
-            case Expr.Call(var func, var argsAlg):
+            case Expr.Call(var func, var callArgs):
                 return WithSpan(expr.Span,
-                    EvalCallCountedExpr(func, argsAlg, ctx, valEnv));
+                    EvalCallCountedExpr(func, callArgs, ctx, valEnv));
 
             case Expr.Index:
                 // The spine machine owns the index-expression span.
@@ -6679,21 +6835,32 @@ public static class Evaluator
     /// are propagated immediately to preserve precise diagnostics.
     /// </summary>
     /// <summary>
-    /// Treat simple zero-parameter inline block expressions uniformly as
-    /// value/output structures in argument position.
-    /// This rule is shared by builtin lazy-argument preparation and higher-order
-    /// probing; callability is not inferred from output count, so both
-    /// <c>{123}</c> and <c>{1, 2}</c> stay on the value side. Blocks with
-    /// parameters, properties, or opens may still resolve as algorithms.
+    /// True when an argument expression supplies ONLY a value in argument
+    /// position. A capture is a value boundary: it suppresses the algorithm
+    /// identity of anything inside it, so higher-order probing never sees the
+    /// enclosed content as callable. <see cref="Expr.AlgorithmExpr"/> is
+    /// deliberately NOT value-only: an algorithm block explicitly exposes its
+    /// contained Algorithm on the algorithm channel regardless of
+    /// parameter/declaration/output count — <c>{42}</c> is as much an
+    /// Algorithm as <c>{a + 1}</c> — while the value channel reifies the
+    /// written slot independently.
     /// </summary>
-    private static bool ShouldWrapArgExprAsValue(Expr expr) => expr switch
-    {
-        Expr.Block(var algorithm)
-            when algorithm.Params.Count == 0
-                && algorithm.Opens.Count == 0
-                && algorithm.Properties.Count == 0 => true,
-        _ => false,
-    };
+    private static bool ShouldWrapArgExprAsValue(Expr expr) => expr is Expr.Capture;
+
+    /// <summary>
+    /// Builtin argument adapters reify each written slot as one value-producing
+    /// adapter. A zero-declaration algorithm block slot keeps its one-slot
+    /// value boundary here (written-slot reification: <c>repeat(step, n, {1, 2})</c>
+    /// supplies ONE initial state slot), exactly as before the block's
+    /// algorithm identity became visible to user-call higher-order binding.
+    /// Blocks with parameters, properties, or opens still resolve as
+    /// algorithms for algorithm-consuming builtin arguments (callbacks).
+    /// </summary>
+    private static bool IsZeroDeclarationBlockValueSlot(Expr expr) => expr is
+        Expr.AlgorithmExpr(var algorithm)
+            && algorithm.Params.Count == 0
+            && algorithm.Opens.Count == 0
+            && algorithm.Properties.Count == 0;
 
     private static Algorithm WrapArgExprAsValue(Expr expr, EvalCtx ctx)
         => WireToCaller(
@@ -6710,16 +6877,17 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
         => ShouldWrapArgExprAsValue(expr)
+            || IsZeroDeclarationBlockValueSlot(expr)
             || expr is Expr.Param(var name)
                 && (LookupCountedParam(ctx.CountedParamEnv, name) is not null
                     || LookupVal(valEnv, name) is not null);
 
     private static EvalResult<IReadOnlyList<Algorithm>> ResolveArgAlgs(
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var resolvedR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
+        var resolvedR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
         if (resolvedR.IsError) return resolvedR.Error;
 
         var algorithms = new List<Algorithm>(resolvedR.Value.Count);
@@ -6734,12 +6902,12 @@ public static class Evaluator
     }
 
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var result = new List<ResolvedArgumentAlgorithm>(argsAlg.Output.Count);
-        foreach (var argExpr in argsAlg.Output)
+        var result = new List<ResolvedArgumentAlgorithm>(args.Count);
+        foreach (var argExpr in args)
         {
             var spreadsSequence = argExpr is Expr.SequenceSpread;
             if (ShouldWrapBuiltinArgExprAsValue(argExpr, ctx, valEnv))
@@ -6786,17 +6954,18 @@ public static class Evaluator
     /// <summary>
     /// Try to resolve each argument expression to an algorithm.
     /// Returns Some(alg) for expressions that resolve, null for those that don't.
-    /// Simple zero-parameter inline blocks are intentionally treated as
-    /// value/output structures here, regardless of whether they emit one value
-    /// or many, so higher-order probing never grants them callable AlgEnv
-    /// bindings based on output count.
+    /// A capture slot never yields a candidate (a capture is a value boundary
+    /// and suppresses enclosed identity); an algorithm block always yields its
+    /// contained Algorithm, regardless of parameter/declaration/output count —
+    /// <c>Call0({42})</c> binds the brace algorithm exactly like
+    /// <c>Call0(Const)</c> binds a named zero-parameter property.
     /// Lean: tryResolveArgAlgs.
     /// </summary>
     private static EvalResult<IReadOnlyList<Algorithm?>> TryResolveArgAlgs(
-        Algorithm argsAlg, EvalCtx ctx)
+        OutputBundle args, EvalCtx ctx)
     {
-        var result = new List<Algorithm?>(argsAlg.Output.Count);
-        foreach (var argExpr in argsAlg.Output)
+        var result = new List<Algorithm?>(args.Count);
+        foreach (var argExpr in args)
         {
             if (ShouldWrapArgExprAsValue(argExpr))
             {
@@ -6850,7 +7019,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result> EvalCall(
         Expr func,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -6858,7 +7027,7 @@ public static class Evaluator
         if (calleeR.IsError) return calleeR.Error;
         return EvalResolvedCall(
             calleeR.Value,
-            argsAlg,
+            args,
             ctx,
             valEnv,
             CallDiagnosticName.FromExpression(func));
@@ -6870,7 +7039,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalCallCounted(
         Expr func,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -6878,7 +7047,7 @@ public static class Evaluator
         if (calleeR.IsError) return calleeR.Error;
         return EvalResolvedCallCounted(
             calleeR.Value,
-            argsAlg,
+            args,
             ctx,
             valEnv,
             CallDiagnosticName.FromExpression(func));
@@ -6889,7 +7058,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result> EvalCallExpr(
         Expr func,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -6899,7 +7068,7 @@ public static class Evaluator
             return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
 
         if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.PlainCall(func, argsAlg, calleeR.Value),
+            SequencePipelineInvocation.PlainCall(func, args, calleeR.Value),
             ctx,
             valEnv,
             out var sequencePipelineR))
@@ -6913,7 +7082,7 @@ public static class Evaluator
         return WithCallCtx(
             diagnosticName,
             ctx,
-            EvalResolvedCall(calleeR.Value, argsAlg, ctx, valEnv, diagnosticName));
+            EvalResolvedCall(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }
 
     /// <summary>
@@ -6921,7 +7090,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalCallCountedExpr(
         Expr func,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -6931,7 +7100,7 @@ public static class Evaluator
             return new EvalError.WithContext(CtxCall(diagnosticName, ctx), calleeR.Error) { Span = calleeR.Error.Span };
 
         if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.PlainCall(func, argsAlg, calleeR.Value),
+            SequencePipelineInvocation.PlainCall(func, args, calleeR.Value),
             ctx,
             valEnv,
             out var sequencePipelineR))
@@ -6940,7 +7109,7 @@ public static class Evaluator
         return WithCallCtx(
             diagnosticName,
             ctx,
-            EvalResolvedCallCounted(calleeR.Value, argsAlg, ctx, valEnv, diagnosticName));
+            EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }
 
     // ── Conditional algorithm call (Lean: evalConditionalCall) ──────────────
@@ -6974,12 +7143,12 @@ public static class Evaluator
     /// so an algorithm-only argument surfaces its value-evaluation error.
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> EvalConditionalCallArguments(
-        Algorithm wiredArgs,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
-        var inputsR = BuildCallArgumentInputs(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, preserveArgBoundaries);
         if (inputsR.IsError) return inputsR.Error;
 
         var argResults = new List<Result>(inputsR.Value.Count);
@@ -6995,7 +7164,7 @@ public static class Evaluator
     }
 
     private static EvalResult<Result> EvalConditionalCall(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -7004,7 +7173,7 @@ public static class Evaluator
         // Charged dynamic invocation boundary: clause selection plus the selected
         // branch body are ONE dynamic invocation, exactly like a flat user call.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+            return AtSpanIfMissing(limitError, FirstSpan(args));
 
         try
         {
@@ -7017,18 +7186,16 @@ public static class Evaluator
     }
 
     private static EvalResult<Result> EvalConditionalCallCore(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
-        var wiredArgs = WireToCaller(ctx, args);
-
         // Shared argument-slot assembly: explicit spread expands into ordinary
         // argument slots BEFORE clause matching, so a multi-clause callee sees
         // the same argument supply as every other callable shape.
-        var argResultsR = EvalConditionalCallArguments(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, preserveArgBoundaries);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -7058,7 +7225,7 @@ public static class Evaluator
     /// Lean: <c>evalConditionalCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalConditionalCallCounted(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -7066,7 +7233,7 @@ public static class Evaluator
     {
         // Charged dynamic invocation boundary (see EvalConditionalCall).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+            return AtSpanIfMissing(limitError, FirstSpan(args));
 
         try
         {
@@ -7079,15 +7246,13 @@ public static class Evaluator
     }
 
     private static EvalResult<CountedResult> EvalConditionalCallCountedCore(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
         IReadOnlyList<bool>? preserveArgBoundaries)
     {
-        var wiredArgs = WireToCaller(ctx, args);
-
-        var argResultsR = EvalConditionalCallArguments(wiredArgs, ctx, valEnv, preserveArgBoundaries);
+        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, preserveArgBoundaries);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -7120,10 +7285,11 @@ public static class Evaluator
     /// If both succeed, the parameter gets both meanings (dual-view).
     /// If only algorithm resolution succeeds, only AlgEnv is bound.
     /// If only value evaluation succeeds, only ValEnv is bound.
-    /// If both fail, the eager-evaluation error is propagated. Zero-parameter
-    /// inline block arguments are excluded from the AlgEnv side by
-    /// <c>TryResolveArgAlgs</c>; they remain ordinary value/output structures
-    /// regardless of output count.
+    /// If both fail, the eager-evaluation error is propagated. Every
+    /// <see cref="Expr.AlgorithmExpr"/> contributes its contained algorithm to
+    /// the AlgEnv side regardless of declaration/output count. A
+    /// <see cref="Expr.Capture"/> contributes only its fresh zero-parameter
+    /// value thunk, never the algorithm identity of an expression it contains.
     ///
     /// Flat fixed calls bind call-site structure: each comma argument is one
     /// argument expression, while a bare spread expression explicitly
@@ -7133,7 +7299,7 @@ public static class Evaluator
     /// side even if some later arguments bind only through AlgEnv.
     /// </summary>
     private static EvalResult<Result> EvalUserCall(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
@@ -7141,7 +7307,7 @@ public static class Evaluator
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+            return AtSpanIfMissing(limitError, FirstSpan(args));
 
         try
         {
@@ -7154,14 +7320,12 @@ public static class Evaluator
     }
 
     private static EvalResult<Result> EvalUserCallCore(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
         CallDiagnosticName calleeName)
     {
-        var wiredArgs = WireToCaller(ctx, args);
-
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
 
@@ -7169,7 +7333,7 @@ public static class Evaluator
         // run-scoped bind (computed once for all N targets) instead of rebinding the whole
         // N-capture pattern per target. The non-counted value is the bound value itself.
         if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
         {
             return sharedTarget;
         }
@@ -7179,7 +7343,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7190,7 +7354,7 @@ public static class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = BindDeconstructionUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7206,7 +7370,7 @@ public static class Evaluator
             callee,
             calleeName,
             flatFixedParams,
-            wiredArgs,
+            args,
             ctx,
             valEnv);
         if (flatBindingsR.IsError) return flatBindingsR.Error;
@@ -7220,7 +7384,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<Result> EvalResolvedCall(
         Algorithm callee,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -7228,7 +7392,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
+            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinResolved(builtinId, argAlgsR.Value, ctx, valEnv);
         }
@@ -7236,18 +7400,18 @@ public static class Evaluator
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
             return EvalUserCall(
                 simpleCallee,
-                argsAlg,
+                args,
                 ctx,
                 valEnv,
                 preserveArgBoundaries,
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCall(callee, argsAlg, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
 
         return EvalUserCall(
             callee,
-            argsAlg,
+            args,
             ctx,
             valEnv,
             preserveArgBoundaries,
@@ -7265,7 +7429,7 @@ public static class Evaluator
     /// Lean: <c>evalUserCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalUserCallCounted(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
@@ -7273,7 +7437,7 @@ public static class Evaluator
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return AtSpanIfMissing(limitError, FirstSpan(args.Output));
+            return AtSpanIfMissing(limitError, FirstSpan(args));
 
         try
         {
@@ -7286,14 +7450,12 @@ public static class Evaluator
     }
 
     private static EvalResult<CountedResult> EvalUserCallCountedCore(
-        Algorithm callee, Algorithm args,
+        Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         IReadOnlyList<bool>? preserveArgBoundaries,
         CallDiagnosticName calleeName)
     {
-        var wiredArgs = WireToCaller(ctx, args);
-
         if (callee.Output.Count == 0)
             return new EvalError.MissingOutput();
 
@@ -7301,7 +7463,7 @@ public static class Evaluator
         // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
         // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
         if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error
@@ -7313,7 +7475,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7324,7 +7486,7 @@ public static class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = BindDeconstructionUserCall(callee, wiredArgs, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7340,7 +7502,7 @@ public static class Evaluator
             callee,
             calleeName,
             flatFixedParams,
-            wiredArgs,
+            args,
             ctx,
             valEnv);
         if (flatBindingsR.IsError) return flatBindingsR.Error;
@@ -7354,7 +7516,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalResolvedCallCounted(
         Algorithm callee,
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
@@ -7362,7 +7524,7 @@ public static class Evaluator
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
+            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return ApplyBuiltinCountedResolved(builtinId, argAlgsR.Value, ctx, valEnv);
         }
@@ -7370,18 +7532,18 @@ public static class Evaluator
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
             return EvalUserCallCounted(
                 simpleCallee,
-                argsAlg,
+                args,
                 ctx,
                 valEnv,
                 preserveArgBoundaries,
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCallCounted(callee, argsAlg, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCallCounted(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
 
         return EvalUserCallCounted(
             callee,
-            argsAlg,
+            args,
             ctx,
             valEnv,
             preserveArgBoundaries,
@@ -7406,7 +7568,7 @@ public static class Evaluator
     /// Lean: evalDotCall.
     /// </summary>
     private static EvalResult<Result> EvalDotCall(
-        Expr target, string name, Algorithm? argsOpt,
+        Expr target, string name, OutputBundle? argsOpt,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -7561,7 +7723,7 @@ public static class Evaluator
     private static EvalResult<SequenceBuiltinDotCall?> TryBuildSequenceBuiltinDotCall(
         string name,
         Expr receiver,
-        Algorithm? extraArgs,
+        OutputBundle? extraArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -7597,7 +7759,13 @@ public static class Evaluator
 
     private static bool TryGetParenthesizedSequenceSpreadReceiver(Expr receiver, out Expr spreadReceiver)
     {
-        if (receiver is Expr.Block({ Opens.Count: 0, Properties.Count: 0, Params.Count: 0, Output.Count: 1 } algorithm)
+        if (receiver is Expr.Capture([Expr.SequenceSpread captureSpread]))
+        {
+            spreadReceiver = captureSpread;
+            return true;
+        }
+
+        if (receiver is Expr.AlgorithmExpr({ Opens.Count: 0, Properties.Count: 0, Params.Count: 0, Output.Count: 1 } algorithm)
             && algorithm.Output[0] is Expr.SequenceSpread sequenceSpread)
         {
             spreadReceiver = sequenceSpread;
@@ -7620,11 +7788,11 @@ public static class Evaluator
             && prefix.Count == 0;
     }
 
-    private static (Algorithm Args, IReadOnlyList<bool> PreserveArgBoundaries) BuildLexicalReceiverCallArgs(
+    private static (OutputBundle Args, IReadOnlyList<bool> PreserveArgBoundaries) BuildLexicalReceiverCallArgs(
         Algorithm callee,
         string name,
         Expr receiver,
-        Algorithm? extraArgs)
+        OutputBundle? extraArgs)
     {
         var receiverExpr = receiver;
         var hasLeadingFlatCollectingParameter = HasLeadingFlatCollectingParameter(callee, name);
@@ -7641,20 +7809,21 @@ public static class Evaluator
             receiverExpr = spreadReceiver;
         }
 
-        var outputExprs = new List<Expr> { receiverExpr };
+        var outputExprs = new Expr[1 + (extraArgs?.Count ?? 0)];
+        outputExprs[0] = receiverExpr;
         var preserveArgBoundaries = new List<bool> { preserveReceiverBoundary };
         if (extraArgs is not null)
         {
-            outputExprs.AddRange(extraArgs.Output);
-            for (var i = 0; i < extraArgs.Output.Count; i++)
+            for (var i = 0; i < extraArgs.Count; i++)
+            {
+                outputExprs[i + 1] = extraArgs[i];
                 preserveArgBoundaries.Add(false);
+            }
         }
 
-        return (
-            new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [],
-                Properties: [], Output: outputExprs),
-            preserveArgBoundaries);
+        // outputExprs is this call's exclusively owned fresh array, so
+        // ownership transfers without a snapshot copy.
+        return (OutputBundle.TakeOwnership(outputExprs), preserveArgBoundaries);
     }
 
     private static bool TryEvaluateSequencePipeline(
@@ -7712,7 +7881,7 @@ public static class Evaluator
     /// </summary>
     private static EvalResult<InclusiveRange> EvaluateRangeCallArgumentsForSequenceOptimizer(
         Expr function,
-        Algorithm argsAlg,
+        OutputBundle args,
         SourceSpan? callSpan,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
@@ -7722,7 +7891,7 @@ public static class Evaluator
             WithCallCtx(
                 CallDiagnosticName.FromExpression(function),
                 ctx,
-                EvalBuiltinRangeCallArguments(argsAlg, ctx, valEnv)));
+                EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
         if (rangeR.IsError)
             return rangeR;
 
@@ -7738,11 +7907,11 @@ public static class Evaluator
     }
 
     private static EvalResult<InclusiveRange> EvalBuiltinRangeCallArguments(
-        Algorithm argsAlg,
+        OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var argAlgsR = ResolveArgAlgsWithSequenceSpread(argsAlg, ctx, valEnv);
+        var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
         if (argAlgsR.IsError) return argAlgsR.Error;
 
         var expandedArgsR = ExpandSequenceSpreadBuiltinArguments(argAlgsR.Value, ctx, valEnv);
@@ -7787,7 +7956,7 @@ public static class Evaluator
     }
 
     private static EvalResult<Result> CallLexicalWithReceiver(
-        string name, Expr receiver, Algorithm? extraArgs,
+        string name, Expr receiver, OutputBundle? extraArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -7813,7 +7982,7 @@ public static class Evaluator
     /// Lean: <c>evalDotCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalDotCallCounted(
-        Expr target, string name, Algorithm? argsOpt,
+        Expr target, string name, OutputBundle? argsOpt,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -7895,7 +8064,7 @@ public static class Evaluator
     /// Lean: <c>callLexicalWithReceiverCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> CallLexicalWithReceiverCounted(
-        string name, Expr receiver, Algorithm? extraArgs,
+        string name, Expr receiver, OutputBundle? extraArgs,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
@@ -8114,7 +8283,7 @@ public static class Evaluator
             sequenceDiagnostics,
             limits,
             observations);
-        return expr is Expr.Block(var alg)
+        return expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
     }
@@ -8187,7 +8356,7 @@ public static class Evaluator
             budget,
             observations);
 
-        var result = expr is Expr.Block(var alg)
+        var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
         return (result, budget);
@@ -8213,7 +8382,7 @@ public static class Evaluator
             enableSequencePipelineOptimization: true,
             sequenceDiagnostics: null,
             limits);
-        return expr is Expr.Block(var alg)
+        return expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
     }
@@ -8241,7 +8410,7 @@ public static class Evaluator
             sequenceDiagnostics: null,
             limits);
 
-        if (expr is Expr.Block(var alg))
+        if (expr is Expr.AlgorithmExpr(var alg))
             return EvalRootProgramCountedWithTopLevelProperty(alg, expr.Span, ctx, topLevelPropertyName);
 
         var outputR = EvalCounted(expr, ctx, []);

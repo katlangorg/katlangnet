@@ -48,21 +48,21 @@ public class AstStructuralDepthTests
     {
         Expr expr = new Expr.Num(1);
         for (var i = 0; i < levels; i++)
-            expr = new Expr.Block(new Algorithm.User(null, [], [], [], [expr]));
+            expr = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [expr]));
         return expr;
     }
 
-    /// <summary>Call(Resolve, User { Output = [inner] }) nesting around a defined F.</summary>
+    /// <summary>Call(Resolve, [inner]) nesting around a defined F (a Call node weighs two units — it absorbed its former transparent Args wrapper).</summary>
     internal static Expr CallSpine(int levels)
     {
         Expr expr = new Expr.Num(1);
         for (var i = 0; i < levels; i++)
-            expr = new Expr.Call(new Expr.Resolve("F"), new Algorithm.User(null, [], [], [], [expr]));
+            expr = new Expr.Call(new Expr.Resolve("F"), [expr]);
 
         var definition = Algorithm.ElaborateClauseDefinition(
             new Pattern.Bind("x"),
             new Algorithm.User(null, [], [], [], [new Expr.Param("x")]));
-        return new Expr.Block(new Algorithm.User(
+        return new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("F", definition)], [expr]));
     }
 
@@ -77,7 +77,7 @@ public class AstStructuralDepthTests
             Parent: null,
             Opens: [],
             Branches: [new CondBranch(pattern, new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))]);
-        return new Expr.Block(new Algorithm.User(
+        return new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("F", conditional)], [new Expr.Num(1)]));
     }
 
@@ -100,7 +100,7 @@ public class AstStructuralDepthTests
         {
             ParameterPatterns = [pattern],
         };
-        return new Expr.Block(new Algorithm.User(
+        return new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [], [new Property("F", algorithm)], [new Expr.Num(1)]));
     }
 
@@ -110,7 +110,7 @@ public class AstStructuralDepthTests
         ScopeCtx? scope = null;
         for (var i = 0; i < scopeNodes; i++)
             scope = new ScopeCtx(scope, [], []);
-        return new Expr.Block(new Algorithm.User(scope, [], [], [], [new Expr.Num(1)]));
+        return new Expr.AlgorithmExpr(new Algorithm.User(scope, [], [], [], [new Expr.Num(1)]));
     }
 
     private static EvalError AssertRejected(Expr expr, EvaluationLimits? limits = null)
@@ -167,7 +167,7 @@ public class AstStructuralDepthTests
     [Fact]
     public void DepthCounting_BlockAlgorithmNesting_CountsTwoNodesPerLevel()
     {
-        // Each level contributes Expr.Block + Algorithm.User; the leaf Num adds one.
+        // Each level contributes Expr.AlgorithmExpr + Algorithm.User; the leaf Num adds one.
         var limits = new EvaluationLimits { MaxAstDepth = 41 };
         AssertAccepted(BlockSpine(20), limits);
         AssertDepthRejected(BlockSpine(21), limits);
@@ -380,7 +380,7 @@ public class AstStructuralDepthTests
         // Explicit parameters with no output is a validation error found by the
         // recursive walker; the structural preflight must win without the walker (or
         // any diagnostic formatting) ever touching the unsafe subtree.
-        var malformed = new Expr.Block(new Algorithm.User(
+        var malformed = new Expr.AlgorithmExpr(new Algorithm.User(
             null,
             [new ParameterDeclaration("x")],
             [],
@@ -394,7 +394,7 @@ public class AstStructuralDepthTests
     [Fact]
     public void Validation_BelowTheStructuralLimit_IsUnchanged()
     {
-        var violating = new Expr.Block(new Algorithm.User(
+        var violating = new Expr.AlgorithmExpr(new Algorithm.User(
             null, [new ParameterDeclaration("x")], [], [], []));
         var error = AssertRejected(violating);
         Assert.IsType<EvalError.ExplicitParametersRequireOutput>(error);
@@ -409,13 +409,13 @@ public class AstStructuralDepthTests
         var parse = Parser.Parse(source);
         Assert.False(parse.HasErrors);
 
-        var result = Evaluator.RunCounted(new Expr.Block(parse.Root) { Span = null });
+        var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(parse.Root) { Span = null });
         Assert.True(result.IsError);
         var depthError = Assert.IsType<EvalError.EvaluationDepthExceeded>(FindLeaf(result.Error));
         Assert.Equal(EvaluationLimits.MaxSupportedDepth, depthError.Limit);
 
         var lowered = Evaluator.RunCounted(
-            new Expr.Block(parse.Root),
+            new Expr.AlgorithmExpr(parse.Root),
             new Evaluation.Caching.RunScopedZeroArgPropertyResultCache(),
             new EvaluationLimits { MaxDepth = 5 });
         Assert.True(lowered.IsError);
@@ -680,9 +680,17 @@ public class AstStructuralDepthTests
     [Fact]
     public void CyclicExpressionGraph_IsRejectedDeterministically()
     {
-        var items = new List<Expr>();
-        var cyclic = new Expr.ListLiteral(items);
-        items.Add(cyclic);
+        // A cycle whose path runs through EXPRESSION nodes. It cannot be
+        // closed through ListLiteral/Capture/call arguments anymore: every
+        // OutputBundle snapshots membership at construction, so
+        // post-construction list mutation never reaches a bundle. An
+        // Algorithm's Opens list is still an aliasable host collection, so the
+        // cycle routes Call -> Function AlgorithmExpr -> open expression ->
+        // the same Call, keeping a Call node on the cyclic path.
+        var opens = new List<Expr>();
+        var functionBlock = new Expr.AlgorithmExpr(new Algorithm.User(null, [], opens, [], [new Expr.Num(1)]));
+        var cyclic = new Expr.Call(functionBlock, [new Expr.Num(1)]);
+        opens.Add(cyclic);
 
         for (var repeat = 0; repeat < 3; repeat++)
         {
@@ -698,7 +706,7 @@ public class AstStructuralDepthTests
         var algorithm = new Algorithm.User(null, [], [], properties, [new Expr.Num(1)]);
         properties.Add(new Property("Self", algorithm));
 
-        var error = AssertRejected(new Expr.Block(algorithm));
+        var error = AssertRejected(new Expr.AlgorithmExpr(algorithm));
         Assert.IsType<EvalError.AstCycleDetected>(error);
 
         var message = KatLangError.FromEvalError(error).Message;
@@ -759,7 +767,7 @@ public class AstStructuralDepthTests
     {
         var parse = Parser.Parse("Values = range(1, 1000)\nValues.map(Double).sum\nDouble(x) = x * 2");
         Assert.False(parse.HasErrors);
-        var program = new Expr.Block(parse.Root);
+        var program = new Expr.AlgorithmExpr(parse.Root);
 
         var (optimized, _) = Evaluator.RunCountedObserved(program, enableOptimizations: true);
         var (generic, _) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
@@ -948,10 +956,15 @@ public class AstStructuralDepthTests
     [Fact]
     public void InheritedCollections_CyclesAndSharing_AreJudgedCorrectly()
     {
-        // A cycle routed through a Builtin's base-declared Output is detected.
-        var output = new List<Expr>();
-        var cyclicBuiltin = new Algorithm.Builtin(BuiltinId.@count) { Output = output };
-        output.Add(new Expr.Block(cyclicBuiltin));
+        // A cycle routed through a Builtin's base-declared Opens is detected.
+        // (Output can no longer carry this cycle: OutputBundle snapshots its
+        // membership at construction, so post-construction list mutation —
+        // the only way to close a cycle through a collection — cannot reach
+        // a bundle. Opens is still an aliasable IReadOnlyList, keeping the
+        // uniform base-surface enumeration itself pinned.)
+        var opens = new List<Expr>();
+        var cyclicBuiltin = new Algorithm.Builtin(BuiltinId.@count) { Opens = opens };
+        opens.Add(new Expr.AlgorithmExpr(cyclicBuiltin));
         var rejection = AstStructuralPreflight.Check(
             cyclicBuiltin, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive);
         Assert.NotNull(rejection);
@@ -973,7 +986,7 @@ public class AstStructuralDepthTests
     public void EvaluatorEntryPoints_RejectDeepInheritedCollections()
     {
         // Through the public evaluator gate, not only direct Check calls.
-        var deepBuiltin = new Expr.Block(new Algorithm.Builtin(BuiltinId.@count)
+        var deepBuiltin = new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@count)
         {
             Output = [UnarySpine(10_000)],
         });
@@ -982,7 +995,7 @@ public class AstStructuralDepthTests
         ParameterPattern pattern = new CaptureParameterPattern("x");
         for (var i = 0; i < 10_000; i++)
             pattern = new SequenceValueParameterPattern([pattern]);
-        var deepConditional = new Expr.Block(new Algorithm.User(
+        var deepConditional = new Expr.AlgorithmExpr(new Algorithm.User(
             null,
             [],
             [],
@@ -1062,7 +1075,7 @@ public class AstStructuralDepthTests
         string[] astTypes =
         [
             nameof(Expr), nameof(Algorithm), nameof(Pattern), nameof(ParameterPattern),
-            nameof(Property), nameof(CondBranch), nameof(ScopeCtx),
+            nameof(Property), nameof(CondBranch), nameof(ScopeCtx), nameof(OutputBundle),
         ];
 
         var known = new Dictionary<string, string[]>
@@ -1079,7 +1092,9 @@ public class AstStructuralDepthTests
             ["ListLiteral"] = ["Items"],
             ["DotCall"] = ["Target", "Args"],
             ["Grace"] = ["Inner"],
-            ["Block"] = ["Algorithm"],
+            ["AlgorithmExpr"] = ["Algorithm"],
+            ["Capture"] = ["Body"],
+            [nameof(OutputBundle)] = ["Item"],
             ["Call"] = ["Function", "Args"],
             ["SequenceValue"] = ["Items"],
             ["SequenceValueParameterPattern"] = ["Items"],
@@ -1092,7 +1107,7 @@ public class AstStructuralDepthTests
         var astBaseTypes = new[]
         {
             typeof(Expr), typeof(Algorithm), typeof(Pattern), typeof(ParameterPattern),
-            typeof(Property), typeof(CondBranch), typeof(ScopeCtx),
+            typeof(Property), typeof(CondBranch), typeof(ScopeCtx), typeof(OutputBundle),
         };
 
         static bool CarriesAstNodes(Type type, Type[] astBases)
@@ -1168,8 +1183,8 @@ public class AstStructuralDepthTests
         var (publicRoot, publicDiags) = ParameterDetector.Detect(parsed.SyntaxRoot);
         var (coreRoot, coreDiags) = ParameterDetector.DetectPrevalidated(parsed.SyntaxRoot);
         Assert.Equal(coreDiags.Count, publicDiags.Count);
-        var publicRun = Evaluator.RunFlat(new Expr.Block(ImplicitArgumentResolver.ResolvePrevalidated(publicRoot)));
-        var coreRun = Evaluator.RunFlat(new Expr.Block(ImplicitArgumentResolver.ResolvePrevalidated(coreRoot)));
+        var publicRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(publicRoot)));
+        var coreRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(coreRoot)));
         Assert.False(publicRun.IsError);
         Assert.Equal(coreRun.Value, publicRun.Value);
     }
@@ -1260,7 +1275,7 @@ public class AstStructuralDepthTests
         Expr deepCachedUse = load;
         for (var i = 0; i < 250; i++)
         {
-            deepCachedUse = new Expr.Block(
+            deepCachedUse = new Expr.AlgorithmExpr(
                 new Algorithm.User(null, [], [], [], [deepCachedUse]));
         }
 
@@ -1332,7 +1347,7 @@ public class AstStructuralDepthTests
         [
             "Param", "Num", "StringLiteral", "Unary", "Binary", "Index",
             "SequenceConstruct", "EmptySequence", "SequenceSpread", "ListLiteral",
-            "Resolve", "DotCall", "Grace", "Block", "Call", "NativeCall",
+            "Resolve", "DotCall", "Grace", "AlgorithmExpr", "Capture", "Call", "NativeCall",
         ];
         string[] knownAlgorithm = ["User", "Builtin", "Conditional"];
         string[] knownPattern = ["Bind", "LitInt", "LitString", "SequenceValue"];
@@ -1377,7 +1392,7 @@ public class AstStructuralDepthTests
             ]);
         var parameterized = new Algorithm.User(null, [], [], [], [new Expr.Num(1)])
             .WithParameterPatterns([new SequenceValueParameterPattern([new CaptureParameterPattern("q")])]);
-        var everything = new Expr.Block(new Algorithm.User(
+        var everything = new Expr.AlgorithmExpr(new Algorithm.User(
             new ScopeCtx(null, [], []),
             [],
             [new Expr.Resolve("Math")],
@@ -1393,8 +1408,9 @@ public class AstStructuralDepthTests
                 new Expr.SequenceConstruct(new Expr.Num(1), new Expr.EmptySequence(0)),
                 new Expr.SequenceSpread(new Expr.StringLiteral("s")),
                 new Expr.Grace(new Expr.Resolve("Cond"), 1),
-                new Expr.DotCall(new Expr.Num(3), "string", new Algorithm.User(null, [], [], [], [])),
-                new Expr.Call(new Expr.Resolve("Pat"), new Algorithm.User(null, [], [], [], [new Expr.Num(1)])),
+                new Expr.DotCall(new Expr.Num(3), "string", OutputBundle.Empty),
+                new Expr.Call(new Expr.Resolve("Pat"), [new Expr.Num(1)]),
+                new Expr.Capture([new Expr.Num(4), new Expr.EmptySequence(0)]),
                 new Expr.NativeCall("sin", ["x"]),
             ]));
 
@@ -1957,7 +1973,7 @@ public class AstStructuralDepthProcessTests
 
             // 6. Open-form error: a deep join chain used as an open target renders
             // through OpenExprName into BadOpenForm when a lookup walks the opens.
-            var openError = Evaluator.Run(new Expr.Block(new Algorithm.User(
+            var openError = Evaluator.Run(new Expr.AlgorithmExpr(new Algorithm.User(
                 null, [], [JoinChain(deep)], [], [new Expr.Resolve("zzz")])));
             Assert.True(openError.IsError);
             var openLeaf = FindLeaf(openError.Error);
@@ -1971,8 +1987,7 @@ public class AstStructuralDepthProcessTests
                 new Expr.DotCall(
                     JoinChain(deep),
                     "filter",
-                    new Algorithm.User(null, [], [], [],
-                        [new Expr.Binary(BinaryOp.Gt, new Expr.Param("x"), new Expr.Num(0))])),
+                    new OutputBundle([new Expr.Binary(BinaryOp.Gt, new Expr.Param("x"), new Expr.Num(0))])),
                 "count",
                 null);
             var pipelineFirst = Evaluator.Run(pipeline);
@@ -2001,7 +2016,7 @@ public class AstStructuralDepthProcessTests
             return chain;
         }
 
-        static Algorithm EmptyArgs() => new Algorithm.User(null, [], [], [], []);
+        static OutputBundle EmptyArgs() => OutputBundle.Empty;
 
         static EvalError FindLeaf(EvalError error)
         {

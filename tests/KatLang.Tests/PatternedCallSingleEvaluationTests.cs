@@ -31,7 +31,7 @@ public class PatternedCallSingleEvaluationTests
         Assert.False(
             parsed.HasErrors,
             string.Join(Environment.NewLine, parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-        return new Expr.Block(parsed.Root);
+        return new Expr.AlgorithmExpr(parsed.Root);
     }
 
     private static void AssertSemanticallyEqual(Result expected, Result actual)
@@ -243,25 +243,20 @@ public class PatternedCallSingleEvaluationTests
     {
         var parsed = Parser.Parse("F((x)) = x\nF((7))");
         Assert.False(parsed.HasErrors);
-        var emptyBlock = new Expr.Block(new Algorithm.User(
+        var emptyBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
             Properties: [],
             Output: []));
-        var emptyArgs = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: [emptyBlock]);
+        OutputBundle emptyArgs = [emptyBlock];
         var root = parsed.Root with
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), emptyArgs)],
         };
 
         var (result, budget) = Evaluator.RunCountedObserved(
-            new Expr.Block(root),
+            new Expr.AlgorithmExpr(root),
             enableOptimizations: false);
 
         Assert.True(result.IsError);
@@ -306,18 +301,13 @@ public class PatternedCallSingleEvaluationTests
         // channel the empty-output-block regression uses.
         var parsed = Parser.Parse("S = ((1, 2), (3, 4))\nF((x)) = x\nF((9))");
         Assert.False(parsed.HasErrors);
-        var projectionBlock = new Expr.Block(new Algorithm.User(
+        var projectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
             Properties: [],
             Output: [new Expr.Index(new Expr.Resolve("S"), new Expr.Num(0))]));
-        var callArgs = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: [projectionBlock]);
+        OutputBundle callArgs = [projectionBlock];
         var root = parsed.Root with
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), callArgs)],
@@ -326,7 +316,7 @@ public class PatternedCallSingleEvaluationTests
         foreach (var optimize in new[] { false, true })
         {
             var (result, _) = Evaluator.RunCountedObserved(
-                new Expr.Block(root),
+                new Expr.AlgorithmExpr(root),
                 enableOptimizations: optimize);
 
             Assert.True(result.IsOk, Failure($"prepared written-slot view (optimize: {optimize})", result));

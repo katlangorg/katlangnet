@@ -46,7 +46,7 @@ public class CorpusExecutionEquivalenceTests
         {
             var parsed = Parser.Parse(source);
             if (!parsed.HasErrors)
-                programs.Add((id, new Expr.Block(parsed.Root)));
+                programs.Add((id, new Expr.AlgorithmExpr(parsed.Root)));
         }
 
         return programs;
@@ -188,8 +188,8 @@ public class CorpusExecutionEquivalenceTests
         Assert.False(plainParsed.HasErrors, plainSource);
         Assert.False(dotParsed.HasErrors, dotSource);
 
-        var plain = Neutral(Evaluator.RunCounted(new Expr.Block(plainParsed.Root)));
-        var dotted = Neutral(Evaluator.RunCounted(new Expr.Block(dotParsed.Root)));
+        var plain = Neutral(Evaluator.RunCounted(new Expr.AlgorithmExpr(plainParsed.Root)));
+        var dotted = Neutral(Evaluator.RunCounted(new Expr.AlgorithmExpr(dotParsed.Root)));
 
         Assert.Equal(plain, dotted);
     }

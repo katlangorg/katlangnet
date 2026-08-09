@@ -479,7 +479,7 @@ public class MetamorphicPhase2FamilyTests
         {
             var parsed = Parser.Parse($"{shape.Source}");
             Assert.False(parsed.HasErrors, shape.Source);
-            var evaluated = Evaluator.RunCounted(new Expr.Block(parsed.Root));
+            var evaluated = Evaluator.RunCounted(new Expr.AlgorithmExpr(parsed.Root));
             Assert.False(evaluated.IsError, shape.Source);
             Assert.True(
                 evaluated.Value.Value is Result.Atom or Result.Str or Result.SequenceValue or Result.ListValue,

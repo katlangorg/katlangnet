@@ -121,7 +121,7 @@ internal static class KatLangBenchmarkRunner
 		}
 
 		var result = Evaluator.Run(
-			new Expr.Block(frontEndResult.ElaboratedRoot),
+			new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
 			cache,
 			EnableLoopOptimization(loopMode),
 			loopDiagnostics: null,
@@ -143,7 +143,7 @@ internal static class KatLangBenchmarkRunner
 		BenchmarkSequencePipelineMode sequencePipelineMode)
 	{
 		var result = Evaluator.Run(
-			new Expr.Block(scenario.PreparedRoot),
+			new Expr.AlgorithmExpr(scenario.PreparedRoot),
 			cache,
 			EnableLoopOptimization(loopMode),
 			loopDiagnostics: null,

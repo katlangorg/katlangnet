@@ -214,7 +214,7 @@ public class ZeroArgPropertyResultCacheTests
             Values = range(1, 5)
             Values.count + Values.count
             """;
-        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
         var uncached = Evaluator.Run(expr, UncachedZeroArgPropertyResultCache.Instance);
         var cached = Evaluator.Run(expr, new RunScopedZeroArgPropertyResultCache());
@@ -233,7 +233,7 @@ public class ZeroArgPropertyResultCacheTests
             """;
         var cache = new RunScopedZeroArgPropertyResultCache();
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
         var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
 
@@ -260,7 +260,7 @@ public class ZeroArgPropertyResultCacheTests
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
         var result = Evaluator.RunCountedWithTopLevelProperty(
-            new Expr.Block(SourceProvenance.ParseValid(source).Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
             "DisplayDecimals",
             cache);
         var snapshot = innerCache.GetSnapshot();
@@ -291,7 +291,7 @@ public class ZeroArgPropertyResultCacheTests
             """;
         var cache = new RunScopedZeroArgPropertyResultCache();
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
         var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
 
@@ -309,7 +309,7 @@ public class ZeroArgPropertyResultCacheTests
         var source = "Math.Pi + Math.Pi";
         var cache = new RunScopedZeroArgPropertyResultCache();
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
 
@@ -331,7 +331,7 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
 
         Assert.False(result.IsError);
@@ -351,7 +351,7 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
@@ -387,7 +387,7 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
@@ -424,7 +424,7 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
 
         Assert.False(result.IsError);
@@ -444,7 +444,7 @@ public class ZeroArgPropertyResultCacheTests
             """;
         var cache = new RunScopedZeroArgPropertyResultCache();
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = cache.GetSnapshot();
         var lexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Lexical);
 
@@ -472,7 +472,7 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
         var snapshot = innerCache.GetSnapshot();
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var structuralRequests = cache.Requests
@@ -517,7 +517,7 @@ public class ZeroArgPropertyResultCacheTests
             """;
         var cache = new RunScopedZeroArgPropertyResultCache();
 
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid(source).Root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), cache);
 
         Assert.False(result.IsError);
         Assert.Equal([10m], result.Value.ToAtoms());
@@ -608,7 +608,7 @@ public class ZeroArgPropertyResultCacheTests
             ]);
 
         var cache = new RunScopedZeroArgPropertyResultCache();
-        var result = Evaluator.Run(new Expr.Block(root), cache);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root), cache);
 
         Assert.False(result.IsError);
         Assert.Equal([6m], result.Value.ToAtoms());
@@ -638,7 +638,7 @@ public class ZeroArgPropertyResultCacheTests
             var diagnostics = new LoopOptimizationDiagnostics();
 
             var result = Evaluator.Run(
-                new Expr.Block(parsed.Root),
+                new Expr.AlgorithmExpr(parsed.Root),
                 cache,
                 enableLoopOptimization: true,
                 diagnostics);

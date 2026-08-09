@@ -43,7 +43,7 @@ public class OpenPathResolutionBranchTests
             "Witness must be a legal program (the branch under test is an EVALUATOR branch): "
                 + string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
-        var result = Evaluator.Run(new Expr.Block(parsed.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsError, $"Expected an evaluation failure for:\n{source}");
 
         var error = result.Error;
@@ -56,7 +56,7 @@ public class OpenPathResolutionBranchTests
     {
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
-        var result = Evaluator.Run(new Expr.Block(parsed.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got: {KatLangError.FromEvalError(result.Error).Message}");
         return result.Value;

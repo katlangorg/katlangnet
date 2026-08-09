@@ -151,13 +151,14 @@ internal static class EvaluatorEligibility
                 case Expr.SequenceConstruct(var l, var r): Ex(l); Ex(r); break;
                 case Expr.Grace(var i, _): Ex(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) Ex(it); break;
-                case Expr.Block(var alg): Alg(alg); break;
+                case Expr.AlgorithmExpr(var alg): Alg(alg); break;
+                case Expr.Capture(var captureBody): foreach (var row in captureBody) Ex(row); break;
                 case Expr.Call(var fn, var args):
                     CheckRiskyCall(NameOf(fn), args);
-                    Ex(fn); Alg(args); break;
+                    Ex(fn); foreach (var a in args) Ex(a); break;
                 case Expr.DotCall dc:
                     if (NonDeterministicNames.Contains(dc.Name)) HasNativeOrRandom = true;
-                    if (dc.Args is { } dargs) { CheckRiskyCall(dc.Name, dargs); Alg(dargs); }
+                    if (dc.Args is { } dargs) { CheckRiskyCall(dc.Name, dargs); foreach (var a in dargs) Ex(a); }
                     Note(dc.Name);
                     Ex(dc.Target); break;
             }
@@ -180,7 +181,7 @@ internal static class EvaluatorEligibility
         /// <summary>Flags loop/allocation builtins whose bound this harness cannot cheaply
         /// prove small. `while` is always excluded; `repeat`/`range` require every numeric
         /// literal in the argument list to be small and at least one to be present.</summary>
-        private void CheckRiskyCall(string? name, Algorithm args)
+        private void CheckRiskyCall(string? name, OutputBundle args)
         {
             if (name is null) return;
             switch (name)
@@ -191,17 +192,17 @@ internal static class EvaluatorEligibility
             }
         }
 
-        private static bool BoundedLiterals(Algorithm args, decimal max)
+        private static bool BoundedLiterals(OutputBundle args, decimal max)
         {
             bool sawLiteral = true_(args, max, out bool tooBig);
             return sawLiteral && !tooBig;
         }
 
-        private static bool true_(Algorithm args, decimal max, out bool tooBig)
+        private static bool true_(OutputBundle args, decimal max, out bool tooBig)
         {
             bool saw = false;
             bool big = false;
-            foreach (var e in args.Output) Walk(e);
+            foreach (var e in args) Walk(e);
             tooBig = big;
             return saw;
 
@@ -217,7 +218,8 @@ internal static class EvaluatorEligibility
                     case Expr.Binary(_, var l, var r): Walk(l); Walk(r); break;
                     case Expr.SequenceSpread(var o): Walk(o); break;
                     case Expr.ListLiteral(var items): foreach (var it in items) Walk(it); break;
-                    case Expr.Block(var alg): foreach (var o2 in alg.Output) Walk(o2); break;
+                    case Expr.AlgorithmExpr(var alg): foreach (var o2 in alg.Output) Walk(o2); break;
+                    case Expr.Capture(var captureBody): foreach (var o2 in captureBody) Walk(o2); break;
                     default:
                         // A non-literal bound cannot be proven small here.
                         big = true;

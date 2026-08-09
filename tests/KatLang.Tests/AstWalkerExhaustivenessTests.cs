@@ -45,10 +45,11 @@ public class AstWalkerExhaustivenessTests
             { nameof(Expr.SequenceSpread), new Expr.SequenceSpread(leaf), 2 },
             { nameof(Expr.ListLiteral), new Expr.ListLiteral([leaf, leaf]), 3 },
             { nameof(Expr.Resolve), new Expr.Resolve("R"), 1 },
-            { nameof(Expr.DotCall), new Expr.DotCall(leaf, "M", EmptyAlgorithm(leaf)), 3 },
+            { nameof(Expr.DotCall), new Expr.DotCall(leaf, "M", EmptyAlgorithm(leaf).Output), 3 },
             { nameof(Expr.Grace), new Expr.Grace(leaf, 1), 2 },
-            { nameof(Expr.Block), new Expr.Block(EmptyAlgorithm(leaf)), 2 },
-            { nameof(Expr.Call), new Expr.Call(leaf, EmptyAlgorithm(leaf)), 3 },
+            { nameof(Expr.AlgorithmExpr), new Expr.AlgorithmExpr(EmptyAlgorithm(leaf)), 2 },
+            { nameof(Expr.Capture), new Expr.Capture([leaf, leaf]), 3 },
+            { nameof(Expr.Call), new Expr.Call(leaf, EmptyAlgorithm(leaf).Output), 3 },
             { nameof(Expr.NativeCall), new Expr.NativeCall("Abs", ["x"]), 1 },
         };
     }

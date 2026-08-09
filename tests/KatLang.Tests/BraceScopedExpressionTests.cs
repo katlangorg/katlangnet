@@ -55,8 +55,7 @@ public class BraceScopedExpressionTests
         Assert.False(result.HasErrors);
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        var block = Assert.IsType<Expr.Block>(Assert.Single(call.Args.Output));
-        Assert.True(block.Algorithm.IsParametrized);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(call.Args));
         var open = Assert.Single(block.Algorithm.Opens);
         Assert.Equal("M", Assert.IsType<Expr.Resolve>(open).Name);
     }
@@ -71,7 +70,7 @@ public class BraceScopedExpressionTests
         Assert.Empty(result.Root.Params);
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(result.Root.Output));
-        var block = Assert.IsType<Expr.Block>(Assert.Single(call.Args.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(call.Args));
         Assert.Single(block.Algorithm.Opens);
         Assert.Empty(block.Algorithm.Params);
     }

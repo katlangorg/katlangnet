@@ -420,8 +420,16 @@ public static class SemanticModelBuilder
                     VisitOpenExpression(right, scope);
                     break;
 
-                case Expr.Block(var algorithm):
+                case Expr.AlgorithmExpr(var algorithm):
                     VisitAlgorithm(algorithm, PreludeScope, extraParameters: null);
+                    break;
+
+                case Expr.Capture(var captureBody):
+                    // A capture target owns no scope: rows classify against the
+                    // open-target prelude scope, matching the pre-split
+                    // transparent wrapper (which added only an empty frame).
+                    foreach (var row in captureBody)
+                        VisitExpr(row, PreludeScope);
                     break;
 
                 default:
@@ -508,21 +516,34 @@ public static class SemanticModelBuilder
                         classification,
                         declaration,
                         propertyInfo);
-                    if (dotCall.Args is not null)
-                        VisitAlgorithm(dotCall.Args, scope, extraParameters: null);
+                    if (dotCall.Args is { } dotCallArgs)
+                    {
+                        // Argument bundles own no scope: slots classify in the
+                        // enclosing scope, exactly like capture rows.
+                        foreach (var argExpr in dotCallArgs)
+                            VisitExpr(argExpr, scope);
+                    }
                     break;
 
                 case Expr.Grace(var inner, _):
                     VisitExpr(inner, scope);
                     break;
 
-                case Expr.Block(var algorithm):
+                case Expr.AlgorithmExpr(var algorithm):
                     VisitAlgorithm(algorithm, scope, extraParameters: null);
+                    break;
+
+                case Expr.Capture(var captureBody):
+                    // Captures are transparent: rows classify in the enclosing
+                    // scope (the pre-split wrapper added only an empty frame).
+                    foreach (var row in captureBody)
+                        VisitExpr(row, scope);
                     break;
 
                 case Expr.Call(var function, var args):
                     VisitExpr(function, scope);
-                    VisitAlgorithm(args, scope, extraParameters: null);
+                    foreach (var argExpr in args)
+                        VisitExpr(argExpr, scope);
                     break;
 
                 case Expr.NativeCall:
@@ -612,8 +633,20 @@ public static class SemanticModelBuilder
                 case Expr.Resolve(var name):
                     return ResolveLexicalProperty(scope, name)?.AlgorithmValue;
 
-                case Expr.Block(var algorithm):
+                case Expr.AlgorithmExpr(var algorithm):
                     return algorithm;
+
+                case Expr.Capture(var captureBody):
+                    // Capture is not algorithm identity: the editor's dot-member
+                    // resolution sees only a member-less value thunk, so
+                    // `(Obj).V` classifies through the lexical fallback exactly
+                    // as the pre-split transparent wrapper did.
+                    return new Algorithm.User(
+                        Parent: null,
+                        Parameters: [],
+                        Opens: [],
+                        Properties: [],
+                        Output: captureBody);
 
                 case Expr.SequenceSpread(var operand):
                 {

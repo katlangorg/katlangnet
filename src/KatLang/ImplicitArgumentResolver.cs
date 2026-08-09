@@ -1,7 +1,7 @@
 namespace KatLang;
 
 /// <summary>
-/// Rewrites bare references to parametrized algorithms into explicit <see cref="Expr.Call"/> nodes,
+/// Rewrites bare references to algorithms with parameters into explicit <see cref="Expr.Call"/> nodes,
 /// lifting their parameters into the enclosing algorithm's <see cref="Algorithm.Parameters"/> list.
 /// Must run after <see cref="ParameterDetector"/>.
 /// </summary>
@@ -9,7 +9,7 @@ public static class ImplicitArgumentResolver
 {
     /// <summary>
     /// Processes a root algorithm, resolving all implicit arguments throughout the tree.
-    /// Returns a new AST where every bare reference to a parametrized algorithm
+    /// Returns a new AST where every bare reference to an algorithm with parameters
     /// has been rewritten into an explicit call with lifted parameters.
     ///
     /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built)
@@ -69,7 +69,7 @@ public static class ImplicitArgumentResolver
 
     /// <summary>
     /// Processes an algorithm: topologically sorts its properties, recursively processes each,
-    /// then collects implicit deps and rewrites the algorithm's own output if parametrized.
+    /// then collects implicit deps and rewrites the algorithm's own output.
     /// </summary>
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
@@ -150,21 +150,6 @@ public static class ImplicitArgumentResolver
 
         var newProperties = processedProperties.ToList();
 
-        if (!alg.IsParametrized)
-        {
-            // Non-parametrized: recurse into nested structures but don't lift
-            var newOutput = new List<Expr>(alg.Output.Count);
-            foreach (var expr in alg.Output)
-                newOutput.Add(ProcessExprNested(expr, visibleParamMap));
-
-            return alg with
-            {
-                Opens = newOpens,
-                Properties = newProperties,
-                Output = newOutput,
-            };
-        }
-
         if (alg.ExplicitParameterPatterns.Count > 0)
         {
             var explicitExistingParams = new HashSet<string>(alg.Params);
@@ -191,7 +176,8 @@ public static class ImplicitArgumentResolver
             };
         }
 
-        // Parametrized: collect implicit deps and lift params
+        // Collect implicit dependencies from the algorithm's output and lift
+        // them into its parameter list.
         var deps = new List<(string Name, CallableSignature Signature)>();
         var seen = new HashSet<string>();
         foreach (var expr in alg.Output)
@@ -266,8 +252,19 @@ public static class ImplicitArgumentResolver
     {
         switch (expr)
         {
-            case Expr.Block(var algorithm):
-                return new Expr.Block(ProcessAlgorithm(algorithm, new Dictionary<string, CallableSignature>()))
+            case Expr.AlgorithmExpr(var algorithm):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(algorithm, new Dictionary<string, CallableSignature>()))
+                {
+                    Span = expr.Span,
+                };
+
+            case Expr.Capture(var captureBody):
+                // Capture targets own no scope; rows recurse without lifting,
+                // with a fresh signature map like every other open target.
+                return new Expr.Capture(new OutputBundle(
+                    captureBody
+                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>()))
+                        .ToList()))
                 {
                     Span = expr.Span,
                 };
@@ -276,7 +273,7 @@ public static class ImplicitArgumentResolver
                 return new Expr.DotCall(
                     ProcessOpenExpr(target),
                     name,
-                    args is not null ? ProcessAlgorithm(args, new Dictionary<string, CallableSignature>()) : null)
+                    args is not null ? ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>()) : null)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan,
@@ -302,7 +299,7 @@ public static class ImplicitArgumentResolver
             case Expr.Call(var function, var args):
                 return new Expr.Call(
                     ProcessOpenExpr(function),
-                    ProcessAlgorithm(args, new Dictionary<string, CallableSignature>())) { Span = expr.Span };
+                    ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>())) { Span = expr.Span };
 
             default:
                 return expr;
@@ -486,12 +483,10 @@ public static class ImplicitArgumentResolver
                 when forwardAsSpread(collecting) =>
                 new Expr.SequenceSpread(new Expr.Param(mapCaptureName(collecting))),
             CaptureParameterPattern capture => new Expr.Param(mapCaptureName(capture)),
-            SequenceValueParameterPattern group => new Expr.Block(new Algorithm.User(
-                Parent: null,
-                Parameters: [],
-                Opens: [],
-                Properties: [],
-                Output: BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread))),
+            // A forwarded sequence-value pattern groups its item arguments as one
+            // written capture boundary — a value grouping, not a scope.
+            SequenceValueParameterPattern group => new Expr.Capture(new OutputBundle(
+                BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread))),
             _ => throw new InvalidOperationException("Unknown parameter pattern."),
         };
     }
@@ -506,7 +501,7 @@ public static class ImplicitArgumentResolver
 
     /// <summary>
     /// Collects implicit dependencies from an expression: bare <see cref="Expr.Resolve"/> nodes
-    /// pointing to parametrized algorithms in the visible scope.
+    /// pointing to algorithms with parameters in the visible scope.
     /// </summary>
     private static void CollectImplicitDeps(
         Expr expr,
@@ -582,8 +577,10 @@ public static class ImplicitArgumentResolver
                 CollectImplicitDeps(inner, paramMap, seen, deps, inCallPosition);
                 break;
 
-            case Expr.Block:
-                // Nested block has its own scope, so do not collect here.
+            case Expr.AlgorithmExpr or Expr.Capture:
+                // A scoped block owns its names; a capture suppresses callable
+                // lifting for everything inside it (pre-split behavior for
+                // grouped expressions). Neither contributes deps here.
                 break;
 
             default:
@@ -592,15 +589,12 @@ public static class ImplicitArgumentResolver
     }
 
     private static void CollectArgumentImplicitDeps(
-        Algorithm args,
+        OutputBundle args,
         Dictionary<string, CallableSignature> paramMap,
         HashSet<string> seen,
         List<(string Name, CallableSignature Signature)> deps)
     {
-        if (args.IsParametrized)
-            return;
-
-        foreach (var argExpr in args.Output)
+        foreach (var argExpr in args)
             CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false);
     }
 
@@ -634,14 +628,8 @@ public static class ImplicitArgumentResolver
                         return expr;
                     }
 
-                    var argsAlg = new Algorithm.User(
-                        Parent: null,
-                        Parameters: [],
-                        Opens: [],
-                        Properties: [],
-                        Output: BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
-
-                    return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, argsAlg) { Span = expr.Span };
+                    var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(ps.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
+                    return new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span };
                 }
                 return expr;
 
@@ -659,7 +647,7 @@ public static class ImplicitArgumentResolver
                         requireExistingParameters,
                         existingParameterNames);
 
-                var newArgs = ProcessAlgorithm(args, paramMap);
+                var newArgs = ProcessArgumentBundle(args, paramMap);
                 return new Expr.Call(newFunc, newArgs) { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
@@ -706,17 +694,11 @@ public static class ImplicitArgumentResolver
                     return expr;
                 }
 
-                var dotArgsAlg = new Algorithm.User(
-                    Parent: null,
-                    Parameters: [],
-                    Opens: [],
-                    Properties: [],
-                    Output: BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
-
+                var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
                 return new Expr.DotCall(
                     RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
                     name,
-                    dotArgsAlg)
+                    liftedDotArgs)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
@@ -729,8 +711,8 @@ public static class ImplicitArgumentResolver
                     name,
                     dotArgs is not null
                         ? IsMathValueDotCall(target, name)
-                            ? ProcessArgumentAlgorithm(dotArgs, paramMap)
-                            : ProcessAlgorithm(dotArgs, paramMap)
+                            ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap)
+                            : ProcessArgumentBundle(dotArgs, paramMap)
                         : null)
                 {
                     Span = expr.Span,
@@ -740,35 +722,63 @@ public static class ImplicitArgumentResolver
             case Expr.Grace(var inner, _):
                 return RewriteImplicitCalls(inner, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition, requireExistingParameters, existingParameterNames);
 
-            case Expr.Block(var alg):
-                return new Expr.Block(ProcessAlgorithm(alg, paramMap)) { Span = expr.Span };
+            case Expr.AlgorithmExpr(var alg):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, paramMap)) { Span = expr.Span };
+
+            case Expr.Capture(var captureBody):
+                // Capture rows recurse without lifting at this level, exactly as
+                // the pre-split transparent group algorithm's rows did.
+                return new Expr.Capture(new OutputBundle(
+                    captureBody.Select(row => ProcessExprNested(row, paramMap)).ToList()))
+                { Span = expr.Span };
 
             default:
                 return expr;
         }
     }
 
-    private static Algorithm ProcessArgumentAlgorithm(
-        Algorithm args,
+    /// <summary>
+    /// Processes an argument bundle without lifting at this level: each slot
+    /// recurses into nested algorithms only, exactly like every other
+    /// transparent expression context (capture rows, list elements). Bare
+    /// higher-order references such as <c>Apply(Increment)</c> therefore stay
+    /// bare argument slots.
+    /// </summary>
+    private static OutputBundle ProcessArgumentBundle(
+        OutputBundle args,
+        Dictionary<string, CallableSignature> paramMap)
+        => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap)).ToList());
+
+    /// <summary>
+    /// Processes an argument bundle whose consumer is VALUE-DEMANDING: each
+    /// slot is an ordinary value position, so bare references to callables
+    /// with parameters lift to implicit calls exactly as they would in any
+    /// other value position (binary operands, output rows). This is the
+    /// deliberate counterpart of <see cref="ProcessArgumentBundle"/>:
+    /// ordinary call arguments stay NEUTRAL (no lifting) because an arbitrary
+    /// callee may consume an argument on the higher-order algorithm channel,
+    /// and lifting would destroy the bare reference. Value-context processing
+    /// is a property of the consumer, not of the argument.
+    ///
+    /// <para>The current value-demanding consumer is the Math member family
+    /// (<see cref="IsMathValueDotCall"/>): the builtin registry proves every
+    /// Math member consumes strictly numeric values, so no higher-order
+    /// channel exists to preserve. Other strict builtins (<c>sum</c>,
+    /// <c>count</c>, ...) do NOT currently receive value-context lifting —
+    /// their unresolved-reference arguments surface as runtime errors instead
+    /// (a documented consistency gap; widening lifting to them would be a new
+    /// observable semantic surface and is deliberately left as future
+    /// work).</para>
+    /// </summary>
+    private static OutputBundle ProcessValueDemandingArgumentBundle(
+        OutputBundle args,
         Dictionary<string, CallableSignature> paramMap)
     {
-        if (args.IsParametrized)
-            return ProcessAlgorithm(args, paramMap);
-
-        var newOutput = new List<Expr>(args.Output.Count);
-        var argBindingKinds = BuildSourceBindingKinds(args.ParameterPatterns);
-        foreach (var expr in args.Output)
-            newOutput.Add(RewriteImplicitCalls(expr, paramMap, args.ParameterPatterns, argBindingKinds, inCallPosition: false));
-
-        var newProperties = new List<Property>(args.Properties.Count);
-        foreach (var prop in args.Properties)
-            newProperties.Add(prop.WithValue(ProcessAlgorithm(prop.Value, paramMap)));
-
-        return args with
-        {
-            Properties = newProperties,
-            Output = newOutput,
-        };
+        var emptyBindingKinds = BuildSourceBindingKinds([]);
+        var rewritten = new List<Expr>(args.Count);
+        foreach (var argExpr in args)
+            rewritten.Add(RewriteImplicitCalls(argExpr, paramMap, [], emptyBindingKinds, inCallPosition: false));
+        return new OutputBundle(rewritten);
     }
 
     private static bool IsMathValueDotCall(Expr target, string name)
@@ -796,8 +806,9 @@ public static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Processes an expression in a non-parametrized context:
-    /// recurse into nested algorithms only (no lifting at this level).
+    /// Processes an expression in a transparent context (capture rows, list
+    /// elements, argument slots): recurse into nested algorithms only (no
+    /// lifting at this level).
     /// </summary>
     private static Expr ProcessExprNested(
         Expr expr,
@@ -805,11 +816,14 @@ public static class ImplicitArgumentResolver
     {
         return expr switch
         {
-            Expr.Block(var alg) => new Expr.Block(
+            Expr.AlgorithmExpr(var alg) => new Expr.AlgorithmExpr(
                 ProcessAlgorithm(alg, paramMap)) { Span = expr.Span },
+            Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+                captureBody.Select(row => ProcessExprNested(row, paramMap)).ToList()))
+            { Span = expr.Span },
             Expr.Call(var func, var args) => new Expr.Call(
                 ProcessExprNested(func, paramMap),
-                ProcessAlgorithm(args, paramMap)) { Span = expr.Span },
+                ProcessArgumentBundle(args, paramMap)) { Span = expr.Span },
             Expr.Binary(var op, var l, var r) => new Expr.Binary(op,
                 ProcessExprNested(l, paramMap),
                 ProcessExprNested(r, paramMap)) { Span = expr.Span },
@@ -833,7 +847,7 @@ public static class ImplicitArgumentResolver
             Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
                 ProcessExprNested(t, paramMap),
                 n,
-                da is not null ? ProcessAlgorithm(da, paramMap) : null)
+                da is not null ? ProcessArgumentBundle(da, paramMap) : null)
             {
                 Span = expr.Span,
                 MemberSpan = ((Expr.DotCall)expr).MemberSpan

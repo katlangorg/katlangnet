@@ -25,8 +25,8 @@ namespace KatLang.Tests;
 /// </summary>
 public static class LeanAstEncoder
 {
-    /// <summary>Encodes a parsed root algorithm as a Lean <c>.block (alg ...)</c> program.</summary>
-    public static string EncodeProgram(Algorithm root) => $".block {EncodeAlgorithm(root)}";
+    /// <summary>Encodes a parsed root algorithm as a Lean <c>.algorithmExpr (alg ...)</c> program.</summary>
+    public static string EncodeProgram(Algorithm root) => $".algorithmExpr {EncodeAlgorithm(root)}";
 
     /// <summary>
     /// Bare encoding, suitable where a delimiter already separates terms (list
@@ -40,15 +40,16 @@ public static class LeanAstEncoder
         Expr.EmptySequence(var depth) => $"(.emptySequence {depth})",
         Expr.Resolve(var name) => $".resolve \"{name}\"",
         Expr.Param(var name) => $".param \"{name}\"",
-        Expr.Block(var algorithm) => $"(.block {EncodeAlgorithm(algorithm)})",
+        Expr.AlgorithmExpr(var algorithm) => $"(.algorithmExpr {EncodeAlgorithm(algorithm)})",
+        Expr.Capture(var captureBody) => $"(.capture [{EncodeList(captureBody, EncodeExpr)}])",
         Expr.ListLiteral(var items) => $"(.listLiteral [{EncodeList(items, EncodeExpr)}])",
         Expr.SequenceSpread(var operand) => $"(.sequenceSpread {Arg(operand)})",
         Expr.Unary(var op, var operand) => $"(.unary .{EncodeUnaryOp(op)} {Arg(operand)})",
         Expr.Binary(var op, var left, var right) =>
             $"(.binary .{EncodeBinaryOp(op)} {Arg(left)} {Arg(right)})",
         Expr.DotCall(var target, var name, var args) =>
-            $"(.dotCall {Arg(target)} \"{name}\" {(args is null ? "none" : $"(some {EncodeAlgorithm(args)})")})",
-        Expr.Call(var callee, var args) => $"(.call {Arg(callee)} {EncodeAlgorithm(args)})",
+            $"(.dotCall {Arg(target)} \"{name}\" {(args is null ? "none" : $"(some {EncodeBundle(args)})")})",
+        Expr.Call(var callee, var args) => $"(.call {Arg(callee)} {EncodeBundle(args)})",
         _ => throw new NotSupportedException(
             $"{nameof(LeanAstEncoder)} does not cover {expr.GetType().Name}. " +
             "Add it deliberately rather than letting the encoder approximate."),
@@ -60,6 +61,9 @@ public static class LeanAstEncoder
         var encoded = EncodeExpr(expr);
         return encoded.StartsWith('(') ? encoded : $"({encoded})";
     }
+
+    /// <summary>Call/dot-call argument bundle: a plain Lean list of the slot expressions.</summary>
+    private static string EncodeBundle(OutputBundle args) => $"[{EncodeList(args, EncodeExpr)}]";
 
     public static string EncodeAlgorithm(Algorithm algorithm)
     {

@@ -77,7 +77,7 @@ public class HostAtomsNonRegressionTests
     {
         var parseResult = Parser.Parse("[1, [2, (3, [4])]]");
         Assert.False(parseResult.HasErrors);
-        var result = Evaluator.RunFlat(new Expr.Block(parseResult.Root));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(parseResult.Root));
         Assert.False(result.IsError);
         Assert.Equal([1m, 2m, 3m, 4m], result.Value);
     }

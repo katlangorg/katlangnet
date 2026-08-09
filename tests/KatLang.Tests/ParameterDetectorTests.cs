@@ -103,7 +103,7 @@ public class ParameterDetectorTests
     {
         var ast = ParseAndDetect("{x + 1}");
 
-        var block = Assert.IsType<Expr.Block>(ast.Output[0]);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(ast.Output[0]);
         Assert.Single(block.Algorithm.Params);
         Assert.Equal("x", block.Algorithm.Params[0]);
     }
@@ -121,12 +121,11 @@ public class ParameterDetectorTests
 
         var countCall = Assert.IsType<Expr.DotCall>(Assert.Single(occurrenceCount.Output));
         var filterCall = Assert.IsType<Expr.Call>(countCall.Target);
-        Assert.Empty(filterCall.Args.Params);
 
-        var valuesArg = Assert.IsType<Expr.Param>(filterCall.Args.Output[0]);
+        var valuesArg = Assert.IsType<Expr.Param>(filterCall.Args[0]);
         Assert.Equal("values", valuesArg.Name);
 
-        var predicateBlock = Assert.IsType<Expr.Block>(filterCall.Args.Output[1]);
+        var predicateBlock = Assert.IsType<Expr.AlgorithmExpr>(filterCall.Args[1]);
         Assert.Single(predicateBlock.Algorithm.Params);
         Assert.Equal("item", predicateBlock.Algorithm.Params[0]);
 
@@ -196,31 +195,30 @@ public class ParameterDetectorTests
     }
 
     [Fact]
-    public void Detect_CallArgsInBraces_IsParametrized()
+    public void Detect_CallArgsInBraces_OwnScopeDetectsParams()
     {
-        // F{x + 1} desugars to F({x + 1}).  The brace content is an Expr.Block
+        // F{x + 1} desugars to F({x + 1}).  The brace content is an Expr.AlgorithmExpr
         // whose inner algorithm has params detected (x).
         var ast = ParseAndDetect("F{x + 1}");
 
         var call = Assert.IsType<Expr.Call>(ast.Output[0]);
-        Assert.Empty(call.Args.Params); // outer wrapper is non-parametrized
-        var block = Assert.IsType<Expr.Block>(call.Args.Output[0]);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(call.Args[0]);
         Assert.Single(block.Algorithm.Params);
         Assert.Equal("x", block.Algorithm.Params[0]);
     }
 
     [Fact]
-    public void Detect_CallArgsInParens_NotParametrized()
+    public void Detect_CallArgsInParens_BelongToTheEnclosingScope()
     {
         var ast = ParseAndDetect("F(x + 1)");
 
         // Both F and x are unknown → become params of the enclosing algorithm
-        // F appears first, x second. Parenthesized args are non-parametrized.
+        // F appears first, x second. Parenthesized args are transparent
+        // bundle slots owned by the caller's scope.
         Assert.Equal(["F", "x"], ast.Params);
         var call = Assert.IsType<Expr.Call>(ast.Output[0]);
-        Assert.Empty(call.Args.Params);
         Assert.IsType<Expr.Param>(call.Function);
-        var binary = Assert.IsType<Expr.Binary>(call.Args.Output[0]);
+        var binary = Assert.IsType<Expr.Binary>(call.Args[0]);
         Assert.IsType<Expr.Param>(binary.Left);
     }
 
@@ -275,9 +273,8 @@ public class ParameterDetectorTests
         var builtin = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("first", builtin.Name);
 
-        Assert.Empty(call.Args.Params);
-        Assert.Equal(2, call.Args.Output.Count);
-        Assert.All(call.Args.Output, expression => Assert.IsType<Expr.Param>(expression));
+        Assert.Equal(2, call.Args.Count);
+        Assert.All(call.Args, expression => Assert.IsType<Expr.Param>(expression));
     }
 
     [Fact]
@@ -596,7 +593,7 @@ public class ParameterDetectorTests
         var call = Assert.IsType<Expr.Call>(user.Output[0]);
         var function = Assert.IsType<Expr.Param>(call.Function);
         Assert.Equal("f", function.Name);
-        Assert.IsType<Expr.Num>(call.Args.Output[0]);
+        Assert.IsType<Expr.Num>(call.Args[0]);
     }
 
     [Fact]
@@ -611,12 +608,12 @@ public class ParameterDetectorTests
         var ifCall = Assert.IsType<Expr.Call>(user.Output[0]);
         Assert.IsType<Expr.Resolve>(ifCall.Function);
 
-        var predicateCall = Assert.IsType<Expr.Call>(ifCall.Args.Output[0]);
+        var predicateCall = Assert.IsType<Expr.Call>(ifCall.Args[0]);
         var predicateParam = Assert.IsType<Expr.Param>(predicateCall.Function);
         Assert.Equal("predicate", predicateParam.Name);
-        Assert.IsType<Expr.Param>(predicateCall.Args.Output[0]);
-        Assert.IsType<Expr.Param>(ifCall.Args.Output[1]);
-        Assert.IsType<Expr.Num>(ifCall.Args.Output[2]);
+        Assert.IsType<Expr.Param>(predicateCall.Args[0]);
+        Assert.IsType<Expr.Param>(ifCall.Args[1]);
+        Assert.IsType<Expr.Num>(ifCall.Args[2]);
     }
 
     // ── Conditional branch: full-input-specification rule ──────────────────
@@ -828,10 +825,11 @@ public class ParameterDetectorTests
             Expr.Index(var target, var selector) => ContainsResolve(target, name) || ContainsResolve(selector, name),
             Expr.SequenceSpread(var operand) => ContainsResolve(operand, name),
             Expr.DotCall(var target, _, var args) => ContainsResolve(target, name)
-                || (args is not null && args.Output.Any(output => ContainsResolve(output, name))),
-            Expr.Block(var algorithm) => algorithm.Output.Any(output => ContainsResolve(output, name)),
+                || (args is not null && args.Any(output => ContainsResolve(output, name))),
+            Expr.AlgorithmExpr(var algorithm) => algorithm.Output.Any(output => ContainsResolve(output, name)),
+            Expr.Capture(var body) => body.Any(output => ContainsResolve(output, name)),
             Expr.Call(var function, var args) => ContainsResolve(function, name)
-                || args.Output.Any(output => ContainsResolve(output, name)),
+                || args.Any(output => ContainsResolve(output, name)),
             _ => false,
         };
 }

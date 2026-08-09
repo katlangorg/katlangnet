@@ -3,8 +3,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// Structural description of a generated semantic-explorer corpus value.
 /// Carries both the written KatLang source form and the equivalent Lean AST
-/// construction (mirroring the C# parser's elaboration: parenthesized lists
-/// are zero-parameter blocks, redundant parens are one written grouping level).
+/// construction, mirroring the C# parser's elaboration: surviving
+/// parenthesized lists are <c>.capture</c> bundles, while redundant parentheses
+/// around atoms, empty sequences, and lists normalize away.
 /// </summary>
 public abstract record ExplorerValue
 {
@@ -36,20 +37,33 @@ public abstract record ExplorerValue
     };
 
     /// <summary>
-    /// Lean Expr text for this written value. Parenthesized lists become
-    /// zero-parameter blocks whose output slots are the items (the same
-    /// elaboration the C# parser applies); a redundant wrap is a nested
-    /// single-output block (one written grouping level); a bracket list
-    /// literal is the dedicated exact <c>.listLiteral</c> node.
+    /// Lean Expr text for this written value. Multi-item parentheses become
+    /// <c>.capture</c> bundles; a redundant wrap survives only when its inner
+    /// parsed expression is already a capture. Parentheses around atoms,
+    /// empty-sequence nodes, and list literals normalize away, matching
+    /// <c>Parser.ShouldUnwrapParenthesizedPrimary</c>.
     /// </summary>
     public string LeanExpr => this switch
     {
         Num n => $"(.num {n.Value})",
         Empty => "(.emptySequence 0)",
-        Seq s => $"(.block (alg [] [] [] [{string.Join(", ", s.Items.Select(i => i.LeanExpr))}]))",
-        Wrap w => $"(.block (alg [] [] [] [{w.Inner.LeanExpr}]))",
+        Seq s => $"(.capture [{string.Join(", ", s.Items.Select(i => i.LeanExpr))}])",
+        Wrap w => w.Inner.ParenthesizedLeanExpr,
         ListOf l => $"(.listLiteral [{string.Join(", ", l.Items.Select(i => i.LeanExpr))}])",
         _ => throw new InvalidOperationException(),
+    };
+
+    /// <summary>The Lean expression produced when this value is wrapped in one more pair of parentheses.</summary>
+    public string ParenthesizedLeanExpr
+        => ProducesCapture
+            ? $"(.capture [{LeanExpr}])"
+            : LeanExpr;
+
+    private bool ProducesCapture => this switch
+    {
+        Seq => true,
+        Wrap w => w.Inner.ProducesCapture,
+        _ => false,
     };
 }
 
@@ -143,7 +157,7 @@ public static class SemanticExplorerCorpus
     // ----- Lean program snippets ---------------------------------------------
 
     private static string LProg(IEnumerable<string> props, IEnumerable<string> outputs)
-        => $".block (alg [] [] [{string.Join(", ", props)}] [{string.Join(", ", outputs)}])";
+        => $".algorithmExpr (alg [] [] [{string.Join(", ", props)}] [{string.Join(", ", outputs)}])";
 
     private static string LVal(string name, string leanExpr)
         => $"privateProp \"{name}\" (alg [] [] [] [{leanExpr}])";
@@ -175,7 +189,7 @@ public static class SemanticExplorerCorpus
         $"privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [{leanExpr}])] [])";
 
     private static string LCall(string callee, params string[] args)
-        => $".call (.resolve \"{callee}\") (alg [] [] [] [{string.Join(", ", args)}])";
+        => $".call (.resolve \"{callee}\") [{string.Join(", ", args)}]";
 
     /// <summary>
     /// Parser-elaborated assignment deconstruction: RHS evaluated once into a
@@ -188,10 +202,10 @@ public static class SemanticExplorerCorpus
             ? $".capture {{ name := \"{t}\", kind := .collecting }}"
             : $".capture {{ name := \"{t}\" }}");
         var pattern = $".sequenceValue [{string.Join(", ", captures)}]";
-        var helper = $".block (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
+        var helper = $".algorithmExpr (algWithParameterPatterns [{pattern}] [] [] [.param \"{observed}\"])";
         return LVal("d", rhsLeanExpr)
             + ", "
-            + $"privateProp \"{observed}\" (alg [] [] [] [.call ({helper}) (alg [] [] [] [.resolve \"d\"])])";
+            + $"privateProp \"{observed}\" (alg [] [] [] [.call ({helper}) [.resolve \"d\"]])";
     }
 
     // ----- Receiver templates ------------------------------------------------
@@ -211,13 +225,13 @@ public static class SemanticExplorerCorpus
             v => LProg([LVal("x", v.LeanExpr)], [".resolve \"x\""])),
         new("captureCall",
             v => $"x = {v.Source}\nx()",
-            v => LProg([LVal("x", v.LeanExpr)], [".call (.resolve \"x\") (alg [] [] [] [])"])),
+            v => LProg([LVal("x", v.LeanExpr)], [".call (.resolve \"x\") []"])),
         new("dotAccess",
             v => $"A = {{\n    X = {v.Source}\n}}\nA.X",
             v => LProg([LContainer(v.LeanExpr)], [".dotCall (.resolve \"A\") \"X\" none"])),
         new("dotAccessCall",
             v => $"A = {{\n    X = {v.Source}\n}}\nA.X()",
-            v => LProg([LContainer(v.LeanExpr)], [".dotCall (.resolve \"A\") \"X\" (some (alg [] [] [] []))"])),
+            v => LProg([LContainer(v.LeanExpr)], [".dotCall (.resolve \"A\") \"X\" (some [])"])),
         new("fixed",
             v => $"F(a) = a\nF({v.Source})",
             v => LProg([LFixed], [LCall("F", v.LeanExpr)])),
@@ -268,16 +282,16 @@ public static class SemanticExplorerCorpus
             v => LProg([LDecon(v.LeanExpr, ["p", "z"], 0, "z")], [".resolve \"z\""])),
         new("seqWrapPair",
             v => $"({v.Source}, 99)",
-            v => LProg([], [$".block (alg [] [] [] [{v.LeanExpr}, .num 99])"])),
+            v => LProg([], [$".capture [{v.LeanExpr}, .num 99]"])),
         new("seqWrapSolo",
             v => $"({v.Source})",
-            v => LProg([], [$".block (alg [] [] [] [{v.LeanExpr}])"])),
+            v => LProg([], [v.ParenthesizedLeanExpr])),
         new("spreadRoot",
             v => $"{v.Source}*",
             v => LProg([], [$".sequenceSpread {v.LeanExpr}"])),
         new("spreadInSeq",
             v => $"({v.Source}*, 99)",
-            v => LProg([], [$".block (alg [] [] [] [.sequenceSpread {v.LeanExpr}, .num 99])"])),
+            v => LProg([], [$".capture [.sequenceSpread {v.LeanExpr}, .num 99]"])),
         new("count",
             v => $"count({v.Source})",
             v => LProg([], [LCall("count", v.LeanExpr)])),
@@ -289,7 +303,7 @@ public static class SemanticExplorerCorpus
             v => LProg([LVal("x", v.LeanExpr)], [".dotCall (.resolve \"x\") \"count\" none"])),
         new("literalDotCount",
             v => $"({v.Source}).count",
-            v => LProg([], [$".dotCall (.block (alg [] [] [] [{v.LeanExpr}])) \"count\" none"])),
+            v => LProg([], [$".dotCall {v.ParenthesizedLeanExpr} \"count\" none"])),
         new("index0",
             v => $"x = {v.Source}\nx:0",
             v => LProg([LVal("x", v.LeanExpr)], [".index (.resolve \"x\") (.num 0)"])),
@@ -389,7 +403,7 @@ public static class SemanticExplorerCorpus
         ("multiProp", "P = 1, 2, 3\nP",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".resolve \"P\""])),
         ("multiPropCall", "P = 1, 2, 3\nP()",
-            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".call (.resolve \"P\") (alg [] [] [] [])"])),
+            LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".call (.resolve \"P\") []"])),
         ("multiPropCount", "P = 1, 2, 3\ncount(P)",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [LCall("count", ".resolve \"P\"")])),
         ("multiPropDotCount", "P = 1, 2, 3\nP.count",
@@ -406,31 +420,31 @@ public static class SemanticExplorerCorpus
                 [".dotCall (.resolve \"A\") \"X\" none"])),
         ("dotAccessCallPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X()",
             LProg(["privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
-                [".dotCall (.resolve \"A\") \"X\" (some (alg [] [] [] []))"])),
+                [".dotCall (.resolve \"A\") \"X\" (some [])"])),
         ("multiPropIndex0", "P = 1, 2, 3\nP:0",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".index (.resolve \"P\") (.num 0)"])),
         ("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"],
-                [".binary .eq (.resolve \"P\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
+                [".binary .eq (.resolve \"P\") (.capture [.num 1, .num 2, .num 3])"])),
         ("multiCollecting", "F(*a) = a\nF(1, 2, 3)",
             LProg([LCollectingF], [LCall("F", ".num 1", ".num 2", ".num 3")])),
         ("multiCollectingCount", "F(*a) = a\ncount(F(1, 2, 3))",
             LProg([LCollectingF], [LCall("count", LCall("F", ".num 1", ".num 2", ".num 3"))])),
         ("collectingEmptyCall", "F(*a) = a\nF()",
-            LProg([LCollectingF], [".call (.resolve \"F\") (alg [] [] [] [])"])),
+            LProg([LCollectingF], [".call (.resolve \"F\") []"])),
         ("collectingFwdSum", "F(*a) = sum(a)\nF(1, 2, 3)",
-            LProg(["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"sum\") (alg [] [] [] [.param \"a\"])])"],
+            LProg(["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"sum\") [.param \"a\"]])"],
                 [LCall("F", ".num 1", ".num 2", ".num 3")])),
         ("collectingFwdSpread", "F(*a) = G(a*)\nG(*b) = b\nF(1, 2, 3)",
             LProg(
-                ["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"G\") (alg [] [] [] [.sequenceSpread (.param \"a\")])])",
+                ["privateProp \"F\" (algWithParameters [{ name := \"a\", kind := .collecting }] [] [] [.call (.resolve \"G\") [.sequenceSpread (.param \"a\")]])",
                  "privateProp \"G\" (algWithParameters [{ name := \"b\", kind := .collecting }] [] [] [.param \"b\"])"],
                 [LCall("F", ".num 1", ".num 2", ".num 3")])),
         ("collectingJoin", "F(*a) = a\nF((1, 2)*, (3, 4)*)",
             LProg([LCollectingF],
                 [LCall("F",
-                    ".sequenceSpread (.block (alg [] [] [] [.num 1, .num 2]))",
-                    ".sequenceSpread (.block (alg [] [] [] [.num 3, .num 4]))")])),
+                    ".sequenceSpread (.capture [.num 1, .num 2])",
+                    ".sequenceSpread (.capture [.num 3, .num 4])")])),
         ("range13", "range(1, 3)", LProg([], [LCall("range", ".num 1", ".num 3")])),
         ("rangeCapture", "x = range(1, 3)\nx",
             LProg([$"privateProp \"x\" (alg [] [] [] [{LCall("range", ".num 1", ".num 3")}])"], [".resolve \"x\""])),
@@ -441,33 +455,33 @@ public static class SemanticExplorerCorpus
         ("takeOneSurvivorPairCount", "count(take(((1, 2), (3, 4)), 1))",
             LProg([], [LCall("count", LCall("take", PairOfPairs, ".num 1"))])),
         ("takeOneSurvivorPairEq", "take(((1, 2), (3, 4)), 1) == (1, 2)",
-            LProg([], [$".binary .eq ({LCall("take", PairOfPairs, ".num 1")}) (.block (alg [] [] [] [.num 1, .num 2]))"])),
+            LProg([], [$".binary .eq ({LCall("take", PairOfPairs, ".num 1")}) (.capture [.num 1, .num 2])"])),
         ("skipToOnePair", "skip(((1, 2), (3, 4)), 1)",
             LProg([], [LCall("skip", PairOfPairs, ".num 1")])),
         ("distinctEmpties", "distinct((), ())",
             LProg([], [LCall("distinct", ".emptySequence 0", ".emptySequence 0")])),
         ("distinctPairsToOne", "distinct((1, 2), (1, 2))",
-            LProg([], [LCall("distinct", "(.block (alg [] [] [] [.num 1, .num 2]))", "(.block (alg [] [] [] [.num 1, .num 2]))")])),
+            LProg([], [LCall("distinct", "(.capture [.num 1, .num 2])", "(.capture [.num 1, .num 2])")])),
         ("takeEmpties", "take((), (), 2)",
             LProg([], [LCall("take", ".emptySequence 0", ".emptySequence 0", ".num 2")])),
         ("filterOneSurvivor", "Big(a) = a > 2\nfilter((1, 2, 3), Big)",
             LProg(["privateProp \"Big\" (alg [\"a\"] [] [] [.binary .gt (.param \"a\") (.num 2)])"],
-                [LCall("filter", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))", ".resolve \"Big\"")])),
+                [LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"Big\"")])),
         ("filterOneSurvivorCount", "Big(a) = a > 2\ncount(filter((1, 2, 3), Big))",
             LProg(["privateProp \"Big\" (alg [\"a\"] [] [] [.binary .gt (.param \"a\") (.num 2)])"],
-                [LCall("count", LCall("filter", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))", ".resolve \"Big\""))])),
+                [LCall("count", LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"Big\""))])),
         ("filterZeroSurvivors", "No(a) = 0\nfilter((1, 2, 3), No)",
             LProg(["privateProp \"No\" (alg [\"a\"] [] [] [.num 0])"],
-                [LCall("filter", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))", ".resolve \"No\"")])),
+                [LCall("filter", "(.capture [.num 1, .num 2, .num 3])", ".resolve \"No\"")])),
         ("mapPairSwap", "Swap(a, b) = b, a\nmap(((1, 2), (3, 4)), Swap)",
             LProg(["privateProp \"Swap\" (alg [\"a\", \"b\"] [] [] [.param \"b\", .param \"a\"])"],
                 [LCall("map", PairOfPairs, ".resolve \"Swap\"")])),
         ("mapPairSwapOk", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)",
-            LProg(["privateProp \"Swap\" (alg [\"a\", \"b\"] [] [] [.block (alg [] [] [] [.param \"b\", .param \"a\"])])"],
+            LProg(["privateProp \"Swap\" (alg [\"a\", \"b\"] [] [] [.capture [.param \"b\", .param \"a\"]])"],
                 [LCall("map", PairOfPairs, ".resolve \"Swap\"")])),
         ("mapToOne", "M(a) = a\nmap((7), M)",
             LProg(["privateProp \"M\" (alg [\"a\"] [] [] [.param \"a\"])"],
-                [LCall("map", "(.block (alg [] [] [] [.num 7]))", ".resolve \"M\"")])),
+                [LCall("map", "(.capture [.num 7])", ".resolve \"M\"")])),
         ("orderSingle", "order(5)", LProg([], [LCall("order", ".num 5")])),
         ("orderEmpty", "order(())", LProg([], [LCall("order", ".emptySequence 0")])),
         ("atomsNested", "atoms(((1, 2), (3, 4)))", LProg([], [LCall("atoms", PairOfPairs)])),
@@ -476,23 +490,23 @@ public static class SemanticExplorerCorpus
         ("emptyOpBoth", "() + ()", LProg([], [".binary .add (.emptySequence 0) (.emptySequence 0)"])),
         ("emptyEqEmpty", "() == ()", LProg([], [".binary .eq (.emptySequence 0) (.emptySequence 0)"])),
         ("emptyEqNestedEmpty", "() == (())",
-            LProg([], [".binary .eq (.emptySequence 0) (.block (alg [] [] [] [.emptySequence 0]))"])),
+            LProg([], [".binary .eq (.emptySequence 0) (.capture [.emptySequence 0])"])),
         ("emptyNeNestedEmpty", "() != (())",
-            LProg([], [".binary .ne (.emptySequence 0) (.block (alg [] [] [] [.emptySequence 0]))"])),
+            LProg([], [".binary .ne (.emptySequence 0) (.capture [.emptySequence 0])"])),
         ("propBodyEmptySlot", "P = (), 99\nP",
             LProg(["privateProp \"P\" (alg [] [] [] [.emptySequence 0, .num 99])"], [".resolve \"P\""])),
         ("rootEmptySlots", "(), 99", LProg([], [".emptySequence 0", ".num 99"])),
         ("seqOfSpreadEmpty", "((()*), 1)",
-            LProg([], [".block (alg [] [] [] [.block (alg [] [] [] [.sequenceSpread (.emptySequence 0)]), .num 1])"])),
+            LProg([], [".capture [.capture [.sequenceSpread (.emptySequence 0)], .num 1]"])),
         ("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x:0, 99)",
-            LProg([LVal("x", PairOfPairs)], [".block (alg [] [] [] [.index (.resolve \"x\") (.num 0), .num 99])"])),
+            LProg([LVal("x", PairOfPairs)], [".capture [.index (.resolve \"x\") (.num 0), .num 99]"])),
         ("indexEmptyItemRoot", "x = ((), ())\nx:0",
-            LProg([LVal("x", "(.block (alg [] [] [] [.emptySequence 0, .emptySequence 0]))")],
+            LProg([LVal("x", "(.capture [.emptySequence 0, .emptySequence 0])")],
                 [".index (.resolve \"x\") (.num 0)"])),
         ("indexCapturedEq", "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)",
             LProg(
                 [LVal("x", PairOfPairs), "privateProp \"y\" (alg [] [] [] [.index (.resolve \"x\") (.num 0)])"],
-                [".binary .eq (.resolve \"y\") (.block (alg [] [] [] [.num 1, .num 2]))"])),
+                [".binary .eq (.resolve \"y\") (.capture [.num 1, .num 2])"])),
         ("chainedListIndex", "x = [[1, 2], [3, 4]]\nx:1:0",
             LProg(
                 [LVal("x", "(.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]])")],
@@ -504,20 +518,20 @@ public static class SemanticExplorerCorpus
                 [".binary .eq (.resolve \"y\") (.listLiteral [.num 1, .num 2])"])),
         ("listIndexSelectedKindEqFalse", "[[1, 2]]:0 == (1, 2)",
             LProg([],
-                [".binary .eq (.index (.listLiteral [.listLiteral [.num 1, .num 2]]) (.num 0)) (.block (alg [] [] [] [.num 1, .num 2]))"])),
+                [".binary .eq (.index (.listLiteral [.listLiteral [.num 1, .num 2]]) (.num 0)) (.capture [.num 1, .num 2])"])),
         ("orderIndex0", "[3, 1, 2].order:0",
             LProg([],
                 [".index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) \"order\" none) (.num 0)"])),
         ("nestedWrittenArg", "F(a, b) = a\nF(((1, 2)), 3)",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
-                [LCall("F", "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))", ".num 3")])),
+                [LCall("F", "(.capture [(.capture [.num 1, .num 2])])", ".num 3")])),
         ("writtenSlotArity", "F(a, b) = a + b\nF(((1, 2)))",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.binary .add (.param \"a\") (.param \"b\")])"],
-                [LCall("F", "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2]))]))")])),
+                [LCall("F", "(.capture [(.capture [.num 1, .num 2])])")])),
         ("mixedSingleGrouped", "F(x, *y, z) = y\nA = (1, 2, 3, 4)\nF(A)",
             LProg(
                 ["privateProp \"F\" (algWithParameters [{ name := \"x\" }, { name := \"y\", kind := .collecting }, { name := \"z\" }] [] [] [.param \"y\"])",
-                 LVal("A", "(.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]))")],
+                 LVal("A", "(.capture [.num 1, .num 2, .num 3, .num 4])")],
                 [LCall("F", ".resolve \"A\"")])),
         ("sumEmpty", "sum(())", LProg([], [LCall("sum", ".emptySequence 0")])),
         // Spread-with-sibling slots inside a written sequence literal, and the
@@ -527,24 +541,24 @@ public static class SemanticExplorerCorpus
         // counted core (spread slots splice; a written `()` slot stays visible).
         ("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x*, 99)",
             LProg([LVal("x", Pair12)],
-                [".block (alg [] [] [] [.sequenceSpread (.resolve \"x\"), .num 99])"])),
+                [".capture [.sequenceSpread (.resolve \"x\"), .num 99]"])),
         ("spreadEmptyBetween", "(1*, (), 2*)",
-            LProg([], [".block (alg [] [] [] [.sequenceSpread (.num 1), .emptySequence 0, .sequenceSpread (.num 2)])"])),
+            LProg([], [".capture [.sequenceSpread (.num 1), .emptySequence 0, .sequenceSpread (.num 2)]"])),
         ("rootSpreadExtra", "A = (1, 2)\nA*, 99",
             LProg([LVal("A", Pair12)], [".sequenceSpread (.resolve \"A\")", ".num 99"])),
         ("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*",
             LProg([LVal("A", Pair12)],
-                [".sequenceSpread (.block (alg [] [] [] [(.block (alg [] [] [] [.sequenceSpread (.resolve \"A\"), .num 99]))]))"])),
+                [".sequenceSpread (.capture [(.capture [.sequenceSpread (.resolve \"A\"), .num 99])])"])),
         ("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)",
             LProg([LVal("P", Pair12)],
-                [".binary .eq (.block (alg [] [] [] [.sequenceSpread (.resolve \"P\"), .num 99])) (.block (alg [] [] [] [.num 1, .num 2, .num 99]))"])),
+                [".binary .eq (.capture [.sequenceSpread (.resolve \"P\"), .num 99]) (.capture [.num 1, .num 2, .num 99])"])),
         ("loopSpreadHistoryFlat",
             "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0",
             LProg(
-                ["privateProp \"Step\" (algWithParameterPatterns [.sequenceValue [.capture { name := \"history\", kind := .collecting }], .capture { name := \"previous\" }] [] [] [.block (alg [] [] [] [.sequenceSpread (.param \"history\"), .binary .add (.param \"previous\") (.num 1)]), .binary .add (.param \"previous\") (.num 1)])"],
-                [".index (.dotCall (.resolve \"Step\") \"repeat\" (some (alg [] [] [] [.num 2, " + Pair12 + ", .num 2]))) (.num 0)"])),
+                ["privateProp \"Step\" (algWithParameterPatterns [.sequenceValue [.capture { name := \"history\", kind := .collecting }], .capture { name := \"previous\" }] [] [] [.capture [.sequenceSpread (.param \"history\"), .binary .add (.param \"previous\") (.num 1)], .binary .add (.param \"previous\") (.num 1)])"],
+                [".index (.dotCall (.resolve \"Step\") \"repeat\" (some [.num 2, " + Pair12 + ", .num 2])) (.num 0)"])),
         ("ifBranchSeq", "if(1, (1, 2), 3)",
-            LProg([], [LCall("if", ".num 1", "(.block (alg [] [] [] [.num 1, .num 2]))", ".num 3")])),
+            LProg([], [LCall("if", ".num 1", "(.capture [.num 1, .num 2])", ".num 3")])),
         ("divZero", "1 / 0", LProg([], [".binary .div (.num 1) (.num 0)"])),
         ("negativeResult", "0 - 1", LProg([], [".binary .sub (.num 0) (.num 1)"])),
         ("strEq", "'ab' == 'ab'", LProg([], [".binary .eq (.stringLiteral \"ab\") (.stringLiteral \"ab\")"])),
@@ -573,22 +587,22 @@ public static class SemanticExplorerCorpus
         ("listEmptySeqSpreadBetween", "[1, ()*, 2]",
             LProg([], [".listLiteral [.num 1, .sequenceSpread (.emptySequence 0), .num 2]"])),
         ("listNeSeq", "[1, 2] == (1, 2)",
-            LProg([], [".binary .eq (.listLiteral [.num 1, .num 2]) (.block (alg [] [] [] [.num 1, .num 2]))"])),
+            LProg([], [".binary .eq (.listLiteral [.num 1, .num 2]) (.capture [.num 1, .num 2])"])),
         ("listEmptyNeEmptySeq", "[] == ()",
             LProg([], [".binary .eq (.listLiteral []) (.emptySequence 0)"])),
         ("listSingletonNeItem", "[7] == 7",
             LProg([], [".binary .eq (.listLiteral [.num 7]) (.num 7)"])),
         ("listWrapCanonicalizes", "([1, 2]) == [1, 2]",
-            LProg([], [".binary .eq (.block (alg [] [] [] [.listLiteral [.num 1, .num 2]])) (.listLiteral [.num 1, .num 2])"])),
+            LProg([], [".binary .eq (.capture [.listLiteral [.num 1, .num 2]]) (.listLiteral [.num 1, .num 2])"])),
         ("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = A*\nB == (1, 2, 3)",
             LProg(
                 [LVal("A", "(.listLiteral [.num 1, .num 2, .num 3])"),
                  "privateProp \"B\" (alg [] [] [] [.sequenceSpread (.resolve \"A\")])"],
-                [".binary .eq (.resolve \"B\") (.block (alg [] [] [] [.num 1, .num 2, .num 3]))"])),
+                [".binary .eq (.resolve \"B\") (.capture [.num 1, .num 2, .num 3])"])),
         ("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
-                [".binary .eq (.resolve \"rest\") (.block (alg [] [] [] [.num 2, .num 3]))"])),
+                [".binary .eq (.resolve \"rest\") (.capture [.num 2, .num 3])"])),
         ("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]",
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["x", "rest"], 1, "rest")],
@@ -596,19 +610,19 @@ public static class SemanticExplorerCorpus
         ("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])",
             LProg(
                 ["privateProp \"Target\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])",
-                 "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") (alg [] [] [] [.param \"items\"])])"],
+                 "privateProp \"Use\" (alg [\"items\"] [] [] [.call (.resolve \"Target\") [.param \"items\"]])"],
                 [LCall("Use", "(.listLiteral [.num 1, .num 2])")])),
         ("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)",
             LProg(
                 ["privateProp \"Collect\" (algWithParameters [{ name := \"items\", kind := .collecting }] [] [] [.param \"items\"])"],
-                [".dotCall (.listLiteral [.num 7]) \"map\" (some (alg [] [] [] [.resolve \"Collect\"]))"])),
+                [".dotCall (.listLiteral [.num 7]) \"map\" (some [.resolve \"Collect\"])"])),
         ("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)",
             LProg(
                 ["privateProp \"F\" (algWithParameters [{ name := \"first\" }, { name := \"middle\", kind := .collecting }, { name := \"last\" }] [] [] [.param \"middle\"])"],
-                [".dotCall (.listLiteral [.block (alg [] [] [] [.num 1, .num 2, .num 3, .num 4])]) \"map\" (some (alg [] [] [] [.resolve \"F\"]))"])),
+                [".dotCall (.listLiteral [.capture [.num 1, .num 2, .num 3, .num 4]]) \"map\" (some [.resolve \"F\"])"])),
         ("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*",
             LProg([LVal("A", List12)],
-                [".sequenceSpread (.block (alg [] [] [] [.resolve \"A\", .num 9]))"])),
+                [".sequenceSpread (.capture [.resolve \"A\", .num 9])"])),
         ("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)",
             LProg(["privateProp \"F\" (alg [\"a\", \"b\"] [] [] [.param \"a\"])"],
                 [LCall("F", List12, ".num 3")])),
@@ -618,7 +632,7 @@ public static class SemanticExplorerCorpus
         // Spread of a DIRECT written block whose output is missing: the
         // operand stays syntactically a Block, so evaluation takes the
         // specialized Block arm of the spread-operand evaluator on both
-        // sides (Lean `evalSequenceSpreadOperandItems` `.block`; C#
+        // sides (Lean `evalSequenceSpreadOperandItems` `.algorithmExpr`; C#
         // `EvalSequenceSpreadOperandItems`). Pinned as the spread-specific
         // error at every spread position, identical to the resolved-name
         // spelling (T4-2 — this arm was previously uncovered).
@@ -653,7 +667,7 @@ public static class SemanticExplorerCorpus
         ("minScalar", "min(7)", LProg([], [LCall("min", ".num 7")])),
         ("minEmpty", "min(())", LProg([], [LCall("min", ".emptySequence 0")])),
         ("minNestedItem", "min(((1, 2), 3))",
-            LProg([], [LCall("min", $"(.block (alg [] [] [] [{Pair12}, .num 3]))")])),
+            LProg([], [LCall("min", $"(.capture [{Pair12}, .num 3])")])),
         ("minDot", "x = 3, 1, 2\nx.min",
             LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"min\" none"])),
         ("maxSeq", "max((3, 1, 2))", LProg([], [LCall("max", Seq312)])),
@@ -662,33 +676,33 @@ public static class SemanticExplorerCorpus
         ("maxDot", "x = 3, 1, 2\nx.max",
             LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"max\" none"])),
         ("firstSeq", "first((1, 2, 3))",
-            LProg([], [LCall("first", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")])),
+            LProg([], [LCall("first", "(.capture [.num 1, .num 2, .num 3])")])),
         ("firstScalar", "first(7)", LProg([], [LCall("first", ".num 7")])),
         ("firstListElementStaysExact", "first([[1, 2], 3])",
             LProg([], [LCall("first", $"(.listLiteral [{List12}, .num 3])")])),
         ("firstEmptyItem", "first(((), 1))",
-            LProg([], [LCall("first", "(.block (alg [] [] [] [.emptySequence 0, .num 1]))")])),
+            LProg([], [LCall("first", "(.capture [.emptySequence 0, .num 1])")])),
         ("firstEmpty", "first(())", LProg([], [LCall("first", ".emptySequence 0")])),
         ("firstDot", "x = 1, 2, 3\nx.first",
-            LProg([LVal("x", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")],
+            LProg([LVal("x", "(.capture [.num 1, .num 2, .num 3])")],
                 [".dotCall (.resolve \"x\") \"first\" none"])),
         ("lastSeq", "last((1, 2, 3))",
-            LProg([], [LCall("last", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")])),
+            LProg([], [LCall("last", "(.capture [.num 1, .num 2, .num 3])")])),
         ("lastListElementStaysExact", "last([1, [2, 3]])",
             LProg([], [LCall("last", "(.listLiteral [.num 1, .listLiteral [.num 2, .num 3]])")])),
         ("lastEmpty", "last(())", LProg([], [LCall("last", ".emptySequence 0")])),
         ("orderDescSeq", "orderDesc((1, 3, 2))",
-            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.num 1, .num 3, .num 2]))")])),
+            LProg([], [LCall("orderDesc", "(.capture [.num 1, .num 3, .num 2])")])),
         ("orderDescList", "orderDesc([2, 1])",
             LProg([], [LCall("orderDesc", "(.listLiteral [.num 2, .num 1])")])),
         ("orderDescDuplicates", "orderDesc((2, 1, 2))",
-            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.num 2, .num 1, .num 2]))")])),
+            LProg([], [LCall("orderDesc", "(.capture [.num 2, .num 1, .num 2])")])),
         ("orderDescScalar", "orderDesc(7)", LProg([], [LCall("orderDesc", ".num 7")])),
         ("orderDescEmpty", "orderDesc(())", LProg([], [LCall("orderDesc", ".emptySequence 0")])),
         ("orderDescString", "orderDesc(('b', 'a'))",
-            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.stringLiteral \"b\", .stringLiteral \"a\"]))")])),
+            LProg([], [LCall("orderDesc", "(.capture [.stringLiteral \"b\", .stringLiteral \"a\"])")])),
         ("orderDescDot", "x = 1, 3, 2\nx.orderDesc",
-            LProg([LVal("x", "(.block (alg [] [] [] [.num 1, .num 3, .num 2]))")],
+            LProg([LVal("x", "(.capture [.num 1, .num 3, .num 2])")],
                 [".dotCall (.resolve \"x\") \"orderDesc\" none"])),
         ("whileCountdown", "S(a) = a - 1, a > 1\nwhile(S, 3)",
             LProg([WhileCountdownStep], [LCall("while", ".resolve \"S\"", ".num 3")])),
@@ -706,17 +720,17 @@ public static class SemanticExplorerCorpus
                 [LCall("while", ".resolve \"S\"", ".num 1")])),
         ("whileDot", "S(a) = a - 1, a > 1\nS.while(3)",
             LProg([WhileCountdownStep],
-                [".dotCall (.resolve \"S\") \"while\" (some (alg [] [] [] [.num 3]))"])),
+                [".dotCall (.resolve \"S\") \"while\" (some [.num 3])"])),
         ("containsSequenceItem", "contains(((1, 2), 3), (1, 2))",
-            LProg([], [LCall("contains", $"(.block (alg [] [] [] [{Pair12}, .num 3]))", Pair12)])),
+            LProg([], [LCall("contains", $"(.capture [{Pair12}, .num 3])", Pair12)])),
         ("containsListItem", "contains([[1, 2], 3], [1, 2])",
             LProg([], [LCall("contains", $"(.listLiteral [{List12}, .num 3])", List12)])),
         ("containsEmptyItem", "contains(((), 1), ())",
-            LProg([], [LCall("contains", "(.block (alg [] [] [] [.emptySequence 0, .num 1]))", ".emptySequence 0")])),
+            LProg([], [LCall("contains", "(.capture [.emptySequence 0, .num 1])", ".emptySequence 0")])),
         ("containsScalarCollection", "contains(7, 7)",
             LProg([], [LCall("contains", ".num 7", ".num 7")])),
         ("containsAcrossKinds", "contains(([1, 2], 3), (1, 2))",
-            LProg([], [LCall("contains", $"(.block (alg [] [] [] [{List12}, .num 3]))", Pair12)])),
+            LProg([], [LCall("contains", $"(.capture [{List12}, .num 3])", Pair12)])),
 
         // ----- open / visibility (Track 10) -----------------------------------
         // Name resolution, `open`, and visibility had ZERO cases in either
@@ -784,15 +798,15 @@ public static class SemanticExplorerCorpus
             "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA",
             LProg(
                 [
-                    "privateProp \"A\" (alg [] [(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])), "
-                        + "(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []))] [] [.resolve \"X\"])",
+                    "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])), "
+                        + "(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []))] [] [.resolve \"X\"])",
                 ],
                 [ResolveA])),
 
         ("openInlineBlock", "A = {\n    open { public X = 101 }\n    X\n}\nA",
             LProg(
                 [
-                    "privateProp \"A\" (alg [] [(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
+                    "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
                         + "[] [.resolve \"X\"])",
                 ],
                 [ResolveA])),
@@ -800,7 +814,7 @@ public static class SemanticExplorerCorpus
         ("openInlineBlockPrivateHidden", "A = {\n    open { X = 101 }\n    X\n}\nA(707)",
             LProg(
                 [
-                    "privateProp \"A\" (alg [\"X\"] [(.block (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] []))] "
+                    "privateProp \"A\" (alg [\"X\"] [(.algorithmExpr (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] []))] "
                         + "[] [.param \"X\"])",
                 ],
                 [CallA707])),
@@ -876,7 +890,7 @@ public static class SemanticExplorerCorpus
                 [
                     "privateProp \"Lib\" (alg [] [] [publicProp \"count\" (alg [] [] [] [.num 101])] [])",
                     "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] "
-                        + "[(.call (.resolve \"count\") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]))])",
+                        + "[(.call (.resolve \"count\") [(.listLiteral [.num 1, .num 2, .num 3])])])",
                 ],
                 [ResolveA])),
 
@@ -935,9 +949,9 @@ public static class SemanticExplorerCorpus
 
     private const string ResolveA = ".resolve \"A\"";
 
-    private const string CallA707 = "(.call (.resolve \"A\") (alg [] [] [] [.num 707]))";
+    private const string CallA707 = "(.call (.resolve \"A\") [.num 707])";
 
-    private const string Seq312 = "(.block (alg [] [] [] [.num 3, .num 1, .num 2]))";
+    private const string Seq312 = "(.capture [.num 3, .num 1, .num 2])";
 
     /// <summary>`S(a) = a - 1, a > 1` — a terminating one-slot `while` step.</summary>
     private const string WhileCountdownStep =
@@ -948,9 +962,9 @@ public static class SemanticExplorerCorpus
         "privateProp \"S\" (alg [\"a\"] [] [] [.param \"a\", .num 0])";
 
     private const string PairOfPairs =
-        "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))";
+        "(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])";
 
-    private const string Pair12 = "(.block (alg [] [] [] [.num 1, .num 2]))";
+    private const string Pair12 = "(.capture [.num 1, .num 2])";
 
     private const string List12 = "(.listLiteral [.num 1, .num 2])";
 
@@ -959,7 +973,7 @@ public static class SemanticExplorerCorpus
     /// <summary>`{A = 1}` — a written block with one private property and no output rows.</summary>
     private const string NoOutputAlg = "(alg [] [] [privateProp \"A\" (alg [] [] [] [.num 1])] [])";
 
-    private const string NoOutputBlock = $"(.block {NoOutputAlg})";
+    private const string NoOutputBlock = $"(.algorithmExpr {NoOutputAlg})";
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
     //
@@ -974,17 +988,18 @@ public static class SemanticExplorerCorpus
     private static Expr ScNum(int n) => new Expr.Num(n);
     private static Expr ScEmpty() => new Expr.EmptySequence(0);
 
-    private static Expr ScBlock(params Expr[] outputs) => new Expr.Block(new Algorithm.User(
-        Parent: null, Parameters: [], Opens: [], Properties: [], Output: outputs));
+    // Written-group leaves are Capture nodes since the OutputBundle split,
+    // matching the Lean-side `(.capture [...])` encodings below.
+    private static Expr ScBlock(params Expr[] outputs) => new Expr.Capture(new OutputBundle(outputs));
 
     private static Expr Sc(params Expr[] leaves)
         => leaves.Aggregate((left, right) => new Expr.SequenceConstruct(left, right));
 
     private static Expr ScCall(string builtin, params Expr[] args) => new Expr.Call(
         new Expr.Resolve(builtin),
-        new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [.. args]));
+        args);
 
-    private const string LScPair12 = "(.block (alg [] [] [] [.num 1, .num 2]))";
+    private const string LScPair12 = "(.capture [.num 1, .num 2])";
 
     public static IReadOnlyList<InternalNodeCase> InternalNodeCases() =>
     [
@@ -1014,7 +1029,7 @@ public static class SemanticExplorerCorpus
             "(1, 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_p12_p34", "SequenceConstruct of two pairs preserves nested structure",
             () => Sc(ScBlock(ScNum(1), ScNum(2)), ScBlock(ScNum(3), ScNum(4))),
-            $".sequenceConstruct {LScPair12} (.block (alg [] [] [] [.num 3, .num 4]))",
+            $".sequenceConstruct {LScPair12} (.capture [.num 3, .num 4])",
             "((1, 2), (3, 4))", InternalNodeRelation.IntentionallyEqual),
         new("sc_spread_3", "SequenceConstruct[(1,2)*, 3] splices the spread leaf",
             () => Sc(new Expr.SequenceSpread(ScBlock(ScNum(1), ScNum(2))), ScNum(3)),
@@ -1022,23 +1037,23 @@ public static class SemanticExplorerCorpus
             "((1, 2)*, 3)", InternalNodeRelation.IntentionallyEqual),
         new("sc_count_arg", "count of the internal node observes the ()-dropped value",
             () => ScCall("count", Sc(ScEmpty(), ScNum(1))),
-            ".call (.resolve \"count\") (alg [] [] [] [.sequenceConstruct (.emptySequence 0) (.num 1)])",
+            ".call (.resolve \"count\") [.sequenceConstruct (.emptySequence 0) (.num 1)]",
             "count(((), 1))", InternalNodeRelation.IntentionallyDifferent),
         new("sc_take_collection", "a SequenceConstruct collection argument binds like the grouped surface form",
             () => ScCall("take", Sc(ScNum(1), ScNum(2), ScNum(5)), ScNum(2)),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2])",
+            ".call (.resolve \"take\") [.sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 5), .num 2]",
             "take((1, 2, 5), 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_take_collection_empty", "() leaf vanishes from a SequenceConstruct collection argument (written parens keep it)",
             () => ScCall("take", Sc(ScEmpty(), ScNum(1), ScNum(2)), ScNum(2)),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2), .num 2])",
+            ".call (.resolve \"take\") [.sequenceConstruct (.sequenceConstruct (.emptySequence 0) (.num 1)) (.num 2), .num 2]",
             "take(((), 1, 2), 2)", InternalNodeRelation.IntentionallyDifferent),
         new("sc_take_block_leaf", "a nested pair inside a SequenceConstruct collection argument stays one item",
             () => ScCall("take", Sc(ScNum(1), ScBlock(ScNum(2), ScNum(5))), ScNum(2)),
-            ".call (.resolve \"take\") (alg [] [] [] [.sequenceConstruct (.num 1) (.block (alg [] [] [] [.num 2, .num 5])), .num 2])",
+            ".call (.resolve \"take\") [.sequenceConstruct (.num 1) (.capture [.num 2, .num 5]), .num 2]",
             "take((1, (2, 5)), 2)", InternalNodeRelation.IntentionallyEqual),
         new("sc_sum_arg", "sum of the internal node matches the grouped surface form",
             () => ScCall("sum", Sc(ScNum(1), ScNum(2))),
-            ".call (.resolve \"sum\") (alg [] [] [] [.sequenceConstruct (.num 1) (.num 2)])",
+            ".call (.resolve \"sum\") [.sequenceConstruct (.num 1) (.num 2)]",
             "sum((1, 2))", InternalNodeRelation.IntentionallyEqual),
         // Call-FUNCTION position: the internal node cannot resolve to an
         // algorithm (structured payload "sequence construct expression",
@@ -1048,8 +1063,8 @@ public static class SemanticExplorerCorpus
         new("sc_call_function", "SequenceConstruct in call-function position is notAnAlgorithm",
             () => new Expr.Call(
                 Sc(ScNum(1), ScNum(2)),
-                new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [ScNum(3)])),
-            ".call (.sequenceConstruct (.num 1) (.num 2)) (alg [] [] [] [.num 3])",
+                [ScNum(3)]),
+            ".call (.sequenceConstruct (.num 1) (.num 2)) [.num 3]",
             "X = (1, 2)\nX(3)", InternalNodeRelation.IntentionallyDifferent),
     ];
 

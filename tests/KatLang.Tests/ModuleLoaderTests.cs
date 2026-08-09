@@ -68,9 +68,10 @@ public class ModuleLoaderTests
         => expr switch
         {
             Expr.Call(Expr.Resolve("load"), _) => true,
-            Expr.Call(var function, var args) => ContainsRawLoad(function) || ContainsRawLoad(args),
-            Expr.Block(var algorithm) => ContainsRawLoad(algorithm),
-            Expr.DotCall(var target, _, var args) => ContainsRawLoad(target) || (args is not null && ContainsRawLoad(args)),
+            Expr.Call(var function, var args) => ContainsRawLoad(function) || args.Any(ContainsRawLoad),
+            Expr.AlgorithmExpr(var algorithm) => ContainsRawLoad(algorithm),
+            Expr.Capture(var captureBody) => captureBody.Any(row => ContainsRawLoad(row)),
+            Expr.DotCall(var target, _, var args) => ContainsRawLoad(target) || (args is not null && args.Any(ContainsRawLoad)),
             Expr.Unary(_, var operand) => ContainsRawLoad(operand),
             Expr.Binary(_, var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
             Expr.Index(var target, var selector) => ContainsRawLoad(target) || ContainsRawLoad(selector),
@@ -91,7 +92,7 @@ public class ModuleLoaderTests
                 string.Join("; ", result.Diagnostics
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
                     .Select(d => d.Message)));
-        return Evaluator.RunFlat(new Expr.Block(result.Root));
+        return Evaluator.RunFlat(new Expr.AlgorithmExpr(result.Root));
     }
 
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
@@ -582,7 +583,7 @@ public class ModuleLoaderTests
         // sitting in a joined expression is not silently skipped.
         var rawLoad = new Expr.Call(
             new Expr.Resolve("load"),
-            new Algorithm.User(null, [], [], [], [new Expr.StringLiteral("https://katlang.org/x.kat")]));
+            [new Expr.StringLiteral("https://katlang.org/x.kat")]);
 
         Assert.True(ContainsRawLoad(new Expr.SequenceConstruct(new Expr.Num(1), rawLoad)));
         Assert.True(ContainsRawLoad(new Expr.SequenceConstruct(rawLoad, new Expr.Num(1))));
@@ -623,7 +624,7 @@ public class ModuleLoaderTests
             """;
 
         var result = Parser.Parse(source);
-        var evalResult = Evaluator.Run(new Expr.Block(result.Root));
+        var evalResult = Evaluator.Run(new Expr.AlgorithmExpr(result.Root));
         Assert.True(evalResult.IsOk);
         Assert.IsType<Result.Str>(evalResult.Value);
         Assert.Equal("hello", ((Result.Str)evalResult.Value).Value);

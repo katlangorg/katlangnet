@@ -1,4 +1,4 @@
--- KatLang v0.8.154 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
+-- KatLang v0.8.156 (core AST + semantics + while/repeat init boundaries + higher-order alg params + conditional algorithms + first-class strings)
 -- Core semantics are authoritative. Surface syntax handled externally except
 -- where noted (implicit parameter detection, while/repeat init boundaries).
 -- Load elaboration is handled entirely in the front-end / elaboration layer;
@@ -743,8 +743,8 @@ mutual
     --   `sequenceSpread`, and never builds this node).
     --   It is NOT the representation of written sequence-value syntax: the
     --   C# surface parser and production transformations have zero origin
-    --   sites for it — parenthesized lists parse to zero-parameter blocks
-    --   and `()` to emptySequence; visitors only rebuild an existing node.
+    --   sites for it — surviving parenthesized lists parse to `capture`
+    --   nodes and `()` to emptySequence; visitors only rebuild an existing node.
     --   The exported `sequenceConstruct` helper (and the public C# AST API)
     --   is the intentional external origin mechanism. Its value evaluation
     --   DROPS `()` leaves (join semantics), which written parentheses never
@@ -784,11 +784,37 @@ mutual
     --   `[]` are all distinct values. C#: `Expr.ListLiteral`.
     | listLiteral : List Expr -> Expr
     | resolve : Ident -> Expr
-    | block   : Algorithm -> Expr
-    | call    : Expr -> Algorithm -> Expr
-    | dotCall : Expr -> Ident -> Option Algorithm -> Expr    -- a.f or a.f(args)
+    -- * algorithmExpr: an algorithm used in expression position, exposing
+    --   ALGORITHM IDENTITY: the contained algorithm owns its lexical scope
+    --   (parameters, properties, `open`, declaration namespace) and the
+    --   expression participates in value, algorithm/callable, and
+    --   namespace/`open` interpretation. Surface form: `{ ... }` brace
+    --   algorithm literals (also elaborated modules and recovery trees).
+    --   C#: `Expr.AlgorithmExpr`.
+    | algorithmExpr : Algorithm -> Expr
+    -- * capture: a surviving parenthesized capture boundary over an
+    --   OutputBundle (an ordered list of written expression rows with no
+    --   lexical ownership — the `OutputBundle` abbreviation is declared after
+    --   this mutual block). Written parentheses PERFORM capture
+    --   (`capture : Supply -> Value`): evaluation supplies the rows through
+    --   the shared output-row loop and canonically captures them as one
+    --   value. CAPTURE IS NOT ALGORITHM IDENTITY: the algorithm channel sees
+    --   only a zero-parameter output thunk over the bundle, never the
+    --   algorithm identity of anything inside it. Redundant parentheses
+    --   normalize away at parse time (C# parser); only meaningful boundaries
+    --   survive as this node. C#: `Expr.Capture`.
+    | capture : List Expr -> Expr
+    -- Call/dot-call arguments are an ordered OutputBundle of the ORIGINAL
+    -- written argument expressions (spelled `List Expr` inside this mutual
+    -- block), evaluated transparently in the caller's lexical context — never
+    -- an Algorithm: an argument list owns no scope, and each slot participates
+    -- independently in the value channel and (where permitted) the algorithm
+    -- channel. `dotCall`'s `none` means NO argument-list syntax (`a.f`);
+    -- `some []` is an explicit empty list (`a.f()`). C#: `Expr.Call`/`Expr.DotCall`.
+    | call    : Expr -> List Expr -> Expr
+    | dotCall : Expr -> Ident -> Option (List Expr) -> Expr    -- a.f or a.f(args)
     -- NOTE: load('url') is surface-only syntax, represented as Call(Resolve("load"), ...)
-    -- in the parser and elaborated to Block(...) by the load elaboration pass.
+    -- in the parser and elaborated to algorithmExpr(...) by the load elaboration pass.
     -- It is NOT a core Expr constructor.  See load elaboration section below.
     deriving Repr
 
@@ -895,6 +921,22 @@ mutual
         ScopeCtx
     deriving Repr
 end
+
+/-- An ordered sequence of original written expression slots with no lexical
+    ownership of its own: no parent scope, no parameters, no properties, no
+    `open`. It is intensional syntax — how the slots contribute values or
+    items is determined entirely by the RECEIVER that consumes the bundle:
+    algorithm output evaluation preserves per-row emitted-count semantics,
+    `Expr.capture` performs canonical sequence capture, and
+    `Expr.listLiteral` collects the slots as one exact list value. It
+    deliberately does NOT encode a fixed runtime consumption policy and is
+    NOT a list of evaluated results. (`Algorithm.mk`'s `output` field, the
+    `capture`/`listLiteral` constructor payloads, and the `call`/`dotCall`
+    argument payloads are this type; the constructors inside the mutual block
+    above spell it `List Expr` because the abbreviation cannot be declared
+    before `Expr` exists.)
+    C#: `OutputBundle`. -/
+abbrev OutputBundle := List Expr
 
 /-- Surface same-name clause-group classification.
   Front-ends must decide ordinary-vs-conditional elaboration only after
@@ -1342,7 +1384,10 @@ namespace Algorithm
     | .mk _ _ _ pr _ => pr
     | .builtin _ => []
     | .conditional _ _ _ => []
-  def output : Algorithm -> List Expr
+  /-- The algorithm's output as an `OutputBundle` — ordered original written
+      expression rows. The algorithm is the scope-owning DEFINITION of this
+      bundle; the bundle itself owns no scope. -/
+  def output : Algorithm -> OutputBundle
     | .mk _ _ _ _ out => out
     | .builtin _ => []
     | .conditional _ _ _ => []
@@ -1680,15 +1725,17 @@ mutual
         validateExplicitParamOutputInvariantExpr operand
     | .listLiteral items =>
         items.forM validateExplicitParamOutputInvariantExpr
-    | .block alg =>
+    | .algorithmExpr alg =>
         validateExplicitParamOutputInvariant alg
+    | .capture rows =>
+        rows.forM validateExplicitParamOutputInvariantExpr
     | .call fn args => do
         validateExplicitParamOutputInvariantExpr fn
-        validateExplicitParamOutputInvariant args
+        args.forM validateExplicitParamOutputInvariantExpr
     | .dotCall target _ args? => do
         validateExplicitParamOutputInvariantExpr target
         match args? with
-        | some args => validateExplicitParamOutputInvariant args
+        | some args => args.forM validateExplicitParamOutputInvariantExpr
         | none => pure ()
 end
 
@@ -2035,7 +2082,9 @@ def resultToExpr : Result -> Expr
       if isEmptySequenceChain (.sequenceValue rs) then
         .emptySequence 0
       else
-        .block (Algorithm.mk none [] [] [] (rs.map resultToExpr))
+        -- A reified sequence value is a capture of its already-evaluated
+        -- items — a value boundary, not an algorithm.
+        .capture (rs.map resultToExpr)
   -- Exact list values reify as list literals so they round-trip losslessly
   -- (a reified `()` element stays one visible list element).
   | .listValue rs => .listLiteral (rs.map resultToExpr)
@@ -2433,7 +2482,7 @@ def negativeIntPow (base exponent : Int) : EvalM Result :=
     OpenForm is the *post-elaboration* set of permitted open expressions.
     Surface-level `load('url')` calls (represented as `Call(Resolve("load"), ...)`)
     may appear in source open lists, but the load elaboration pass MUST rewrite
-    every such call into `Expr.block` before open resolution or validation runs.
+    every such call into `Expr.algorithmExpr` before open resolution or validation runs.
 
     Note: the C# parser produces DotCall for all dot syntax (e.g. `Lib.Sub`).
     `DotCall(obj, name, none)` is the canonical form for open dot paths.
@@ -2456,15 +2505,18 @@ def negativeIntPow (base exponent : Int) : EvalM Result :=
     open-form validation, so no accepted SequenceSpread ever reaches open
     resolution. -/
 inductive OpenForm where
-  | block   : Algorithm -> OpenForm
+  | algorithmExpr : Algorithm -> OpenForm
   | resolve : Ident -> OpenForm
   | dotCall : Expr -> Ident -> OpenForm     -- a.f (no-arg dotCall)
 
 def Expr.openForm? : Expr -> Option OpenForm
-  | .block a         => some (.block a)
+  | .algorithmExpr a => some (.algorithmExpr a)
+  -- A capture is a value boundary, not algorithm/namespace identity, so
+  -- `open (M)` is NOT an open form: it is rejected by open-form validation
+  -- with badOpenForm, exactly like a spread-marked target.
   | .resolve n       => some (.resolve n)
   | .dotCall o n none => some (.dotCall o n)
-  | _                => none          -- dotCall with args, call, and all other forms are rejected
+  | _                => none          -- capture, dotCall with args, call, and all other forms are rejected
 
 def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
@@ -2482,7 +2534,8 @@ def Expr.kind : Expr -> String
   | .sequenceSpread _    => "spread"
   | .listLiteral _ => "listLiteral"
   | .resolve _    => "resolve"
-  | .block _      => "block"
+  | .algorithmExpr _ => "algorithmExpr"
+  | .capture _    => "capture"
   | .call _ _     => "call"
   | .dotCall _ _ _  => "dotCall"
 
@@ -2545,7 +2598,8 @@ def openExprName (e : Expr) : String :=
       openExprName target ++ ":" ++
         (if openExprNameIndexSelectorNeedsParens selector then "(" ++ selectorName ++ ")"
          else selectorName)
-  | .block _ => "(inline library)"
+  | .algorithmExpr _ => "(inline library)"
+  | .capture _ => "(inline library)"
   -- SequenceConstruct is an internal value node; ';' is not surface syntax,
   -- so render it as one sequence value, never with ';'.
   | .sequenceConstruct a b => "(" ++ openExprName a ++ ", " ++ openExprName b ++ ")"
@@ -2590,7 +2644,8 @@ partial def exprDiagnosticName : Expr -> String
   -- Exact list literal `[a, b, c]`.
   | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
-  | .block algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
+  | .algorithmExpr algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
+  | .capture rows => "(" ++ String.intercalate ", " (rows.map exprDiagnosticName) ++ ")"
   | .call fn _ => exprDiagnosticName fn ++ "(...)"
   | .dotCall target name none => exprDiagnosticName target ++ "." ++ name
   | .dotCall target name (some _) => exprDiagnosticName target ++ "." ++ name ++ "(...)"
@@ -2794,19 +2849,29 @@ def matchCountedCallBranches (bs : List CondBranch) (args : List CountedResult)
 -- they never call back into eval/evalCounted/applyBuiltin and friends, so
 -- Lean checks them as ordinary total definitions.
 
-/-- Treat simple zero-parameter block expressions uniformly as
-    value/output structures in argument position.
+/-- True when an argument expression supplies ONLY a value in argument
+    position. A capture is a value boundary: it suppresses the algorithm
+    identity of anything inside it, so higher-order probing never sees the
+    enclosed content as callable.
 
-    This rule is shared by builtin lazy-argument preparation and higher-order
-    argument probing. Callability is not inferred from output count: both
-    `{123}` and `{1, 2}` stay on the value side, while inline blocks with
-    parameters, properties, or opens may still resolve as algorithms.
-
-    Preserving zero-parameter inline blocks as values keeps sequence-value argument
-    boundaries intact for calls such as `first((1, 2), (3, 4))` without
-    relying on parser rewriting. -/
+    `algorithmExpr` is deliberately NOT value-only: an algorithm block
+    explicitly exposes its contained Algorithm on the algorithm channel
+    regardless of parameter/declaration/output count — `{42}` is as much an
+    Algorithm as `{a + 1}` — while the value channel reifies the written slot
+    independently. -/
 def shouldWrapArgExprAsValue : Expr -> Bool
-  | .block alg =>
+  | .capture _ => true
+  | _ => false
+
+/-- Builtin argument adapters reify each written slot as one value-producing
+    adapter. A zero-declaration algorithm block slot keeps its one-slot value
+    boundary here (written-slot reification: `repeat(step, n, {1, 2})`
+    supplies ONE initial state slot), exactly as before the block's algorithm
+    identity became visible to user-call higher-order binding. Blocks with
+    parameters, properties, or opens still resolve as algorithms for
+    algorithm-consuming builtin arguments (callbacks). -/
+def zeroDeclarationBlockValueSlot : Expr -> Bool
+  | .algorithmExpr alg =>
       (Algorithm.params alg).isEmpty
         && (Algorithm.opens alg).isEmpty
         && (Algorithm.props alg).isEmpty
@@ -3263,13 +3328,18 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-/-- Recognize a parenthesized spread receiver such as `(Arg*)`:
-    a bare zero-parameter block whose single output is a `sequenceSpread`.
+/-- Recognize a parenthesized spread receiver such as `(Arg*)`: a capture
+    whose single row is a `sequenceSpread` (or the observationally equivalent
+    bare zero-parameter block shape, kept for host-built ASTs).
     This explicit spread form is the only receiver shape that may feed its
     top-level items into a leading flat collecting parameter. -/
 def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
   match receiver with
-  | .block (.mk none [] [] [] [supplied]) =>
+  | .capture [supplied] =>
+      match supplied with
+      | .sequenceSpread _ => some supplied
+      | _ => none
+  | .algorithmExpr (.mk none [] [] [] [supplied]) =>
       match supplied with
       | .sequenceSpread _ => some supplied
       | _ => none
@@ -3289,7 +3359,7 @@ def hasLeadingFlatCollectingParameter (callee : Algorithm) : Bool :=
   | .capture { kind := .collecting, .. } :: rest => allFlatCaptures rest
   | _ => false
 
-/-- Assemble the argument algorithm for ordinary lexical dot-call fallback:
+/-- Assemble the argument bundle for ordinary lexical dot-call fallback:
     `receiver.F(C, D)` evaluates as `F(receiver, C, D)`.
 
     The injected receiver is always ONE leading argument segment for slot
@@ -3305,11 +3375,9 @@ def hasLeadingFlatCollectingParameter (callee : Algorithm) : Bool :=
     canonical `F(Arg*, C, D)`. Fixed receiver parameters keep even a
     spread receiver as one argument boundary. -/
 def prepareLexicalDotCallArgs
-    (callee : Algorithm) (receiver : Expr) (extraArgs : Option Algorithm)
-    : Algorithm × List Bool :=
-  let explicitArgs := match extraArgs with
-    | some args => Algorithm.output args
-    | none => []
+    (callee : Algorithm) (receiver : Expr) (extraArgs : Option OutputBundle)
+    : OutputBundle × List Bool :=
+  let explicitArgs := extraArgs.getD []
   let receiverHasLeadingFlatCollecting := hasLeadingFlatCollectingParameter callee
   let (receiverExpr, preserveReceiverBoundary) :=
     match parenthesizedSequenceSpreadReceiver? receiver with
@@ -3321,7 +3389,7 @@ def prepareLexicalDotCallArgs
     | none => (receiver, !receiverHasLeadingFlatCollecting)
   let outputExprs := [receiverExpr] ++ explicitArgs
   let preserveBoundaries := [preserveReceiverBoundary] ++ explicitArgs.map (fun _ => false)
-  (Algorithm.mk none [] [] [] outputExprs, preserveBoundaries)
+  (outputExprs, preserveBoundaries)
 
 
 --------------------------------------------------------------------------
@@ -3362,11 +3430,18 @@ def prepareLexicalDotCallArgs
     - Structural access `Lib.PrivateSub.X` in code → OK (uses Algorithm.lookupProp, sees private)
     - `open Lib` does NOT expose private properties of Lib (filtered by lookupOpens) -/
 def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
-  -- This match mirrors `Expr.openForm?` case-for-case (block / resolve /
-  -- no-arg dotCall / reject-the-rest) but matches the expression directly so
-  -- the dotted-path recursion is visibly structural. Keep the two in sync.
+  -- This match mirrors `Expr.openForm?` case-for-case (algorithmExpr /
+  -- resolve / no-arg dotCall / reject-the-rest) but matches the
+  -- expression directly so the dotted-path recursion is visibly structural.
+  -- Keep the two in sync.
   match e with
-  | .block a => pure (wireOpenBlockToGlobalScope ctx a)
+  | .algorithmExpr a => pure (wireOpenBlockToGlobalScope ctx a)
+  -- A capture is a value boundary, never algorithm/namespace identity:
+  -- `open` consumes algorithm identity, so a captured target such as
+  -- `open (M)` is not openable. Top-level capture targets are already
+  -- rejected by resolveAllOpens' open-form validation; this arm is reached
+  -- through dotted-path recursion (`open (X).B`) and prebuilt ASTs.
+  | .capture _ => throw (Error.badOpenForm "captured value groups cannot be opened")
   | .resolve n =>
     match ctx.callStack with
     | a::_ =>
@@ -3416,8 +3491,9 @@ def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) 
   -- Deduplicate by key (first occurrence wins); inline blocks use positional keys
   let tagged := rawOpens.mapIdx (fun idx e =>
     let key := match e with
-      | .block _ => s!"(inline#{idx})"   -- * unique per original position, never deduped
-      | _        => openExprName e
+      | .algorithmExpr _ => s!"(inline#{idx})"   -- * unique per original position, never deduped
+      | .capture _        => s!"(inline#{idx})"
+      | _                 => openExprName e
     (key, e))
   let mut seen : List String := []
   let mut acc : List (Prod String Expr) := []
@@ -3624,7 +3700,13 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
     .error (Error.notAnAlgorithm "sequence construct expression")
   | .sequenceSpread _ =>
     .error (Error.notAnAlgorithm "spread expression")
-  | .block a => pure (wireToCaller ctx a)
+  | .algorithmExpr a => pure (wireToCaller ctx a)
+  -- Capture is not algorithm identity: the algorithm channel sees only a
+  -- zero-parameter value thunk over the bundle, exactly as the pre-split
+  -- transparent wrapper behaved. `(F)(1)` therefore stays an arity error and
+  -- `Apply((Increment))` never receives Increment's callable identity.
+  -- C#: `CaptureValueThunk`.
+  | .capture rows => pure (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
   | .resolve n =>
       match ctx.callStack with
       | a::_ => lookupLexical a n ctx
@@ -3653,7 +3735,7 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorith
     match e with
     | .param name => (ctx.countedParamEnv.lookup name).isSome || (env.lookup name).isSome
     | _ => false
-  if shouldWrapArgExprAsValue e || shouldUseValueSide then
+  if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e || shouldUseValueSide then
     pure (wireToCaller ctx (Algorithm.ofExpr e))
   else
     match <- evalAttempt (resolveAlg e ctx) with
@@ -3684,9 +3766,9 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Algorith
     Non-builtin call paths are unaffected — user-defined calls still evaluate
     arguments eagerly through the expression-position call path
     (`evalCallExpr` / `evalCallCountedExpr`). -/
-def resolveArgAlgsWithSequenceSpread (args : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+def resolveArgAlgsWithSequenceSpread (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
     : EvalM (List ResolvedArgumentAlgorithm) :=
-  (Algorithm.output args).mapM (fun e => do
+  args.mapM (fun e => do
     let alg <- resolveArgAlgExpr e ctx env
     let spreadsSequence :=
       match e with
@@ -3696,16 +3778,16 @@ def resolveArgAlgsWithSequenceSpread (args : Algorithm) (ctx : EvalCtx) (env : V
 
 /-- Try to resolve each argument expression to an algorithm.
     Returns `some alg` for expressions that resolve, `none` for those that don't
-    (e.g., numeric literals, arithmetic). Simple zero-parameter inline blocks
-    are intentionally treated as value/output structures here, regardless of
-    whether they emit one value or many, so higher-order probing never grants
-    them callable `AlgEnv` bindings based on output count. Only liftable
+    (e.g., numeric literals, arithmetic). Every `algorithmExpr` contributes its
+    contained algorithm regardless of declaration/output count. A `capture`
+    contributes only its zero-parameter value thunk, never the algorithm
+    identity of an expression it contains. Only liftable
     errors → none; genuine lookup failures propagate.
     Used by the shared call argument-slot assembly
     (`collectVariadicCallItems`, serving every callable shape) to build AlgEnv
     for higher-order algorithm parameters. -/
-def tryResolveArgAlgs (args : Algorithm) (ctx : EvalCtx) : EvalM (List (Option Algorithm)) :=
-  (Algorithm.output args).mapM (fun e => do
+def tryResolveArgAlgs (args : OutputBundle) (ctx : EvalCtx) : EvalM (List (Option Algorithm)) :=
+  args.mapM (fun e => do
     if shouldWrapArgExprAsValue e then
       pure none
     else
@@ -4075,26 +4157,63 @@ mutual
         match a with
         | .mk _ _ _ _ [] => .error Error.missingOutput
         | _ => pure ()
-        let pushedCtx := EvalCtx.push a ctx
-        let rec collect : List Expr -> List Result -> Nat -> EvalM PreparedAlgorithmOutput
-          | [], acc, emitted =>
-              let outputSlots := acc.reverse
-              pure {
-                counted := (combineOutputSlots outputSlots, emitted),
-                outputSlots := outputSlots
-              }
-          | expr :: rest, acc, emitted => do
-              let out <- evalCounted expr pushedCtx env
-              match expr with
-              | .sequenceSpread _ =>
-                  collect rest ((countedTopLevelValues out).reverse ++ acc) (emitted + out.snd)
-              | _ =>
-                  -- A non-spread output is always one visible slot, even when it is
-                  -- the empty sequence value (). Only an explicit spread can
-                  -- contribute zero items.
-                  let slotCount := if out.snd = 0 then 1 else out.snd
-                  collect rest (out.fst :: acc) (emitted + slotCount)
-        collect (Algorithm.output a) [] 0
+        evalOutputRowsPreparedCore (Algorithm.output a) (EvalCtx.push a ctx) env
+
+  /-- The ONE shared output-row supply loop: evaluates ordered `OutputBundle`
+      rows left to right (a spread row contributes its supplied items, a
+      non-spread row contributes exactly one slot) and combines the collected
+      slots into one canonical value (`combineOutputSlots`). Algorithm output
+      evaluation reaches it after pushing the algorithm's own scope;
+      `Expr.capture` evaluation reaches it directly with the surrounding
+      context, because a capture owns no scope. Both receivers therefore share
+      exactly the same supply semantics rather than duplicating them.
+      C#: `EvalOutputRowsPreparedCore`. -/
+  partial def evalOutputRowsPreparedCore
+      (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv)
+      : EvalM PreparedAlgorithmOutput := do
+    let rec collect : List Expr -> List Result -> Nat -> EvalM PreparedAlgorithmOutput
+      | [], acc, emitted =>
+          let outputSlots := acc.reverse
+          pure {
+            counted := (combineOutputSlots outputSlots, emitted),
+            outputSlots := outputSlots
+          }
+      | expr :: rest, acc, emitted => do
+          let out <- evalCounted expr rowCtx env
+          match expr with
+          | .sequenceSpread _ =>
+              collect rest ((countedTopLevelValues out).reverse ++ acc) (emitted + out.snd)
+          | _ =>
+              -- A non-spread output is always one visible slot, even when it is
+              -- the empty sequence value (). Only an explicit spread can
+              -- contribute zero items.
+              let slotCount := if out.snd = 0 then 1 else out.snd
+              collect rest (out.fst :: acc) (emitted + slotCount)
+    collect rows [] 0
+
+  /-- Evaluates a `Expr.capture` body's rows in the surrounding context (a
+      capture owns no scope, so nothing is pushed) through the shared
+      output-row supply loop. The multi-item emitted count is preserved here;
+      value-position consumers re-count at the capture's value boundary
+      (`Result.valueCount`). An empty bundle captures the empty sequence value.
+      C#: `EvalCapturePreparedCore`. -/
+  partial def evalCapturePreparedCore
+      (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM PreparedAlgorithmOutput :=
+    evalOutputRowsPreparedCore rows ctx env
+
+  partial def evalCaptureCountedCore
+      (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    let out <- evalCapturePreparedCore rows ctx env
+    pure out.counted
+
+  /-- Evaluates a capture body to its single canonical captured value. -/
+  partial def evalCaptureValue
+      (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM Result := do
+    let out <- evalCaptureCountedCore rows ctx env
+    pure out.fst
 
   /-- Counted projection of the shared prepared algorithm-output evaluation. -/
   partial def evalAlgOutputCountedCore
@@ -4673,47 +4792,61 @@ mutual
     pure out.fst
 
   partial def evalVariadicCallItemCounted (e : Expr) (ctx : EvalCtx)
-      (argEvalCtx : EvalCtx) (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
+      (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
       : EvalM CountedResult := do
     if exposeInlineBlockTopLevel then
       match e with
-      | .block a =>
+      -- A grouped receiver keeps its multi-item emitted count as the injected
+      -- leading argument segment (no value-boundary re-count), for both the
+      -- capture form and a zero-parameter scoped block.
+      | .capture rows =>
+          evalCaptureCountedCore rows ctx env
+      | .algorithmExpr a =>
           let wired := wireToCaller ctx a
           if (Algorithm.params wired).length = 0 then
             evalAlgOutputCounted wired ctx env
           else
-            evalCounted e argEvalCtx env
+            evalCounted e ctx env
       | _ =>
-          evalCounted e argEvalCtx env
+          evalCounted e ctx env
     else
-      evalCounted e argEvalCtx env
+      evalCounted e ctx env
 
   /-- Evaluate one non-expanded call argument. Patterned calls additionally need the written
-      output-slot view of a zero-parameter parenthesized block; obtain both products from
-      `evalAlgOutputPreparedCore` in one pass. A multi-parameter block remains on the ordinary
-      dual algorithm/value fallback and is not forced to manufacture explicit items. -/
+      output-slot view of a capture or zero-parameter `algorithmExpr`; obtain both products from
+      the corresponding prepared-output evaluator in one pass. A multi-parameter algorithm
+      remains on the ordinary dual algorithm/value fallback and is not forced to manufacture explicit items.
+      Argument slots evaluate directly in the CALLER's context: the bundle owns
+      no scope, so there is no argument-level lexical frame (the pre-Track-B
+      transparent args wrapper was an empty caller-wired level, so lookup
+      behavior is unchanged by its removal). -/
   partial def evalVariadicCallItemPrepared (e : Expr) (ctx : EvalCtx)
-      (argEvalCtx : EvalCtx) (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
+      (env : ValEnv) (exposeInlineBlockTopLevel : Bool)
       (includeExplicitItems : Bool) : EvalM PreparedCallArgumentEvaluation := do
     if includeExplicitItems then
       match e with
-      | .block a =>
-          let blockCtx := if exposeInlineBlockTopLevel then ctx else argEvalCtx
-          let wired := wireToCaller blockCtx a
+      | .capture rows => do
+          let prepared <- evalCapturePreparedCore rows ctx env
+          let counted :=
+            if exposeInlineBlockTopLevel then prepared.counted
+            else reCountValueBoundary prepared.counted
+          pure { counted := counted, explicitItems? := some prepared.outputSlots }
+      | .algorithmExpr a =>
+          let wired := wireToCaller ctx a
           if (Algorithm.params wired).length = 0 then do
-            let prepared <- evalAlgOutputPreparedCore wired blockCtx env
+            let prepared <- evalAlgOutputPreparedCore wired ctx env
             let counted :=
               if exposeInlineBlockTopLevel then prepared.counted
               else reCountValueBoundary prepared.counted
             pure { counted := counted, explicitItems? := some prepared.outputSlots }
           else do
-            let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+            let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
             pure { counted := counted }
       | _ => do
-          let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+          let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
           pure { counted := counted }
     else do
-      let counted <- evalVariadicCallItemCounted e ctx argEvalCtx env exposeInlineBlockTopLevel
+      let counted <- evalVariadicCallItemCounted e ctx env exposeInlineBlockTopLevel
       pure { counted := counted }
 
   /-- Shared call argument-slot assembly used by EVERY callable shape (flat
@@ -4727,18 +4860,17 @@ mutual
       representation never influences the meaning of caller-side spread.
       Dot-call receiver segments honor `preserveArgBoundaries` (an injected
       receiver stays one boundary and is never expanded). When
-      `includeExplicitItems` is set (patterned callees), a non-spread written
-      zero-parameter block also records its written item slots for
+      `includeExplicitItems` is set (patterned callees), a non-spread capture or
+      zero-parameter `algorithmExpr` also records its written item slots for
       sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
-  partial def collectVariadicCallItems (wiredArgs : Algorithm)
+  partial def collectVariadicCallItems (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       (includeExplicitItems : Bool := false)
       : EvalM (List VariadicItem) := do
-    let maybeAlgs <- tryResolveArgAlgs wiredArgs ctx
-    let argEvalCtx := EvalCtx.push wiredArgs ctx
+    let maybeAlgs <- tryResolveArgAlgs args ctx
     let hasExplicitBoundaryFlags := !preserveArgBoundaries.isEmpty
     let argBoundaryFlags :=
-      (List.range (Algorithm.output wiredArgs).length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
+      (List.range args.length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
         (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
@@ -4758,7 +4890,7 @@ mutual
       | e :: es, ma :: mas, preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
               (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
@@ -4771,7 +4903,7 @@ mutual
       | e :: es, [], preserveBoundary :: preserveBoundaries, isReceiver, acc => do
           let expand :=
             shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
               (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
@@ -4783,7 +4915,7 @@ mutual
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env false
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env false
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
             loop es mas [] false
@@ -4797,22 +4929,22 @@ mutual
             match e with
             | .sequenceSpread _ => true
             | _ => false
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx argEvalCtx env false
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env false
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
             loop es [] [] false
               (appendCounted prepared.counted none expand prepared.explicitItems? acc)
           | .error err => .error err
-    loop (Algorithm.output wiredArgs) maybeAlgs argBoundaryFlags true []
+    loop args maybeAlgs argBoundaryFlags true []
 
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
       The call argument stream is already the receiver for parameter binding: a
       plain sequence-valued argument contributes one item, while explicit spread
       contributes the operand's items. -/
-  partial def bindDeconstructionUserCall (callee : Algorithm) (wiredArgs : Algorithm)
+  partial def bindDeconstructionUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
@@ -4833,26 +4965,38 @@ mutual
         match a with
         | .mk _ _ _ _ [] => .error Error.missingOutput
         | _ => pure ()
-        let pushedCtx := EvalCtx.push a ctx
-        let rec collect : List Expr -> List Result -> EvalM (List Result)
-          | [], acc => pure acc.reverse
-          | e :: rest, acc => do
-              let values <- evalExplicitSequenceValueExprSlots e pushedCtx env
-              collect rest (values.reverse ++ acc)
-        collect (Algorithm.output a) []
+        evalExplicitSequenceValueRowSlots (Algorithm.output a) (EvalCtx.push a ctx) env
+
+  /-- The shared written-slot loop over ordered bundle rows: each row
+      contributes its explicit written slots. Algorithm-shaped groupings reach
+      it after pushing their own scope; a `Expr.capture` body reaches it
+      directly (captures own no scope).
+      C#: `EvalExplicitSequenceValueRowSlots`. -/
+  partial def evalExplicitSequenceValueRowSlots (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv)
+      : EvalM (List Result) := do
+    let rec collect : List Expr -> List Result -> EvalM (List Result)
+      | [], acc => pure acc.reverse
+      | e :: rest, acc => do
+          let values <- evalExplicitSequenceValueExprSlots e rowCtx env
+          collect rest (values.reverse ++ acc)
+    collect rows []
 
   partial def evalExplicitSequenceValueExprSlots (expr : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
     match expr with
-    | .block algorithm => do
+    -- A nested written grouping level materializes exactly one item, combined
+    -- with the same shallow singleton-erasing rule as ordinary capture
+    -- evaluation (`combineOutputSlots`). A singleton group such as `(A)` IS
+    -- its single already-evaluated item and an all-spread-empty group is `()`
+    -- -- never a literal-unwritable orphan such as `(5)`. Both node kinds keep
+    -- this written-slot view: a capture body directly, and a zero-parameter
+    -- scoped block through its algorithm.
+    | .capture rows => do
+        let items <- evalExplicitSequenceValueRowSlots rows ctx env
+        pure [combineOutputSlots items]
+    | .algorithmExpr algorithm => do
         let wired := wireToCaller ctx algorithm
         if (Algorithm.params wired).length = 0 then
-          -- A nested zero-parameter block is one written grouping level: it
-          -- materializes exactly one item, combined with the same shallow
-          -- singleton-erasing rule as ordinary block evaluation
-          -- (`combineOutputSlots`). A singleton group such as `(A)` IS its
-          -- single already-evaluated item and an all-spread-empty group is
-          -- `()` -- never a literal-unwritable orphan such as `(5)`.
           let items <- evalExplicitSequenceValueItems wired ctx env
           pure [combineOutputSlots items]
         else
@@ -4870,21 +5014,21 @@ mutual
         -- supplies the value's items into the surrounding item slots.
         pure [out.fst]
 
-  partial def bindPatternedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
+  partial def bindPatternedUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
       (includeExplicitItems := true)
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
 
-  partial def bindFlatFixedUserCall (callee : Algorithm) (wiredArgs : Algorithm)
+  partial def bindFlatFixedUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (ValEnv × AlgEnv) := do
     let params := Algorithm.params callee
     -- Shared argument-slot assembly (spread expansion happens there, before
     -- any arity checking).
-    let items <- collectVariadicCallItems wiredArgs ctx env
+    let items <- collectVariadicCallItems args ctx env
     let slots := items.map (fun item =>
       { value? := item.value?, algorithm? := item.algorithm?, error? := item.error? : FlatFixedCallSlot })
     if slots.length > params.length then
@@ -4918,15 +5062,14 @@ mutual
       `reCountValueBoundary`). A multi-output body therefore becomes one sequence
       value (count 1); only a caller-site spread `value*`
       re-spreads it. -/
-  partial def evalUserCallCounted (callee : Algorithm) (args : Algorithm)
+  partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM CountedResult := do
-    let wiredArgs := wireToCaller ctx args
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee wiredArgs ctx env preserveArgBoundaries
+            bindPatternedUserCall callee args ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -4936,7 +5079,7 @@ mutual
       | some _ =>
           -- Any top-level variadic binds the supplied call argument stream.
           let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries
+            bindDeconstructionUserCall callee args ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -4944,7 +5087,7 @@ mutual
           reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
       | none =>
       do
-        let (argEnv, algBindings) <- bindFlatFixedUserCall callee wiredArgs ctx env
+        let (argEnv, algBindings) <- bindFlatFixedUserCall callee args ctx env
         let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
           (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
         reCountValueBoundary <$> evalAlgOutputCounted callee newCtx (argEnv ++ env)
@@ -4956,10 +5099,10 @@ mutual
       other callable shape. Clause matching needs plain values, so an
       algorithm-only argument surfaces its value-evaluation error.
       C#: `EvalConditionalCallArguments`. -/
-  partial def evalConditionalCallArguments (wiredArgs : Algorithm)
+  partial def evalConditionalCallArguments (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool)
       : EvalM (List Result) := do
-    let items <- collectVariadicCallItems wiredArgs ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
     items.mapM (fun item =>
       match item.value? with
       | some value => pure value
@@ -4970,11 +5113,10 @@ mutual
       value boundary, so its public result re-counts the emitted arity to
       `Result.valueCount` (via `reCountValueBoundary`) -- a multi-output branch
       becomes one sequence value (count 1), matching `if` and plain calls. -/
-  partial def evalConditionalCallCounted (callee : Algorithm) (args : Algorithm)
+  partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
-    let wiredArgs := wireToCaller ctx args
-    let argResults <- evalConditionalCallArguments wiredArgs ctx env preserveArgBoundaries
+    let argResults <- evalConditionalCallArguments args ctx env preserveArgBoundaries
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else
@@ -4989,7 +5131,7 @@ mutual
           .error (Error.noMatchingBranch calleeName)
 
   /-- Dispatch an already-resolved callee in ordinary evaluation. -/
-  partial def evalResolvedCall (callee : Algorithm) (args : Algorithm)
+  partial def evalResolvedCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (preserveArgBoundaries : List Bool := []) : EvalM Result := do
     match callee with
@@ -5003,7 +5145,7 @@ mutual
     | _ => evalUserCall callee args ctx env preserveArgBoundaries
 
   /-- Dispatch an already-resolved callee in counted evaluation. -/
-  partial def evalResolvedCallCounted (callee : Algorithm) (args : Algorithm)
+  partial def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
     match callee with
@@ -5018,7 +5160,7 @@ mutual
 
   /-- Context-aware counted call evaluation for expression position;
       attaches `CtxMsg.call` to resolution and dispatch errors. -/
-  partial def evalCallCountedExpr (f : Expr) (args : Algorithm)
+  partial def evalCallCountedExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
@@ -5048,7 +5190,7 @@ mutual
     pure [{ algorithm := countedArgAlgorithm receiverOut, spreadsSequence := false }]
 
   partial def trySequenceBuiltinDotCall
-      (name : Ident) (receiver : Expr) (extraArgs : Option Algorithm)
+      (name : Ident) (receiver : Expr) (extraArgs : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (Builtin × List ResolvedArgumentAlgorithm)) := do
     match <- evalAttempt (resolveAlg (.resolve name) ctx) with
     | .ok (.builtin b) =>
@@ -5076,7 +5218,7 @@ mutual
       The injected receiver is one leading argument segment; sequence builtin
       dot-call expansion is handled before this path. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
-      (extraArgs : Option Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+      (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match <- trySequenceBuiltinDotCall name receiver extraArgs ctx env with
     | some (b, args) =>
       applyBuiltinCountedResolved b args ctx env
@@ -5109,7 +5251,7 @@ mutual
       arguments in the current evaluation context. This is intentionally local
       to one run and must not be interpreted as memoizing arbitrary calls or as
       changing the semantic behavior of dotCall itself. -/
-  partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
+  partial def evalDotCallCounted (target : Expr) (name : Ident) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match <- evalAttempt (resolveAlg target ctx) with
     | .ok targetAlg =>
@@ -5158,14 +5300,24 @@ mutual
 
   /-- Evaluate a spread operand and supply its immediate items. Spreading an
       operand that has no defined output is the spread-specific
-      `spreadMissingOutput` error on EVERY operand shape — the direct `.block`
-      specialization translates a missing-output failure exactly like the
-      generic arm, so `{A = 1}*` and `X = {A = 1}` / `X*` agree.
+      `spreadMissingOutput` error on EVERY operand shape — the direct
+      `.algorithmExpr`/`.capture` specializations translate a missing-output
+      failure exactly like the generic arm, so `{A = 1}*` and
+      `X = {A = 1}` / `X*` agree.
       C#: `EvalSequenceSpreadOperandItems`. -/
   partial def evalSequenceSpreadOperandItems (e : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM (List Result) := do
     match e with
-    | .block a =>
+    | .capture rows =>
+        match <- evalAttempt (evalCaptureValue rows ctx env) with
+        | .ok value =>
+            pure value.spreadItems
+        | .error err =>
+            if isMissingOutputError err then
+              .error Error.spreadMissingOutput
+            else
+              .error err
+    | .algorithmExpr a =>
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
           match <- evalAttempt (evalAlgOutput wired ctx env) with
@@ -5218,7 +5370,7 @@ mutual
       explicit spread slot opens its operand's immediate items into the list
       being constructed (an empty spread contributes no elements), a non-spread
       slot is one element even when it evaluates to the empty sequence value
-      `()`, and a nested zero-parameter block is one written grouping level.
+      `()`, and a nested capture or zero-parameter `algorithmExpr` is one written grouping level.
       Unlike sequence construction the collected elements are stored EXACTLY:
       no singleton erasure and no empty canonicalization, so `[7]`, `[[7]]`,
       `[]`, and `[()]` are all distinct list values. A list literal always
@@ -5239,7 +5391,7 @@ mutual
       leaf whose value is `()` contributes NO item (an empty join
       contribution), an explicit spread leaf opens its operand's immediate
       items into the constructed sequence, and the result is normalized.
-      Written parentheses parse to zero-parameter blocks and always keep a
+      Written parentheses parse to `capture` nodes and always keep a
       non-spread `()` item visible — surface syntax must never route through
       this node (see the constructor note on `Expr.sequenceConstruct`).
       C#: `EvalSequenceConstructCounted`; plain `eval` is this function's
@@ -5303,13 +5455,19 @@ mutual
         evalSequenceSpreadCounted e ctx env
     | .listLiteral elements =>
         evalListLiteralCounted elements ctx env
-    | .block a => do
+    | .algorithmExpr a => do
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
           let r <- evalAlgOutput wired ctx env
           pure (r, Result.valueCount r)
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+    | .capture rows => do
+        -- A capture in value position is a value boundary: the body's supply
+        -- is captured to one canonical value and re-counted as that value's
+        -- valueCount.
+        let r <- evalCaptureValue rows ctx env
+        pure (r, Result.valueCount r)
     | .resolve n => do
         match ctx.callStack with
         | owner :: _ =>
@@ -5351,9 +5509,10 @@ mutual
 
       If both succeed, the parameter gets both meanings. If only one succeeds,
       only that view is bound. If both fail, the ordinary eager-evaluation
-      error is propagated. Zero-parameter inline block arguments are excluded
-      from the `AlgEnv` side by `tryResolveArgAlgs`; they remain ordinary
-      value/output structures regardless of output count.
+      error is propagated. Every `algorithmExpr` contributes its contained
+      algorithm to the `AlgEnv` side regardless of declaration/output count;
+      a `capture` contributes only its fresh zero-parameter value thunk and
+      never exposes contained algorithm identity.
 
           Flat fixed calls bind call-site structure: each comma argument is one
           argument expression, while a bare `sequenceSpread` expression explicitly
@@ -5361,15 +5520,14 @@ mutual
           expressions, including `.atoms`, remain one argument expression. Earlier
           explicit argument positions stay distinct on the eager value side even if
           some later arguments bind only through `AlgEnv`. -/
-  partial def evalUserCall (callee : Algorithm) (args : Algorithm)
+  partial def evalUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
       : EvalM Result := do
-    let wiredArgs := wireToCaller ctx args
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee wiredArgs ctx env preserveArgBoundaries
+            bindPatternedUserCall callee args ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5380,7 +5538,7 @@ mutual
           -- Any top-level collecting parameter (lone collecting binding or comma deconstruction) binds
           -- through the shared item-supply matcher.
           let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee wiredArgs ctx env preserveArgBoundaries
+            bindDeconstructionUserCall callee args ctx env preserveArgBoundaries
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5388,7 +5546,7 @@ mutual
           evalAlgOutput callee newCtx (argEnv ++ env)
       | none =>
       do
-        let (argEnv, algBindings) <- bindFlatFixedUserCall callee wiredArgs ctx env
+        let (argEnv, algBindings) <- bindFlatFixedUserCall callee args ctx env
         let newCtx := (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
           (CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee))
         evalAlgOutput callee newCtx (argEnv ++ env)
@@ -5412,14 +5570,13 @@ mutual
       **Assumes uniform output arity**: after validation (validateBranchOutputArities),
       all branches produce the same top-level output arity.  The evaluator does
       not re-check this at runtime. -/
-  partial def evalConditionalCall (callee : Algorithm) (args : Algorithm)
+  partial def evalConditionalCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       (preserveArgBoundaries : List Bool := []) : EvalM Result := do
-    let wiredArgs := wireToCaller ctx args
     -- Shared argument-slot assembly: explicit spread expands into ordinary
     -- argument slots BEFORE clause matching, so a multi-clause callee sees
     -- the same argument supply as every other callable shape.
-    let argResults <- evalConditionalCallArguments wiredArgs ctx env preserveArgBoundaries
+    let argResults <- evalConditionalCallArguments args ctx env preserveArgBoundaries
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else
@@ -5434,7 +5591,7 @@ mutual
           .error (Error.noMatchingBranch calleeName)
 
   /-- Context-aware direct call evaluation for expression position. -/
-  partial def evalCallExpr (f : Expr) (args : Algorithm)
+  partial def evalCallExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCall callee args ctx env (openExprName f)
@@ -5447,7 +5604,7 @@ mutual
       path only discards the emitted-count metadata. The CoreTests dot-call
       projection parity guards pin this equivalence (values, error
       diagnostics, and evaluator state) case by case. -/
-  partial def evalDotCall (target : Expr) (name : Ident) (argsOpt : Option Algorithm)
+  partial def evalDotCall (target : Expr) (name : Ident) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let out <- evalDotCallCounted target name argsOpt ctx env
     pure out.fst
@@ -5564,12 +5721,15 @@ mutual
         let out <- evalListLiteralCounted elements ctx env
         pure out.fst
 
-    | .block a =>
+    | .algorithmExpr a =>
         let wired := wireToCaller ctx a
         if (Algorithm.params wired).length = 0 then
           evalAlgOutput wired ctx env
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+
+    | .capture rows =>
+        evalCaptureValue rows ctx env
 
     | .resolve n => do
         match ctx.callStack with
@@ -5733,12 +5893,12 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
    return a sequence-value step result; multi-output steps intentionally
    become many next-state slots.
 
-   Expr.block semantics
-   --------------------
-   No tuple constructor exists in the Lean core AST; sequence-value construction
-   is expressed purely via `Expr.block`.  Free identifiers inside the block bubble up to
-   the enclosing algorithm through ParameterDetector, because the synthetic
-   block has no params of its own (non-parametrized).
+   Expr.capture semantics
+   ----------------------
+   No tuple constructor exists in the Lean core AST; written sequence-value
+   construction is expressed via `Expr.capture` over an OutputBundle of row
+   expressions.  Free identifiers inside a capture bubble up to the enclosing
+   algorithm through ParameterDetector, because a capture owns no scope.
 
    Examples
    --------
@@ -5782,16 +5942,18 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
 
    Desugaring
    ----------
-   The parser constructs two layers:
+   The parser constructs one algorithm and places it in the argument bundle:
 
    1. **Inline algorithm** (`inlineAlg`): the parametrized algorithm inferred
       from the brace body.  Free lowercase identifiers inside the body become
       implicit parameters via ParameterDetector, exactly as for `func`-style
       algorithms.  This is the algorithm that `{e}` denotes.
 
-   2. **Argument-wrapper algorithm** (`argsAlg`): a zero-parameter algorithm
-      whose single output expression is `Expr.block inlineAlg`.  This wrapper
-      is what the parser emits as the call/dotCall argument.
+   2. **Argument bundle**: call/dotCall arguments are an OutputBundle
+      (`List Expr`) of the original written argument expressions, consumed
+      directly in the caller's context.  The trailing brace lowers to the
+      single bundle slot `[Expr.algorithmExpr inlineAlg]` — there is no
+      argument-wrapper Algorithm.
 
    The trailing brace is therefore equivalent to parenthesised call syntax:
 
@@ -5801,27 +5963,33 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
    Lowered AST:
 
      Algo{e}
-       =>  call(resolve("Algo"), argsAlg)
-           where  argsAlg = Algorithm.mk(none, [], [], [], [Expr.block inlineAlg])
+       =>  call (resolve "Algo") [Expr.algorithmExpr inlineAlg]
 
      A.Apply{e}
-       =>  dotCall(resolve("A"), "Apply", some argsAlg)
-           where  argsAlg = Algorithm.mk(none, [], [], [], [Expr.block inlineAlg])
+       =>  dotCall (resolve "A") "Apply" (some [Expr.algorithmExpr inlineAlg])
 
-   Note: the parser does NOT pass `inlineAlg` as the args algorithm directly.
-   It always wraps it inside `Expr.block` within the zero-parameter `argsAlg`.
-   This allows `resolveAlg` to see the `Expr.block` node and return the inner
+   Note: the parser does NOT place `inlineAlg` in the bundle as a bare
+   Algorithm — a bundle slot is an Expr, and the brace algorithm always
+   appears as an `Expr.algorithmExpr` slot. This allows per-slot argument
+   resolution to see the `Expr.algorithmExpr` node and return the inner
    algorithm, which is essential for higher-order binding via AlgEnv.
+   (Per-expression Algorithm resolution remains separate from value
+   evaluation, and the runtime may still construct one-expression
+   Algorithm adapters — `Algorithm.ofExpr`, `countedArgAlgorithm`, the
+   capture value thunk — for deferred/lazy evaluation of individual
+   slots; those adapters are runtime machinery, not the source AST.)
 
-   Evaluation semantics of `Expr.block` in value position
-   ------------------------------------------------------
-   `Expr.block` represents an inline anonymous algorithm.  When evaluated
-   directly (not resolved as an algorithm via resolveAlg):
+   Evaluation semantics of `Expr.algorithmExpr` in value position
+   ---------------------------------------------------------------
+   `Expr.algorithmExpr` represents an inline anonymous algorithm.  When
+   evaluated directly (not resolved as an algorithm via resolveAlg):
    - 0-param block: auto-evaluates via evalAlgOutput (thunk semantics)
-   - parametrized block: returns arityMismatch (needs explicit arguments)
+   - block with parameters: returns arityMismatch (needs explicit arguments)
 
-   `resolveAlg(.block a)` always returns the algorithm (wired to caller scope),
-   regardless of parameter count.
+   `resolveAlg(.algorithmExpr a)` always returns the algorithm (wired to
+   caller scope), regardless of parameter count. `resolveAlg(.capture rows)`,
+   by contrast, returns only a fresh zero-parameter output thunk over the
+   bundle — capture is not algorithm identity.
 
    Higher-order flow
    -----------------
@@ -5830,12 +5998,12 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
      Algo = func(9)
      Algo{a + 1}
 
-   1. The parser emits `call(resolve("Algo"), argsAlg)` where
-      `argsAlg.output = [Expr.block inlineAlg]` and `inlineAlg.params = ["a"]`.
+   1. The parser emits `call (resolve "Algo") [Expr.algorithmExpr inlineAlg]`
+      where `inlineAlg.params = ["a"]`.
    2. `evalCallExpr` resolves `Algo` and dispatches through
       `evalResolvedCall` into `evalUserCall`.
-   3. `tryResolveArgAlgs` calls `resolveAlg(Expr.block inlineAlg)`, which
-      returns `inlineAlg` (wired to caller scope).
+   3. `tryResolveArgAlgs` calls `resolveAlg(Expr.algorithmExpr inlineAlg)` on
+      that bundle slot, which returns `inlineAlg` (wired to caller scope).
    4. The callee's `func` parameter is bound in AlgEnv to `inlineAlg`.
    5. When the callee evaluates `func(9)`, the value `9` is bound to `a` and
       the output `a + 1` evaluates to `10`.
@@ -5908,7 +6076,7 @@ def runResultM (e : Expr) : EvalM Result := do
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg], algEnv := [] }
   match e with
-  | .block a =>
+  | .algorithmExpr a =>
       let wired := wireToCaller ctx a
       if (Algorithm.params wired).length = 0 then
         evalProgramOutput wired ctx []
@@ -5937,8 +6105,9 @@ def param (s : Ident) : Expr := .param s
 def num (n : Int) : Expr := .num n
 def index (a i : Expr) : Expr := .index a i
 def resolve (n : Ident) : Expr := .resolve n
-def block (a : Algorithm) : Expr := .block a
-def call (f : Expr) (a : Algorithm) : Expr := .call f a
+def algorithmExpr (a : Algorithm) : Expr := .algorithmExpr a
+def capture (rows : OutputBundle) : Expr := .capture rows
+def call (f : Expr) (args : List Expr) : Expr := .call f args
 def dotCall (o : Expr) (n : Ident) : Expr := .dotCall o n none
 def sequenceConstruct (a b : Expr) : Expr := .sequenceConstruct a b
 def sequenceSpread (a : Expr) : Expr := .sequenceSpread a
@@ -6006,7 +6175,7 @@ inductive LoadPosition where
 /- **load elaboration judgment**
 
   The elaboration pass transforms surface `Call(Resolve("load"), ...)` nodes into
-  `Expr.block (parseModule (fetch url))` nodes.  `load` is NOT a core Expr
+  `Expr.algorithmExpr (parseModule (fetch url))` nodes.  `load` is NOT a core Expr
   constructor — it exists only as surface syntax represented via
   `call (resolve "load") (alg with output = [stringLiteral url])`.
   The elaborator extracts the URL from the stringLiteral argument and enforces:
@@ -6035,7 +6204,7 @@ inductive LoadPosition where
   which guarantees:
     1. Runtime `Expr.stringLiteral` nodes may remain as ordinary first-class values.
     2. No unresolved load calls remain (i.e., no `call (resolve "load") _` nodes).
-  All load directives have been replaced with `Expr.block` containing the
+  All load directives have been replaced with `Expr.algorithmExpr` containing the
   parsed and elaborated remote algorithm. The evaluator never sees unresolved
   load calls.
 
@@ -6057,13 +6226,14 @@ partial def postElabInvariant : Expr -> Bool
   | .sequenceSpread a       => postElabInvariant a
   | .listLiteral items      => items.all postElabInvariant
   | .call (.resolve "load") _ => false  -- unresolved load call
-  | .call f args     => postElabInvariant f && postElabInvariantAlg args
+  | .call f args     => postElabInvariant f && args.all postElabInvariant
   | .dotCall a _ args =>
       postElabInvariant a &&
       match args with
-      | some alg => postElabInvariantAlg alg
+      | some slots => slots.all postElabInvariant
       | none => true
-  | .block alg       => postElabInvariantAlg alg
+  | .algorithmExpr alg => postElabInvariantAlg alg
+  | .capture rows    => rows.all postElabInvariant
   | _                => true  -- param, num, resolve
 
 /-- Algorithm-level post-elaboration invariant: all contained expressions

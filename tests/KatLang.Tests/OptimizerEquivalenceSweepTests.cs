@@ -82,7 +82,7 @@ public class OptimizerEquivalenceSweepTests
         if (parsed.HasErrors)
             return;
 
-        var expr = new Expr.Block(parsed.Root);
+        var expr = new Expr.AlgorithmExpr(parsed.Root);
 
         var probe = Evaluator.RunCountedObserved(expr, ProbeLimits, enableOptimizations: false).Result;
         if (probe.IsError && SemanticExplorerHarness.ErrorCategory(probe.Error) == "evaluationStepLimitExceeded")

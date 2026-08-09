@@ -7,7 +7,7 @@ namespace KatLang;
 /// <para>
 /// <c>load</c> is a compile-time directive, NOT a runtime function.
 /// After this pass completes, no load calls remain in the AST — they are replaced
-/// with <see cref="Expr.Block"/> nodes containing the parsed remote algorithm.
+/// with <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
 /// </para>
 ///
 /// <para>Security: enforces domain allowlist, size limits, cycle detection, and optional
@@ -309,9 +309,9 @@ public sealed class ModuleLoader
         foreach (var prop in alg.Properties)
         {
             var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
-            // Unwrap only algorithm-valued single-block property bodies. This keeps
-            // plain sequence values such as (a, b) wrapped as one block value while
-            // still letting load-elaborated modules become direct property values.
+            // Unwrap only algorithm-valued single-block property bodies. A plain
+            // sequence value such as (a, b) stays one captured value boundary,
+            // while load-elaborated modules become direct property values.
             processedValue = processedValue.UnwrapSingleBlockPropertyBody();
             newProperties.Add(prop.WithValue(processedValue));
         }
@@ -349,11 +349,19 @@ public sealed class ModuleLoader
             case Expr.Call(var func, var args):
                 return new Expr.Call(
                     ProcessExpr(func, LoadContext.RuntimeExpr, depth + 1),
-                    ProcessAlgorithm(args, LoadContext.RuntimeExpr, depth + 1))
+                    new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList()))
                 { Span = expr.Span };
 
-            case Expr.Block(var alg):
-                return new Expr.Block(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
+            case Expr.AlgorithmExpr(var alg):
+                return new Expr.AlgorithmExpr(ProcessAlgorithm(alg, context, depth + 1)) { Span = expr.Span };
+
+            // Capture rows inherit the surrounding load context, exactly like
+            // list-literal elements and internal sequence joins: `X = (load('url'), 1)`
+            // elaborates where `X = [load('url')]` does.
+            case Expr.Capture(var captureBody):
+                return new Expr.Capture(new OutputBundle(
+                    captureBody.Select(row => ProcessExpr(row, context, depth + 1)).ToList()))
+                { Span = expr.Span };
 
             case Expr.Binary(var op, var left, var right):
                 return new Expr.Binary(op,
@@ -386,8 +394,8 @@ public sealed class ModuleLoader
                 { Span = expr.Span };
 
             // List-literal elements inherit the surrounding load context,
-            // exactly like parenthesized-group output slots (Expr.Block) and
-            // internal sequence joins: `X = [load('url')]` elaborates where
+            // exactly like capture rows (Expr.Capture) and internal sequence
+            // joins: `X = [load('url')]` elaborates where
             // `X = (load('url'), 1)` does.
             case Expr.ListLiteral(var items):
                 return new Expr.ListLiteral(
@@ -398,7 +406,9 @@ public sealed class ModuleLoader
                 return new Expr.DotCall(
                     ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr, depth + 1),
                     name,
-                    args is not null ? ProcessAlgorithm(args, LoadContext.RuntimeExpr, depth + 1) : null)
+                    args is not null
+                        ? new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
+                        : null)
                 {
                     Span = expr.Span,
                     MemberSpan = ((Expr.DotCall)expr).MemberSpan
@@ -422,7 +432,7 @@ public sealed class ModuleLoader
 
     // ── load processing ────────────────────────────────────────────────────────────────
 
-    private Expr ProcessLoad(Algorithm args, LoadContext context, SourceSpan? span, int depth)
+    private Expr ProcessLoad(OutputBundle args, LoadContext context, SourceSpan? span, int depth)
     {
         // 1. Position check: load only allowed in property definitions and open lists
         if (context == LoadContext.RuntimeExpr)
@@ -451,7 +461,7 @@ public sealed class ModuleLoader
         // 5. Cache check — an already-elaborated module splices without re-traversal,
         // so it charges no cumulative traversal depth.
         if (_cache.TryGetValue(normalized, out var cached))
-            return new Expr.Block(cached) { Span = span };
+            return new Expr.AlgorithmExpr(cached) { Span = span };
 
         // 6. Fetch + parse + splice
         return FetchAndSplice(normalized, span, depth);
@@ -461,16 +471,16 @@ public sealed class ModuleLoader
     /// Extracts a URL string from load arguments.
     /// Must be exactly one argument that is a string literal.
     /// </summary>
-    private string? ExtractLoadUrl(Algorithm args, SourceSpan? span)
+    private string? ExtractLoadUrl(OutputBundle args, SourceSpan? span)
     {
-        // load must have exactly 1 output (the URL) and no properties
-        if (args.Properties.Count != 0 || args.Output.Count != 1)
+        // load must have exactly 1 argument slot (the URL)
+        if (args.Count != 1)
         {
             ReportError("load requires exactly 1 argument (a URL string literal).", span);
             return null;
         }
 
-        var urlExpr = args.Output[0];
+        var urlExpr = args[0];
 
         // Must be a string literal
         if (urlExpr is Expr.StringLiteral(var url))
@@ -699,7 +709,7 @@ public sealed class ModuleLoader
             _sourceProcessingCancellationToken.ThrowIfCancellationRequested();
             _cache[normalizedUrl] = elaborated;
 
-            return new Expr.Block(elaborated) { Span = span };
+            return new Expr.AlgorithmExpr(elaborated) { Span = span };
         }
         catch (OperationCanceledException) when (_sourceProcessingCancellationToken.IsCancellationRequested)
         {

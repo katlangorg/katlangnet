@@ -8,7 +8,7 @@ namespace KatLang.Tests;
 /// spread directly joined to a right operand, from the era before a spread
 /// expression became its own expression-list slot — today `A*, B`). The parser
 /// and all current production transformations have ZERO ORIGIN SITES for it —
-/// written parentheses parse to <see cref="Expr.Block"/> /
+/// written parentheses parse to <see cref="Expr.Capture"/> /
 /// <see cref="Expr.EmptySequence"/>, and the elaboration visitors only
 /// REBUILD an existing node (they cannot introduce one into an AST that did
 /// not already contain it). The public AST API and Lean's `sequenceConstruct`
@@ -153,18 +153,16 @@ public class SequenceConstructContainmentTests
         var one = Assert.IsType<Expr.Num>(SingleRootOutput("(1)"));
         Assert.Equal(1m, one.Value);
 
-        // A parenthesized list is a zero-parameter block whose output slots are
-        // the items; a `()` item stays an EmptySequence slot.
-        var pair = Assert.IsType<Expr.Block>(SingleRootOutput("((), 1)"));
-        var pairAlg = Assert.IsType<Algorithm.User>(pair.Algorithm);
-        Assert.Collection(pairAlg.Output,
+        // A parenthesized list is a capture whose body slots are the items;
+        // a `()` item stays an EmptySequence slot.
+        var pair = Assert.IsType<Expr.Capture>(SingleRootOutput("((), 1)"));
+        Assert.Collection(pair.Body,
             item => Assert.IsType<Expr.EmptySequence>(item),
             item => Assert.Equal(1m, Assert.IsType<Expr.Num>(item).Value));
 
-        // A spread item inside parentheses is a SequenceSpread slot in the block.
-        var spread = Assert.IsType<Expr.Block>(SingleRootOutput("A = (1, 2)\n(A*, 99)"));
-        var spreadAlg = Assert.IsType<Algorithm.User>(spread.Algorithm);
-        Assert.Collection(spreadAlg.Output,
+        // A spread item inside parentheses is a SequenceSpread slot in the capture.
+        var spread = Assert.IsType<Expr.Capture>(SingleRootOutput("A = (1, 2)\n(A*, 99)"));
+        Assert.Collection(spread.Body,
             item => Assert.IsType<Expr.SequenceSpread>(item),
             item => Assert.Equal(99m, Assert.IsType<Expr.Num>(item).Value));
     }
@@ -178,7 +176,7 @@ public class SequenceConstructContainmentTests
     private static Expr N(int n) => new Expr.Num(n);
     private static Expr E() => new Expr.EmptySequence(0);
 
-    private static Expr Blk(params Expr[] outputs) => new Expr.Block(new Algorithm.User(
+    private static Expr Blk(params Expr[] outputs) => new Expr.AlgorithmExpr(new Algorithm.User(
         Parent: null, Parameters: [], Opens: [], Properties: [], Output: outputs));
 
     private static Expr Sc(params Expr[] leaves)
@@ -251,10 +249,8 @@ public class SequenceConstructContainmentTests
     [Fact]
     public void SequenceConstructAsCallFunction_IsNotAnAlgorithmWithLeanAlignedDescription()
     {
-        var call = new Expr.Call(
-            Sc(N(1), N(2)),
-            new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [N(3)]));
-        var root = new Expr.Block(new Algorithm.User(
+        var call = new Expr.Call(Sc(N(1), N(2)), [N(3)]);
+        var root = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null, Parameters: [], Opens: [], Properties: [], Output: [call]));
 
         static EvalError Innermost(EvalError error)
@@ -285,9 +281,8 @@ public class SequenceConstructContainmentTests
     // post-binding collection view opens its lone boundary — exactly like
     // Lean and like the written grouped surface form.
 
-    private static Expr BuiltinCall(string name, params Expr[] args) => new Expr.Call(
-        new Expr.Resolve(name),
-        new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: args));
+    private static Expr BuiltinCall(string name, params Expr[] args)
+        => new Expr.Call(new Expr.Resolve(name), args);
 
     [Fact]
     public void LoneSequenceConstructBuiltinArgument_BehavesLikeGroupedSurfaceArgument()

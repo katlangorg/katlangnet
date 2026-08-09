@@ -54,7 +54,7 @@ public class WideDeconstructionScalabilityTests
         {
             var body = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == $"x{i}").Value);
             var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
-            var helper = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.Block>(call.Function).Algorithm);
+            var helper = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(call.Function).Algorithm);
 
             // The helper is the synthetic assignment-deconstruction leaf and STILL carries the full
             // N-capture sequence-value pattern — the frontend leaf guards must preserve it, because
@@ -69,7 +69,7 @@ public class WideDeconstructionScalabilityTests
             Assert.Equal($"x{i}", selected.Name);
 
             // Its argument resolves the one shared source.
-            var argument = Assert.IsType<Expr.Resolve>(Assert.Single(((Algorithm.User)call.Args).Output));
+            var argument = Assert.IsType<Expr.Resolve>(Assert.Single(call.Args));
             Assert.Equal("$deconstruct$0", argument.Name);
         }
     }

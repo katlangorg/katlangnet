@@ -97,9 +97,10 @@ internal enum AstConsumerProfile
 /// while elaboration and evaluation apply their own bound. Both ceilings are
 /// clamped inside <see cref="Check"/> itself.</para>
 ///
-/// <para><b>Sharing and cycles.</b> The public record collections are
-/// <see cref="IReadOnlyList{T}"/> views over caller-owned lists, so hosts can build
-/// shared acyclic subgraphs and even reference cycles. Shared subtrees are legal and
+/// <para><b>Sharing and cycles.</b> Some public record collections remain
+/// <see cref="IReadOnlyList{T}"/> views over caller-owned lists (OutputBundle is
+/// deliberately an immutable snapshot), so hosts can still build shared acyclic
+/// subgraphs and reference cycles through the caller-owned collections. Shared subtrees are legal and
 /// are visited once (per-node longest-downward-path heights are memoized by reference
 /// identity, keeping the walk <c>O(nodes + edges)</c> instead of exponential), while
 /// depth is still judged over the longest PATH, so a shared subtree reached again
@@ -268,6 +269,22 @@ internal static class AstStructuralPreflight
     /// </summary>
     private static int Weight(object node, AstConsumerProfile profile)
     {
+        // A Capture node stands for what was previously a Block wrapper PLUS its
+        // transparent wrapper Algorithm — two nodes costing two units on every
+        // profile — and its recursive consumers still spend comparable frames per
+        // written paren level, so it keeps that two-unit cost everywhere. A Call
+        // node likewise absorbs its former transparent Args wrapper Algorithm
+        // (two units everywhere), and an args-bearing DotCall absorbs the same
+        // wrapper unit on top of its own link cost. This preserves every
+        // measured per-shape stack capacity unchanged, while the recursive
+        // consumers now spend the same or fewer frames per level (no wrapper is
+        // constructed or wired at runtime).
+        if (node is Expr.Capture or Expr.Call)
+            return 2;
+
+        if (node is Expr.DotCall argsBearingDotCall && argsBearingDotCall.Args is not null)
+            return profile == AstConsumerProfile.EvaluatorIterativeJoinSpines ? 4 : 2;
+
         if (profile != AstConsumerProfile.EvaluatorIterativeJoinSpines)
             return 1;
 
@@ -349,10 +366,18 @@ internal static class AstStructuralPreflight
                 return PickOne(index, spread.Operand, out child);
             case Expr.Grace grace:
                 return PickOne(index, grace.Inner, out child);
-            case Expr.Block block:
+            case Expr.AlgorithmExpr block:
                 return PickOne(index, block.Algorithm, out child);
+            case Expr.Capture capture:
+                return PickFromList(index, capture.Body, out child);
             case Expr.Call call:
-                return PickTwo(index, call.Function, call.Args, out child);
+                if (index == 0)
+                {
+                    child = call.Function;
+                    return true;
+                }
+
+                return PickFromList(index - 1, call.Args, out child);
             case Expr.DotCall dotCall:
                 if (index == 0)
                 {
@@ -360,11 +385,8 @@ internal static class AstStructuralPreflight
                     return true;
                 }
 
-                if (index == 1 && dotCall.Args is { } dotArgs)
-                {
-                    child = dotArgs;
-                    return true;
-                }
+                if (dotCall.Args is { } dotArgs)
+                    return PickFromList(index - 1, dotArgs, out child);
 
                 child = null!;
                 return false;

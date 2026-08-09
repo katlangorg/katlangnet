@@ -51,7 +51,7 @@ public class OperationalMetamorphicTests
             return new OperationalObservation(new SemanticObservation("parseError", null, null, null), 0, 0, 0, 0);
 
         var (result, budget) = Evaluator.RunCountedObserved(
-            new Expr.Block(parsed.Root), limits, optimize, cache);
+            new Expr.AlgorithmExpr(parsed.Root), limits, optimize, cache);
 
         var semantic = result.IsError
             ? new SemanticObservation("err", null, null, SemanticExplorerHarness.ErrorCategory(result.Error))
@@ -280,7 +280,7 @@ public class OperationalMetamorphicTests
     [InlineData("'abc'")]
     public void PlainCountedAndEngine_ProduceTheSameValue(string source)
     {
-        var expr = new Expr.Block(SourceProvenance.ParseValid(source).Root);
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
         var plain = Evaluator.Run(expr);
         var counted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance);
         var engine = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
@@ -475,9 +475,10 @@ public class OperationalMetamorphicTests
                 case Expr.SequenceSpread(var o): Ex(o); break;
                 case Expr.Grace(var i, _): Ex(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) Ex(it); break;
-                case Expr.Block(var alg): Alg(alg); break;
-                case Expr.Call(var fn, var args): Ex(fn); Alg(args); break;
-                case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) Alg(a2); break;
+                case Expr.AlgorithmExpr(var alg): Alg(alg); break;
+                case Expr.Capture(var captureBody): foreach (var row in captureBody) Ex(row); break;
+                case Expr.Call(var fn, var args): Ex(fn); foreach (var a in args) Ex(a); break;
+                case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) { foreach (var a in a2) Ex(a); } break;
             }
         }
     }
@@ -534,7 +535,7 @@ public class OperationalMetamorphicTests
         static EvalError RunError(string source, EvaluationLimits limits)
         {
             var result = Evaluator.RunCounted(
-                new Expr.Block(SourceProvenance.ParseValid(source).Root),
+                new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
                 UncachedZeroArgPropertyResultCache.Instance,
                 limits);
             Assert.True(result.IsError);

@@ -7,7 +7,7 @@ namespace KatLang.Tests;
 /// </summary>
 public class EvaluatorInvariantTests
 {
-    private static Expr Block(string source) => new Expr.Block(SourceProvenance.ParseValid(source).Root);
+    private static Expr Block(string source) => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
     private static EvalError Innermost(EvalError e)
     {

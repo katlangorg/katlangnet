@@ -262,7 +262,7 @@ public abstract record RunResult
 
 /// <summary>
 /// Public façade for KatLang: parse and evaluate in one step.
-/// Hides internal details such as <see cref="Expr.Block"/> wrapping.
+/// Hides internal details such as <see cref="Expr.AlgorithmExpr"/> wrapping.
 /// For advanced/internal use, <see cref="Parser"/> and <see cref="Evaluator"/> remain available.
 /// </summary>
 public static class KatLangEngine
@@ -306,7 +306,7 @@ public static class KatLangEngine
         // property are evaluated under the same run-scoped budget, so neither can reset
         // or escape the other's accounting.
         var evalResult = Evaluator.RunCountedWithTopLevelProperty(
-            new Expr.Block(frontEndResult.ElaboratedRoot),
+            new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits);
@@ -474,7 +474,7 @@ public static class KatLangEngine
     private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(Algorithm root, EvaluationLimits? limits)
     {
         var evalResult = Evaluator.RunCounted(
-            new Expr.Block(root),
+            new Expr.AlgorithmExpr(root),
             new RunScopedZeroArgPropertyResultCache(),
             limits);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))

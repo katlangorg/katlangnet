@@ -145,7 +145,7 @@ internal static class SequencePipelineOptimizer
     private static bool TryRecognizeDotFilterDotCount(
         Expr target,
         string name,
-        Algorithm? argsOpt,
+        OutputBundle? argsOpt,
         out FilterCountPipelineSyntax syntax)
     {
         if (name == BuiltinId.@count.ToString()
@@ -169,7 +169,7 @@ internal static class SequencePipelineOptimizer
 
     private static bool TryRecognizePlainCountFilter(
         Expr function,
-        Algorithm args,
+        OutputBundle args,
         out FilterCountPipelineSyntax syntax,
         out string? fallbackReason)
     {
@@ -179,9 +179,9 @@ internal static class SequencePipelineOptimizer
         if (function is not Expr.Resolve(var countName) || countName != BuiltinId.@count.ToString())
             return false;
 
-        if (args.Output.Count != 1)
+        if (args.Count != 1)
         {
-            if (TryFindFilterCountSourceCandidate(args.Output, out syntax))
+            if (TryFindFilterCountSourceCandidate(args, out syntax))
                 fallbackReason = "unsupported count argument shape";
 
             return false;
@@ -194,7 +194,7 @@ internal static class SequencePipelineOptimizer
         // supplies the spread items as separate arguments and is an ordinary
         // arity error, so it must NOT be recognized: it falls back to the
         // generic evaluator, which reports the arity mismatch.
-        var countSource = args.Output[0];
+        var countSource = args[0];
         if (countSource is Expr.SequenceSpread)
             return false;
 
@@ -214,8 +214,8 @@ internal static class SequencePipelineOptimizer
         if (countSource is Expr.Call(var filterFunction, var plainFilterArgs)
             && IsFilterFunctionCandidate(filterFunction))
         {
-            var plainSource = plainFilterArgs.Output.Count > 0
-                ? plainFilterArgs.Output[0]
+            var plainSource = plainFilterArgs.Count > 0
+                ? plainFilterArgs[0]
                 : countSource;
             syntax = new FilterCountPipelineSyntax(
                 FilterCountPipelineForm.PlainCountPlainFilter,
@@ -254,8 +254,8 @@ internal static class SequencePipelineOptimizer
             if (candidate is Expr.Call(var filterFunction, var plainFilterArgs)
                 && IsFilterFunctionCandidate(filterFunction))
             {
-                var plainSource = plainFilterArgs.Output.Count > 0
-                    ? UnwrapSpread(plainFilterArgs.Output[0])
+                var plainSource = plainFilterArgs.Count > 0
+                    ? UnwrapSpread(plainFilterArgs[0])
                     : candidate;
                 syntax = new FilterCountPipelineSyntax(
                     FilterCountPipelineForm.PlainCountPlainFilter,
@@ -308,19 +308,19 @@ internal static class SequencePipelineOptimizer
         plan = null;
         result = default;
 
-        if (syntax.DotFilterArgs is null || syntax.DotFilterArgs.Output.Count == 0)
+        if (syntax.DotFilterArgs is null || syntax.DotFilterArgs.Count == 0)
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported filter argument shape");
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        if (syntax.DotFilterArgs.Output.Count != 1)
+        if (syntax.DotFilterArgs.Count != 1)
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported extra arguments");
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        if (syntax.DotFilterArgs.Output[0] is Expr.SequenceSpread)
+        if (syntax.DotFilterArgs[0] is Expr.SequenceSpread)
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported explicit spread argument");
             return FilterCountRecognitionStatus.Fallback;
@@ -417,13 +417,13 @@ internal static class SequencePipelineOptimizer
         // exactly two arguments, and a spread argument would change the
         // supplied argument count — such a program is an ordinary arity error
         // and must fall back so the generic evaluator reports it.
-        if (filterArgs.Output.Count != 2)
+        if (filterArgs.Count != 2)
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "unsupported filter argument shape");
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        if (filterArgs.Output.Any(static expr => expr is Expr.SequenceSpread))
+        if (filterArgs.Any(static expr => expr is Expr.SequenceSpread))
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "spread argument follows ordinary fixed arity");
             return FilterCountRecognitionStatus.Fallback;
@@ -583,7 +583,7 @@ internal static class SequencePipelineOptimizer
         // the peeled call stays value-equivalent there.
         source = UnwrapSpread(source);
 
-        if (source is not Expr.Call(var function, var argsAlg))
+        if (source is not Expr.Call(var function, var callArgs))
             return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
                 SequencePipelineRangeSourceEvaluation.Fallback("source is not builtin range"));
 
@@ -594,13 +594,13 @@ internal static class SequencePipelineOptimizer
                 SequencePipelineRangeSourceEvaluation.Fallback("source is not builtin range"));
         }
 
-        if (argsAlg.Output.Count != 2)
+        if (callArgs.Count != 2)
         {
             return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
                 SequencePipelineRangeSourceEvaluation.Fallback("range argument shape unsupported"));
         }
 
-        var rangeR = services.EvaluateRangeCallArguments(function, argsAlg, source.Span);
+        var rangeR = services.EvaluateRangeCallArguments(function, callArgs, source.Span);
         return rangeR.IsError
             ? rangeR.Error
             : EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
@@ -768,9 +768,9 @@ internal static class SequencePipelineOptimizer
         => syntax.Form switch
         {
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
-                syntax.DotFilterArgs is { Output.Count: 1 } ? syntax.DotFilterArgs.Output[0] : null,
+                syntax.DotFilterArgs is { Count: 1 } ? syntax.DotFilterArgs[0] : null,
             FilterCountPipelineForm.PlainCountPlainFilter =>
-                syntax.PlainFilterArgs is { Output.Count: 2 } ? syntax.PlainFilterArgs.Output[1] : null,
+                syntax.PlainFilterArgs is { Count: 2 } ? syntax.PlainFilterArgs[1] : null,
             _ => null,
         };
 

@@ -25,7 +25,7 @@ public class DeconstructionBindingTests
             parse.HasErrors,
             string.Join(Environment.NewLine, parse.Diagnostics.Select(static diagnostic => diagnostic.Message)));
 
-        var result = Evaluator.Run(new Expr.Block(parse.Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parse.Root));
         Assert.True(result.IsError, $"Expected {typeof(T).Name}, but evaluation succeeded.");
         return Assert.IsType<T>(Innermost(result.Error));
     }
@@ -289,7 +289,7 @@ public class DeconstructionBindingTests
         // A scalar right-hand side is a one-item supply; matching it against two
         // fixed targets is an arity mismatch (expected 2, actual 1), not a generic
         // shape/BadArity failure.
-        var result = Evaluator.Run(new Expr.Block(SourceProvenance.ParseValid("x, y = 1\nx").Root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("x, y = 1\nx").Root));
 
         Assert.True(result.IsError);
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));

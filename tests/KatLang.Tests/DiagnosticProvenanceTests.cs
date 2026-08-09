@@ -152,7 +152,7 @@ public class DiagnosticProvenanceTests
     /// that shape into an ordinary <c>Algorithm.User</c>. Every written form
     /// tried — <c>F(a) = …</c>, <c>F(a, b) = …</c>, even the repeated-binder
     /// <c>F(x, x) = …</c> — elaborates to a User algorithm and reports its arity
-    /// through the ordinary parametrized-property path instead.
+    /// through the ordinary parameter-owning User-algorithm path instead.
     /// </para>
     ///
     /// <para>
@@ -181,7 +181,7 @@ public class DiagnosticProvenanceTests
             Properties: [new Property("F", conditional)],
             Output: [new Expr.Resolve("F")]);
 
-        var result = Evaluator.Run(new Expr.Block(root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
         Assert.True(result.IsError);
 
         var error = result.Error;

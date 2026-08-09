@@ -21,7 +21,7 @@ public class IfBuiltinArityPayloadTests
     {
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, "dot-call reproducers must not be parser-gated");
-        return new Expr.Block(parsed.Root);
+        return new Expr.AlgorithmExpr(parsed.Root);
     }
 
     private static EvalError Innermost(EvalError error)

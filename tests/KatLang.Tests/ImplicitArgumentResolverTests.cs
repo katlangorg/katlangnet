@@ -6,7 +6,7 @@ public class ImplicitArgumentResolverTests
         => SourceProvenance.ParseValid(source).Root;
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
-        => Evaluator.RunFlat(new Expr.Block(Resolve(source)));
+        => Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
 
     /// <summary>
     /// Evaluate to the single structured root value. Unlike <see cref="Eval"/>
@@ -15,7 +15,7 @@ public class ImplicitArgumentResolverTests
     /// </summary>
     private static Result EvalValue(string source)
     {
-        var result = Evaluator.RunCounted(new Expr.Block(Resolve(source)));
+        var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(Resolve(source)));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
         return result.Value.Value;
@@ -60,7 +60,7 @@ public class ImplicitArgumentResolverTests
         Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("F", ((Expr.Resolve)call.Function).Name);
 
-        var callArg = Assert.Single(call.Args.Output);
+        var callArg = Assert.Single(call.Args);
         var param = Assert.IsType<Expr.Param>(callArg);
         Assert.Equal("a", param.Name);
 
@@ -126,7 +126,7 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_NonParametrizedRef_NoLifting()
+    public void Resolve_ReferenceToZeroParameterProperty_NoLifting()
     {
         var source = """
             X = 5
@@ -151,7 +151,7 @@ public class ImplicitArgumentResolverTests
         Assert.Equal(["c"], g.Params);
 
         var binary = Assert.IsType<Expr.Binary>(Assert.Single(g.Output));
-        var block = Assert.IsType<Expr.Block>(binary.Left);
+        var block = Assert.IsType<Expr.AlgorithmExpr>(binary.Left);
         Assert.Contains("b", block.Algorithm.Params);
         Assert.Contains("a", block.Algorithm.Params);
     }
@@ -219,7 +219,7 @@ public class ImplicitArgumentResolverTests
         // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values*)`):
         // the caller's collecting parameter holds one exact list, and the spread re-supplies its
         // collected items so the callee's collecting parameter re-collects exactly them.
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         var param = Assert.IsType<Expr.Param>(spread.Operand);
         Assert.Equal("values", param.Name);
     }
@@ -256,7 +256,7 @@ public class ImplicitArgumentResolverTests
         var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(roundB.Output));
         Assert.NotNull(dotCall.Args);
         Assert.Equal("Round", dotCall.Name);
-        Assert.Equal(["x", "y"], dotCall.Args.Output
+        Assert.Equal(["x", "y"], dotCall.Args
             .Select(expr => Assert.IsType<Expr.Param>(expr).Name)
             .ToArray());
     }
@@ -538,7 +538,7 @@ public class ImplicitArgumentResolverTests
 
         var use = root.Properties.Single(p => p.Name == "Use").Value;
         var call = Assert.IsType<Expr.Call>(Assert.Single(use.Output));
-        var param = Assert.IsType<Expr.Param>(Assert.Single(call.Args.Output));
+        var param = Assert.IsType<Expr.Param>(Assert.Single(call.Args));
         Assert.Equal("items", param.Name);
     }
 

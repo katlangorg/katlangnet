@@ -145,7 +145,7 @@ internal static class PropertyExposureResolver
         {
             Opens = rewrittenOpens,
             Properties = rewrittenProperties,
-            Output = rewrittenOutput,
+            Output = OutputBundle.From(rewrittenOutput),
         };
     }
 
@@ -339,7 +339,7 @@ internal static class PropertyExposureResolver
                 return new Expr.ListLiteral(rewrittenItems) { Span = expr.Span };
             }
 
-            case Expr.Block(var algorithm):
+            case Expr.AlgorithmExpr(var algorithm):
             {
                 var rewrittenAlgorithm = ProcessAlgorithm(
                     algorithm,
@@ -347,7 +347,26 @@ internal static class PropertyExposureResolver
                     ancestorOwnedForChildren,
                     CreateNameSet(),
                     insideConditionalAlgorithm);
-                return new Expr.Block(rewrittenAlgorithm) { Span = expr.Span };
+                return new Expr.AlgorithmExpr(rewrittenAlgorithm) { Span = expr.Span };
+            }
+
+            case Expr.Capture(var captureBody):
+            {
+                // A capture owns no names and no properties, so its rows rewrite
+                // with the same visible summaries and owned-name context — the
+                // exact effect the pre-split transparent wrapper had through
+                // ProcessAlgorithm.
+                var rewrittenRows = new List<Expr>(captureBody.Count);
+                foreach (var row in captureBody)
+                {
+                    rewrittenRows.Add(RewriteExpr(
+                        row,
+                        visiblePropertySummaries,
+                        ancestorOwnedForChildren,
+                        insideConditionalAlgorithm));
+                }
+
+                return new Expr.Capture(new OutputBundle(rewrittenRows)) { Span = expr.Span };
             }
 
             case Expr.Call(var function, var args):
@@ -357,13 +376,19 @@ internal static class PropertyExposureResolver
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                var rewrittenArgs = ProcessAlgorithm(
-                    args,
-                    visiblePropertySummaries,
-                    ancestorOwnedForChildren,
-                    CreateNameSet(),
-                    insideConditionalAlgorithm);
-                return new Expr.Call(rewrittenFunction, rewrittenArgs) { Span = expr.Span };
+                // Argument bundles own no scope: slots rewrite in the enclosing
+                // context, exactly like capture rows.
+                var rewrittenArgs = new List<Expr>(args.Count);
+                foreach (var argExpr in args)
+                {
+                    rewrittenArgs.Add(RewriteExpr(
+                        argExpr,
+                        visiblePropertySummaries,
+                        ancestorOwnedForChildren,
+                        insideConditionalAlgorithm));
+                }
+
+                return new Expr.Call(rewrittenFunction, new OutputBundle(rewrittenArgs)) { Span = expr.Span };
             }
 
             case Expr.DotCall(var target, var name, var argsOpt):
@@ -373,15 +398,20 @@ internal static class PropertyExposureResolver
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                Algorithm? rewrittenArgs = null;
+                OutputBundle? rewrittenArgs = null;
                 if (argsOpt is not null)
                 {
-                    rewrittenArgs = ProcessAlgorithm(
-                        argsOpt,
-                        visiblePropertySummaries,
-                        ancestorOwnedForChildren,
-                        CreateNameSet(),
-                        insideConditionalAlgorithm);
+                    var rewrittenSlots = new List<Expr>(argsOpt.Count);
+                    foreach (var argExpr in argsOpt)
+                    {
+                        rewrittenSlots.Add(RewriteExpr(
+                            argExpr,
+                            visiblePropertySummaries,
+                            ancestorOwnedForChildren,
+                            insideConditionalAlgorithm));
+                    }
+
+                    rewrittenArgs = new OutputBundle(rewrittenSlots);
                 }
 
                 return new Expr.DotCall(rewrittenTarget, name, rewrittenArgs)

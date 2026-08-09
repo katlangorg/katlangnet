@@ -34,31 +34,26 @@ def SumAlg : Algorithm :=
     [ KatLang.index
         (KatLang.call
           (KatLang.resolve "repeat")
-          (KatLang.Algorithm.mk
-            none
-            []
-            []
-            []
-            [ KatLang.resolve "Add"
-            , KatLang.block (KatLang.alg [] [] [] [ KatLang.dotCall (KatLang.resolve "Numbers") "count" ])
-            , KatLang.num 0
-            , KatLang.num 0
-            ]))
+          [ KatLang.resolve "Add"
+          , KatLang.algorithmExpr (KatLang.alg [] [] [] [ KatLang.dotCall (KatLang.resolve "Numbers") "count" ])
+          , KatLang.num 0
+          , KatLang.num 0
+          ])
         (KatLang.num 1)
     ]
 
 def RootAlg : Algorithm :=
   KatLang.algPrivate
     []
-    [ KatLang.block NumbersLib ]  -- ★ opened import
+    [ KatLang.algorithmExpr NumbersLib ]  -- ★ opened import
     [ ("Add", AddAlg)
     , ("Sum", SumAlg)
     ]
     [ KatLang.resolve "Sum" ]
 
 -- Expected: ok [24]
-#eval! KatLang.runFlat (KatLang.block RootAlg)
-#eval! KatLang.runResult (KatLang.block RootAlg)
+#eval! KatLang.runFlat (KatLang.algorithmExpr RootAlg)
+#eval! KatLang.runResult (KatLang.algorithmExpr RootAlg)
 
 --------------------------------------------------------------------------------
 -- Zero-parameter property cache demo
@@ -95,12 +90,12 @@ def ExplicitZeroArgCallRoot : Algorithm :=
     []
     []
     [ ("A", KatLang.alg [] [] [] [KatLang.num 1 + KatLang.num 2]) ]
-    [ KatLang.call (KatLang.resolve "A") (KatLang.alg [] [] [] [])
-    , KatLang.call (KatLang.resolve "A") (KatLang.alg [] [] [] [])
+    [ KatLang.call (KatLang.resolve "A") []
+    , KatLang.call (KatLang.resolve "A") []
     ]
 
 -- Property-style access (`A, A`) leaves one zero-argument cache entry for A.
-#eval! runResultAndCacheView (KatLang.block CachedPropertyStyleRoot)
+#eval! runResultAndCacheView (KatLang.algorithmExpr CachedPropertyStyleRoot)
 
 -- Explicit calls (`A(), A()`) bypass A's zero-argument cache entry.
-#eval! runResultAndCacheView (KatLang.block ExplicitZeroArgCallRoot)
+#eval! runResultAndCacheView (KatLang.algorithmExpr ExplicitZeroArgCallRoot)

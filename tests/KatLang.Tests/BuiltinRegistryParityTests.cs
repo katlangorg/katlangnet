@@ -456,10 +456,7 @@ public class BuiltinRegistryParityTests
             Parameters: [],
             Opens: opens ?? Array.Empty<Expr>(),
             Properties: [],
-            Output: [new Expr.Resolve(name)])
-        {
-            IsParametrized = true,
-        };
+            Output: [new Expr.Resolve(name)]);
 
         var (processed, diagnostics) = ParameterDetector.Detect(root);
         return (Assert.IsType<Algorithm.User>(processed), diagnostics);

@@ -200,7 +200,7 @@ public class ParenthesizedSequenceDeclarationTests
         // downstream tooling sees a truthful (if invalid) tree.
         var result = Parser.ParseSyntax("M = { public P = 5 }\n(open M\nP + 1)");
         Assert.True(result.HasErrors);
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         var open = Assert.Single(block.Algorithm.Opens);
         Assert.Equal("M", Assert.IsType<Expr.Resolve>(open).Name);
     }
@@ -211,7 +211,7 @@ public class ParenthesizedSequenceDeclarationTests
         var result = Parser.ParseSyntax("(\nA = 5\nA + 1\n)");
         Assert.True(result.HasErrors);
 
-        var block = Assert.IsType<Expr.Block>(Assert.Single(result.Root.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(result.Root.Output));
         var property = Assert.Single(block.Algorithm.Properties);
         Assert.Equal("A", property.Name);
         Assert.IsType<Expr.Num>(Assert.Single(property.Value.Output));

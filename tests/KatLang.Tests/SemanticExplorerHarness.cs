@@ -44,7 +44,7 @@ public static class SemanticExplorerHarness
         if (parsed.HasErrors)
             return new ExplorerObservation(caseId, source, "parseError", null, null, null, null, null);
 
-        var root = new Expr.Block(parsed.Root);
+        var root = new Expr.AlgorithmExpr(parsed.Root);
         var counted = Evaluator.RunCounted(root);
 
         // Plain/counted cross-check, mirroring the generated Lean artifact's
@@ -118,7 +118,7 @@ public static class SemanticExplorerHarness
     /// </summary>
     public static ExplorerObservation ObserveAst(string caseId, Expr rootOutput)
     {
-        var root = new Expr.Block(new Algorithm.User(
+        var root = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null, Parameters: [], Opens: [], Properties: [], Output: [rootOutput]));
 
         var counted = Evaluator.RunCounted(root);

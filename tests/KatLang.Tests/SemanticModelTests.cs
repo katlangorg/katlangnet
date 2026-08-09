@@ -217,7 +217,7 @@ public class SemanticModelTests
         AssertNoIdentifierSemanticSiteOverlaps(model, Assert.IsType<SourceSpan>(parameter.CollectMarkerSpan));
 
         var call = Assert.IsType<Expr.Call>(Assert.Single(parseResult.Root.Output));
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.IsType<Expr.Resolve>(spread.Operand);
 
         // The postfix `*` spread marker is punctuation too: no identifier

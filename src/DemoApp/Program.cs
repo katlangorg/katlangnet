@@ -156,8 +156,14 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write($", \"{name}\"");
             if (dotArgs is not null)
             {
-                Console.Write(", ");
-                PrintAlgorithm(dotArgs, indent);
+                Console.Write(", Args(");
+                for (var i = 0; i < dotArgs.Count; i++)
+                {
+                    if (i > 0)
+                        Console.Write(", ");
+                    PrintExpr(dotArgs[i], indent);
+                }
+                Console.Write(')');
             }
             Console.Write(')');
             break;
@@ -168,18 +174,34 @@ static void PrintExpr(Expr expr, int indent)
             Console.Write(')');
             break;
 
-        case Expr.Block(var alg):
-            Console.WriteLine("Block(");
+        case Expr.AlgorithmExpr(var alg):
+            Console.WriteLine("AlgorithmExpr(");
             PrintAlgorithm(alg, indent + 2);
             Console.Write($"{new string(' ', indent)})");
+            break;
+
+        case Expr.Capture(var captureBody):
+            Console.Write("Capture(");
+            for (var i = 0; i < captureBody.Count; i++)
+            {
+                if (i > 0)
+                    Console.Write(", ");
+                PrintExpr(captureBody[i], indent);
+            }
+            Console.Write(')');
             break;
 
         case Expr.Call(var func, var args):
             Console.Write("Call(");
             PrintExpr(func, indent);
-            Console.WriteLine(", Args(");
-            PrintAlgorithm(args, indent + 2);
-            Console.Write($"{new string(' ', indent)}))");
+            Console.Write(", Args(");
+            for (var i = 0; i < args.Count; i++)
+            {
+                if (i > 0)
+                    Console.Write(", ");
+                PrintExpr(args[i], indent);
+            }
+            Console.Write("))");
             break;
 
         case Expr.NativeCall(var fnName, var argNames):

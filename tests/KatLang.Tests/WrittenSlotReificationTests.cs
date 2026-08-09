@@ -32,7 +32,7 @@ public class WrittenSlotReificationTests
     private static Result EvaluateAllModes(string source)
     {
         var ast = SourceProvenance.ParseValid(source).Root;
-        var expr = new Expr.Block(ast);
+        var expr = new Expr.AlgorithmExpr(ast);
 
         var plainOptimized = Evaluator.Run(
             expr, new RunScopedZeroArgPropertyResultCache(),

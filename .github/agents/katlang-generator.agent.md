@@ -258,7 +258,7 @@ GOOD — assumed values in final call:
 - No objects, dictionaries, or tuples from other languages. KatLang's own collections are sequence values `(1, 2, 3)` and exact immutable lists `[1, 2, 3]` — do not import foreign array idioms (no indexing with `A[0]`, no mutation, no `.push`/`.append`).
 - Do not invent standard-library functions.
 - When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `# unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
-- Do not wrap simple property bodies in `{ ... }` or `( ... )` — property bodies are already implicitly parametrized. Use `{ ... }` only when the body contains nested property definitions or an `open` (see Nested Properties); `( ... )` cannot hold declarations.
+- Do not wrap simple property bodies in `{ ... }` or `( ... )` — a property body is already its own algorithm scope and owns its parameters. Use `{ ... }` only when the body contains nested property definitions or an `open` (see Nested Properties); `( ... )` cannot hold declarations.
 - Do not generate multiple `open` declarations.
 - Do not put `public` on `open`.
 - For exported clause-style APIs, `public Name(pattern) = body` is valid, but every clause in that same-name family must include `public`; do not mix public and private clauses.
@@ -386,7 +386,7 @@ If ANY checklist item fails, fix the output before emitting it.
 - String literals (single-quoted) are first-class runtime values.
 - Logical truth is numeric.
 - Algorithms are also first-class values.
-- Property bodies are implicitly parametrized by their free identifiers.
+- Property bodies infer their parameters implicitly from their free identifiers.
 
 ## Program Structure
 
@@ -565,7 +565,7 @@ Unless numeric coding was explicitly part of the user's request.
 - `(expr*)` — one sequence-value result materialized from the spread items; without parentheses, `expr*` contributes the spread items to the surrounding item supply (output rows, call argument slots, or list/sequence elements) — it does not create or emit a sequence value by itself.
 - `{ ... }` — algorithm-valued expressions whose free identifiers become parameters; also property bodies containing nested definitions.
 - Only `{ ... }` creates an algorithm scope: `open` declarations and nested property/function definitions belong to brace blocks (or the root). Writing them inside `( ... )` is a parse error — parentheses group expressions and compose outputs only.
-- Simple property bodies (no nested definitions) are already implicitly parametrized — do not wrap them.
+- Simple property bodies (no nested definitions) already own their parameters — do not wrap them.
 
 ## Nested Properties
 
@@ -723,7 +723,7 @@ The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provi
 
 ## Calls and Sequence Values
 
-- `F(5)` — one argument. `F(3, 4)` — two arguments. `F{a + b}` — parametrized block argument.
+- `F(5)` — one argument. `F(3, 4)` — two arguments. `F{a + b}` — an algorithm-block argument with parameters `a` and `b`.
 - Ordinary parentheses construct sequence values. `((expr))` is just nested sequence-value construction, not special syntax.
 - `while`/`repeat` initial state preserves explicit argument boundaries:
     - `Step.while(x, 0)` starts with two state slots
@@ -1522,7 +1522,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (45 of the 163-case canonical language specification,
+Verified reference examples (47 of the 167-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1747,6 +1747,27 @@ Regenerate this block from the repo root with:
     1
     (2, 3)
     4
+
+[zero-param-block-higher-order] An algorithm block always provides its contained algorithm on the higher-order channel, regardless of parameter or output count: `Call0({42})` invokes the brace algorithm exactly like the named zero-parameter `Call0(Const)`, redundant parentheses around braces normalize away, and a multi-output block's call emits its outputs as one captured sequence value.
+
+    Call0 = f()
+    Call0({42})
+
+  Displays:
+    42
+
+[open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
+
+    M = {
+        public C = 5
+    }
+    R = {
+        open (M)
+        C
+    }
+    R
+
+  Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
 
 [take-single-survivor] Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.
 

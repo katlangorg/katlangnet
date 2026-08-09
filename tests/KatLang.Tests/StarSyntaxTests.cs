@@ -500,7 +500,7 @@ public class StarSyntaxTests
         var call = Assert.IsType<Expr.Call>(Assert.Single(parse.Root.Output));
         var callee = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("Target", callee.Name);
-        var argument = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args.Output));
+        var argument = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
         Assert.IsType<Expr.Resolve>(argument.Operand);
     }
 
@@ -525,8 +525,8 @@ public class StarSyntaxTests
             Assert.IsType<Expr.Resolve>(fluentCall.Function).Name,
             Assert.IsType<Expr.Resolve>(plainCall.Function).Name);
         Assert.Equal(
-            Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(fluentCall.Args.Output)).Operand).Name,
-            Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(plainCall.Args.Output)).Operand).Name);
+            Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(fluentCall.Args)).Operand).Name,
+            Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(plainCall.Args)).Operand).Name);
     }
 
     [Fact]
@@ -656,13 +656,13 @@ public class StarSyntaxTests
         // the grouped form is a DotCall whose target is the captured group.
         var ungrouped = Assert.IsType<Expr.Call>(
             Assert.Single(SourceProvenance.ParseValid("F(*v) = v\nA = (1, 2)\nA*.F").Root.Output));
-        Assert.IsType<Expr.SequenceSpread>(Assert.Single(ungrouped.Args.Output));
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(ungrouped.Args));
 
         var grouped = Assert.IsType<Expr.DotCall>(
             Assert.Single(SourceProvenance.ParseValid("F(*v) = v\nA = (1, 2)\n(A*).F").Root.Output));
         Assert.Equal("F", grouped.Name);
-        var block = Assert.IsType<Expr.Block>(grouped.Target);
-        Assert.IsType<Expr.SequenceSpread>(Assert.Single(block.Algorithm.Output));
+        var capture = Assert.IsType<Expr.Capture>(grouped.Target);
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
     }
 
     [Fact]
@@ -696,7 +696,8 @@ public class StarSyntaxTests
     {
         // The spread receiver is a supply, not a value: `.Target` never does
         // structural lookup inside the operand value's members. The lexical
-        // `Target` receives the spread item (the block value) as its argument.
+        // `Target` receives the spread item (the property's value) as its
+        // argument.
         const string source =
             "Target(v) = 100\n" +
             "A = (5)\n" +

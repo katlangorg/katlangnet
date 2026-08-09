@@ -40,7 +40,7 @@ public class EvaluatorTests
     }
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source)
-        => Evaluator.RunFlat(new Expr.Block(ParseValidRoot(source)));
+        => Evaluator.RunFlat(new Expr.AlgorithmExpr(ParseValidRoot(source)));
 
     private static EvalResult<IReadOnlyList<decimal>> Eval(string source, bool enableLoopOptimization)
     {
@@ -58,7 +58,7 @@ public class EvaluatorTests
     private static EvalResult<IReadOnlyList<decimal>> EvalAllPublic(string source)
     {
         var ast = ParseValidRoot(source);
-        return Evaluator.RunFlat(new Expr.Block(MakeAllPublic(ast)));
+        return Evaluator.RunFlat(new Expr.AlgorithmExpr(MakeAllPublic(ast)));
     }
 
     /// <summary>
@@ -78,10 +78,13 @@ public class EvaluatorTests
 
     private static Expr MakeAllPublicExpr(Expr expr) => expr switch
     {
-        Expr.Block(var a) => new Expr.Block(MakeAllPublic(a)) { Span = expr.Span },
-        Expr.Call(var f, var args) => new Expr.Call(MakeAllPublicExpr(f), MakeAllPublic(args)) { Span = expr.Span },
+        Expr.AlgorithmExpr(var a) => new Expr.AlgorithmExpr(MakeAllPublic(a)) { Span = expr.Span },
+        Expr.Capture(var captureBody) => new Expr.Capture(new OutputBundle(
+            captureBody.Select(MakeAllPublicExpr).ToList()))
+        { Span = expr.Span },
+        Expr.Call(var f, var args) => new Expr.Call(MakeAllPublicExpr(f), MakeAllPublicArgs(args)) { Span = expr.Span },
         Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
-            MakeAllPublicExpr(t), n, da is not null ? MakeAllPublic(da) : null)
+            MakeAllPublicExpr(t), n, da is not null ? MakeAllPublicArgs(da) : null)
         { Span = expr.Span },
         Expr.Binary(var op, var l, var r) => new Expr.Binary(op, MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
@@ -91,6 +94,9 @@ public class EvaluatorTests
         Expr.ListLiteral(var items) => new Expr.ListLiteral(items.Select(MakeAllPublicExpr).ToList()) { Span = expr.Span },
         _ => expr,
     };
+
+    private static OutputBundle MakeAllPublicArgs(OutputBundle args)
+        => new(args.Select(MakeAllPublicExpr).ToList());
 
     private static void AssertEval(string source, params decimal[] expected)
     {
@@ -132,7 +138,7 @@ public class EvaluatorTests
             Assert.Fail($"Expected parse success but got diagnostics:{Environment.NewLine}{message}");
         }
 
-        var result = Evaluator.RunCounted(new Expr.Block(parseResult.Root));
+        var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(parseResult.Root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -284,14 +290,14 @@ public class EvaluatorTests
     private static EvalResult<Result> EvalFull(string source)
     {
         var ast = ParseValidRoot(source);
-        return Evaluator.Run(new Expr.Block(ast));
+        return Evaluator.Run(new Expr.AlgorithmExpr(ast));
     }
 
     private static EvalResult<Result> EvalFull(string source, bool enableLoopOptimization)
     {
         var ast = ParseValidRoot(source);
         return Evaluator.Run(
-            new Expr.Block(ast),
+            new Expr.AlgorithmExpr(ast),
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization);
     }
@@ -303,7 +309,7 @@ public class EvaluatorTests
     {
         var ast = ParseValidRoot(source);
         return Evaluator.Run(
-            new Expr.Block(ast),
+            new Expr.AlgorithmExpr(ast),
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization,
             loopDiagnostics: null,
@@ -318,7 +324,7 @@ public class EvaluatorTests
         var ast = ParseValidRoot(source);
         var diagnostics = new LoopOptimizationDiagnostics();
         var result = Evaluator.Run(
-            new Expr.Block(ast),
+            new Expr.AlgorithmExpr(ast),
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization,
             diagnostics);
@@ -332,7 +338,7 @@ public class EvaluatorTests
         var ast = ParseValidRoot(source);
         var diagnostics = new SequencePipelineDiagnostics();
         var result = Evaluator.Run(
-            new Expr.Block(ast),
+            new Expr.AlgorithmExpr(ast),
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: true,
             loopDiagnostics: null,
@@ -373,7 +379,7 @@ public class EvaluatorTests
         var loopDiagnostics = new LoopOptimizationDiagnostics();
         var sequenceDiagnostics = new SequencePipelineDiagnostics();
         var result = Evaluator.Run(
-            new Expr.Block(ast),
+            new Expr.AlgorithmExpr(ast),
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization,
             loopDiagnostics,
@@ -502,7 +508,7 @@ public class EvaluatorTests
         var parsed = Parser.Parse(source);
         Assert.True(parsed.HasErrors, $"Expected a front-end diagnostic for:{Environment.NewLine}{source}");
 
-        var result = Evaluator.RunFlat(new Expr.Block(MakeAllPublic(parsed.Root)));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(MakeAllPublic(parsed.Root)));
         if (result.IsOk)
             Assert.Fail($"Recovery tree unexpectedly evaluated to: [{string.Join(", ", result.Value)}]");
     }
@@ -837,8 +843,8 @@ public class EvaluatorTests
 
         var ast = ParseValidRoot(source);
 
-        var first = Evaluator.Run(new Expr.Block(ast));
-        var second = Evaluator.Run(new Expr.Block(ast));
+        var first = Evaluator.Run(new Expr.AlgorithmExpr(ast));
+        var second = Evaluator.Run(new Expr.AlgorithmExpr(ast));
 
         if (first.IsError)
             Assert.Fail($"Expected first run success but got error: {first.Error}");
@@ -963,19 +969,9 @@ public class EvaluatorTests
                         new Expr.Resolve("Shared"))
                 ]));
 
-        var oneArg = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: [new Expr.Num(1)]);
+        OutputBundle oneArg = [new Expr.Num(1)];
 
-        var twoArg = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output: [new Expr.Num(2)]);
+        OutputBundle twoArg = [new Expr.Num(2)];
 
         var root = new Algorithm.User(
             Parent: null,
@@ -990,7 +986,7 @@ public class EvaluatorTests
                     new Expr.Call(new Expr.Resolve("Caller"), twoArg))
             ]);
 
-        var result = Evaluator.Run(new Expr.Block(root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -1081,7 +1077,7 @@ public class EvaluatorTests
                     new Expr.Resolve("OpenWrapper"))
             ]);
 
-        var result = Evaluator.Run(new Expr.Block(root));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
         if (result.IsError)
             Assert.Fail($"Expected success but got error: {result.Error}");
 
@@ -1958,8 +1954,8 @@ public class EvaluatorTests
     private static void AssertIndexErrorAgreesAcrossEvaluators(string source)
     {
         var ast = ParseValidRoot(source);
-        var plain = Evaluator.Run(new Expr.Block(ast));
-        var counted = Evaluator.RunCounted(new Expr.Block(ast));
+        var plain = Evaluator.Run(new Expr.AlgorithmExpr(ast));
+        var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(ast));
 
         if (plain.IsOk || counted.IsOk)
             Assert.Fail($"Expected both evaluators to fail for: {source}");
@@ -4318,26 +4314,16 @@ public class EvaluatorTests
         // must be invoked exactly zero times.
         var sequenceEvalCount = 0;
 
-        var filterArgs = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output:
-            [
-                new Expr.SequenceSpread(new Expr.Resolve("Data")),
-                new Expr.Resolve("IsEven"),
-            ]);
-        var countArgs = new Algorithm.User(
-            Parent: null,
-            Parameters: [],
-            Opens: [],
-            Properties: [],
-            Output:
-            [
-                new Expr.SequenceSpread(
-                    new Expr.Call(new Expr.Resolve("filter"), filterArgs)),
-            ]);
+        OutputBundle filterArgs =
+        [
+            new Expr.SequenceSpread(new Expr.Resolve("Data")),
+            new Expr.Resolve("IsEven"),
+        ];
+        OutputBundle countArgs =
+        [
+            new Expr.SequenceSpread(
+                new Expr.Call(new Expr.Resolve("filter"), filterArgs)),
+        ];
         var invocation = SequencePipelineInvocation.PlainCall(
             new Expr.Resolve("count"),
             countArgs,
@@ -4394,9 +4380,7 @@ public class EvaluatorTests
         // invoked exactly zero times.
         var dotReceiverEvalCount = 0;
 
-        var filterArgs = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [], Properties: [],
-            Output: [new Expr.Resolve("BadPred")]);
+        OutputBundle filterArgs = [new Expr.Resolve("BadPred")];
         var target = new Expr.DotCall(new Expr.Resolve("Data"), "filter", filterArgs);
         var invocation = SequencePipelineInvocation.DotCall(target, "count", null);
 
@@ -4456,12 +4440,8 @@ public class EvaluatorTests
 
         var rangeSource = new Expr.Call(
             new Expr.Resolve("range"),
-            new Algorithm.User(
-                Parent: null, Parameters: [], Opens: [], Properties: [],
-                Output: [new Expr.Num(1m), new Expr.Num(10m)]));
-        var filterArgs = new Algorithm.User(
-            Parent: null, Parameters: [], Opens: [], Properties: [],
-            Output: [new Expr.Resolve("BadPred")]);
+            [new Expr.Num(1m), new Expr.Num(10m)]);
+        OutputBundle filterArgs = [new Expr.Resolve("BadPred")];
         var target = new Expr.DotCall(rangeSource, "filter", filterArgs);
         var invocation = SequencePipelineInvocation.DotCall(target, "count", null);
 
@@ -12739,7 +12719,7 @@ public class EvaluatorTests
         // Verify it's specifically an AmbiguousOpen error
         var ast = ParseValidRoot(source);
         var publicAst = MakeAllPublic(ast);
-        var result = Evaluator.RunFlat(new Expr.Block(publicAst));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(publicAst));
         Assert.True(result.IsError);
         // Unwrap WithContext if present
         var err = result.Error;
@@ -13296,7 +13276,7 @@ public class EvaluatorTests
             Assert.Fail($"Expected success but got error: {flatR.Error}");
         Assert.Equal(Enumerable.Repeat(1m, itemCount), flatR.Value);
 
-        var countedRoot = new Expr.Block(new Algorithm.User(
+        var countedRoot = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             Parameters: [],
             Opens: [],
@@ -13338,14 +13318,7 @@ public class EvaluatorTests
         }
 
         static Expr BuiltinCall(string name, Expr arg) =>
-            new Expr.Call(
-                new Expr.Resolve(name),
-                new Algorithm.User(
-                    Parent: null,
-                    Parameters: [],
-                    Opens: [],
-                    Properties: [],
-                    Output: [arg]));
+            new Expr.Call(new Expr.Resolve(name), [arg]);
     }
 
     [Fact]
@@ -13636,12 +13609,12 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceSpread_DirectBlockOperandWithoutOutput_IsSpreadMissingOutput()
     {
-        // The spread operand is SYNTACTICALLY a written block (`Expr.Block`),
-        // so evaluation takes the direct Block arm of the spread-operand
+        // The spread operand is SYNTACTICALLY a written block (`Expr.AlgorithmExpr`),
+        // so evaluation takes the direct block arm of the spread-operand
         // evaluator rather than the generic expression arm. A no-output block
         // operand must report the SAME spread-specific structured error as a
         // resolved-name operand — never raw MissingOutput (T4-2; the Lean
-        // `.block` arm translates identically). Root row: span is the block
+        // `.algorithmExpr` arm translates identically). Root row: span is the block
         // `{A = 1}` (line 1, columns 1-7).
         AssertSpreadMissingOutput("{A = 1}*", 1, 1, 1, 7);
 
@@ -14336,7 +14309,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_CapturedNestedProperty_ThroughCallArguments_DotAccess_IsLocalOnly()
     {
-        // The capture sits inside a transparent call-argument algorithm; the
+        // The capture sits inside a call-argument OutputBundle slot; the
         // property still depends on the enclosing algorithm's parameter, so it
         // is local-only exactly like the directly written capture above.
         AssertLocalOnlyPropertyMessage(
@@ -14452,7 +14425,7 @@ public class EvaluatorTests
             ExplicitParameters = [new ParameterDeclaration("x", new SourceSpan(1, 6, 1, 6))]
         };
 
-        var result = Evaluator.Run(new Expr.Block(invalid));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(invalid));
 
         Assert.True(result.IsError);
         Assert.IsType<EvalError.ExplicitParametersRequireOutput>(result.Error);
@@ -14490,10 +14463,10 @@ public class EvaluatorTests
                 new Expr.DotCall(
                     new Expr.Resolve("Algo"),
                     "Output",
-                    new Algorithm.User(Parent: null, Parameters: [], Opens: [], Properties: [], Output: [new Expr.Num(6m)]))
+                    new OutputBundle([new Expr.Num(6m)]))
             ]);
 
-        var result = Evaluator.RunFlat(new Expr.Block(root));
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(root));
 
         Assert.False(result.IsError);
         Assert.Equal([7m], result.Value);
@@ -14593,11 +14566,13 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_InlineBlock_ZeroParamSingleOutputInParens_IsNotAutoCallable()
+    public void Eval_InlineBlock_ZeroParamSingleOutput_CrossesHigherOrderBoundary()
     {
-        // A zero-parameter inline block does not become callable just because
-        // it emits exactly one output.
-        AssertEvalFails("Apply(f) = f()\nApply({123})");
+        // An algorithm block always provides its contained Algorithm on the
+        // algorithm channel, regardless of parameter/declaration/output
+        // count: `f()` invokes the zero-parameter brace algorithm exactly
+        // like a named zero-parameter property.
+        AssertEval("Apply(f) = f()\nApply({123})", 123);
     }
 
     [Fact]
@@ -14608,12 +14583,12 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_InlineBlock_ZeroParamMultiOutputInParens_IsNotAutoCallable()
+    public void Eval_InlineBlock_ZeroParamMultiOutput_CrossesHigherOrderBoundary()
     {
-        // Multi-output zero-parameter inline blocks follow the same rule as
-        // single-output ones: they stay value/output structures rather than
-        // callable higher-order arguments.
-        AssertEvalFails("Apply(f) = f()\nApply({1, 2})");
+        // Output count never gates algorithm identity: calling the bound
+        // multi-output brace algorithm emits its outputs, observed at the
+        // call's value boundary as one sequence value.
+        AssertEval("Apply(f) = f()\nApply({1, 2})", 1, 2);
     }
 
     [Fact]
@@ -14770,12 +14745,7 @@ public class EvaluatorTests
     {
         var expr = new Expr.Call(
             new Expr.Resolve("if"),
-            new Algorithm.User(
-                Parent: null,
-                Parameters: [],
-                Opens: [],
-                Properties: [],
-                Output: [new Expr.Num(1), new Expr.Num(5)]));
+            [new Expr.Num(1), new Expr.Num(5)]);
 
         var result = Evaluator.Run(expr);
         if (result.IsOk)
@@ -14795,16 +14765,10 @@ public class EvaluatorTests
             new Expr.Num(10),
             new Expr.Call(
                 new Expr.Resolve("if"),
-                new Algorithm.User(
-                    Parent: null,
-                    Parameters: [],
-                    Opens: [],
-                    Properties: [],
-                    Output:
-                    [
-                        new Expr.Binary(BinaryOp.Lt, new Expr.Num(7), new Expr.Num(6)),
-                        new Expr.Num(1),
-                    ])));
+                [
+                    new Expr.Binary(BinaryOp.Lt, new Expr.Num(7), new Expr.Num(6)),
+                    new Expr.Num(1),
+                ]));
 
         var result = Evaluator.Run(expr);
         if (result.IsOk)
@@ -15717,7 +15681,7 @@ public class EvaluatorTests
         var unaryExpr = new Expr.Unary(UnaryOp.Minus, strExpr);
         var alg = new Algorithm.User(Parent: null, Parameters: [], Opens: [],
             Properties: [], Output: [unaryExpr]);
-        var result = Evaluator.Run(new Expr.Block(alg));
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(alg));
         Assert.True(result.IsError);
         var error = result.Error;
         while (error is EvalError.WithContext wc) error = wc.Inner;

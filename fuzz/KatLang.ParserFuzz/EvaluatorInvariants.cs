@@ -74,7 +74,7 @@ internal static class EvaluatorInvariants
         var verdict = EvaluatorEligibility.Classify(source, parse.Root);
         if (!verdict.Eligible) return;                     // resource-sensitive: probes cover it
 
-        var block = new Expr.Block(parse.Root);
+        var block = new Expr.AlgorithmExpr(parse.Root);
 
         phase = EvaluatorPhase.PlainEval;
         var plain = Evaluator.Run(block, CampaignLimits);
@@ -252,7 +252,7 @@ internal static class EvaluatorInvariants
         sb.Append("|elig:").Append(verdict.Eligible ? "y" : "n").Append(':').Append(verdict.ReasonText);
         if (!verdict.Eligible) return sb.ToString();
 
-        var block = new Expr.Block(parse.Root);
+        var block = new Expr.AlgorithmExpr(parse.Root);
         var plain = Evaluator.Run(block, CampaignLimits);
         sb.Append("|plain:").Append(plain.IsOk ? Shape(plain.Value) : ErrorKey(plain.Error));
 

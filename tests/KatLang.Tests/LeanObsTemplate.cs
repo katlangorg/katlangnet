@@ -62,7 +62,7 @@ internal static class LeanObsTemplate
           validateExplicitParamOutputInvariantExpr e
           let ctx := { callStack := [preludeAlg], algEnv := [] }
           match e with
-          | .block a =>
+          | .algorithmExpr a =>
               let wired := wireToCaller ctx a
               if (Algorithm.params wired).length = 0 then
                 evalAlgOutputCounted wired ctx []
