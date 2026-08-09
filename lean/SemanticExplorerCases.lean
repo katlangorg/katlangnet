@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 1499
+- surface corpus cases: 1557
 - excluded parse-level cases (Lean has no surface parser): 31
-- Lean-representable surface cases: 1468
+- Lean-representable surface cases: 1526
 - internal-node cases: 14
-- total generated guards: 1482 case guards + 2 count guards
+- total generated guards: 1540 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -484,262 +484,262 @@ def case_captureCall__pl1 : Expr :=
 
 -- dotAccess__e: A = { \n     X = () \n } \n A.X
 def case_dotAccess__e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.emptySequence 0)])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.emptySequence 0)])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__e == "ok raw=S[] n=1"
 
 -- dotAccess__n0: A = { \n     X = 0 \n } \n A.X
 def case_dotAccess__n0 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.num 0)])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.num 0)])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__n0 == "ok raw=0 n=1"
 
 -- dotAccess__n1: A = { \n     X = 1 \n } \n A.X
 def case_dotAccess__n1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.num 1)])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.num 1)])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__n1 == "ok raw=1 n=1"
 
 -- dotAccess__p1: A = { \n     X = (1) \n } \n A.X
 def case_dotAccess__p1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p1 == "ok raw=1 n=1"
 
 -- dotAccess__p12: A = { \n     X = (1, 2) \n } \n A.X
 def case_dotAccess__p12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p12 == "ok raw=S[1, 2] n=1"
 
 -- dotAccess__p123: A = { \n     X = (1, 2, 3) \n } \n A.X
 def case_dotAccess__p123 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p123 == "ok raw=S[1, 2, 3] n=1"
 
 -- dotAccess__pee: A = { \n     X = ((), ()) \n } \n A.X
 def case_dotAccess__pee : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__pee == "ok raw=S[S[], S[]] n=1"
 
 -- dotAccess__pe1: A = { \n     X = ((), 1) \n } \n A.X
 def case_dotAccess__pe1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__pe1 == "ok raw=S[S[], 1] n=1"
 
 -- dotAccess__p1e: A = { \n     X = (1, ()) \n } \n A.X
 def case_dotAccess__p1e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p1e == "ok raw=S[1, S[]] n=1"
 
 -- dotAccess__p12_3: A = { \n     X = ((1, 2), 3) \n } \n A.X
 def case_dotAccess__p12_3 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
 
 -- dotAccess__p12_34: A = { \n     X = ((1, 2), (3, 4)) \n } \n A.X
 def case_dotAccess__p12_34 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
 
 -- dotAccess__pe_12: A = { \n     X = ((), (1, 2)) \n } \n A.X
 def case_dotAccess__pe_12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
 
 -- dotAccess__ppe1_2: A = { \n     X = (((), 1), 2) \n } \n A.X
 def case_dotAccess__ppe1_2 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
 
 -- dotAccess__p12_e: A = { \n     X = ((1, 2), ()) \n } \n A.X
 def case_dotAccess__p12_e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
 
 -- dotAccess__ppe: A = { \n     X = (()) \n } \n A.X
 def case_dotAccess__ppe : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__ppe == "ok raw=S[] n=1"
 
 -- dotAccess__pp1: A = { \n     X = ((1)) \n } \n A.X
 def case_dotAccess__pp1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__pp1 == "ok raw=1 n=1"
 
 -- dotAccess__ppp12: A = { \n     X = (((1, 2))) \n } \n A.X
 def case_dotAccess__ppp12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__ppp12 == "ok raw=S[1, 2] n=1"
 
 -- dotAccess__le: A = { \n     X = [] \n } \n A.X
 def case_dotAccess__le : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__le == "ok raw=L[] n=1"
 
 -- dotAccess__l7: A = { \n     X = [7] \n } \n A.X
 def case_dotAccess__l7 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.num 7)])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.num 7)])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__l7 == "ok raw=L[7] n=1"
 
 -- dotAccess__l12: A = { \n     X = [1, 2] \n } \n A.X
 def case_dotAccess__l12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__l12 == "ok raw=L[1, 2] n=1"
 
 -- dotAccess__l12_3: A = { \n     X = [[1, 2], 3] \n } \n A.X
 def case_dotAccess__l12_3 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- dotAccess__lle: A = { \n     X = [[]] \n } \n A.X
 def case_dotAccess__lle : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__lle == "ok raw=L[L[]] n=1"
 
 -- dotAccess__l_e: A = { \n     X = [()] \n } \n A.X
 def case_dotAccess__l_e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__l_e == "ok raw=L[S[]] n=1"
 
 -- dotAccess__l_p12: A = { \n     X = [(1, 2)] \n } \n A.X
 def case_dotAccess__l_p12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- dotAccess__p_l12: A = { \n     X = ([1, 2], 3) \n } \n A.X
 def case_dotAccess__p_l12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__p_l12 == "ok raw=S[L[1, 2], 3] n=1"
 
 -- dotAccess__pl1: A = { \n     X = ([1]) \n } \n A.X
 def case_dotAccess__pl1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_dotAccess__pl1 == "ok raw=L[1] n=1"
 
 -- dotAccessCall__e: A = { \n     X = () \n } \n A.X()
 def case_dotAccessCall__e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.emptySequence 0)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.emptySequence 0)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__e == "ok raw=S[] n=1"
 
 -- dotAccessCall__n0: A = { \n     X = 0 \n } \n A.X()
 def case_dotAccessCall__n0 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.num 0)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.num 0)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__n0 == "ok raw=0 n=1"
 
 -- dotAccessCall__n1: A = { \n     X = 1 \n } \n A.X()
 def case_dotAccessCall__n1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.num 1)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.num 1)])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__n1 == "ok raw=1 n=1"
 
 -- dotAccessCall__p1: A = { \n     X = (1) \n } \n A.X()
 def case_dotAccessCall__p1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p1 == "ok raw=1 n=1"
 
 -- dotAccessCall__p12: A = { \n     X = (1, 2) \n } \n A.X()
 def case_dotAccessCall__p12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p12 == "ok raw=S[1, 2] n=1"
 
 -- dotAccessCall__p123: A = { \n     X = (1, 2, 3) \n } \n A.X()
 def case_dotAccessCall__p123 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p123 == "ok raw=S[1, 2, 3] n=1"
 
 -- dotAccessCall__pee: A = { \n     X = ((), ()) \n } \n A.X()
 def case_dotAccessCall__pee : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__pee == "ok raw=S[S[], S[]] n=1"
 
 -- dotAccessCall__pe1: A = { \n     X = ((), 1) \n } \n A.X()
 def case_dotAccessCall__pe1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__pe1 == "ok raw=S[S[], 1] n=1"
 
 -- dotAccessCall__p1e: A = { \n     X = (1, ()) \n } \n A.X()
 def case_dotAccessCall__p1e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p1e == "ok raw=S[1, S[]] n=1"
 
 -- dotAccessCall__p12_3: A = { \n     X = ((1, 2), 3) \n } \n A.X()
 def case_dotAccessCall__p12_3 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
 
 -- dotAccessCall__p12_34: A = { \n     X = ((1, 2), (3, 4)) \n } \n A.X()
 def case_dotAccessCall__p12_34 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.block (alg [] [] [] [(.num 3), (.num 4)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
 
 -- dotAccessCall__pe_12: A = { \n     X = ((), (1, 2)) \n } \n A.X()
 def case_dotAccessCall__pe_12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.block (alg [] [] [] [(.num 1), (.num 2)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
 
 -- dotAccessCall__ppe1_2: A = { \n     X = (((), 1), 2) \n } \n A.X()
 def case_dotAccessCall__ppe1_2 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0), (.num 1)])), (.num 2)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
 
 -- dotAccessCall__p12_e: A = { \n     X = ((1, 2), ()) \n } \n A.X()
 def case_dotAccessCall__p12_e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)])), (.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
 
 -- dotAccessCall__ppe: A = { \n     X = (()) \n } \n A.X()
 def case_dotAccessCall__ppe : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.emptySequence 0)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__ppe == "ok raw=S[] n=1"
 
 -- dotAccessCall__pp1: A = { \n     X = ((1)) \n } \n A.X()
 def case_dotAccessCall__pp1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1)]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__pp1 == "ok raw=1 n=1"
 
 -- dotAccessCall__ppp12: A = { \n     X = (((1, 2))) \n } \n A.X()
 def case_dotAccessCall__ppp12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [(.num 1), (.num 2)]))]))]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__ppp12 == "ok raw=S[1, 2] n=1"
 
 -- dotAccessCall__le: A = { \n     X = [] \n } \n A.X()
 def case_dotAccessCall__le : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__le == "ok raw=L[] n=1"
 
 -- dotAccessCall__l7: A = { \n     X = [7] \n } \n A.X()
 def case_dotAccessCall__l7 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.num 7)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.num 7)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__l7 == "ok raw=L[7] n=1"
 
 -- dotAccessCall__l12: A = { \n     X = [1, 2] \n } \n A.X()
 def case_dotAccessCall__l12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__l12 == "ok raw=L[1, 2] n=1"
 
 -- dotAccessCall__l12_3: A = { \n     X = [[1, 2], 3] \n } \n A.X()
 def case_dotAccessCall__l12_3 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [(.num 1), (.num 2)]), (.num 3)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- dotAccessCall__lle: A = { \n     X = [[]] \n } \n A.X()
 def case_dotAccessCall__lle : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__lle == "ok raw=L[L[]] n=1"
 
 -- dotAccessCall__l_e: A = { \n     X = [()] \n } \n A.X()
 def case_dotAccessCall__l_e : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__l_e == "ok raw=L[S[]] n=1"
 
 -- dotAccessCall__l_p12: A = { \n     X = [(1, 2)] \n } \n A.X()
 def case_dotAccessCall__l_p12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.listLiteral [(.block (alg [] [] [] [(.num 1), (.num 2)]))])])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- dotAccessCall__p_l12: A = { \n     X = ([1, 2], 3) \n } \n A.X()
 def case_dotAccessCall__p_l12 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1), (.num 2)]), (.num 3)]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__p_l12 == "ok raw=S[L[1, 2], 3] n=1"
 
 -- dotAccessCall__pl1: A = { \n     X = ([1]) \n } \n A.X()
 def case_dotAccessCall__pl1 : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [(.num 1)])]))])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
 #guard obs case_dotAccessCall__pl1 == "ok raw=L[1] n=1"
 
 -- fixed__e: F(a) = a \n F(())
@@ -7004,8 +7004,18 @@ def case_special__multiPropDotCount : Expr :=
 
 -- special__multiPropDot: A = { \n     X = 1, 2, 3 \n } \n A.X
 def case_special__multiPropDot : Expr :=
-  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [.dotCall (.resolve "A") "X" none])
+  .block (alg [] [] [privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [.dotCall (.resolve "A") "X" none])
 #guard obs case_special__multiPropDot == "ok raw=S[1, 2, 3] n=1"
+
+-- special__dotAccessPublicMember: A = { \n     public X = 1, 2, 3 \n } \n A.X
+def case_special__dotAccessPublicMember : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [.dotCall (.resolve "A") "X" none])
+#guard obs case_special__dotAccessPublicMember == "ok raw=S[1, 2, 3] n=1"
+
+-- special__dotAccessCallPublicMember: A = { \n     public X = 1, 2, 3 \n } \n A.X()
+def case_special__dotAccessCallPublicMember : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [.dotCall (.resolve "A") "X" (some (alg [] [] [] []))])
+#guard obs case_special__dotAccessCallPublicMember == "ok raw=S[1, 2, 3] n=1"
 
 -- special__multiPropIndex0: P = 1, 2, 3 \n P:0
 def case_special__multiPropIndex0 : Expr :=
@@ -7432,7 +7442,287 @@ def case_special__listLoneCollectingAssignment : Expr :=
   .block (alg [] [] [privateProp "d" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [.call (.block (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) (alg [] [] [] [.resolve "d"])])] [])
 #guard obs case_special__listLoneCollectingAssignment == "err missingOutput"
 
--- 1468 differential cases.
+-- special__minSeq: min((3, 1, 2))
+def case_special__minSeq : Expr :=
+  .block (alg [] [] [] [.call (.resolve "min") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 2]))])])
+#guard obs case_special__minSeq == "ok raw=1 n=1"
+
+-- special__minList: min([3, 1])
+def case_special__minList : Expr :=
+  .block (alg [] [] [] [.call (.resolve "min") (alg [] [] [] [(.listLiteral [.num 3, .num 1])])])
+#guard obs case_special__minList == "ok raw=1 n=1"
+
+-- special__minScalar: min(7)
+def case_special__minScalar : Expr :=
+  .block (alg [] [] [] [.call (.resolve "min") (alg [] [] [] [.num 7])])
+#guard obs case_special__minScalar == "ok raw=7 n=1"
+
+-- special__minEmpty: min(())
+def case_special__minEmpty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "min") (alg [] [] [] [.emptySequence 0])])
+#guard obs case_special__minEmpty == "err arity"
+
+-- special__minNestedItem: min(((1, 2), 3))
+def case_special__minNestedItem : Expr :=
+  .block (alg [] [] [] [.call (.resolve "min") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), .num 3]))])])
+#guard obs case_special__minNestedItem == "err arity"
+
+-- special__minDot: x = 3, 1, 2 \n x.min
+def case_special__minDot : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 2]))])] [.dotCall (.resolve "x") "min" none])
+#guard obs case_special__minDot == "ok raw=1 n=1"
+
+-- special__maxSeq: max((3, 1, 2))
+def case_special__maxSeq : Expr :=
+  .block (alg [] [] [] [.call (.resolve "max") (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 2]))])])
+#guard obs case_special__maxSeq == "ok raw=3 n=1"
+
+-- special__maxList: max([3, 1])
+def case_special__maxList : Expr :=
+  .block (alg [] [] [] [.call (.resolve "max") (alg [] [] [] [(.listLiteral [.num 3, .num 1])])])
+#guard obs case_special__maxList == "ok raw=3 n=1"
+
+-- special__maxEmpty: max(())
+def case_special__maxEmpty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "max") (alg [] [] [] [.emptySequence 0])])
+#guard obs case_special__maxEmpty == "err arity"
+
+-- special__maxDot: x = 3, 1, 2 \n x.max
+def case_special__maxDot : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 3, .num 1, .num 2]))])] [.dotCall (.resolve "x") "max" none])
+#guard obs case_special__maxDot == "ok raw=3 n=1"
+
+-- special__firstSeq: first((1, 2, 3))
+def case_special__firstSeq : Expr :=
+  .block (alg [] [] [] [.call (.resolve "first") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
+#guard obs case_special__firstSeq == "ok raw=1 n=1"
+
+-- special__firstScalar: first(7)
+def case_special__firstScalar : Expr :=
+  .block (alg [] [] [] [.call (.resolve "first") (alg [] [] [] [.num 7])])
+#guard obs case_special__firstScalar == "ok raw=7 n=1"
+
+-- special__firstListElementStaysExact: first([[1, 2], 3])
+def case_special__firstListElementStaysExact : Expr :=
+  .block (alg [] [] [] [.call (.resolve "first") (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_special__firstListElementStaysExact == "ok raw=L[1, 2] n=1"
+
+-- special__firstEmptyItem: first(((), 1))
+def case_special__firstEmptyItem : Expr :=
+  .block (alg [] [] [] [.call (.resolve "first") (alg [] [] [] [(.block (alg [] [] [] [.emptySequence 0, .num 1]))])])
+#guard obs case_special__firstEmptyItem == "ok raw=S[] n=1"
+
+-- special__firstEmpty: first(())
+def case_special__firstEmpty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "first") (alg [] [] [] [.emptySequence 0])])
+#guard obs case_special__firstEmpty == "err arity"
+
+-- special__firstDot: x = 1, 2, 3 \n x.first
+def case_special__firstDot : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])] [.dotCall (.resolve "x") "first" none])
+#guard obs case_special__firstDot == "ok raw=1 n=1"
+
+-- special__lastSeq: last((1, 2, 3))
+def case_special__lastSeq : Expr :=
+  .block (alg [] [] [] [.call (.resolve "last") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2, .num 3]))])])
+#guard obs case_special__lastSeq == "ok raw=3 n=1"
+
+-- special__lastListElementStaysExact: last([1, [2, 3]])
+def case_special__lastListElementStaysExact : Expr :=
+  .block (alg [] [] [] [.call (.resolve "last") (alg [] [] [] [(.listLiteral [.num 1, .listLiteral [.num 2, .num 3]])])])
+#guard obs case_special__lastListElementStaysExact == "ok raw=L[2, 3] n=1"
+
+-- special__lastEmpty: last(())
+def case_special__lastEmpty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "last") (alg [] [] [] [.emptySequence 0])])
+#guard obs case_special__lastEmpty == "err arity"
+
+-- special__orderDescSeq: orderDesc((1, 3, 2))
+def case_special__orderDescSeq : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 3, .num 2]))])])
+#guard obs case_special__orderDescSeq == "ok raw=L[3, 2, 1] n=1"
+
+-- special__orderDescList: orderDesc([2, 1])
+def case_special__orderDescList : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [(.listLiteral [.num 2, .num 1])])])
+#guard obs case_special__orderDescList == "ok raw=L[2, 1] n=1"
+
+-- special__orderDescDuplicates: orderDesc((2, 1, 2))
+def case_special__orderDescDuplicates : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [(.block (alg [] [] [] [.num 2, .num 1, .num 2]))])])
+#guard obs case_special__orderDescDuplicates == "ok raw=L[2, 2, 1] n=1"
+
+-- special__orderDescScalar: orderDesc(7)
+def case_special__orderDescScalar : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [.num 7])])
+#guard obs case_special__orderDescScalar == "ok raw=L[7] n=1"
+
+-- special__orderDescEmpty: orderDesc(())
+def case_special__orderDescEmpty : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [.emptySequence 0])])
+#guard obs case_special__orderDescEmpty == "ok raw=L[] n=1"
+
+-- special__orderDescString: orderDesc(('b', 'a'))
+def case_special__orderDescString : Expr :=
+  .block (alg [] [] [] [.call (.resolve "orderDesc") (alg [] [] [] [(.block (alg [] [] [] [.stringLiteral "b", .stringLiteral "a"]))])])
+#guard obs case_special__orderDescString == "err arity"
+
+-- special__orderDescDot: x = 1, 3, 2 \n x.orderDesc
+def case_special__orderDescDot : Expr :=
+  .block (alg [] [] [privateProp "x" (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 3, .num 2]))])] [.dotCall (.resolve "x") "orderDesc" none])
+#guard obs case_special__orderDescDot == "ok raw=L[3, 2, 1] n=1"
+
+-- special__whileCountdown: S(a) = a - 1, a > 1 \n while(S, 3)
+def case_special__whileCountdown : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a"] [] [] [.binary .sub (.param "a") (.num 1), .binary .gt (.param "a") (.num 1)])] [.call (.resolve "while") (alg [] [] [] [.resolve "S", .num 3])])
+#guard obs case_special__whileCountdown == "ok raw=1 n=1"
+
+-- special__whileZeroIterations: S(a) = a, 0 \n while(S, 5)
+def case_special__whileZeroIterations : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [.call (.resolve "while") (alg [] [] [] [.resolve "S", .num 5])])
+#guard obs case_special__whileZeroIterations == "ok raw=5 n=1"
+
+-- special__whileTwoSlotState: S(a, b) = a + 1, b * 2, a < 3 \n while(S, 1, 1)
+def case_special__whileTwoSlotState : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [.binary .add (.param "a") (.num 1), .binary .mul (.param "b") (.num 2), .binary .lt (.param "a") (.num 3)])] [.call (.resolve "while") (alg [] [] [] [.resolve "S", .num 1, .num 1])])
+#guard obs case_special__whileTwoSlotState == "ok raw=S[3, 4] n=2"
+
+-- special__whileEmptyInitialState: S(a) = a, 0 \n while(S, ())
+def case_special__whileEmptyInitialState : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [.call (.resolve "while") (alg [] [] [] [.resolve "S", .emptySequence 0])])
+#guard obs case_special__whileEmptyInitialState == "ok raw=S[] n=1"
+
+-- special__whileNonNumericContinuation: S(a) = a, () \n while(S, 1)
+def case_special__whileNonNumericContinuation : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .emptySequence 0])] [.call (.resolve "while") (alg [] [] [] [.resolve "S", .num 1])])
+#guard obs case_special__whileNonNumericContinuation == "err arity"
+
+-- special__whileDot: S(a) = a - 1, a > 1 \n S.while(3)
+def case_special__whileDot : Expr :=
+  .block (alg [] [] [privateProp "S" (alg ["a"] [] [] [.binary .sub (.param "a") (.num 1), .binary .gt (.param "a") (.num 1)])] [.dotCall (.resolve "S") "while" (some (alg [] [] [] [.num 3]))])
+#guard obs case_special__whileDot == "ok raw=1 n=1"
+
+-- special__containsSequenceItem: contains(((1, 2), 3), (1, 2))
+def case_special__containsSequenceItem : Expr :=
+  .block (alg [] [] [] [.call (.resolve "contains") (alg [] [] [] [(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), .num 3])), (.block (alg [] [] [] [.num 1, .num 2]))])])
+#guard obs case_special__containsSequenceItem == "ok raw=1 n=1"
+
+-- special__containsListItem: contains([[1, 2], 3], [1, 2])
+def case_special__containsListItem : Expr :=
+  .block (alg [] [] [] [.call (.resolve "contains") (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]), (.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__containsListItem == "ok raw=1 n=1"
+
+-- special__containsEmptyItem: contains(((), 1), ())
+def case_special__containsEmptyItem : Expr :=
+  .block (alg [] [] [] [.call (.resolve "contains") (alg [] [] [] [(.block (alg [] [] [] [.emptySequence 0, .num 1])), .emptySequence 0])])
+#guard obs case_special__containsEmptyItem == "ok raw=1 n=1"
+
+-- special__containsScalarCollection: contains(7, 7)
+def case_special__containsScalarCollection : Expr :=
+  .block (alg [] [] [] [.call (.resolve "contains") (alg [] [] [] [.num 7, .num 7])])
+#guard obs case_special__containsScalarCollection == "ok raw=1 n=1"
+
+-- special__containsAcrossKinds: contains(([1, 2], 3), (1, 2))
+def case_special__containsAcrossKinds : Expr :=
+  .block (alg [] [] [] [.call (.resolve "contains") (alg [] [] [] [(.block (alg [] [] [] [(.listLiteral [.num 1, .num 2]), .num 3])), (.block (alg [] [] [] [.num 1, .num 2]))])])
+#guard obs case_special__containsAcrossKinds == "ok raw=0 n=1"
+
+-- special__openPublicMember: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     X \n } \n A
+def case_special__openPublicMember : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openPublicMember == "ok raw=101 n=1"
+
+-- special__openPrivateMemberHidden: Lib = { \n     X = 101 \n } \n A = { \n     open Lib \n     X \n } \n A(707)
+def case_special__openPrivateMemberHidden : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [.resolve "Lib"] [] [.param "X"])] [(.call (.resolve "A") (alg [] [] [] [.num 707]))])
+#guard obs case_special__openPrivateMemberHidden == "ok raw=707 n=1"
+
+-- special__openLocalOnlyCapturedParamsHidden: Lib(p) = { \n     public X = p + 101 \n     X \n } \n A = { \n     open Lib \n     X \n } \n A
+def case_special__openLocalOnlyCapturedParamsHidden : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg ["p"] [] [publicLocalProp "X" .localCapturedAncestorParams (alg [] [] [] [(.binary .add (.param "p") (.num 101))])] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openLocalOnlyCapturedParamsHidden == "err unknownName"
+
+-- special__openTwoProvidersAmbiguous: L1 = { \n     public X = 101 \n } \n L2 = { \n     public X = 202 \n } \n A = { \n     open L1, L2 \n     X \n } \n A
+def case_special__openTwoProvidersAmbiguous : Expr :=
+  .block (alg [] [] [privateProp "L1" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "L2" (alg [] [] [publicProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "L1", .resolve "L2"] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openTwoProvidersAmbiguous == "err ambiguousOpen"
+
+-- special__openDuplicateTargetDedup: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib, Lib \n     X \n } \n A
+def case_special__openDuplicateTargetDedup : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openDuplicateTargetDedup == "ok raw=101 n=1"
+
+-- special__openDuplicateDottedTargetDedup: Lib = { \n     public S = { \n         public X = 101 \n     } \n } \n A = { \n     open Lib.S, Lib.S \n     X \n } \n A
+def case_special__openDuplicateDottedTargetDedup : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg [] [(.dotCall (.resolve "Lib") "S" none), (.dotCall (.resolve "Lib") "S" none)] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openDuplicateDottedTargetDedup == "ok raw=101 n=1"
+
+-- special__openDuplicateInlineBlocksAmbiguous: A = { \n     open { public X = 101 }, { public X = 202 } \n     X \n } \n A
+def case_special__openDuplicateInlineBlocksAmbiguous : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [(.block (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])), (.block (alg [] [] [publicProp "X" (alg [] [] [] [.num 202])] []))] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openDuplicateInlineBlocksAmbiguous == "err ambiguousOpen"
+
+-- special__openInlineBlock: A = { \n     open { public X = 101 } \n     X \n } \n A
+def case_special__openInlineBlock : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [(.block (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []))] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openInlineBlock == "ok raw=101 n=1"
+
+-- special__openInlineBlockPrivateHidden: A = { \n     open { X = 101 } \n     X \n } \n A(707)
+def case_special__openInlineBlockPrivateHidden : Expr :=
+  .block (alg [] [] [privateProp "A" (alg ["X"] [(.block (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] []))] [] [.param "X"])] [(.call (.resolve "A") (alg [] [] [] [.num 707]))])
+#guard obs case_special__openInlineBlockPrivateHidden == "ok raw=707 n=1"
+
+-- special__openDottedPath: Lib = { \n     public S = { \n         public X = 101 \n     } \n } \n A = { \n     open Lib.S \n     X \n } \n A
+def case_special__openDottedPath : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg [] [(.dotCall (.resolve "Lib") "S" none)] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openDottedPath == "ok raw=101 n=1"
+
+-- special__openDottedPathPrivateIntermediate: Lib = { \n     S = { \n         public X = 101 \n     } \n } \n A = { \n     open Lib.S \n     X \n } \n A(707)
+def case_special__openDottedPathPrivateIntermediate : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg ["X"] [(.dotCall (.resolve "Lib") "S" none)] [] [.param "X"])] [(.call (.resolve "A") (alg [] [] [] [.num 707]))])
+#guard obs case_special__openDottedPathPrivateIntermediate == "ok raw=707 n=1"
+
+-- special__openLocalShadowsOpenedName: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     X = 202 \n     X \n } \n A
+def case_special__openLocalShadowsOpenedName : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [privateProp "X" (alg [] [] [] [.num 202])] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openLocalShadowsOpenedName == "ok raw=202 n=1"
+
+-- special__openAncestorPropertyWins: Lib = { \n     public X = 101 \n } \n A = { \n     X = 202 \n     Inner = { \n         open Lib \n         X \n     } \n     Inner \n } \n A
+def case_special__openAncestorPropertyWins : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202]), privateProp "Inner" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "Inner"])] [.resolve "A"])
+#guard obs case_special__openAncestorPropertyWins == "ok raw=202 n=1"
+
+-- special__openParentScopeReachesChild: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     Inner = { \n         X \n     } \n     Inner \n } \n A
+def case_special__openParentScopeReachesChild : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [privateProp "Inner" (alg [] [] [] [.resolve "X"])] [.resolve "Inner"])] [.resolve "A"])
+#guard obs case_special__openParentScopeReachesChild == "ok raw=101 n=1"
+
+-- special__openNestedDoesNotLeakOutward: Lib = { \n     public X = 101 \n } \n A = { \n     Inner = { \n         open Lib \n         X \n     } \n     X \n } \n A(707)
+def case_special__openNestedDoesNotLeakOutward : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [privateProp "Inner" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.param "X"])] [(.call (.resolve "A") (alg [] [] [] [.num 707]))])
+#guard obs case_special__openNestedDoesNotLeakOutward == "ok raw=707 n=1"
+
+-- special__openHeadDefinedLater: A = { \n     open Lib \n     X \n } \n Lib = { \n     public X = 101 \n } \n A
+def case_special__openHeadDefinedLater : Expr :=
+  .block (alg [] [] [privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] [.resolve "A"])
+#guard obs case_special__openHeadDefinedLater == "ok raw=101 n=1"
+
+-- special__openBuiltinNameCollision: Lib = { \n     public count = 101 \n } \n A = { \n     open Lib \n     count([1, 2, 3]) \n } \n A
+def case_special__openBuiltinNameCollision : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "count" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [] [(.call (.resolve "count") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]))])] [.resolve "A"])
+#guard obs case_special__openBuiltinNameCollision == "ok raw=3 n=1"
+
+-- special__openBuiltinTargetIsIllegal: Lib = { \n     public X = 101 \n } \n A = { \n     open count, Lib \n     X \n } \n A
+def case_special__openBuiltinTargetIsIllegal : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "count", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+#guard obs case_special__openBuiltinTargetIsIllegal == "err illegalInOpen"
+
+-- special__structuralDotSeesPrivateMember: Lib = { \n     X = 101 \n } \n Lib.X
+def case_special__structuralDotSeesPrivateMember : Expr :=
+  .block (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 101])] [])] [(.dotCall (.resolve "Lib") "X" none)])
+#guard obs case_special__structuralDotSeesPrivateMember == "ok raw=101 n=1"
+
+-- 1526 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -8823,6 +9113,8 @@ def surfaceCaseIds : List String := [
   "special__multiPropCount",
   "special__multiPropDotCount",
   "special__multiPropDot",
+  "special__dotAccessPublicMember",
+  "special__dotAccessCallPublicMember",
   "special__multiPropIndex0",
   "special__multiPropEq",
   "special__multiCollecting",
@@ -8907,9 +9199,65 @@ def surfaceCaseIds : List String := [
   "special__spreadNoOutputBlockList",
   "special__spreadNoOutputBlockCallArg",
   "special__spreadNoOutputResolved",
-  "special__listLoneCollectingAssignment"
+  "special__listLoneCollectingAssignment",
+  "special__minSeq",
+  "special__minList",
+  "special__minScalar",
+  "special__minEmpty",
+  "special__minNestedItem",
+  "special__minDot",
+  "special__maxSeq",
+  "special__maxList",
+  "special__maxEmpty",
+  "special__maxDot",
+  "special__firstSeq",
+  "special__firstScalar",
+  "special__firstListElementStaysExact",
+  "special__firstEmptyItem",
+  "special__firstEmpty",
+  "special__firstDot",
+  "special__lastSeq",
+  "special__lastListElementStaysExact",
+  "special__lastEmpty",
+  "special__orderDescSeq",
+  "special__orderDescList",
+  "special__orderDescDuplicates",
+  "special__orderDescScalar",
+  "special__orderDescEmpty",
+  "special__orderDescString",
+  "special__orderDescDot",
+  "special__whileCountdown",
+  "special__whileZeroIterations",
+  "special__whileTwoSlotState",
+  "special__whileEmptyInitialState",
+  "special__whileNonNumericContinuation",
+  "special__whileDot",
+  "special__containsSequenceItem",
+  "special__containsListItem",
+  "special__containsEmptyItem",
+  "special__containsScalarCollection",
+  "special__containsAcrossKinds",
+  "special__openPublicMember",
+  "special__openPrivateMemberHidden",
+  "special__openLocalOnlyCapturedParamsHidden",
+  "special__openTwoProvidersAmbiguous",
+  "special__openDuplicateTargetDedup",
+  "special__openDuplicateDottedTargetDedup",
+  "special__openDuplicateInlineBlocksAmbiguous",
+  "special__openInlineBlock",
+  "special__openInlineBlockPrivateHidden",
+  "special__openDottedPath",
+  "special__openDottedPathPrivateIntermediate",
+  "special__openLocalShadowsOpenedName",
+  "special__openAncestorPropertyWins",
+  "special__openParentScopeReachesChild",
+  "special__openNestedDoesNotLeakOutward",
+  "special__openHeadDefinedLater",
+  "special__openBuiltinNameCollision",
+  "special__openBuiltinTargetIsIllegal",
+  "special__structuralDotSeesPrivateMember"
 ]
-#guard surfaceCaseIds.length == 1468
+#guard surfaceCaseIds.length == 1526
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -9011,5 +9359,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 1482 case guards (1468 surface + 14 internal-node).
+-- Total: 1540 case guards (1526 surface + 14 internal-node).
 end SemanticExplorerCases

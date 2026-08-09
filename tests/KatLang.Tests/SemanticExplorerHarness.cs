@@ -44,11 +44,41 @@ public static class SemanticExplorerHarness
         if (parsed.HasErrors)
             return new ExplorerObservation(caseId, source, "parseError", null, null, null, null, null);
 
-        var counted = Evaluator.RunCounted(new Expr.Block(parsed.Root));
+        var root = new Expr.Block(parsed.Root);
+        var counted = Evaluator.RunCounted(root);
+
+        // Plain/counted cross-check, mirroring the generated Lean artifact's
+        // `obs` (which compares `runResult` against `runCountedM` on every
+        // case). Without it the surface corpus observed only the COUNTED C#
+        // evaluator, so a plain-evaluator regression could not fail any of the
+        // ~1500 generated guards. ObserveAst already applied the same check to
+        // the internal-node cases.
+        var plain = Evaluator.Run(root);
+        if (counted.IsError != plain.IsError)
+        {
+            throw new InvalidOperationException(
+                $"Plain/counted evaluator disagreement for '{caseId}': one errored, the other succeeded.");
+        }
+
         if (counted.IsError)
         {
+            var countedCategory = ErrorCategory(counted.Error);
+            var plainCategory = ErrorCategory(plain.Error);
+            if (countedCategory != plainCategory)
+            {
+                throw new InvalidOperationException(
+                    $"Plain/counted evaluator disagreement for '{caseId}': err {countedCategory} vs err {plainCategory}.");
+            }
+
             return new ExplorerObservation(
-                caseId, source, "err", null, null, null, ErrorCategory(counted.Error), null);
+                caseId, source, "err", null, null, null, countedCategory, null);
+        }
+
+        if (!Result.ValueComparer.Equals(counted.Value.Value, plain.Value))
+        {
+            throw new InvalidOperationException(
+                $"Plain/counted evaluator disagreement for '{caseId}': " +
+                $"{Neutral(plain.Value)} vs {Neutral(counted.Value.Value)}.");
         }
 
         // Display comes from the public engine path so display-facing invariants

@@ -161,8 +161,18 @@ public static class SemanticExplorerCorpus
     private static string LMixedBack(string bodyParam) =>
         $"privateProp \"F\" (algWithParameters [{{ name := \"t\", kind := .collecting }}, {{ name := \"z\" }}] [] [] [.param \"{bodyParam}\"])";
 
+    /// <summary>
+    /// Lean encoding of the <c>dotAccess</c> templates' container. The written
+    /// source is <c>A = { X = ... }</c>, whose <c>X</c> the parser elaborates as
+    /// a PRIVATE property, so the Lean side must use <c>privateProp</c> for the
+    /// two sides to run the same program. Structural dot access deliberately
+    /// sees private members on both sides (Lean: the <c>resolveAlgForOpen</c>
+    /// note — <c>open</c> filters to public members, <c>Algorithm.lookupProp</c>
+    /// does not), so these templates also pin that rule. The
+    /// <c>dotAccessPublicMember</c> specials cover the public spelling.
+    /// </summary>
     private static string LContainer(string leanExpr) =>
-        $"privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [{leanExpr}])] [])";
+        $"privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [{leanExpr}])] [])";
 
     private static string LCall(string callee, params string[] args)
         => $".call (.resolve \"{callee}\") (alg [] [] [] [{string.Join(", ", args)}])";
@@ -385,8 +395,18 @@ public static class SemanticExplorerCorpus
         ("multiPropDotCount", "P = 1, 2, 3\nP.count",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".dotCall (.resolve \"P\") \"count\" none"])),
         ("multiPropDot", "A = {\n    X = 1, 2, 3\n}\nA.X",
+            LProg(["privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
+                [".dotCall (.resolve \"A\") \"X\" none"])),
+        // The `dotAccess*` templates use a PRIVATE member (that is what
+        // `A = { X = ... }` elaborates to). These pin the public spelling of the
+        // same access so a change that made structural dot access exposure-sensitive
+        // on one side alone cannot pass unnoticed.
+        ("dotAccessPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X",
             LProg(["privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
                 [".dotCall (.resolve \"A\") \"X\" none"])),
+        ("dotAccessCallPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X()",
+            LProg(["privateProp \"A\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1, .num 2, .num 3])] [])"],
+                [".dotCall (.resolve \"A\") \"X\" (some (alg [] [] [] []))"])),
         ("multiPropIndex0", "P = 1, 2, 3\nP:0",
             LProg(["privateProp \"P\" (alg [] [] [] [.num 1, .num 2, .num 3])"], [".index (.resolve \"P\") (.num 0)"])),
         ("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)",
@@ -620,7 +640,284 @@ public static class SemanticExplorerCorpus
             LProg(
                 [LDecon("(.listLiteral [.num 1, .num 2, .num 3])", ["items"], 0, "items")],
                 [])),
+        // ── Builtins that had Lean guards and C# tests but no SHARED case ────
+        // `while`, `first`, `last`, `min`, `max`, and `orderDesc` were the only
+        // builtins with no Lean/C# differential pin at all (the receiver
+        // templates cover count/take/skip/distinct/order/map/filter/atoms, and
+        // the language spec covers if/repeat/reduce/sum/avg/range/contains).
+        // Each is pinned here across the boundaries that distinguish them:
+        // sequence vs exact list vs scalar collection, the empty-collection
+        // policy, the item-shape constraint, and the dot spelling.
+        ("minSeq", "min((3, 1, 2))", LProg([], [LCall("min", Seq312)])),
+        ("minList", "min([3, 1])", LProg([], [LCall("min", "(.listLiteral [.num 3, .num 1])")])),
+        ("minScalar", "min(7)", LProg([], [LCall("min", ".num 7")])),
+        ("minEmpty", "min(())", LProg([], [LCall("min", ".emptySequence 0")])),
+        ("minNestedItem", "min(((1, 2), 3))",
+            LProg([], [LCall("min", $"(.block (alg [] [] [] [{Pair12}, .num 3]))")])),
+        ("minDot", "x = 3, 1, 2\nx.min",
+            LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"min\" none"])),
+        ("maxSeq", "max((3, 1, 2))", LProg([], [LCall("max", Seq312)])),
+        ("maxList", "max([3, 1])", LProg([], [LCall("max", "(.listLiteral [.num 3, .num 1])")])),
+        ("maxEmpty", "max(())", LProg([], [LCall("max", ".emptySequence 0")])),
+        ("maxDot", "x = 3, 1, 2\nx.max",
+            LProg([LVal("x", Seq312)], [".dotCall (.resolve \"x\") \"max\" none"])),
+        ("firstSeq", "first((1, 2, 3))",
+            LProg([], [LCall("first", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")])),
+        ("firstScalar", "first(7)", LProg([], [LCall("first", ".num 7")])),
+        ("firstListElementStaysExact", "first([[1, 2], 3])",
+            LProg([], [LCall("first", $"(.listLiteral [{List12}, .num 3])")])),
+        ("firstEmptyItem", "first(((), 1))",
+            LProg([], [LCall("first", "(.block (alg [] [] [] [.emptySequence 0, .num 1]))")])),
+        ("firstEmpty", "first(())", LProg([], [LCall("first", ".emptySequence 0")])),
+        ("firstDot", "x = 1, 2, 3\nx.first",
+            LProg([LVal("x", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")],
+                [".dotCall (.resolve \"x\") \"first\" none"])),
+        ("lastSeq", "last((1, 2, 3))",
+            LProg([], [LCall("last", "(.block (alg [] [] [] [.num 1, .num 2, .num 3]))")])),
+        ("lastListElementStaysExact", "last([1, [2, 3]])",
+            LProg([], [LCall("last", "(.listLiteral [.num 1, .listLiteral [.num 2, .num 3]])")])),
+        ("lastEmpty", "last(())", LProg([], [LCall("last", ".emptySequence 0")])),
+        ("orderDescSeq", "orderDesc((1, 3, 2))",
+            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.num 1, .num 3, .num 2]))")])),
+        ("orderDescList", "orderDesc([2, 1])",
+            LProg([], [LCall("orderDesc", "(.listLiteral [.num 2, .num 1])")])),
+        ("orderDescDuplicates", "orderDesc((2, 1, 2))",
+            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.num 2, .num 1, .num 2]))")])),
+        ("orderDescScalar", "orderDesc(7)", LProg([], [LCall("orderDesc", ".num 7")])),
+        ("orderDescEmpty", "orderDesc(())", LProg([], [LCall("orderDesc", ".emptySequence 0")])),
+        ("orderDescString", "orderDesc(('b', 'a'))",
+            LProg([], [LCall("orderDesc", "(.block (alg [] [] [] [.stringLiteral \"b\", .stringLiteral \"a\"]))")])),
+        ("orderDescDot", "x = 1, 3, 2\nx.orderDesc",
+            LProg([LVal("x", "(.block (alg [] [] [] [.num 1, .num 3, .num 2]))")],
+                [".dotCall (.resolve \"x\") \"orderDesc\" none"])),
+        ("whileCountdown", "S(a) = a - 1, a > 1\nwhile(S, 3)",
+            LProg([WhileCountdownStep], [LCall("while", ".resolve \"S\"", ".num 3")])),
+        ("whileZeroIterations", "S(a) = a, 0\nwhile(S, 5)",
+            LProg([HaltingStep], [LCall("while", ".resolve \"S\"", ".num 5")])),
+        ("whileTwoSlotState", "S(a, b) = a + 1, b * 2, a < 3\nwhile(S, 1, 1)",
+            LProg(
+                ["privateProp \"S\" (alg [\"a\", \"b\"] [] [] [.binary .add (.param \"a\") (.num 1), .binary .mul (.param \"b\") (.num 2), .binary .lt (.param \"a\") (.num 3)])"],
+                [LCall("while", ".resolve \"S\"", ".num 1", ".num 1")])),
+        ("whileEmptyInitialState", "S(a) = a, 0\nwhile(S, ())",
+            LProg([HaltingStep], [LCall("while", ".resolve \"S\"", ".emptySequence 0")])),
+        ("whileNonNumericContinuation", "S(a) = a, ()\nwhile(S, 1)",
+            LProg(
+                ["privateProp \"S\" (alg [\"a\"] [] [] [.param \"a\", .emptySequence 0])"],
+                [LCall("while", ".resolve \"S\"", ".num 1")])),
+        ("whileDot", "S(a) = a - 1, a > 1\nS.while(3)",
+            LProg([WhileCountdownStep],
+                [".dotCall (.resolve \"S\") \"while\" (some (alg [] [] [] [.num 3]))"])),
+        ("containsSequenceItem", "contains(((1, 2), 3), (1, 2))",
+            LProg([], [LCall("contains", $"(.block (alg [] [] [] [{Pair12}, .num 3]))", Pair12)])),
+        ("containsListItem", "contains([[1, 2], 3], [1, 2])",
+            LProg([], [LCall("contains", $"(.listLiteral [{List12}, .num 3])", List12)])),
+        ("containsEmptyItem", "contains(((), 1), ())",
+            LProg([], [LCall("contains", "(.block (alg [] [] [] [.emptySequence 0, .num 1]))", ".emptySequence 0")])),
+        ("containsScalarCollection", "contains(7, 7)",
+            LProg([], [LCall("contains", ".num 7", ".num 7")])),
+        ("containsAcrossKinds", "contains(([1, 2], 3), (1, 2))",
+            LProg([], [LCall("contains", $"(.block (alg [] [] [] [{List12}, .num 3]))", Pair12)])),
+
+        // ----- open / visibility (Track 10) -----------------------------------
+        // Name resolution, `open`, and visibility had ZERO cases in either
+        // generated differential artifact before this family, even though Lean
+        // models ownership-first lookup, public-only exposure through `open`,
+        // provider ambiguity, and open-target dedup in full.
+        //
+        // Every Lean program below was produced by LeanAstEncoder from the
+        // written source's ELABORATED AST and is pinned against it by
+        // OpenVisibilityCorpusFidelityTests, so exposure metadata (public /
+        // private / local-only) and implicit-parameter promotion cannot silently
+        // drift from what the source actually means — the Track 9 fidelity
+        // defect this family is most exposed to.
+        ("openPublicMember", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X\n}\nA",
+            LProg([LibPublicX, "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])"], [ResolveA])),
+
+        // `open` never exposes a private member, so `X` is unresolvable and the
+        // front end promotes it to an implicit parameter of `A`.
+        ("openPrivateMemberHidden", "Lib = {\n    X = 101\n}\nA = {\n    open Lib\n    X\n}\nA(707)",
+            LProg(
+                [LibPrivateX, "privateProp \"A\" (alg [\"X\"] [.resolve \"Lib\"] [] [.param \"X\"])"],
+                [CallA707])),
+
+        // Public but NOT exported: the member depends on its owner's parameter.
+        ("openLocalOnlyCapturedParamsHidden",
+            "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])",
+                    "privateProp \"Lib\" (alg [\"p\"] [] [publicLocalProp \"X\" .localCapturedAncestorParams "
+                        + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        ("openTwoProvidersAmbiguous",
+            "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"L1\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])",
+                    "privateProp \"L2\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] [])",
+                    "privateProp \"A\" (alg [] [.resolve \"L1\", .resolve \"L2\"] [] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        // Duplicate NAMED targets deduplicate first-occurrence-wins, so they are
+        // one provider and never a spurious ambiguity (Lean: resolveAllOpens).
+        ("openDuplicateTargetDedup", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib, Lib\n    X\n}\nA",
+            LProg(
+                [LibPublicX, "privateProp \"A\" (alg [] [.resolve \"Lib\", .resolve \"Lib\"] [] [.resolve \"X\"])"],
+                [ResolveA])),
+
+        ("openDuplicateDottedTargetDedup",
+            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S, Lib.S\n    X\n}\nA",
+            LProg(
+                [
+                    LibPublicSX,
+                    "privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none), "
+                        + "(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        // Inline blocks get positional keys and are NEVER deduplicated, so two
+        // structurally identical blocks really are two providers.
+        ("openDuplicateInlineBlocksAmbiguous",
+            "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"A\" (alg [] [(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])), "
+                        + "(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []))] [] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        ("openInlineBlock", "A = {\n    open { public X = 101 }\n    X\n}\nA",
+            LProg(
+                [
+                    "privateProp \"A\" (alg [] [(.block (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
+                        + "[] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        ("openInlineBlockPrivateHidden", "A = {\n    open { X = 101 }\n    X\n}\nA(707)",
+            LProg(
+                [
+                    "privateProp \"A\" (alg [\"X\"] [(.block (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] []))] "
+                        + "[] [.param \"X\"])",
+                ],
+                [CallA707])),
+
+        ("openDottedPath",
+            "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA",
+            LProg(
+                [LibPublicSX, "privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])"],
+                [ResolveA])),
+
+        // A dotted open path requires every member after the lexical head to be
+        // public, so a private intermediate provides nothing.
+        ("openDottedPathPrivateIntermediate",
+            "Lib = {\n    S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S\n    X\n}\nA(707)",
+            LProg(
+                [
+                    "privateProp \"Lib\" (alg [] [] [privateProp \"S\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])] [])",
+                    "privateProp \"A\" (alg [\"X\"] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.param \"X\"])",
+                ],
+                [CallA707])),
+
+        // Ownership-first: an owned property always beats an opened one.
+        ("openLocalShadowsOpenedName",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    X = 202\n    X\n}\nA",
+            LProg(
+                [
+                    LibPublicX,
+                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"X\" (alg [] [] [] [.num 202])] [.resolve \"X\"])",
+                ],
+                [ResolveA])),
+
+        ("openAncestorPropertyWins",
+            "Lib = {\n    public X = 101\n}\nA = {\n    X = 202\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nA",
+            LProg(
+                [
+                    LibPublicX,
+                    "privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202]), "
+                        + "privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] [.resolve \"Inner\"])",
+                ],
+                [ResolveA])),
+
+        // A nested `open` is visible to descendants but never leaks outward.
+        ("openParentScopeReachesChild",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open Lib\n    Inner = {\n        X\n    }\n    Inner\n}\nA",
+            LProg(
+                [
+                    LibPublicX,
+                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"Inner\" (alg [] [] [] [.resolve \"X\"])] "
+                        + "[.resolve \"Inner\"])",
+                ],
+                [ResolveA])),
+
+        ("openNestedDoesNotLeakOutward",
+            "Lib = {\n    public X = 101\n}\nA = {\n    Inner = {\n        open Lib\n        X\n    }\n    X\n}\nA(707)",
+            LProg(
+                [
+                    LibPublicX,
+                    "privateProp \"A\" (alg [\"X\"] [] [privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] "
+                        + "[.param \"X\"])",
+                ],
+                [CallA707])),
+
+        // The open head resolves by direct lexical lookup, which sees a private
+        // sibling defined later in the same body.
+        ("openHeadDefinedLater", "A = {\n    open Lib\n    X\n}\nLib = {\n    public X = 101\n}\nA",
+            LProg(["privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])", LibPublicX], [ResolveA])),
+
+        // The prelude is the outermost lexical scope, so ownership-first reaches
+        // the builtin before opens are consulted.
+        ("openBuiltinNameCollision",
+            "Lib = {\n    public count = 101\n}\nA = {\n    open Lib\n    count([1, 2, 3])\n}\nA",
+            LProg(
+                [
+                    "privateProp \"Lib\" (alg [] [] [publicProp \"count\" (alg [] [] [] [.num 101])] [])",
+                    "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] "
+                        + "[(.call (.resolve \"count\") (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]))])",
+                ],
+                [ResolveA])),
+
+        // A builtin is never a legal open target; validation runs over the whole
+        // open list before any name is resolved through it.
+        ("openBuiltinTargetIsIllegal",
+            "Lib = {\n    public X = 101\n}\nA = {\n    open count, Lib\n    X\n}\nA",
+            LProg(
+                [LibPublicX, "privateProp \"A\" (alg [] [.resolve \"count\", .resolve \"Lib\"] [] [.resolve \"X\"])"],
+                [ResolveA])),
+
+        // Structural dot access deliberately ignores visibility; `open` does not.
+        // Pinning both spellings keeps the two rules from collapsing into one.
+        ("structuralDotSeesPrivateMember", "Lib = {\n    X = 101\n}\nLib.X",
+            LProg([LibPrivateX], ["(.dotCall (.resolve \"Lib\") \"X\" none)"])),
     ];
+
+    // ----- open/visibility shared fragments ------------------------------------
+
+    private const string LibPublicX =
+        "privateProp \"Lib\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])";
+
+    private const string LibPrivateX =
+        "privateProp \"Lib\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 101])] [])";
+
+    private const string LibPublicSX =
+        "privateProp \"Lib\" (alg [] [] [publicProp \"S\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])] [])";
+
+    private const string ResolveA = ".resolve \"A\"";
+
+    private const string CallA707 = "(.call (.resolve \"A\") (alg [] [] [] [.num 707]))";
+
+    private const string Seq312 = "(.block (alg [] [] [] [.num 3, .num 1, .num 2]))";
+
+    /// <summary>`S(a) = a - 1, a > 1` — a terminating one-slot `while` step.</summary>
+    private const string WhileCountdownStep =
+        "privateProp \"S\" (alg [\"a\"] [] [] [.binary .sub (.param \"a\") (.num 1), .binary .gt (.param \"a\") (.num 1)])";
+
+    /// <summary>`S(a) = a, 0` — a `while` step whose continuation is immediately false.</summary>
+    private const string HaltingStep =
+        "privateProp \"S\" (alg [\"a\"] [] [] [.param \"a\", .num 0])";
 
     private const string PairOfPairs =
         "(.block (alg [] [] [] [(.block (alg [] [] [] [.num 1, .num 2])), (.block (alg [] [] [] [.num 3, .num 4]))]))";

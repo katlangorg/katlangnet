@@ -185,10 +185,21 @@ public abstract class AstWalker
                 VisitExpr(function);
                 VisitAlgorithm(args);
                 break;
+            // Childless leaves: nothing to recurse into.
             case Expr.NativeCall:
             case Expr.Num:
             case Expr.StringLiteral:
+            case Expr.EmptySequence:
                 break;
+
+            // Exhaustiveness guard, matching AstStructuralPreflight's fail-loud
+            // child enumeration: a new Expr variant must be added above rather
+            // than being silently skipped by every walker subclass (semantic
+            // modelling, exposure resolution, module loading, the fuzz probes).
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Expr variant in {nameof(AstWalker)}.{nameof(VisitExpr)}: {expr.GetType().Name}. " +
+                    "Add the new variant to the switch so its children are walked.");
         }
     }
 

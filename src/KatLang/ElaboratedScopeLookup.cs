@@ -114,9 +114,23 @@ internal static class ElaboratedScopeLookup
         for (var current = scope; current is not null; current = current.Parent)
         {
             List<PropertyLookupHit>? hits = null;
+            HashSet<string>? seenKeys = null;
 
-            foreach (var openExpr in current.Opens)
+            for (var i = 0; i < current.Opens.Count; i++)
             {
+                var openExpr = current.Opens[i];
+
+                // Same dedup rule as the evaluator's ResolveAllOpens (Lean:
+                // resolveAllOpens): named targets are keyed by their open
+                // spelling and deduplicated first-occurrence-wins, while inline
+                // blocks get a unique positional key and are never deduplicated.
+                // Without this, `open Lib, Lib` reported one hit per written
+                // target and every name it provides looked ambiguous here while
+                // the evaluator resolved it.
+                seenKeys ??= [];
+                if (!seenKeys.Add(OpenTargetDedupKey(openExpr, i)))
+                    continue;
+
                 var targetAlgorithm = ResolveOpenTarget(current, openExpr);
                 if (targetAlgorithm is null)
                     continue;
@@ -134,6 +148,15 @@ internal static class ElaboratedScopeLookup
 
         return [];
     }
+
+    /// <summary>
+    /// Canonical dedup key for one written <c>open</c> target, matching
+    /// <c>Evaluator.ResolveAllOpens</c> and Lean <c>resolveAllOpens</c>.
+    /// </summary>
+    private static string OpenTargetDedupKey(Expr openExpr, int index)
+        => openExpr is Expr.Block
+            ? $"(inline#{index})"
+            : Evaluator.OpenExprName(openExpr);
 
     public static IReadOnlyList<PropertyLookupHit> LookupLexicalPropertyMatches(ElaboratedPropertyScope scope, string name)
     {
