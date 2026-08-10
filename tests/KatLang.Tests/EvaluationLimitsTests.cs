@@ -165,6 +165,134 @@ public class EvaluationLimitsTests
         => Assert.IsType<EvalError.EvaluationDepthExceeded>(
             ErrorOf("Apply(g, x) = g(x)\nF(x) = Apply(F, x)\nF(1)", Depth(16)));
 
+    // ── Depth: recursion through builtin arguments ───────────────────────────
+    //
+    // A zero-parameter property that reaches itself through a builtin ARGUMENT or
+    // RECEIVER re-enters its body outside every call chokepoint. Before the
+    // depth-charged argument-evaluation chokepoint
+    // (EvaluationBudget.TryEnterArgumentEvaluation), the plain-call spellings below
+    // terminated the whole process with an uncatchable StackOverflowException — the
+    // one failure mode no in-process assertion can observe, which is why
+    // EvaluationLimitsProcessTests re-proves the worst spellings in a subprocess.
+
+    [Theory]
+    [InlineData("A = count(A)\nA")]
+    [InlineData("A = A.count\nA")]
+    [InlineData("A = range(1, A)\nA.count")]
+    [InlineData("A = if(1, A, 0)\nA")]
+    [InlineData("A = if(A, 1, 0)\nA")]
+    [InlineData("A = take([1, 2, 3], A)\nA")]
+    [InlineData("A = [1, 2].take(A)\nA")]
+    [InlineData("A = sum([A])\nA")]
+    [InlineData("Add(a, b) = a + b\nA = [1, 2].reduce(Add, A)\nA")]
+    [InlineData("Step = x, 0\nA = Step.while(A)\nA")]
+    [InlineData("Inc = x + 1\nA = Inc.repeat(A, 0)\nA")]
+    [InlineData("A = B.count\nB = A.count\nA")]
+    public void BuiltinArgumentRecursion_ReturnsAStructuredResourceError(string source)
+    {
+        // The deterministic depth limit is the primary guard; the machine-dependent
+        // stack backstop remains acceptable for the spellings whose per-level frame
+        // cost trips the probe first. Any other outcome — a wrong value, a
+        // non-resource error, or a crash — is the regression.
+        foreach (var error in new[]
+        {
+            Eval(source).Error,
+            Evaluator.RunCounted(
+                new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+                UncachedZeroArgPropertyResultCache.Instance,
+                limits: null).Error,
+        })
+        {
+            Assert.True(
+                error is EvalError.EvaluationDepthExceeded or EvalError.EvaluationStackExhausted,
+                $"expected a structured resource error for `{source.Replace("\n", " ; ")}`, got {error}");
+        }
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.Single(failure.Errors);
+    }
+
+    // ── Failing recursion stays linear in depth ──────────────────────────────
+
+    [Theory]
+    [InlineData("f(x) = f(x)\nf(1)")]
+    [InlineData("f(x) = f(x) + f(x)\nf(1)")]
+    [InlineData("f(x) = f(f(x))\nf(1)")]
+    public void FailingRecursion_ConsumesWorkLinearInDepth(string source)
+    {
+        // Every failing shape charges exactly MaxDepth + 1 steps: one per entered
+        // level plus the rejected attempt. The budget of 3x MaxDepth therefore
+        // leaves the DEPTH error as the observed kind; a mutation that swallows a
+        // limit error and retries the child on a second channel squares the work,
+        // trips the step budget first, and flips the asserted kind.
+        var error = ErrorOf(source, new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(error);
+    }
+
+    [Fact]
+    public void FailingBuiltinArgumentRecursion_ConsumesWorkLinearInDepth()
+    {
+        // The builtin-argument twin, indirected through a charged user call so the
+        // step budget observes each level. The reduce initial accumulator once
+        // retried a depth-failed eager argument evaluation through the algorithm
+        // channel (2^depth work); the resource-limit error is now sticky
+        // (PrepareSequenceBuiltinSuffixArg), so the run stays linear and the depth
+        // kind wins under a linear step budget.
+        var error = ErrorOf(
+            "Add(a, b) = a + b\nG(x) = A\nA = [1, 2].reduce(Add, G(1))\nA",
+            new EvaluationLimits { MaxDepth = 24, MaxSteps = 96 });
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(error);
+    }
+
+    [Theory]
+    [InlineData("F(v) = 0\nA = F(A)\nA")]
+    [InlineData("Bad = 1 / 0\nF(v) = 0\nF(Bad)")]
+    public void UnusedResolveArgument_IsNeverEvaluated(string source)
+    {
+        // The lazy negative control: F never demands its parameter, so a
+        // resolve-shaped argument — even a self-referential or failing one — is
+        // never evaluated and the call is cheap. (Call-shaped argument slots are
+        // different: written call slots are assembled eagerly.)
+        var result = Evaluator.RunFlat(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
+        Assert.False(result.IsError);
+        Assert.Equal([0m], result.Value);
+    }
+
+    // ── Budget unit invariants ───────────────────────────────────────────────
+
+    [Fact]
+    public void TryEnterInvocation_RejectedAttempt_LeavesDepthUnchanged()
+    {
+        // The doc contract: a failed enter is never counted as entered. Entering
+        // twice at MaxDepth = 2 fills the budget, the third attempt fails, and one
+        // exit must make room for exactly one more successful enter.
+        var budget = EvaluationBudget.Create(new EvaluationLimits { MaxDepth = 2 });
+        Assert.Null(budget.TryEnterInvocation());
+        Assert.Null(budget.TryEnterInvocation());
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterInvocation());
+        budget.ExitInvocation();
+        Assert.Null(budget.TryEnterInvocation());
+        Assert.Equal(2, budget.PeakDepth);
+    }
+
+    [Fact]
+    public void TryEnterArgumentEvaluation_SharesTheDepthBudget_AndChargesNoStep()
+    {
+        var budget = EvaluationBudget.Create(new EvaluationLimits { MaxDepth = 2, MaxSteps = 5 });
+        Assert.Null(budget.TryEnterArgumentEvaluation());
+        Assert.Null(budget.TryEnterInvocation());
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterArgumentEvaluation());
+        budget.ExitInvocation();
+        Assert.Null(budget.TryEnterArgumentEvaluation());
+        Assert.Equal(2, budget.PeakDepth);
+
+        // Exactly one step was charged across all of the above — by the one
+        // successful TryEnterInvocation; argument-evaluation entries are step-free.
+        Assert.Equal(1L, budget.ConsumedSteps);
+    }
+
     // ── Error shape: span, context, display ──────────────────────────────────
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 
@@ -10,14 +11,16 @@ public class ZeroArgPropertyResultCacheTests
         bool BindingIdentityMatches,
         bool ValueEnvironmentIdentityMatches,
         bool AlgorithmEnvironmentIdentityMatches,
-        bool CountedParamEnvironmentIdentityMatches)
+        bool CountedParamEnvironmentIdentityMatches,
+        bool RunIdentityMatches)
     {
         public bool AllComponentsMatch
             => OwnerIdentityMatches
                 && BindingIdentityMatches
                 && ValueEnvironmentIdentityMatches
                 && AlgorithmEnvironmentIdentityMatches
-                && CountedParamEnvironmentIdentityMatches;
+                && CountedParamEnvironmentIdentityMatches
+                && RunIdentityMatches;
     }
 
     private sealed class RecordingZeroArgPropertyResultCache : IZeroArgPropertyResultCache
@@ -53,6 +56,7 @@ public class ZeroArgPropertyResultCacheTests
             ZeroArgPropertyAccessKind.Lexical,
             new object(),
             new object(),
+            new object(),
             new object());
 
         var first = cache.GetOrEvaluate(
@@ -86,20 +90,23 @@ public class ZeroArgPropertyResultCacheTests
     {
         var cache = new RunScopedZeroArgPropertyResultCache();
         var binding = NewProperty("Value");
+        var runIdentity = new object();
         var first = new ZeroArgPropertyExecution(
             NewAlgorithm(),
             binding,
             ZeroArgPropertyAccessKind.Structural,
             new object(),
             new object(),
-            new object());
+            new object(),
+            runIdentity);
         var second = new ZeroArgPropertyExecution(
             NewAlgorithm(),
             binding,
             ZeroArgPropertyAccessKind.Structural,
             new object(),
             new object(),
-            new object());
+            new object(),
+            runIdentity);
 
         Assert.False(cache.GetOrEvaluate(first, () => EvalResult<ZeroArgPropertyResult>.Ok(new ZeroArgPropertyResult(new Result.Atom(1m), 1))).IsError);
         Assert.False(cache.GetOrEvaluate(second, () => EvalResult<ZeroArgPropertyResult>.Ok(new ZeroArgPropertyResult(new Result.Atom(2m), 1))).IsError);
@@ -128,20 +135,23 @@ public class ZeroArgPropertyResultCacheTests
         var valueEnv = new object();
         var algorithmEnv = new object();
         var countedParamEnv = new object();
+        var runIdentity = new object();
         var first = new ZeroArgPropertyExecution(
             NewAlgorithm(),
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
             algorithmEnv,
-            countedParamEnv);
+            countedParamEnv,
+            runIdentity);
         var second = new ZeroArgPropertyExecution(
             NewAlgorithm(),
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
             algorithmEnv,
-            countedParamEnv);
+            countedParamEnv,
+            runIdentity);
 
         var firstResult = cache.GetOrEvaluate(
             first,
@@ -163,6 +173,7 @@ public class ZeroArgPropertyResultCacheTests
         Assert.True(comparison.ValueEnvironmentIdentityMatches);
         Assert.True(comparison.AlgorithmEnvironmentIdentityMatches);
         Assert.True(comparison.CountedParamEnvironmentIdentityMatches);
+        Assert.True(comparison.RunIdentityMatches);
         Assert.Equal(2, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
         Assert.Equal(1, snapshot.Misses);
@@ -177,6 +188,58 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
+    public void RunScopedZeroArgPropertyResultCache_ReusesStructuralExecutions_AcrossRecursivelyRebuiltScopeChains()
+    {
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        var binding = NewProperty("Value");
+        var valueEnv = new object();
+        var algorithmEnv = new object();
+        var countedParamEnv = new object();
+        var runIdentity = new object();
+        IReadOnlyList<Expr> grandparentOpens = [new Expr.Num(1m)];
+        IReadOnlyList<Property> grandparentProperties = [NewProperty("Grandparent")];
+        IReadOnlyList<Expr> parentOpens = [new Expr.Num(2m)];
+        IReadOnlyList<Property> parentProperties = [NewProperty("Parent")];
+        IReadOnlyList<Expr> ownerOpens = [new Expr.Num(3m)];
+        IReadOnlyList<Property> ownerProperties = [binding];
+
+        Algorithm.User RebuildOwner()
+            => NewAlgorithm() with
+            {
+                Parent = new ScopeCtx(
+                    new ScopeCtx(null, grandparentOpens, grandparentProperties),
+                    parentOpens,
+                    parentProperties),
+                Opens = ownerOpens,
+                Properties = ownerProperties,
+            };
+
+        var first = new ZeroArgPropertyExecution(
+            RebuildOwner(),
+            binding,
+            ZeroArgPropertyAccessKind.Structural,
+            valueEnv,
+            algorithmEnv,
+            countedParamEnv,
+            runIdentity);
+        var second = first with { Owner = RebuildOwner() };
+
+        var firstResult = cache.GetOrEvaluate(
+            first,
+            () => EvalResult<ZeroArgPropertyResult>.Ok(new ZeroArgPropertyResult(new Result.Atom(1m), 1)));
+        var secondResult = cache.GetOrEvaluate(
+            second,
+            () => EvalResult<ZeroArgPropertyResult>.Ok(new ZeroArgPropertyResult(new Result.Atom(2m), 1)));
+
+        Assert.False(ReferenceEquals(first.Owner.Parent, second.Owner.Parent));
+        Assert.False(ReferenceEquals(first.Owner.Parent?.Parent, second.Owner.Parent?.Parent));
+        Assert.True(CompareKeyComponents(first, second).AllComponentsMatch);
+        Assert.Equal(1m, Assert.IsType<Result.Atom>(firstResult.Value.Value).Value);
+        Assert.Equal(1m, Assert.IsType<Result.Atom>(secondResult.Value.Value).Value);
+        Assert.Equal(1, cache.GetSnapshot().Hits);
+    }
+
+    [Fact]
     public void RunScopedZeroArgPropertyResultCache_TracksRepeatedMissRequests_WhenEvaluationNeverStores()
     {
         var cache = new RunScopedZeroArgPropertyResultCache();
@@ -184,6 +247,7 @@ public class ZeroArgPropertyResultCacheTests
             NewAlgorithm(),
             NewProperty("Value"),
             ZeroArgPropertyAccessKind.CountedStructural,
+            new object(),
             new object(),
             new object(),
             new object());
@@ -503,6 +567,7 @@ public class ZeroArgPropertyResultCacheTests
         Assert.True(comparison.ValueEnvironmentIdentityMatches);
         Assert.True(comparison.AlgorithmEnvironmentIdentityMatches);
         Assert.True(comparison.CountedParamEnvironmentIdentityMatches);
+        Assert.True(comparison.RunIdentityMatches);
     }
 
     [Fact]
@@ -650,6 +715,248 @@ public class ZeroArgPropertyResultCacheTests
         }
     }
 
+    /// <summary>
+    /// ONE shared <see cref="Property"/> object placed under TWO owners whose
+    /// lexical resolution of <c>Base</c> differs, demanded STRUCTURALLY via
+    /// <see cref="Expr.DotCall"/>. This is the structural twin of the tree in
+    /// <see cref="Evaluator_ZeroArgPropertyCaching_PreservesBehaviorAcrossDifferentOwnerIdentities"/>:
+    /// shared acyclic subtrees are a supported host-AST input class, and an
+    /// owner-blind structural cache key served <c>Lib1</c>'s value for
+    /// <c>Lib2.Shared</c>. The third output row repeats <c>Lib1.Shared</c> so the
+    /// same tree also pins that structural reuse across rebuilt owner records
+    /// still works. Expected output: <c>(1, 2, 1)</c>.
+    /// </summary>
+    private static Expr NewSharedStructuralPropertyProgram()
+    {
+        var sharedBinding = new Property(
+            "Shared",
+            new Algorithm.User(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties: [],
+                Output: [new Expr.Resolve("Base")]),
+            IsPublic: true);
+
+        var lib1Binding = new Property(
+            "Lib1",
+            new Algorithm.User(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties:
+                [
+                    new Property(
+                        "Base",
+                        new Algorithm.User(
+                            Parent: null,
+                            Parameters: [],
+                            Opens: [],
+                            Properties: [],
+                            Output: [new Expr.Num(1)])),
+                    sharedBinding,
+                ],
+                Output: []),
+            IsPublic: true);
+
+        var lib2Binding = new Property(
+            "Lib2",
+            new Algorithm.User(
+                Parent: null,
+                Parameters: [],
+                Opens: [],
+                Properties:
+                [
+                    new Property(
+                        "Base",
+                        new Algorithm.User(
+                            Parent: null,
+                            Parameters: [],
+                            Opens: [],
+                            Properties: [],
+                            Output: [new Expr.Num(2)])),
+                    sharedBinding,
+                ],
+                Output: []),
+            IsPublic: true);
+
+        var root = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [lib1Binding, lib2Binding],
+            Output:
+            [
+                new Expr.DotCall(new Expr.Resolve("Lib1"), "Shared", null),
+                new Expr.DotCall(new Expr.Resolve("Lib2"), "Shared", null),
+                new Expr.DotCall(new Expr.Resolve("Lib1"), "Shared", null),
+            ]);
+
+        return new Expr.AlgorithmExpr(root);
+    }
+
+    [Fact]
+    public void Evaluator_ZeroArgPropertyCaching_StructuralAccess_PreservesBehaviorAcrossDifferentOwnerIdentities()
+    {
+        var expr = NewSharedStructuralPropertyProgram();
+
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        var plain = Evaluator.Run(expr, cache);
+
+        Assert.False(plain.IsError);
+        Assert.Equal([1m, 2m, 1m], plain.Value.ToAtoms());
+        // Distinct owners never alias; the rebuilt Lib1 owner still reuses its entry.
+        AssertStructuralAccessCounts(cache, requests: 3, hits: 1, misses: 2, stores: 2);
+
+        var countedCache = new RunScopedZeroArgPropertyResultCache();
+        var counted = Evaluator.RunCounted(expr, countedCache);
+
+        Assert.False(counted.IsError);
+        Assert.Equal([1m, 2m, 1m], counted.Value.Value.ToAtoms());
+        AssertStructuralAccessCounts(countedCache, requests: 3, hits: 1, misses: 2, stores: 2);
+    }
+
+    /// <summary>
+    /// Sums the plain and counted structural access kinds: the cache key merges
+    /// them by design, and which evaluator core serves a given surface entry
+    /// point (root output rows evaluate through the counted core even under
+    /// plain <c>Run</c>) is not what these tests pin.
+    /// </summary>
+    private static void AssertStructuralAccessCounts(
+        RunScopedZeroArgPropertyResultCache cache,
+        int requests,
+        int hits,
+        int misses,
+        int stores)
+    {
+        var snapshot = cache.GetSnapshot();
+        var plain = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
+        var counted = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
+
+        Assert.Equal(requests, plain.Requests + counted.Requests);
+        Assert.Equal(hits, plain.Hits + counted.Hits);
+        Assert.Equal(misses, plain.Misses + counted.Misses);
+        Assert.Equal(stores, plain.Stores + counted.Stores);
+    }
+
+    [Fact]
+    public void Evaluator_ZeroArgPropertyCaching_StructuralAccess_MatchesUncachedBehavior()
+    {
+        var expr = NewSharedStructuralPropertyProgram();
+
+        var uncachedPlain = Evaluator.Run(expr, UncachedZeroArgPropertyResultCache.CreateForRun());
+        var cachedPlain = Evaluator.Run(expr, new RunScopedZeroArgPropertyResultCache());
+
+        Assert.False(uncachedPlain.IsError);
+        Assert.False(cachedPlain.IsError);
+        Assert.Equal(uncachedPlain.Value.ToAtoms(), cachedPlain.Value.ToAtoms());
+
+        var uncachedCounted = Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.CreateForRun());
+        var cachedCounted = Evaluator.RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
+
+        Assert.False(uncachedCounted.IsError);
+        Assert.False(cachedCounted.IsError);
+        Assert.Equal(uncachedCounted.Value.Value.ToAtoms(), cachedCounted.Value.Value.ToAtoms());
+        Assert.Equal(uncachedCounted.Value.EmittedCount, cachedCounted.Value.EmittedCount);
+    }
+
+    [Fact]
+    public void Evaluator_ZeroArgPropertyCaching_StructuralEntries_DoNotCarryAcrossRunsOnASharedCache()
+    {
+        // The cache contract is run-scoped. A host that (incorrectly) shares one
+        // instance across runs must still never be served another run's structural
+        // entry: a warmed permissive run must not let a tight-limit rerun bypass
+        // its own materialization ceiling.
+        var source = """
+            X = {
+                P = range(1, 200)
+            }
+            X.P.count
+            """;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var sharedCache = new RunScopedZeroArgPropertyResultCache();
+
+        var warm = Evaluator.Run(expr, sharedCache);
+        Assert.False(warm.IsError);
+        Assert.Equal([200m], warm.Value.ToAtoms());
+
+        var tight = Evaluator.Run(
+            expr,
+            sharedCache,
+            enableLoopOptimization: true,
+            new EvaluationLimits { MaxCollectionItems = 10 });
+        Assert.True(tight.IsError);
+
+        var error = tight.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(error);
+    }
+
+    [Fact]
+    public void UncachedInstance_SharedAcrossConcurrentEvaluations_IsSafeAndStateless()
+    {
+        // The shared singleton is used concurrently by independent evaluations
+        // (thread safety is by per-run isolation everywhere else), so it must
+        // record nothing: no thrown collection-corruption exceptions, and no
+        // process-lifetime bookkeeping growth.
+        const int programCount = 200;
+        var programs = Enumerable.Range(0, programCount)
+            .Select(index => new Expr.AlgorithmExpr(
+                SourceProvenance.ParseValid($"A = {index} + 1\nA + A").Root))
+            .ToArray();
+
+        var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+        Parallel.For(0, programCount, index =>
+        {
+            try
+            {
+                var result = Evaluator.Run(programs[index], UncachedZeroArgPropertyResultCache.Instance);
+                if (result.IsError)
+                    failures.Add(result.Error.ToString() ?? "unknown error");
+                else if (result.Value.ToAtoms() is not [var atom] || atom != 2m * (index + 1))
+                    failures.Add($"wrong value for program {index}");
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception.ToString());
+            }
+        });
+
+        Assert.Empty(failures);
+
+        var snapshot = UncachedZeroArgPropertyResultCache.Instance.GetSnapshot();
+        Assert.Equal(0, snapshot.TotalRequests);
+        Assert.Equal(0, snapshot.DistinctKeysCreated);
+        Assert.Equal(0, snapshot.RepeatedMissRequests);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference EvaluateThroughSharedUncachedInstance()
+    {
+        var root = SourceProvenance.ParseValid("A = 41 + 1\nA + A").Root;
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root), UncachedZeroArgPropertyResultCache.Instance);
+        Assert.False(result.IsError);
+        return new WeakReference(root.Properties[0]);
+    }
+
+    [Fact]
+    public void UncachedInstance_DoesNotRetainEvaluatedPrograms()
+    {
+        // The former seen-key tracking held strong references to the run's
+        // property bindings (and through them the program AST) for process
+        // lifetime. The stateless singleton must not pin anything it evaluated.
+        var weak = EvaluateThroughSharedUncachedInstance();
+
+        for (var attempt = 0; attempt < 5 && weak.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        Assert.False(weak.IsAlive);
+    }
+
     private static Algorithm.User NewAlgorithm()
         => new(
             Parent: null,
@@ -672,10 +979,13 @@ public class ZeroArgPropertyResultCacheTests
         var secondKey = ZeroArgPropertyCacheKey.FromExecution(second);
 
         return new CacheKeyComponentComparison(
-            ReferenceEquals(firstKey.OwnerIdentity, secondKey.OwnerIdentity),
+            // Structural owner identity is a computed scope-chain value, so it is
+            // compared through the comparer's owner rule, not raw reference identity.
+            ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(firstKey.OwnerIdentity, secondKey.OwnerIdentity),
             ReferenceEquals(firstKey.BindingIdentity, secondKey.BindingIdentity),
             ReferenceEquals(firstKey.ValueEnvironmentIdentity, secondKey.ValueEnvironmentIdentity),
             ReferenceEquals(firstKey.AlgorithmEnvironmentIdentity, secondKey.AlgorithmEnvironmentIdentity),
-            ReferenceEquals(firstKey.CountedParamEnvironmentIdentity, secondKey.CountedParamEnvironmentIdentity));
+            ReferenceEquals(firstKey.CountedParamEnvironmentIdentity, secondKey.CountedParamEnvironmentIdentity),
+            ReferenceEquals(firstKey.RunIdentity, secondKey.RunIdentity));
     }
 }

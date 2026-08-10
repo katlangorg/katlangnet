@@ -1062,26 +1062,54 @@ public static class Evaluator
         return EvalResult<InclusiveRange>.Ok(new InclusiveRange(startIntR.Value, stopIntR.Value));
     }
 
-    /// <summary>Enumerate the validated inclusive integer bounds for <c>range(start, stop)</c>.</summary>
+    /// <summary>
+    /// Enumerate the validated inclusive integer bounds for <c>range(start, stop)</c>.
+    /// The inclusive-bound check runs BEFORE the step, never after: bounds are whole
+    /// numbers, so the cursor lands exactly on <c>Stop</c>, and stepping only while
+    /// strictly inside the bound keeps the enumeration total at the
+    /// <see cref="decimal"/> extremes (<c>range(decimal.MaxValue, decimal.MaxValue)</c>
+    /// must yield its one value, not overflow on a step past the bound).
+    /// </summary>
     internal static IEnumerable<decimal> EnumerateInclusiveRangeValues(InclusiveRange range)
     {
         if (range.Start <= range.Stop)
         {
-            for (var current = range.Start; current <= range.Stop; current += 1m)
+            var current = range.Start;
+            yield return current;
+            while (current < range.Stop)
+            {
+                current += 1m;
                 yield return current;
+            }
         }
         else
         {
-            for (var current = range.Start; current >= range.Stop; current -= 1m)
+            var current = range.Start;
+            yield return current;
+            while (current > range.Stop)
+            {
+                current -= 1m;
                 yield return current;
+            }
         }
     }
 
-    /// <summary>Count the values that <see cref="EnumerateInclusiveRangeValues"/> would produce.</summary>
+    /// <summary>
+    /// Count the values that <see cref="EnumerateInclusiveRangeValues"/> would produce,
+    /// saturating at <see cref="long.MaxValue"/>. The subtraction itself can exceed
+    /// <see cref="decimal.MaxValue"/> for opposite-sign bounds, so that case is
+    /// detected without performing it — any such span is far beyond the saturation
+    /// ceiling anyway.
+    /// </summary>
     internal static long CountInclusiveRangeValues(InclusiveRange range)
     {
-        var count = Math.Abs(range.Stop - range.Start) + 1m;
-        return count > long.MaxValue ? long.MaxValue : (long)count;
+        var lo = Math.Min(range.Start, range.Stop);
+        var hi = Math.Max(range.Start, range.Stop);
+        if (lo < 0m && hi > decimal.MaxValue + lo)
+            return long.MaxValue;
+
+        var span = hi - lo;
+        return span >= long.MaxValue ? long.MaxValue : (long)span + 1;
     }
 
     /// <summary>
@@ -2543,7 +2571,18 @@ public static class Evaluator
 
     private abstract record PreparedSequenceBuiltinSuffixArg
     {
-        public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinSuffixArg;
+        /// <summary>
+        /// An algorithm-kind suffix argument. <see cref="PreparedValue"/> carries the
+        /// slot's already-computed counted value when call-item assembly evaluated it
+        /// eagerly (a value-shaped zero-parameter argument): a value-consuming
+        /// position (the reduce initial accumulator) must use THAT result instead of
+        /// re-evaluating the algorithm channel — the written slot is evaluated
+        /// exactly once. Genuine callbacks have no prepared value.
+        /// </summary>
+        public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
+        {
+            public CountedResult? PreparedValue { get; init; }
+        }
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;
 
@@ -3630,7 +3669,12 @@ public static class Evaluator
                 accessKind,
                 ValueEnvironmentCacheIdentity(valEnv),
                 ctx.AlgEnv,
-                ctx.CountedParamEnv),
+                ctx.CountedParamEnv,
+                // The budget is created fresh per run (CreateRootCtx) and threaded by
+                // reference through every derived ctx, so it is the run identity:
+                // entries can never be served across runs even when a host shares
+                // one cache instance between runs.
+                ctx.Budget),
             () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
     }
 
@@ -4040,7 +4084,7 @@ public static class Evaluator
             var outputR = resolvedArg.PreparedValue is { } prepared
                 ? EvalResult<CountedResult>.Ok(prepared)
                 : arg is { } algorithm
-                    ? EvalAlgOutputCounted(algorithm, ctx, valEnv)
+                    ? EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv)
                     : EvalResult<CountedResult>.Err(new EvalError.BadArity());
             if (outputR.IsOk)
             {
@@ -4083,6 +4127,16 @@ public static class Evaluator
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
                 {
+                    // A resource-limit failure from the slot's eager value evaluation is
+                    // STICKY: the limit is a property of the run, and falling through to
+                    // the algorithm channel would re-run the same body — each active
+                    // level retrying once turns a failing self-referential argument
+                    // (`A = xs.reduce(F, A)`) into work exponential in the depth limit.
+                    // Non-limit value errors keep the legacy fall-through, which is what
+                    // lets a genuine callback reference reach the algorithm channel.
+                    if (item.ValueError is { IsResourceLimit: true } stickyLimit)
+                        return stickyLimit;
+
                     var algorithm = item.Algorithm
                         ?? (item.PreparedValue is { } prepared
                             ? CountedArgAlgorithm(prepared, ctx)
@@ -4091,7 +4145,10 @@ public static class Evaluator
                     {
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
                             new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(
-                                NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx)));
+                                NormalizeSequenceCallableSuffixAlgorithm(algorithm, ctx))
+                            {
+                                PreparedValue = item.PreparedValue,
+                            });
                     }
 
                     return item.ValueError ?? new EvalError.WithContext(
@@ -4250,10 +4307,16 @@ public static class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
         Algorithm initialAlg,
+        CountedResult? preparedInitial,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var initialR = EvalAlgOutputCounted(initialAlg, ctx, valEnv);
+        // The initial accumulator is a written value slot: when call-item assembly
+        // already evaluated it (a value-shaped argument), that result IS the slot's
+        // value — evaluating the algorithm channel again would run the body twice.
+        var initialR = preparedInitial is { } preparedValue
+            ? EvalResult<CountedResult>.Ok(preparedValue)
+            : EvalArgumentAlgOutputCounted(initialAlg, ctx, valEnv);
         if (initialR.IsError)
         {
             if (IsLikelyUnevaluatedParameterError(initialAlg, initialR.Error))
@@ -4569,15 +4632,27 @@ public static class Evaluator
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
         int index)
+    {
+        var argR = ExpectPreparedAlgorithmSuffixArgFull(builtin, descriptors, args, index);
+        return argR.IsError
+            ? argR.Error
+            : EvalResult<Algorithm>.Ok(argR.Value.AlgorithmValue);
+    }
+
+    private static EvalResult<PreparedSequenceBuiltinSuffixArg.AlgorithmArg> ExpectPreparedAlgorithmSuffixArgFull(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
+        int index)
         => ExpectPreparedSequenceBuiltinSuffixArgAt(
             builtin,
             descriptors,
             args,
             index,
             SequenceBuiltinSuffixArgKind.Algorithm,
-            (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg(var algorithm)
-                ? EvalResult<Algorithm>.Ok(algorithm)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm>(
+            (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg algorithmArg
+                ? EvalResult<PreparedSequenceBuiltinSuffixArg.AlgorithmArg>.Ok(algorithmArg)
+                : InternalSequenceBuiltinSuffixArgMetadataError<PreparedSequenceBuiltinSuffixArg.AlgorithmArg>(
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
 
@@ -4751,9 +4826,12 @@ public static class Evaluator
         IReadOnlyList<Result> items,
         decimal count)
     {
+        // Saturate before narrowing: `count` is a validated whole decimal that may
+        // exceed int.MaxValue, and an oversized count means "all items" by
+        // specification, so it must never reach the host (int) conversion.
         IReadOnlyList<Result> taken = count <= 0
             ? []
-            : items.Take((int)count).ToList();
+            : items.Take(count >= items.Count ? items.Count : (int)count).ToList();
 
         return MakeCollectionListResult(ctx, taken);
     }
@@ -4772,9 +4850,11 @@ public static class Evaluator
         IReadOnlyList<Result> items,
         decimal count)
     {
+        // Saturate before narrowing, mirroring EvalTakeCounted: an oversized count
+        // means "skip everything" and must never reach the host (int) conversion.
         IReadOnlyList<Result> remaining = count <= 0
             ? items.ToList()
-            : items.Skip((int)count).ToList();
+            : items.Skip(count >= items.Count ? items.Count : (int)count).ToList();
 
         return MakeCollectionListResult(ctx, remaining);
     }
@@ -5005,17 +5085,52 @@ public static class Evaluator
                             0);
                         if (stepR.IsError) return stepR.Error;
 
-                        var initialR = ExpectPreparedAlgorithmSuffixArg(
+                        var initialR = ExpectPreparedAlgorithmSuffixArgFull(
                             builtin,
                             metadata.SuffixArgs,
                             preparedSuffixArgs,
                             1);
                         if (initialR.IsError) return initialR.Error;
 
-                        return EvalReduceCounted(bound.IterationItems, stepR.Value, initialR.Value, ctx, valEnv);
+                        return EvalReduceCounted(
+                            bound.IterationItems,
+                            stepR.Value,
+                            initialR.Value.AlgorithmValue,
+                            initialR.Value.PreparedValue,
+                            ctx,
+                            valEnv);
                     }),
             _ => WrongBuiltinArity(builtin, args.Count),
         };
+    }
+
+    /// <summary>
+    /// Evaluate a builtin argument's algorithm body through the depth-charged
+    /// chokepoint (<see cref="EvaluationBudget.TryEnterArgumentEvaluation"/>).
+    /// Builtin argument evaluation re-enters an algorithm body exactly like a call
+    /// does, so it must consume depth: without the charge, a zero-parameter
+    /// property that reaches itself through a builtin argument (<c>A = count(A)</c>,
+    /// <c>A = if(1, A, 0)</c>, <c>A = range(1, A)</c>, a loop's initial state or
+    /// count) recurses outside every budget chokepoint and terminates the process
+    /// with an uncatchable <see cref="StackOverflowException"/>. It charges no STEP,
+    /// preserving the frozen step accounting (steps count dynamic invocations and
+    /// loop iterations only) and the plain/dot work-parity pins.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalArgumentAlgOutputCounted(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+            return limitError;
+        try
+        {
+            return EvalAlgOutputCounted(algorithm, ctx, valEnv);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
     }
 
     private static EvalResult<CountedResult> EvalResolvedArgumentCounted(
@@ -5025,7 +5140,7 @@ public static class Evaluator
         => arg.PreparedValue is { } prepared
             ? EvalResult<CountedResult>.Ok(prepared)
             : arg.Algorithm is { } algorithm
-                ? EvalAlgOutputCounted(algorithm, ctx, valEnv)
+                ? EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv)
                 : new EvalError.BadArity();
 
     /// <summary>
@@ -5139,8 +5254,12 @@ public static class Evaluator
                     if (countR.IsError) return countR.Error;
                     var nR = ExpectWholeInt(countR.Value, "Repeat count");
                     if (nR.IsError) return nR.Error;
-                    var n = (long)nR.Value;
-                    if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                    // Domain check BEFORE narrowing: the validated whole decimal may lie
+                    // outside long's range in either direction, so the (long) conversion
+                    // is only safe after rejecting negatives and saturating oversized
+                    // counts (behaviorally identical: both exceed any finite budget).
+                    if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                    var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
 
                     var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
                     if (initialStateR.IsError) return initialStateR.Error;
@@ -5938,8 +6057,9 @@ public static class Evaluator
                     if (countR.IsError) return countR.Error;
                     var nR = ExpectWholeInt(countR.Value, "Repeat count");
                     if (nR.IsError) return nR.Error;
-                    var n = (long)nR.Value;
-                    if (n < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                    // Domain check BEFORE narrowing, mirroring the counted twin above.
+                    if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
+                    var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
                     var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
                     if (initialStateR.IsError) return initialStateR.Error;
                     return RepeatLoop(stepR.Value, n, initialStateR.Value, ctx, valEnv);
@@ -7738,10 +7858,25 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var valueR = Eval(receiver, ctx, valEnv);
-        return valueR.IsError
-            ? valueR.Error
-            : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
+        // The receiver is this builtin call's collection ARGUMENT, so it consumes
+        // one depth-only argument-evaluation level exactly like the plain-call
+        // spelling's argument funnel (EvalArgumentAlgOutputCounted). This keeps the
+        // plain/dot work observations identical — including PeakDepth — and bounds
+        // a self-referential receiver (`A = A.count`) by the same deterministic
+        // depth limit instead of the machine-dependent stack backstop.
+        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+            return limitError;
+        try
+        {
+            var valueR = Eval(receiver, ctx, valEnv);
+            return valueR.IsError
+                ? valueR.Error
+                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
     }
 
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> SequenceBuiltinDotReceiverArgs(

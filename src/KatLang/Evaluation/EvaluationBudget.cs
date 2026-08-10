@@ -93,7 +93,37 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal int PeakDepth { get; private set; }
 
-    /// <summary>Leaves an invocation entered by a successful <see cref="TryEnterInvocation"/>.</summary>
+    /// <summary>
+    /// Charges one level of depth — and NO step — for re-entering an algorithm body
+    /// outside a dynamic invocation: builtin argument and control-argument body
+    /// evaluation. Argument evaluation is not a unit of semantic work (steps count
+    /// dynamic invocations and loop iterations only, and the frozen plain/dot work
+    /// parity depends on that), but it IS a level of host recursion: without this
+    /// charge a zero-parameter property that reaches itself through a builtin
+    /// argument (<c>A = count(A)</c>, <c>A = if(1, A, 0)</c>, <c>A = range(1, A)</c>)
+    /// recurses outside every budget chokepoint and terminates the process with an
+    /// uncatchable <see cref="StackOverflowException"/>. Same contract as
+    /// <see cref="TryEnterInvocation"/>: on <c>null</c>, balance with
+    /// <see cref="ExitInvocation"/> from a <c>finally</c> block; on an error the
+    /// depth is left unchanged.
+    /// </summary>
+    internal EvalError? TryEnterArgumentEvaluation()
+    {
+        if (_depth >= _maxDepth)
+            return new EvalError.EvaluationDepthExceeded(_maxDepth);
+
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
+        _depth++;
+        if (_depth > PeakDepth) PeakDepth = _depth;
+        return null;
+    }
+
+    /// <summary>
+    /// Leaves a level entered by a successful <see cref="TryEnterInvocation"/> or
+    /// <see cref="TryEnterArgumentEvaluation"/>.
+    /// </summary>
     internal void ExitInvocation() => _depth--;
 
     /// <summary>The enforced single-collection item limit.</summary>

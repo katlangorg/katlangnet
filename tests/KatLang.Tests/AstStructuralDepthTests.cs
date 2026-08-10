@@ -954,6 +954,72 @@ public class AstStructuralDepthTests
     }
 
     [Fact]
+    public void ExplicitParameterPatterns_AreMeasuredOnTheirOwn_AtExactBoundaries()
+    {
+        // ExplicitParameterPatterns with ParameterPatterns EMPTY: the only prior
+        // coverage assigned the SAME spine to both collections, so deleting the
+        // ExplicitParameterPatterns branch from TryGetChild kept every depth test
+        // green — the spine stayed reachable through the sibling collection.
+        static Algorithm WithExplicitOnly(int patternNodes)
+        {
+            ParameterPattern pattern = new CaptureParameterPattern("x");
+            for (var i = 0; i < patternNodes - 1; i++)
+                pattern = new SequenceValueParameterPattern([pattern]);
+            return new Algorithm.User(null, [], [], [], [new Expr.Num(1)]) with
+            {
+                ExplicitParameterPatterns = [pattern],
+            };
+        }
+
+        // Root algorithm (1) + N pattern nodes.
+        Assert.Null(AstStructuralPreflight.Check(WithExplicitOnly(39), 40, AstConsumerProfile.FullyRecursive));
+        var rejection = AstStructuralPreflight.Check(WithExplicitOnly(40), 40, AstConsumerProfile.FullyRecursive);
+        Assert.NotNull(rejection);
+        Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
+
+        // The same shape through the public evaluator gate.
+        static Expr Program(int patternNodes) => new Expr.AlgorithmExpr(new Algorithm.User(
+            null, [], [], [new Property("F", WithExplicitOnly(patternNodes))], [new Expr.Num(1)]));
+        AssertAccepted(Program(10));
+        AssertDepthRejected(Program(EvaluationLimits.MaxSupportedAstDepth + 10));
+    }
+
+    [Fact]
+    public void ScopeContextOpensAndProperties_AreMeasuredOnTheirOwn_AtExactBoundaries()
+    {
+        // Every other ScopeCtx in the suite is built with EMPTY Opens/Properties
+        // (only Parent chains are exercised), so deleting either branch from the
+        // ScopeCtx case kept the suite green. The parser never populates ScopeCtx,
+        // so no source-level test can reach these incidentally.
+
+        // Case A: the deep subtree hangs ONLY off Opens.
+        // Root algorithm (1) + ScopeCtx (1) + N spine nodes.
+        static Algorithm WithOpens(int spineNodes) => new Algorithm.User(
+            new ScopeCtx(null, [UnarySpine(spineNodes)], []), [], [], [], [new Expr.Num(1)]);
+        Assert.Null(AstStructuralPreflight.Check(WithOpens(38), 40, AstConsumerProfile.FullyRecursive));
+        var opensRejection = AstStructuralPreflight.Check(WithOpens(39), 40, AstConsumerProfile.FullyRecursive);
+        Assert.NotNull(opensRejection);
+        Assert.Equal(AstStructuralViolation.DepthExceeded, opensRejection.Kind);
+
+        // Case B: the deep subtree hangs ONLY off Properties[i].Value.
+        // Root algorithm (1) + ScopeCtx (1) + property membrane + algorithm (1) + N spine nodes.
+        static Algorithm WithProperties(int spineNodes) => new Algorithm.User(
+            new ScopeCtx(null, [],
+                [new Property("P", new Algorithm.User(null, [], [], [], [UnarySpine(spineNodes)]))]),
+            [], [], [], [new Expr.Num(1)]);
+        Assert.Null(AstStructuralPreflight.Check(WithProperties(37), 40, AstConsumerProfile.FullyRecursive));
+        var propertiesRejection = AstStructuralPreflight.Check(WithProperties(38), 40, AstConsumerProfile.FullyRecursive);
+        Assert.NotNull(propertiesRejection);
+        Assert.Equal(AstStructuralViolation.DepthExceeded, propertiesRejection.Kind);
+
+        // Both shapes through the public evaluator gate.
+        AssertAccepted(new Expr.AlgorithmExpr(WithOpens(10)));
+        AssertDepthRejected(new Expr.AlgorithmExpr(WithOpens(EvaluationLimits.MaxSupportedAstDepth + 10)));
+        AssertAccepted(new Expr.AlgorithmExpr(WithProperties(10)));
+        AssertDepthRejected(new Expr.AlgorithmExpr(WithProperties(EvaluationLimits.MaxSupportedAstDepth + 10)));
+    }
+
+    [Fact]
     public void InheritedCollections_CyclesAndSharing_AreJudgedCorrectly()
     {
         // A cycle routed through a Builtin's base-declared Opens is detected.
