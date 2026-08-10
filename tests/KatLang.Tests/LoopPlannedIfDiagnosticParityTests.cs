@@ -149,6 +149,8 @@ public class LoopPlannedIfDiagnosticParityTests
                 $"VariadicLoopStateBinding[{loopName}|{string.Join(",", stepParams)}|{expectedMin}|{actualCount}]",
             DeconstructionBindingContext(var targets, var hasCollecting) =>
                 $"DeconstructionBinding[{string.Join(",", targets)}|{hasCollecting}]",
+            SequenceValueParameterBindingContext(var patternDisplayName, var hasCollectingItem) =>
+                $"SequenceValueParameterBinding[{patternDisplayName}|{hasCollectingItem}]",
             OpenResolutionContext(var openDescription) => $"Open[{openDescription}]",
             ImplicitParameterContext(var paramNames, var providedCount) =>
                 $"ImplicitParameter[{string.Join(",", paramNames)}|{providedCount}]",

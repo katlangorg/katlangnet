@@ -42,6 +42,13 @@ public sealed record ReduceInitialAccumulatorContext(IReadOnlyList<string> Requi
     public override string ToLegacyString() => "while preparing reduce initial accumulator";
 }
 
+/// <summary>
+/// Binding failure of a loop step's state slots. <see cref="StepParameterNames"/>
+/// holds the step's TOP-LEVEL parameter display labels (one entry per state
+/// slot, so a sequence-value pattern such as <c>(x, y)</c> is ONE entry), not
+/// the flattened capture names. The expected state-slot count lives in the
+/// inner <see cref="EvalError.ArityMismatch"/>.
+/// </summary>
 public sealed record LoopStateBindingContext(string LoopName, IReadOnlyList<string> StepParameterNames, int ActualStateValueCount) : ErrorContext
 {
     public override string ToLegacyString() => $"while binding {LoopName} step state";
@@ -68,6 +75,24 @@ public sealed record DeconstructionBindingContext(
 {
     public override string ToLegacyString()
         => $"while binding assignment pattern {string.Join(", ", TargetDisplayNames)}";
+}
+
+/// <summary>
+/// Binding failure of one nested sequence-value parameter pattern group
+/// (<c>F((b, c)) = ...</c> receiving the wrong number of values for
+/// <c>(b, c)</c>). Wraps ONLY the arity mismatch produced by binding that
+/// group's own items, so the failure is attributed to the written pattern
+/// instead of the enclosing call's argument count.
+/// <see cref="PatternDisplayName"/> is the group's display form, e.g.
+/// <c>(b, c)</c>; <see cref="HasCollectingItem"/> is true when the group
+/// contains a collecting binding at this level (an "at least N" expectation).
+/// </summary>
+public sealed record SequenceValueParameterBindingContext(
+    string PatternDisplayName,
+    bool HasCollectingItem) : ErrorContext
+{
+    public override string ToLegacyString()
+        => $"while binding sequence-value parameter pattern {PatternDisplayName}";
 }
 
 public sealed record OpenResolutionContext(string OpenDescription) : ErrorContext

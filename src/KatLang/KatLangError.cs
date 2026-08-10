@@ -44,6 +44,8 @@ public sealed class KatLangError
             return formattedLoopStateArityMismatch;
         if (TryFormatDeconstructionBindingMismatch(error, out var formattedDeconstructionMismatch))
             return formattedDeconstructionMismatch;
+        if (TryFormatSequenceValuePatternBindingMismatch(error, out var formattedSequenceValuePatternMismatch))
+            return formattedSequenceValuePatternMismatch;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
             return formattedArityMismatch;
         if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
@@ -258,9 +260,16 @@ public sealed class KatLangError
 
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.ArityMismatch dotCallArity })
         {
-            message = dotCallArity.Span is null
-                ? $"Property '{dotCallContext.PropertyName}' on `{dotCallContext.ReceiverDescription}` expects {FormatCount(dotCallArity.Expected, "parameter")}, but was called with {FormatCount(dotCallArity.Actual, "argument")}."
-                : FormatGenericArityMismatch(dotCallArity.Expected, dotCallArity.Actual);
+            // Signature first: builtin arity errors deliberately carry the
+            // Lean-aligned placeholder Expected = 0 beside their real
+            // signature, so rendering raw Expected here would claim
+            // "expects 0 parameters". Signatureless structural property
+            // errors keep the receiver-specific fallback below.
+            message = dotCallArity.Signature is not null
+                ? FormatArityMismatch(dotCallArity)
+                : dotCallArity.Span is null
+                    ? $"Property '{dotCallContext.PropertyName}' on `{dotCallContext.ReceiverDescription}` expects {FormatCount(dotCallArity.Expected, "parameter")}, but was called with {FormatCount(dotCallArity.Actual, "argument")}."
+                    : FormatGenericArityMismatch(dotCallArity.Expected, dotCallArity.Actual);
             return true;
         }
 
@@ -290,9 +299,12 @@ public sealed class KatLangError
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            message = legacyArity.Span is null
-                ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(legacyArity.Expected, "parameter")}, but was called with {FormatCount(legacyArity.Actual, "argument")}."
-                : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
+            // Same signature-first rule as the structured DotCallContext branch.
+            message = legacyArity.Signature is not null
+                ? FormatArityMismatch(legacyArity)
+                : legacyArity.Span is null
+                    ? $"Property '{dotPropertyName}' on `{receiverDesc}` expects {FormatCount(legacyArity.Expected, "parameter")}, but was called with {FormatCount(legacyArity.Actual, "argument")}."
+                    : FormatGenericArityMismatch(legacyArity.Expected, legacyArity.Actual);
             return true;
         }
 
@@ -368,11 +380,39 @@ public sealed class KatLangError
         return false;
     }
 
+    /// <summary>
+    /// Phrase a nested sequence-value parameter pattern's arity failure against
+    /// the WRITTEN pattern (<c>F((b, c))</c> receiving three values) instead of
+    /// the enclosing call's argument count. The context may be nested under
+    /// ordinary call/dot-call/property contexts, so the chain is searched.
+    /// </summary>
+    private static bool TryFormatSequenceValuePatternBindingMismatch(EvalError error, out string message)
+    {
+        var current = error;
+        while (current is EvalError.WithContext context)
+        {
+            if (context.ErrorContext is SequenceValueParameterBindingContext pattern
+                && context.Inner is EvalError.ArityMismatch mismatch)
+            {
+                var expectation = pattern.HasCollectingItem
+                    ? $"at least {FormatCount(mismatch.Expected, "value")}"
+                    : FormatCount(mismatch.Expected, "value");
+                message = $"Sequence-value parameter pattern `{pattern.PatternDisplayName}` expects {expectation}, but received {FormatCount(mismatch.Actual, "value")}.";
+                return true;
+            }
+
+            current = context.Inner;
+        }
+
+        message = string.Empty;
+        return false;
+    }
+
     private static bool TryFormatLoopStateArityMismatch(EvalError error, out string message)
     {
-        if (error is EvalError.WithContext { ErrorContext: LoopStateBindingContext context, Inner: EvalError.ArityMismatch })
+        if (error is EvalError.WithContext { ErrorContext: LoopStateBindingContext context, Inner: EvalError.ArityMismatch loopMismatch })
         {
-            message = FormatLoopStateArityMismatch(context);
+            message = FormatLoopStateArityMismatch(context, loopMismatch);
             return true;
         }
 
@@ -486,12 +526,22 @@ public sealed class KatLangError
             ? $"Callable `{signature.DisplayText}` expects at least {FormatCount(error.ExpectedMinimum, "item")}, but received {FormatCount(error.Actual, "item")}."
             : $"Property `{error.CalleeName}` expects at least {FormatCount(error.ExpectedMinimum, "item")}, but received {FormatCount(error.Actual, "item")}.";
 
-    private static string FormatLoopStateArityMismatch(LoopStateBindingContext context)
+    private static string FormatLoopStateArityMismatch(LoopStateBindingContext context, EvalError.ArityMismatch mismatch)
     {
-        var expected = context.StepParameterNames.Count;
-        var parameterDetail = expected == 0
+        // The inner mismatch's Expected is the numeric source of truth (the
+        // binder-computed top-level state-slot count); the context's names are
+        // the matching top-level parameter display labels, so a patterned step
+        // `Step((x, y))` reports ONE state value for the ONE pattern "(x, y)".
+        // When the counts differ (a top-level collecting pattern's underflow
+        // reports only the fixed slots as expected), omit the numeric parameter
+        // count so the displayed count and displayed list never disagree.
+        var expected = mismatch.Expected;
+        var names = context.StepParameterNames;
+        var parameterDetail = names.Count == 0
             ? "because the step has no parameters"
-            : $"for {FormatCount(expected, "parameter")} {FormatQuotedList(context.StepParameterNames)}";
+            : names.Count == expected
+                ? $"for {FormatCount(names.Count, "parameter")} {FormatQuotedList(names)}"
+                : $"for parameters {FormatQuotedList(names)}";
 
         return $"`{context.LoopName}` step expects {FormatCount(expected, "state value")} {parameterDetail}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. Loop state values are bound positionally to the step's implicit parameters. If this is a nested step, remember that names already bound by an enclosing algorithm are captured, not added as step parameters; use a distinct state-slot name such as `candidate` when threading an outer value through the loop state.";
     }

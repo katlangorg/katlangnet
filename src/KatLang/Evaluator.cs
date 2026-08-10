@@ -1575,6 +1575,25 @@ public static class Evaluator
         return input.ValueError ?? new EvalError.BadArity();
     }
 
+    /// <summary>
+    /// Arity mismatch produced by binding one nested sequence-value parameter
+    /// pattern group's OWN items. The structured payload keeps the innermost
+    /// Lean-aligned <see cref="EvalError.ArityMismatch"/> unchanged; the added
+    /// context only attributes the failure to the written group (e.g.
+    /// <c>(b, c)</c>) instead of the enclosing call's argument count.
+    /// Genuine top-level call-arity mismatches and argument evaluation errors
+    /// passing through the binder are never wrapped.
+    /// </summary>
+    private static EvalError SequenceValuePatternArityMismatch(
+        SequenceValueParameterPattern group,
+        int required,
+        int actual)
+        => new EvalError.WithContext(
+            new SequenceValueParameterBindingContext(
+                group.DisplayName,
+                group.Items.Any(static item => item is CaptureParameterPattern { Kind: ParameterKind.Collecting })),
+            new EvalError.ArityMismatch(required, actual));
+
     private static EvalResult<UserCallBindings> BindParameterPattern(
         ParameterPattern pattern,
         ParameterPatternInput input,
@@ -1627,7 +1646,7 @@ public static class Evaluator
                         nestedInputs,
                         ctx,
                         allowAlgorithmBindings: false,
-                        (required, actual) => new EvalError.ArityMismatch(required, actual));
+                        (required, actual) => SequenceValuePatternArityMismatch(group, required, actual));
                 }
 
             default:
@@ -1847,9 +1866,13 @@ public static class Evaluator
         // ArityMismatch is (or reflects) that argument's own value-evaluation
         // error — re-wording it would misattribute unrelated numbers to the
         // written pattern (e.g. `x, y = sum` leaking sum's 0/0 arity error).
+        // The helper binds through one synthetic inline sequence-value pattern,
+        // so its shape failure may arrive wrapped in that pattern's
+        // SequenceValueParameterBindingContext — the assignment-focused
+        // DeconstructionBindingContext takes precedence and replaces it.
         if (bindingsR.IsError
-            && bindingsR.Error is EvalError.ArityMismatch deconstructionMismatch
             && callee is Algorithm.User { IsAssignmentDeconstructionHelper: true }
+            && TryGetDeconstructionShapeMismatch(bindingsR.Error) is { } deconstructionMismatch
             && inputsR.Value.All(static input => input.Value is not null))
         {
             return new EvalError.WithContext(
@@ -1861,6 +1884,23 @@ public static class Evaluator
 
         return bindingsR;
     }
+
+    /// <summary>
+    /// Recognize a deconstruction helper's genuine binding-shape failure: either
+    /// a bare top-level <see cref="EvalError.ArityMismatch"/>, or one wrapped in
+    /// the nested-group <see cref="SequenceValueParameterBindingContext"/> the
+    /// helper's synthetic inline pattern produced (at most one such layer exists:
+    /// only the innermost failing group attaches its context). Returns the inner
+    /// mismatch to re-wrap in the assignment-focused context, or null when the
+    /// error is not a shape mismatch (e.g. a passed-through argument error).
+    /// </summary>
+    private static EvalError.ArityMismatch? TryGetDeconstructionShapeMismatch(EvalError error)
+        => error switch
+        {
+            EvalError.ArityMismatch direct => direct,
+            EvalError.WithContext { ErrorContext: SequenceValueParameterBindingContext, Inner: EvalError.ArityMismatch nested } => nested,
+            _ => null,
+        };
 
     /// <summary>
     /// Shared lazy binding of one assignment-deconstruction group. All N target helpers of a
@@ -2942,7 +2982,7 @@ public static class Evaluator
                         group.Items,
                         nestedInputs,
                         ctx,
-                        (required, actual) => new EvalError.ArityMismatch(required, actual));
+                        (required, actual) => SequenceValuePatternArityMismatch(group, required, actual));
                 }
 
             default:
@@ -5494,11 +5534,19 @@ public static class Evaluator
 
     private static EvalError LoopStateArityMismatch(
         Algorithm step,
+        int expectedStateValueCount,
         int actualStateValueCount,
         string loopName)
+        // Expected is the binder-computed top-level state-slot count, NOT the
+        // flattened capture count: a patterned step `Step((x, y))` has ONE
+        // state slot but two flattened captures. The context's parameter names
+        // are the matching top-level display labels ("(x, y)" is one entry).
         => new EvalError.WithContext(
-            new LoopStateBindingContext(loopName, step.Params.ToList(), actualStateValueCount),
-            new EvalError.ArityMismatch(step.Params.Count, actualStateValueCount));
+            new LoopStateBindingContext(
+                loopName,
+                step.ParameterPatterns.Select(static pattern => pattern.DisplayName).ToList(),
+                actualStateValueCount),
+            new EvalError.ArityMismatch(expectedStateValueCount, actualStateValueCount));
 
     private static EvalError VariadicLoopStateArityMismatch(
         Algorithm step,
@@ -5674,7 +5722,7 @@ public static class Evaluator
             ctx,
             "loop step",
             bindingSelection,
-            (_, actual) => LoopStateArityMismatch(step, actual, loopName),
+            (required, actual) => LoopStateArityMismatch(step, required, actual, loopName),
             (required, actual) => VariadicLoopStateArityMismatch(step, required, actual, loopName));
     }
 
@@ -5962,7 +6010,7 @@ public static class Evaluator
         }
 
         if (step.Params.Count != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, initialStateSlots.Count, "while");
+            return LoopStateArityMismatch(step, step.Params.Count, initialStateSlots.Count, "while");
 
         return LoopOptimizer.TryEvaluateWhile(
             step,
@@ -6051,7 +6099,7 @@ public static class Evaluator
         }
 
         if (step.Params.Count != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, initialStateSlots.Count, "repeat");
+            return LoopStateArityMismatch(step, step.Params.Count, initialStateSlots.Count, "repeat");
 
         return LoopOptimizer.TryEvaluateRepeat(
             step,

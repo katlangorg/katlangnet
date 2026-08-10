@@ -424,7 +424,7 @@ public class ExprNameRendererTests
             dottedContext.ErrorContext.ToString());
         Assert.IsType<EvalError.ArityMismatch>(dottedContext.Inner);
         Assert.Equal(
-            $"Property 'take' on `{receiverName}` expects 2 parameters, but was called with 1 argument.",
+            "Callable `take(collection, count)` expects 2 arguments, but was called with 1 argument.",
             KatLangError.FromEvalError(dotted.Error).Message);
         Assert.Equal(1, dottedObservations.CallDiagnosticNameRenderCount);
     }

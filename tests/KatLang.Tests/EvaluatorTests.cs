@@ -7069,7 +7069,7 @@ public class EvaluatorTests
         Assert.Equal(2, formatted.StartLine);
         Assert.Equal(1, formatted.StartColumn);
         Assert.Equal(
-            "Property 'reduce' on `Values` expects 3 parameters, but was called with 2 arguments.",
+            "Callable `reduce(collection, reducer, initial)` expects 3 arguments, but was called with 2 arguments.",
             formatted.Message);
     }
 
@@ -11652,12 +11652,15 @@ public class EvaluatorTests
 
         foreach (var error in new[] { generic, optimized })
         {
+            // The step has ONE top-level state slot (the pattern `(x, y)`), so the
+            // binder-computed expected count is 1 — never the flattened capture
+            // count 2, which used to produce the contradictory 2-vs-2 payload.
             var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
-            Assert.Equal(2, arity.Expected);
+            Assert.Equal(1, arity.Expected);
             Assert.Equal(2, arity.Actual);
 
             var formatted = KatLangError.FromEvalError(error).Message;
-            Assert.Contains("`repeat` step expects 2 state values", formatted, StringComparison.Ordinal);
+            Assert.Contains("`repeat` step expects 1 state value for 1 parameter '(x, y)'", formatted, StringComparison.Ordinal);
             Assert.Contains("current loop state has 2 state values", formatted, StringComparison.Ordinal);
             Assert.DoesNotContain("Callable `Step((x, y))`", formatted, StringComparison.Ordinal);
         }
@@ -14952,7 +14955,10 @@ public class EvaluatorTests
         var error = GetEvalError(source);
         Assert.NotNull(error);
         Assert.IsType<EvalError.WithContext>(error);
-        var inner = ((EvalError.WithContext)error!).Inner;
+        // The mismatch is attributed to the nested pattern `(b)` (a
+        // SequenceValueParameterBindingContext layer may sit between the call
+        // context and the innermost arity error).
+        var inner = Innermost(error!);
         Assert.True(inner is EvalError.ArityMismatch or EvalError.BadArity);
     }
 
