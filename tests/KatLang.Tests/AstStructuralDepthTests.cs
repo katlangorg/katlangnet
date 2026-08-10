@@ -953,6 +953,33 @@ public class AstStructuralDepthTests
         Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
     }
 
+    /// <summary>Alternating Spread(Construct(...)) chain: the ONE join shape whose evaluation recurses.</summary>
+    internal static Expr AlternatingJoinChain(int levels)
+    {
+        Expr e = new Expr.EmptySequence(0);
+        for (var i = 0; i < levels; i++)
+            e = new Expr.SequenceSpread(new Expr.SequenceConstruct(e, new Expr.EmptySequence(0)));
+        return e;
+    }
+
+    [Fact]
+    public void AlternatingJoinChains_AreWeighted_AtTheExactBoundary()
+    {
+        // Single-kind join chains are iterative and stay free (pinned elsewhere at
+        // tens of thousands of levels), but each ALTERNATION — a spread whose
+        // operand is a construct — re-enters generic evaluation recursively and
+        // previously overflowed a 1 MiB stack between 80 and 130 alternations
+        // while the preflight charged ZERO for the whole chain. Each alternation
+        // link now weighs 8 units, so the 300-unit ceiling admits exactly 37 links
+        // (37*8 + 1 leaf = 297) and rejects 38 — a >=2.1x stack margin in Debug.
+        var accepted = Evaluator.Run(AlternatingJoinChain(37));
+        Assert.False(accepted.IsError);
+
+        Assert.Equal(
+            EvaluationLimits.MaxSupportedAstDepth,
+            AssertDepthRejected(AlternatingJoinChain(38)).Limit);
+    }
+
     [Fact]
     public void ExplicitParameterPatterns_AreMeasuredOnTheirOwn_AtExactBoundaries()
     {
@@ -1685,6 +1712,73 @@ public class AstStructuralDepthProcessTests
             var error = Assert.IsType<EvalError.AstDepthLimitExceeded>(result.Error);
             Assert.Equal(EvaluationLimits.MaxSupportedAstDepth, error.Limit);
         }
+    }
+
+    [Fact]
+    public async Task AlternatingJoinsAndNestedBuiltins_StayStructured_InSubprocess()
+        => await RunProbeChild(nameof(AlternatingJoinsAndNestedBuiltins_ProbeChild));
+
+    [Fact]
+    public void AlternatingJoinsAndNestedBuiltins_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // These are process-termination regressions, so they must execute in this
+        // child rather than in the main xUnit host. A missing alternation weight or
+        // builtin-argument stack probe kills only the probe process, and the parent
+        // reports the absent marker/non-zero exit as an ordinary test failure.
+        RunOnThreadWithStack(1_048_576, () =>
+        {
+            // The calibrated accepted boundary must genuinely evaluate on the
+            // minimum supported stack, not merely pass the structural preflight.
+            var accepted = AstStructuralDepthTests.AlternatingJoinChain(37);
+            Assert.False(Evaluator.Run(accepted).IsError);
+            Assert.False(Evaluator.RunFlat(accepted).IsError);
+            Assert.False(Evaluator.RunCounted(accepted).IsError);
+
+            // Far beyond the former alternating-join crash boundary, through every
+            // runtime entry point. The safe exact 37/38 weighted boundary remains an
+            // in-process assertion in AstStructuralDepthTests.
+            var deep = AstStructuralDepthTests.AlternatingJoinChain(1000);
+            Assert.IsType<EvalError.AstDepthLimitExceeded>(Evaluator.Run(deep).Error);
+            Assert.IsType<EvalError.AstDepthLimitExceeded>(Evaluator.RunFlat(deep).Error);
+            Assert.IsType<EvalError.AstDepthLimitExceeded>(Evaluator.RunCounted(deep).Error);
+
+            // Source-reachable nesting: call arguments parse through 127 levels.
+            // Cover the materially different builtin paths from the audit — scalar,
+            // lazy branch, sequence receiver, and callback — at representative former
+            // crash boundaries and at the parser ceiling.
+            (string Preamble, string Prefix, string Suffix)[] builtinShapes =
+            [
+                ("", "sum(", ")"),
+                ("", "if(1, ", ", 0)"),
+                ("", "take(", ", 1)"),
+                ("Id(x) = x\n", "map(", ", Id)"),
+            ];
+
+            foreach (var (preamble, prefix, suffix) in builtinShapes)
+            {
+                foreach (var levels in new[] { 32, 63, 90, 127 })
+                {
+                    var source = preamble
+                        + string.Concat(Enumerable.Repeat(prefix, levels))
+                        + "1"
+                        + string.Concat(Enumerable.Repeat(suffix, levels));
+                    var run = KatLangEngine.Run(source);
+                    Assert.True(
+                        run is RunResult.Success or RunResult.EvalFailure,
+                        $"unexpected outcome {run.GetType().Name} for `{prefix}` at {levels} levels");
+
+                    // The evaluator's public AST entry is a second distinct runtime
+                    // funnel. Any EvalResult outcome is structured; process death is
+                    // observed by the parent as a missing marker/non-zero exit.
+                    _ = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+                }
+            }
+        });
+
+        WriteProbeMarker();
     }
 
     [Fact]

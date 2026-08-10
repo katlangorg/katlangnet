@@ -2041,6 +2041,10 @@ public class MetamorphicPhase3FamilyTests
             Assert.Null(testCase.Limits!.MaxSteps);
             Assert.Null(testCase.Limits.MaxStringLength);
             Assert.Null(testCase.Limits.MaxMaterializedStringChars);
+            // A configured cumulative item budget forces the generic sequence paths, so a
+            // "generous" one would mirror a DIFFERENT execution policy than the default —
+            // only the fusion-neutral per-collection ceiling may be generous here.
+            Assert.Null(testCase.Limits.MaxMaterializedItems);
 
             foreach (var profile in new[] { testCase.LeftProfile, testCase.RightProfile })
             {

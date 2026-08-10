@@ -578,6 +578,55 @@ public class EvaluationLimitsTests
         Assert.Equal("50000", Assert.IsType<RunResult.Success>(result).ToDisplayString());
     }
 
+    // ── Bulk expression-node work is bounded by the step budget ──────────────
+
+    /// <summary>16 levels of `e = e + e` over ONE shared reference: 17 node objects, 2^17 node evaluations.</summary>
+    private static Expr SharedBinaryDag(int levels)
+    {
+        Expr e = new Expr.Num(1);
+        for (var i = 0; i < levels; i++)
+            e = new Expr.Binary(BinaryOp.Add, e, e);
+        return e;
+    }
+
+    [Fact]
+    public void SharedExpressionDag_IsBoundedByAConfiguredStepBudget()
+    {
+        // The preflight accepts reference-shared acyclic subtrees (visited once, so
+        // the CHECK is linear), but evaluation re-walks every occurrence: 17 shared
+        // Binary nodes demand 2^17 node evaluations while charging no invocation,
+        // depth, or materialization. Expression-node work is now charged in bulk
+        // (one step per 4096 evaluator work checkpoints), so the ONE budget documented to stop excessive
+        // computation actually stops it — previously this exact run succeeded after
+        // millions of operations with MaxSteps = 1 configured.
+        var bounded = Evaluator.Run(SharedBinaryDag(16), new EvaluationLimits { MaxDepth = 1, MaxSteps = 1 });
+        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(bounded.Error);
+    }
+
+    [Fact]
+    public void SharedExpressionDag_WithinAGenerousStepBudget_StillEvaluates()
+    {
+        // 2^17 node evaluations plus the spine-machine transitions cost far fewer
+        // than 10_000 bulk steps, and the value is exact.
+        var result = Evaluator.RunFlat(SharedBinaryDag(16), new EvaluationLimits { MaxSteps = 10_000 });
+        Assert.False(result.IsError);
+        Assert.Equal([65536m], result.Value);
+
+        // Without a configured step budget the run stays in the documented
+        // unbudgeted-compute class and completes.
+        var unbudgeted = Evaluator.RunFlat(SharedBinaryDag(16));
+        Assert.False(unbudgeted.IsError);
+        Assert.Equal([65536m], unbudgeted.Value);
+    }
+
+    [Fact]
+    public void OrdinaryPrograms_ChargeNoBulkExpressionSteps()
+    {
+        // The 4096-checkpoint granularity exists so small ordinary programs keep
+        // their exact step accounting, including this no-invocation control.
+        Assert.False(Eval("1 + 2 * 3 - 4", Steps(1)).IsError);
+    }
+
     // ── Optimizer independence ───────────────────────────────────────────────
 
     [Fact]

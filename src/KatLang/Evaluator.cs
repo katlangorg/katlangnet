@@ -545,16 +545,24 @@ public static class Evaluator
 
     // ── Lexical lookup (direct — no opens, used for open resolution) ────────
 
-    /// <summary>Lean: lookupInParentsDirect (Option).</summary>
+    /// <summary>
+    /// Lean: lookupInParentsDirect (Option). Iterative over the parent chain: scope
+    /// chains grow with structural nesting, and resolving a name from the deepest
+    /// evaluation frame must not add another O(chain) recursive burst on top of the
+    /// already-deep host stack.
+    /// </summary>
     private static Algorithm? LookupInParentsDirect(ScopeCtx sc, string name)
     {
-        foreach (var prop in sc.Properties)
+        for (ScopeCtx? current = sc; current is not null; current = current.Parent)
         {
-            if (prop.Name == name)
-                return WithParent(prop.Value, sc);
+            foreach (var prop in current.Properties)
+            {
+                if (prop.Name == name)
+                    return WithParent(prop.Value, current);
+            }
         }
 
-        return sc.Parent is { } parent ? LookupInParentsDirect(parent, name) : null;
+        return null;
     }
 
     /// <summary>
@@ -678,22 +686,25 @@ public static class Evaluator
         return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
     }
 
+    // Iterative over the parent chain for the same reason as LookupInParentsDirect:
+    // no O(chain) recursion on top of the deepest evaluation stack.
     private static ResolvedLexicalProperty? LookupInParentsDirectBinding(ScopeCtx sc, string name)
     {
-        foreach (var prop in sc.Properties)
+        for (ScopeCtx? current = sc; current is not null; current = current.Parent)
         {
-            if (prop.Name == name)
+            foreach (var prop in current.Properties)
             {
-                return new ResolvedLexicalProperty(
-                    TryGetScopeOwnerAlgorithm(sc),
-                    prop,
-                    WithParent(prop.Value, sc));
+                if (prop.Name == name)
+                {
+                    return new ResolvedLexicalProperty(
+                        TryGetScopeOwnerAlgorithm(current),
+                        prop,
+                        WithParent(prop.Value, current));
+                }
             }
         }
 
-        return sc.Parent is { } parent
-            ? LookupInParentsDirectBinding(parent, name)
-            : null;
+        return null;
     }
 
     // ── Lexical resolution (ownership-first) ────────────────────────────────
@@ -6342,6 +6353,12 @@ public static class Evaluator
 
         while (true)
         {
+            // Bulk pathological-work bound (see TryChargeExpressionNodeWork): the
+            // machine bypasses ordinary dispatch for spine kinds, so each frame
+            // transition contributes to the same cheap bulk-work counter.
+            if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
+                return nodeWorkError;
+
             ref var frame = ref frames[frameCount - 1];
             EvalResult<CountedResult>? completed = null;
             Expr? requestedChild = null;
@@ -6610,6 +6627,10 @@ public static class Evaluator
         // probe here: the CLR probe reserves roughly half of a 1 MiB stack, so a
         // per-node probe rejects deep parser-produced programs that complete fine
         // today (measured: a 288-level bracket nesting).
+        // Bulk pathological-work bound (see TryChargeExpressionNodeWork).
+        if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
+            return nodeWorkError;
+
         switch (expr)
         {
             case Expr.Num(var n):
@@ -6765,6 +6786,12 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // Bulk pathological-work bound (see TryChargeExpressionNodeWork): free for
+        // small ordinary programs, but a reference-shared (DAG-shaped) host tree that
+        // re-evaluates 2^n occurrences of 25 nodes now consults the step budget.
+        if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
+            return nodeWorkError;
+
         switch (expr)
         {
             case Expr.Param(var name):
@@ -8325,13 +8352,14 @@ public static class Evaluator
     /// Builds the root evaluation context for one run, including its fresh
     /// <see cref="EvaluationBudget"/>.
     ///
-    /// <para>A configured step budget must mean the same thing no matter which internal
-    /// execution strategy runs. The optimized loop and sequence-pipeline paths collapse
-    /// many generic evaluator operations into specialized routines, so their internal
-    /// operation counts do not match the generic paths. A budgeted run therefore always
-    /// takes the generic paths and charges exactly the generic units; an unbudgeted run
-    /// keeps every optimization. This is optimizer independence by construction rather
-    /// than by parallel accounting.</para>
+    /// <para>Configured operational budgets must mean the same thing no matter which
+    /// internal execution strategy runs. A step budget disables both optimized loops
+    /// and sequence pipelines because their operation counts differ from the generic
+    /// paths. Configured string or cumulative-item budgets disable sequence fusion,
+    /// whose allocation profile differs, while optimized loops remain eligible because
+    /// both loop strategies charge those budgets identically. With none of those opt-in
+    /// budgets, every requested optimization remains eligible. This is strategy
+    /// independence by construction rather than by parallel accounting.</para>
     /// </summary>
     private static EvalCtx CreateRootCtx(
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -8360,7 +8388,16 @@ public static class Evaluator
         EvaluationObservations? observations = null)
     {
         var loopOptimize = !budget.HasStepLimit;
-        var sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit;
+        // A configured cumulative materialization budget also forces the generic
+        // SEQUENCE paths: fused pipelines charge only the per-collection boundary,
+        // never the cumulative counter, so leaving them enabled made the verdict a
+        // function of whether an unrelated MaxSteps happened to disable them.
+        // Optimized LOOPS charge the cumulative counter identically to the generic
+        // paths (pinned by GenericAndOptimizedLoops_ChargeOnlyTheirFinalPersistentState),
+        // so they stay eligible.
+        var sequenceOptimize = loopOptimize
+            && !budget.HasConfiguredStringLimit
+            && !budget.HasConfiguredMaterializationLimit;
         return new EvalCtx(
             [PreludeAlg],
             [],

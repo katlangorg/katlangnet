@@ -29,8 +29,11 @@ internal enum AstConsumerProfile
     /// validation walker's flat-output traversal, and the evaluator's flat and counted
     /// spread/join evaluation, pinned by
     /// <c>Eval_SequenceSpread_LongChain_IsStackSafeForFlatAndCountedEvaluation</c>), so
-    /// those two node kinds add NO depth: an arbitrarily long host-built join chain
-    /// stays accepted, exactly as it evaluates today. A <see cref="Expr.DotCall"/>
+    /// those two node kinds add NO depth WITHIN one kind: an arbitrarily long
+    /// single-kind host-built join chain stays accepted, exactly as it evaluates
+    /// today. The exception is the ALTERNATION link — a spread whose operand is a
+    /// construct — which re-enters generic evaluation recursively and weighs EIGHT
+    /// units (see <c>Weight</c>). A <see cref="Expr.DotCall"/>
     /// link weighs THREE units, matching the several large resolution frames each
     /// link consumes at evaluation time. Every other node kind counts one level —
     /// including the unary/binary/index/list spines that the evaluator itself handles
@@ -73,9 +76,11 @@ internal enum AstConsumerProfile
 /// traversal passes through them to their contents without adding a level. On the
 /// evaluator gates (<see cref="AstConsumerProfile.EvaluatorIterativeJoinSpines"/>) the
 /// two internal sequence-join node kinds (<see cref="Expr.SequenceConstruct"/>,
-/// <see cref="Expr.SequenceSpread"/>) also contribute no depth, because every consumer
-/// behind those gates walks their spines with an explicit iterative stack — an
-/// arbitrarily long host-built join chain is a supported, pinned shape. This is
+/// <see cref="Expr.SequenceSpread"/>) also contribute no depth within one kind,
+/// because every consumer behind those gates walks single-kind spines with an
+/// explicit iterative stack — an arbitrarily long single-kind host-built join chain
+/// is a supported, pinned shape. A spread-of-construct ALTERNATION link is the
+/// exception: it re-enters generic evaluation recursively and is weighted. This is
 /// distinct from — and deliberately much larger than — the runtime limit on
 /// simultaneously active dynamic algorithm invocations
 /// (<see cref="EvaluationLimits.MaxDepth"/>): a deeply RECURSIVE program has a shallow
@@ -254,11 +259,15 @@ internal static class AstStructuralPreflight
 
     /// <summary>
     /// Structural depth cost of one node under the gate's consumer profile. On the
-    /// evaluator gates: the internal sequence-join spines are free exactly because
-    /// every downstream consumer walks them iteratively (as are the machine-evaluated
-    /// unary/binary/index/list spines, which still cost one unit each so that the
-    /// small-framed recursive consumers around evaluation — validation walk, planner
-    /// analysis, pattern binding — stay bounded too); a dot-call link costs THREE
+    /// evaluator gates: the internal sequence-join spines are free WITHIN one kind,
+    /// because every downstream consumer walks single-kind spines iteratively — but
+    /// an ALTERNATION link (a spread whose operand is a construct) re-enters generic
+    /// evaluation recursively (~6 CLR frames per link, measured to overflow a 1 MiB
+    /// Debug stack between 80 and 96 alternations) and therefore weighs EIGHT units,
+    /// admitting at most 37 links under the 300-unit ceiling (≥2.1x Debug margin).
+    /// The machine-evaluated unary/binary/index/list spines still cost one unit each
+    /// so that the small-framed recursive consumers around evaluation — validation
+    /// walk, planner analysis, pattern binding — stay bounded too. A dot-call link costs THREE
     /// units, because each link's resolution machinery (pipeline planning, algorithm
     /// resolution, lexical receiver-injection fallback) consumes several large frames —
     /// process-isolated probes measured pure dot-call chains failing at ~160 links
@@ -287,6 +296,17 @@ internal static class AstStructuralPreflight
 
         if (profile != AstConsumerProfile.EvaluatorIterativeJoinSpines)
             return 1;
+
+        // The join kinds are free only WITHIN one kind: construct spines flatten
+        // iteratively and consecutive spread layers unwrap iteratively, but each
+        // ALTERNATION — a spread whose operand is a construct — re-enters generic
+        // evaluation recursively (~6 CLR frames per alternation, measured to
+        // overflow a 1 MiB Debug stack between 80 and 96 alternations). Charging
+        // EIGHT units per alternation link admits at most 37 links under the
+        // 300-unit evaluation ceiling, a >=2.1x margin in Debug (>=2.9x Release),
+        // while pure single-kind chains keep their pinned unbounded acceptance.
+        if (node is Expr.SequenceSpread(Expr.SequenceConstruct))
+            return 8;
 
         return node switch
         {

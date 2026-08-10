@@ -388,13 +388,14 @@ check are reached, so nothing records a fallback. Collapsing the two would let t
 template claim it exercised a fallback it never reached. Proving that an outer loop *wrapper* ran is
 explicitly not enough, which is why `LoopExecutions` alone is never a requirement.
 
-**Limit policy.** Only budgets that cannot bind differently on the two sides are generated (`Default`,
-`PerCollectionItems`, `Generous`). A cumulative budget derived from the optimized side's own measurement
-is below what the generic side legitimately materializes, so the generic run would stop at a limit the
-optimized run cleared — a difference in execution policy, not in optimizer setting, and exactly the
-false mismatch Phase 2 already documents for fused chains. The per-collection ceiling *is* kept, because
-the runtime explicitly promises it is optimizer-independent (`EvaluationBudget.CheckCollectionSize`
-exists so a fused pipeline rejects the same collection size a generic one does).
+**Limit policy.** Only fusion-neutral modes are generated (`Default`, `PerCollectionItems`,
+`Generous`, where generous now configures only the per-collection ceiling). A configured cumulative
+item budget disables sequence fusion by production policy; including it in this family would therefore
+prevent the sequence sources from satisfying the family's measured optimizer-hit precondition while the
+loop sources could remain optimized. Step and string budgets are omitted for the same execution-policy
+reason. The per-collection ceiling *is* kept, because the runtime explicitly promises it is optimizer-
+independent (`EvaluationBudget.CheckCollectionSize` exists so a fused pipeline rejects the same
+collection size a generic one does).
 
 #### Group B — cached versus rebuilt
 
@@ -577,20 +578,19 @@ never a reason to weaken the relation.
   its ordinary equivalent, which is exactly how the duplicate dotted-receiver defect presented.
 
   Eligibility is the **runtime's own gate**, not the optimizer flag alone. `Evaluator.CreateRootCtx`
-  computes `loopOptimize = !budget.HasStepLimit` and
-  `sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit`, and `EvaluationBudget`
-  sets `HasConfiguredStringLimit` when *either* string limit was configured — so any string or
-  step budget, however generous, switches fusion off for the whole run. One helper owns that rule
+  computes `loopOptimize = !budget.HasStepLimit` and `sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit && !budget.HasConfiguredMaterializationLimit`.
+  `EvaluationBudget` sets the latter flags when either
+  string limit or the cumulative item limit was configured — so any string, step, or cumulative-item
+  budget, however generous, switches fusion off for the whole run. One helper owns that rule
   (`MetamorphicLimitPolicy.SequencePipelineFusionCanApply`) and both the relation selector and the
   tests read it, so an approximate copy cannot drift in. Wherever fusion is ineligible — the
-  optimizer-off policy and the string-limit modes alike — the relation returns to exact equality,
-  measured 144/144. This is why `Generous` configures only the *item* budgets: a generous string
-  budget would silently make it a different execution policy from the default it mirrors.
+  optimizer-off policy and those limit modes alike — the relation returns to exact equality, measured
+  144/144. This is why `Generous` configures only the fusion-neutral per-collection ceiling: any other
+  generous budget would silently make it a different execution policy from the default it mirrors.
 
-  For the same reason, Group C **rejects** cumulative-item limit modes while optimizations are on
-  (`fused-chain-does-not-share-the-cumulative-item-budget`): a fused pipeline deliberately does
-  not consume that budget, so the two spellings genuinely cross it at different points. The
-  per-collection ceiling *is* enforced identically and stays comparable.
+  Cumulative-item modes are accepted rather than rejected: configuring that budget itself forces both
+  chain spellings through the generic sequence path, so they charge the same cumulative counter. The
+  per-collection ceiling remains fusion-neutral and is enforced identically on both strategies.
 
 Phase 3 adds five more, all declared for the same reason: the relation must match the pair.
 
@@ -830,12 +830,8 @@ shown invalid independently.
   chain, it never assembles one.
 * Group C claims only a directional operational relation where sequence-pipeline fusion is
   effectively eligible; the exact claim is made wherever it is not (optimizer off, or any
-  configured string budget).
-* Group C's cumulative-item rejection is deliberately **conservative**: it drops the whole mode
-  while optimizations are on, although only the fusible chains actually cross that budget at
-  different points. Narrowing it would mean predicting per-template fusion inside the harness —
-  a second implementation of the optimizer's own eligibility analysis — so the broad rejection is
-  kept and counted by name rather than replaced by a guess.
+  configured string, step, or cumulative-item budget). Cumulative-item modes are accepted because
+  configuring that budget makes fusion ineligible by construction.
 * Operational counters are not compared when either side aborts on a resource limit (see the
   qualification under *Declared relations*); those cases still compare their full semantic
   observation, including the structured resource-limit payload.
@@ -845,10 +841,10 @@ shown invalid independently.
 
 *Phase 3:*
 
-* Groups A and B generate only limit modes that cannot bind differently on their two sides. A
-  cumulative budget derived from the cheaper side's measurement would stop the other side for a
-  reason that is not a defect, so those modes are rejected by name rather than compared. Varying
-  budgets is the budget-law family's job.
+* Group A uses only fusion-neutral modes so every source in its mixed loop/sequence table can still
+  demonstrate the declared optimizer hit. Group B rejects cumulative budgets because a limit
+  derived from the cheaper cached side can legitimately stop the rebuilt side. Varying budgets is
+  the budget-law family's job.
 * Group A's optimizer sources are a fixed reviewed table of 28 programs with **declared** paths; the
   fuzzer selects a source, it never assembles one. A source whose optimizer shape changes makes the
   case rejected (and the committed sweep fail), never silently compared.

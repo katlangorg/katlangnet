@@ -40,6 +40,7 @@ internal sealed class EvaluationBudget
         HasStepLimit = limits.EffectiveMaxSteps is not null;
         HasConfiguredStringLimit = limits.MaxStringLength is not null
             || limits.MaxMaterializedStringChars is not null;
+        HasConfiguredMaterializationLimit = limits.MaxMaterializedItems is not null;
     }
 
     /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
@@ -54,6 +55,17 @@ internal sealed class EvaluationBudget
 
     /// <summary>True when the caller explicitly configured either string limit.</summary>
     internal bool HasConfiguredStringLimit { get; }
+
+    /// <summary>
+    /// True when the caller explicitly configured the cumulative materialization
+    /// budget. Fused sequence pipelines deliberately avoid materializing and so do
+    /// not charge it (only the per-collection boundary check applies); a configured
+    /// cumulative budget therefore forces the generic paths, so its verdict cannot
+    /// depend on which internal execution strategy ran — the same strategy-independence
+    /// rule <see cref="HasStepLimit"/> and <see cref="HasConfiguredStringLimit"/>
+    /// already apply.
+    /// </summary>
+    internal bool HasConfiguredMaterializationLimit { get; }
 
     /// <summary>Steps consumed so far by this run. Diagnostics and tests only.</summary>
     internal long ConsumedSteps => _steps;
@@ -205,8 +217,36 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>
-    /// Charges one unit of semantic work (currently: one dynamic invocation, or one
-    /// loop iteration). Returns <c>null</c> when the work may proceed.
+    /// Bulk pathological-work bound for expression evaluation: every 4096 evaluator
+    /// work checkpoints charge ONE step. A checkpoint is recorded at the
+    /// <c>Eval</c>/<c>EvalCounted</c> dispatch heads and at each expression-spine
+    /// machine transition; it is deliberately a cheap operational proxy, not an exact
+    /// distinct-AST-node counter. Small ordinary programs stay below the first bulk
+    /// block and keep their prior exact step accounting. What this bounds is
+    /// re-evaluation blowup that otherwise charges nothing — a reference-shared
+    /// (DAG-shaped) host expression evaluates every occurrence, so 25 shared
+    /// Binary nodes can demand 2^24 evaluations while every per-invocation budget
+    /// stays at zero. With a configured <see cref="EvaluationLimits.MaxSteps"/>
+    /// that work is now charged in bulk and stops with the ordinary step-limit
+    /// error; without one, steps remain unlimited and the run stays in the
+    /// documented unbudgeted-compute class.
+    /// </summary>
+    internal EvalError? TryChargeExpressionNodeWork()
+    {
+        _expressionEvaluationCheckpoints++;
+        if ((_expressionEvaluationCheckpoints & 4095) != 0)
+            return null;
+
+        return TryChargeStep();
+    }
+
+    private long _expressionEvaluationCheckpoints;
+
+    /// <summary>
+    /// Charges one unit of semantic work (currently: one dynamic invocation, one
+    /// loop iteration, or one bulk block of 4096 expression-evaluation checkpoints via
+    /// <see cref="TryChargeExpressionNodeWork"/>). Returns <c>null</c> when the
+    /// work may proceed.
     /// </summary>
     internal EvalError? TryChargeStep()
     {

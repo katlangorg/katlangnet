@@ -82,9 +82,10 @@ internal static class MetamorphicChainTemplate
     ///
     /// <para>Eligibility is the EFFECTIVE runtime condition, not the optimizer flag alone:
     /// <see cref="MetamorphicLimitPolicy.SequencePipelineFusionCanApply"/> also accounts for the
-    /// configured string and step budgets that switch the sequence-pipeline optimizer off. Keying
-    /// on the flag alone would give away detection strength for free — the string-limit modes run
-    /// unfused and do agree exactly, so they get the exact relation.</para>
+    /// configured string, step, and cumulative-item budgets that switch the
+    /// sequence-pipeline optimizer off. Keying on the flag alone would give away
+    /// detection strength for free — those limit modes run unfused and do agree
+    /// exactly, so they get the exact relation.</para>
     ///
     /// <para>Measured on the committed chain table: with fusion ineligible the two forms agree
     /// exactly on all 144 chain/receiver pairs; with fusion eligible the dotted form charged less
@@ -103,28 +104,14 @@ internal static class MetamorphicChainTemplate
         if (chain.Length is < 2 or > MaxChainLength)
             return MetamorphicPrecondition.Rejected("chain-length-out-of-bounds");
 
-        // A fused pipeline deliberately does NOT consume the cumulative materialization budget
-        // (charging an allocation that never happens is precisely the double charging fusion
-        // exists to avoid), so the two spellings genuinely cross that budget at different
-        // points. The per-collection ceiling IS still enforced identically and stays comparable.
-        //
-        // These two modes are exactly the ones that configure the cumulative item budget, and
-        // neither configures a string or step budget — so for them the effective fusion
-        // eligibility of MetamorphicLimitPolicy.SequencePipelineFusionCanApply reduces to
-        // EnableOptimizations, which is what this predicate reads. (Pinned by
-        // MetamorphicPhase2FamilyTests.ChainCumulativeRejection_TracksEffectiveFusionEligibility,
-        // so the two rules cannot drift apart.)
-        //
-        // DELIBERATELY CONSERVATIVE: only the fusible chains genuinely diverge at that boundary,
-        // but predicting per-template fusion here would re-implement the optimizer's own
-        // eligibility analysis inside the harness. Rejecting the whole mode is a documented
-        // Phase 2 limitation rather than a hidden coverage hole — every rejection is counted and
-        // reported by this name.
-        if (parameters.EnableOptimizations
-            && parameters.LimitMode is MetamorphicLimitMode.CumulativeItems or MetamorphicLimitMode.Both)
-        {
-            return MetamorphicPrecondition.Rejected("fused-chain-does-not-share-the-cumulative-item-budget");
-        }
+        // The cumulative-item modes need no rejection anymore: a CONFIGURED cumulative
+        // materialization budget forces the generic sequence paths in the runtime
+        // (Evaluator.CreateRootCtx, mirrored by
+        // MetamorphicLimitPolicy.SequencePipelineFusionCanApply), so both spellings run
+        // unfused and charge the budget identically — the divergence the former
+        // "fused-chain-does-not-share-the-cumulative-item-budget" rejection guarded is
+        // structurally impossible now. (Pinned by
+        // MetamorphicPhase2FamilyTests.ChainCumulativeModes_AreAcceptedWhenTheirBudgetDisablesFusion.)
 
         foreach (var link in chain)
         {

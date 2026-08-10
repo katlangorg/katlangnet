@@ -43,15 +43,14 @@ internal sealed record MetamorphicOptimizerSource(
 /// different nesting profile than the generic interpreter, so the relation deliberately does not
 /// constrain it. Materialized items, materialized string units, and steps are constrained.</para>
 ///
-/// <para><b>Why the limit policy is nearly fixed.</b> Only limit modes that CANNOT bind
-/// differently on the two sides are generated. A cumulative budget derived from the optimized
-/// side's own measurement would be below what the generic side legitimately materializes, so the
-/// generic run would stop at a limit the optimized run cleared — a difference in execution
-/// policy, not in optimizer setting, and exactly the false mismatch Phase 2 already documents for
-/// fused chains. The per-collection ceiling is kept, because the runtime explicitly promises it
-/// is optimizer-INDEPENDENT (<c>EvaluationBudget.CheckCollectionSize</c> exists so a fused
-/// pipeline rejects the same collection size a generic one does), which makes it the one budget
-/// worth comparing here.</para>
+/// <para><b>Why the limit policy is nearly fixed.</b> Only fusion-neutral modes are
+/// generated. A configured cumulative item budget disables sequence fusion by production
+/// policy, so including it would prevent this mixed loop/sequence table from satisfying its
+/// measured optimizer-hit requirement uniformly; step and string budgets are excluded for the
+/// same execution-policy reason. The per-collection ceiling is kept because the runtime
+/// explicitly promises it is optimizer-INDEPENDENT
+/// (<c>EvaluationBudget.CheckCollectionSize</c> exists so a fused pipeline rejects the same
+/// collection size a generic one does), which makes it the budget worth comparing here.</para>
 /// </summary>
 internal static class MetamorphicOptimizerTemplate
 {
@@ -173,8 +172,8 @@ internal static class MetamorphicOptimizerTemplate
         [MetamorphicExecutionOrder.LeftFirst, MetamorphicExecutionOrder.RightFirst];
 
     /// <summary>
-    /// The limit modes this family may run under. Only budgets that cannot bind differently on
-    /// the two sides are generated; see the type doc for why a cumulative budget cannot be.
+    /// The limit modes this family may run under. Only fusion-neutral budgets are generated;
+    /// see the type doc for why a cumulative budget cannot be used here.
     /// </summary>
     internal static readonly ImmutableArray<MetamorphicLimitMode> LimitModes =
     [

@@ -993,8 +993,6 @@ public class MetamorphicPhase2FamilyTests
             // Callback projections that are provably NOT equivalent (see the template docs).
             "builtin-callback-wrapper/collecting-projection-collects-a-list-not-the-supplied-value",
             "builtin-callback-wrapper/wrapper-arity-does-not-match-callback-projection",
-            // A fused dotted chain is documented not to consume the cumulative item budget.
-            "dotted-chain/fused-chain-does-not-share-the-cumulative-item-budget",
         ];
 
         var rewriteIds = RewriteFamilies.Select(MetamorphicCase.FamilyIdOf).ToHashSet(StringComparer.Ordinal);
@@ -1246,9 +1244,10 @@ public class MetamorphicPhase2FamilyTests
 
     /// <summary>
     /// The harness's fusion-eligibility helper must agree with the runtime's own gate, measured
-    /// on a chain that demonstrably fuses. Configuring either string budget or a step budget
-    /// switches the sequence-pipeline optimizer off however generous the value is, so an
-    /// eligibility rule that reads only the optimizer flag would be wrong here.
+    /// on a chain that demonstrably fuses. Configuring either string budget, the cumulative
+    /// item budget, or a step budget switches the sequence-pipeline optimizer off however
+    /// generous the value is, so an eligibility rule that reads only the optimizer flag
+    /// would be wrong here.
     /// </summary>
     [Fact]
     public void EffectiveFusionEligibility_MatchesWhatTheRuntimeActuallyDoes()
@@ -1259,6 +1258,7 @@ public class MetamorphicPhase2FamilyTests
         [
             (null, true),
             (null, false),
+            (new EvaluationLimits { MaxCollectionItems = 1_000 }, true),
             (new EvaluationLimits { MaxMaterializedItems = 1_000, MaxCollectionItems = 1_000 }, true),
             (new EvaluationLimits { MaxMaterializedStringChars = 1_000 }, true),
             (new EvaluationLimits { MaxStringLength = 1_000 }, true),
@@ -1384,14 +1384,17 @@ public class MetamorphicPhase2FamilyTests
     }
 
     /// <summary>
-    /// The cumulative-item rejection and the effective fusion eligibility are two spellings of
-    /// one condition for the modes the rejection names, so they cannot drift apart.
+    /// A configured cumulative-item budget forces the generic sequence paths, so the
+    /// cumulative-item modes are ACCEPTED (the former
+    /// "fused-chain-does-not-share-the-cumulative-item-budget" rejection guarded a
+    /// divergence that is structurally impossible now), fusion eligibility is off for
+    /// them, and the two spellings agree exactly on the charged budget.
     /// </summary>
     [Fact]
-    public void ChainCumulativeRejection_TracksEffectiveFusionEligibility()
+    public void ChainCumulativeModes_AreAcceptedWhenTheirBudgetDisablesFusion()
     {
         var definition = MetamorphicFamilyRegistry.Get(MetamorphicFamily.DottedChain);
-        var rejections = 0;
+        var cumulativePointsExercised = 0;
 
         for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
             for (var optimize = 0; optimize < 2; optimize++)
@@ -1402,21 +1405,29 @@ public class MetamorphicPhase2FamilyTests
                 var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
                     [0x03, 0, (byte)mode, 1, 1, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
 
-                var rejected = !testCase.Precondition.Satisfied;
-                if (rejected)
-                {
-                    Assert.Equal("fused-chain-does-not-share-the-cumulative-item-budget", testCase.Precondition.Reason);
-                    rejections++;
-                }
+                // No mode is rejected for the retired cumulative-budget reason anymore.
+                Assert.True(
+                    testCase.Precondition.Satisfied
+                        || testCase.Precondition.Reason != "fused-chain-does-not-share-the-cumulative-item-budget");
+                if (!testCase.Precondition.Satisfied) continue;
 
-                // For the two cumulative-item modes the rejection IS the effective fusion condition;
-                // no other mode is ever rejected for this reason.
-                Assert.Equal(
-                    cumulative && MetamorphicLimitPolicy.SequencePipelineFusionCanApply(testCase.EnableOptimizations, testCase.Limits),
-                    rejected);
+                if (!cumulative) continue;
+                cumulativePointsExercised++;
+
+                // The harness eligibility mirror and the runtime gate agree: a configured
+                // cumulative budget disables fusion however generous the value is…
+                Assert.False(MetamorphicLimitPolicy.SequencePipelineFusionCanApply(
+                    testCase.EnableOptimizations, testCase.Limits));
+
+                // …so both spellings run generic and charge the SAME cumulative budget.
+                var execution = MetamorphicExecutor.Execute(testCase);
+                Assert.True(execution.Accepted);
+                Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
+                if (MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
+                    Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
             }
 
-        Assert.Equal(2, rejections);   // CumulativeItems and Both, optimizations on
+        Assert.True(cumulativePointsExercised > 0, "no cumulative-item chain point was exercised");
     }
 
     /// <summary>The exhaustive Group B claim the family's ExactObservedWorkEqual relation rests on.</summary>

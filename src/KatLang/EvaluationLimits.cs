@@ -191,7 +191,10 @@ public sealed record EvaluationLimits
     /// <summary>
     /// Maximum cumulative evaluation steps for one run, or <c>null</c> for no step
     /// budget (the default). One step is charged for each dynamic algorithm
-    /// invocation and for each loop iteration.
+    /// invocation, each loop iteration, and each bulk block of 4096 expression-
+    /// evaluation work checkpoints. The bulk charge bounds pathological repeated
+    /// evaluation of shared host-built expression subtrees while leaving small
+    /// ordinary programs' accounting unchanged.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public long? MaxSteps
@@ -269,7 +272,10 @@ public sealed record EvaluationLimits
     /// for no cumulative budget (the default). This bounds a program that repeatedly
     /// builds individually legal collections; it counts slots CREATED, and is therefore
     /// deliberately not a live-memory measure — a run that builds and discards many
-    /// small collections still pays for each one.
+    /// small collections still pays for each one. Configuring this budget selects the
+    /// generic sequence-pipeline strategy for the run, because a fused pipeline elides
+    /// intermediate collections and would otherwise give the same budget a different
+    /// success/failure meaning.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public long? MaxMaterializedItems
