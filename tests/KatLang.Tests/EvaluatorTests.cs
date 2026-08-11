@@ -5650,23 +5650,27 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_UserDefinedVariadicDotCallReceiver_CountsOneReceiverArgument()
+    public void Eval_UserDefinedVariadicDotCallReceiver_CountsReceiverSupplyItems()
     {
-        // The receiver is one leading argument, so the collecting parameter collects the
-        // one-element list [(1, 2)]. Lean twin: `(1, 2).CountItems` is 1.
+        // The receiver is ONE leading argument segment for allocation, and a
+        // flat top-level collecting parameter allocated that segment consumes
+        // its evaluated top-level SUPPLY. The inline group `(1, 2)` emits its
+        // row supply (two items), so the collecting parameter collects [1, 2].
         var source = """
             CountItems(*items) = items.count
             (1, 2).CountItems
             """;
 
-        AssertEval(source, 1);
+        AssertEval(source, 2);
     }
 
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_SpreadReceiverBindsItemsForBody()
     {
-        // The parenthesized-spread receiver pre-expands the sequence's items,
-        // so the collecting parameter collects [1, 2] and the numeric body works.
+        // The parenthesized-spread receiver is a capture whose supply is the
+        // spread items, so the collecting parameter collects [1, 2] and the
+        // numeric body works. (Spread is no longer required for this: the
+        // plain inline group `(1, 2).Mean` supplies the same two row items.)
         var source = """
             Mean(*vector) = vector.sum
             ((1, 2)*).Mean
@@ -5678,8 +5682,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_UserDefinedVariadicDotCallReceiver_PreservesSingleGroupedValueBeforeSuffixAllocation()
     {
-        // Sum(*values, last) receives Values as one argument. `last` receives
-        // the sequence value, so the numeric body fails unless Values* is used.
+        // The named receiver is the only supplied segment, and segment
+        // allocation happens before collector consumption: the fixed suffix
+        // `last` takes the segment as its VALUE (the sequence (10, 20)), the
+        // collecting parameter collects [], and the numeric body fails. Use
+        // the direct spread call `Sum(Values*)` to supply separate slots.
         var source = """
             Values = 10, 20
             Sum(*values, last) = values.sum + last
@@ -5689,22 +5696,28 @@ public class EvaluatorTests
         AssertEvalFails(source);
     }
 
-    // Dot-call receiver symmetry: receiver.F(C, D) == F(receiver, C, D)
-    // and (receiver*).F(C, D) == F(receiver*, C, D). An ordinary
-    // receiver is one leading argument slot even for callees with a leading
-    // flat collecting parameter; explicit receiver spread spreads the
-    // receiver's emitted top-level values. A sequence-valued property such as
-    // Pair = (10, 20) emits ONE sequence value, so even its spread spreads a
-    // single sequence value (spread preserves named sequence-value operand
-    // boundaries); a multi-output property such as Values = 10, 20 is where
-    // ordinary-slot allocation and explicit spread observably differ.
-    // Lean: CoreTests dot-call receiver symmetry guards.
+    // Dot-call receiver law: a lexical dot-call receiver is ONE leading
+    // argument segment. Segments are allocated to parameters first (arity
+    // check plus fixed prefix/suffix binding from front and back) — the
+    // receiver's item count never satisfies arity. A fixed parameter binds
+    // the segment's VALUE; only a flat TOP-LEVEL collecting parameter
+    // allocated the segment consumes the receiver's evaluated top-level
+    // SUPPLY (one level, never recursive). The supply is the receiver's raw
+    // counted evaluation: an inline group `(1, 2, 3)` or zero-parameter brace
+    // block emits its row items, while a NAMED property receiver is a value
+    // boundary and supplies one item (zero for an empty-sequence property);
+    // exact lists stay opaque. So Pair = (10, 20) and Values = 10, 20 both
+    // supply one item as receivers, and `(Values*)` — a capture of the spread
+    // — supplies the spread items through the same general rule (there is no
+    // callee-shape special case for spread receivers anymore).
+    // Lean: CoreTests dot-call receiver guards.
 
     [Fact]
     public void Eval_SequenceValueReceiver_LeadingFlatVariadic_IsOneReceiverArgument()
     {
-        // The ordinary receiver is one leading argument even for a single-variadic
-        // callee, so the capture is the one-element list [(10, 20)].
+        // A named property receiver is a value boundary: its supply is one
+        // item, so the collecting parameter collects the one-element list
+        // [(10, 20)]. (An inline group receiver would supply its row items.)
         var source = """
             NItems(*values) = values.count
             Pair = (10, 20)
@@ -5717,8 +5730,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpread_BindsSpreadSlotsAsItemSupply()
     {
-        // NItems(*values) collects the supplied slots: (Pair*) spreads into two
-        // slots, so the collected list is [10, 20] with count 2.
+        // (Pair*) is a capture of the spread: the receiver segment's supply is
+        // the two spread items, so the collector consumes [10, 20] (count 2).
         var source = """
             NItems(*values) = values.count
             Pair = (10, 20)
@@ -5745,9 +5758,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_SequenceValueReceiverSpreadWithSuffix_OverSuppliesVariadicByDeconstruction()
     {
-        // BeforeLastCount(*values, last) is a comma deconstruction parameter
-        // list, so the spread receiver's two items plus the suffix 99 give three
-        // items: the collecting parameter captures [10, 20] (count 2) and last binds 99.
+        // Two segments: the receiver and 99. The fixed suffix `last` binds 99
+        // from the back; the receiver segment is allocated to the collecting
+        // parameter, which consumes its supply — the two spread items — so the
+        // collected list is [10, 20] (count 2).
         var source = """
             BeforeLastCount(*values, last) = values.count
             Pair = (10, 20)
@@ -5788,9 +5802,11 @@ public class EvaluatorTests
     [Fact]
     public void Eval_MultiOutputReceiver_DotCallMatchesCanonicalCalls()
     {
-        // The dot-call always matches its canonical-call twin. The ordinary forms
-        // pass one sequence-valued slot (rest collects [(10, 20)], count 1); the
-        // spread forms pass two separate slots (rest collects [10, 20], count 2).
+        // Each dot-call agrees with its canonical-call twin here. The named
+        // receiver supplies one value-boundary item, matching the one written
+        // argument slot (rest collects [(10, 20)], count 1); the capture-of-
+        // spread receiver's supply is the two spread items, matching the two
+        // spread slots of the direct call (rest collects [10, 20], count 2).
         var define = """
             NItems(*values) = values.count
             Values = 10, 20
@@ -5810,10 +5826,11 @@ public class EvaluatorTests
             Values = 10, 20
 
             """;
-        // Each dot-call agrees with its canonical-call twin. The ordinary forms
-        // pass one sequence-valued slot plus the suffix (rest collects
-        // [(10, 20)], count 1); the spread forms open the receiver before suffix
-        // allocation (rest collects [10, 20], count 2).
+        // Each dot-call agrees with its canonical-call twin here. The ordinary
+        // forms pass one sequence-valued segment plus the suffix (rest collects
+        // [(10, 20)], count 1); in the spread forms the suffix binds 99 and the
+        // collector consumes the receiver segment's spread-item supply — the
+        // same items the direct spread call supplies as slots (count 2).
         AssertEval(define + "Values.BeforeLastCount(99)", 1);
         AssertEval(define + "BeforeLastCount(Values, 99)", 1);
         AssertEval(define + "(Values*).BeforeLastCount(99)", 2);
@@ -5835,17 +5852,26 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_SpreadMultiOutputReceiver_BindsWhenSpreadSlotsMatchSuffixShape()
+    public void Eval_SpreadMultiOutputReceiver_StaysOneSegmentAtSuffixAllocation()
     {
-        // Explicit spread spreads 10 and 20 as separate items before slot
-        // allocation, so `last` binds 20 and the collecting parameter captures [10].
+        // The two forms now differ. In the direct call, spread supplies 10 and
+        // 20 as separate slots before allocation, so `last` binds 20 and the
+        // collecting parameter captures [10]. The spread RECEIVER is still ONE
+        // segment: with no other arguments the fixed suffix `last` takes that
+        // segment's VALUE — the captured sequence (10, 20) — the collector
+        // gets nothing, and the numeric body fails. A receiver's supply feeds
+        // only a collecting parameter the segment is allocated to; it never
+        // fans out across fixed parameters.
         var define = """
             Sum(*values, last) = values.sum + last
             Values = 10, 20
 
             """;
-        AssertEval(define + "(Values*).Sum", 30);
         AssertEval(define + "Sum(Values*)", 30);
+
+        var receiverResult = EvalFull(define + "(Values*).Sum");
+        Assert.True(receiverResult.IsError, $"Expected failure but got: {(receiverResult.IsOk ? receiverResult.Value : null)}");
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(receiverResult.Error));
     }
 
     [Fact]
@@ -10311,9 +10337,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_CollectingParameter_DotCallReceiverIsOneCapturedItem()
     {
-        // The ordinary receiver is one leading argument, so the collecting parameter is
-        // the one-element list [(1, 2, 3)] — explicit receiver spread (below)
-        // is what supplies the receiver's items.
+        // A named property receiver is a value boundary, so its supply is one
+        // item and the collecting parameter collects the one-element list
+        // [(1, 2, 3)]. Explicit receiver spread (below) supplies the items —
+        // as would an inline group receiver, whose supply is its row items.
         AssertEval(
             """
             Arg = 1, 2, 3
@@ -10324,7 +10351,7 @@ public class EvaluatorTests
     }
 
     [Fact]
-    public void Eval_CollectingParameter_ExplicitReceiverSpreadCapturesReceiverTopLevelItems()
+    public void Eval_CollectingParameter_ExplicitReceiverSpreadAlsoSuppliesReceiverTopLevelItems()
     {
         AssertEval(
             """
@@ -10474,15 +10501,23 @@ public class EvaluatorTests
     [Fact]
     public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverIsOneCollectedItem()
     {
-        // The unspread `((10, 20, 30))` receiver is one leading argument, so the
-        // rest collects [(10, 20, 30)] and the numeric `values.sum` fails on the
-        // sequence-valued element. The spread forms above supply the items.
+        // The nested capture `((10, 20, 30))` emits ONE row — the inner
+        // sequence value — so the receiver segment's supply is one item: after
+        // the suffix binds 5, the collector collects [(10, 20, 30)] and the
+        // numeric `values.sum` fails on the sequence-valued element. The
+        // single-group forms above supply the three items.
         var source = """
             TotalWithFee(*values, fee) = values.sum + fee
             ((10, 20, 30)).TotalWithFee(5)
             """;
 
-        AssertEvalFails(source);
+        var result = EvalFull(source);
+        Assert.True(result.IsError, $"Expected failure but got: {(result.IsOk ? result.Value : null)}");
+        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+        Assert.Contains(
+            "sum expects each collection element to be a single numeric value",
+            KatLangError.FromEvalError(result.Error).Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -10499,8 +10534,10 @@ public class EvaluatorTests
     [Fact]
     public void Eval_CollectingParameter_SpreadReceiverExpandsReceiverItems()
     {
-        // Only the parenthesized-spread receiver form supplies the receiver's
-        // items to a leading flat variadic; the collecting parameter collects [10, 20, 30].
+        // The general receiver rule: the collector consumes the receiver
+        // segment's supply. Here the capture-of-spread supplies the three
+        // items, so the collecting parameter collects [10, 20, 30] — exactly
+        // as the plain inline group `(10, 20, 30).Collect` would.
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
@@ -13892,7 +13929,8 @@ public class EvaluatorTests
     [Fact]
     public void Eval_DotCallReceiver_RemainsCanonicalOneArgument()
     {
-        // The receiver is one argument, so the collecting parameter collects [(1, 2, 3)].
+        // The named property receiver is a value boundary supplying one item,
+        // so the collecting parameter collects [(1, 2, 3)].
         AssertEval(
             """
             Seq = (1, 2, 3)

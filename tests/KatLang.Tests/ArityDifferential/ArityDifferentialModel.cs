@@ -63,7 +63,14 @@ public enum ReceiverLaw
     /// <summary>Mixed fixed/collecting parameter lists bind front and back fixed captures and collect exactly the middle segment.</summary>
     COLLECT_SEGMENT_ALLOCATION,
 
-    /// <summary>a.F(b, …) is exactly F(a, b, …): same value, same diagnostics, receiver evaluated once.</summary>
+    /// <summary>
+    /// a.F(b, …) injects a as ONE leading argument segment of F(a, b, …):
+    /// same allocation, same diagnostics, receiver evaluated once. It
+    /// coincides exactly with the written direct call except where
+    /// <see cref="COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY"/> applies —
+    /// a written direct-call slot always reifies to one value, while a
+    /// receiver segment also carries its evaluated top-level supply.
+    /// </summary>
     DOTTED_CALL_EQUALS_DIRECT_REWRITE,
 
     /// <summary>A spread receiver keeps the supply: operand*.F lowers to the lexical call F(operand*).</summary>
@@ -73,12 +80,17 @@ public enum ReceiverLaw
     GROUPED_SPREAD_RECEIVER_CAPTURES,
 
     /// <summary>
-    /// Receiver-specific exception: a parenthesized spread receiver feeds its
-    /// top-level items (like the fluent form) exactly when the callee's
-    /// binding plan has a LEADING flat collecting parameter; every other
-    /// callee shape keeps the captured receiver as one argument boundary.
+    /// The general dot-receiver segment rule: a lexical dot-call receiver is
+    /// ONE leading segment for arity checking and fixed prefix/suffix
+    /// allocation (its item count never satisfies arity), and a flat
+    /// top-level collecting parameter that is allocated the segment consumes
+    /// the segment's evaluated top-level supply — one level, never recursive.
+    /// A fixed parameter allocated the segment binds its one captured value.
+    /// Receiver assembly never inspects the callee or recognizes a spelling;
+    /// a written group's supply is its raw row emission, a stored property's
+    /// supply is its value-boundary count (zero items for `()`, else one).
     /// </summary>
-    GROUPED_SPREAD_RECEIVER_FEEDS_LEADING_COLLECTING,
+    COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY,
 
     /// <summary>Assignment deconstruction opens one lone sequence/list boundary of its single shared RHS value before matching.</summary>
     DECONSTRUCTION_OPENS_LONE_STRUCTURE,
@@ -152,13 +164,15 @@ public static class ReceiverLaws
         [ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE] =
             "AGENTS.md dotted-call equivalence rule; KatLang.lean evalDotCall* receiver-as-one-leading-argument; C# DottedReceiverEvaluationTests (receiver charged once)",
         [ReceiverLaw.FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL] =
-            "AGENTS.md: operand*.Member(...) lowers to Member(operand*, ...); C# Parser.TryGetParenthesizedSequenceSpreadReceiver counterpart",
+            "AGENTS.md: operand*.Member(...) lowers to Member(operand*, ...); C# parser fluent dot-chain lowering (spread receiver becomes the leading argument slot)",
         [ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES] =
             "CoreArityAlgebra: capture; tutorial spec spread-capture-count ((A*).count = 3); KatLangArityLaws: capture_spreadItems_of_list",
-        [ReceiverLaw.GROUPED_SPREAD_RECEIVER_FEEDS_LEADING_COLLECTING] =
-            "KatLang.lean parenthesizedSequenceSpreadReceiver? + hasLeadingFlatCollectingParameter (buildLexicalReceiverCallArgs); "
-            + "C# Evaluator.BuildLexicalReceiverCallArgs; StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply "
-            + "(the documented 'coincide on a collecting callable' rule)",
+        [ReceiverLaw.COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY] =
+            "KatLang.lean collectVariadicCallItems (injectedDotReceiverLeading segment keeps collectingSegmentCount?) + "
+            + "bindParameterPatternList collectValues (countedTopLevelValues supply expansion at the collecting position); "
+            + "KatLangArityLaws: dot_receiver_segment_supply_consumed / dot_receiver_segment_fixed_binds_value / dot_receiver_segment_count_never_satisfies_arity; "
+            + "C# Evaluator.BuildCallArgumentInputs (ParameterPatternInput.CollectingSegmentEmittedCount) + BindParameterPatternList; "
+            + "StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply (grouped and fluent spread receivers coincide on a collector by the general rule)",
         [ReceiverLaw.DECONSTRUCTION_OPENS_LONE_STRUCTURE] =
             "CoreArityAlgebra: openLoneStructure/bindDeconstruct; CoreArityAlgebraProofs: deconstruct_fixed_single_sequence_opens, deconstruct_singleton_eq_args_items; KatLangArityLaws: deconstruct_fixed_single_list_opens, deconstruct_collecting_single_list_opens",
         [ReceiverLaw.DECONSTRUCTION_RHS_CAPTURE_BOUNDARY] =

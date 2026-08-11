@@ -1934,10 +1934,23 @@ def unpackArgs (r : Result) : List Result :=
   | .sequenceValue rs => rs
   | .listValue _ => [r]
 
-def preserveCallArgBoundary : List Bool -> Nat -> Bool
-  | [], _ => false
-  | b :: _, 0 => b
-  | _ :: rest, Nat.succ n => preserveCallArgBoundary rest n
+/-- How a call's argument bundle was assembled: ordinary written argument
+    slots, or a lexical dot-call bundle whose FIRST slot is the injected
+    receiver segment. The injected receiver is always ONE leading segment for
+    arity checking and prefix/suffix allocation (never pre-expanded), is
+    evaluated through the raw counted receiver-segment path, and carries its
+    evaluated top-level supply (`ParameterPatternInput.collectingSegmentCount?`)
+    so only a flat top-level collecting parameter allocated the segment
+    consumes the supply items. Receiver assembly never inspects the resolved
+    callee. C#: `CallArgumentAssembly`. -/
+inductive CallArgumentAssembly where
+  | ordinaryArguments
+  | injectedDotReceiverLeading
+  deriving Repr, BEq
+
+def CallArgumentAssembly.isInjectedDotReceiverLeading : CallArgumentAssembly -> Bool
+  | .injectedDotReceiverLeading => true
+  | .ordinaryArguments => false
 
 /-- Bind algorithm-typed parameters: zip parameter names with algorithms.
     Only includes entries where the argument resolved to an algorithm.
@@ -1951,11 +1964,21 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
     | some alg => (p, alg) :: bindAlgParams ps' as'
     | none     => bindAlgParams ps' as'
 
+/-- One call argument segment prepared for parameter binding. Every segment
+    has a value view (`value?`); an injected dot-call receiver segment
+    additionally carries `collectingSegmentCount?` — the raw emitted count of
+    its counted evaluation — as an EPHEMERAL collecting supply view. A fixed
+    parameter always binds the value view; only a flat top-level collecting
+    parameter that is allocated the segment consumes the supply view
+    (one level, never recursive). The field is data-only and never propagated
+    into nested pattern inputs, parameter environments, or collected lists.
+    C#: `ParameterPatternInput` (via `VariadicCallItem`). -/
 structure VariadicItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitItems? : Option (List Result) := none
+  collectingSegmentCount? : Option Nat := none
   deriving Repr
 
 structure FlatFixedCallSlot where
@@ -1976,6 +1999,7 @@ structure ParameterPatternInput where
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   explicitSequenceValueItems? : Option (List Result) := none
+  collectingSegmentCount? : Option Nat := none
   deriving Repr
 
 structure ParameterPatternBindings where
@@ -2003,7 +2027,8 @@ def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
   { value? := item.value?,
     algorithm? := item.algorithm?,
     error? := item.error?,
-    explicitSequenceValueItems? := item.explicitItems? }
+    explicitSequenceValueItems? := item.explicitItems?,
+    collectingSegmentCount? := item.collectingSegmentCount? }
 
 /-- Compatibility fallback for manually constructed core conditionals.
   Surface clause elaboration should already route eligible single-branch
@@ -3328,68 +3353,18 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
 
-/-- Recognize a parenthesized spread receiver such as `(Arg*)`: a capture
-    whose single row is a `sequenceSpread` (or the observationally equivalent
-    bare zero-parameter block shape, kept for host-built ASTs).
-    This explicit spread form is the only receiver shape that may feed its
-    top-level items into a leading flat collecting parameter. -/
-def parenthesizedSequenceSpreadReceiver? (receiver : Expr) : Option Expr :=
-  match receiver with
-  | .capture [supplied] =>
-      match supplied with
-      | .sequenceSpread _ => some supplied
-      | _ => none
-  | .algorithmExpr (.mk none [] [] [] [supplied]) =>
-      match supplied with
-      | .sequenceSpread _ => some supplied
-      | _ => none
-  | _ => none
-
-/-- True when the callee's parameter list is flat (no sequence-value patterns)
-    and starts with a collecting parameter, e.g. `F(*values, last)`.
-    Flat-binder core conditionals are classified through their ordinary
-    user-call equivalent. -/
-def hasLeadingFlatCollectingParameter (callee : Algorithm) : Bool :=
-  let effectiveCallee := (flatBinderUserEquivalent? callee).getD callee
-  let rec allFlatCaptures : List ParameterPattern -> Bool
-    | [] => true
-    | .capture _ :: rest => allFlatCaptures rest
-    | .sequenceValue _ :: _ => false
-  match Algorithm.parameterPatterns effectiveCallee with
-  | .capture { kind := .collecting, .. } :: rest => allFlatCaptures rest
-  | _ => false
-
 /-- Assemble the argument bundle for ordinary lexical dot-call fallback:
-    `receiver.F(C, D)` evaluates as `F(receiver, C, D)`.
-
-    The injected receiver is always ONE leading argument segment for slot
-    allocation, so suffix parameters bind from the back exactly as in the
-    canonical call. When the callee has a leading flat collecting parameter,
-    that segment's emitted-count metadata may expand within the collecting segment
-    capture after slot allocation, but the receiver is never pre-expanded.
-
-    A parenthesized spread receiver, as in `(Arg*).F`, is the
-    explicit opt-in: only when the callee has a leading flat collecting parameter does
-    the inner spread replace the receiver segment and pre-expand into the
-    receiver's top-level items before slot allocation, matching the
-    canonical `F(Arg*, C, D)`. Fixed receiver parameters keep even a
-    spread receiver as one argument boundary. -/
-def prepareLexicalDotCallArgs
-    (callee : Algorithm) (receiver : Expr) (extraArgs : Option OutputBundle)
-    : OutputBundle × List Bool :=
-  let explicitArgs := extraArgs.getD []
-  let receiverHasLeadingFlatCollecting := hasLeadingFlatCollectingParameter callee
-  let (receiverExpr, preserveReceiverBoundary) :=
-    match parenthesizedSequenceSpreadReceiver? receiver with
-    | some supplied =>
-        if receiverHasLeadingFlatCollecting then
-          (supplied, false)
-        else
-          (receiver, true)
-    | none => (receiver, !receiverHasLeadingFlatCollecting)
-  let outputExprs := [receiverExpr] ++ explicitArgs
-  let preserveBoundaries := [preserveReceiverBoundary] ++ explicitArgs.map (fun _ => false)
-  (outputExprs, preserveBoundaries)
+    `receiver.F(C, D)` calls `F` with the ORIGINAL receiver expression as one
+    injected leading segment followed by the written extra arguments.
+    Assembly is independent of the resolved callee: the receiver is never
+    pre-expanded, never unwrapped, and no parameter shape is inspected. The
+    paired `CallArgumentAssembly.injectedDotReceiverLeading` marker makes the
+    receiver one segment for allocation whose evaluated top-level supply only
+    a flat top-level collecting parameter consumes.
+    C#: `BuildLexicalReceiverCallArgs`. -/
+def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle)
+    : OutputBundle :=
+  [receiver] ++ extraArgs.getD []
 
 
 --------------------------------------------------------------------------
@@ -3932,7 +3907,17 @@ mutual
                 match input.value? with
                 | some value => do
                     let values <- collectValues rest
-                    pure (value :: values)
+                    -- A segment allocated to the flat top-level collecting
+                    -- position consumes its evaluated top-level supply (one
+                    -- level, never recursive): an injected dot-call receiver
+                    -- segment contributes its emitted items, while every
+                    -- ordinary segment contributes its one reified value.
+                    -- Fixed prefix/suffix and nested pattern positions ignore
+                    -- the supply view (they bind the value view).
+                    match input.collectingSegmentCount? with
+                    | some segmentCount =>
+                        pure (countedTopLevelValues (value, segmentCount) ++ values)
+                    | none => pure (value :: values)
                 | none =>
                     -- A collecting binding collects VALUES. A FUNCTION-shaped
                     -- argument (builtin, clause family, or parameterized
@@ -4858,21 +4843,21 @@ mutual
       argument supply is formed BEFORE any arity checking, clause selection,
       conditional dispatch, or pattern binding — the callee's internal
       representation never influences the meaning of caller-side spread.
-      Dot-call receiver segments honor `preserveArgBoundaries` (an injected
-      receiver stays one boundary and is never expanded). When
-      `includeExplicitItems` is set (patterned callees), a non-spread capture or
-      zero-parameter `algorithmExpr` also records its written item slots for
-      sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
+      An injected dot-call receiver segment
+      (`CallArgumentAssembly.injectedDotReceiverLeading`) stays ONE segment
+      for allocation — never pre-expanded — and retains its raw counted supply
+      (`collectingSegmentCount?`) for the flat top-level collecting position.
+      When `includeExplicitItems` is set (patterned callees), a non-spread
+      capture or zero-parameter `algorithmExpr` also records its written item
+      slots for sequence-value pattern binding. C#: `BuildCallArgumentInputs`. -/
   partial def collectVariadicCallItems (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (ctx : EvalCtx) (env : ValEnv)
+      (assembly : CallArgumentAssembly := .ordinaryArguments)
       (includeExplicitItems : Bool := false)
       : EvalM (List VariadicItem) := do
     let maybeAlgs <- tryResolveArgAlgs args ctx
-    let hasExplicitBoundaryFlags := !preserveArgBoundaries.isEmpty
-    let argBoundaryFlags :=
-      (List.range args.length).map (fun i => preserveCallArgBoundary preserveArgBoundaries i)
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
-        (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
+        (isReceiver : Bool) (explicitItems : Option (List Result)) (acc : List VariadicItem) : List VariadicItem :=
       if expand then
         let expanded := (countedTopLevelValues counted).map (fun value =>
           { value? := some value : VariadicItem })
@@ -4880,71 +4865,43 @@ mutual
       else
         { value? := some counted.fst,
           algorithm? := maybeAlg,
-          explicitItems? := explicitItems : VariadicItem } :: acc
-    let shouldExpand (e : Expr) (preserveBoundary : Bool) : Bool :=
+          explicitItems? := explicitItems,
+          collectingSegmentCount? := if isReceiver then some counted.snd else none : VariadicItem } :: acc
+    let shouldExpand (e : Expr) (isReceiver : Bool) : Bool :=
       match e with
-      | .sequenceSpread _ => !preserveBoundary
+      | .sequenceSpread _ => !isReceiver
       | _ => false
-    let rec loop : List Expr -> List (Option Algorithm) -> List Bool -> Bool -> List VariadicItem -> EvalM (List VariadicItem)
-      | [], _, _, _, acc => pure acc.reverse
-      | e :: es, ma :: mas, preserveBoundary :: preserveBoundaries, isReceiver, acc => do
-          let expand :=
-            shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
-              (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
+    let rec loop : List Expr -> List (Option Algorithm) -> Bool -> List VariadicItem -> EvalM (List VariadicItem)
+      | [], _, _, acc => pure acc.reverse
+      | e :: es, ma :: mas, isReceiver, acc => do
+          let expand := shouldExpand e isReceiver
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env isReceiver
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
-            loop es mas preserveBoundaries false
-              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
+            loop es mas false
+              (appendCounted prepared.counted ma expand isReceiver prepared.explicitItems? acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas preserveBoundaries false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
+            | some alg => loop es mas false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
             | none => .error err
-      | e :: es, [], preserveBoundary :: preserveBoundaries, isReceiver, acc => do
-          let expand :=
-            shouldExpand e preserveBoundary
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env
-              (preserveBoundary || expand || (hasExplicitBoundaryFlags && isReceiver))
+      | e :: es, [], isReceiver, acc => do
+          let expand := shouldExpand e isReceiver
+          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env isReceiver
               (includeExplicitItems && !expand)) with
           | .ok prepared =>
-            loop es [] preserveBoundaries false
-              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
+            loop es [] false
+              (appendCounted prepared.counted none expand isReceiver prepared.explicitItems? acc)
           | .error err => .error err
-      | e :: es, ma :: mas, [], _, acc => do
-          let expand :=
-            match e with
-            | .sequenceSpread _ => true
-            | _ => false
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env false
-              (includeExplicitItems && !expand)) with
-          | .ok prepared =>
-            loop es mas [] false
-              (appendCounted prepared.counted ma expand prepared.explicitItems? acc)
-          | .error err =>
-            match ma with
-            | some alg => loop es mas [] false ({ algorithm? := some alg, error? := some err : VariadicItem } :: acc)
-            | none => .error err
-      | e :: es, [], [], _, acc => do
-          let expand :=
-            match e with
-            | .sequenceSpread _ => true
-            | _ => false
-          match <- evalAttempt (evalVariadicCallItemPrepared e ctx env false
-              (includeExplicitItems && !expand)) with
-          | .ok prepared =>
-            loop es [] [] false
-              (appendCounted prepared.counted none expand prepared.explicitItems? acc)
-          | .error err => .error err
-    loop args maybeAlgs argBoundaryFlags true []
+    loop args maybeAlgs assembly.isInjectedDotReceiverLeading []
 
   /-- Bind a call to an item-supply parameter list (any top-level variadic).
       The call argument stream is already the receiver for parameter binding: a
       plain sequence-valued argument contributes one item, while explicit spread
       contributes the operand's items. -/
   partial def bindDeconstructionUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env assembly
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
@@ -5015,9 +4972,9 @@ mutual
         pure [out.fst]
 
   partial def bindPatternedUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env assembly
       (includeExplicitItems := true)
     let inputs := items.map variadicItemToPatternInput
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
@@ -5063,13 +5020,13 @@ mutual
       value (count 1); only a caller-site spread `value*`
       re-spreads it. -/
   partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM CountedResult := do
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee args ctx env preserveArgBoundaries
+            bindPatternedUserCall callee args ctx env assembly
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5079,7 +5036,7 @@ mutual
       | some _ =>
           -- Any top-level variadic binds the supplied call argument stream.
           let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee args ctx env preserveArgBoundaries
+            bindDeconstructionUserCall callee args ctx env assembly
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5100,9 +5057,9 @@ mutual
       algorithm-only argument surfaces its value-evaluation error.
       C#: `EvalConditionalCallArguments`. -/
   partial def evalConditionalCallArguments (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool)
+      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly)
       : EvalM (List Result) := do
-    let items <- collectVariadicCallItems args ctx env preserveArgBoundaries
+    let items <- collectVariadicCallItems args ctx env assembly
     items.mapM (fun item =>
       match item.value? with
       | some value => pure value
@@ -5115,8 +5072,8 @@ mutual
       becomes one sequence value (count 1), matching `if` and plain calls. -/
   partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
-    let argResults <- evalConditionalCallArguments args ctx env preserveArgBoundaries
+      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
+    let argResults <- evalConditionalCallArguments args ctx env assembly
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else
@@ -5133,30 +5090,30 @@ mutual
   /-- Dispatch an already-resolved callee in ordinary evaluation. -/
   partial def evalResolvedCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (preserveArgBoundaries : List Bool := []) : EvalM Result := do
+      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
     match callee with
     | .builtin b => do
       let argAlgs <- resolveArgAlgsWithSequenceSpread args ctx env
       applyBuiltinResolved b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCall simple args ctx env preserveArgBoundaries
-      | none => evalConditionalCall callee args ctx env calleeName preserveArgBoundaries
-    | _ => evalUserCall callee args ctx env preserveArgBoundaries
+      | some simple => evalUserCall simple args ctx env assembly
+      | none => evalConditionalCall callee args ctx env calleeName assembly
+    | _ => evalUserCall callee args ctx env assembly
 
   /-- Dispatch an already-resolved callee in counted evaluation. -/
   partial def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (preserveArgBoundaries : List Bool := []) : EvalM CountedResult := do
+      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM CountedResult := do
     match callee with
     | .builtin b => do
       let argAlgs <- resolveArgAlgsWithSequenceSpread args ctx env
       applyBuiltinCountedResolved b argAlgs ctx env
     | .conditional _ _ _ =>
       match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCallCounted simple args ctx env preserveArgBoundaries
-      | none => evalConditionalCallCounted callee args ctx env calleeName preserveArgBoundaries
-    | _ => evalUserCallCounted callee args ctx env preserveArgBoundaries
+      | some simple => evalUserCallCounted simple args ctx env assembly
+      | none => evalConditionalCallCounted callee args ctx env calleeName assembly
+    | _ => evalUserCallCounted callee args ctx env assembly
 
   /-- Context-aware counted call evaluation for expression position;
       attaches `CtxMsg.call` to resolution and dispatch errors. -/
@@ -5224,8 +5181,8 @@ mutual
       applyBuiltinCountedResolved b args ctx env
     | none =>
     let callee <- resolveAlg (.resolve name) ctx
-    let (combinedArgs, preserveArgBoundaries) := prepareLexicalDotCallArgs callee receiver extraArgs
-    evalResolvedCallCounted callee combinedArgs ctx env name preserveArgBoundaries
+    let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
+    evalResolvedCallCounted callee combinedArgs ctx env name .injectedDotReceiverLeading
 
   /-- Evaluate dotCall: a.f or a.f(args). The member result is a value boundary:
       structural zero-arg property access and collection builtins re-count to
@@ -5521,13 +5478,13 @@ mutual
           explicit argument positions stay distinct on the eager value side even if
           some later arguments bind only through `AlgEnv`. -/
   partial def evalUserCall (callee : Algorithm) (args : OutputBundle)
-      (ctx : EvalCtx) (env : ValEnv) (preserveArgBoundaries : List Bool := [])
+      (ctx : EvalCtx) (env : ValEnv) (assembly : CallArgumentAssembly := .ordinaryArguments)
       : EvalM Result := do
     if (Algorithm.output callee).isEmpty then
       .error Error.missingOutput
     else if Algorithm.requiresPatternBinding callee then do
           let (argEnv, countedParamEnv, algBindings) <-
-            bindPatternedUserCall callee args ctx env preserveArgBoundaries
+            bindPatternedUserCall callee args ctx env assembly
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5538,7 +5495,7 @@ mutual
           -- Any top-level collecting parameter (lone collecting binding or comma deconstruction) binds
           -- through the shared item-supply matcher.
           let (argEnv, countedParamEnv, algBindings) <-
-            bindDeconstructionUserCall callee args ctx env preserveArgBoundaries
+            bindDeconstructionUserCall callee args ctx env assembly
           let shadowedCountedParamEnv := CountedParamEnv.shadow ctx.countedParamEnv (Algorithm.params callee)
           let newCtx :=
             (ctx.withAlgEnv (algBindings ++ ctx.algEnv)).withCountedParamEnv
@@ -5572,11 +5529,11 @@ mutual
       not re-check this at runtime. -/
   partial def evalConditionalCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      (preserveArgBoundaries : List Bool := []) : EvalM Result := do
+      (assembly : CallArgumentAssembly := .ordinaryArguments) : EvalM Result := do
     -- Shared argument-slot assembly: explicit spread expands into ordinary
     -- argument slots BEFORE clause matching, so a multi-clause callee sees
     -- the same argument supply as every other callable shape.
-    let argResults <- evalConditionalCallArguments args ctx env preserveArgBoundaries
+    let argResults <- evalConditionalCallArguments args ctx env assembly
     if callee.hasDuplicateBranchPatterns then
       .error Error.duplicateBranchPattern
     else

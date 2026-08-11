@@ -273,6 +273,9 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicSuffixBinding_DotCallReceiverPreservesSingleGroupedValue()
+        // The named receiver is the only supplied segment, so the fixed suffix
+        // `val` binds its VALUE — the sequence (10, 20) — and the numeric body
+        // fails with an empty collected list.
         => AssertEvaluationFailure(
             """
             Values = 10, 20
@@ -282,15 +285,30 @@ public class SequenceSpreadTests
 
     [Fact]
     public void VariadicSuffixBinding_DotCallReceiverWithSuffixIsOneCollectedItem()
-        // The receiver is one leading argument (Sum(Values, 7)), so the
-        // collecting parameter collects [(10, 20)] and the numeric body fails
-        // exactly like the canonical call above.
+        // The named receiver is one leading segment whose supply is its
+        // value-boundary count (one item): the suffix binds 7, the collecting
+        // parameter collects [(10, 20)], and the numeric body fails exactly
+        // like the canonical call Sum(Values, 7).
         => AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(*values, val) = values.sum + val
             Values.Sum(7)
             """);
+
+    [Fact]
+    public void VariadicSuffixBinding_InlineGroupReceiverSuppliesItemsAfterSuffixAllocation()
+        // The inline-group receiver's supply is its row items: the suffix
+        // binds 7 from the back, the collecting parameter consumes the
+        // receiver segment's supply [10, 20], and the body evaluates
+        // 30 + 7 = 37. (A NAMED receiver holding the same values fails above,
+        // because a property is a value boundary supplying one item.)
+        => AssertEval(
+            """
+            Sum(*values, val) = values.sum + val
+            (10, 20).Sum(7)
+            """,
+            37m);
 
     [Fact]
     public void VariadicSuffixBinding_ExplicitSpreadCanSatisfySuffixWhenSlotCountMatches()
@@ -631,9 +649,11 @@ public class SequenceSpreadTests
             """,
             1m, 2m, 3m);
 
-    // `(Values*).Sum` is the parenthesized spread receiver: the receiver's
-    // items feed the leading flat collecting parameter, so `values` collects
-    // [10, 20] and sums to 30.
+    // Dot-call receiver law: the receiver is ONE leading argument segment for
+    // allocation, and a flat top-level collecting parameter allocated the
+    // segment consumes the receiver's evaluated top-level SUPPLY items. An
+    // inline group (Expr.Capture) receiver supplies its row items, so
+    // `(Values*).Sum` collects [10, 20] and sums to 30.
     [Fact]
     public void DotCall_ExplicitSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
@@ -644,20 +664,23 @@ public class SequenceSpreadTests
             """,
             30m);
 
-    // `(Values*, 7)` materializes ONE sequence value (10, 20, 7): unlike the
-    // lone `(Values*)` spread receiver it is an ordinary grouped receiver, so
-    // the collecting parameter collects [(10, 20, 7)] and the numeric body
-    // fails. Re-spreading the group — `((Values*, 7)*)` — supplies the items.
-    // (`Values* 7` without the comma would be multiplication.)
+    // `(Values*, 7)` is an inline group receiver too: its row supply is the
+    // spread items plus 7, so the collecting parameter collects [10, 20, 7]
+    // (there is no callee-shape special case restricting this to lone-spread
+    // groups anymore). (`Values* 7` without the comma would be
+    // multiplication.)
     [Fact]
-    public void DotCall_SpreadJoinGroupReceiver_IsOneCollectedItem()
-        => AssertEvaluationFailure(
+    public void DotCall_SpreadJoinGroupReceiver_SuppliesItsRowItems()
+        => AssertEval(
             """
             Values = 10, 20
             Sum(*values) = values.sum
             (Values*, 7).Sum
-            """);
+            """,
+            37m);
 
+    // Re-spreading the captured group supplies the same three items: the
+    // capture's value (10, 20, 7) spreads back into the row supply.
     [Fact]
     public void DotCall_RespreadSpreadJoinGroupReceiver_SuppliesItems()
         => AssertEval(
@@ -668,8 +691,9 @@ public class SequenceSpreadTests
             """,
             37m);
 
-    // `(Pair*)` spreads the receiver items into the item supply, so the
-    // collecting parameter binds [10, 20] and sums to 30.
+    // `(Pair*)` is a capture of the spread: the receiver segment's supply is
+    // the two spread items, so the collecting parameter binds [10, 20] and
+    // sums to 30.
     [Fact]
     public void DotCall_GroupSequenceSpreadReceiverBindsItemSupply()
         => AssertEval(
@@ -681,18 +705,18 @@ public class SequenceSpreadTests
             30m);
 
     [Fact]
-    public void DotCall_GroupSpreadJoinReceiver_IsOneCollectedItem()
+    public void DotCall_GroupSpreadJoinReceiver_SuppliesItsRowItems()
     {
-        // Same rule for a sequence-valued source: `(Pair*, 7)` is one grouped
-        // receiver argument, so the collecting parameter collects
-        // [(10, 20, 7)] and the numeric body fails; re-spreading the group
-        // supplies the items.
-        AssertEvaluationFailure(
+        // Same rule for a sequence-valued source: the inline group
+        // `(Pair*, 7)` supplies its row items [10, 20, 7] to the collector,
+        // and re-spreading the captured group supplies the same items.
+        AssertEval(
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
             (Pair*, 7).Sum
-            """);
+            """,
+            37m);
 
         AssertEval(
             """
@@ -703,6 +727,10 @@ public class SequenceSpreadTests
             37m);
     }
 
+    // The receiver's supply feeds only an allocated COLLECTING parameter.
+    // Fixed parameters allocate segments, and the one receiver segment can
+    // never satisfy a two-parameter arity — supply items do not fan out
+    // across fixed parameters.
     [Fact]
     public void DotCall_SequenceSpreadReceiverDoesNotSpreadIntoFixedParameters()
         => AssertArityFailure(

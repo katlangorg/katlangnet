@@ -1165,10 +1165,24 @@ public static class Evaluator
         _ => [],
     };
 
-    private static bool PreserveCallArgBoundary(IReadOnlyList<bool>? preserveArgBoundaries, int index) =>
-        preserveArgBoundaries is not null
-        && index < preserveArgBoundaries.Count
-        && preserveArgBoundaries[index];
+    /// <summary>
+    /// How a call's argument bundle was assembled: ordinary written argument
+    /// slots, or a lexical dot-call bundle whose FIRST slot is the injected
+    /// receiver segment. The injected receiver is always ONE leading segment
+    /// for arity checking and prefix/suffix allocation (never pre-expanded),
+    /// is evaluated through the raw counted receiver-segment path
+    /// (<see cref="EvalDotReceiverCallSegmentCounted"/>), and carries its
+    /// evaluated top-level supply so a flat top-level collecting parameter
+    /// allocated the segment consumes the supply items
+    /// (<see cref="ParameterPatternInput.CollectingSegmentEmittedCount"/>).
+    /// Receiver assembly never inspects the resolved callee.
+    /// Lean: <c>CallArgumentAssembly</c>.
+    /// </summary>
+    internal enum CallArgumentAssembly
+    {
+        OrdinaryArguments,
+        InjectedDotReceiverLeading,
+    }
 
     private readonly record struct VariadicCallItem(
         Result? Value,
@@ -1242,11 +1256,24 @@ public static class Evaluator
         Result Value,
         CountedResult CountedValue);
 
+    /// <summary>
+    /// One call argument segment prepared for parameter binding. Every segment
+    /// has a value view (<see cref="Value"/>); an injected dot-call receiver
+    /// segment additionally carries <see cref="CollectingSegmentEmittedCount"/> —
+    /// the raw emitted count of its counted evaluation — as an EPHEMERAL
+    /// collecting supply view. A fixed parameter always binds the value view;
+    /// only a flat top-level collecting parameter that is allocated the segment
+    /// consumes the supply view (one-level, never recursive). The field is
+    /// data-only and never propagated into nested pattern inputs, parameter
+    /// environments, or collected lists.
+    /// Lean: <c>ParameterPatternInput</c>.
+    /// </summary>
     private readonly record struct ParameterPatternInput(
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        IReadOnlyList<Result>? ExplicitSequenceValueItems);
+        IReadOnlyList<Result>? ExplicitSequenceValueItems,
+        int? CollectingSegmentEmittedCount = null);
 
     private static bool HasStructuredParameterPattern(Algorithm algorithm)
         => algorithm.ParameterPatterns.Any(static parameter => parameter is SequenceValueParameterPattern);
@@ -1849,7 +1876,16 @@ public static class Evaluator
                 return input.ValueError ?? new EvalError.BadArity();
             }
 
-            capturedValues.Add(input.Value);
+            // A segment allocated to the flat top-level collecting position
+            // consumes its evaluated top-level supply (one level, never
+            // recursive): an injected dot-call receiver segment contributes its
+            // emitted items, while every ordinary segment contributes its one
+            // reified value. Fixed prefix/suffix and nested pattern positions
+            // ignore the supply view (they bind the value view above).
+            if (input.CollectingSegmentEmittedCount is { } segmentEmittedCount)
+                capturedValues.AddRange(CountedTopLevelValues(new CountedResult(input.Value, segmentEmittedCount)));
+            else
+                capturedValues.Add(input.Value);
         }
 
         var captureR = CreateCollectingCapture(ctx, collectingCapture.Name, capturedValues, collectingCapture.Span);
@@ -1870,7 +1906,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
         // Passive, run-scoped observation: this is the one path that binds a deconstruction helper's
         // shared N-capture pattern in both the old per-target and new shared-bind implementations, so
@@ -1883,7 +1919,7 @@ public static class Evaluator
             args,
             ctx,
             valEnv,
-            preserveArgBoundaries,
+            argumentAssembly,
             includeExplicitSequenceValueItems: true);
         if (inputsR.IsError) return inputsR.Error;
 
@@ -1960,7 +1996,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries)
+        CallArgumentAssembly argumentAssembly)
     {
         var group = helper.AssignmentDeconstructionGroup;
         if (group is null)
@@ -1976,7 +2012,7 @@ public static class Evaluator
             execution,
             () =>
             {
-                var bindingsR = BindPatternedUserCall(helper, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+                var bindingsR = BindPatternedUserCall(helper, args, ctx, valEnv, calleeName, argumentAssembly);
                 if (bindingsR.IsError)
                     return bindingsR.Error;
 
@@ -2030,15 +2066,17 @@ public static class Evaluator
     /// argument supply is formed BEFORE any arity checking, clause selection,
     /// conditional dispatch, or pattern binding — the callee's internal
     /// representation never influences the meaning of caller-side spread.
-    /// Dot-call receiver segments honor <paramref name="preserveArgBoundaries"/>
-    /// (an injected receiver stays one boundary and is never expanded).
+    /// An injected dot-call receiver segment
+    /// (<see cref="CallArgumentAssembly.InjectedDotReceiverLeading"/>) stays
+    /// ONE segment for allocation — never pre-expanded — and retains its raw
+    /// counted supply for the flat top-level collecting position.
     /// Lean: <c>collectVariadicCallItems</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<ParameterPatternInput>> BuildCallArgumentInputs(
         OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries = null,
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments,
         bool includeExplicitSequenceValueItems = false)
     {
         var maybeAlgsR = TryResolveArgAlgs(args, ctx);
@@ -2055,10 +2093,9 @@ public static class Evaluator
         {
             var argExpr = args[index];
             var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
-            var preserveArgBoundary = PreserveCallArgBoundary(preserveArgBoundaries, index);
-            var isDotReceiverSegment = IsInjectedDotCallReceiverSegment(preserveArgBoundaries, index);
+            var isDotReceiverSegment = IsInjectedDotReceiverSegment(argumentAssembly, index);
 
-            if (argExpr is Expr.SequenceSpread && !preserveArgBoundary)
+            if (argExpr is Expr.SequenceSpread && !isDotReceiverSegment)
             {
                 var suppliedR = EvalCounted(argExpr, ctx, valEnv);
                 if (suppliedR.IsError)
@@ -2082,7 +2119,10 @@ public static class Evaluator
                     preparedR.Value.Counted.Value,
                     maybeAlg,
                     ValueError: null,
-                    preparedR.Value.ExplicitSequenceValueItems));
+                    preparedR.Value.ExplicitSequenceValueItems,
+                    CollectingSegmentEmittedCount: isDotReceiverSegment
+                        ? preparedR.Value.Counted.EmittedCount
+                        : null));
                 continue;
             }
 
@@ -2154,10 +2194,10 @@ public static class Evaluator
             : EvalResult<PreparedCallArgumentEvaluation>.Ok(new(evaluatedR.Value, null));
     }
 
-    private static bool IsInjectedDotCallReceiverSegment(
-        IReadOnlyList<bool>? preserveArgBoundaries,
+    private static bool IsInjectedDotReceiverSegment(
+        CallArgumentAssembly argumentAssembly,
         int index)
-        => preserveArgBoundaries is not null
+        => argumentAssembly == CallArgumentAssembly.InjectedDotReceiverLeading
         && index == 0;
 
     private static EvalResult<CountedResult> EvalDotReceiverCallSegmentCounted(
@@ -2235,9 +2275,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
-        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, preserveArgBoundaries);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, argumentAssembly);
         if (inputsR.IsError) return inputsR.Error;
 
         // A deconstruction parameter list always carries a collecting binding, so a
@@ -7341,9 +7381,9 @@ public static class Evaluator
         OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries)
+        CallArgumentAssembly argumentAssembly)
     {
-        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, preserveArgBoundaries);
+        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv, argumentAssembly);
         if (inputsR.IsError) return inputsR.Error;
 
         var argResults = new List<Result>(inputsR.Value.Count);
@@ -7363,7 +7403,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
         // Charged dynamic invocation boundary: clause selection plus the selected
         // branch body are ONE dynamic invocation, exactly like a flat user call.
@@ -7372,7 +7412,7 @@ public static class Evaluator
 
         try
         {
-            return EvalConditionalCallCore(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCallCore(callee, args, ctx, valEnv, calleeName, argumentAssembly);
         }
         finally
         {
@@ -7385,12 +7425,12 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries)
+        CallArgumentAssembly argumentAssembly)
     {
         // Shared argument-slot assembly: explicit spread expands into ordinary
         // argument slots BEFORE clause matching, so a multi-clause callee sees
         // the same argument supply as every other callable shape.
-        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, preserveArgBoundaries);
+        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, argumentAssembly);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -7424,7 +7464,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
         // Charged dynamic invocation boundary (see EvalConditionalCall).
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
@@ -7432,7 +7472,7 @@ public static class Evaluator
 
         try
         {
-            return EvalConditionalCallCountedCore(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCallCountedCore(callee, args, ctx, valEnv, calleeName, argumentAssembly);
         }
         finally
         {
@@ -7445,9 +7485,9 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries)
+        CallArgumentAssembly argumentAssembly)
     {
-        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, preserveArgBoundaries);
+        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv, argumentAssembly);
         if (argResultsR.IsError) return argResultsR.Error;
         var argResults = argResultsR.Value;
 
@@ -7497,7 +7537,7 @@ public static class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
@@ -7506,7 +7546,7 @@ public static class Evaluator
 
         try
         {
-            return EvalUserCallCore(callee, args, ctx, valEnv, preserveArgBoundaries, calleeName);
+            return EvalUserCallCore(callee, args, ctx, valEnv, argumentAssembly, calleeName);
         }
         finally
         {
@@ -7518,7 +7558,7 @@ public static class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         if (callee.Output.Count == 0)
@@ -7528,7 +7568,7 @@ public static class Evaluator
         // run-scoped bind (computed once for all N targets) instead of rebinding the whole
         // N-capture pattern per target. The non-counted value is the bound value itself.
         if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
         {
             return sharedTarget;
         }
@@ -7538,7 +7578,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7549,7 +7589,7 @@ public static class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7583,7 +7623,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -7598,18 +7638,18 @@ public static class Evaluator
                 args,
                 ctx,
                 valEnv,
-                preserveArgBoundaries,
+                argumentAssembly,
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
 
         return EvalUserCall(
             callee,
             args,
             ctx,
             valEnv,
-            preserveArgBoundaries,
+            argumentAssembly,
             calleeName);
     }
 
@@ -7627,7 +7667,7 @@ public static class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         // Charged dynamic invocation boundary (see EvaluationBudget).
@@ -7636,7 +7676,7 @@ public static class Evaluator
 
         try
         {
-            return EvalUserCallCountedCore(callee, args, ctx, valEnv, preserveArgBoundaries, calleeName);
+            return EvalUserCallCountedCore(callee, args, ctx, valEnv, argumentAssembly, calleeName);
         }
         finally
         {
@@ -7648,7 +7688,7 @@ public static class Evaluator
         Algorithm callee, OutputBundle args,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
-        IReadOnlyList<bool>? preserveArgBoundaries,
+        CallArgumentAssembly argumentAssembly,
         CallDiagnosticName calleeName)
     {
         if (callee.Output.Count == 0)
@@ -7658,7 +7698,7 @@ public static class Evaluator
         // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
         // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
         if (callee is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, preserveArgBoundaries) is { } sharedTarget)
+            && TryProjectSharedDeconstructionTarget(deconstructionHelper, args, ctx, valEnv, calleeName, argumentAssembly) is { } sharedTarget)
         {
             return sharedTarget.IsError
                 ? sharedTarget.Error
@@ -7670,7 +7710,7 @@ public static class Evaluator
 
         if (bindingPlan.RequiresPatternedBinding)
         {
-            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7681,7 +7721,7 @@ public static class Evaluator
 
         if (IsDeconstructionUserCallShape(signature))
         {
-            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName, argumentAssembly);
             if (bindingsR.IsError) return bindingsR.Error;
 
             var bindings = bindingsR.Value;
@@ -7715,7 +7755,7 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv,
         CallDiagnosticName calleeName,
-        IReadOnlyList<bool>? preserveArgBoundaries = null)
+        CallArgumentAssembly argumentAssembly = CallArgumentAssembly.OrdinaryArguments)
     {
         if (callee is Algorithm.Builtin(var builtinId))
         {
@@ -7730,18 +7770,18 @@ public static class Evaluator
                 args,
                 ctx,
                 valEnv,
-                preserveArgBoundaries,
+                argumentAssembly,
                 calleeName);
 
         if (callee is Algorithm.Conditional)
-            return EvalConditionalCallCounted(callee, args, ctx, valEnv, calleeName, preserveArgBoundaries);
+            return EvalConditionalCallCounted(callee, args, ctx, valEnv, calleeName, argumentAssembly);
 
         return EvalUserCallCounted(
             callee,
             args,
             ctx,
             valEnv,
-            preserveArgBoundaries,
+            argumentAssembly,
             calleeName);
     }
 
@@ -7967,73 +8007,33 @@ public static class Evaluator
             new SequenceBuiltinDotCall(builtin, argAlgs));
     }
 
-    private static bool TryGetParenthesizedSequenceSpreadReceiver(Expr receiver, out Expr spreadReceiver)
-    {
-        if (receiver is Expr.Capture([Expr.SequenceSpread captureSpread]))
-        {
-            spreadReceiver = captureSpread;
-            return true;
-        }
-
-        if (receiver is Expr.AlgorithmExpr({ Opens.Count: 0, Properties.Count: 0, Params.Count: 0, Output.Count: 1 } algorithm)
-            && algorithm.Output[0] is Expr.SequenceSpread sequenceSpread)
-        {
-            spreadReceiver = sequenceSpread;
-            return true;
-        }
-
-        spreadReceiver = receiver;
-        return false;
-    }
-
-    private static bool HasLeadingFlatCollectingParameter(Algorithm callee, string name)
-    {
-        var effectiveCallee = TryGetFlatBinderUserEquivalent(callee) ?? callee;
-        if (effectiveCallee is not Algorithm.User)
-            return false;
-
-        var signature = CallableSignature.FromAlgorithm(name, effectiveCallee);
-        var plan = CallableBindingPlan.FromSignature(signature);
-        return plan.TryGetFlatCollectingLayout(out var prefix, out _, out _)
-            && prefix.Count == 0;
-    }
-
-    private static (OutputBundle Args, IReadOnlyList<bool> PreserveArgBoundaries) BuildLexicalReceiverCallArgs(
-        Algorithm callee,
-        string name,
+    /// <summary>
+    /// Assemble the argument bundle for ordinary lexical dot-call fallback:
+    /// <c>receiver.F(C, D)</c> calls <c>F</c> with the ORIGINAL receiver
+    /// expression as one injected leading segment followed by the written
+    /// extra arguments. Assembly is independent of the resolved callee: the
+    /// receiver is never pre-expanded, never unwrapped, and no parameter
+    /// shape is inspected. The paired
+    /// <see cref="CallArgumentAssembly.InjectedDotReceiverLeading"/> marker
+    /// makes the receiver one segment for allocation whose evaluated
+    /// top-level supply only a flat top-level collecting parameter consumes.
+    /// Lean: <c>prepareLexicalDotCallArgs</c>.
+    /// </summary>
+    private static OutputBundle BuildLexicalReceiverCallArgs(
         Expr receiver,
         OutputBundle? extraArgs)
     {
-        var receiverExpr = receiver;
-        var hasLeadingFlatCollectingParameter = HasLeadingFlatCollectingParameter(callee, name);
-        var preserveReceiverBoundary = !hasLeadingFlatCollectingParameter;
-        // The injected receiver is still one leading argument segment. When a
-        // leading flat collecting parameter exists, that segment may carry its
-        // emitted-count metadata into the capture after slot allocation.
-        // Parenthesized receiver spread, as in (Arg*).F, can feed the
-        // receiver's top-level items only to leading flat collecting receiver params.
-        // Fixed receiver params keep the receiver as one argument boundary.
-        if (TryGetParenthesizedSequenceSpreadReceiver(receiver, out var spreadReceiver)
-            && hasLeadingFlatCollectingParameter)
-        {
-            receiverExpr = spreadReceiver;
-        }
-
         var outputExprs = new Expr[1 + (extraArgs?.Count ?? 0)];
-        outputExprs[0] = receiverExpr;
-        var preserveArgBoundaries = new List<bool> { preserveReceiverBoundary };
+        outputExprs[0] = receiver;
         if (extraArgs is not null)
         {
             for (var i = 0; i < extraArgs.Count; i++)
-            {
                 outputExprs[i + 1] = extraArgs[i];
-                preserveArgBoundaries.Add(false);
-            }
         }
 
         // outputExprs is this call's exclusively owned fresh array, so
         // ownership transfers without a snapshot copy.
-        return (OutputBundle.TakeOwnership(outputExprs), preserveArgBoundaries);
+        return OutputBundle.TakeOwnership(outputExprs);
     }
 
     private static bool TryEvaluateSequencePipeline(
@@ -8177,14 +8177,14 @@ public static class Evaluator
 
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var (combinedArgs, preserveArgBoundaries) = BuildLexicalReceiverCallArgs(calleeR.Value, name, receiver, extraArgs);
+        var combinedArgs = BuildLexicalReceiverCallArgs(receiver, extraArgs);
         return EvalResolvedCall(
             calleeR.Value,
             combinedArgs,
             ctx,
             valEnv,
             CallDiagnosticName.FromKnown(name),
-            preserveArgBoundaries);
+            CallArgumentAssembly.InjectedDotReceiverLeading);
     }
 
     /// <summary>
@@ -8285,14 +8285,14 @@ public static class Evaluator
 
         var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var (combinedArgs, preserveArgBoundaries) = BuildLexicalReceiverCallArgs(calleeR.Value, name, receiver, extraArgs);
+        var combinedArgs = BuildLexicalReceiverCallArgs(receiver, extraArgs);
         return EvalResolvedCallCounted(
             calleeR.Value,
             combinedArgs,
             ctx,
             valEnv,
             CallDiagnosticName.FromKnown(name),
-            preserveArgBoundaries);
+            CallArgumentAssembly.InjectedDotReceiverLeading);
     }
 
     // ── Entry points ────────────────────────────────────────────────────────

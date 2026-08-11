@@ -86,6 +86,26 @@ of the plain algebra:
    coincidence, written-argument difference, stored-capture difference (the
    rule is syntactic on the receiver expression), and the non-leading
    collecting case (`Mid3`) where the exception does NOT apply.
+
+   > **Superseded (August 2026, compositional dot-call collecting receiver
+   > binding).** The spelling- and callee-dependent exception above was
+   > REPLACED by the general segment rule
+   > **`COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY`**: every lexical
+   > dot-call receiver is one leading segment carrying its raw counted
+   > supply (`ParameterPatternInput.CollectingSegmentEmittedCount` / Lean
+   > `collectingSegmentCount?`), and a flat top-level collecting parameter
+   > allocated the segment consumes that supply — no receiver-spelling
+   > recognition, no callee inspection, allocation always before
+   > consumption. `(A*).F` reaches a collector with the same results
+   > through the general rule; written group receivers now feed collectors
+   > too (`(1, 2, 3).Mean` averages the items); and at a fixed suffix the
+   > grouped receiver stays one segment where the old exception
+   > pre-expanded. The recognizers named above are deleted; the relational
+   > family `grouped-receiver-exception` was re-derived under the general
+   > law, and the new `dot-inline-collect` / `dot-nested-collect` /
+   > `dot-list-literal-collect` / `dot-seg-*` matrix templates pin the
+   > written-receiver sides. See `SEMANTIC-ALIGNMENT.md` and the
+   > `KatLangArityLaws` `dot_receiver_segment_*` bridge laws.
 2. **Loop init arity floor** — `repeat`/`while` require at least one initial
    state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
    is an ordinary arity rejection after spreading.

@@ -858,26 +858,30 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsSingleListResult()
+    public void RunResult_ToDisplayString_VariadicDotCallReceiver_ShowsReceiverSupplyListResult()
     {
-        // A call boundary always returns one value. The receiver is one leading
-        // argument, so the collecting binding collects it as the one-element list
-        // [(10, 20, 30)], displayed as a single row.
+        // A call boundary always returns one value. The receiver is one
+        // leading argument segment, and the collecting parameter it is
+        // allocated to consumes the segment's supply: the inline group emits
+        // its three row items, so the collected list is [10, 20, 30],
+        // displayed as a single row.
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
             (10, 20, 30).Collect
             """);
 
-        Assert.Equal("[(10, 20, 30)]", result.ToDisplayString());
+        Assert.Equal("[10, 20, 30]", result.ToDisplayString());
     }
 
     [Fact]
     public void RunResult_ToDisplayString_VariadicDotCallReceiverSpread_OpensIntoRows()
     {
-        // The spread receiver supplies the items, so the collected list is
-        // [10, 20, 30]; an explicit caller-site spread re-spreads the returned
-        // list into the surrounding item supply, displaying separate rows.
+        // The capture-of-spread receiver supplies the same three items through
+        // the general receiver-supply rule, so the collected list is
+        // [10, 20, 30]; the explicit caller-site spread then re-spreads the
+        // returned list into the surrounding item supply, displaying separate
+        // rows.
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list

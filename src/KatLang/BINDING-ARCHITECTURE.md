@@ -33,7 +33,7 @@ Flat collecting user calls own:
 - argument item construction
 - counted top-level expansion
 - algorithm/value error propagation
-- dot receiver boundary preservation
+- dot receiver segment injection (one leading segment; supply consumed only at the flat top-level collecting position)
 
 Patterned/sequence-value executor owns:
 
@@ -83,11 +83,12 @@ Optimized loops own:
 
 ## Receiver semantics separation
 
-- Ordinary dot-call receiver boundary preservation is call-site syntax/runtime data.
+- Ordinary dot-call receiver injection is call-site syntax/runtime data: the receiver rides as ONE leading segment (`CallArgumentAssembly.InjectedDotReceiverLeading`), and the segment's evaluated top-level supply is carried as data-only input metadata (`ParameterPatternInput.CollectingSegmentEmittedCount`). Receiver assembly never inspects the resolved callee.
+- The binder applies the segment rule: fixed prefix/suffix allocation first (the segment is one input for arity), fixed positions bind the segment's value, and only a flat top-level collecting position consumes the segment's supply (one level, never recursive; nested pattern inputs never receive the metadata).
 - The collection-builtin post-binding collection view is builtin runtime behavior.
 - Neither behavior belongs in a future `BindingPolicy`.
 
-If future models need to carry receiver information, they should carry it as descriptive input data only; they should not decide what receiver semantics to apply.
+If future models need to carry receiver information, they should carry it as descriptive input data only (as `CollectingSegmentEmittedCount` does); they should not decide what receiver semantics to apply.
 
 ## Future `BindingInput`
 
@@ -100,7 +101,7 @@ Good candidates:
 - explicit sequence-value items
 - emitted count
 - source/provenance
-- receiver-boundary holder flag as descriptive data
+- receiver-segment supply metadata as descriptive data (realized today as `ParameterPatternInput.CollectingSegmentEmittedCount`)
 
 `BindingInput` must not decide what to do. Executors consume it; they keep semantic ownership.
 
@@ -108,7 +109,7 @@ Good candidates:
 
 Flat collecting user-call binding and generic `Algorithm.User` loop-step evaluated-slot binding now share `FlatCollectingBindingLayout`, `BindingInputSlot`, `BindItemsToFlatCollectingLayout`, `BindCallableArguments`, and `CreateCollectingCapture`. This is the intended flat collecting migration boundary for the current architecture.
 
-The remaining differences are executor-owned. User calls still own argument expression evaluation, counted top-level expansion, algorithm/value/error channels, dot-call receiver boundary preservation, callable diagnostics, and `UserCallBindings`. Generic loop binding still owns already-evaluated value-only slots, declaration-order projection of the collecting capture, loop-state diagnostics, and `EvaluatedSlotBindings`.
+The remaining differences are executor-owned. User calls still own argument expression evaluation, counted top-level expansion, algorithm/value/error channels, dot-call receiver segment injection and supply consumption, callable diagnostics, and `UserCallBindings`. Generic loop binding still owns already-evaluated value-only slots, declaration-order projection of the collecting capture, loop-state diagnostics, and `EvaluatedSlotBindings` (loop-state slots never carry receiver-segment metadata).
 
 `TryGetLegacyFlatCollectingBindingLayout` remains for non-`Algorithm.User` loop steps where no `CallableBindingPlan` is available. `VariadicCallItem` remains as the collection-builtin argument-evaluation carrier because builtins own different empty/error policy, control preparation, callback invocation, and post-binding collection semantics.
 
@@ -174,7 +175,7 @@ Reopen only when a concrete consumer appears, such as accepted guard-expression 
 
 Call argument-slot assembly is now centralized: `BuildCallArgumentInputs` (Lean `collectVariadicCallItems`) serves EVERY callable shape — flat fixed, flat/mixed variadic, patterned, and multi-clause conditional. It evaluates each written slot exactly once, left to right, reifies every non-spread slot as exactly one argument value (with the dual algorithm channel where resolvable), and expands every explicit spread slot by one value boundary BEFORE any arity checking, clause selection, or pattern binding. For a `Capture` or zero-parameter `AlgorithmExpr` sent to a patterned callee, the corresponding prepared-output pass returns both the combined counted value and a read-only explicit-slot view over the same evaluated values; binding never evaluates the expression again or reconstructs the view from the combined value. The July 2026 call-spread repair introduced the shared assembler after an audit found spread expansion implemented in only two of four per-shape assemblers (patterned and conditional callees silently received a spread argument as one closed value).
 
-Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/collecting/suffix binder, `ParameterPattern` binding (which additionally consumes the explicit written-item channel for capture and zero-parameter AlgorithmExpr arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver boundary preservation, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
+Per-shape binding after assembly remains executor-owned: flat fixed positional binding, the item-supply prefix/collecting/suffix binder (which consumes an injected receiver segment's supply at the flat top-level collecting position), `ParameterPattern` binding (which additionally consumes the explicit written-item channel for capture and zero-parameter AlgorithmExpr arguments), and conditional branch matching. Counted-param shadowing, dot-call receiver segment marking, and algorithm/value dual binding live in the shared assembly and its consumers. Do not reintroduce per-shape argument evaluation loops; changes to slot semantics belong in the shared assembler in BOTH languages.
 
 ## `BindingPolicy` deferred
 

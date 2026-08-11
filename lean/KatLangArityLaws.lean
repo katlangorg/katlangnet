@@ -452,6 +452,103 @@ theorem bindParameterPatternList_middle_collecting_binds_collect
   rfl
 
 /-
+## Dot-receiver segment bridge laws (the general segment rule)
+
+An ordinary lexical dot-call injects its receiver as ONE leading argument
+segment (`prepareLexicalDotCallArgs` + `CallArgumentAssembly.injectedDotReceiverLeading`),
+and `collectVariadicCallItems` retains that segment's raw counted evaluation as
+`ParameterPatternInput.collectingSegmentCount?`. The laws below pin the general
+segment rule directly over the real binder, replacing the removed
+`parenthesizedSequenceSpreadReceiver?`/`hasLeadingFlatCollectingParameter`
+`(A*)`-spelling exception:
+
+- the segment is ONE input for arity checking and fixed prefix/suffix
+  allocation (its supply count never satisfies arity);
+- a FIXED parameter allocated the segment binds its one captured value and
+  ignores the supply view;
+- a flat top-level collecting parameter allocated the segment consumes the
+  segment's evaluated top-level supply (`countedTopLevelValues (value, count)`)
+  — one level, never recursive.
+-/
+
+private theorem collectValues_receiverSegment_single (v : Result) (n : Nat) :
+    bindParameterPatternList.collectValues
+      [{ value? := some v, collectingSegmentCount? := some n : ParameterPatternInput }]
+      = pure (countedTopLevelValues (v, n)) := by
+  simp [bindParameterPatternList.collectValues]
+
+/-- A collecting parameter allocated the receiver segment consumes the
+segment's evaluated top-level supply: zero items for count 0, the value itself
+for count 1, the value's items for a multi-count segment. -/
+theorem dot_receiver_segment_supply_consumed (v : Result) (n : Nat) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "x", kind := .collecting }]
+      [{ value? := some v, collectingSegmentCount? := some n : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("x", collectSegment (countedTopLevelValues (v, n)))],
+              countedParamEnv := [("x", (collectSegment (countedTopLevelValues (v, n)), 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindPairs_nil_nil, collectValues_receiverSegment_single,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- Allocation precedes supply consumption: with an extra ordinary argument,
+the fixed suffix binds from the back and the collector consumes exactly the
+receiver segment's supply. -/
+theorem dot_receiver_segment_with_suffix_consumes_supply (v y : Result) (n : Nat) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some v, collectingSegmentCount? := some n : ParameterPatternInput },
+       { value? := some y : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("r", collectSegment (countedTopLevelValues (v, n))), ("z", y)],
+              countedParamEnv := [("r", (collectSegment (countedTopLevelValues (v, n)), 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    bindPairs_nil_nil, collectValues_receiverSegment_single,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- A FIXED parameter allocated the receiver segment binds the segment's one
+captured value; the supply view is ignored at fixed positions (here the lone
+segment is allocated to the suffix, and the collector collects the empty
+middle segment). -/
+theorem dot_receiver_segment_fixed_binds_value (v : Result) (n : Nat) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some v, collectingSegmentCount? := some n : ParameterPatternInput }]
+      false)
+      = .ok { argEnv := [("r", collectSegment []), ("z", v)],
+              countedParamEnv := [("r", (collectSegment [], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern,
+    bindPairs_nil_nil, bindParameterPatternList.collectValues,
+    runEvalM, mergeEqualValEnv, mergeEqualCountedParamEnv,
+    mergePatternAlgEnv, lookupAssoc, CountedParamEnv.lookup, ValEnv.lookup, collectSegment]
+  rfl
+
+/-- The receiver segment is ONE input for arity checking regardless of its
+supply count: a mixed prefix/collecting/suffix list requiring two fixed inputs
+rejects a lone receiver segment even when its supply holds enough items. -/
+theorem dot_receiver_segment_count_never_satisfies_arity (v : Result) (n : Nat) :
+    runEvalM (bindParameterPatternList
+      [.capture { name := "a", kind := .normal },
+       .capture { name := "r", kind := .collecting },
+       .capture { name := "z", kind := .normal }]
+      [{ value? := some v, collectingSegmentCount? := some n : ParameterPatternInput }]
+      false)
+      = .error (Error.arityMismatch 2 1) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
+  rfl
+
+/-
 ## Deconstruction bridge laws (unpacking receiver)
 
 Assignment deconstruction (`x, *y, z = RHS`) is parser-elaborated into a helper

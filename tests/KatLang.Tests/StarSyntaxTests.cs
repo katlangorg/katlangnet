@@ -627,12 +627,15 @@ public class StarSyntaxTests
         //   A*.F   — the spread stays a SUPPLY. The fluent dot lowers to the
         //            lexical call `F(A*)`, so the items become argument SLOTS.
         //   (A*).F — the parentheses are a CAPTURE receiver
-        //            (`capture : Supply -> Value`). The items materialize as
-        //            ONE sequence value first, and `.F` is then an ordinary
-        //            dot-call on that value.
+        //            (`capture : Supply -> Value`): one leading argument
+        //            SEGMENT whose value is the captured sequence and whose
+        //            raw supply is the capture's row items.
         //
-        // They coincide on a collecting callable, which re-collects either
-        // shape into the same list...
+        // On a collecting callable they coincide by the general segment rule:
+        // the direct call collects the spread SLOTS, while the capture
+        // receiver's segment is allocated to the flat top-level collecting
+        // parameter, which consumes the segment's SUPPLY — the same items. No
+        // callee inspection is involved on either route...
         const string collecting = "F(*v) = v\nA = (1, 2)\n";
         Assert.Equal("[1, 2]", Display(collecting + "A*.F"));
         Assert.Equal("[1, 2]", Display(collecting + "(A*).F"));

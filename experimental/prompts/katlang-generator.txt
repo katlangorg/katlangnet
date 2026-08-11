@@ -555,7 +555,7 @@ For ordinary/user-defined properties:
 means:
     B(A, C, D)
 
-It preserves `A` as one leading argument boundary rather than spreading `A`'s outputs into fixed parameters.
+It preserves `A` as one leading argument segment rather than spreading `A`'s outputs into fixed parameters: the receiver never satisfies extra fixed-parameter arity, and a fixed parameter binds the receiver as one value. The one supply rule: a flat top-level COLLECTING parameter allocated the receiver segment consumes the receiver's evaluated top-level supply, so a written group receiver feeds it item by item — `Mean(*Vector) = Vector.sum / Vector.count` supports both `Mean(1, 2, 3)` and `(1, 2, 3).Mean` — while a named property receiver supplies its one stored value (`Arg.Mean` passes `Arg` whole; use `Arg*.Mean` to supply its items).
 
 Examples:
     Add = a + b
@@ -591,6 +591,7 @@ Collection builtins are ordinary fixed-arity callables such as `count(collection
     take((1, 2, 3), 2)
     Scale(*values, factor) = values.map{n * factor}
     Scale(Arg*, 10)    # spread the items into the collecting parameter; Scale(Arg, 10) binds values = [Arg]
+    (1, 2, 3).Scale(10)    # a written group receiver supplies its rows: values = [1, 2, 3], factor = 10
     Values = 10, 20
     Sum(*values, last) = values.sum + last
     Sum(Values*, 7)    # 37: spread opens two value slots, then 7 fills last
@@ -1041,7 +1042,7 @@ Idiomatic structure:
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (47 of the 167-case canonical language specification,
+Verified reference examples (48 of the 168-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1228,7 +1229,7 @@ Regenerate this block from the repo root with:
     [(1, 2)]
     [1, 2]
 
-[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver in `A.Inspect` is the same one slot — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). The old grouped/spread coincidence is intentionally gone.
+[variadic-receiver-distinction] An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and a NAMED dotted receiver `A.Inspect` supplies the same one item (a stored property receiver's segment supply is its value-boundary count) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). A WRITTEN group receiver is different: see `dot-receiver-segment-supply`.
 
     Inspect(*items) = items
     A = [1, 2, 3]
@@ -1239,6 +1240,17 @@ Regenerate this block from the repo root with:
   Displays:
     [[1, 2, 3]]
     [1, 2, 3]
+
+[dot-receiver-segment-supply] A lexical dot-call receiver is ONE leading segment for arity checking and fixed prefix/suffix allocation — its item count never satisfies arity, and a fixed parameter binds the receiver as one value. A flat top-level collecting parameter that is allocated the segment consumes the segment's evaluated top-level supply: a WRITTEN group receiver supplies its raw rows (`(1, 2, 3).Mean` averages the three items; `((1, 2)).Collect` keeps the extra written boundary; `().Collect` supplies zero items), while exact lists stay opaque. Direct calls are unchanged: `Mean((1, 2, 3))` still collects one grouped argument.
+
+    Mean(*Vector) = Vector.sum / Vector.count
+
+    Mean(1, 2, 3)
+    (1, 2, 3).Mean
+
+  Displays:
+    2
+    2
 
 [mixed-collecting-parameter] Mixed fixed/collecting parameter lists bind the call's argument stream: fixed captures take the front and back, and the collecting parameter collects the middle as one exact immutable list (possibly `[]`). A plain call does not implicitly open a single sequence argument, so `F(A)` fails.
 

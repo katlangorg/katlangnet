@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 167
+- specification surface cases: 168
 - excluded parse-level cases (Lean has no surface parser): 6
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 160
-- probe observations (C#-only by design): 236
+- Lean-guarded cases: 161
+- probe observations (C#-only by design): 245
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -342,6 +342,11 @@ def case_implicit_forwarding_source_kind : Expr :=
 def case_variadic_receiver_distinction : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inspect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [.call (.resolve "Inspect") [.resolve "A"], .call (.resolve "Inspect") [.sequenceSpread (.resolve "A")]])
 #guard obs case_variadic_receiver_distinction == "ok raw=S[L[L[1, 2, 3]], L[1, 2, 3]] n=2"
+
+-- dot-receiver-segment-supply [variadic-calls]: Mean(*Vector) = Vector.sum / Vector.count \n  \n Mean(1, 2, 3) \n (1, 2, 3).Mean
+def case_dot_receiver_segment_supply : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none)])] [.call (.resolve "Mean") [.num 1, .num 2, .num 3], .dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none])
+#guard obs case_dot_receiver_segment_supply == "ok raw=S[2, 2] n=2"
 
 -- mixed-collecting-parameter [variadic-calls]: F(x, *y, z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
 def case_mixed_collecting_parameter : Expr :=
@@ -898,7 +903,7 @@ def case_list_builtin_collection : Expr :=
   .algorithmExpr (alg [] [] [] [.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])]])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 160 canonical Lean-guarded specification cases.
+-- 161 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -955,6 +960,7 @@ def specCaseIds : List String := [
   "variadic-forwarding-list-spread",
   "implicit-forwarding-source-kind",
   "variadic-receiver-distinction",
+  "dot-receiver-segment-supply",
   "mixed-collecting-parameter",
   "mixed-front-back-family",
   "collecting-minimum-arity",
@@ -1067,6 +1073,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 160
+#guard specCaseIds.length == 161
 
 end LanguageSpecCases

@@ -272,6 +272,25 @@ public static class AlgebraOracle
     public static (OracleVal Value, int Emitted) RootNonSpreadRow(OracleVal value, int boundaryCount) =>
         (value, boundaryCount == 0 ? 1 : boundaryCount);
 
+    /// <summary>
+    /// The evaluated top-level supply of an injected lexical dot-call receiver
+    /// segment holding a STORED value: a named property receiver evaluates at
+    /// its value boundary, so the segment supply is <see cref="ValueCount"/>
+    /// items — zero items for the empty sequence value, otherwise the one
+    /// stored value. (A WRITTEN inline group/block receiver instead emits its
+    /// raw row supply; matrix cases model that supply directly from the
+    /// written rows.) This is what a flat top-level collecting parameter
+    /// consumes when the receiver segment is allocated to it
+    /// (COLLECTOR_CONSUMES_ALLOCATED_SEGMENT_SUPPLY); fixed parameters bind
+    /// the segment's one value and ignore this view.
+    /// Lean: <c>collectVariadicCallItems</c> receiver segment
+    /// (<c>collectingSegmentCount?</c>) consumed by
+    /// <c>bindParameterPatternList</c> via <c>countedTopLevelValues</c>;
+    /// C#: <c>ParameterPatternInput.CollectingSegmentEmittedCount</c>.
+    /// </summary>
+    public static IReadOnlyList<OracleVal> StoredReceiverSegmentSupply(OracleVal value) =>
+        ValueCount(value) == 0 ? [] : [value];
+
     /// <summary>Neutral observation string for a successful single-row program, matching <c>ExplorerObservation.Neutral</c>.</summary>
     public static string OkNeutral(OracleVal value, int emitted) => $"ok raw={value.Neutral} n={emitted}";
 

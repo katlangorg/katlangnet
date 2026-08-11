@@ -943,7 +943,36 @@ public static class LanguageSpecCorpus
                 new SpecProbe("CountArgs(*items) = items.count\nCountArgs((10, 20)*)", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and the dotted receiver in `A.Inspect` is the same one slot — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). The old grouped/spread coincidence is intentionally gone.",
+            Explanation = "An unspread structure is one argument slot — `Inspect(A)` collects `[A]` (count 1) for lists and sequence values alike, and a NAMED dotted receiver `A.Inspect` supplies the same one item (a stored property receiver's segment supply is its value-boundary count) — while explicit spread supplies the immediate items (`Inspect(A*)` collects `[1, 2, 3]`, count 3). A WRITTEN group receiver is different: see `dot-receiver-segment-supply`.",
+        },
+        new()
+        {
+            Id = "dot-receiver-segment-supply",
+            Category = "variadic-calls",
+            Source = "Mean(*Vector) = Vector.sum / Vector.count\n\nMean(1, 2, 3)\n(1, 2, 3).Mean",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2\n2",
+            ExpectedRaw = "S[2, 2]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFnP("Mean", [LVar("Vector")],
+                    ".binary .div (.dotCall (.param \"Vector\") \"sum\" none) (.dotCall (.param \"Vector\") \"count\" none)")],
+                [LCall("Mean", LNums(1, 2, 3)),
+                 ".dotCall (.capture [.num 1, .num 2, .num 3]) \"Mean\" none"]),
+            Probes =
+            [
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\nMean(1, 2, 2.718)", "ok raw=1.906 n=1"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", "ok raw=1.906 n=1"),
+                new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Collect(*items) = items\n((1, 2)).Collect", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Collect(*items) = items\n().Collect", "ok raw=L[] n=1"),
+                new SpecProbe("Collect(*items) = items\n[1, 2].Collect", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Scale(*values, factor) = values, factor\n(1, 2, 3).Scale(10)", "ok raw=S[L[1, 2, 3], 10] n=1"),
+                new SpecProbe("F(first, *middle, last) = first\n(1, 2).F", "err arity"),
+                new SpecProbe("F(*middle, last) = middle, last\n(1, 2).F", "ok raw=S[L[], S[1, 2]] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A lexical dot-call receiver is ONE leading segment for arity checking and fixed prefix/suffix allocation — its item count never satisfies arity, and a fixed parameter binds the receiver as one value. A flat top-level collecting parameter that is allocated the segment consumes the segment's evaluated top-level supply: a WRITTEN group receiver supplies its raw rows (`(1, 2, 3).Mean` averages the three items; `((1, 2)).Collect` keeps the extra written boundary; `().Collect` supplies zero items), while exact lists stay opaque. Direct calls are unchanged: `Mean((1, 2, 3))` still collects one grouped argument.",
         },
         new()
         {
