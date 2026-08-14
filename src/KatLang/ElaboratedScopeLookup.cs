@@ -80,12 +80,12 @@ internal static class ElaboratedScopeLookup
             case Expr.Resolve(var name):
                 return TryLookupDirectLexicalProperty(scope, name)?.Property.Value;
 
-            case Expr.DotCall(var target, var name, null):
+            case Expr.DotCall dotCall when dotCall.IsCoreOpenForm():
             {
-                var targetAlgorithm = ResolveOpenTarget(scope, target);
+                var targetAlgorithm = ResolveOpenTarget(scope, dotCall.Target);
                 return targetAlgorithm is null
                     ? null
-                    : TryLookupPublicExportedProperty(targetAlgorithm, name)?.Property.Value;
+                    : TryLookupPublicExportedProperty(targetAlgorithm, dotCall.Name)?.Property.Value;
             }
 
             case Expr.SequenceSpread(var operand):

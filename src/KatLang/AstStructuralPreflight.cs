@@ -405,8 +405,25 @@ internal static class AstStructuralPreflight
                     return true;
                 }
 
+                index--;
+                // The elaborated lexical-fallback identity is an Expr child
+                // (Resolve/Param leaf for parser/front-end trees, but a
+                // host-built tree could place anything here), so it is
+                // enumerated for the same cycle/depth safety as every other
+                // reference the recursive consumers follow.
+                if (dotCall.LexicalFallback is { } lexicalFallback)
+                {
+                    if (index == 0)
+                    {
+                        child = lexicalFallback;
+                        return true;
+                    }
+
+                    index--;
+                }
+
                 if (dotCall.Args is { } dotArgs)
-                    return PickFromList(index - 1, dotArgs, out child);
+                    return PickFromList(index, dotArgs, out child);
 
                 child = null!;
                 return false;

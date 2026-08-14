@@ -4,7 +4,10 @@ namespace KatLang;
 /// Shared recursive KatLang AST walker.
 /// Override the visit hooks you care about; the default implementation walks
 /// all nested algorithms, expressions, patterns, declaration metadata, and
-/// nested scopes without using reflection.
+/// nested scopes without using reflection. It walks stored semantic children;
+/// source identifiers that are also represented by semantic aliases are
+/// surfaced once through identifier hooks rather than double-walked as two
+/// syntax occurrences (see <see cref="VisitDotCallLexicalFallback"/>).
 ///
 /// <para><b>Recursion contract:</b> traversal is RECURSIVE on the CLR stack by
 /// design (the virtual visit hooks fire in depth-first order), and it is
@@ -170,8 +173,21 @@ public abstract class AstWalker
                 break;
             case Expr.DotCall(var target, _, var args):
                 VisitExpr(target);
-                if (expr is Expr.DotCall dotCall && dotCall.MemberSpan is { } memberSpan)
-                    VisitDotMemberIdentifier(dotCall, memberSpan);
+                if (expr is Expr.DotCall dotCall)
+                {
+                    if (dotCall.MemberSpan is { } memberSpan)
+                        VisitDotMemberIdentifier(dotCall, memberSpan);
+                    if (dotCall.ExtensionMarkerSpan is { } extensionMarkerSpan)
+                        VisitExtensionDotMarker(dotCall, extensionMarkerSpan);
+                    // The elaborated lexical-fallback identity is a real child
+                    // (Resolve/Param for parser trees; a host-built tree could
+                    // place anything here), so it is walked like every other
+                    // reference the recursive consumers follow — in particular
+                    // the pre-evaluation validation walk must see algorithms a
+                    // hostile host tree hides inside it.
+                    if (dotCall.LexicalFallback is { } lexicalFallback)
+                        VisitDotCallLexicalFallback(dotCall, lexicalFallback);
+                }
                 if (args is not null)
                 {
                     foreach (var argExpr in args)
@@ -274,5 +290,29 @@ public abstract class AstWalker
     /// </summary>
     protected virtual void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span)
     {
+    }
+
+    /// <summary>
+    /// Visits the source-backed <c>~</c> marker belonging to one extension-dot
+    /// edge. The marker is source metadata for that edge, not an expression
+    /// child or a second member occurrence.
+    /// </summary>
+    protected virtual void VisitExtensionDotMarker(Expr.DotCall expr, SourceSpan span)
+    {
+    }
+
+    /// <summary>
+    /// Visits a dot-call's stored lexical-fallback identity. A well-formed
+    /// fallback is a <see cref="Expr.Resolve"/>/<see cref="Expr.Param"/> name
+    /// leaf whose one source occurrence is already surfaced through
+    /// <see cref="VisitDotMemberIdentifier"/>, so the default deliberately
+    /// does NOT re-walk it — that would double-count the member as a bare
+    /// identifier site. Any OTHER (host-built) expression is walked in full so
+    /// the pre-evaluation validation pass sees algorithms it may hide.
+    /// </summary>
+    protected virtual void VisitDotCallLexicalFallback(Expr.DotCall expr, Expr lexicalFallback)
+    {
+        if (lexicalFallback is not (Expr.Resolve or Expr.Param))
+            VisitExpr(lexicalFallback);
     }
 }

@@ -83,9 +83,11 @@ public class EvaluatorTests
             captureBody.Select(MakeAllPublicExpr).ToList()))
         { Span = expr.Span },
         Expr.Call(var f, var args) => new Expr.Call(MakeAllPublicExpr(f), MakeAllPublicArgs(args)) { Span = expr.Span },
-        Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
-            MakeAllPublicExpr(t), n, da is not null ? MakeAllPublicArgs(da) : null)
-        { Span = expr.Span },
+        Expr.DotCall dotCall => dotCall with
+        {
+            Target = MakeAllPublicExpr(dotCall.Target),
+            Args = dotCall.Args is { } dotArgs ? MakeAllPublicArgs(dotArgs) : null,
+        },
         Expr.Binary(var op, var l, var r) => new Expr.Binary(op, MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
         Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
@@ -4330,7 +4332,7 @@ public class EvaluatorTests
             new Algorithm.Builtin(BuiltinId.@count));
 
         var services = new SequencePipelineEvaluationServices(
-            GetDotCallLexicalBuiltinFallbackReason: (_, _, _) => null,
+            GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("dot-receiver evaluation must not run for a plain call"),
             EvaluateSequenceIterationItems: _ =>
@@ -4382,10 +4384,10 @@ public class EvaluatorTests
 
         OutputBundle filterArgs = [new Expr.Resolve("BadPred")];
         var target = new Expr.DotCall(new Expr.Resolve("Data"), "filter", filterArgs);
-        var invocation = SequencePipelineInvocation.DotCall(target, "count", null);
+        var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(target, "count"));
 
         var services = new SequencePipelineEvaluationServices(
-            GetDotCallLexicalBuiltinFallbackReason: (_, _, _) => null,
+            GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
             {
                 dotReceiverEvalCount++;
@@ -4443,10 +4445,10 @@ public class EvaluatorTests
             [new Expr.Num(1m), new Expr.Num(10m)]);
         OutputBundle filterArgs = [new Expr.Resolve("BadPred")];
         var target = new Expr.DotCall(rangeSource, "filter", filterArgs);
-        var invocation = SequencePipelineInvocation.DotCall(target, "count", null);
+        var invocation = SequencePipelineInvocation.DotCall(new Expr.DotCall(target, "count"));
 
         var services = new SequencePipelineEvaluationServices(
-            GetDotCallLexicalBuiltinFallbackReason: (_, _, _) => null,
+            GetDotCallLexicalBuiltinFallbackReason: (_, _) => null,
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic dot-receiver iteration must not run for a direct range"),
             EvaluateSequenceIterationItems: _ =>

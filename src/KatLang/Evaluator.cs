@@ -306,23 +306,6 @@ public static class Evaluator
         return false;
     }
 
-    private static bool ConditionalBranchesDefineProperty(Algorithm alg, string name)
-    {
-        if (alg is not Algorithm.Conditional conditional)
-            return false;
-
-        foreach (var branch in conditional.Branches)
-        {
-            foreach (var prop in branch.Body.Properties)
-            {
-                if (prop.Name == name)
-                    return true;
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>
     /// Human-readable constructor kind for diagnostics.
     /// Lean: Expr.kind.
@@ -348,19 +331,6 @@ public static class Evaluator
         Expr.NativeCall => "nativeCall",
         _ => "unknown",
     };
-
-    /// <summary>
-    /// Predicate defining which expression forms are allowed in open position.
-    /// Only structural references to libraries are permitted. A Capture is NOT
-    /// an open form: a capture is a value boundary, never algorithm/namespace
-    /// identity, so `open (M)` fails open validation with BadOpenForm exactly
-    /// like a spread-marked target (the parser also rejects it in source; the
-    /// <see cref="ResolveAlgForOpen"/> capture arm covers dotted heads and
-    /// prebuilt ASTs).
-    /// Lean: Expr.isOpenForm.
-    /// </summary>
-    private static bool IsOpenForm(Expr e) => e is
-        Expr.AlgorithmExpr or Expr.Resolve or Expr.DotCall(_, _, null);
 
     /// <summary>
     /// Extract a descriptive name from an open expression for error messages.
@@ -446,8 +416,11 @@ public static class Evaluator
     private static ErrorContext CtxOpen(string key) => new OpenResolutionContext(key);
     private static ErrorContext CtxCall(CallDiagnosticName name, EvalCtx ctx) => new CallContext(name.Render(ctx));
     private static ErrorContext CtxProperty(string name) => new PropertyEvaluationContext(name);
-    private static ErrorContext CtxDotCall(Expr obj, string name, EvalCtx ctx)
-        => new DotCallContext(CallDiagnosticName.FromExpression(obj).Render(ctx), name);
+    private static ErrorContext CtxDotCall(Expr obj, string name, EvalCtx ctx, bool isExtension = false)
+        => new DotCallContext(CallDiagnosticName.FromExpression(obj).Render(ctx), name)
+        {
+            IsExtension = isExtension,
+        };
 
     // ── Error context helper ────────────────────────────────────────────────
 
@@ -479,9 +452,16 @@ public static class Evaluator
     /// with the context constructed only on the error path (see
     /// <see cref="WithCallCtx{T}"/>).
     /// </summary>
-    private static EvalResult<T> WithDotCallCtx<T>(Expr target, string name, EvalCtx ctx, EvalResult<T> result)
+    private static EvalResult<T> WithDotCallCtx<T>(Expr.DotCall dotCall, EvalCtx ctx, EvalResult<T> result)
         => result.IsError && !result.Error.IsResourceLimit
-            ? new EvalError.WithContext(CtxDotCall(target, name, ctx), result.Error) { Span = result.Error.Span }
+            ? new EvalError.WithContext(
+                CtxDotCall(
+                    dotCall.Target,
+                    dotCall.Name,
+                    ctx,
+                    isExtension: dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly),
+                result.Error)
+            { Span = result.Error.Span }
             : result;
 
     /// <summary>
@@ -629,7 +609,7 @@ public static class Evaluator
         // Validate all open expressions first (fail-fast with clear errors)
         foreach (var (key, openExpr) in deduped)
         {
-            if (!IsOpenForm(openExpr))
+            if (!openExpr.IsCoreOpenForm())
                 return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {key}");
         }
 
@@ -5475,11 +5455,14 @@ public static class Evaluator
                     return new EvalError.UnknownName(name) { Span = expr.Span };
                 }
 
-            case Expr.DotCall(var target, var propName, null):
-                return WithSpan(expr.Span, ResolveOpenPropAccess(target, propName, ctx));
+            case Expr.DotCall openDotCall when openDotCall.IsCoreOpenForm():
+                return WithSpan(expr.Span, ResolveOpenPropAccess(openDotCall.Target, openDotCall.Name, ctx));
 
             default:
-                // Not an open form — reject with informative error
+                // Not an open form — reject with informative error. An
+                // extension-dot target (`open A~.B`) lands here too: `open`
+                // consumes structural identity, and an extension edge bypasses
+                // structural lookup by definition.
                 return new EvalError.BadOpenForm($"{ExprKind(expr)}: {OpenExprName(expr)}") { Span = expr.Span };
         }
     }
@@ -5512,7 +5495,7 @@ public static class Evaluator
 
             return new EvalError.NotPublicProperty(OpenExprName(target), propName);
         }
-        if (ConditionalBranchesDefineProperty(targetResult.Value, propName))
+        if (targetResult.Value.DefinesConditionalBranchProperty(propName))
             return new EvalError.LocalOnlyProperty(OpenExprName(target), propName, PropertyExposure.LocalOnlyConditionalAlgorithm);
 
         return new EvalError.UnknownProperty(OpenExprName(target), propName);
@@ -6782,11 +6765,11 @@ public static class Evaluator
                         EvalZeroArgPropertyAccess(resolvedR.Value, ctx, valEnv));
                 }
 
-            case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
-                // Lean: eval (.dotCall o n argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
+            case Expr.DotCall dotCallExpr:
+                // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
                 // (the context — which renders the receiver's name — is built only on error).
-                return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
-                    EvalDotCall(dotTarget, dotName, dotArgs, ctx, valEnv)));
+                return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+                    EvalDotCall(dotCallExpr, ctx, valEnv)));
 
             case Expr.Call(var func, var callArgs):
                 return WithSpan(expr.Span,
@@ -6934,9 +6917,9 @@ public static class Evaluator
                             propertyR.Value.Value.ValueCount()));
                 }
 
-            case Expr.DotCall(var dotTarget, var dotName, var dotArgs):
-                return WithSpan(expr.Span, WithDotCallCtx(dotTarget, dotName, ctx,
-                    EvalDotCallCounted(dotTarget, dotName, dotArgs, ctx, valEnv)));
+            case Expr.DotCall dotCallExpr:
+                return WithSpan(expr.Span, WithDotCallCtx(dotCallExpr, ctx,
+                    EvalDotCallCounted(dotCallExpr, ctx, valEnv)));
 
             case Expr.Call(var func, var callArgs):
                 return WithSpan(expr.Span,
@@ -7789,7 +7772,7 @@ public static class Evaluator
 
     /// <summary>
     /// Evaluates dotCall: <c>a.f</c> or <c>a.f(args)</c>
-    /// Smart dispatch:
+    /// Smart dispatch (ORDINARY mode):
     /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
     /// 2. Structural property found (navigation-only):
     ///    - No args + 0-param → value access
@@ -7800,21 +7783,35 @@ public static class Evaluator
     /// value-based intrinsics are checked before lexical fallback.
     /// Structural property calls use the same higher-order binding logic as normal
     /// user-defined calls (both delegate to EvalUserCall).
+    /// EXTENSION mode (<c>a~.f</c> / <c>a.~f</c>) bypasses the intrinsic and
+    /// structural steps entirely: the member is a callable-name occurrence and
+    /// the stored lexical fallback is always invoked with the receiver as one
+    /// injected leading segment — the same fallback machinery, minus the
+    /// ordinary-dot structural precedence.
     /// Lean: evalDotCall.
     /// </summary>
     private static EvalResult<Result> EvalDotCall(
-        Expr target, string name, OutputBundle? argsOpt,
+        Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.DotCall(target, name, argsOpt),
+            SequencePipelineInvocation.DotCall(dotCall),
             ctx,
             valEnv,
             out var sequencePipelineR))
             return sequencePipelineR.IsError
                 ? sequencePipelineR.Error
                 : EvalResult<Result>.Ok(sequencePipelineR.Value.Value);
+
+        var target = dotCall.Target;
+        var name = dotCall.Name;
+        var argsOpt = dotCall.Args;
+
+        // Extension edge: structural member lookup and the dot-only string
+        // intrinsic are bypassed by design.
+        if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
+            return CallLexicalWithReceiver(dotCall, ctx, valEnv);
 
         // Lean: let targetAlg <- resolveAlg target ctx
         // Extension-property rule: if target is a value-producing expression (not an algorithm),
@@ -7831,20 +7828,20 @@ public static class Evaluator
             if (targetResult.Error is EvalError.NotAnAlgorithm)
             {
                 // Value-only target (e.g. numeric literal): check value-based intrinsics
-                if (name == "string")
+                if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 {
                     var val = Eval(target, ctx, valEnv);
                     if (val.IsError) return val.Error;
                     return ResultToString(ctx, val.Value);
                 }
-                return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
+                return CallLexicalWithReceiver(dotCall, ctx, valEnv);
             }
             return targetResult.Error;
         }
         var targetAlg = targetResult.Value;
 
         // Value-based intrinsic: "string" — evaluate algorithm output and convert
-        if (name == "string")
+        if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
             var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
@@ -7882,11 +7879,11 @@ public static class Evaluator
                 CallDiagnosticName.FromKnown(name));
         }
 
-        if (ConditionalBranchesDefineProperty(targetAlg, name))
+        if (targetAlg.DefinesConditionalBranchProperty(name))
             return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
 
         // Lexical fallback (receiver injection via CallLexicalWithReceiver)
-        return CallLexicalWithReceiver(name, target, argsOpt, ctx, valEnv);
+        return CallLexicalWithReceiver(dotCall, ctx, valEnv);
     }
 
     /// <summary>
@@ -8043,8 +8040,8 @@ public static class Evaluator
         out EvalResult<CountedResult> result)
     {
         var services = new SequencePipelineEvaluationServices(
-            GetDotCallLexicalBuiltinFallbackReason: (target, name, expectedBuiltin) =>
-                GetDotCallLexicalBuiltinFallbackReason(target, name, expectedBuiltin, ctx),
+            GetDotCallLexicalBuiltinFallbackReason: (stageDotCall, expectedBuiltin) =>
+                GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
             EvaluateSequenceIterationItems: collectionArgs => EvalSequenceIterationItems(collectionArgs, ctx, valEnv),
             ResolveArgumentAlgorithms: args => ResolveArgAlgs(args, ctx, valEnv),
@@ -8131,22 +8128,80 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Non-Resolve lexical-fallback dispatch: resolve the dot edge's STORED
+    /// fallback identity (normally <see cref="Expr.Param"/>; an invalid
+    /// host-built expression follows its ordinary <c>ResolveAlg</c> behavior)
+    /// and call with
+    /// the receiver as one injected leading segment. This is pure consumption
+    /// of the front-end's Param-vs-Resolve decision — no runtime environment
+    /// is probed to reconstruct it. Kept out of
+    /// <see cref="CallLexicalWithReceiver"/> so its temporaries never enlarge
+    /// that recursive frame (native stack-margin calibration).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<Result> CallLexicalFallbackCalleeWithReceiver(
+        Expr.DotCall dotCall,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        return EvalResolvedCall(
+            calleeR.Value,
+            BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromKnown(dotCall.Name),
+            CallArgumentAssembly.InjectedDotReceiverLeading);
+    }
+
+    /// <summary>
+    /// Counted twin of <see cref="CallLexicalFallbackCalleeWithReceiver"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> CallLexicalFallbackCalleeWithReceiverCounted(
+        Expr.DotCall dotCall,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
+        if (calleeR.IsError) return calleeR.Error;
+        return EvalResolvedCallCounted(
+            calleeR.Value,
+            BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
+            ctx,
+            valEnv,
+            CallDiagnosticName.FromKnown(dotCall.Name),
+            CallArgumentAssembly.InjectedDotReceiverLeading);
+    }
+
+    /// <summary>
     /// Check whether a dot call would fall through to a specific lexical
-    /// builtin after structural shadowing rules are applied.
+    /// builtin after structural shadowing rules are applied. The elaborated
+    /// dot-edge facts are CONSUMED from the node: an extension edge or a
+    /// non-Resolve (parameter-bound) fallback never dispatches through the
+    /// ordinary-dot sequence-builtin view, so fusion must fall back to the
+    /// generic path for those edges — no runtime environment is probed.
     /// </summary>
     private static string? GetDotCallLexicalBuiltinFallbackReason(
-        Expr target,
-        string name,
+        Expr.DotCall dotCall,
         BuiltinId expectedBuiltin,
         EvalCtx ctx)
     {
-        var targetResult = ResolveAlg(target, ctx);
+        var name = dotCall.Name;
+        if (dotCall.ResolutionMode != DotResolutionMode.Ordinary)
+            return $"{name} uses extension-call resolution";
+
+        if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
+            return $"{name} is bound as a parameter in the calling context";
+
+        var targetResult = ResolveAlg(dotCall.Target, ctx);
         if (targetResult.IsOk)
         {
             if (LookupPropBinding(targetResult.Value, name) is not null)
                 return $"{name} is shadowed by a structural property";
 
-            if (ConditionalBranchesDefineProperty(targetResult.Value, name))
+            if (targetResult.Value.DefinesConditionalBranchProperty(name))
                 return $"{name} is shadowed by a conditional structural property";
         }
         else if (targetResult.Error is not EvalError.NotAnAlgorithm)
@@ -8154,7 +8209,7 @@ public static class Evaluator
             return $"{name} receiver resolution failed";
         }
 
-        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
+        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
         if (calleeR.IsError
             || calleeR.Value is not Algorithm.Builtin(var builtin)
             || builtin != expectedBuiltin)
@@ -8166,49 +8221,78 @@ public static class Evaluator
     }
 
     private static EvalResult<Result> CallLexicalWithReceiver(
-        string name, Expr receiver, OutputBundle? extraArgs,
+        Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(name, receiver, extraArgs, ctx, valEnv);
-        if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
-        if (sequenceDotCallR.Value is { } sequenceDotCall)
-            return ApplyBuiltinResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
+        // The STORED lexical-fallback identity decides the callee channel —
+        // the front-end's Param-vs-Resolve decision is CONSUMED here, never
+        // reconstructed from runtime environments. A Param fallback (or any
+        // non-Resolve host-built expression) resolves through canonical
+        // ResolveAlg out of line, so a parameter shadows a same-name builtin
+        // exactly as in plain-call position; the dispatch stays out of line so
+        // its temporaries never enlarge this recursive dot-chain frame
+        // (native stack-margin calibration; see the near-boundary dot-call
+        // chain pin in AstStructuralDepthProcessTests).
+        if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
+            return CallLexicalFallbackCalleeWithReceiver(dotCall, ctx, valEnv);
 
-        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
+        // The ordinary-dot sequence-builtin receiver view applies only to
+        // ORDINARY edges: an extension edge is the plain lexical call
+        // `F(receiver, ...)`, so its receiver takes the ordinary written
+        // argument boundary through EvalResolvedCall below.
+        if (dotCall.ResolutionMode == DotResolutionMode.Ordinary)
+        {
+            var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(fallbackName, dotCall.Target, dotCall.Args, ctx, valEnv);
+            if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
+            if (sequenceDotCallR.Value is { } sequenceDotCall)
+                return ApplyBuiltinResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
+        }
+
+        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var combinedArgs = BuildLexicalReceiverCallArgs(receiver, extraArgs);
+        var combinedArgs = BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args);
         return EvalResolvedCall(
             calleeR.Value,
             combinedArgs,
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(name),
+            CallDiagnosticName.FromKnown(fallbackName),
             CallArgumentAssembly.InjectedDotReceiverLeading);
     }
 
     /// <summary>
     /// Counted dotCall evaluation for <c>reduce</c> step validation.
+    /// Mirrors <see cref="EvalDotCall"/>, including the extension-edge bypass.
     /// Lean: <c>evalDotCallCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalDotCallCounted(
-        Expr target, string name, OutputBundle? argsOpt,
+        Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
         if (TryEvaluateSequencePipeline(
-            SequencePipelineInvocation.DotCall(target, name, argsOpt),
+            SequencePipelineInvocation.DotCall(dotCall),
             ctx,
             valEnv,
             out var sequencePipelineR))
             return sequencePipelineR;
+
+        var target = dotCall.Target;
+        var name = dotCall.Name;
+        var argsOpt = dotCall.Args;
+
+        // Extension edge: structural member lookup and the dot-only string
+        // intrinsic are bypassed by design.
+        if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
+            return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
 
         var targetResult = ResolveAlg(target, ctx);
         if (targetResult.IsError)
         {
             if (targetResult.Error is EvalError.NotAnAlgorithm)
             {
-                if (name == "string")
+                if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 {
                     var val = Eval(target, ctx, valEnv);
                     if (val.IsError) return val.Error;
@@ -8216,7 +8300,7 @@ public static class Evaluator
                     if (outR.IsError) return outR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
                 }
-                return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);
+                return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
             }
 
             return targetResult.Error;
@@ -8224,7 +8308,7 @@ public static class Evaluator
 
         var targetAlg = targetResult.Value;
 
-        if (name == "string")
+        if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
             var val = EvalAlgOutput(targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
@@ -8262,10 +8346,10 @@ public static class Evaluator
                 CallDiagnosticName.FromKnown(name));
         }
 
-        if (ConditionalBranchesDefineProperty(targetAlg, name))
+        if (targetAlg.DefinesConditionalBranchProperty(name))
             return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
 
-        return CallLexicalWithReceiverCounted(name, target, argsOpt, ctx, valEnv);
+        return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
     }
 
     /// <summary>
@@ -8274,24 +8358,31 @@ public static class Evaluator
     /// Lean: <c>callLexicalWithReceiverCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> CallLexicalWithReceiverCounted(
-        string name, Expr receiver, OutputBundle? extraArgs,
+        Expr.DotCall dotCall,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(name, receiver, extraArgs, ctx, valEnv);
-        if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
-        if (sequenceDotCallR.Value is { } sequenceDotCall)
-            return ApplyBuiltinCountedResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
+        // Stored-fallback consumption — see CallLexicalWithReceiver.
+        if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
+            return CallLexicalFallbackCalleeWithReceiverCounted(dotCall, ctx, valEnv);
 
-        var calleeR = ResolveNamedAlgorithm(name, span: null, ctx);
+        if (dotCall.ResolutionMode == DotResolutionMode.Ordinary)
+        {
+            var sequenceDotCallR = TryBuildSequenceBuiltinDotCall(fallbackName, dotCall.Target, dotCall.Args, ctx, valEnv);
+            if (sequenceDotCallR.IsError) return sequenceDotCallR.Error;
+            if (sequenceDotCallR.Value is { } sequenceDotCall)
+                return ApplyBuiltinCountedResolved(sequenceDotCall.Builtin, sequenceDotCall.Args, ctx, valEnv);
+        }
+
+        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
         if (calleeR.IsError) return calleeR.Error;
-        var combinedArgs = BuildLexicalReceiverCallArgs(receiver, extraArgs);
+        var combinedArgs = BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args);
         return EvalResolvedCallCounted(
             calleeR.Value,
             combinedArgs,
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(name),
+            CallDiagnosticName.FromKnown(fallbackName),
             CallArgumentAssembly.InjectedDotReceiverLeading);
     }
 

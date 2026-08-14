@@ -100,7 +100,7 @@ internal static class SequencePipelineOptimizer
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        if (!CountResolvesToBuiltin(invocation, ctx))
+        if (!CountResolvesToBuiltin(invocation, services))
         {
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "count does not resolve to builtin");
             return FilterCountRecognitionStatus.Fallback;
@@ -326,9 +326,11 @@ internal static class SequencePipelineOptimizer
             return FilterCountRecognitionStatus.Fallback;
         }
 
+        // The probe consumes the ORIGINAL filter dot-edge node, so the
+        // elaborated facts (resolution mode, lexical-fallback identity) gate
+        // fusion exactly as they gate generic dispatch.
         var filterLookupFallbackReason = services.GetDotCallLexicalBuiltinFallbackReason(
-            syntax.Source,
-            BuiltinId.@filter.ToString(),
+            (Expr.DotCall)syntax.FilterExpression,
             BuiltinId.@filter);
         if (filterLookupFallbackReason is not null)
         {
@@ -749,13 +751,17 @@ internal static class SequencePipelineOptimizer
 
     private static bool CountResolvesToBuiltin(
         SequencePipelineInvocation invocation,
-        Evaluator.EvalCtx ctx)
+        SequencePipelineEvaluationServices services)
         => invocation.Kind switch
         {
-            SequencePipelineInvocationKind.DotCall => Evaluator.ResolvesToBuiltinAlgorithm(
-                BuiltinId.@count.ToString(),
-                BuiltinId.@count,
-                ctx),
+            // The dot form probes through the shared evaluator legality check
+            // on the ORIGINAL count dot-edge node, so fusion observes exactly
+            // the generic dispatch: an extension edge or a parameter-bound
+            // member falls back to the generic path, which resolves the stored
+            // fallback identity instead of the builtin.
+            SequencePipelineInvocationKind.DotCall => services.GetDotCallLexicalBuiltinFallbackReason(
+                invocation.Dot!,
+                BuiltinId.@count) is null,
             SequencePipelineInvocationKind.PlainCall => invocation.PlainCallee is { } callee
                 && IsBuiltin(callee, BuiltinId.@count),
             _ => false,

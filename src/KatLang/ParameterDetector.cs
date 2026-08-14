@@ -215,16 +215,20 @@ public static class ParameterDetector
                     captureBody.Select(row => ProcessExpr(row, openParentScope, [])).ToList()))
                 { Span = expr.Span };
 
-            case Expr.DotCall(var target, var name, var args):
-                return new Expr.DotCall(
-                    ProcessOpenExpr(target, openParentScope, diagnostics),
-                    name,
-                    args is not null
-                        ? new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())
-                        : null)
+            case Expr.DotCall dotCall:
+                // `with` keeps the stored dot-edge facts (member span,
+                // resolution mode, marker span). Open targets are ordinary
+                // structural paths, so the fallback identity is inert here,
+                // but the detector is the normalization owner: every DotCall
+                // it emits carries an EXPLICIT fallback (null is only a
+                // host-construction shorthand for Resolve(Name)).
+                return dotCall with
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan,
+                    Target = ProcessOpenExpr(dotCall.Target, openParentScope, diagnostics),
+                    Args = dotCall.Args is { } dotArgs
+                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())
+                        : null,
+                    LexicalFallback = dotCall.EffectiveLexicalFallback,
                 };
 
             case Expr.SequenceSpread(var operand):
@@ -423,23 +427,27 @@ public static class ParameterDetector
                     items.Select(item => RewriteBinderRefs(item, binderNames, scope, capturedParamNames)).ToList())
                 { Span = expr.Span };
 
-            case Expr.DotCall(var target, var name, null):
-                return new Expr.DotCall(
-                    RewriteBinderRefs(target, binderNames, scope, capturedParamNames),
-                    name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
-
-            case Expr.DotCall(var target, var name, var dotArgs):
+            case Expr.DotCall dotCall:
             {
-                var rewrittenTarget = RewriteBinderRefs(target, binderNames, scope, capturedParamNames);
                 // Argument bundles own no scope: slots rewrite in the enclosing
-                // binder scope, exactly like capture rows.
-                var rewrittenArgs = new List<Expr>(dotArgs.Count);
-                foreach (var argExpr in dotArgs)
-                    rewrittenArgs.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
-                return new Expr.DotCall(rewrittenTarget, name, new OutputBundle(rewrittenArgs))
+                // binder scope, exactly like capture rows. The stored
+                // lexical-fallback identity rewrites by the SAME rule as a bare
+                // callee name (Resolve → Param when the member is a known
+                // binder), for BOTH resolution modes.
+                OutputBundle? rewrittenArgs = null;
+                if (dotCall.Args is { } dotArgs)
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    var rewrittenSlots = new List<Expr>(dotArgs.Count);
+                    foreach (var argExpr in dotArgs)
+                        rewrittenSlots.Add(RewriteBinderRefs(argExpr, binderNames, scope, capturedParamNames));
+                    rewrittenArgs = new OutputBundle(rewrittenSlots);
+                }
+
+                return dotCall with
+                {
+                    Target = RewriteBinderRefs(dotCall.Target, binderNames, scope, capturedParamNames),
+                    Args = rewrittenArgs,
+                    LexicalFallback = RewriteBinderRefs(dotCall.EffectiveLexicalFallback, binderNames, scope, capturedParamNames),
                 };
             }
 
@@ -553,13 +561,19 @@ public static class ParameterDetector
                     CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
 
-            case Expr.DotCall(var target, _, null):
-                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                break;
-
-            case Expr.DotCall(var target, _, var dotArgs):
-                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                if (dotArgs is not null)
+            case Expr.DotCall dotCall:
+                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                // EXTENSION dot (`a~.t` / `a.~t`): the member is a
+                // callable-name occurrence and participates in ordinary
+                // free-name analysis through its stored lexical-fallback
+                // identity, so `K = a~.t` infers the same parameters as
+                // `K = t(a)`. ORDINARY dot deliberately contributes nothing
+                // here: the member may be a structural property of the runtime
+                // receiver, so it never becomes an implicit parameter merely
+                // because a lexical fallback path exists.
+                if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
+                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                if (dotCall.Args is { } dotArgs)
                     CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
                 break;
 
@@ -702,23 +716,28 @@ public static class ParameterDetector
                     items.Select(item => RewriteParams(item, paramNames, scope, capturedParamNames)).ToList())
                 { Span = expr.Span };
 
-            case Expr.DotCall(var target, var name, null):
-                return new Expr.DotCall(
-                    RewriteParams(target, paramNames, scope, capturedParamNames),
-                    name) { Span = expr.Span, MemberSpan = ((Expr.DotCall)expr).MemberSpan };
-
-            case Expr.DotCall(var target, var name, var dotArgs):
+            case Expr.DotCall dotCall:
             {
-                var rewrittenTarget = RewriteParams(target, paramNames, scope, capturedParamNames);
                 // Argument bundles own no scope: slots rewrite in the enclosing
-                // param context.
-                var rewrittenArgs = new List<Expr>(dotArgs.Count);
-                foreach (var argExpr in dotArgs)
-                    rewrittenArgs.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
-                return new Expr.DotCall(rewrittenTarget, name, new OutputBundle(rewrittenArgs))
+                // param context. The stored lexical-fallback identity rewrites
+                // by the SAME rule as a bare callee name (Resolve → Param when
+                // the member is a known local or captured parameter), for BOTH
+                // resolution modes: ordinary dot rewrites already-known
+                // parameters here without ever collecting new ones.
+                OutputBundle? rewrittenArgs = null;
+                if (dotCall.Args is { } dotArgs)
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    var rewrittenSlots = new List<Expr>(dotArgs.Count);
+                    foreach (var argExpr in dotArgs)
+                        rewrittenSlots.Add(RewriteParams(argExpr, paramNames, scope, capturedParamNames));
+                    rewrittenArgs = new OutputBundle(rewrittenSlots);
+                }
+
+                return dotCall with
+                {
+                    Target = RewriteParams(dotCall.Target, paramNames, scope, capturedParamNames),
+                    Args = rewrittenArgs,
+                    LexicalFallback = RewriteParams(dotCall.EffectiveLexicalFallback, paramNames, scope, capturedParamNames),
                 };
             }
 
@@ -792,15 +811,16 @@ public static class ParameterDetector
             Expr.ListLiteral(var items) => new Expr.ListLiteral(
                 items.Select(item => ProcessExpr(item, scope, capturedParamNames)).ToList())
             { Span = expr.Span },
-            Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
-                ProcessExpr(t, scope, capturedParamNames),
-                n,
-                da is not null
-                    ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames)).ToList())
-                    : null)
+            // The detector is the normalization owner: every DotCall it emits
+            // carries an EXPLICIT fallback identity (null is only a
+            // host-construction shorthand for Resolve(Name)).
+            Expr.DotCall dotCall => dotCall with
             {
-                Span = expr.Span,
-                MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                Target = ProcessExpr(dotCall.Target, scope, capturedParamNames),
+                Args = dotCall.Args is { } da
+                    ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames)).ToList())
+                    : null,
+                LexicalFallback = dotCall.EffectiveLexicalFallback,
             },
             _ => expr,
         };
@@ -845,7 +865,11 @@ public static class ParameterDetector
             Expr.SequenceConstruct(var l, var r) => FindResolveSpan(l, name) ?? FindResolveSpan(r, name),
             Expr.SequenceSpread(var operand) => FindResolveSpan(operand, name),
             Expr.ListLiteral(var items) => FindResolveSpan(items, name),
-            Expr.DotCall(var t, _, var da) => FindResolveSpan(t, name) ?? (da is not null ? FindResolveSpan(da, name) : null),
+            Expr.DotCall d => FindResolveSpan(d.Target, name)
+                ?? (d.ResolutionMode == DotResolutionMode.ExtensionOnly
+                    ? FindResolveSpan(d.EffectiveLexicalFallback, name)
+                    : null)
+                ?? (d.Args is not null ? FindResolveSpan(d.Args, name) : null),
             Expr.AlgorithmExpr(var alg) => FindResolveSpan(alg.Output, name),
             Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name),
             Expr.Call(var f, var args) => FindResolveSpan(f, name) ?? FindResolveSpan(args, name),

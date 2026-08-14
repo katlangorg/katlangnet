@@ -1183,7 +1183,10 @@ public class AstStructuralDepthTests
             ["SequenceConstruct"] = ["Left", "Right"],
             ["SequenceSpread"] = ["Operand"],
             ["ListLiteral"] = ["Items"],
-            ["DotCall"] = ["Target", "Args"],
+            // LexicalFallback is enumerated by TryGetChild; EffectiveLexicalFallback
+            // is a computed view over it (LexicalFallback ?? Resolve(Name)) and
+            // introduces no additional stored reachability.
+            ["DotCall"] = ["Target", "Args", "LexicalFallback", "EffectiveLexicalFallback"],
             ["Grace"] = ["Inner"],
             ["AlgorithmExpr"] = ["Algorithm"],
             ["Capture"] = ["Body"],
@@ -1871,6 +1874,17 @@ public class AstStructuralDepthProcessTests
             AssertFlatValue(DotCallChain(links: (max - 3) / 3, extraUnary: 1), -1m);              // depth max - 1
             AssertDepthRejected(DotCallChain(links: max / 3, extraUnary: 0));                     // 300 + 1 = max + 1
 
+            // An EXTENSION-dot chain (`~.`) is the same AST shape with the same
+            // per-link weight: the preflight gate accepts it at the boundary and
+            // rejects it one link above, exactly like the ordinary chain. (The
+            // member is a builtin name here, so at the boundary the extension
+            // edge takes the plain builtin-call path — deeper per link than the
+            // ordinary sequence-builtin view — and legitimately stops at the
+            // established runtime backstop; the DEPTH gate boundary is the
+            // shared invariant being pinned.)
+            AssertDepthGateBoundary(ExtensionDotCallChain(links: (max - 3) / 3, extraUnary: 2));
+            AssertDepthRejected(ExtensionDotCallChain(links: max / 3, extraUnary: 0));
+
             // ── Parser-produced source reaching the same evaluation boundary ─
             // The parser's own chain guard caps a flat chain at 256 operators
             // (depth 259 through the engine), so the boundary is reached by bracket
@@ -2005,6 +2019,31 @@ public class AstStructuralDepthProcessTests
             for (var i = 0; i < extraUnary; i++)
                 expr = new Expr.Unary(UnaryOp.Minus, expr);
             return expr;
+        }
+
+        static Expr ExtensionDotCallChain(int links, int extraUnary)
+        {
+            Expr expr = new Expr.Num(1);
+            for (var i = 0; i < links; i++)
+                expr = new Expr.DotCall(expr, "count", null)
+                {
+                    LexicalFallback = new Expr.Resolve("count"),
+                    ResolutionMode = DotResolutionMode.ExtensionOnly,
+                    ExtensionMarkerSpan = new SourceSpan(1, 1, 1, 1),
+                };
+            for (var i = 0; i < extraUnary; i++)
+                expr = new Expr.Unary(UnaryOp.Minus, expr);
+            return expr;
+        }
+
+        // The at-boundary extension chain passes the structural depth gate (no
+        // AstDepthLimitExceeded); its runtime outcome may be the value or the
+        // established stack backstop, never a structural rejection.
+        static void AssertDepthGateBoundary(Expr expr)
+        {
+            var result = Evaluator.RunFlat(expr);
+            if (result.IsError)
+                Assert.IsNotType<EvalError.AstDepthLimitExceeded>(result.Error);
         }
 
         static string BracketChainSource(int brackets)

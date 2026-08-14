@@ -269,14 +269,15 @@ public static class ImplicitArgumentResolver
                     Span = expr.Span,
                 };
 
-            case Expr.DotCall(var target, var name, var args):
-                return new Expr.DotCall(
-                    ProcessOpenExpr(target),
-                    name,
-                    args is not null ? ProcessArgumentBundle(args, new Dictionary<string, CallableSignature>()) : null)
+            case Expr.DotCall dotCall:
+                // `with` keeps the stored dot-edge facts (member span, lexical
+                // fallback, resolution mode, marker span) intact.
+                return dotCall with
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan,
+                    Target = ProcessOpenExpr(dotCall.Target),
+                    Args = dotCall.Args is { } dotArgs
+                        ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>())
+                        : null,
                 };
 
             case Expr.SequenceSpread(var operand):
@@ -559,18 +560,21 @@ public static class ImplicitArgumentResolver
                     CollectImplicitDeps(item, paramMap, seen, deps, false);
                 break;
 
-            case Expr.DotCall(var target, var name, var dotArgs):
+            case Expr.DotCall dotCall:
                 if (!inCallPosition
-                    && TryGetBareBuiltinCallableSignature(expr, paramMap, out var callableKey, out var signature))
+                    && TryGetBareBuiltinCallableSignature(dotCall, paramMap, out var callableKey, out var signature))
                 {
                     if (seen.Add(callableKey))
                         deps.Add((callableKey, signature));
                 }
 
                 // DotCall target is in algorithm position (resolveAlg, not eval).
-                CollectImplicitDeps(target, paramMap, seen, deps, inCallPosition: true);
-                if (dotArgs is not null && IsMathValueDotCall(target, name))
+                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: true);
+                if (dotCall.Args is { } dotArgs
+                    && dotCall.HasRegistryProvenStrictValueArguments())
+                {
                     CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps);
+                }
                 break;
 
             case Expr.Grace(var inner, _):
@@ -695,28 +699,24 @@ public static class ImplicitArgumentResolver
                 }
 
                 var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(builtinSignature.ParameterPatterns, callerParameterPatterns, sourceBindingKinds));
-                return new Expr.DotCall(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
-                    name,
-                    liftedDotArgs)
+                return ((Expr.DotCall)expr) with
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    Target = RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    Args = liftedDotArgs,
                 };
 
-            case Expr.DotCall(var target, var name, var dotArgs):
+            case Expr.DotCall dotCall:
                 // DotCall target is in algorithm position (resolveAlg, not eval).
-                return new Expr.DotCall(
-                    RewriteImplicitCalls(target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
-                    name,
-                    dotArgs is not null
-                        ? IsMathValueDotCall(target, name)
+                // The stored lexical fallback is a Resolve/Param leaf and needs
+                // no implicit-call rewriting; `with` carries it forward.
+                return dotCall with
+                {
+                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, callerParameterPatterns, sourceBindingKinds, inCallPosition: true, requireExistingParameters, existingParameterNames),
+                    Args = dotCall.Args is { } dotArgs
+                        ? dotCall.HasRegistryProvenStrictValueArguments()
                             ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap)
                             : ProcessArgumentBundle(dotArgs, paramMap)
-                        : null)
-                {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                        : null,
                 };
 
             case Expr.Grace(var inner, _):
@@ -761,7 +761,7 @@ public static class ImplicitArgumentResolver
     /// is a property of the consumer, not of the argument.
     ///
     /// <para>The current value-demanding consumer is the Math member family
-    /// (<see cref="IsMathValueDotCall"/>): the builtin registry proves every
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments"/>): the builtin registry proves every
     /// Math member consumes strictly numeric values, so no higher-order
     /// channel exists to preserve. Other strict builtins (<c>sum</c>,
     /// <c>count</c>, ...) do NOT currently receive value-context lifting —
@@ -781,17 +781,22 @@ public static class ImplicitArgumentResolver
         return new OutputBundle(rewritten);
     }
 
-    private static bool IsMathValueDotCall(Expr target, string name)
-        => target is Expr.Resolve { Name: "Math" }
-            && BuiltinRegistry.IsMathFunctionMember(name);
-
     private static bool TryGetBareBuiltinCallableSignature(
         Expr expr,
         Dictionary<string, CallableSignature> paramMap,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? callableKey,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
     {
-        if (expr is Expr.DotCall(Expr.Resolve { Name: var ownerName }, var memberName, null)
+        // Ordinary dot only: an extension edge (`Math~.Pow`) bypasses the
+        // structural registry surface entirely — by the extension law it is
+        // the plain call `Pow(Math)` — so bare-builtin lifting never applies.
+        if (expr is Expr.DotCall
+            {
+                Target: Expr.Resolve { Name: var ownerName },
+                Name: var memberName,
+                Args: null,
+                ResolutionMode: DotResolutionMode.Ordinary,
+            }
             && !paramMap.ContainsKey(ownerName)
             && BuiltinRegistry.TryGetBuiltinCallableSignature(ownerName, memberName, out signature)
             && signature.Parameters.Count > 0)
@@ -844,13 +849,14 @@ public static class ImplicitArgumentResolver
             Expr.ListLiteral(var items) => new Expr.ListLiteral(
                 items.Select(item => ProcessExprNested(item, paramMap)).ToList())
             { Span = expr.Span },
-            Expr.DotCall(var t, var n, var da) => new Expr.DotCall(
-                ProcessExprNested(t, paramMap),
-                n,
-                da is not null ? ProcessArgumentBundle(da, paramMap) : null)
+            // `with` keeps the stored dot-edge facts (member span, lexical
+            // fallback, resolution mode, marker span) — a positional rebuild
+            // here silently degraded extension edges inside argument bundles,
+            // capture rows, and list elements to ordinary dots.
+            Expr.DotCall dotCall => dotCall with
             {
-                Span = expr.Span,
-                MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                Target = ProcessExprNested(dotCall.Target, paramMap),
+                Args = dotCall.Args is { } da ? ProcessArgumentBundle(da, paramMap) : null,
             },
             Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap),
             _ => expr,

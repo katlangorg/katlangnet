@@ -390,7 +390,7 @@ public static class SemanticModelBuilder
                     break;
                 }
 
-                case Expr.DotCall dotCall when dotCall.Args is null:
+                case Expr.DotCall dotCall when dotCall.IsCoreOpenForm():
                 {
                     var targetAlgorithm = VisitOpenExpressionAndResolve(dotCall.Target, scope);
                     var memberSymbol = targetAlgorithm is null ? null : TryResolvePublicProperty(targetAlgorithm, dotCall.Name);
@@ -555,15 +555,19 @@ public static class SemanticModelBuilder
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
         {
-            if (dotCall.Name == "string")
+            // EXTENSION edge (`a~.t` / `a.~t`): structural lookup and the
+            // string intrinsic are bypassed by the language rule — the member
+            // is exactly its stored lexical-fallback binding.
+            if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
+                return ResolveDotMemberFallbackBinding(dotCall, scope);
+
+            if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
-            if (TryResolveLexicalFallbackOnParameterReceiver(dotCall.Target, dotCall.Name, scope) is { } parameterFallback)
-                return (ClassifyReferenceSymbol(parameterFallback), parameterFallback.Declaration, GetDotMemberPropertyInfo(parameterFallback));
-
-            var targetAlgorithm = TryResolveAlgorithmValue(dotCall.Target, scope);
-            if (targetAlgorithm is not null)
+            var provider = ResolveStructuralMemberProvider(dotCall.Target, scope);
+            if (provider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm)
             {
+                var targetAlgorithm = provider.Algorithm!;
                 if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
                 {
                     if (declaredProperty.PropertyInfo?.IsExported == true)
@@ -572,22 +576,57 @@ public static class SemanticModelBuilder
                     return (IdentifierClassification.Unresolved, null, null);
                 }
 
-                if (ConditionalBranchesDefineProperty(targetAlgorithm, dotCall.Name))
+                if (targetAlgorithm.DefinesConditionalBranchProperty(dotCall.Name))
                     return (IdentifierClassification.Unresolved, null, null);
 
-                if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexicalFallback)
-                    return (ClassifyReferenceSymbol(lexicalFallback), lexicalFallback.Declaration, GetDotMemberPropertyInfo(lexicalFallback));
-
-                return (IdentifierClassification.Unresolved, null, null);
+                return ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
-            if (!AllowsExactLexicalFallback(dotCall.Target))
-                return (IdentifierClassification.Unresolved, null, null);
+            return provider.Kind switch
+            {
+                // A runtime parameter may or may not carry a structural
+                // algorithm. The editor surfaces the stored fallback as the
+                // possible callable binding, matching its long-standing
+                // optimistic parameter-receiver policy; exposure analysis
+                // separately requires an unconditional fallback.
+                StaticStructuralMemberProviderKind.RuntimeParameter =>
+                    ResolveDotMemberFallbackBinding(dotCall, scope),
+                StaticStructuralMemberProviderKind.DefinitelyAbsent =>
+                    ResolveDotMemberFallbackBinding(dotCall, scope),
+                StaticStructuralMemberProviderKind.LexicalReference =>
+                    (IdentifierClassification.Unresolved, null, null),
+                _ => throw new InvalidOperationException(
+                    $"Unhandled structural-member provider kind: {provider.Kind}"),
+            };
+        }
 
-            if (ResolveLexicalProperty(scope, dotCall.Name) is { } lexical)
-                return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetDotMemberPropertyInfo(lexical));
+        /// <summary>
+        /// Dot-member lexical-fallback classification, CONSUMING the dot
+        /// edge's stored fallback identity: a <see cref="Expr.Param"/>
+        /// fallback navigates to the parameter declaration through the
+        /// ordinary parameter frames, and a <see cref="Expr.Resolve"/>
+        /// fallback keeps ordinary lexical/property/open/prelude resolution
+        /// under ITS OWN identifier. The front-end decided Param-vs-Resolve
+        /// once; no shadow-precedence algorithm is re-run here, and
+        /// <c>DotCall.Name</c> is never used for lexical resolution.
+        /// </summary>
+        private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMemberFallbackBinding(Expr.DotCall dotCall, ScopeFrame scope)
+        {
+            switch (dotCall.EffectiveLexicalFallback)
+            {
+                case Expr.Param(var parameterName):
+                {
+                    var parameterSymbol = ResolveParameter(scope, parameterName);
+                    return (ClassifyParameterSymbol(parameterSymbol), parameterSymbol?.Declaration, null);
+                }
 
-            return (IdentifierClassification.Unresolved, null, null);
+                case Expr.Resolve(var fallbackName)
+                    when ResolveLexicalProperty(scope, fallbackName) is { } lexical:
+                    return (ClassifyReferenceSymbol(lexical), lexical.Declaration, GetDotMemberPropertyInfo(lexical));
+
+                default:
+                    return (IdentifierClassification.Unresolved, null, null);
+            }
         }
 
         private static PropertyInfo? GetDotMemberPropertyInfo(SymbolDefinition symbol)
@@ -626,60 +665,21 @@ public static class SemanticModelBuilder
                     ? algorithm
                     : null;
 
-        private Algorithm? TryResolveAlgorithmValue(Expr expr, ScopeFrame scope)
+        private StaticStructuralMemberProvider ResolveStructuralMemberProvider(Expr expr, ScopeFrame scope)
         {
-            switch (expr)
+            var provider = expr.GetStaticStructuralMemberProvider();
+            if (provider.Kind != StaticStructuralMemberProviderKind.LexicalReference)
+                return provider;
+
+            if (expr is Expr.Resolve(var name)
+                && ResolveLexicalProperty(scope, name)?.AlgorithmValue is { } algorithm)
             {
-                case Expr.Resolve(var name):
-                    return ResolveLexicalProperty(scope, name)?.AlgorithmValue;
-
-                case Expr.AlgorithmExpr(var algorithm):
-                    return algorithm;
-
-                case Expr.Capture(var captureBody):
-                    // Capture is not algorithm identity: the editor's dot-member
-                    // resolution sees only a member-less value thunk, so
-                    // `(Obj).V` classifies through the lexical fallback exactly
-                    // as the pre-split transparent wrapper did.
-                    return new Algorithm.User(
-                        Parent: null,
-                        Parameters: [],
-                        Opens: [],
-                        Properties: [],
-                        Output: captureBody);
-
-                case Expr.SequenceSpread(var operand):
-                {
-                    _ = operand;
-                    return null;
-                }
-
-                case Expr.SequenceConstruct(var left, var right):
-                {
-                    _ = left;
-                    _ = right;
-                    return null;
-                }
-
-                case Expr.DotCall dotCall:
-                    return new Algorithm.User(
-                        Parent: null,
-                        Parameters: [],
-                        Opens: [],
-                        Properties: [],
-                        Output: [dotCall]);
-
-                default:
-                    return null;
+                return new StaticStructuralMemberProvider(
+                    StaticStructuralMemberProviderKind.KnownAlgorithm,
+                    algorithm);
             }
-        }
 
-        private SymbolDefinition? TryResolveLexicalFallbackOnParameterReceiver(Expr expr, string name, ScopeFrame scope)
-        {
-            if (expr is not Expr.Param)
-                return null;
-
-            return ResolveLexicalProperty(scope, name);
+            return provider;
         }
 
         private SymbolDefinition? TryResolveDeclaredProperty(Algorithm algorithm, string name)
@@ -693,31 +693,6 @@ public static class SemanticModelBuilder
             var hit = ElaboratedScopeLookup.TryLookupPublicExportedProperty(algorithm, name);
             return hit is null ? null : CreateLookupPropertySymbol(hit.Value.Owner, hit.Value.Property);
         }
-
-        private static bool ConditionalBranchesDefineProperty(Algorithm algorithm, string name)
-        {
-            if (algorithm is not Algorithm.Conditional conditional)
-                return false;
-
-            foreach (var branch in conditional.Branches)
-            {
-                if (branch.Body.Properties.Any(property => property.Name == name))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool AllowsExactLexicalFallback(Expr expr)
-            => expr is Expr.Num
-                or Expr.StringLiteral
-                or Expr.Unary
-                or Expr.Binary
-                or Expr.Index
-                or Expr.Call
-                or Expr.NativeCall
-                or Expr.DotCall
-                or Expr.ListLiteral;
 
         private static bool IsIllegalOpenTarget(SymbolDefinition symbol)
             => symbol.AlgorithmValue is Algorithm.Builtin;

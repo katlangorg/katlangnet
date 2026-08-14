@@ -1077,7 +1077,64 @@ Both item-supplying call forms agree: `factor` binds `10` from the back, `*value
 
 An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Extension Calls and Collecting Parameters](#extension-calls-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
-**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to lexical lookup in the current scope — this is how extension-style calls work.
+**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use — this is how extension-style calls work.
+
+That fallback includes parameters: a member name that is a parameter of the calling context resolves exactly like the plain callee, so higher-order algorithm-valued parameters work in both spellings:
+
+<!-- spec:dot-member-higher-order-parameter -->
+```
+K(a, t) = t(a)
+D(a, t) = a.t
+
+K(7, {a+1})
+D(7, {a+1})
+```
+
+**Results:**
+```
+8
+8
+```
+
+Parameter precedence in the fallback mirrors plain calls: a parameter of the current algorithm wins over a same-name visible property, while a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration of the same name. Structural members of the resolved receiver always win before any of this — a receiver's own property is never bypassed in favor of a parameter.
+
+### Extension Dot `~.`
+
+A `~` written directly against the dot — `receiver~.Name` or the equivalent spelling `receiver.~Name` — explicitly selects **extension-call resolution** for that one dot edge. An extension dot never looks for a structural member on the receiver: it always calls the lexical `Name` with the receiver injected as the first argument, using exactly the same receiver and argument rules as the ordinary lexical fallback.
+
+<!-- spec:extension-dot-bypasses-structural-member -->
+```
+V(x) = 99
+Obj = {
+    public V = 42
+    0
+}
+
+Obj.V
+Obj~.V
+```
+
+**Results:**
+```
+42
+99
+```
+
+Because structural lookup is off the table, the member of an extension dot is an ordinary callable-name occurrence: it participates in the same parameter and name resolution as a written callee. In an algorithm without an explicit parameter list, an unresolved extension member becomes an implicit parameter exactly like an unresolved callee name would:
+
+<!-- spec:extension-dot-higher-order-implicit -->
+```
+K = a~.t
+K(7, {a+1})
+```
+
+**Result:** `8`
+
+Here `K = a~.t` infers the parameters `(a, t)` — the same interface as `K = t(a)`. Ordinary dot deliberately does not do this: `K(x) = x.V` keeps arity 1, because `V` may be a structural property of whatever `x` turns out to be at runtime.
+
+The marker binds to exactly one dot edge and never leaks along a chain: `a~.t.string` runs the extension edge first and then an ordinary `.string` on its result, while `a~.t~.u` marks both edges. The `~` must be directly attached to the dot on either side (`a~.t`, `a.~t`); a detached tilde such as `a ~ .t` keeps its ordinary grace meaning, and the dot stays an ordinary dot edge. Because `open` consumes structural identity, an extension edge is not a valid `open` target (`open M~.C` is rejected).
+
+An extension member also counts for the local-only rule exactly like a written callee: a nested property whose extension member is a parameter owned by the enclosing algorithm (for example `P = a~.t` inside `Outer(a, t)`) depends on those parameters and is therefore local-only, just as `P = t(a)` is. An ordinary dot member marks such a dependency only when static structural-member analysis proves that its lexical fallback must be selected; when the receiver may own the member structurally, the possible fallback does not by itself change the property's exposure.
 
 ### Name Resolution
 

@@ -1261,6 +1261,8 @@ BETTER — specific branch first:
 - `a.string` — converts a numeric value to its string representation (e.g. `123.string` → `'123'`).
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.
+- The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. A parameter of the current algorithm wins over a same-name visible property; a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration. Structural members of the receiver always win before either.
+- EXTENSION DOT: `a~.f(args)` (equivalently `a.~f(args)`) explicitly selects extension-call resolution for that one dot edge — structural member lookup is bypassed and the lexical `f` is always called with `a` injected first. The member of an extension dot is an ordinary callable-name occurrence, so in an algorithm without an explicit parameter list it can become an implicit parameter exactly like a written callee name (`K = a~.t` infers `K(a, t)` just like `K = t(a)`). Ordinary `.member` never becomes an implicit parameter. The `~` must be directly attached to the dot; a detached tilde keeps its grace meaning. The marker binds to one edge only (`a~.t.string` runs extension then ordinary), and an extension edge is not a valid `open` target.
 - Ordinary lexical dot-call preserves that injected receiver as one argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
 - A SPREAD receiver is the exception: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading segment whose supply only that collector consumes. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument (a named receiver supplies its one stored value). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
@@ -1522,7 +1524,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (48 of the 168-case canonical language specification,
+Verified reference examples (51 of the 172-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1766,6 +1768,41 @@ Regenerate this block from the repo root with:
 
   Displays:
     42
+
+[dot-member-higher-order-parameter] After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. A parameter of the current algorithm wins over a same-name visible property, a captured ancestor parameter yields to a visible non-builtin declaration, and structural members of the resolved receiver always take precedence first.
+
+    K(a, t) = t(a)
+    D(a, t) = a.t
+
+    K(7, {a+1})
+    D(7, {a+1})
+
+  Displays:
+    8
+    8
+
+[extension-dot-higher-order-implicit] `~.` (equivalently `.~`) selects extension-call resolution: the member is a callable-name occurrence that participates in ordinary parameter/name resolution, so `K = a~.t` infers the parameters `(a, t)` exactly like `K = t(a)` and calls the bound algorithm with the receiver injected first. Ordinary `.` never infers member names as parameters.
+
+    K = a~.t
+    K(7, {a+1})
+
+  Displays:
+    8
+
+[extension-dot-bypasses-structural-member] Ordinary `.` performs structural member lookup first, so `Obj.V` reads Obj's own property even when a lexical `V` exists; `Obj~.V` (equivalently `Obj.~V`) explicitly selects extension-call resolution, bypasses structural lookup, and calls the lexical `V` with `Obj` as the injected first argument.
+
+    V(x) = 99
+    Obj = {
+        public V = 42
+        0
+    }
+
+    Obj.V
+    Obj~.V
+
+  Displays:
+    42
+    99
 
 [open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
 

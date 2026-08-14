@@ -391,7 +391,7 @@ internal static class PropertyExposureResolver
                 return new Expr.Call(rewrittenFunction, new OutputBundle(rewrittenArgs)) { Span = expr.Span };
             }
 
-            case Expr.DotCall(var target, var name, var argsOpt):
+            case Expr.DotCall(var target, _, var argsOpt):
             {
                 var rewrittenTarget = RewriteExpr(
                     target,
@@ -414,10 +414,12 @@ internal static class PropertyExposureResolver
                     rewrittenArgs = new OutputBundle(rewrittenSlots);
                 }
 
-                return new Expr.DotCall(rewrittenTarget, name, rewrittenArgs)
+                // `with` keeps the stored dot-edge facts (member span, lexical
+                // fallback, resolution mode, marker span) intact.
+                return ((Expr.DotCall)expr) with
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan,
+                    Target = rewrittenTarget,
+                    Args = rewrittenArgs,
                 };
             }
 

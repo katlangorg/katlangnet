@@ -1422,6 +1422,86 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-member-higher-order-parameter",
+            Category = "access-boundaries",
+            Source = "K(a, t) = t(a)\nD(a, t) = a.t\n\nK(7, {a+1})\nD(7, {a+1})",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8\n8",
+            ExpectedRaw = "S[8, 8]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFn("K", ["a", "t"], ".call (.param \"t\") [.param \"a\"]"),
+                 LFn("D", ["a", "t"], ".dotMember (.param \"a\") \"t\" (.param \"t\") .ordinary none")],
+                [LCall("K", ".num 7", ".algorithmExpr (alg [\"a\"] [] [] [.binary .add (.param \"a\") (.num 1)])"),
+                 LCall("D", ".num 7", ".algorithmExpr (alg [\"a\"] [] [] [.binary .add (.param \"a\") (.num 1)])")]),
+            Probes =
+            [
+                new SpecProbe("t = 5\nK(a, t) = a.t\nK(7, {a+1})", "ok raw=8 n=1"),
+                new SpecProbe("t = 5\nG(x) = x.t\nK(a, t) = G(a)\nK(7, {a+1})", "err arity"),
+                new SpecProbe("Obj = {public V = 42}\nK(a, V) = a.V\nK(Obj, {a+1})", "ok raw=42 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "After structural member lookup fails, a dot member name that is a parameter of the calling context resolves exactly like the plain callee: `a.t` and `t(a)` agree, including algorithm-valued parameters. A parameter of the current algorithm wins over a same-name visible property, a captured ancestor parameter yields to a visible non-builtin declaration, and structural members of the resolved receiver always take precedence first.",
+        },
+        new()
+        {
+            Id = "extension-dot-higher-order-implicit",
+            Category = "access-boundaries",
+            Source = "K = a~.t\nK(7, {a+1})",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFn("K", ["a", "t"], ".dotMember (.param \"a\") \"t\" (.param \"t\") .extensionOnly none")],
+                [LCall("K", ".num 7", ".algorithmExpr (alg [\"a\"] [] [] [.binary .add (.param \"a\") (.num 1)])")]),
+            Probes =
+            [
+                new SpecProbe("K = a.~t\nK(7, {a+1})", "ok raw=8 n=1"),
+                new SpecProbe("K(a, t) = a~.t\nK(7, {a+1})", "ok raw=8 n=1"),
+                new SpecProbe("K(a, t) = a.~t\nK(7, {a+1})", "ok raw=8 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`~.` (equivalently `.~`) selects extension-call resolution: the member is a callable-name occurrence that participates in ordinary parameter/name resolution, so `K = a~.t` infers the parameters `(a, t)` exactly like `K = t(a)` and calls the bound algorithm with the receiver injected first. Ordinary `.` never infers member names as parameters.",
+        },
+        new()
+        {
+            Id = "extension-dot-bypasses-structural-member",
+            Category = "access-boundaries",
+            Source = "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\n\nObj.V\nObj~.V",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "42\n99",
+            ExpectedRaw = "S[42, 99]",
+            ExpectedEmittedCount = 2,
+            LeanProgram = LProg(
+                [LFn("V", ["x"], ".num 99"),
+                 "privateProp \"Obj\" (alg [] [] [publicProp \"V\" (alg [] [] [] [.num 42])] [.num 0])"],
+                [".dotCall (.resolve \"Obj\") \"V\" none",
+                 ".dotMember (.resolve \"Obj\") \"V\" (.resolve \"V\") .extensionOnly none"]),
+            Probes =
+            [
+                new SpecProbe("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.~V", "ok raw=99 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Ordinary `.` performs structural member lookup first, so `Obj.V` reads Obj's own property even when a lexical `V` exists; `Obj~.V` (equivalently `Obj.~V`) explicitly selects extension-call resolution, bypasses structural lookup, and calls the lexical `V` with `Obj` as the injected first argument.",
+        },
+        new()
+        {
+            Id = "ordinary-dot-member-is-not-implicit-param",
+            Category = "access-boundaries",
+            Source = "K(x) = x.V\nObj = {public V = 42}\n\nK(Obj)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "42",
+            ExpectedRaw = "42",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFn("K", ["x"], ".dotCall (.param \"x\") \"V\" none"),
+                 "privateProp \"Obj\" (alg [] [] [publicProp \"V\" (alg [] [] [] [.num 42])] [])"],
+                [LCall("K", ".resolve \"Obj\"")]),
+            Explanation = "An ordinary dot member is never inferred as an implicit parameter merely because a lexical fallback path exists: `K(x) = x.V` keeps arity 1, and `V` resolves structurally on the runtime receiver. Use the extension marker (`x~.V`) when the member is meant as a callable-name occurrence.",
+        },
+        new()
+        {
             Id = "open-capture-target-rejected",
             Category = "access-boundaries",
             Source = "M = {\n    public C = 5\n}\nR = {\n    open (M)\n    C\n}\nR",

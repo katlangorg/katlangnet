@@ -166,7 +166,11 @@ internal static class FrontEndStageProbe
                     case Expr.AlgorithmExpr(var alg): algs.Push(alg); break;
                     case Expr.Capture(var captureBody): foreach (var row in captureBody) exprs.Push(row); break;
                     case Expr.Call(var fn, var args): exprs.Push(fn); foreach (var a in args) exprs.Push(a); break;
-                    case Expr.DotCall dc: exprs.Push(dc.Target); if (dc.Args is { } a2) foreach (var row in a2) exprs.Push(row); break;
+                    case Expr.DotCall dc:
+                        exprs.Push(dc.Target);
+                        if (dc.LexicalFallback is { } fallback) exprs.Push(fallback);
+                        if (dc.Args is { } a2) foreach (var row in a2) exprs.Push(row);
+                        break;
                 }
             }
         }
@@ -204,7 +208,11 @@ internal static class FrontEndStageProbe
                 case Expr.AlgorithmExpr(var alg): Alg(alg); break;
                 case Expr.Capture(var captureBody): foreach (var row in captureBody) Ex(row); break;
                 case Expr.Call(var fn, var args): Ex(fn); foreach (var a in args) Ex(a); break;
-                case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) foreach (var row in a2) Ex(row); break;
+                case Expr.DotCall dc:
+                    Ex(dc.Target);
+                    if (dc.LexicalFallback is { } fallback) Ex(fallback);
+                    if (dc.Args is { } a2) foreach (var row in a2) Ex(row);
+                    break;
             }
         }
     }

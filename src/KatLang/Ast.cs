@@ -344,6 +344,25 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
 
 /// <summary>
+/// How a <see cref="Expr.DotCall"/> edge resolves its member.
+/// <see cref="Ordinary"/> (<c>a.f</c>): structural member lookup on the
+/// resolved receiver first; lexical fallback only on a structural miss.
+/// <see cref="ExtensionOnly"/> (<c>a~.f</c> / <c>a.~f</c>): structural lookup
+/// is bypassed entirely — the member is a callable-name occurrence and the
+/// stored lexical fallback is always invoked with the receiver injected as the
+/// leading argument segment. The mode belongs to exactly one dot edge.
+/// Lean: <c>DotResolutionMode</c>.
+/// </summary>
+public enum DotResolutionMode
+{
+    /// <summary>Structural-first dot resolution (<c>a.f</c>).</summary>
+    Ordinary,
+
+    /// <summary>Extension-call resolution (<c>a~.f</c> / <c>a.~f</c>): lexical fallback only.</summary>
+    ExtensionOnly,
+}
+
+/// <summary>
 /// Abstract base for all KatLang expressions.
 /// Each sealed nested record corresponds to a constructor in the Lean <c>Expr</c> inductive.
 /// </summary>
@@ -447,14 +466,33 @@ public abstract record Expr
     public sealed record Resolve(string Name) : Expr;
 
     /// <summary>
-    /// Extension call syntax. <c>DotCall(a, "f", args?)</c> represents <c>a.f</c> or <c>a.f(args)</c>
+    /// Dot-call syntax. <c>DotCall(a, "f", args?)</c> represents <c>a.f</c> or <c>a.f(args)</c>
     /// with smart resolution: property access when f has 0 params, otherwise call with receiver.
     /// <c>Args</c> is an ordered <see cref="OutputBundle"/> of the original written
     /// argument expressions, evaluated transparently in the caller's lexical
     /// context. <c>null</c> means NO argument-list syntax (property-style access
     /// <c>a.f</c>); <see cref="OutputBundle.Empty"/> means an explicit empty
     /// list (<c>a.f()</c>) — the two remain distinct.
-    /// Lean: <c>dotCall : Expr → Ident → Option OutputBundle → Expr</c>.
+    /// <para><b>Resolution mode:</b> an ORDINARY dot edge (<c>a.f</c>) tries
+    /// structural member lookup on the resolved receiver first and uses the
+    /// lexical fallback only on a structural miss; an EXTENSION dot edge
+    /// (<c>a~.f</c> / <c>a.~f</c> — one canonical node) explicitly bypasses
+    /// structural lookup and always calls the lexical fallback with the
+    /// receiver injected as the leading argument segment. The mode belongs to
+    /// exactly this dot edge and never leaks to chained edges.</para>
+    /// <para><b>Lexical fallback identity:</b> <see cref="LexicalFallback"/>
+    /// carries the member's lexical-fallback callee as an ordinary
+    /// elaboratable name expression — <see cref="Expr.Resolve"/>, or
+    /// <see cref="Expr.Param"/> once front-end elaboration decides the name is
+    /// a parameter reference — so every runtime consumer CONSUMES the
+    /// front-end's Param-vs-Resolve decision instead of reconstructing it.
+    /// <c>null</c> means the unelaborated default <c>Resolve(Name)</c>
+    /// (host-built trees keep plain lexical-fallback semantics). Producers
+    /// must store only Resolve/Param nodes here; any other expression is outside
+    /// the elaborated contract (host-built defensive evaluation still follows
+    /// that expression's ordinary <c>ResolveAlg</c> behavior).</para>
+    /// Lean: <c>dotMember : Expr → Ident → Expr → DotResolutionMode → Option OutputBundle → Expr</c>
+    /// (with <c>Expr.dotCall</c> kept as the ordinary/lexical smart constructor).
     /// </summary>
     public sealed record DotCall(Expr Target, string Name, OutputBundle? Args = null) : Expr
     {
@@ -463,6 +501,32 @@ public abstract record Expr
         /// parser has source information for it.
         /// </summary>
         public SourceSpan? MemberSpan { get; init; }
+
+        /// <summary>
+        /// The member's lexical-fallback callee identity as an ordinary name
+        /// expression (<see cref="Expr.Resolve"/> or <see cref="Expr.Param"/>),
+        /// decided once by front-end elaboration. <c>null</c> means the
+        /// unelaborated default <c>Resolve(Name)</c>.
+        /// </summary>
+        public Expr? LexicalFallback { get; init; }
+
+        /// <summary>How this dot edge resolves its member (see type remarks).</summary>
+        public DotResolutionMode ResolutionMode { get; init; } = DotResolutionMode.Ordinary;
+
+        /// <summary>
+        /// Exact span of the extension marker <c>~</c> on extension-dot edges
+        /// (<c>a~.f</c> stores the marker before the dot, <c>a.~f</c> after
+        /// it); null for ordinary dot edges.
+        /// </summary>
+        public SourceSpan? ExtensionMarkerSpan { get; init; }
+
+        /// <summary>
+        /// The effective lexical-fallback callee: the stored elaborated
+        /// identity, or the unelaborated default <c>Resolve(Name)</c> spanned
+        /// at the member identifier.
+        /// </summary>
+        public Expr EffectiveLexicalFallback
+            => LexicalFallback ?? new Resolve(Name) { Span = MemberSpan };
     }
 
     /// <summary>

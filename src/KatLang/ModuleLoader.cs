@@ -402,16 +402,17 @@ public sealed class ModuleLoader
                     items.Select(item => ProcessExpr(item, context, depth + 1)).ToList())
                 { Span = expr.Span };
 
-            case Expr.DotCall(var target, var name, var args):
-                return new Expr.DotCall(
-                    ProcessExpr(target, args is null ? context : LoadContext.RuntimeExpr, depth + 1),
-                    name,
-                    args is not null
-                        ? new OutputBundle(args.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
-                        : null)
+            case Expr.DotCall dotCall:
+                // `with` keeps every stored dot-edge fact (member span, lexical
+                // fallback, resolution mode, extension marker span) intact —
+                // rebuilding positionally here silently degraded extension
+                // edges to ordinary dots for every module-elaborated tree.
+                return dotCall with
                 {
-                    Span = expr.Span,
-                    MemberSpan = ((Expr.DotCall)expr).MemberSpan
+                    Target = ProcessExpr(dotCall.Target, dotCall.Args is null ? context : LoadContext.RuntimeExpr, depth + 1),
+                    Args = dotCall.Args is { } dotArgs
+                        ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, LoadContext.RuntimeExpr, depth + 1)).ToList())
+                        : null,
                 };
 
             case Expr.Grace(var inner, var weight):

@@ -275,9 +275,31 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    line never continues the previous expression and
                                    is a parse error. Same-line whitespace around ':'
                                    is insignificant (Pair:0, Pair :0, Pair : 0). *)
-                | "." Identifier [ CallArgs ]
+                | [ "~" ] "." [ "~" ] Identifier [ CallArgs ]
                                 (* a '.'-led line intentionally continues the
-                                   dot-call chain (method-chain layout). When
+                                   dot-call chain (method-chain layout).
+                                   EXTENSION DOT: a "~" DIRECTLY attached to
+                                   the dot on either side — `recv~.Name` or
+                                   `recv.~Name` (exact source-offset adjacency
+                                   between the tilde and the dot; at most one
+                                   marker per edge) — selects extension-call
+                                   resolution for exactly that dot edge: no
+                                   structural member lookup, the member is a
+                                   callable-name occurrence, and the lexical
+                                   callee is invoked with the receiver as the
+                                   injected leading argument segment. Both
+                                   spellings normalize to one AST node. A
+                                   detached tilde (`a ~ .t`) is ordinary
+                                   grace, and the dot stays an ordinary
+                                   structural-first edge. In a marker run
+                                   such as `a~~.t`, only the dot-adjacent
+                                   tilde is the extension marker; preceding
+                                   tildes keep their grace meaning. `~.` is
+                                   same-physical-line only (the tilde follows
+                                   the receiver's line); a cross-line chain
+                                   uses the '.'-led continuation, where `.~`
+                                   still marks the edge. Extension edges are
+                                   not open targets. When
                                    the target of the "." is a spread
                                    expression, the continuation is the fluent
                                    supply transition: `operand*.Target(args)`
@@ -287,7 +309,9 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    the receiver is an item supply, not a
                                    value, so no structural member lookup
                                    applies and no property access happens on
-                                   the spread. Further continuations chain on
+                                   the spread (an extension marker on a
+                                   spread receiver selects exactly that same
+                                   lowering). Further continuations chain on
                                    the call result
                                    (`x.Calculate*.Target.Other`). *)
                 | SpreadMarker  (* see SpreadExpression *)

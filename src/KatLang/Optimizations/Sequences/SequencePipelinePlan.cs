@@ -15,22 +15,24 @@ internal enum SequencePipelineInvocationKind
 
 internal readonly record struct SequencePipelineInvocation(
     SequencePipelineInvocationKind Kind,
-    Expr? DotTarget,
-    string? DotName,
-    OutputBundle? DotArgs,
+    Expr.DotCall? Dot,
     Expr? PlainFunction,
     OutputBundle? PlainArgs,
     Algorithm? PlainCallee)
 {
-    internal static SequencePipelineInvocation DotCall(
-        Expr target,
-        string name,
-        OutputBundle? args)
+    // The dot invocation carries its ORIGINAL node so recognizers and
+    // legality probes consume the elaborated dot-edge facts (member name,
+    // lexical fallback, resolution mode) instead of loose pieces.
+    public Expr? DotTarget => Dot?.Target;
+
+    public string? DotName => Dot?.Name;
+
+    public OutputBundle? DotArgs => Dot?.Args;
+
+    internal static SequencePipelineInvocation DotCall(Expr.DotCall dotCall)
         => new(
             SequencePipelineInvocationKind.DotCall,
-            DotTarget: target,
-            DotName: name,
-            DotArgs: args,
+            Dot: dotCall,
             PlainFunction: null,
             PlainArgs: null,
             PlainCallee: null);
@@ -41,16 +43,14 @@ internal readonly record struct SequencePipelineInvocation(
         Algorithm callee)
         => new(
             SequencePipelineInvocationKind.PlainCall,
-            DotTarget: null,
-            DotName: null,
-            DotArgs: null,
+            Dot: null,
             PlainFunction: function,
             PlainArgs: args,
             PlainCallee: callee);
 }
 
 internal readonly record struct SequencePipelineEvaluationServices(
-    Func<Expr, string, BuiltinId, string?> GetDotCallLexicalBuiltinFallbackReason,
+    Func<Expr.DotCall, BuiltinId, string?> GetDotCallLexicalBuiltinFallbackReason,
     Func<Expr, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateDotReceiverIterationItems,
     Func<IReadOnlyList<Algorithm>, EvalResult<IReadOnlyList<Evaluator.CountedResult>>> EvaluateSequenceIterationItems,
     Func<OutputBundle, EvalResult<IReadOnlyList<Algorithm>>> ResolveArgumentAlgorithms,

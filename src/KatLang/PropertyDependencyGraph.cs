@@ -419,10 +419,38 @@ internal static class PropertyDependencyGraphBuilder
                 return seed;
             }
 
-            case Expr.DotCall(var target, _, var argsOpt):
+            case Expr.DotCall dotCall:
             {
-                var seed = CollectSummarySeed(target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
-                if (argsOpt is not null)
+                var seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, ancestorOwnedForChildren);
+
+                // The stored lexical-fallback identity is an ordinary
+                // elaborated name expression (Resolve/Param) and participates
+                // in dependency analysis EXACTLY like a written callee name —
+                // through this same walk with the enclosing attribution — but
+                // only when the edge's resolution facts make the fallback the
+                // unconditional selection (every extension edge; an ordinary
+                // edge whose algorithm-position capability makes structural
+                // resolution statically impossible). A CONDITIONAL fallback — a receiver
+                // that may resolve structurally at runtime — is deliberately
+                // excluded: marking a structurally-resolving property
+                // LocalOnly because its unreached fallback names a parameter
+                // would revoke working structural/open access
+                // (see AstHelpers.LexicalFallbackIsUnconditional).
+                // The sibling evaluation-order channel
+                // (CollectSiblingDependencyIndices) deliberately takes no
+                // fallback contribution: the fallback is a CALLED name, and
+                // called siblings are not order dependencies there (the same
+                // rule as Call function position).
+                if (dotCall.LexicalFallbackIsUnconditional())
+                {
+                    seed.UnionWith(CollectSummarySeed(
+                        dotCall.EffectiveLexicalFallback,
+                        localPropertySummaries,
+                        ownedHere,
+                        ancestorOwnedForChildren));
+                }
+
+                if (dotCall.Args is { } argsOpt)
                 {
                     seed.UnionWith(CollectSummarySeed(
                         argsOpt,
@@ -524,10 +552,13 @@ internal static class PropertyDependencyGraphBuilder
                 CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, false);
                 break;
 
-            case Expr.DotCall(var target, var name, var args):
-                CollectSiblingDependencyIndices(target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
-                if (args is not null && IsMathValueDotCall(target, name))
+            case Expr.DotCall dotCall:
+                CollectSiblingDependencyIndices(dotCall.Target, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex, inCallPosition: true);
+                if (dotCall.Args is { } args
+                    && dotCall.HasRegistryProvenStrictValueArguments())
+                {
                     CollectArgumentSiblingDependencyIndices(args, siblingNames, propertyNameToIndex, dependencyIndices, propertyIndex);
+                }
                 break;
 
             case Expr.Grace(var inner, _):
@@ -560,10 +591,6 @@ internal static class PropertyDependencyGraphBuilder
                 inCallPosition: false);
         }
     }
-
-    private static bool IsMathValueDotCall(Expr target, string name)
-        => target is Expr.Resolve { Name: "Math" }
-            && BuiltinRegistry.IsMathFunctionMember(name);
 
     private static HashSet<string> CreateNameSet(IEnumerable<string>? names = null)
         => names is null

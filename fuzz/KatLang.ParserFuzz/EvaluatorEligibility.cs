@@ -159,7 +159,7 @@ internal static class EvaluatorEligibility
                 case Expr.DotCall dc:
                     if (NonDeterministicNames.Contains(dc.Name)) HasNativeOrRandom = true;
                     if (dc.Args is { } dargs) { CheckRiskyCall(dc.Name, dargs); foreach (var a in dargs) Ex(a); }
-                    Note(dc.Name);
+                    if (dc.LexicalFallback is { } fallback) Ex(fallback); else Note(dc.Name);
                     Ex(dc.Target); break;
             }
         }

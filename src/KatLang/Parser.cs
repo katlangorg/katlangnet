@@ -1411,6 +1411,20 @@ public sealed class Parser
         => second.Position == first.Position + first.Length;
 
     /// <summary>
+    /// True when the CURRENT token is a tilde forming an EXTENSION-DOT edge:
+    /// directly attached (exact source-offset adjacency, like the collect and
+    /// spread markers) to an immediately following <c>.</c> token. `a~.t` is
+    /// an extension edge; a detached tilde (`a ~ .t`) keeps its ordinary grace
+    /// meaning and the dot stays an ordinary dot edge. In a marker run such as
+    /// `a~~.t` only the dot-adjacent tilde is the extension marker; preceding
+    /// tildes keep their grace meaning.
+    /// </summary>
+    private bool IsExtensionMarkerTilde()
+        => Current.Kind == TokenKind.Tilde
+            && PeekSignificant(1) is { Kind: TokenKind.Dot } dotToken
+            && IsDirectlyAttached(Current, dotToken);
+
+    /// <summary>
     /// Checks if the current tilde sequence is followed by Identifier '=' or 'public Identifier ='.
     /// Used to detect invalid grace on property definitions.
     /// </summary>
@@ -1993,11 +2007,11 @@ public sealed class Parser
         switch (expr)
         {
             case Expr.DotCall dotCall when dotCall.Args is null:
-                return new Expr.DotCall(NormalizeOpenExpr(dotCall.Target), dotCall.Name)
-                {
-                    Span = expr.Span,
-                    MemberSpan = dotCall.MemberSpan
-                };
+                // `with` keeps every stored dot-edge fact (member span,
+                // lexical fallback, resolution mode, marker span) intact;
+                // extension-mode targets are rejected by the open-form
+                // validation that follows.
+                return dotCall with { Target = NormalizeOpenExpr(dotCall.Target) };
 
             case Expr.DotCall(var target, var name, _):
                 ReportOpenFormError(
@@ -2032,9 +2046,12 @@ public sealed class Parser
     /// see Lean postElabInvariant (rejects both structurally).
     /// load is NOT a core Expr constructor; it is surface syntax only.
     /// </summary>
-    private static bool IsOpenForm(Expr e) => e is
-        Expr.Resolve or Expr.DotCall(_, _, null) or Expr.AlgorithmExpr
-        || e.TryGetUnresolvedLoadArguments(out _);
+    // An open target consumes structural algorithm identity, so only ORDINARY
+    // argumentless dot paths qualify: an extension-dot target (`open A~.B`)
+    // explicitly bypasses structural lookup and is not an open form, exactly
+    // like a spread target.
+    private static bool IsOpenForm(Expr e)
+        => e.IsCoreOpenForm() || e.TryGetUnresolvedLoadArguments(out _);
 
     /// <summary>
     /// Human-readable kind string for open-form validation errors.
@@ -2051,6 +2068,7 @@ public sealed class Parser
         Expr.ListLiteral => "listLiteral",
         Expr.Index => "index",
         Expr.Call => "call",
+        Expr.DotCall { ResolutionMode: DotResolutionMode.ExtensionOnly } => "extension dotCall",
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
         Expr.NativeCall => "nativeCall",
@@ -2376,54 +2394,26 @@ public sealed class Parser
                     lhs = ParseIndexContinuation(lhs, colonToken);
                     break;
 
+                case TokenKind.Tilde when MayContinueClosedExpression(TokenKind.Tilde)
+                    && IsExtensionMarkerTilde():
+                    // Extension-dot edge, `recv~.Name`: the tilde directly
+                    // attached to the following '.' selects extension-call
+                    // resolution for exactly this dot edge. (`recv.~Name` is
+                    // the equivalent spelling, handled inside the shared dot
+                    // continuation; both normalize to one node.) A detached
+                    // tilde never reaches this arm and keeps its grace meaning.
+                    var extensionMarkerToken = Advance(); // consume '~'
+                    var extensionDotToken = Advance();    // consume '.'
+                    lhs = ParseDotCallContinuation(lhs, extensionDotToken, TokenSpan(extensionMarkerToken));
+                    break;
+
                 case TokenKind.Dot when MayContinueClosedExpression(TokenKind.Dot):
                     // Dot-call syntax: expr.Name or expr.Name(args). The
                     // leading '.' is the one whitelisted postfix continuation
                     // that may cross a physical newline (method-chain layout)
                     // — encoded in the continuation policy table.
                     var dotToken = Advance(); // consume '.'
-                    if (Current.Kind != TokenKind.Identifier)
-                    {
-                        ReportError("Expected property name after '.'.");
-                        break;
-                    }
-                    var propNameToken = Current;
-                    var propName = propNameToken.StringValue!;
-                    var memberSpan = TokenSpan(propNameToken);
-                    Advance(); // consume identifier
-
-                    if (lhs is Expr.SequenceSpread)
-                    {
-                        // Fluent supply transition: `operand*.Target(...)`
-                        // consumes the spread items as the leading call
-                        // arguments. Lowers to the ordinary lexical call
-                        // `Target(operand*, ...)`.
-                        lhs = ParseSpreadReceiverContinuation(lhs, dotToken, propNameToken, memberSpan);
-                        break;
-                    }
-
-                    if (IsCallArgumentStart())
-                    {
-                        // expr.Name(args) → DotCall(expr, Name, args)
-                        // Lean: dotCall : Expr → Ident → Option OutputBundle → Expr
-                        var args = ParseCallArgs();
-                        var dotCall = new Expr.DotCall(lhs, propName, args)
-                        {
-                            Span = SpanFrom(lhs),
-                            MemberSpan = memberSpan
-                        };
-                        lhs = GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
-                    }
-                    else
-                    {
-                        // expr.Name → DotCall(expr, Name, null)
-                        var dotCall = new Expr.DotCall(lhs, propName)
-                        {
-                            Span = SpanFrom(lhs),
-                            MemberSpan = memberSpan
-                        };
-                        lhs = GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
-                    }
+                    lhs = ParseDotCallContinuation(lhs, dotToken, extensionMarkerSpan: null);
                     break;
 
                 case TokenKind.LParen or TokenKind.LBrace
@@ -2494,7 +2484,16 @@ public sealed class Parser
         if (!IsDirectlyAttached(Previous, Current))
             return false;
         var next = PeekSignificant(1);
-        return next.Line != Current.Line || !CanStartMultiplicationOperand(next.Kind);
+        if (next.Line != Current.Line || !CanStartMultiplicationOperand(next.Kind))
+            return true;
+
+        // A tilde forming an extension-dot edge (`x*~.F`) is a postfix
+        // continuation marker, never the start of a prefix-grace operand, so
+        // the star stays a spread marker and the fluent chain lowers exactly
+        // like `x*.F` / `x*.~F`.
+        return next.Kind == TokenKind.Tilde
+            && PeekSignificant(2) is { Kind: TokenKind.Dot } dotAfterTilde
+            && IsDirectlyAttached(next, dotAfterTilde);
     }
 
     /// <summary>
@@ -2510,6 +2509,69 @@ public sealed class Parser
     {
         var spreadNode = CreateSequenceSpread(operand, SpanFrom(operand), TokenSpan(starToken));
         return GuardExpressionChainDepth(spreadNode, TokenSpan(starToken), operand);
+    }
+
+    /// <summary>
+    /// Parses one dot edge after its '.' token has been consumed:
+    /// <c>expr.Name</c>, <c>expr.Name(args)</c>, and the extension spellings
+    /// <c>expr~.Name</c> (marker consumed by the caller) and <c>expr.~Name</c>
+    /// (marker directly attached after the dot, consumed here). Both extension
+    /// spellings normalize to ONE node — <see cref="Expr.DotCall"/> with
+    /// <see cref="DotResolutionMode.ExtensionOnly"/> — differing only in the
+    /// recorded marker span. Every parsed dot edge stores its lexical-fallback
+    /// identity as <c>Resolve(Name)</c> spanned at the member identifier;
+    /// front-end elaboration may rewrite it to <c>Param(Name)</c>. Kept out of
+    /// <see cref="ParsePostfix"/> so its locals and call temporaries never
+    /// enlarge that recursive frame (native stack-margin calibration).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParseDotCallContinuation(Expr lhs, Token dotToken, SourceSpan? extensionMarkerSpan)
+    {
+        // `.~Name` spelling: an extension marker directly attached AFTER the
+        // dot. `expr~.~Name` (both markers) is rejected below as a missing
+        // member name, so exactly one marker forms an extension edge.
+        if (extensionMarkerSpan is null
+            && Current.Kind == TokenKind.Tilde
+            && IsDirectlyAttached(dotToken, Current))
+        {
+            var markerToken = Advance();
+            extensionMarkerSpan = TokenSpan(markerToken);
+        }
+
+        if (Current.Kind != TokenKind.Identifier)
+        {
+            ReportError("Expected property name after '.'.");
+            return lhs;
+        }
+
+        var propNameToken = Advance();
+        var propName = propNameToken.StringValue!;
+        var memberSpan = TokenSpan(propNameToken);
+
+        if (lhs is Expr.SequenceSpread)
+        {
+            // Fluent supply transition: `operand*.Target(...)` consumes the
+            // spread items as the leading call arguments and lowers to the
+            // ordinary lexical call `Target(operand*, ...)`. An extension
+            // marker on a spread receiver selects exactly that resolution —
+            // a spread supply has no structural members — so both spellings
+            // share the one lowering.
+            return ParseSpreadReceiverContinuation(lhs, dotToken, propNameToken, memberSpan);
+        }
+
+        var resolutionMode = extensionMarkerSpan is null
+            ? DotResolutionMode.Ordinary
+            : DotResolutionMode.ExtensionOnly;
+        OutputBundle? args = IsCallArgumentStart() ? ParseCallArgs() : null;
+        var dotCall = new Expr.DotCall(lhs, propName, args)
+        {
+            Span = SpanFrom(lhs),
+            MemberSpan = memberSpan,
+            LexicalFallback = new Expr.Resolve(propName) { Span = memberSpan },
+            ResolutionMode = resolutionMode,
+            ExtensionMarkerSpan = extensionMarkerSpan,
+        };
+        return GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
     }
 
     /// <summary>
@@ -2675,11 +2737,15 @@ public sealed class Parser
                     var token = Advance();
                     // Postfix grace '~' is same-physical-line only: a '~'-led
                     // line is a prefix-grace expression of its own, never a
-                    // continuation of the previous line's identifier.
-                    if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+                    // continuation of the previous line's identifier. A tilde
+                    // directly attached to a following '.' is the EXTENSION-DOT
+                    // marker, not grace — it stays for the postfix loop.
+                    if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
+                        && !IsExtensionMarkerTilde())
                     {
                         var weight = 0;
-                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
+                            && !IsExtensionMarkerTilde())
                         {
                             Advance();
                             weight++;
@@ -2710,8 +2776,11 @@ public sealed class Parser
                     }
                     var graceToken = Advance();
                     // Postfix grace: each same-line ~ after the identifier
-                    // increments weight; a '~' on a later line never continues.
-                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
+                    // increments weight; a '~' on a later line never continues,
+                    // and a dot-attached tilde is the extension-dot marker for
+                    // the postfix loop, never grace.
+                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
+                        && !IsExtensionMarkerTilde())
                     {
                         Advance();
                         weight++;

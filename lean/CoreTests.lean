@@ -672,6 +672,20 @@ def outputDotCallSatisfiesInvariant : Bool :=
 
 #guard outputDotCallSatisfiesInvariant
 
+-- The elaborated dot-edge contract (C#: DotCallElaborationInvariant): the
+-- stored lexical fallback must be `.resolve`/`.param` naming the SAME member.
+-- The `Expr.dotCall` sugar and an explicit coherent `.param` fallback satisfy
+-- it; name mismatches and non-name fallback expressions are rejected.
+def dotMemberFallbackCoherenceEnforced : Bool :=
+  KatLang.postElabInvariant (.dotCall (.num 1) "t" none)
+  && KatLang.postElabInvariant (.dotMember (.num 1) "t" (.param "t") .extensionOnly none)
+  && KatLang.postElabInvariant (.dotMember (.num 1) "t" (.resolve "t") .ordinary (some [.num 2]))
+  && !(KatLang.postElabInvariant (.dotMember (.num 1) "t" (.resolve "u") .ordinary none))
+  && !(KatLang.postElabInvariant (.dotMember (.num 1) "t" (.param "u") .extensionOnly none))
+  && !(KatLang.postElabInvariant (.dotMember (.num 1) "t" (.num 5) .ordinary none))
+
+#guard dotMemberFallbackCoherenceEnforced
+
 def outputNamedPropertySatisfiesInvariant : Bool :=
   KatLang.postElabInvariantAlg
     (alg [] [] [privateProp "Output" (alg [] [] [] [.num 1])] [.num 2])
@@ -1631,6 +1645,345 @@ def test3 : Bool :=
 #guard test3
 -- EXPECTED: Except.ok [10]
 #eval runFlat (.algorithmExpr outer3)
+
+--------------------------------------------------------------------------------
+-- Higher-order dot fallback: the ELABORATED lexical-fallback identity
+-- After structural member lookup fails (ordinary edges), or always (extension
+-- edges), `receiver.F(args...)` invokes the dot edge's STORED fallback —
+-- `.param "F"` after front-end elaboration decides the member is a parameter
+-- reference, `.resolve "F"` otherwise — through canonical `resolveAlg`.
+-- No runtime environment reconstructs the Param-vs-Resolve decision.
+--------------------------------------------------------------------------------
+
+-- `{a+1}`: the one-parameter increment algorithm passed as the `t` argument.
+def higherOrderDotIncrement : Algorithm :=
+  alg ["a"] [] [] [.binary .add (.param "a") (.num 1)]
+
+-- K(a, t) = t(a) — plain-call control.
+def higherOrderPlainCallK : Algorithm :=
+  alg ["a", "t"] [] [] [.call (.param "t") [.param "a"]]
+
+def higherOrderPlainCallControl : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", higherOrderPlainCallK)] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard higherOrderPlainCallControl
+
+-- K(a, t) = a.t — elaborated form: the member's fallback identity is
+-- `.param "t"` (the front-end's decision), so the dot spelling agrees with
+-- `t(a)` by consuming the same canonical parameter resolution.
+def higherOrderDotParamK : Algorithm :=
+  alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") .ordinary none]
+
+def higherOrderDotParamMemberResolvesStoredParamFallback : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", higherOrderDotParamK)] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard higherOrderDotParamMemberResolvesStoredParamFallback
+
+-- K(a, t) = {a.t} — nested scope: the front-end still elaborates the member's
+-- fallback to `.param "t"` (captured ancestor parameter), and the stored
+-- identity rides the node regardless of the runtime scope topology.
+def higherOrderDotCapturedParamK : Algorithm :=
+  alg ["a", "t"] [] [] [
+    .algorithmExpr (alg [] [] [] [.dotMember (.param "a") "t" (.param "t") .ordinary none])
+  ]
+
+def higherOrderDotParamMemberResolvesCapturedParameter : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", higherOrderDotCapturedParamK)] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard higherOrderDotParamMemberResolvesCapturedParameter
+
+-- Ordinary lexical fallback uses the same ownership-first lookup as a direct
+-- callee name when the callable is owned by the dot-call algorithm's immediate
+-- parent. Both output rows must therefore select the same `t` declaration.
+def higherOrderImmediateParentT : Algorithm :=
+  alg ["a"] [] [] [.binary .add (.param "a") (.num 2)]
+
+def higherOrderImmediateParentK : Algorithm :=
+  alg ["a"] [] [] [
+    .dotCall (.param "a") "t" none,
+    .call (.resolve "t") [.param "a"]
+  ]
+
+def higherOrderImmediateParentLexicalFallbackMatchesDirectCall : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Outer", algPrivate [] [] [
+      ("t", higherOrderImmediateParentT),
+      ("K", higherOrderImmediateParentK)
+    ] [.call (.resolve "K") [.num 7]])
+  ] [.resolve "Outer"])) with
+  | Except.ok [9, 9] => true
+  | _ => false
+
+#guard higherOrderImmediateParentLexicalFallbackMatchesDirectCall
+
+-- The same law crosses more than one lexical parent and obeys nearest-owner
+-- shadowing: K is owned by Inner, the nearer `t` is owned by Outer, and the
+-- root's same-name property must not win for either spelling.
+def higherOrderGrandparentRootT : Algorithm :=
+  alg ["a"] [] [] [.binary .add (.param "a") (.num 100)]
+
+def higherOrderGrandparentNearT : Algorithm :=
+  alg ["a"] [] [] [.binary .add (.param "a") (.num 10)]
+
+def higherOrderGrandparentLexicalFallbackMatchesDirectCall : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("t", higherOrderGrandparentRootT),
+    ("Outer", algPrivate [] [] [
+      ("t", higherOrderGrandparentNearT),
+      ("Inner", algPrivate [] [] [
+        ("K", higherOrderImmediateParentK)
+      ] [.call (.resolve "K") [.num 7]])
+    ] [.resolve "Inner"])
+  ] [.resolve "Outer"])) with
+  | Except.ok [17, 17] => true
+  | _ => false
+
+#guard higherOrderGrandparentLexicalFallbackMatchesDirectCall
+
+-- Value-bound parameter parity: `K(7, 5)` fails with the SAME canonical
+-- parameter-resolution error for `t(a)` and `a.t` — notAnAlgorithm "param(t)".
+def higherOrderValueBoundPlainCallIsParamError : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("K", higherOrderPlainCallK)] [
+    .call (.resolve "K") [.num 7, .num 5]
+  ])) with
+  | Except.error err => innermostIsNotAnAlgorithm "param(t)" err
+  | Except.ok _ => false
+
+#guard higherOrderValueBoundPlainCallIsParamError
+
+def higherOrderValueBoundDotCallIsParamError : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("K", higherOrderDotParamK)] [
+    .call (.resolve "K") [.num 7, .num 5]
+  ])) with
+  | Except.error err => innermostIsNotAnAlgorithm "param(t)" err
+  | Except.ok _ => false
+
+#guard higherOrderValueBoundDotCallIsParamError
+
+-- Shadow rule (front-end elaborated): inside G(x) = x.t, `t` is NOT a
+-- parameter of G and the visible property `t = 5` keeps the member's fallback
+-- identity `.resolve "t"` (the `Expr.dotCall` sugar), so the fallback stays
+-- LEXICAL: calling the zero-parameter property with the injected receiver is
+-- arityMismatch 0 1 — exactly like the plain form `t(x)` written in G's body.
+def higherOrderShadowG : Algorithm :=
+  alg ["x"] [] [] [.dotCall (.param "x") "t" none]
+
+def higherOrderShadowK : Algorithm :=
+  alg ["a", "t"] [] [] [.call (.resolve "G") [.param "a"]]
+
+def higherOrderShadowedDotMemberStaysLexical : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("t", alg [] [] [] [.num 5]),
+    ("G", higherOrderShadowG),
+    ("K", higherOrderShadowK)
+  ] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | Except.ok _ => false
+
+#guard higherOrderShadowedDotMemberStaysLexical
+
+-- Local parameter precedence: the front-end stores `.param "t"` for a member
+-- that is a parameter of the current algorithm even when a same-name property
+-- is visible, so the parameter wins exactly as for a bare callee name.
+def higherOrderLocalParamBeatsProperty : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("t", alg [] [] [] [.num 5]),
+    ("K", higherOrderDotParamK)
+  ] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard higherOrderLocalParamBeatsProperty
+
+-- A parameter bound to a BUILTIN algorithm takes the stored-Param channel too:
+-- `K((1, 2, 3), count)` with `K(a, t) = a.t` calls builtin `count` with the
+-- receiver as its one ordinary collection argument — the same boundary the
+-- plain form `t(a)` uses (NOT the sequence-builtin dot-receiver view).
+def higherOrderBuiltinBoundParamDotCall : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", higherOrderDotParamK)] [
+    .call (.resolve "K") [.capture [.num 1, .num 2, .num 3], .resolve "count"]
+  ])) with
+  | Except.ok [3] => true
+  | _ => false
+
+#guard higherOrderBuiltinBoundParamDotCall
+
+-- An UNELABORATED (hand-built) dot edge keeps plain lexical-fallback
+-- semantics: the `Expr.dotCall` sugar stores `.resolve "t"`, so with no
+-- lexical `t` in sight the member fails as unknownName even though a
+-- dynamically visible `t` binding exists — the stored identity, not the
+-- runtime environment, decides.
+def higherOrderUnelaboratedDotKeepsLexicalFallback : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("K", alg ["a", "t"] [] [] [.dotCall (.param "a") "t" none])
+  ] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.error err => innermostIsUnknownName "t" err
+  | Except.ok _ => false
+
+#guard higherOrderUnelaboratedDotKeepsLexicalFallback
+
+--------------------------------------------------------------------------------
+-- Extension-dot edges (`a~.t` / `a.~t` — one canonical node)
+-- Extension resolution bypasses structural member lookup and always invokes
+-- the stored lexical fallback with the receiver as one injected leading
+-- segment; the mode belongs to exactly one dot edge.
+--------------------------------------------------------------------------------
+
+-- K(a, t) = a~.t — extension edge with the elaborated `.param "t"` fallback.
+def extensionDotParamK : Algorithm :=
+  alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") .extensionOnly none]
+
+def extensionDotParamMemberInvokesBoundAlgorithm : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("K", extensionDotParamK)] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok [8] => true
+  | _ => false
+
+#guard extensionDotParamMemberInvokesBoundAlgorithm
+
+-- Structural precedence split: `Obj.V` keeps the structural property (42),
+-- while the extension edge `Obj~.V` bypasses it and calls lexical V with Obj
+-- injected (99). Obj also defines output so the ordinary access stays a
+-- structural member read on a resolvable receiver.
+def extensionSplitObj : Algorithm :=
+  algPrivate [] [] [("V", alg [] [] [] [.num 42])] [.num 0]
+
+def extensionSplitLexicalV : Algorithm :=
+  alg ["x"] [] [] [.num 99]
+
+def extensionSplitRoot (edge : KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] [] [
+    ("V", extensionSplitLexicalV),
+    ("Obj", extensionSplitObj)
+  ] [edge])
+
+def ordinaryDotKeepsStructuralPrecedence : Bool :=
+  match runFlat (extensionSplitRoot (.dotCall (.resolve "Obj") "V" none)) with
+  | Except.ok [42] => true
+  | _ => false
+
+#guard ordinaryDotKeepsStructuralPrecedence
+
+def extensionDotBypassesStructuralMember : Bool :=
+  match runFlat (extensionSplitRoot
+    (.dotMember (.resolve "Obj") "V" (.resolve "V") .extensionOnly none)) with
+  | Except.ok [99] => true
+  | _ => false
+
+#guard extensionDotBypassesStructuralMember
+
+-- Extra explicit arguments follow the injected receiver: `3~.F(1, 2)` is
+-- `F(3, 1, 2)` under the ordinary receiver-segment machinery.
+def extensionDotExtraArgs : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("F", alg ["x", "y", "z"] [] [] [
+      .binary .add
+        (.binary .add
+          (.binary .mul (.param "x") (.num 100))
+          (.binary .mul (.param "y") (.num 10)))
+        (.param "z")])
+  ] [
+    .dotMember (.num 3) "F" (.resolve "F") .extensionOnly (some [.num 1, .num 2])
+  ])) with
+  | Except.ok [312] => true
+  | _ => false
+
+#guard extensionDotExtraArgs
+
+-- Collecting receiver-segment law: the extension edge uses the SAME injected
+-- leading segment as the ordinary lexical fallback, so a written group
+-- receiver supplies its row items to a flat top-level collecting parameter
+-- ((1, 2)~.CountItems binds items = [1, 2] exactly like (1, 2).CountItems).
+def extensionDotCollectingReceiverSegment : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("CountItems", algWithParameters [{ name := "items", kind := .collecting }] [] [] [
+      .dotCall (.param "items") "count" none
+    ])
+  ] [
+    .dotMember (.capture [.num 1, .num 2]) "CountItems" (.resolve "CountItems") .extensionOnly none
+  ])) with
+  | Except.ok [2] => true
+  | _ => false
+
+#guard extensionDotCollectingReceiverSegment
+
+-- Extension mode belongs to ONE edge: `a~.t.string` runs the extension edge
+-- first and then an ORDINARY `.string` intrinsic on its result.
+def extensionDotChainOrdinaryString : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("K",
+    alg ["a", "t"] [] [] [
+      .dotCall (.dotMember (.param "a") "t" (.param "t") .extensionOnly none) "string" none
+    ])
+  ] [
+    .call (.resolve "K") [.num 7, .algorithmExpr higherOrderDotIncrement]
+  ])) with
+  | Except.ok (KatLang.Result.str "8") => true
+  | _ => false
+
+#guard extensionDotChainOrdinaryString
+
+-- The ordinary-dot `string` value intrinsic is an ordinary-edge member
+-- special case: an EXTENSION edge (`5~.string`) treats `string` as a plain
+-- callable-name occurrence and NEVER re-enters the intrinsic. With a lexical
+-- `string` callable present, the extension edge invokes it (105) while the
+-- ordinary edge keeps the intrinsic ("5"); with no lexical `string`, the
+-- extension edge fails as an unresolved name.
+def extensionStringBypassesIntrinsic : Bool :=
+  let stringFn : Algorithm := alg ["x"] [] [] [.binary .add (.param "x") (.num 100)]
+  let root (edge : KatLang.Expr) : KatLang.Expr :=
+    .algorithmExpr (algPrivate [] [] [("string", stringFn)] [edge])
+  let extensionOk :=
+    match runResult (root (.dotMember (.num 5) "string" (.resolve "string") .extensionOnly none)) with
+    | Except.ok (KatLang.Result.atom 105) => true
+    | _ => false
+  let ordinaryIntrinsic :=
+    match runResult (root (.dotCall (.num 5) "string" none)) with
+    | Except.ok (KatLang.Result.str "5") => true
+    | _ => false
+  let extensionUnresolved :=
+    match runResult (.algorithmExpr (algPrivate [] [] [] [
+      .dotMember (.num 5) "string" (.resolve "string") .extensionOnly none
+    ])) with
+    | Except.error err => innermostIsUnknownName "string" err
+    | Except.ok _ => false
+  extensionOk && ordinaryIntrinsic && extensionUnresolved
+
+#guard extensionStringBypassesIntrinsic
+
+-- Extension edges never resolve as open targets: `open` consumes structural
+-- identity, which an extension edge bypasses by definition. The body must
+-- reference an opened name so the (lazy) open resolution actually validates
+-- the target.
+def extensionDotOpenTargetRejected : Bool :=
+  match runResult (.algorithmExpr (algPrivate
+    []
+    [.dotMember (.resolve "M") "C" (.resolve "C") .extensionOnly none]
+    [
+      ("M", algPrivate [] [] [("C", alg [] [] [] [.num 5])] [])
+    ] [.resolve "C"])) with
+  | Except.error err => innermostIsBadOpenForm "dotCall: M~.C" err
+  | Except.ok _ => false
+
+#guard extensionDotOpenTargetRejected
 
 def userCollectingDotCallCountItemsAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [
@@ -12536,6 +12889,10 @@ structure DotCallParityCase where
   argsOpt : Option (List KatLang.Expr) := none
   expected : BuiltinApplyOutcome := .succeeded
   expectedAtoms : Option (List Int) := none
+  -- Elaborated dot-edge facts; the default mirrors the `Expr.dotCall` sugar
+  -- (ordinary mode, `.resolve name` fallback).
+  fallback? : Option KatLang.Expr := none
+  mode : KatLang.DotResolutionMode := .ordinary
 
 /-- Lexical context mirroring `runResultM`: the program algorithm is wired
     onto the prelude and pushed, exactly as when its output expressions are
@@ -12553,8 +12910,9 @@ def dotCallParityCtx (prog : Algorithm) : KatLang.EvalCtx :=
     values, so collection-builtin cases still assert their numeric contents. -/
 def dotCallParityCaseHolds (c : DotCallParityCase) : Bool :=
   let ctx := dotCallParityCtx dotCallParityProg
-  let plain := (KatLang.evalDotCall c.target c.name c.argsOpt ctx []).run KatLang.EvalState.empty
-  let counted := (KatLang.evalDotCallCounted c.target c.name c.argsOpt ctx []).run KatLang.EvalState.empty
+  let fallback := c.fallback?.getD (.resolve c.name)
+  let plain := (KatLang.evalDotCall c.target c.name fallback c.mode c.argsOpt ctx []).run KatLang.EvalState.empty
+  let counted := (KatLang.evalDotCallCounted c.target c.name fallback c.mode c.argsOpt ctx []).run KatLang.EvalState.empty
   let parity :=
     match plain, counted with
     | .ok (value, plainState), .ok ((countedValue, _), countedState) =>
@@ -12650,7 +13008,20 @@ def dotCallParityCases : List DotCallParityCase :=
     -- P: structural zero-arg property access through dot-call writes the
     -- per-run cache; both paths must leave the same cache state.
     { label := "P/structural-zero-arg-cache", target := resolve "Holder", name := "Inner",
-      expectedAtoms := some [42] } ]
+      expectedAtoms := some [42] },
+    -- Q: a stored `.param` fallback with NO algEnv binding fails with the
+    -- canonical parameter-resolution error on both paths — the stored
+    -- identity decides, never the runtime environment.
+    { label := "Q/param-fallback-unbound", target := .num 5, name := "Missing",
+      fallback? := some (.param "Missing"), expected := .failedOtherwise },
+    -- R: an EXTENSION edge bypasses structural lookup: `Holder~.Inner` never
+    -- sees Holder's structural `Inner` and fails lexically on both paths.
+    { label := "R/extension-bypasses-structural", target := resolve "Holder", name := "Inner",
+      mode := .extensionOnly, expected := .failedOtherwise },
+    -- S: an EXTENSION edge with a lexical fallback runs the ordinary
+    -- receiver-injected user call: `5~.Double` is `Double(5)` on both paths.
+    { label := "S/extension-lexical-user-callee", target := .num 5, name := "Double",
+      mode := .extensionOnly, expectedAtoms := some [10] } ]
 
 def dotCallParityCaseFailures : List String :=
   (dotCallParityCases.filter (fun c => !(dotCallParityCaseHolds c))).map
@@ -12663,7 +13034,8 @@ def dotCallParityCaseFailures : List String :=
 def dotCallParityCacheCasesWriteCache : Bool :=
   [ (resolve "Holder", "Inner") ].all
     fun (target, name) =>
-      match (KatLang.evalDotCall target name none (dotCallParityCtx dotCallParityProg) []).run
+      match (KatLang.evalDotCall target name (.resolve name) .ordinary none
+          (dotCallParityCtx dotCallParityProg) []).run
           KatLang.EvalState.empty with
       | .ok (_, state) => !state.zeroArgPropertyCache.isEmpty
       | .error _ => false

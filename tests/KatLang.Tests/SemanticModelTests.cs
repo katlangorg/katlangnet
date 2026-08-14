@@ -648,6 +648,167 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void Build_DotCall_MemberResolvesCallingContextParameter()
+    {
+        // The dot member `t` mirrors the evaluator's parameter channel: with
+        // no lexical declaration in sight it resolves to the enclosing
+        // explicit parameter, exactly like the plain callee `t(a)` would.
+        var model = BuildModel(
+            """
+            K(a, t) = a.t
+            K(7, {a+1})
+            """);
+
+        var tDeclaration = Assert.Single(model.FindDeclarations("t"));
+        Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, tDeclaration.Kind);
+        AssertSpan(tDeclaration.Span, 1, 6, 1, 6);
+
+        var memberReference = ResolutionAt(model, 1, 13);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, memberReference.Classification);
+        Assert.Equal(tDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_DotCall_MemberPrefersLocalParameterOverSameNameProperty()
+    {
+        var model = BuildModel(
+            """
+            t = 5
+            K(a, t) = a.t
+            K(7, {a+1})
+            """);
+
+        var declarations = model.FindDeclarations("t");
+        var parameterDeclaration = Assert.Single(
+            declarations,
+            declaration => declaration.Kind == OccurrenceKind.ExplicitParameterDefinition);
+
+        var memberReference = ResolutionAt(model, 2, 13);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, memberReference.Classification);
+        Assert.Equal(parameterDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_ExtensionDot_InferredMemberNavigatesToParameter()
+    {
+        // `K = a~.t`: the extension member is a callable-name occurrence, so
+        // `t` is an inferred implicit parameter and the member reference
+        // classifies exactly like a bare implicit-parameter reference
+        // (implicit parameters carry no source declaration occurrence, so
+        // there is nothing to navigate to — same as bare `t`).
+        var model = BuildModel(
+            """
+            K = a~.t
+            K(7, {a+1})
+            """);
+
+        var memberReference = ResolutionAt(model, 1, 8);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, memberReference.Classification);
+    }
+
+    [Fact]
+    public void Build_ExtensionDot_MemberBypassesStructuralClassification()
+    {
+        // `Obj~.V` classifies the member by its lexical fallback (the property
+        // V(x) = 99), never by Obj's structural member.
+        var model = BuildModel(
+            """
+            V(x) = 99
+            Obj = {
+                public V = 42
+                0
+            }
+            Obj~.V
+            """);
+
+        var lexicalDeclaration = Assert.Single(
+            model.FindDeclarations("V"),
+            declaration => declaration.Span is { } span && span.StartLineNumber == 1);
+
+        var memberReference = ResolutionAt(model, 6, 6);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, memberReference.Classification);
+        Assert.Equal(lexicalDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_OrdinaryDot_StructuralMemberStaysMemberBesideSameNameLexical()
+    {
+        // Ordinary `Obj.V` keeps structural classification: the member
+        // navigates to Obj's own V, not the lexical V(x).
+        var model = BuildModel(
+            """
+            V(x) = 99
+            Obj = {
+                public V = 42
+                0
+            }
+            Obj.V
+            """);
+
+        var structuralDeclaration = Assert.Single(
+            model.FindDeclarations("V"),
+            declaration => declaration.Span is { } span && span.StartLineNumber == 3);
+
+        var memberReference = ResolutionAt(model, 6, 5);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, memberReference.Classification);
+        Assert.Equal(structuralDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_DotCall_MemberPrefersVisiblePropertyOverCapturedParameterBinding()
+    {
+        // Inside G, `t` is not a parameter of G; the visible property `t`
+        // shadows any dynamically visible parameter binding, mirroring the
+        // evaluator's captured-parameter shadow rule.
+        var model = BuildModel(
+            """
+            t = 5
+            G(x) = x.t
+            K(a, t) = G(a)
+            K(7, {a+1})
+            """);
+
+        var propertyDeclaration = Assert.Single(
+            model.FindDeclarations("t"),
+            declaration => declaration.Kind == OccurrenceKind.PropertyDefinition);
+
+        var memberReference = ResolutionAt(model, 2, 10);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, memberReference.Classification);
+        Assert.Equal(propertyDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_DotCall_GrandparentLexicalFallbackUsesOrdinaryScopeLookup()
+    {
+        var model = BuildModel(
+            """
+            Outer = {
+                t(a) = a + 1
+                Inner = {
+                    K(a) = a.t
+                    K(7)
+                }
+                Inner
+            }
+            Outer
+            """);
+
+        var tDeclaration = Assert.Single(
+            model.FindDeclarations("t"),
+            declaration => declaration.Kind == OccurrenceKind.PropertyDefinition);
+        var memberReference = ResolutionAt(model, 4, 18);
+        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, memberReference.Classification);
+        Assert.Equal(tDeclaration, memberReference.ResolvedDeclaration);
+    }
+
+    [Fact]
     public void Build_DotCall_SequenceSpreadDoesNotMergePropertySurface()
     {
         var model = BuildModel(

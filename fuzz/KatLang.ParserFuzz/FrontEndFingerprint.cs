@@ -159,7 +159,16 @@ internal static class FrontEndFingerprint
                 sb.Append(')'); break;
             case Expr.NativeCall nc: sb.Append("Native{").Append(nc.FnName).Append('(').Append(string.Join(",", nc.ArgNames)).Append(")}"); break;
             case Expr.DotCall dc:
-                sb.Append("Dot{").Append(dc.Name).Append("}@").Append(Span(dc.MemberSpan)).Append('(');
+                sb.Append("Dot{").Append(dc.Name)
+                    .Append(",mode:").Append(dc.ResolutionMode)
+                    .Append(",member@").Append(Span(dc.MemberSpan))
+                    .Append(",extension@").Append(Span(dc.ExtensionMarkerSpan))
+                    .Append(",fallback:");
+                if (dc.LexicalFallback is { } fallback)
+                    Expr(sb, fallback);
+                else
+                    sb.Append("null");
+                sb.Append("}(");
                 Expr(sb, dc.Target);
                 if (dc.Args is { } dargs)
                 {

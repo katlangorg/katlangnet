@@ -47,8 +47,7 @@ public static class LeanAstEncoder
         Expr.Unary(var op, var operand) => $"(.unary .{EncodeUnaryOp(op)} {Arg(operand)})",
         Expr.Binary(var op, var left, var right) =>
             $"(.binary .{EncodeBinaryOp(op)} {Arg(left)} {Arg(right)})",
-        Expr.DotCall(var target, var name, var args) =>
-            $"(.dotCall {Arg(target)} \"{name}\" {(args is null ? "none" : $"(some {EncodeBundle(args)})")})",
+        Expr.DotCall dotCall => EncodeDotCall(dotCall),
         Expr.Call(var callee, var args) => $"(.call {Arg(callee)} {EncodeBundle(args)})",
         _ => throw new NotSupportedException(
             $"{nameof(LeanAstEncoder)} does not cover {expr.GetType().Name}. " +
@@ -60,6 +59,29 @@ public static class LeanAstEncoder
     {
         var encoded = EncodeExpr(expr);
         return encoded.StartsWith('(') ? encoded : $"({encoded})";
+    }
+
+    /// <summary>
+    /// Serializes the ELABORATED dot-edge decision: an ordinary edge whose
+    /// fallback is the default <c>Resolve(Name)</c> uses the `Expr.dotCall`
+    /// smart constructor (definitionally the same node), while a Param-bound
+    /// fallback or an extension edge is spelled with the full
+    /// <c>.dotMember</c> constructor so the Lean guard evaluates the same
+    /// front-end decision the C# runtime consumes.
+    /// </summary>
+    private static string EncodeDotCall(Expr.DotCall dotCall)
+    {
+        var argsEncoding = dotCall.Args is null ? "none" : $"(some {EncodeBundle(dotCall.Args)})";
+        var fallback = dotCall.EffectiveLexicalFallback;
+        if (dotCall.ResolutionMode == DotResolutionMode.Ordinary
+            && fallback is Expr.Resolve(var fallbackName)
+            && string.Equals(fallbackName, dotCall.Name, StringComparison.Ordinal))
+        {
+            return $"(.dotCall {Arg(dotCall.Target)} \"{dotCall.Name}\" {argsEncoding})";
+        }
+
+        var mode = dotCall.ResolutionMode == DotResolutionMode.Ordinary ? ".ordinary" : ".extensionOnly";
+        return $"(.dotMember {Arg(dotCall.Target)} \"{dotCall.Name}\" {Arg(fallback)} {mode} {argsEncoding})";
     }
 
     /// <summary>Call/dot-call argument bundle: a plain Lean list of the slot expressions.</summary>
