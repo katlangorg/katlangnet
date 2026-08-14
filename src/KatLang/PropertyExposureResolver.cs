@@ -245,14 +245,17 @@ internal static class PropertyExposureResolver
     {
         switch (expr)
         {
-            case Expr.Grace(var inner, var weight):
+            case Expr.Grace grace:
             {
+                // Defensive only — parameter detection strips every grace
+                // before exposure resolution runs; `with` keeps the stored
+                // grace facts for host-built trees.
                 var rewrittenInner = RewriteExpr(
-                    inner,
+                    grace.Inner,
                     visiblePropertySummaries,
                     ancestorOwnedForChildren,
                     insideConditionalAlgorithm);
-                return new Expr.Grace(rewrittenInner, weight) { Span = expr.Span };
+                return grace with { Inner = rewrittenInner };
             }
 
             case Expr.Unary(var op, var operand):
@@ -415,7 +418,7 @@ internal static class PropertyExposureResolver
                 }
 
                 // `with` keeps the stored dot-edge facts (member span, lexical
-                // fallback, resolution mode, marker span) intact.
+                // fallback) intact.
                 return ((Expr.DotCall)expr) with
                 {
                     Target = rewrittenTarget,

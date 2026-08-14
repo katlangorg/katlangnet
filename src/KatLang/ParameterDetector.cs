@@ -102,7 +102,9 @@ public static class ParameterDetector
         }
         else
         {
-            CollectFreeParams(alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights);
+            CollectFreeParams(
+                alg.Output, scope, boundNames, paramNames, paramOrder, graceWeights,
+                FreeNameCollection.ImplicitSignature);
 
             if (graceWeights.Count > 0)
                 ApplyGraceReordering(paramOrder, graceWeights);
@@ -204,6 +206,13 @@ public static class ParameterDetector
     {
         switch (expr)
         {
+            case Expr.Grace(var gracedTarget, _):
+                // An open target has no parameter inference to reorder, so a
+                // grace annotation is meaningless here. The parser rejects and
+                // unwraps written ones; a host-built tree is unwrapped the same
+                // way so no Grace can survive elaboration in any position.
+                return ProcessOpenExpr(gracedTarget, openParentScope, diagnostics);
+
             case Expr.AlgorithmExpr(var algorithm):
                 return new Expr.AlgorithmExpr(ProcessAlgorithm(algorithm, openParentScope, [], diagnostics)) { Span = expr.Span };
 
@@ -216,19 +225,20 @@ public static class ParameterDetector
                 { Span = expr.Span };
 
             case Expr.DotCall dotCall:
-                // `with` keeps the stored dot-edge facts (member span,
-                // resolution mode, marker span). Open targets are ordinary
-                // structural paths, so the fallback identity is inert here,
-                // but the detector is the normalization owner: every DotCall
-                // it emits carries an EXPLICIT fallback (null is only a
-                // host-construction shorthand for Resolve(Name)).
+                // `with` keeps the stored dot-edge facts (member span). Open
+                // targets are ordinary structural paths, so the fallback
+                // identity is inert here, but the detector is the
+                // normalization owner: every DotCall it emits carries an
+                // EXPLICIT fallback (null is only a host-construction
+                // shorthand for Resolve(Name)).
                 return dotCall with
                 {
                     Target = ProcessOpenExpr(dotCall.Target, openParentScope, diagnostics),
                     Args = dotCall.Args is { } dotArgs
                         ? new OutputBundle(dotArgs.Select(argExpr => ProcessExpr(argExpr, openParentScope, [])).ToList())
                         : null,
-                    LexicalFallback = dotCall.EffectiveLexicalFallback,
+                    LexicalFallback = ProcessOpenExpr(
+                        dotCall.EffectiveLexicalFallback, openParentScope, diagnostics),
                 };
 
             case Expr.SequenceSpread(var operand):
@@ -297,7 +307,8 @@ public static class ParameterDetector
                 bodyCapturedParamNames,
                 freeNames,
                 freeOrder,
-                dummyWeights);
+                dummyWeights,
+                FreeNameCollection.DeclaredNameCheck);
             foreach (var freeName in freeOrder)
             {
                 // Find the span for the first occurrence of this free identifier
@@ -362,7 +373,9 @@ public static class ParameterDetector
         var freeNames = new HashSet<string>();
         var freeOrder = new List<string>();
         var dummyWeights = new Dictionary<string, int>();
-        CollectFreeParams(output, scope, boundNames, freeNames, freeOrder, dummyWeights);
+        CollectFreeParams(
+            output, scope, boundNames, freeNames, freeOrder, dummyWeights,
+            FreeNameCollection.DeclaredNameCheck);
 
         foreach (var freeName in freeOrder)
         {
@@ -433,7 +446,7 @@ public static class ParameterDetector
                 // binder scope, exactly like capture rows. The stored
                 // lexical-fallback identity rewrites by the SAME rule as a bare
                 // callee name (Resolve → Param when the member is a known
-                // binder), for BOTH resolution modes.
+                // binder).
                 OutputBundle? rewrittenArgs = null;
                 if (dotCall.Args is { } dotArgs)
                 {
@@ -482,6 +495,32 @@ public static class ParameterDetector
     }
 
     /// <summary>
+    /// The purpose a free-name collection serves — the two purposes act on
+    /// DIFFERENT dependency strengths for a dot edge's lexical fallback:
+    /// <list type="bullet">
+    /// <item><see cref="ImplicitSignature"/> constructs an implicit
+    /// parameter list, a MAY-selection question: whenever the fallback CAN be
+    /// selected at runtime, its callable identity must be representable in
+    /// the signature, so the fallback name participates (see
+    /// <see cref="LexicalFallbackSelection"/>).</item>
+    /// <item><see cref="DeclaredNameCheck"/> REJECTS programs (the closed
+    /// explicit-parameter-list rule and the conditional-branch
+    /// full-input-specification rule). A conditional fallback name is not a
+    /// definite dependency — the program stays runtime-valid through the
+    /// structural arm (`Get(obj) = obj.size` with a member-bearing runtime
+    /// receiver never selects the fallback) — so charging it here would
+    /// reject working programs. The checks therefore take no fallback
+    /// contribution, exactly like dependency/exposure analysis charges only
+    /// must-selected fallbacks.</item>
+    /// </list>
+    /// </summary>
+    private enum FreeNameCollection
+    {
+        ImplicitSignature,
+        DeclaredNameCheck,
+    }
+
+    /// <summary>
     /// Collects identifiers that are free (not defined as properties in any visible scope).
     /// Preserves order of first appearance.
     /// </summary>
@@ -491,10 +530,11 @@ public static class ParameterDetector
         HashSet<string> extraBoundNames,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, int> graceWeights)
+        Dictionary<string, int> graceWeights,
+        FreeNameCollection mode)
     {
         foreach (var expr in exprs)
-            CollectFreeParams(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+            CollectFreeParams(expr, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
     }
 
     private static void CollectFreeParams(
@@ -503,25 +543,48 @@ public static class ParameterDetector
         HashSet<string> extraBoundNames,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, int> graceWeights)
+        Dictionary<string, int> graceWeights,
+        FreeNameCollection mode)
     {
         switch (expr)
         {
-            case Expr.Grace(Expr.Resolve(var name), var weight):
-                if (!IsBoundName(name, scope, extraBoundNames) && name.Length > 0)
+            case Expr.Grace(var graceOperand, var graceWeight):
+            {
+                // Grace decorates exactly ONE bare name occurrence. Stacked
+                // wrappers on the SAME occurrence accumulate their weights.
+                // Repeated prefix/postfix markers use this same arithmetic in
+                // every context, including before a dot (`a~~.t` is ordinary
+                // postfix Grace with weight +2). Grace never distributes a
+                // weight through a compound expression: source validation
+                // rejects complex operands, and a host-built one is handled
+                // defensively by collecting its names WITHOUT any reordering
+                // weight.
+                var accumulatedWeight = graceWeight;
+                var gracedCore = graceOperand;
+                while (gracedCore is Expr.Grace(var deeperOperand, var deeperWeight))
                 {
-                    if (paramNames.Add(name))
-                        paramOrder.Add(name);
-                    // Accumulate weight (multiple references sum up)
-                    if (!graceWeights.TryAdd(name, weight))
-                        graceWeights[name] += weight;
+                    accumulatedWeight += deeperWeight;
+                    gracedCore = deeperOperand;
                 }
-                break;
 
-            case Expr.Grace(var inner, _):
-                // Grace wrapping non-Resolve (shouldn't happen, but handle gracefully)
-                CollectFreeParams(inner, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                if (gracedCore is Expr.Resolve(var gracedName))
+                {
+                    if (!IsBoundName(gracedName, scope, extraBoundNames) && gracedName.Length > 0)
+                    {
+                        if (paramNames.Add(gracedName))
+                            paramOrder.Add(gracedName);
+                        // Accumulate weight (multiple references sum up)
+                        if (!graceWeights.TryAdd(gracedName, accumulatedWeight))
+                            graceWeights[gracedName] += accumulatedWeight;
+                    }
+                }
+                else
+                {
+                    CollectFreeParams(gracedCore, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                }
+
                 break;
+            }
 
             case Expr.Resolve(var name):
                 if (!IsBoundName(name, scope, extraBoundNames) && name.Length > 0)
@@ -532,55 +595,69 @@ public static class ParameterDetector
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                CollectFreeParams(selector, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(selector, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(operand, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(left, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                CollectFreeParams(right, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.ListLiteral(var items):
                 // List-literal elements are transparent to the enclosing
                 // parameter scope, like spread operands and sequence joins.
                 foreach (var item in items)
-                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                    CollectFreeParams(item, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.DotCall dotCall:
-                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
-                // EXTENSION dot (`a~.t` / `a.~t`): the member is a
-                // callable-name occurrence and participates in ordinary
-                // free-name analysis through its stored lexical-fallback
-                // identity, so `K = a~.t` infers the same parameters as
-                // `K = t(a)`. ORDINARY dot deliberately contributes nothing
-                // here: the member may be a structural property of the runtime
-                // receiver, so it never becomes an implicit parameter merely
-                // because a lexical fallback path exists.
-                if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
-                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                // Occurrence order is the language's ordinary semantic source
+                // order: receiver, member, then written arguments. The member
+                // spelling contributes a free-name occurrence through the
+                // stored lexical-fallback identity only when that fallback MAY
+                // be selected at runtime. This participation question is
+                // independent of runtime fallback invocation, which later calls
+                // `t(receiver, args...)`; executable argument assembly does not
+                // reorder the enclosing algorithm's signature. Thus `a.t(b)`
+                // contributes `a, t, b`, while the direct call `t(a)` keeps its
+                // own source order `t, a`.
+                CollectFreeParams(dotCall.Target, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+
+                // A statically impossible fallback — a guaranteed structural
+                // member, a conditional-branch member (a local-only ERROR at
+                // runtime, never a fallback), or the dot-only `string`
+                // intrinsic — contributes no member occurrence. The
+                // DeclaredNameCheck mode likewise takes no fallback
+                // contribution because a conditional fallback is not a
+                // definite dependency (see FreeNameCollection).
+                if (mode == FreeNameCollection.ImplicitSignature
+                    && GetImplicitSignatureFallbackSelection(dotCall, scope, extraBoundNames)
+                        != LexicalFallbackSelection.Never)
+                {
+                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
+                }
                 if (dotCall.Args is { } dotArgs)
-                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                    CollectFreeParams(dotArgs, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.Capture(var captureBody):
                 // Captures are transparent: free identifiers bubble up to the
                 // enclosing param scope.
-                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(captureBody, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             case Expr.AlgorithmExpr:
@@ -588,17 +665,66 @@ public static class ParameterDetector
                 break;
 
             case Expr.Call(var func, var args):
-                CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(func, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 // Argument bundles are transparent: free identifiers inside
                 // argument slots belong to the enclosing algorithm. (A brace
                 // block argument is an AlgorithmExpr slot and owns its names.)
-                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights);
+                CollectFreeParams(args, scope, extraBoundNames, paramNames, paramOrder, graceWeights, mode);
                 break;
 
             // Num, Param — no free names
             default:
                 break;
         }
+    }
+
+    /// <summary>
+    /// The MAY-selection classification of one dot edge at implicit-signature
+    /// collection time, resolving a lexical-reference receiver through the
+    /// SAME elaborated scope the collection itself uses. The receiver's
+    /// provider mirrors the receiver occurrence's own elaboration fate:
+    /// a name that will elaborate to a parameter (unbound and therefore
+    /// inferred, or a known parameter name not shadowed by a visible
+    /// non-builtin property — the <see cref="ShouldRewriteAsParam"/>
+    /// decision) is a runtime value; a name resolving to exactly one visible
+    /// property is that property's statically known algorithm; an ambiguous
+    /// name stays an unresolved reference. The Never/Conditional/Always
+    /// mapping itself is the shared
+    /// <see cref="AstHelpers.GetLexicalFallbackSelection"/> law — this
+    /// method only supplies the detector's resolution power, exactly like
+    /// the editor's provider resolution.
+    /// </summary>
+    private static LexicalFallbackSelection GetImplicitSignatureFallbackSelection(
+        Expr.DotCall dotCall,
+        ElaboratedPropertyScope scope,
+        HashSet<string> extraBoundNames)
+    {
+        var receiver = dotCall.Target.UnwrapGraceOperand();
+        var provider = receiver.GetStaticStructuralMemberProvider();
+        if (provider.Kind == StaticStructuralMemberProviderKind.LexicalReference
+            && receiver is Expr.Resolve(var receiverName))
+        {
+            provider = ResolveReceiverNameProvider(receiverName, scope, extraBoundNames);
+        }
+
+        return dotCall.GetLexicalFallbackSelection(provider);
+    }
+
+    private static StaticStructuralMemberProvider ResolveReceiverNameProvider(
+        string name,
+        ElaboratedPropertyScope scope,
+        HashSet<string> extraBoundNames)
+    {
+        if (!IsBoundName(name, scope, extraBoundNames)
+            || (extraBoundNames.Contains(name) && !HasVisibleNonBuiltinPropertyName(scope, name)))
+        {
+            return new(StaticStructuralMemberProviderKind.RuntimeParameter);
+        }
+
+        var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name);
+        return hits.Count == 1
+            ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hits[0].Property.Value)
+            : new(StaticStructuralMemberProviderKind.LexicalReference);
     }
 
     /// <summary>
@@ -721,9 +847,9 @@ public static class ParameterDetector
                 // Argument bundles own no scope: slots rewrite in the enclosing
                 // param context. The stored lexical-fallback identity rewrites
                 // by the SAME rule as a bare callee name (Resolve → Param when
-                // the member is a known local or captured parameter), for BOTH
-                // resolution modes: ordinary dot rewrites already-known
-                // parameters here without ever collecting new ones.
+                // the member is a known local or captured parameter) —
+                // including a fallback name the collection itself just
+                // inferred because the fallback may be selected at runtime.
                 OutputBundle? rewrittenArgs = null;
                 if (dotCall.Args is { } dotArgs)
                 {
@@ -820,7 +946,8 @@ public static class ParameterDetector
                 Args = dotCall.Args is { } da
                     ? new OutputBundle(da.Select(argExpr => ProcessExpr(argExpr, scope, capturedParamNames)).ToList())
                     : null,
-                LexicalFallback = dotCall.EffectiveLexicalFallback,
+                LexicalFallback = ProcessExpr(
+                    dotCall.EffectiveLexicalFallback, scope, capturedParamNames),
             },
             _ => expr,
         };
@@ -866,9 +993,6 @@ public static class ParameterDetector
             Expr.SequenceSpread(var operand) => FindResolveSpan(operand, name),
             Expr.ListLiteral(var items) => FindResolveSpan(items, name),
             Expr.DotCall d => FindResolveSpan(d.Target, name)
-                ?? (d.ResolutionMode == DotResolutionMode.ExtensionOnly
-                    ? FindResolveSpan(d.EffectiveLexicalFallback, name)
-                    : null)
                 ?? (d.Args is not null ? FindResolveSpan(d.Args, name) : null),
             Expr.AlgorithmExpr(var alg) => FindResolveSpan(alg.Output, name),
             Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name),

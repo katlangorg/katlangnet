@@ -405,10 +405,7 @@ internal static class ExprNameRenderer
                 if (argsOpt is not null)
                     pending.Push(new Piece("(...)"));
                 pending.Push(new Piece(name));
-                // Canonical extension rendering is the `~.` spelling for both
-                // written forms (`a~.t` and `a.~t` are one semantic node).
-                pending.Push(new Piece(
-                    node is Expr.DotCall { ResolutionMode: DotResolutionMode.ExtensionOnly } ? "~." : "."));
+                pending.Push(new Piece("."));
                 pending.Push(new Piece(target, ExprNameMode.Open));
                 return true;
 

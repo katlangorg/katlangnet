@@ -555,12 +555,6 @@ public static class SemanticModelBuilder
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
         {
-            // EXTENSION edge (`a~.t` / `a.~t`): structural lookup and the
-            // string intrinsic are bypassed by the language rule — the member
-            // is exactly its stored lexical-fallback binding.
-            if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
-                return ResolveDotMemberFallbackBinding(dotCall, scope);
-
             if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
@@ -582,21 +576,31 @@ public static class SemanticModelBuilder
                 return ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
-            return provider.Kind switch
+            var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
+            return fallbackSelection switch
             {
-                // A runtime parameter may or may not carry a structural
-                // algorithm. The editor surfaces the stored fallback as the
-                // possible callable binding, matching its long-standing
-                // optimistic parameter-receiver policy; exposure analysis
-                // separately requires an unconditional fallback.
-                StaticStructuralMemberProviderKind.RuntimeParameter =>
+                // The editor surfaces a MAY-selected stored fallback for a
+                // runtime parameter as the possible callable binding, exactly
+                // like implicit signature inference. Exposure analysis remains
+                // the separate MUST-selected consumer.
+                LexicalFallbackSelection.Conditional
+                    when provider.Kind == StaticStructuralMemberProviderKind.RuntimeParameter =>
                     ResolveDotMemberFallbackBinding(dotCall, scope),
-                StaticStructuralMemberProviderKind.DefinitelyAbsent =>
+                LexicalFallbackSelection.Always =>
                     ResolveDotMemberFallbackBinding(dotCall, scope),
-                StaticStructuralMemberProviderKind.LexicalReference =>
+
+                // A remaining Conditional provider is an unresolved or
+                // ambiguous lexical receiver. Runtime receiver resolution can
+                // fail before either dot arm is selected, so the tolerant
+                // editor leaves the member unresolved. Never reaches here for
+                // a conditional-branch structural member (a runtime error, not
+                // fallback); ordinary declared members and `.string` returned
+                // above with their richer symbol information.
+                LexicalFallbackSelection.Conditional
+                    or LexicalFallbackSelection.Never =>
                     (IdentifierClassification.Unresolved, null, null),
                 _ => throw new InvalidOperationException(
-                    $"Unhandled structural-member provider kind: {provider.Kind}"),
+                    $"Unhandled lexical-fallback selection: {fallbackSelection}"),
             };
         }
 

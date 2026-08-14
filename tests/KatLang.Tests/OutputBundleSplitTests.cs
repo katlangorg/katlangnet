@@ -290,18 +290,20 @@ public class OutputBundleSplitTests
     public void CaptureReceiver_FailsStructuralLookup_AndInjectsIntoLexicalFallback()
     {
         // (Obj).V: the capture exposes no members, so structural lookup fails
-        // and the lexical fallback resolves V lexically — with no lexical V the
-        // structured error is UnknownName("V") (the engine's dot-call context
+        // and the lexical fallback resolves V lexically. The edge is inside a
+        // CLOSED explicit parameter list, so the unresolvable fallback stays a
+        // lexical name (it is not promoted to an implicit parameter) and the
+        // structured error is UnknownName("V") — the engine's dot-call context
         // renders it as "Property 'V' was not found on `(inline library)`...",
-        // never as a member of Obj).
-        var missing = Innermost(EvalError("Obj = {public V = 7}\n(Obj).V"));
+        // never as a member of Obj.
+        var missing = Innermost(EvalError("Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)"));
         var unknown = Assert.IsType<EvalError.UnknownName>(missing);
         Assert.Equal("V", unknown.Name);
 
         // With a lexical one-parameter V, the receiver is injected as the one
         // leading argument: V(receiverValue). Obj has properties but NO output,
         // so evaluating the capture receiver reports Obj's missing output —
-        // proof the fallback call路 was taken (structural access Obj.V works).
+        // proof the fallback call was taken (structural access Obj.V works).
         var fallback = EvalError("V(v) = v + 1\nObj = {public V = 7}\n(Obj).V");
         Assert.IsType<EvalError.MissingOutput>(Innermost(fallback));
 

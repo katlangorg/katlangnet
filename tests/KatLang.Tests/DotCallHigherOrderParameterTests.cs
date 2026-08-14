@@ -14,8 +14,8 @@ namespace KatLang.Tests;
 /// through canonical <c>ResolveAlg</c>. Structural lookup precedence, the
 /// receiver segment rule, sequence-builtin dot dispatch for lexical member
 /// names, and plain/counted parity all stay intact. Lean: `Expr.dotMember`
-/// (CoreTests `higherOrderDot*` guards); extension-dot coverage lives in
-/// <c>ExtensionDotResolutionTests</c>.
+/// (CoreTests `higherOrderDot*` guards); Grace composition coverage lives in
+/// <c>GraceDotCompositionTests</c>.
 /// </summary>
 public class DotCallHigherOrderParameterTests
 {

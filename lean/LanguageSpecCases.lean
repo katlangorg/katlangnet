@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 172
+- specification surface cases: 173
 - excluded parse-level cases (Lean has no surface parser): 6
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 165
-- probe observations (C#-only by design): 252
+- Lean-guarded cases: 166
+- probe observations (C#-only by design): 255
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -470,33 +470,38 @@ def case_zero_param_block_higher_order : Expr :=
 
 -- dot-member-higher-order-parameter [access-boundaries]: K(a, t) = t(a) \n D(a, t) = a.t \n  \n K(7, {a+1}) \n D(7, {a+1})
 def case_dot_member_higher_order_parameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "K" (alg ["a", "t"] [] [] [.call (.param "t") [.param "a"]]), privateProp "D" (alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") .ordinary none])] [.call (.resolve "K") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])], .call (.resolve "D") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])]])
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["a", "t"] [] [] [.call (.param "t") [.param "a"]]), privateProp "D" (alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") none])] [.call (.resolve "K") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])], .call (.resolve "D") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])]])
 #guard obs case_dot_member_higher_order_parameter == "ok raw=S[8, 8] n=2"
 
--- extension-dot-higher-order-implicit [access-boundaries]: K = a~.t \n K(7, {a+1})
-def case_extension_dot_higher_order_implicit : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "K" (alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") .extensionOnly none])] [.call (.resolve "K") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])]])
-#guard obs case_extension_dot_higher_order_implicit == "ok raw=8 n=1"
+-- dot-member-fallback-implicit-signature [access-boundaries]: K = a.t \n K(7, {a+1})
+def case_dot_member_fallback_implicit_signature : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["a", "t"] [] [] [.dotMember (.param "a") "t" (.param "t") none])] [.call (.resolve "K") [.num 7, .algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)])]])
+#guard obs case_dot_member_fallback_implicit_signature == "ok raw=8 n=1"
 
--- extension-dot-bypasses-structural-member [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 42 \n     0 \n } \n  \n Obj.V \n Obj~.V
-def case_extension_dot_bypasses_structural_member : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "V" (alg ["x"] [] [] [.num 99]), privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [.num 0])] [.dotCall (.resolve "Obj") "V" none, .dotMember (.resolve "Obj") "V" (.resolve "V") .extensionOnly none])
-#guard obs case_extension_dot_bypasses_structural_member == "ok raw=S[42, 99] n=2"
+-- grace-dot-higher-order-implicit [access-boundaries]: K = a~.t \n K({a+1}, 7)
+def case_grace_dot_higher_order_implicit : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["t", "a"] [] [] [.dotMember (.param "a") "t" (.param "t") none])] [.call (.resolve "K") [.algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)]), .num 7]])
+#guard obs case_grace_dot_higher_order_implicit == "ok raw=8 n=1"
 
--- ordinary-dot-member-is-not-implicit-param [access-boundaries]: K(x) = x.V \n Obj = {public V = 42} \n  \n K(Obj)
-def case_ordinary_dot_member_is_not_implicit_param : Expr :=
+-- grace-dot-keeps-structural-precedence [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 42 \n     0 \n } \n  \n Obj.V \n Obj~.V
+def case_grace_dot_keeps_structural_precedence : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "V" (alg ["x"] [] [] [.num 99]), privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [.num 0])] [.dotCall (.resolve "Obj") "V" none, .dotCall (.resolve "Obj") "V" none])
+#guard obs case_grace_dot_keeps_structural_precedence == "ok raw=S[42, 42] n=2"
+
+-- dot-member-fallback-in-closed-parameter-list [access-boundaries]: K(x) = x.V \n Obj = {public V = 42} \n  \n K(Obj)
+def case_dot_member_fallback_in_closed_parameter_list : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.dotCall (.param "x") "V" none]), privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [])] [.call (.resolve "K") [.resolve "Obj"]])
-#guard obs case_ordinary_dot_member_is_not_implicit_param == "ok raw=42 n=1"
+#guard obs case_dot_member_fallback_in_closed_parameter_list == "ok raw=42 n=1"
 
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment))
 def case_capture_suppresses_higher_order_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [.call (.param "f") [.num 9]]), privateProp "Increment" (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)])] [.call (.resolve "Apply") [(.capture [.resolve "Increment"])]])
 #guard obs case_capture_suppresses_higher_order_identity == "err arity"
 
--- capture-suppresses-structural-members [access-boundaries]: Obj = {public V = 7} \n (Obj).V
+-- capture-suppresses-structural-members [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 7 \n     0 \n } \n  \n Obj.V \n (Obj).V
 def case_capture_suppresses_structural_members : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 7])] [])] [.dotCall (.capture [.resolve "Obj"]) "V" none])
-#guard obs case_capture_suppresses_structural_members == "err unknownName"
+  .algorithmExpr (alg [] [] [privateProp "V" (alg ["x"] [] [] [.num 99]), privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 7])] [.num 0])] [.dotCall (.resolve "Obj") "V" none, .dotCall (.capture [.resolve "Obj"]) "V" none])
+#guard obs case_capture_suppresses_structural_members == "ok raw=S[7, 99] n=2"
 
 -- output-dotted-access-ordinary [access-boundaries]: A = { \n     Output = 9 \n } \n  \n A.Output
 def case_output_dotted_access_ordinary : Expr :=
@@ -923,7 +928,7 @@ def case_list_builtin_collection : Expr :=
   .algorithmExpr (alg [] [] [] [.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])]])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 165 canonical Lean-guarded specification cases.
+-- 166 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1006,9 +1011,10 @@ def specCaseIds : List String := [
   "dot-access-value-boundary",
   "zero-param-block-higher-order",
   "dot-member-higher-order-parameter",
-  "extension-dot-higher-order-implicit",
-  "extension-dot-bypasses-structural-member",
-  "ordinary-dot-member-is-not-implicit-param",
+  "dot-member-fallback-implicit-signature",
+  "grace-dot-higher-order-implicit",
+  "grace-dot-keeps-structural-precedence",
+  "dot-member-fallback-in-closed-parameter-list",
   "capture-suppresses-higher-order-identity",
   "capture-suppresses-structural-members",
   "output-dotted-access-ordinary",
@@ -1097,6 +1103,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 165
+#guard specCaseIds.length == 166
 
 end LanguageSpecCases

@@ -28,6 +28,7 @@ internal sealed class FrontEndInvariantException(string message) : Exception(mes
 ///   2. raw invariants             — existing raw-parser invariants + raw AST spans
 ///   3. frontend process           — <c>FrontEndPipeline.Process</c> (no downloader)
 ///   4. frontend traversal         — total, cycle-safe walk + spans + no SequenceConstruct
+///                                   + DotCall phase contract
 ///   5. diagnostic-prefix          — raw diagnostics are an unchanged prefix of frontend's
 ///   6. determinism                — same source ⇒ identical structural fingerprint
 ///   7. public-wrapper parity      — Parser.Parse == Process().ToParseResult() (sampled)
@@ -74,6 +75,10 @@ internal static class FrontEndInvariants
         phase = FrontEndPhase.FrontendTraversal;
         new AstSpanWalker(lineWidths, "frontend").VisitAlgorithm(frontend.ElaboratedRoot);
         CheckDiagnosticSpans(frontend.Diagnostics, lineWidths);
+        var violation = DotCallElaborationInvariant.CheckElaborated(frontend.ElaboratedRoot);
+        if (violation is not null)
+            throw new FrontEndInvariantException(
+                $"Frontend tree violated the DotCall phase contract: {violation.Description}");
 
         phase = FrontEndPhase.DiagnosticPrefix;
         CheckDiagnosticPrefix(syntax.Diagnostics, frontend.Diagnostics);
@@ -179,7 +184,6 @@ internal static class FrontEndInvariants
         protected override void VisitConditionalBinderDeclaration(Pattern.Bind pattern, SourceSpan span) => Check(span, "conditional-binder");
         protected override void VisitCollectMarker(SourceSpan span) => Check(span, "collect-marker");
         protected override void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span) => Check(span, "dot-member");
-        protected override void VisitExtensionDotMarker(Expr.DotCall expr, SourceSpan span) => Check(span, "extension-dot-marker");
 
         private void Check(SourceSpan? span, string kind)
         {

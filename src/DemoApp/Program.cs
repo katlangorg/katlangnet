@@ -1,7 +1,8 @@
 using KatLang;
 
 var source = """
-    take([1,2,3,4,5], 3)
+    K=a.t
+    K(7, {x+1})
     """;
 
 switch (KatLangEngine.Run(source, new RunOptions { DownloadCode = DownloadCode }))

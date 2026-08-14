@@ -62,26 +62,25 @@ public static class LeanAstEncoder
     }
 
     /// <summary>
-    /// Serializes the ELABORATED dot-edge decision: an ordinary edge whose
-    /// fallback is the default <c>Resolve(Name)</c> uses the `Expr.dotCall`
-    /// smart constructor (definitionally the same node), while a Param-bound
-    /// fallback or an extension edge is spelled with the full
-    /// <c>.dotMember</c> constructor so the Lean guard evaluates the same
-    /// front-end decision the C# runtime consumes.
+    /// Serializes the ELABORATED dot-edge decision: an edge whose fallback is
+    /// the default <c>Resolve(Name)</c> uses the `Expr.dotCall` smart
+    /// constructor (definitionally the same node), while a Param-bound
+    /// fallback is spelled with the full <c>.dotMember</c> constructor so the
+    /// Lean guard evaluates the same front-end decision the C# runtime
+    /// consumes. (A graced dot source encodes identically to its ungraced
+    /// twin: Grace is consumed before encoding.)
     /// </summary>
     private static string EncodeDotCall(Expr.DotCall dotCall)
     {
         var argsEncoding = dotCall.Args is null ? "none" : $"(some {EncodeBundle(dotCall.Args)})";
         var fallback = dotCall.EffectiveLexicalFallback;
-        if (dotCall.ResolutionMode == DotResolutionMode.Ordinary
-            && fallback is Expr.Resolve(var fallbackName)
+        if (fallback is Expr.Resolve(var fallbackName)
             && string.Equals(fallbackName, dotCall.Name, StringComparison.Ordinal))
         {
             return $"(.dotCall {Arg(dotCall.Target)} \"{dotCall.Name}\" {argsEncoding})";
         }
 
-        var mode = dotCall.ResolutionMode == DotResolutionMode.Ordinary ? ".ordinary" : ".extensionOnly";
-        return $"(.dotMember {Arg(dotCall.Target)} \"{dotCall.Name}\" {Arg(fallback)} {mode} {argsEncoding})";
+        return $"(.dotMember {Arg(dotCall.Target)} \"{dotCall.Name}\" {Arg(fallback)} {argsEncoding})";
     }
 
     /// <summary>Call/dot-call argument bundle: a plain Lean list of the slot expressions.</summary>

@@ -327,7 +327,7 @@ internal static class SequencePipelineOptimizer
         }
 
         // The probe consumes the ORIGINAL filter dot-edge node, so the
-        // elaborated facts (resolution mode, lexical-fallback identity) gate
+        // elaborated fact (the lexical-fallback identity) gates
         // fusion exactly as they gate generic dispatch.
         var filterLookupFallbackReason = services.GetDotCallLexicalBuiltinFallbackReason(
             (Expr.DotCall)syntax.FilterExpression,
@@ -756,9 +756,9 @@ internal static class SequencePipelineOptimizer
         {
             // The dot form probes through the shared evaluator legality check
             // on the ORIGINAL count dot-edge node, so fusion observes exactly
-            // the generic dispatch: an extension edge or a parameter-bound
-            // member falls back to the generic path, which resolves the stored
-            // fallback identity instead of the builtin.
+            // the generic dispatch: a parameter-bound member falls back to the
+            // generic path, which resolves the stored fallback identity
+            // instead of the builtin.
             SequencePipelineInvocationKind.DotCall => services.GetDotCallLexicalBuiltinFallbackReason(
                 invocation.Dot!,
                 BuiltinId.@count) is null,

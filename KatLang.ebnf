@@ -275,32 +275,54 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    line never continues the previous expression and
                                    is a parse error. Same-line whitespace around ':'
                                    is insignificant (Pair:0, Pair :0, Pair : 0). *)
-                | [ "~" ] "." [ "~" ] Identifier [ CallArgs ]
+                | "." { "~" } Identifier [ CallArgs ]
                                 (* a '.'-led line intentionally continues the
                                    dot-call chain (method-chain layout).
-                                   EXTENSION DOT: a "~" DIRECTLY attached to
-                                   the dot on either side — `recv~.Name` or
-                                   `recv.~Name` (exact source-offset adjacency
-                                   between the tilde and the dot; at most one
-                                   marker per edge) — selects extension-call
-                                   resolution for exactly that dot edge: no
-                                   structural member lookup, the member is a
-                                   callable-name occurrence, and the lexical
-                                   callee is invoked with the receiver as the
-                                   injected leading argument segment. Both
-                                   spellings normalize to one AST node. A
-                                   detached tilde (`a ~ .t`) is ordinary
-                                   grace, and the dot stays an ordinary
-                                   structural-first edge. In a marker run
-                                   such as `a~~.t`, only the dot-adjacent
-                                   tilde is the extension marker; preceding
-                                   tildes keep their grace meaning. `~.` is
-                                   same-physical-line only (the tilde follows
-                                   the receiver's line); a cross-line chain
-                                   uses the '.'-led continuation, where `.~`
-                                   still marks the edge. Extension edges are
-                                   not open targets. When
-                                   the target of the "." is a spread
+                                   GRACE COMPOSES WITH DOT. `recv~.Name` is
+                                   ordinary postfix Grace on the bare receiver
+                                   name followed by an ordinary dot; `recv.~Name`
+                                   is ordinary dot with prefix Grace on the
+                                   member/fallback name occurrence. Repeated
+                                   markers use the normal same-occurrence
+                                   weight arithmetic (`recv~~.Name`,
+                                   `recv.~~Name`). Parameter detection consumes
+                                   Grace, so every form builds the SAME ordinary
+                                   dot edge as `recv.Name`: structural member
+                                   first, lexical fallback second.
+
+                                   Free-name collection follows semantic source order:
+                                   receiver, participating member fallback,
+                                   then arguments, so `K = a.t(b)` infers
+                                   `(a, t, b)`. Thus `a.t` infers `(a, t)`;
+                                   postfix Grace in `a~.t` moves `a` one place
+                                   later, and prefix Grace in `a.~t` moves `t`
+                                   one place earlier, so both infer `(t, a)`.
+                                   The multi-argument forms both infer
+                                   `(t, a, b, c)` from base `(a, t, b, c)`.
+                                   Runtime fallback invocation as `t(a, b)`
+                                   does not determine signature order.
+
+                                   Grace itself remains restricted to one bare
+                                   name occurrence. Therefore postfix Grace on
+                                   a literal, group, call result, dot result
+                                   (including the second `~.` in `a~.t~.u`),
+                                   list, brace, string, or spread is a targeted
+                                   error that recovers as the graceless edge.
+                                   Prefix member Grace is eligible even with a
+                                   compound receiver because it decorates the
+                                   bare member/fallback name, not the receiver.
+                                   Call arguments are unrestricted.
+                                   A detached tilde (`a ~ .t`) is ordinary
+                                   postfix Grace on the receiver name under the
+                                   ordinary whitespace-insensitive token grammar,
+                                   and therefore has the same `(t, a)` order in
+                                   the two-name case. Postfix Grace is
+                                   same-physical-line only. A cross-line chain
+                                   uses the '.'-led continuation; prefix member
+                                   Grace must be directly attached after that dot.
+                                   A grace-marked
+                                   open target is rejected (`open M~.C`).
+                                   When the target of the "." is a spread
                                    expression, the continuation is the fluent
                                    supply transition: `operand*.Target(args)`
                                    lowers at parse time to the ordinary
@@ -309,10 +331,11 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    the receiver is an item supply, not a
                                    value, so no structural member lookup
                                    applies and no property access happens on
-                                   the spread (an extension marker on a
-                                   spread receiver selects exactly that same
-                                   lowering). Further continuations chain on
-                                   the call result
+                                   the spread. Postfix Grace on the spread is
+                                   invalid; prefix member Grace in
+                                   `operand*.~Target` decorates the ordinary
+                                   lowered lexical callee occurrence. Further
+                                   continuations chain on the call result
                                    (`x.Calculate*.Target.Other`). *)
                 | SpreadMarker  (* see SpreadExpression *)
                 | CallArgs ;    (* only when LHS is a callable target: Resolve, DotCall, or Grace,
@@ -369,9 +392,16 @@ Primary         = NumberLiteral
                 | ListLiteral ;
 
 GraceIdentifier = { "~" } Identifier { "~" } ;
-                  (* postfix "~" is same-physical-line only: a "~"-led line
-                     is its own prefix-grace expression, never postfix grace
-                     on the previous line's identifier. *)
+                  (* Grace `~` applies ONLY to one bare parameter/name
+                     occurrence — this production is its entire surface.
+                     Attaching a marker to any other completed expression
+                     (`(x + y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~`, `~(x)`)
+                     is a targeted parse error: Grace is a parameter-order
+                     annotation, not an expression operator, and never
+                     distributes through a compound operand. Postfix "~" is
+                     same-physical-line only: a "~"-led line is its own
+                     prefix-grace expression, never postfix grace on the
+                     previous line's identifier. *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty

@@ -81,19 +81,6 @@ public class ExprNameRendererTests
         Assert.Equal("a.f", Open(new Expr.DotCall(a, "f", null)));
         Assert.Equal("a.f(...)", Open(new Expr.DotCall(a, "f", emptyArgs)));
 
-        // Extension dot: both written spellings (`a~.f`, `a.~f`) are ONE node
-        // whose canonical rendering is the `~.` form, in every name mode.
-        var extension = new Expr.DotCall(a, "f", null)
-        {
-            ResolutionMode = DotResolutionMode.ExtensionOnly,
-            LexicalFallback = new Expr.Resolve("f"),
-            ExtensionMarkerSpan = new SourceSpan(1, 2, 1, 2),
-        };
-        Assert.Equal("a~.f", Open(extension));
-        Assert.Equal("a~.f", Diag(extension));
-        var extensionWithArgs = extension with { Args = emptyArgs };
-        Assert.Equal("a~.f(...)", Open(extensionWithArgs));
-
         // Grace prefix/postfix.
         Assert.Equal("~a", Open(new Expr.Grace(a, -1)));
         Assert.Equal("a~", Open(new Expr.Grace(a, 1)));

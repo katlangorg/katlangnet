@@ -632,8 +632,12 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_DotCall_UnknownMemberOnImplicitParameterReceiverRemainsUnresolved()
+    public void Build_DotCall_UnknownMemberOnImplicitParameterReceiver_IsTheInferredFallbackParameter()
     {
+        // The opaque receiver means the lexical fallback MAY be selected, so
+        // the member's callable identity was inferred as an implicit
+        // parameter. The editor consumes that stored identity: the occurrence
+        // is still a dot member, classified as the parameter it binds.
         var model = BuildModel("public Test = a.Unknown");
 
         var parameterReference = ResolutionAt(model, 1, 15);
@@ -642,7 +646,8 @@ public class SemanticModelTests
 
         var unknownReference = ResolutionAt(model, 1, 17);
         Assert.Equal(OccurrenceKind.DotMemberReference, unknownReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, unknownReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, unknownReference.Classification);
+        // An implicit parameter has no source declaration to navigate to.
         Assert.Null(unknownReference.ResolvedDeclaration);
         Assert.Null(unknownReference.ResolvedProperty);
     }
@@ -691,29 +696,78 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_ExtensionDot_InferredMemberNavigatesToParameter()
+    public void Build_GracedDot_MemberClassifiesLikeTheOrdinaryDotMember()
     {
-        // `K = a~.t`: the extension member is a callable-name occurrence, so
-        // `t` is an inferred implicit parameter and the member reference
-        // classifies exactly like a bare implicit-parameter reference
-        // (implicit parameters carry no source declaration occurrence, so
-        // there is nothing to navigate to — same as bare `t`).
-        var model = BuildModel(
+        // `K = a~.t` IS the ordinary dot edge `a.t`, so its member identifier
+        // is a dot-member occurrence classified through the stored fallback —
+        // here the inferred implicit parameter `t`. The graced and ungraced
+        // spellings classify identically. Grace still belongs only to
+        // signature ordering: postfix Grace moves `a` after `t`.
+        var graced = BuildModel(
             """
             K = a~.t
+            K({a+1}, 7)
+            """);
+        var gracedMember = ResolutionAt(graced, 1, 8);
+        Assert.Equal(OccurrenceKind.DotMemberReference, gracedMember.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, gracedMember.Classification);
+        Assert.Equal(
+            ["t", "a"],
+            SingleProperty(graced, "K").Parameters.Select(parameter => parameter.Name).ToList());
+
+        var prefixMemberGraced = BuildModel(
+            """
+            K = a.~t
+            K({a+1}, 7)
+            """);
+        var prefixMember = ResolutionAt(prefixMemberGraced, 1, 8);
+        Assert.Equal(OccurrenceKind.DotMemberReference, prefixMember.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, prefixMember.Classification);
+        Assert.Equal(
+            ["t", "a"],
+            SingleProperty(prefixMemberGraced, "K").Parameters.Select(parameter => parameter.Name).ToList());
+
+        var ungraced = BuildModel(
+            """
+            K = a.t
             K(7, {a+1})
             """);
-
-        var memberReference = ResolutionAt(model, 1, 8);
-        Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, memberReference.Classification);
+        var ungracedMember = ResolutionAt(ungraced, 1, 7);
+        Assert.Equal(gracedMember.Occurrence.Kind, ungracedMember.Occurrence.Kind);
+        Assert.Equal(gracedMember.Classification, ungracedMember.Classification);
+        Assert.Equal(
+            ["a", "t"],
+            SingleProperty(ungraced, "K").Parameters.Select(parameter => parameter.Name).ToList());
     }
 
     [Fact]
-    public void Build_ExtensionDot_MemberBypassesStructuralClassification()
+    public void Build_RejectedComplexPostfixGraceReceiver_YieldsNoGraceOrdering()
     {
-        // `Obj~.V` classifies the member by its lexical fallback (the property
-        // V(x) = 99), never by Obj's structural member.
+        // Ineligible Grace on a compound receiver is a parse error; the recovery
+        // tree is the ordinary GRACELESS dot edge, so the editor stays
+        // tolerant (spans, ordinary classification) without ever inferring a
+        // multi-name Grace ordering from invalid source.
+        var parseResult = Parser.Parse("K = (x + y)~.t\nK(3, 4, {a})");
+        Assert.True(parseResult.HasErrors);
+        Assert.Contains(
+            parseResult.Diagnostics,
+            d => d.Message.Contains("Grace `~` can only be applied to a parameter or name occurrence.", StringComparison.Ordinal));
+
+        var model = SemanticModelBuilder.Build(parseResult);
+        Assert.NotNull(model);
+        var k = Assert.IsType<Algorithm.User>(parseResult.Root.Properties[0].Value);
+        // No grace was assigned, so the recovery tree keeps ordinary semantic
+        // occurrence order: receiver names first, then member/fallback.
+        Assert.Equal(["x", "y", "t"], k.Params);
+    }
+
+    [Fact]
+    public void Build_GracedDot_MemberNavigatesToTheStructuralMember()
+    {
+        // `Obj~.V` IS the ordinary dot edge `Obj.V`, so the member navigates
+        // to Obj's STRUCTURAL V (line 3) — the same target the marker-free
+        // spelling gives, and the same one the evaluator selects (42). The
+        // marker never redirects navigation to the lexical V(x) = 99.
         var model = BuildModel(
             """
             V(x) = 99
@@ -724,14 +778,14 @@ public class SemanticModelTests
             Obj~.V
             """);
 
-        var lexicalDeclaration = Assert.Single(
+        var structuralDeclaration = Assert.Single(
             model.FindDeclarations("V"),
-            declaration => declaration.Span is { } span && span.StartLineNumber == 1);
+            declaration => declaration.Span is { } span && span.StartLineNumber == 3);
 
         var memberReference = ResolutionAt(model, 6, 6);
         Assert.Equal(OccurrenceKind.DotMemberReference, memberReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.PropertyReference, memberReference.Classification);
-        Assert.Equal(lexicalDeclaration, memberReference.ResolvedDeclaration);
+        Assert.Equal(structuralDeclaration, memberReference.ResolvedDeclaration);
     }
 
     [Fact]
@@ -829,22 +883,28 @@ public class SemanticModelTests
         Assert.Single(model.FindDeclarations("X"));
         Assert.Single(model.FindDeclarations("Y"));
 
+        // Neither member reaches A's or B's declaration: a spread joins VALUES
+        // and merges no property surface. Both are the edges' own inferred
+        // fallback parameters instead.
         var xReference = ResolutionAt(model, 10, 3);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, xReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, xReference.Classification);
         Assert.Null(xReference.ResolvedDeclaration);
         Assert.Null(xReference.ResolvedProperty);
 
         var yReference = ResolutionAt(model, 11, 3);
         Assert.Equal(OccurrenceKind.DotMemberReference, yReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, yReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, yReference.Classification);
         Assert.Null(yReference.ResolvedDeclaration);
         Assert.Null(yReference.ResolvedProperty);
     }
 
     [Fact]
-    public void Build_DotCall_ArityOnImplicitParameter_RemainsUnresolved()
+    public void Build_DotCall_ArityOnImplicitParameter_IsNoIntrinsic()
     {
+        // `arity` is not an intrinsic member and resolves nowhere lexically,
+        // so it is just the edge's inferred fallback parameter — it must never
+        // classify as a builtin or resolve to a declaration.
         var model = BuildModel(
             """
             Args = 1, 2, 5
@@ -858,13 +918,13 @@ public class SemanticModelTests
 
         var arityReference = ResolutionAt(model, 2, 10);
         Assert.Equal(OccurrenceKind.DotMemberReference, arityReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, arityReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, arityReference.Classification);
         Assert.Null(arityReference.ResolvedDeclaration);
         Assert.Null(arityReference.ResolvedProperty);
     }
 
     [Fact]
-    public void Build_DotCall_LengthOnImplicitParameter_RemainsUnresolved()
+    public void Build_DotCall_LengthOnImplicitParameter_IsNoIntrinsic()
     {
         var model = BuildModel(
             """
@@ -879,7 +939,7 @@ public class SemanticModelTests
 
         var lengthReference = ResolutionAt(model, 2, 10);
         Assert.Equal(OccurrenceKind.DotMemberReference, lengthReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, lengthReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, lengthReference.Classification);
         Assert.Null(lengthReference.ResolvedDeclaration);
         Assert.Null(lengthReference.ResolvedProperty);
     }
@@ -1340,8 +1400,11 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_NonLoadUnresolvedDotMember_RemainsUnresolved()
+    public void Build_NonLoadUnresolvedDotMember_ResolvesToNoDeclaration()
     {
+        // `A` is a plain value property, so the member has no structural
+        // target: it is the edge's inferred fallback parameter and navigates
+        // nowhere.
         var model = BuildModel(
             """
             A = 5
@@ -1350,7 +1413,7 @@ public class SemanticModelTests
 
         var xReference = ResolutionAt(model, 2, 3);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, xReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, xReference.Classification);
         Assert.Null(xReference.ResolvedDeclaration);
     }
 
@@ -1371,9 +1434,12 @@ public class SemanticModelTests
         var aliasReference = ResolutionAt(model, 3, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, aliasReference.Classification);
 
+        // The alias is a wrapper without members, so `X` never navigates into
+        // the loaded module — it is the edge's own inferred fallback
+        // parameter, matching the evaluator's lexical-fallback dispatch.
         var xReference = ResolutionAt(model, 3, 7);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.Unresolved, xReference.Classification);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, xReference.Classification);
         Assert.Null(xReference.ResolvedDeclaration);
     }
 

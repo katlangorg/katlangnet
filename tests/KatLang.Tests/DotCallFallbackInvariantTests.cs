@@ -1,20 +1,27 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// The elaborated dot-edge phase contract
+/// The elaborated DotCall phase contract
 /// (<see cref="DotCallElaborationInvariant"/>):
 ///
 /// RAW / HOST-COMPATIBLE AST — <c>LexicalFallback</c> may be null, meaning
 /// exactly <c>Resolve(Name)</c> and nothing else.
 ///
-/// ELABORATED, DIAGNOSTIC-FREE SOURCE AST — the fallback is always explicit:
-/// exactly <c>Resolve(Name)</c> or <c>Param(Name)</c> with the identifier
-/// equal to the structural member name, and the extension marker span agrees
-/// with the resolution mode. The parser constructs <c>Resolve(Name)</c> for
-/// every edge and <see cref="ParameterDetector"/> owns both the
-/// <c>null → Resolve(Name)</c> normalization and the Param rewrite, so the
-/// contract holds by construction; these tests are its permanent enforcement
-/// (the repository's guarded-by-tests pattern for producer invariants).
+/// ELABORATED SOURCE AST (including diagnostic recovery) — no
+/// <see cref="Expr.Grace"/> survives, and every dot fallback is explicit: exactly
+/// <c>Resolve(Name)</c> or <c>Param(Name)</c> with the identifier equal to the
+/// structural member name. The parser constructs
+/// <c>Resolve(Name)</c> for every edge and <see cref="ParameterDetector"/>
+/// owns both the <c>null → Resolve(Name)</c> normalization and the Param
+/// rewrite, so the contract holds by construction; these tests are its
+/// permanent enforcement (the repository's guarded-by-tests pattern for
+/// producer invariants). Grace composed with dot syntax leaves NO trace: <c>a~.t</c> /
+/// <c>a.~t</c> parse to the same ordinary <see cref="Expr.DotCall"/> as
+/// <c>a.t</c>. The former carries temporary postfix Grace on the receiver;
+/// the latter carries temporary prefix Grace on the fallback occurrence.
+/// Parameter detection consumes both, so an elaborated graced source is structurally
+/// indistinguishable from its ungraced twin except for any ordinary Grace
+/// effect on the enclosing parameter order.
 /// Lean twin: the <c>dotMember</c> arm of <c>postElabInvariant</c>
 /// (CoreTests <c>dotMemberFallbackCoherence*</c> guards).
 /// </summary>
@@ -29,7 +36,7 @@ public class DotCallFallbackInvariantTests
         var violation = DotCallElaborationInvariant.CheckElaborated(provenance.Root);
         Assert.True(
             violation is null,
-            $"Elaborated dot-edge contract violated: {violation?.Description}{Environment.NewLine}Source:{Environment.NewLine}{source}");
+            $"Elaborated DotCall contract violated: {violation?.Description}{Environment.NewLine}Source:{Environment.NewLine}{source}");
     }
 
     // ── 1. Raw host-built null keeps documented plain lexical semantics ─────
@@ -91,26 +98,41 @@ public class DotCallFallbackInvariantTests
     }
 
     [Fact]
-    public void ExtensionImplicitMember_ElaboratesToParamName()
+    public void GracedImplicitMember_ElaboratesToTheOrdinaryDotEdge()
     {
-        var root = SourceProvenance.ParseValid("K = a~.t\nK(7, {a+1})").Root;
-        var k = Assert.IsType<Algorithm.User>(root.Properties[0].Value);
-        var dotCall = Assert.IsType<Expr.DotCall>(k.Output[0]);
-        Assert.Equal(DotResolutionMode.ExtensionOnly, dotCall.ResolutionMode);
-        var fallback = Assert.IsType<Expr.Param>(dotCall.LexicalFallback);
-        Assert.Equal("t", fallback.Name);
+        // LAW: after elaboration there is no Grace state left to observe —
+        // `K = a~.t` is the ordinary dot edge `a.t` whose fallback carries the
+        // front-end's Param decision for `t`. The parser's ordering Grace is
+        // consumed and stripped by parameter detection. Base order a,t plus
+        // postfix Grace on a yields t,a.
+        var graced = SourceProvenance.ParseValid("K = a~.t\nK({a+1}, 7)").Root;
+        var gracedK = Assert.IsType<Algorithm.User>(graced.Properties[0].Value);
+        Assert.Equal(["t", "a"], gracedK.Params);
+
+        var ungraced = SourceProvenance.ParseValid("K = a.t\nK(7, {a+1})").Root;
+        var ungracedK = Assert.IsType<Algorithm.User>(ungraced.Properties[0].Value);
+        Assert.Equal(["a", "t"], ungracedK.Params);
+
+        foreach (var body in new[] { gracedK.Output[0], ungracedK.Output[0] })
+        {
+            var edge = Assert.IsType<Expr.DotCall>(body);
+            Assert.Equal("t", edge.Name);
+            Assert.Equal("a", Assert.IsType<Expr.Param>(edge.Target).Name);
+            Assert.Equal("t", Assert.IsType<Expr.Param>(edge.LexicalFallback).Name);
+            Assert.Null(edge.Args);
+        }
     }
 
     [Fact]
-    public void ExtensionKnownLexicalMember_ElaboratesToResolveName()
+    public void GracedKnownLexicalMember_ElaboratesToTheOrdinaryResolveFallback()
     {
-        // ExtensionOnly does NOT imply Param: a visible declaration keeps the
-        // ordinary Resolve identity.
-        var root = SourceProvenance.ParseValid("Known(x) = x + 1\n5~.Known").Root;
-        var dotCall = SingleOutputDotCall(root);
-        Assert.Equal(DotResolutionMode.ExtensionOnly, dotCall.ResolutionMode);
-        var fallback = Assert.IsType<Expr.Resolve>(dotCall.LexicalFallback);
-        Assert.Equal("Known", fallback.Name);
+        // The marker does NOT imply Param: a visible declaration keeps the
+        // ordinary Resolve fallback, exactly like the ungraced edge.
+        var root = SourceProvenance.ParseValid("Known(x) = x + 1\nv = 5\nv~.Known").Root;
+        var edge = SingleOutputDotCall(root);
+        Assert.Equal("Known", edge.Name);
+        Assert.Equal("Known", Assert.IsType<Expr.Resolve>(edge.LexicalFallback).Name);
+        Assert.Equal("v", Assert.IsType<Expr.Resolve>(edge.Target).Name);
     }
 
     // ── 7-8: the checker rejects incoherent hand-built edges ────────────────
@@ -144,7 +166,7 @@ public class DotCallFallbackInvariantTests
     }
 
     [Fact]
-    public void Checker_RejectsNullFallback_AndMarkerModeDisagreement()
+    public void Checker_RejectsNullFallback()
     {
         var nullFallback = new Algorithm.User(null, [], [], [], [
             new Expr.DotCall(new Expr.Num(1m), "t"),
@@ -153,58 +175,38 @@ public class DotCallFallbackInvariantTests
             "null",
             DotCallElaborationInvariant.CheckElaborated(nullFallback)!.Description,
             StringComparison.OrdinalIgnoreCase);
-
-        var markerless = new Algorithm.User(null, [], [], [], [
-            new Expr.DotCall(new Expr.Num(1m), "t")
-            {
-                LexicalFallback = new Expr.Resolve("t"),
-                ResolutionMode = DotResolutionMode.ExtensionOnly,
-            },
-        ]);
-        Assert.Contains(
-            "ExtensionMarkerSpan",
-            DotCallElaborationInvariant.CheckElaborated(markerless)!.Description);
     }
 
     [Fact]
-    public void Checker_RejectsInvalidResolutionModeValue()
+    public void Checker_RejectsLeakedGraceAnnotation()
     {
-        var root = new Algorithm.User(null, [], [], [], [
-            new Expr.DotCall(new Expr.Num(1m), "t")
-            {
-                LexicalFallback = new Expr.Resolve("t"),
-                ResolutionMode = (DotResolutionMode)42,
-            },
-        ]);
+        var leaked = new Expr.Grace(new Expr.Resolve("a"), -1);
+        var root = new Algorithm.User(null, [], [], [], [leaked]);
 
         var violation = DotCallElaborationInvariant.CheckElaborated(root);
+
         Assert.NotNull(violation);
-        Assert.Contains("invalid value 42", violation.Description);
+        Assert.Same(leaked, violation.Expression);
+        Assert.Contains("Grace remains after elaboration", violation.Description);
     }
 
     [Fact]
-    public void CoreOpenFormRule_AcceptsOnlyOrdinaryArgumentlessDotEdges()
+    public void CoreOpenFormRule_AcceptsOnlyArgumentlessDotEdges()
     {
         var ordinary = new Expr.DotCall(new Expr.Resolve("M"), "C")
         {
             LexicalFallback = new Expr.Resolve("C"),
         };
-        var extension = ordinary with
-        {
-            ResolutionMode = DotResolutionMode.ExtensionOnly,
-            ExtensionMarkerSpan = new SourceSpan(1, 2, 1, 2),
-        };
         var explicitEmptyArgs = ordinary with { Args = OutputBundle.Empty };
 
         Assert.True(ordinary.IsCoreOpenForm());
-        Assert.False(extension.IsCoreOpenForm());
         Assert.False(explicitEmptyArgs.IsCoreOpenForm());
     }
 
     [Fact]
-    public void FrontEndFingerprint_IncludesEveryStoredDotEdgeFact()
+    public void FrontEndFingerprint_IncludesDotEdgeAndGraceOccurrenceFacts()
     {
-        static string Fingerprint(Expr.DotCall edge)
+        static string Fingerprint(Expr edge)
         {
             var root = new Algorithm.User(null, [], [], [], [edge]);
             return global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(root, []);
@@ -216,42 +218,39 @@ public class DotCallFallbackInvariantTests
             MemberSpan = new SourceSpan(1, 4, 1, 4),
         };
         var paramFallback = baseline with { LexicalFallback = new Expr.Param("F") };
-        var extension = baseline with
-        {
-            ResolutionMode = DotResolutionMode.ExtensionOnly,
-            ExtensionMarkerSpan = new SourceSpan(1, 2, 1, 2),
-        };
-        var differentMarker = extension with
-        {
-            ExtensionMarkerSpan = new SourceSpan(1, 3, 1, 3),
-        };
 
         Assert.NotEqual(Fingerprint(baseline), Fingerprint(paramFallback));
-        Assert.NotEqual(Fingerprint(baseline), Fingerprint(extension));
-        Assert.NotEqual(Fingerprint(extension), Fingerprint(differentMarker));
+
+        // Receiver-postfix and member-prefix Grace are ordinary Grace nodes on
+        // different semantic name occurrences. Their raw fingerprints retain
+        // both position and weight without any source-origin provenance bit.
+        var receiverPostfix = baseline with
+        {
+            Target = new Expr.Grace(new Expr.Resolve("a"), +1),
+        };
+        var memberPrefix = baseline with
+        {
+            Target = new Expr.Resolve("a"),
+            LexicalFallback = new Expr.Grace(new Expr.Resolve("F"), -1),
+        };
+        Assert.NotEqual(Fingerprint(baseline), Fingerprint(receiverPostfix));
+        Assert.NotEqual(Fingerprint(baseline), Fingerprint(memberPrefix));
+        Assert.NotEqual(Fingerprint(receiverPostfix), Fingerprint(memberPrefix));
     }
 
     // ── 2 (sweep): the whole canonical corpus satisfies the contract ────────
 
     [Fact]
-    public void EveryParseableLanguageSpecSource_SatisfiesTheElaboratedContract()
+    public void EveryLanguageSpecSource_SatisfiesTheElaboratedContract()
     {
         var checkedCases = 0;
         foreach (var specCase in LanguageSpec.LanguageSpecCorpus.AllCases())
         {
-            if (specCase.Outcome == LanguageSpec.SpecOutcome.ParseError)
-                continue;
-
             var parse = Parser.Parse(specCase.Source);
-            // Recovery trees are exempt from valid-source invariants by
-            // repository policy; the corpus's evaluating cases parse cleanly.
-            if (parse.HasErrors)
-                continue;
-
             var violation = DotCallElaborationInvariant.CheckElaborated(parse.Root);
             Assert.True(
                 violation is null,
-                $"Spec case '{specCase.Id}' violated the dot-edge contract: {violation?.Description}");
+                $"Spec case '{specCase.Id}' violated the DotCall contract: {violation?.Description}");
             checkedCases++;
         }
 
@@ -259,16 +258,16 @@ public class DotCallFallbackInvariantTests
     }
 
     [Fact]
-    public void RepresentativeExtensionAndChainSources_SatisfyTheContract()
+    public void RepresentativeGracedAndChainedSources_SatisfyTheContract()
     {
         string[] sources =
         [
             "K(a, t) = a.t\nK(7, {a+1})",
             "K(a, t) = a~.t\nK(7, {a+1})",
-            "K = a.~t\nK(7, {a+1})",
+            "K = a.~t\nK({a+1}, 7)",
             "K(a, t) = a~.t.string\nK(7, {a+1})",
-            "Dub(x) = x * 2\nInc(x) = x + 1\n5~.Inc~.Dub",
-            "Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)~.Mean",
+            "Inc(x) = x + 1\nv = 5\nv~.Inc",
+            "Mean(*Vector) = Vector.sum / Vector.count\nV = 1, 2, 2.718\nV~.Mean",
             "Obj = {public V = 42}\nK(a, V) = a.V\nK(Obj, {a+1})",
             "x, *rest = (1, 2, 3)\nrest.count",
             "A = {\n    public X = 1, 2, 3\n}\nA.X",
@@ -277,18 +276,16 @@ public class DotCallFallbackInvariantTests
             AssertElaborated(source);
     }
 
-    // ── 9: diagnostic recovery is not rejected by valid-source invariants ───
+    // ── 9: diagnostic recovery still completes phase normalization ─────────
 
     [Fact]
-    public void DiagnosticRecoveryTrees_AreExemptFromTheValidSourceSweep()
+    public void DiagnosticRecoveryTree_StillSatisfiesThePhaseContract()
     {
-        // The sweep's contract applies to diagnostic-free elaborations only;
-        // a recovery tree is simply outside the checker's domain. This pins
-        // the exemption policy so the sweep can never start failing merely
-        // because recovery output shapes changed.
-        var recovery = Parser.Parse("K(a, t) = a~.~t\nK(7, {a+1})");
+        // Recovery may preserve a useful ordinary-call shape, but it may not
+        // leak Grace or an incoherent dot fallback into later tooling.
+        var recovery = Parser.Parse("K = f(x)~.t");
         Assert.True(recovery.HasErrors);
-        // No assertion on CheckElaborated: recovery output is out of contract.
+        Assert.Null(DotCallElaborationInvariant.CheckElaborated(recovery.Root));
     }
 
     // ── 10: the C# → Lean encoding never serializes a semantic null ─────────
@@ -305,14 +302,14 @@ public class DotCallFallbackInvariantTests
             LexicalFallback = new Expr.Param("t"),
         };
         Assert.Equal(
-            "(.dotMember (.param \"a\") \"t\" (.param \"t\") .ordinary none)",
+            "(.dotMember (.param \"a\") \"t\" (.param \"t\") none)",
             LeanAstEncoder.EncodeExpr(paramFallback));
     }
 
     // ── 12-13: rewriters preserve the stored identity and provenance ────────
 
     [Fact]
-    public void FrontEndRewriters_PreserveFallbackIdentityModeAndSpans()
+    public void FrontEndRewriters_PreserveFallbackIdentityAndSpans()
     {
         var provenance = SourceProvenance.ParseValid(
             """
@@ -327,26 +324,29 @@ public class DotCallFallbackInvariantTests
         var k = Assert.IsType<Algorithm.User>(
             Assert.Single(provenance.Root.Properties, property => property.Name == "K").Value);
         var outerChain = Assert.IsType<Expr.DotCall>(k.Output[0]);
-        var innerExtension = Assert.IsType<Expr.DotCall>(outerChain.Target);
 
         // The full pipeline (detector, implicit-argument resolution, exposure
-        // resolution) ran; the extension edge kept its identity and spans.
-        Assert.Equal(DotResolutionMode.ExtensionOnly, innerExtension.ResolutionMode);
-        Assert.NotNull(innerExtension.ExtensionMarkerSpan);
-        Assert.NotNull(innerExtension.MemberSpan);
-        Assert.Equal("t", Assert.IsType<Expr.Param>(innerExtension.LexicalFallback).Name);
-        Assert.Equal(DotResolutionMode.Ordinary, outerChain.ResolutionMode);
+        // resolution) ran; the inner graced source is the ordinary dot
+        // edge `a.t` (its ordering grace consumed and stripped) with both its
+        // stored facts intact, and the outer `.string` edge kept its identity
+        // and spans.
+        var innerEdge = Assert.IsType<Expr.DotCall>(outerChain.Target);
+        Assert.Equal("t", innerEdge.Name);
+        Assert.Equal("a", Assert.IsType<Expr.Param>(innerEdge.Target).Name);
+        Assert.Equal("t", Assert.IsType<Expr.Param>(innerEdge.LexicalFallback).Name);
+        Assert.NotNull(innerEdge.MemberSpan);
+        Assert.NotNull(outerChain.MemberSpan);
         Assert.Equal("string", Assert.IsType<Expr.Resolve>(outerChain.LexicalFallback).Name);
 
         Assert.Null(DotCallElaborationInvariant.CheckElaborated(provenance.Root));
     }
 
     [Fact]
-    public void ModuleElaborationPath_PreservesExtensionEdges()
+    public void ModuleElaborationPath_PreservesGracedDotFacts()
     {
-        // Regression for the module-path rebuild that silently degraded
-        // extension edges to ordinary dots (dropping mode + fallback): the
-        // load-enabled pipeline must evaluate `Obj~.V` as the extension call.
+        // Regression family: a module-path rebuild once silently dropped
+        // stored dot-edge facts. Both spellings must survive the load-enabled
+        // pipeline as the SAME structural edge — 42 twice.
         var run = KatLangEngine.Run(
             """
             V(x) = 99
@@ -360,7 +360,27 @@ public class DotCallFallbackInvariantTests
             """,
             new RunOptions { DownloadCode = _ => "public C = 5" });
         var success = Assert.IsType<RunResult.Success>(run);
-        Assert.Equal($"42{Environment.NewLine}99", success.ToDisplayString());
+        Assert.Equal($"42{Environment.NewLine}42", success.ToDisplayString());
+    }
+
+    [Fact]
+    public void HostTreeWithGracedOpenTarget_LeavesNoGraceAfterElaboration()
+    {
+        // An open target has no parameter inference to reorder. Source can't
+        // produce this (the parser rejects and unwraps it), but a host tree
+        // can — and "no Grace survives elaboration" must hold in EVERY
+        // position, opens included.
+        var hostRoot = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [new Expr.Grace(new Expr.Resolve("Lib"), -1)],
+            Properties: [],
+            Output: [new Expr.Num(0m)]);
+
+        var (detected, _) = ParameterDetector.Detect(hostRoot);
+
+        Assert.Equal("Lib", Assert.IsType<Expr.Resolve>(Assert.Single(detected.Opens)).Name);
+        Assert.Null(DotCallElaborationInvariant.CheckElaborated(detected));
     }
 
     [Fact]

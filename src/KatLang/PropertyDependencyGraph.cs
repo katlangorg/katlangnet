@@ -427,14 +427,14 @@ internal static class PropertyDependencyGraphBuilder
                 // elaborated name expression (Resolve/Param) and participates
                 // in dependency analysis EXACTLY like a written callee name —
                 // through this same walk with the enclosing attribution — but
-                // only when the edge's resolution facts make the fallback the
-                // unconditional selection (every extension edge; an ordinary
-                // edge whose algorithm-position capability makes structural
-                // resolution statically impossible). A CONDITIONAL fallback — a receiver
-                // that may resolve structurally at runtime — is deliberately
-                // excluded: marking a structurally-resolving property
-                // LocalOnly because its unreached fallback names a parameter
-                // would revoke working structural/open access
+                // only when the receiver's static algorithm-position
+                // capability makes the fallback the unconditional selection
+                // (structural resolution is statically impossible). A
+                // CONDITIONAL fallback — a receiver that may resolve
+                // structurally at runtime — is deliberately excluded: marking
+                // a structurally-resolving property LocalOnly because its
+                // unreached fallback names a parameter would revoke working
+                // structural/open access
                 // (see AstHelpers.LexicalFallbackIsUnconditional).
                 // The sibling evaluation-order channel
                 // (CollectSiblingDependencyIndices) deliberately takes no

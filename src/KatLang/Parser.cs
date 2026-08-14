@@ -1411,18 +1411,27 @@ public sealed class Parser
         => second.Position == first.Position + first.Length;
 
     /// <summary>
-    /// True when the CURRENT token is a tilde forming an EXTENSION-DOT edge:
-    /// directly attached (exact source-offset adjacency, like the collect and
-    /// spread markers) to an immediately following <c>.</c> token. `a~.t` is
-    /// an extension edge; a detached tilde (`a ~ .t`) keeps its ordinary grace
-    /// meaning and the dot stays an ordinary dot edge. In a marker run such as
-    /// `a~~.t` only the dot-adjacent tilde is the extension marker; preceding
-    /// tildes keep their grace meaning.
+    /// True when the CURRENT postfix-Grace run is followed on the same
+    /// physical line by a dot. A bare identifier consumes such a run in
+    /// <see cref="ParsePrimary"/> using the ordinary postfix-Grace rule before
+    /// the ordinary dot continuation runs. This lookahead is used only for
+    /// recovery when the completed operand is NOT a bare name, such as
+    /// <c>(x + y)~.t</c>: report the one-name Grace diagnostic, discard the
+    /// invalid ordering annotation, then retain a useful graceless DotCall.
     /// </summary>
-    private bool IsExtensionMarkerTilde()
-        => Current.Kind == TokenKind.Tilde
-            && PeekSignificant(1) is { Kind: TokenKind.Dot } dotToken
-            && IsDirectlyAttached(Current, dotToken);
+    private bool IsPostfixGraceRunBeforeDot()
+    {
+        var offset = 0;
+        while (PeekSignificant(offset) is { Kind: TokenKind.Tilde } tilde
+               && tilde.Line == Current.Line)
+        {
+            offset++;
+        }
+
+        return offset > 0
+            && PeekSignificant(offset) is { Kind: TokenKind.Dot } dot
+            && dot.Line == Current.Line;
+    }
 
     /// <summary>
     /// Checks if the current tilde sequence is followed by Identifier '=' or 'public Identifier ='.
@@ -1537,8 +1546,10 @@ public sealed class Parser
     /// so the LIFO stack yields them left to right, keeping the original first-match
     /// span selection. Only the child positions the scan has always inspected are
     /// pushed — argument/block OUTPUT rows but never opens, properties, or patterns,
-    /// and never a <see cref="Expr.Grace"/> node's Inner (a Grace is a match boundary:
-    /// it either supplies its span or, span-less, contributes nothing).
+    /// and never a WRITTEN <see cref="Expr.Grace"/> node's Inner (a written grace is
+    /// a match boundary: it either supplies its span or, span-less, contributes
+    /// nothing). DotCall's stored fallback is visited at the member occurrence
+    /// position so prefix member Grace is rejected by the same branch-body rule.
     /// </summary>
     private static SourceSpan? ScanPendingForGraceSpan(Stack<Expr> pending)
     {
@@ -1571,10 +1582,12 @@ public sealed class Parser
                 case Expr.ListLiteral(var items):
                     PushInReverse(pending, items);
                     break;
-                case Expr.DotCall(var target, _, var args):
-                    if (args is not null)
-                        PushInReverse(pending, args);
-                    pending.Push(target);
+                case Expr.DotCall dotCall:
+                    if (dotCall.Args is { } dotArgs)
+                        PushInReverse(pending, dotArgs);
+                    if (dotCall.LexicalFallback is { } fallback)
+                        pending.Push(fallback);
+                    pending.Push(dotCall.Target);
                     break;
                 case Expr.Call(var function, var args):
                     PushInReverse(pending, args);
@@ -1997,7 +2010,8 @@ public sealed class Parser
     /// Recursively normalizes an open expression:
     /// - DotCall(obj, name, null) is the canonical no-arg form (kept as-is)
     /// - DotCall(obj, name, args) → report error (call-like syntax not allowed in opens)
-    /// - Recurse through the DotCall target; AlgorithmExpr/Capture nodes are kept as-is.
+    /// - Recurse through the DotCall target and stored fallback/name occurrence;
+    ///   AlgorithmExpr/Capture nodes are kept as-is.
     /// A SequenceSpread target falls through unchanged (never rebuilt here,
     /// which would bypass CreateSequenceSpread) and is rejected by the
     /// open-form validation that follows.
@@ -2006,12 +2020,28 @@ public sealed class Parser
     {
         switch (expr)
         {
+            case Expr.Grace grace:
+                // Grace annotates implicit parameter ORDER; an open target
+                // consumes structural algorithm identity, where no parameter
+                // inference exists, so a grace-marked target is not an open
+                // form. This covers written prefix/postfix Grace on a target
+                // occurrence (`open ~A`, `open A~`, `open A~.B`) and prefix
+                // Grace on a dot member occurrence (`open A.~B`). Recovery
+                // unwraps the individual name occurrence, so no Grace node
+                // ever survives open elaboration.
+                ReportOpenFormError(
+                    "Invalid open form: 'grace' is not allowed in open declarations.",
+                    grace);
+                return NormalizeOpenExpr(grace.Inner);
+
             case Expr.DotCall dotCall when dotCall.Args is null:
-                // `with` keeps every stored dot-edge fact (member span,
-                // lexical fallback, resolution mode, marker span) intact;
-                // extension-mode targets are rejected by the open-form
-                // validation that follows.
-                return dotCall with { Target = NormalizeOpenExpr(dotCall.Target) };
+                return dotCall with
+                {
+                    Target = NormalizeOpenExpr(dotCall.Target),
+                    LexicalFallback = dotCall.LexicalFallback is { } fallback
+                        ? NormalizeOpenExpr(fallback)
+                        : null,
+                };
 
             case Expr.DotCall(var target, var name, _):
                 ReportOpenFormError(
@@ -2046,10 +2076,9 @@ public sealed class Parser
     /// see Lean postElabInvariant (rejects both structurally).
     /// load is NOT a core Expr constructor; it is surface syntax only.
     /// </summary>
-    // An open target consumes structural algorithm identity, so only ORDINARY
-    // argumentless dot paths qualify: an extension-dot target (`open A~.B`)
-    // explicitly bypasses structural lookup and is not an open form, exactly
-    // like a spread target.
+    // An open target consumes structural algorithm identity, so only
+    // argumentless dot paths qualify. Grace on either the receiver or member
+    // occurrence is reported and unwrapped by NormalizeOpenExpr first.
     private static bool IsOpenForm(Expr e)
         => e.IsCoreOpenForm() || e.TryGetUnresolvedLoadArguments(out _);
 
@@ -2068,7 +2097,6 @@ public sealed class Parser
         Expr.ListLiteral => "listLiteral",
         Expr.Index => "index",
         Expr.Call => "call",
-        Expr.DotCall { ResolutionMode: DotResolutionMode.ExtensionOnly } => "extension dotCall",
         Expr.DotCall => "dotCall",
         Expr.Grace => "grace",
         Expr.NativeCall => "nativeCall",
@@ -2395,16 +2423,23 @@ public sealed class Parser
                     break;
 
                 case TokenKind.Tilde when MayContinueClosedExpression(TokenKind.Tilde)
-                    && IsExtensionMarkerTilde():
-                    // Extension-dot edge, `recv~.Name`: the tilde directly
-                    // attached to the following '.' selects extension-call
-                    // resolution for exactly this dot edge. (`recv.~Name` is
-                    // the equivalent spelling, handled inside the shared dot
-                    // continuation; both normalize to one node.) A detached
-                    // tilde never reaches this arm and keeps its grace meaning.
-                    var extensionMarkerToken = Advance(); // consume '~'
-                    var extensionDotToken = Advance();    // consume '.'
-                    lhs = ParseDotCallContinuation(lhs, extensionDotToken, TokenSpan(extensionMarkerToken));
+                    && IsPostfixGraceRunBeforeDot():
+                    // Recovery only. A bare identifier already consumed this
+                    // run as ordinary postfix Grace in ParsePrimary. Reaching
+                    // it here means the operand is a compound expression, on
+                    // which Grace is not defined. Report once, discard every
+                    // marker in the run, and preserve the ordinary dot edge.
+                    var invalidGraceToken = Current;
+                    while (Current.Kind == TokenKind.Tilde
+                           && MayContinueClosedExpression(TokenKind.Tilde))
+                    {
+                        Advance();
+                    }
+                    ReportError(
+                        "Grace `~` can only be applied to a parameter or name occurrence.",
+                        TokenSpan(invalidGraceToken));
+                    var recoveredDotToken = Advance(); // consume '.'
+                    lhs = ParseDotCallContinuation(lhs, recoveredDotToken);
                     break;
 
                 case TokenKind.Dot when MayContinueClosedExpression(TokenKind.Dot):
@@ -2413,7 +2448,7 @@ public sealed class Parser
                     // that may cross a physical newline (method-chain layout)
                     // — encoded in the continuation policy table.
                     var dotToken = Advance(); // consume '.'
-                    lhs = ParseDotCallContinuation(lhs, dotToken, extensionMarkerSpan: null);
+                    lhs = ParseDotCallContinuation(lhs, dotToken);
                     break;
 
                 case TokenKind.LParen or TokenKind.LBrace
@@ -2487,10 +2522,10 @@ public sealed class Parser
         if (next.Line != Current.Line || !CanStartMultiplicationOperand(next.Kind))
             return true;
 
-        // A tilde forming an extension-dot edge (`x*~.F`) is a postfix
-        // continuation marker, never the start of a prefix-grace operand, so
-        // the star stays a spread marker and the fluent chain lowers exactly
-        // like `x*.F` / `x*.~F`.
+        // In `x*~.F`, the tilde would apply postfix Grace to the completed
+        // spread expression, which is not a bare name. Keep the star as a
+        // spread marker so the postfix/dot recovery reports the one-name Grace
+        // diagnostic; never reinterpret the sequence as multiplication.
         return next.Kind == TokenKind.Tilde
             && PeekSignificant(2) is { Kind: TokenKind.Dot } dotAfterTilde
             && IsDirectlyAttached(next, dotAfterTilde);
@@ -2513,29 +2548,37 @@ public sealed class Parser
 
     /// <summary>
     /// Parses one dot edge after its '.' token has been consumed:
-    /// <c>expr.Name</c>, <c>expr.Name(args)</c>, and the extension spellings
-    /// <c>expr~.Name</c> (marker consumed by the caller) and <c>expr.~Name</c>
-    /// (marker directly attached after the dot, consumed here). Both extension
-    /// spellings normalize to ONE node — <see cref="Expr.DotCall"/> with
-    /// <see cref="DotResolutionMode.ExtensionOnly"/> — differing only in the
-    /// recorded marker span. Every parsed dot edge stores its lexical-fallback
-    /// identity as <c>Resolve(Name)</c> spanned at the member identifier;
-    /// front-end elaboration may rewrite it to <c>Param(Name)</c>. Kept out of
-    /// <see cref="ParsePostfix"/> so its locals and call temporaries never
-    /// enlarge that recursive frame (native stack-margin calibration).
+    /// <c>expr.Name</c> and <c>expr.Name(args)</c>. Ordinary written Grace
+    /// composes at either name occurrence: <c>expr~.Name</c> arrives with
+    /// postfix Grace already wrapped around <paramref name="lhs"/>, while
+    /// <c>expr.~Name</c> stores prefix Grace around the fallback/name
+    /// occurrence. Every spelling builds the SAME ordinary continuation: an
+    /// <see cref="Expr.DotCall"/> storing its lexical-fallback identity as
+    /// <c>Resolve(Name)</c> spanned at the member identifier (front-end
+    /// elaboration may rewrite it to <c>Param(Name)</c>), or the fluent
+    /// supply-transition call for a spread receiver. Grace affects only the
+    /// individual semantic name occurrence it decorates; the executable
+    /// dot-edge semantics are identical after elaboration. Kept out of
+    /// <see cref="ParsePostfix"/> so its locals and call
+    /// temporaries never enlarge that recursive frame (native stack-margin
+    /// calibration).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private Expr ParseDotCallContinuation(Expr lhs, Token dotToken, SourceSpan? extensionMarkerSpan)
+    private Expr ParseDotCallContinuation(Expr lhs, Token dotToken)
     {
-        // `.~Name` spelling: an extension marker directly attached AFTER the
-        // dot. `expr~.~Name` (both markers) is rejected below as a missing
-        // member name, so exactly one marker forms an extension edge.
-        if (extensionMarkerSpan is null
-            && Current.Kind == TokenKind.Tilde
-            && IsDirectlyAttached(dotToken, Current))
+        // Prefix Grace on the member/fallback occurrence. The first marker is
+        // recognized when it is attached to the dot; once that syntax has
+        // begun, repeated markers use the ordinary prefix accumulation law.
+        Token? memberGraceStart = null;
+        var memberGraceWeight = 0;
+        if (Current.Kind == TokenKind.Tilde && IsDirectlyAttached(dotToken, Current))
         {
-            var markerToken = Advance();
-            extensionMarkerSpan = TokenSpan(markerToken);
+            memberGraceStart = Current;
+            while (Current.Kind == TokenKind.Tilde)
+            {
+                Advance();
+                memberGraceWeight--;
+            }
         }
 
         if (Current.Kind != TokenKind.Identifier)
@@ -2548,28 +2591,32 @@ public sealed class Parser
         var propName = propNameToken.StringValue!;
         var memberSpan = TokenSpan(propNameToken);
 
+        Expr lexicalFallback = new Expr.Resolve(propName) { Span = memberSpan };
+        if (memberGraceWeight != 0)
+        {
+            lexicalFallback = new Expr.Grace(lexicalFallback, memberGraceWeight)
+            {
+                Span = MakeSpan(memberGraceStart!),
+            };
+        }
+
         if (lhs is Expr.SequenceSpread)
         {
             // Fluent supply transition: `operand*.Target(...)` consumes the
             // spread items as the leading call arguments and lowers to the
-            // ordinary lexical call `Target(operand*, ...)`. An extension
-            // marker on a spread receiver selects exactly that resolution —
-            // a spread supply has no structural members — so both spellings
-            // share the one lowering.
-            return ParseSpreadReceiverContinuation(lhs, dotToken, propNameToken, memberSpan);
+            // ordinary lexical call `Target(operand*, ...)`. Postfix Grace on
+            // a spread receiver is rejected before this arm. Prefix Grace on
+            // the member is ordinary Grace on that lexical callee occurrence,
+            // so preserve the same expression when lowering the fluent form.
+            return ParseSpreadReceiverContinuation(lhs, dotToken, lexicalFallback, memberSpan);
         }
 
-        var resolutionMode = extensionMarkerSpan is null
-            ? DotResolutionMode.Ordinary
-            : DotResolutionMode.ExtensionOnly;
         OutputBundle? args = IsCallArgumentStart() ? ParseCallArgs() : null;
         var dotCall = new Expr.DotCall(lhs, propName, args)
         {
             Span = SpanFrom(lhs),
             MemberSpan = memberSpan,
-            LexicalFallback = new Expr.Resolve(propName) { Span = memberSpan },
-            ResolutionMode = resolutionMode,
-            ExtensionMarkerSpan = extensionMarkerSpan,
+            LexicalFallback = lexicalFallback,
         };
         return GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
     }
@@ -2591,10 +2638,8 @@ public sealed class Parser
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private Expr ParseSpreadReceiverContinuation(
-        Expr spreadReceiver, Token dotToken, Token memberToken, SourceSpan memberSpan)
+        Expr spreadReceiver, Token dotToken, Expr callee, SourceSpan memberSpan)
     {
-        var callee = new Expr.Resolve(memberToken.StringValue!) { Span = memberSpan };
-
         OutputBundle args = IsCallArgumentStart()
             ? [spreadReceiver, .. ParseCallArgs()]
             : [spreadReceiver];
@@ -2738,14 +2783,13 @@ public sealed class Parser
                     // Postfix grace '~' is same-physical-line only: a '~'-led
                     // line is a prefix-grace expression of its own, never a
                     // continuation of the previous line's identifier. A tilde
-                    // directly attached to a following '.' is the EXTENSION-DOT
-                    // marker, not grace — it stays for the postfix loop.
-                    if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
-                        && !IsExtensionMarkerTilde())
+                    // before a following dot is still ordinary postfix Grace
+                    // on this same bare name; the postfix loop then builds the
+                    // ordinary dot continuation.
+                    if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                     {
                         var weight = 0;
-                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
-                            && !IsExtensionMarkerTilde())
+                        while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                         {
                             Advance();
                             weight++;
@@ -2770,17 +2814,22 @@ public sealed class Parser
                     }
                     if (Current.Kind != TokenKind.Identifier)
                     {
-                        ReportError("Expected identifier after '~'.");
+                        // The one written-grace law: `~` decorates exactly one
+                        // bare parameter/name occurrence (`~x` / `x~`). Every
+                        // complex-operand spelling — prefix on a non-name, and
+                        // the postfix forms `(x + y)~` / `f(x)~` / `x.y~` /
+                        // `[x]~` / `5~`, whose orphaned tilde re-enters here as
+                        // the start of a new expression — lands on this
+                        // diagnostic.
+                        ReportError("Grace `~` can only be applied to a parameter or name occurrence.");
                         Advance(); // skip for recovery
                         return new Expr.Num(0) { Span = MakeSpan(startToken) };
                     }
                     var graceToken = Advance();
                     // Postfix grace: each same-line ~ after the identifier
                     // increments weight; a '~' on a later line never continues,
-                    // and a dot-attached tilde is the extension-dot marker for
-                    // the postfix loop, never grace.
-                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde)
-                        && !IsExtensionMarkerTilde())
+                    // including one immediately before an ordinary dot.
+                    while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                     {
                         Advance();
                         weight++;

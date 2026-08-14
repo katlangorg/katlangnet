@@ -2818,7 +2818,7 @@ public class ParserTests
         var result = Parser.ParseSyntax("~42");
 
         Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Expected identifier after '~'"));
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace `~` can only be applied to a parameter or name occurrence"));
     }
 
     [Fact]
@@ -4743,6 +4743,52 @@ public class ParserTests
         Assert.True(result.HasErrors);
         var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
         Assert.Equal(2, diag.Span.StartLineNumber);
+    }
+
+    [Fact]
+    public void Parse_Conditional_PostfixGraceBeforeDot_IsOrdinaryWrittenGrace()
+    {
+        var result = Parser.ParseSyntax("F(1, a, t) = a~.t");
+
+        Assert.True(result.HasErrors);
+        Assert.Single(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
+        var conditional = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var branch = Assert.Single(conditional.Branches);
+        var edge = Assert.IsType<Expr.DotCall>(Assert.Single(branch.Body.Output));
+        Assert.Equal("t", edge.Name);
+        var receiverGrace = Assert.IsType<Expr.Grace>(edge.Target);
+        Assert.Equal(+1, receiverGrace.Weight);
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(receiverGrace.Inner).Name);
+    }
+
+    [Fact]
+    public void Parse_Conditional_PrefixGraceOnDotMember_IsOrdinaryWrittenGrace()
+    {
+        var result = Parser.ParseSyntax("F(1, a, t) = a.~t");
+
+        Assert.True(result.HasErrors);
+        Assert.Single(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
+        var conditional = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        var branch = Assert.Single(conditional.Branches);
+        var edge = Assert.IsType<Expr.DotCall>(Assert.Single(branch.Body.Output));
+        var memberGrace = Assert.IsType<Expr.Grace>(edge.LexicalFallback);
+        Assert.Equal(-1, memberGrace.Weight);
+        Assert.Equal("t", Assert.IsType<Expr.Resolve>(memberGrace.Inner).Name);
+    }
+
+    [Fact]
+    public void Parse_Conditional_RepeatedPostfixGraceBeforeDot_ReportsError()
+    {
+        var result = Parser.ParseSyntax("F(1, a, t) = a~~.t");
+
+        Assert.True(result.HasErrors);
+        Assert.Single(
+            result.Diagnostics,
+            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
     }
 
     // ── Uniform top-level pattern arity validation ──────────────────────────

@@ -152,12 +152,7 @@ public sealed class KatLangError
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotContext, Inner: EvalError.UnknownName(var missingName) }
             && string.Equals(dotContext.PropertyName, missingName, StringComparison.Ordinal))
         {
-            // An extension edge (`recv~.Name`) never performed structural
-            // member lookup, so its message must not claim a property lookup
-            // happened.
-            message = dotContext.IsExtension
-                ? $"No visible algorithm or property named '{dotContext.PropertyName}' can be used with `{dotContext.ReceiverDescription}` as the first argument."
-                : $"Property '{dotContext.PropertyName}' was not found on `{dotContext.ReceiverDescription}`, and no visible algorithm or property named '{dotContext.PropertyName}' can be used with `{dotContext.ReceiverDescription}` as the first argument.";
+            message = $"Property '{dotContext.PropertyName}' was not found on `{dotContext.ReceiverDescription}`, and no visible algorithm or property named '{dotContext.PropertyName}' can be used with `{dotContext.ReceiverDescription}` as the first argument.";
             return true;
         }
 
@@ -212,13 +207,9 @@ public sealed class KatLangError
 
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput })
         {
-            // The `string` intrinsic renders receiver-only because it is an
-            // ordinary-dot value conversion (no `.string` property reference);
-            // an EXTENSION edge named `string` is an ordinary callable-name
-            // occurrence and renders the full `receiver.string` reference.
-            var isStringIntrinsic = !dotCallContext.IsExtension
-                && string.Equals(dotCallContext.PropertyName, "string", StringComparison.Ordinal);
-            message = isStringIntrinsic
+            // The `string` intrinsic renders receiver-only because it is a
+            // dot-only value conversion (no `.string` property reference).
+            message = string.Equals(dotCallContext.PropertyName, "string", StringComparison.Ordinal)
                 ? FormatReferenceMissingOutput(dotCallContext.ReceiverDescription)
                 : FormatReferenceMissingOutput($"{dotCallContext.ReceiverDescription}.{dotCallContext.PropertyName}");
             return true;
@@ -242,10 +233,8 @@ public sealed class KatLangError
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            // Legacy text contexts carry no extension-mode flag; the `string`
-            // special case is only meaningful for the ordinary-dot intrinsic,
-            // and a legacy extension context cannot reach this parser (the
-            // structured DotCallContext path above already handled it).
+            // The `string` special case matches the dot-only intrinsic
+            // rendering of the structured DotCallContext path above.
             message = string.Equals(dotPropertyName, "string", StringComparison.Ordinal)
                 ? FormatReferenceMissingOutput(receiverDesc)
                 : FormatReferenceMissingOutput($"{receiverDesc}.{dotPropertyName}");

@@ -775,7 +775,10 @@ Preferred sequence-style helper shapes:
 Do not use `atoms` to simulate `*values`; `atoms` recursively flattens nested structure and changes semantics. Prefer `(*values)` when destructuring one sequence-value parameter slot at binding time, and the postfix spread star (`value*`) when opening one value into the surrounding output, argument, or item supply. Do not generate `content(...)`; it is no longer a builtin.
 
 ## Grace Operator (~)
-Reorders implicit parameters without adding computation.
+Reorders implicit parameters without adding computation. Grace applies ONLY to
+one bare parameter/name occurrence — `~x` and `x~` are the only operand
+shapes. Never attach it to an expression: `(x + y)~`, `f(x)~`, `x.y~`, `[x]~`,
+and `5~` are parse errors.
 
 - Prefix `~x`: shift `x` one position earlier. `~~x`: two positions earlier.
 - Postfix `x~`: shift `x` one position later. `x~~`: two positions later.
@@ -1262,7 +1265,7 @@ BETTER — specific branch first:
 - `a.f(args)` where `f` is a structural property of `a` — calls directly, no receiver injection.
 - `a.f(args)` where `f` is not structural — lexical fallback injects `a` as first argument.
 - The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. A parameter of the current algorithm wins over a same-name visible property; a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration. Structural members of the receiver always win before either.
-- EXTENSION DOT: `a~.f(args)` (equivalently `a.~f(args)`) explicitly selects extension-call resolution for that one dot edge — structural member lookup is bypassed and the lexical `f` is always called with `a` injected first. The member of an extension dot is an ordinary callable-name occurrence, so in an algorithm without an explicit parameter list it can become an implicit parameter exactly like a written callee name (`K = a~.t` infers `K(a, t)` just like `K = t(a)`). Ordinary `.member` never becomes an implicit parameter. The `~` must be directly attached to the dot; a detached tilde keeps its grace meaning. The marker binds to one edge only (`a~.t.string` runs extension then ordinary), and an extension edge is not a valid `open` target.
+- GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: `Obj~.V` and `Obj.~V` read Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` / `x.~string` keep the dot-only intrinsic, `S~.count` / `S.~count` keep the dotted builtin view, and receiver-segment supply is unchanged. A member participates in inference when fallback MAY be selected, but not when structural resolution is certain and not in a CLOSED explicit list. `a ~ .t` follows the ordinary whitespace-insensitive postfix-Grace grammar and therefore has the same inferred order as `a~.t`; prefix member Grace must begin directly after the dot. A grace-marked `open` target is rejected (`open M~.C`).
 - Ordinary lexical dot-call preserves that injected receiver as one argument boundary. `A.B(C, D)` means `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D`. Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
 - A SPREAD receiver is the exception: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`.
 - A user-defined property with an explicit collecting parameter (`*values`) collects its assigned argument slots as one exact immutable list; the dot-call receiver is one leading segment whose supply only that collector consumes. For `Scale(*values, factor) = values.map{n * factor}` with `Arg = 1, 2, 3`, use `Scale(Arg*, 10)`, `Arg*.Scale(10)`, `(1, 2, 3).Scale(10)`, or `Scale(1, 2, 3, 10)` to scale each item. `Scale(Arg, 10)` and `Arg.Scale(10)` supply `Arg` as one sequence-valued argument (a named receiver supplies its one stored value). Multiple sibling grouped values are preserved unless explicitly spread with a postfix star.
@@ -1524,7 +1527,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (51 of the 172-case canonical language specification,
+Verified reference examples (53 of the 173-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1781,15 +1784,23 @@ Regenerate this block from the repo root with:
     8
     8
 
-[extension-dot-higher-order-implicit] `~.` (equivalently `.~`) selects extension-call resolution: the member is a callable-name occurrence that participates in ordinary parameter/name resolution, so `K = a~.t` infers the parameters `(a, t)` exactly like `K = t(a)` and calls the bound algorithm with the receiver injected first. Ordinary `.` never infers member names as parameters.
+[dot-member-fallback-implicit-signature] An opaque receiver may not carry the member structurally, so the dot edge's lexical fallback may be selected at runtime and its callable name participates in implicit parameter inference at the member's semantic source occurrence. DotCall order is receiver, participating member/fallback, then written arguments: `K = a.t` corresponds to `K(a, t) = a.t`, while runtime fallback still invokes `t(a)` and the direct source `t(a)` independently infers callee first.
 
-    K = a~.t
+    K = a.t
     K(7, {a+1})
 
   Displays:
     8
 
-[extension-dot-bypasses-structural-member] Ordinary `.` performs structural member lookup first, so `Obj.V` reads Obj's own property even when a lexical `V` exists; `Obj~.V` (equivalently `Obj.~V`) explicitly selects extension-call resolution, bypasses structural lookup, and calls the lexical `V` with `Obj` as the injected first argument.
+[grace-dot-higher-order-implicit] Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)`, while all three sources elaborate to the same ordinary `a.t` body.
+
+    K = a~.t
+    K({a+1}, 7)
+
+  Displays:
+    8
+
+[grace-dot-keeps-structural-precedence] `~` changes inferred parameter ORDER only — never member selection. `Obj.V`, `Obj~.V`, and `Obj.~V` all perform ordinary structural-first DotCall lookup, so each reads Obj's own property even though a lexical `V` exists. To call the lexical `V` with Obj's value, write the call `V(Obj)`.
 
     V(x) = 99
     Obj = {
@@ -1802,7 +1813,17 @@ Regenerate this block from the repo root with:
 
   Displays:
     42
-    99
+    42
+
+[dot-member-fallback-in-closed-parameter-list] An explicit parameter list is CLOSED, and it asks the definite question: a member name whose fallback merely MAY be selected is not required to be declared. `K(x) = x.V` keeps arity 1, resolving `V` structurally on the runtime receiver and reaching the lexical fallback only when the receiver has no such member.
+
+    K(x) = x.V
+    Obj = {public V = 42}
+
+    K(Obj)
+
+  Displays:
+    42
 
 [open-capture-target-rejected] `open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M)` is rejected at parse time. Open the algorithm directly (`open M`), or use a brace block — parentheses around a brace block normalize away, so `open ({ ... })` still opens the block.
 

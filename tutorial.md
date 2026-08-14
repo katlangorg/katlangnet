@@ -19,7 +19,8 @@
    - [The Empty Sequence Value](#the-empty-sequence-value)
     - [Sequence Values and Count](#sequence-values-and-count)
    - [Output Selection](#output-selection)
-   - [Extension Dot-Call Syntax](#extension-dot-call-syntax)
+   - [Dot-Call Syntax](#dot-call-syntax)
+   - [Grace with DotCall](#grace-with-dotcall)
    - [Name Resolution](#name-resolution)
 6. [String Literals](#string-literals)
    - [String Equality](#string-equality)
@@ -1013,7 +1014,7 @@ Exact list values use the same zero-based selection:
 
 Output selection is especially useful with loops and multi-output algorithms where you only need one particular result.
 
-### Extension Dot-Call Syntax
+### Dot-Call Syntax
 
 A property call can be written with dot notation, placing the first argument before the dot. The two forms below are equivalent:
 
@@ -1023,7 +1024,7 @@ Square = n * n
 # Standard call:
 Square(5)
 
-# Extension (dot-call) syntax:
+# Dot-call syntax:
 5.Square
 ```
 
@@ -1075,9 +1076,9 @@ Scale(1, 2, 3, 10)
 
 Both item-supplying call forms agree: `factor` binds `10` from the back, `*values` collects the three front slots as `values = [1, 2, 3]`, the body's `map` call materializes the mapped items as the one exact list value `[10, 20, 30]`, and the call boundary returns that single value unchanged (see [Calls Return One Value](#calls-return-one-value)). Caller-site spread such as `Scale(Arg*, 10)*` opens the result into the flat items `10`, `20`, `30`.
 
-An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Extension Calls and Collecting Parameters](#extension-calls-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
+An UNSPREAD structured argument is one collected slot, not an item supply: `Scale(Arg, 10)` (and the dotted `Arg.Scale(10)`, whose named receiver supplies its one stored value) binds `values = [Arg]` — a one-element list holding the whole sequence — so the numeric `map` callback fails on the sequence element. To supply a stored property's items, spread them (`Scale(Arg*, 10)`); a WRITTEN group receiver supplies its rows directly (`(1, 2, 3).Scale(10)` binds `values = [1, 2, 3]` — see [Dotted Receivers and Collecting Parameters](#dotted-receivers-and-collecting-parameters)). A lone collecting parameter such as `Helper(*values)` is the degenerate lone-collecting-binding case of the same item-supply binding (see [Collecting Explicit Parameters](#collecting-explicit-parameters)).
 
-**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use — this is how extension-style calls work.
+**Resolution rule:** KatLang first checks whether the property name exists as a structural property of the target algorithm. If found, it calls that property. If not found, it falls back to the same callable resolution a plain call would use, with the receiver as the leading argument.
 
 That fallback includes parameters: a member name that is a parameter of the calling context resolves exactly like the plain callee, so higher-order algorithm-valued parameters work in both spellings:
 
@@ -1098,11 +1099,39 @@ D(7, {a+1})
 
 Parameter precedence in the fallback mirrors plain calls: a parameter of the current algorithm wins over a same-name visible property, while a parameter captured from an enclosing algorithm yields to a visible non-builtin declaration of the same name. Structural members of the resolved receiver always win before any of this — a receiver's own property is never bypassed in favor of a parameter.
 
-### Extension Dot `~.`
+### Dot Members and Implicit Parameters
 
-A `~` written directly against the dot — `receiver~.Name` or the equivalent spelling `receiver.~Name` — explicitly selects **extension-call resolution** for that one dot edge. An extension dot never looks for a structural member on the receiver: it always calls the lexical `Name` with the receiver injected as the first argument, using exactly the same receiver and argument rules as the ordinary lexical fallback.
+Because a dot edge's lexical fallback is a real callable name, that name participates in implicit parameter inference whenever the fallback **may** be selected at runtime. Participation and ordering are separate: inferred names keep their normal semantic source-occurrence order. A dot edge contributes receiver occurrences first, then the participating member/fallback occurrence, then written argument occurrences:
 
-<!-- spec:extension-dot-bypasses-structural-member -->
+<!-- spec:dot-member-fallback-implicit-signature -->
+```
+K = a.t
+K(7, {a+1})
+```
+
+**Result:** `8`
+
+`K = a.t` corresponds exactly to `K(a, t) = a.t`. The receiver `a` is an opaque implicit parameter, so at runtime `7` has no structural `t` and the edge falls back to `t(7)`. That runtime invocation order does not reorder the enclosing signature: the direct call `K = t(a)` independently infers `(t, a)`, while `K = a.t(b, c)` infers `(a, t, b, c)`.
+
+When the fallback **cannot** be selected, nothing is inferred: with `Obj = {public t = 42 ...}`, `K = Obj.t` keeps arity 0 because the structural member always wins. An explicit parameter list is a different question again — it is closed, and it only requires names that are definitely needed, so a member whose fallback merely may be selected need not be declared:
+
+<!-- spec:dot-member-fallback-in-closed-parameter-list -->
+```
+K(x) = x.V
+Obj = {public V = 42}
+
+K(Obj)
+```
+
+**Result:** `42`
+
+`K` keeps arity 1: `V` resolves structurally on whatever `x` turns out to be, and reaches the lexical fallback only when the receiver has no such member.
+
+### Grace with DotCall
+
+[Grace](#reordering-parameters-with-grace-operator) and ordinary dot syntax compose without creating another call form. `receiver~.Name(args...)` is postfix Grace on the bare receiver name followed by ordinary dot. `receiver.~Name(args...)` is ordinary dot with prefix Grace on the participating member/fallback name. In both cases `~` can change inferred parameter order only; it never changes structural-first member selection or lexical fallback execution:
+
+<!-- spec:grace-dot-keeps-structural-precedence -->
 ```
 V(x) = 99
 Obj = {
@@ -1117,24 +1146,32 @@ Obj~.V
 **Results:**
 ```
 42
-99
+42
 ```
 
-Because structural lookup is off the table, the member of an extension dot is an ordinary callable-name occurrence: it participates in the same parameter and name resolution as a written callee. In an algorithm without an explicit parameter list, an unresolved extension member becomes an implicit parameter exactly like an unresolved callee name would:
+`Obj.V`, `Obj~.V`, and `Obj.~V` all read Obj's own property. To call the lexical `V` with Obj's value instead, write the direct call `V(Obj)`.
 
-<!-- spec:extension-dot-higher-order-implicit -->
+For an opaque receiver, ordinary DotCall occurrence order is receiver, participating fallback, then written arguments. Therefore `a.t` starts as `(a, t)`. Postfix Grace in `a~.t` moves `a` one position later; prefix Grace in `a.~t` moves `t` one position earlier. Both graced forms infer `(t, a)`:
+
+<!-- spec:grace-dot-higher-order-implicit -->
 ```
 K = a~.t
-K(7, {a+1})
+K({a+1}, 7)
 ```
 
 **Result:** `8`
 
-Here `K = a~.t` infers the parameters `(a, t)` — the same interface as `K = t(a)`. Ordinary dot deliberately does not do this: `K(x) = x.V` keeps arity 1, because `V` may be a structural property of whatever `x` turns out to be at runtime.
+The executable body is still exactly ordinary `a.t`: parameter detection strips Grace, leaving the same DotCall target `a`, structural name `t`, and lexical fallback `t`. Only the enclosing inferred list differs. The prefix-member spelling works the same way: `K = a.~t` with `K({a+1}, 7)` also returns `8`.
 
-The marker binds to exactly one dot edge and never leaks along a chain: `a~.t.string` runs the extension edge first and then an ordinary `.string` on its result, while `a~.t~.u` marks both edges. The `~` must be directly attached to the dot on either side (`a~.t`, `a.~t`); a detached tilde such as `a ~ .t` keeps its ordinary grace meaning, and the dot stays an ordinary dot edge. Because `open` consumes structural identity, an extension edge is not a valid `open` target (`open M~.C` is rejected).
+Repeated markers use ordinary weight arithmetic. `a~~.t` is two postfix markers on `a`; with only `t` after it, the result is still `(t, a)`. `a~.~t` applies postfix Grace to `a` and prefix Grace to `t`, again through the same general pass. No token-sequence-specific permutation exists.
 
-An extension member also counts for the local-only rule exactly like a written callee: a nested property whose extension member is a parameter owned by the enclosing algorithm (for example `P = a~.t` inside `Outer(a, t)`) depends on those parameters and is therefore local-only, just as `P = t(a)` is. An ordinary dot member marks such a dependency only when static structural-member analysis proves that its lexical fallback must be selected; when the receiver may own the member structurally, the possible fallback does not by itself change the property's exposure.
+Grace still applies only to **one bare name occurrence**. Consequently `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and `a~.t~.u` reject because postfix Grace would decorate a compound receiver at the failing edge. By contrast, `(x + y).~t` is valid: its prefix Grace decorates the bare fallback name `t`, not the receiver. Ordinary ungraced dot retains full receiver generality (`(x + y).t` and `(1, 2, 3).Mean` are unchanged).
+
+Everything else is ordinary DotCall behavior: `.string` (`v~.string` and `v.~string`), dotted sequence builtins (`S~.count` and `S.~count`), and receiver-segment supply all use the same runtime paths as their ungraced forms. Chaining an ordinary dot afterward is fine — `a~.t.string` has the same executable body as `a.t.string`.
+
+`a ~ .t` is lexically distinct from `a~.t` by source offsets, but whitespace is insignificant between these postfix tokens. The normal grammar therefore gives it the same postfix Grace on `a`, the same ordinary dot, and the same `(t, a)` inferred order. Prefix member Grace must begin directly after the dot (`a.~t`). A grace-marked target is not a valid `open` target: `open M~.C` is rejected because `open` consumes structural algorithm identity and has no parameter inference to reorder.
+
+Exposure analysis is unaffected by Grace because it analyzes the same DotCall. A dot member marks a captured-parameter dependency only when static analysis proves its lexical fallback must be selected; when the receiver may own the member structurally, the possible fallback does not by itself change the property's exposure. That MUST-selection rule is deliberately stricter than signature inference, which includes a fallback whenever it MAY be needed.
 
 ### Name Resolution
 
@@ -1438,9 +1475,9 @@ Arg.CollectMany.count
 
 `Arg.Collect` binds `list = (1, 2, 3)`, so `count` opens the sequence (3 items); `Arg.CollectMany` binds `list = [(1, 2, 3)]` — a named property receiver supplies its one stored value — so its count is 1. To supply the stored items instead, spread them: the fluent `Arg*.CollectMany.count` and the grouped receiver `(Arg*).CollectMany.count` are both `3`.
 
-#### Extension Calls and Collecting Parameters
+#### Dotted Receivers and Collecting Parameters
 
-A **written group receiver** is different: the receiver of a lexical extension call is one leading segment whose evaluated top-level supply a flat top-level collecting parameter consumes, so writing the rows inline supplies them individually. This is what makes extension-style aggregates read naturally:
+A **written group receiver** is different: the receiver of an ordinary dot call's lexical fallback is one leading segment whose evaluated top-level supply a flat top-level collecting parameter consumes, so writing the rows inline supplies them individually. This is what makes dotted aggregates read naturally:
 
 <!-- spec:dot-receiver-segment-supply -->
 ```
@@ -1456,7 +1493,7 @@ Mean(1, 2, 3)
 2
 ```
 
-`(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`.
+`(1, 2, 3).Mean` supplies the written rows `1`, `2`, `3` to the collector (`Vector = [1, 2, 3]`), exactly like the flat call `Mean(1, 2, 3)`. The receiver is still ONE segment for arity and for fixed parameters: with `F(first, *middle, last)`, `(1, 2).F(9)` binds `first = (1, 2)` whole (fixed parameters bind the receiver's one captured value), and `(1, 2).F` is an arity error — the receiver's item count never satisfies fixed-parameter arity. An extra written boundary survives as one item (`((1, 2)).CollectMany` collects `[(1, 2)]`), the empty receiver supplies nothing (`().CollectMany` collects `[]`), and exact lists stay opaque (`[1, 2].CollectMany` collects `[[1, 2]]`). Direct calls are unchanged: a written argument slot always reifies to one value, so `CollectMany((1, 2, 3))` still collects `[(1, 2, 3)]`. The [graced source](#grace-with-dotcall) `S~.Mean` is the same ordinary dot edge with frontend-only Grace on `S`, so it keeps the same one-segment receiver behavior and raw-supply rule (a written group is not a valid postfix-Grace operand).
 
 A function signature may contain fixed and collecting parameters. When a parameter list has two or more parameters and one of them is a collecting parameter, the collecting parameter may appear at the front, middle, or end. Fixed parameters before it bind from the front, fixed parameters after it bind from the back, and the collecting parameter collects the remaining middle slots (possibly zero) as one exact immutable list. The supplied items are the call argument slots: a bare argument supplies one slot (a stored sequence value is one slot, not opened), and only an explicit spread opens a sequence value into separate slots:
 
@@ -1674,7 +1711,7 @@ Only one collecting binding is allowed in each comma-separated pattern level, co
 
 Sometimes the natural reading order of parameters in a definition does not match the intended calling convention. The Grace`~` operator shifts a parameter's position.
 
-Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later.
+Prefix `~x` moves `x` one position earlier in the parameter list. Postfix `x~` moves `x` one position later. Grace applies only to a bare parameter/name occurrence — `~x` and `x~` are the two supported forms. Attaching `~` to anything else (a parenthesized expression, a call result, a dot result, a list, a literal) is an error: `(x + y)~`, `f(x)~`, and `5~` are rejected, and parentheses never smuggle an expression into Grace (`(x)~` is rejected too). A marker written before a call, `~f(x)`, is grace on the callee name `f` itself — the call applies to the graced name, exactly like the postfix `f~(x)` idiom.
 
 ```
 # Without Grace, parameter order would be (y, x) since 'y' appears first.
@@ -3277,7 +3314,7 @@ F(A*)
 6
 ```
 
-`F(A)` without the spread is an arity error (one argument for three parameters), and `F([]*)` supplies zero arguments. Extension dot-calls follow the ordinary receiver rule: `A.F(9)` passes the whole list `A` as the one leading argument.
+`F(A)` without the spread is an arity error (one argument for three parameters), and `F([]*)` supplies zero arguments. An ordinary dotted call `A.F(9)` passes the whole list `A` as one leading receiver segment. The graced source `A~.F(9)` is the same ordinary dot edge with frontend-only postfix Grace on `A`, so it keeps the same receiver segment and list opacity.
 
 Multi-target **deconstruction**, by contrast, is an unpacking receiver: a right-hand side that is exactly one list value opens the list and matches its elements — the same rule that already opens a lone sequence value, and the same bindings the explicit spread `x, y, z = [1, 2, 3]*` produces. (The two written forms coincide except for one exotic shape: a singleton list whose lone element is itself a sequence or list, such as `[(1, 2)]`, where the spread form re-groups through a capture boundary and opens one level further.)
 

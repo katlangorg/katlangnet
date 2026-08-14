@@ -177,8 +177,6 @@ public abstract class AstWalker
                 {
                     if (dotCall.MemberSpan is { } memberSpan)
                         VisitDotMemberIdentifier(dotCall, memberSpan);
-                    if (dotCall.ExtensionMarkerSpan is { } extensionMarkerSpan)
-                        VisitExtensionDotMarker(dotCall, extensionMarkerSpan);
                     // The elaborated lexical-fallback identity is a real child
                     // (Resolve/Param for parser trees; a host-built tree could
                     // place anything here), so it is walked like every other
@@ -289,15 +287,6 @@ public abstract class AstWalker
     /// Visits a dot-call member identifier occurrence.
     /// </summary>
     protected virtual void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span)
-    {
-    }
-
-    /// <summary>
-    /// Visits the source-backed <c>~</c> marker belonging to one extension-dot
-    /// edge. The marker is source metadata for that edge, not an expression
-    /// child or a second member occurrence.
-    /// </summary>
-    protected virtual void VisitExtensionDotMarker(Expr.DotCall expr, SourceSpan span)
     {
     }
 

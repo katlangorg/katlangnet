@@ -1,7 +1,7 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Regression matrix for how the elaborated dot-edge lexical-fallback identity
+/// Regression matrix for how an ordinary dot edge's lexical fallback
 /// participates in property dependency/exposure analysis.
 ///
 /// The rule (see <c>AstHelpers.LexicalFallbackIsUnconditional</c> and the
@@ -9,11 +9,23 @@ namespace KatLang.Tests;
 /// an ordinary elaborated name expression and flows through the SAME
 /// expression dependency walk as a written callee name — but only when the
 /// edge's resolution facts make the fallback the unconditional selection
-/// (every extension edge; an ordinary edge whose algorithm-position
-/// capability makes structural resolution statically impossible). A CONDITIONAL fallback — a
-/// receiver that may resolve structurally at runtime — contributes nothing,
-/// so a structurally-resolving property is never made LocalOnly by an
-/// unreached fallback that happens to name a parameter.
+/// (<see cref="LexicalFallbackSelection.Always"/>: the receiver's
+/// algorithm-position capability makes structural resolution statically
+/// impossible). A CONDITIONAL fallback — a receiver that may resolve
+/// structurally at runtime, including every lexical NAME receiver this
+/// scope-free view cannot resolve — contributes nothing, so a
+/// structurally-resolving property is never made LocalOnly by an unreached
+/// fallback that happens to name a parameter.
+///
+/// This is deliberately the MUST-selection question, distinct from implicit
+/// parameter inference's MAY-selection question (a fallback that CAN be
+/// selected must be representable in the inferred signature). The two are
+/// pinned apart by <c>GraceDotCompositionTests.MayVsMust_*</c>.
+///
+/// Graced sources are a CONTROL family here: `a~.t` is the same ordinary
+/// dot edge as `a.t`, so every graced case must classify exactly like its
+/// ungraced twin — Grace changes only the enclosing signature's
+/// parameter order.
 ///
 /// Every case pins BOTH the exposure classification and the runtime
 /// result/error, so classification changes can never silently diverge from
@@ -68,7 +80,7 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void ExtensionDot_CapturedParameters_LocalOnly_TildeDot()
+    public void PostfixGraceDot_CapturedParameters_LocalOnly()
         => AssertExposureAndResult(
             """
             Outer(a, t) = {
@@ -82,7 +94,7 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void ExtensionDot_CapturedParameters_LocalOnly_DotTilde()
+    public void PrefixMemberGraceDot_CapturedParameters_LocalOnly()
         => AssertExposureAndResult(
             """
             Outer(a, t) = {
@@ -113,20 +125,41 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void ExtensionDot_CertainReceiverlessCapture_MarksLocalOnly()
-        => AssertExposureAndResult(
+    public void SiblingNameReceiver_ConditionalFallback_StaysExported_InBothSpellings()
+    {
+        // A NAME receiver is not resolvable by this scope-free view, so the
+        // fallback stays conditional and is not charged — even though the
+        // runtime does take it here. That imprecision is the long-standing
+        // exposure policy (a conditional fallback is treated as unselected),
+        // and both spellings inherit it identically.
+        AssertExposureAndResult(
             """
             Outer(t) = {
-                P = 5~.t
+                Five = 5
+                P = Five.t
                 P
             }
             Outer({x+1})
             """,
-            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            PropertyExposure.Exported,
             "6",
             "Outer", "P");
 
-    // ── 5-6: structural winner vs extension bypass ──────────────────────────
+        AssertExposureAndResult(
+            """
+            Outer(t) = {
+                Five = 5
+                P = Five~.t
+                P
+            }
+            Outer({x+1})
+            """,
+            PropertyExposure.Exported,
+            "6",
+            "Outer", "P");
+    }
+
+    // ── 5-6: structural winner, both spellings ─────────────────────────────
 
     [Fact]
     public void OrdinaryDot_HiddenParamName_StructuralWinnerStaysExported()
@@ -168,9 +201,9 @@ public class DotCallFallbackExposureTests
     }
 
     [Fact]
-    public void ExtensionDot_SameShape_BypassesStructuralAndMarksLocalOnly()
-        // The extension edge is unconditional: the member is the captured
-        // parameter, so P is LocalOnly and evaluates t(Obj-value) = 0+1.
+    public void GracedDot_SameShape_ClassifiesExactlyLikeTheOrdinaryEdge()
+        // The marker does not bypass structural lookup, so this is the same
+        // structural winner as the ungraced twin above: Exported, and 42.
         => AssertExposureAndResult(
             """
             Outer(t) = {
@@ -183,8 +216,8 @@ public class DotCallFallbackExposureTests
             }
             Outer({x+1})
             """,
-            PropertyExposure.LocalOnlyCapturedAncestorParameters,
-            "1",
+            PropertyExposure.Exported,
+            "42",
             "Outer", "P");
 
     [Fact]
@@ -243,9 +276,10 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void VisiblePropertyShadow_KeepsResolveFallback_Exported()
     {
-        // The visible root property `t` keeps the member's fallback identity
-        // Resolve("t") for both edges, so neither captures the parameter:
-        // ordinary resolves structurally (42), extension calls lexical t (99).
+        // The visible root property `t` keeps the edge's fallback as
+        // Resolve("t") in both spellings. Neither captures the ancestor
+        // parameter, and both resolve structurally on the member-bearing
+        // receiver (42) — the marker only reorders inferred parameters.
         AssertExposureAndResult(
             """
             t(x) = 99
@@ -277,14 +311,14 @@ public class DotCallFallbackExposureTests
             Outer({x+1})
             """,
             PropertyExposure.Exported,
-            "99",
+            "42",
             "Outer", "P");
     }
 
-    // ── 9-11: opened, ambiguous, builtin fallbacks ──────────────────────────
+    // ── 9-11: opened, ambiguous, and builtin fallback callees ───────────────
 
     [Fact]
-    public void OpenedCallableFallback_ResolvesLexically_Exported()
+    public void GracedEdgeFallback_ResolvesThroughOpen_Exported()
         => AssertExposureAndResult(
             """
             Lib = {
@@ -292,7 +326,8 @@ public class DotCallFallbackExposureTests
             }
             Outer = {
                 open Lib
-                P = 5~.Inc
+                v = 5
+                P = v~.Inc
                 P
             }
             Outer
@@ -302,7 +337,7 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void AmbiguousOpenFallback_StaysExported_RuntimeReportsAmbiguity()
+    public void GracedEdgeFallback_AmbiguousOpenStaysExported_RuntimeReportsAmbiguity()
     {
         // Static analysis records only a visible-name edge; the ambiguity is
         // the runtime lookup's verdict, exactly as for a plain call.
@@ -316,7 +351,8 @@ public class DotCallFallbackExposureTests
             }
             Outer = {
                 open A, B
-                P = 5~.Pick
+                v = 5
+                P = v~.Pick
                 P
             }
             Outer
@@ -329,11 +365,12 @@ public class DotCallFallbackExposureTests
     }
 
     [Fact]
-    public void BuiltinFallback_ContributesNothing_Exported()
+    public void GracedEdgeBuiltinFallback_ContributesNothing_Exported()
         => AssertExposureAndResult(
             """
             Outer = {
-                P = (1, 2, 3)~.count
+                S = 1, 2, 3
+                P = S~.count
                 P
             }
             Outer
@@ -345,7 +382,7 @@ public class DotCallFallbackExposureTests
     // ── 12-15: chains, nested bodies, argument slots, capture receivers ─────
 
     [Fact]
-    public void Chained_ExtensionThenOrdinaryString_MarksInnerCapture()
+    public void Chained_GracedThenOrdinaryString_MarksInnerCapture()
         => AssertExposureAndResult(
             """
             Outer(a, t) = {
@@ -359,22 +396,42 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void Chained_TwoExtensionEdges_MarksCapturedMember()
-        => AssertExposureAndResult(
+    public void GracedEdgeInsideCallSlot_ClassifiesLikeTheOrdinaryEdge()
+    {
+        // (Postfix Grace on a chained dot result rejects under the one-name law, so the
+        // two-step pipeline is written as an ordinary call around the edge.)
+        // The name receiver keeps the fallback conditional in both spellings.
+        AssertExposureAndResult(
             """
             Inc(x) = x + 1
             Outer(t) = {
-                P = 5~.t~.Inc
+                v = 5
+                P = Inc(v.t)
                 P
             }
             Outer({x*3})
             """,
-            PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            PropertyExposure.Exported,
             "16",
             "Outer", "P");
 
+        AssertExposureAndResult(
+            """
+            Inc(x) = x + 1
+            Outer(t) = {
+                v = 5
+                P = Inc(v~.t)
+                P
+            }
+            Outer({x*3})
+            """,
+            PropertyExposure.Exported,
+            "16",
+            "Outer", "P");
+    }
+
     [Fact]
-    public void FallbackInsideNestedPropertyScope_MarksBothLevels()
+    public void GracedEdgeInsideNestedPropertyScope_MarksBothLevels()
         => AssertExposureAndResult(
             """
             Outer(a, t) = {
@@ -391,7 +448,7 @@ public class DotCallFallbackExposureTests
             "Outer", "P");
 
     [Fact]
-    public void FallbackInsideCallArguments_MarksCapture()
+    public void GracedEdgeInsideCallArguments_MarksCapture()
     {
         var source =
             """
@@ -433,7 +490,7 @@ public class DotCallFallbackExposureTests
     // ── 16-17: direct-call equivalences ─────────────────────────────────────
 
     [Fact]
-    public void DirectCall_And_ExtensionDot_AgreeOnClassificationAndResult()
+    public void DirectCall_And_GracedDot_AgreeOnClassificationAndResult()
     {
         var direct = ParseValidRoot(
             """
@@ -443,7 +500,7 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """);
-        var extension = ParseValidRoot(
+        var graced = ParseValidRoot(
             """
             Outer(a, t) = {
                 P = a~.t
@@ -453,7 +510,7 @@ public class DotCallFallbackExposureTests
             """);
         Assert.Equal(
             FindProperty(direct, "Outer", "P").Exposure,
-            FindProperty(extension, "Outer", "P").Exposure);
+            FindProperty(graced, "Outer", "P").Exposure);
     }
 
     [Fact]
@@ -492,7 +549,7 @@ public class DotCallFallbackExposureTests
     // ── Dependency-graph facts: fallback flows through the ordinary walk ────
 
     [Fact]
-    public void Graph_ExtensionFallback_SeedsRequiredAncestorNames_LikeDirectCall()
+    public void Graph_GracedEdge_SeedsRequiredAncestorNames_LikeTheOrdinaryEdge()
     {
         static IReadOnlyList<string> RequiredNames(string source)
         {
@@ -502,6 +559,9 @@ public class DotCallFallbackExposureTests
             return graph[0].RequiredAncestorOwnedParameterNames;
         }
 
+        // A direct call requires BOTH names; the dot edge requires only the
+        // receiver, because its parameter-named fallback is conditional. The
+        // graced source belongs to the DOT family, not the call family.
         var direct = RequiredNames(
             """
             Outer(a, t) = {
@@ -510,7 +570,15 @@ public class DotCallFallbackExposureTests
             }
             Outer(1, {x+1})
             """);
-        var extension = RequiredNames(
+        var ordinaryDot = RequiredNames(
+            """
+            Outer(a, t) = {
+                P = a.t
+                P
+            }
+            Outer(1, {x+1})
+            """);
+        var graced = RequiredNames(
             """
             Outer(a, t) = {
                 P = a~.t
@@ -520,25 +588,27 @@ public class DotCallFallbackExposureTests
             """);
 
         Assert.Equal(["a", "t"], direct);
-        Assert.Equal(direct, extension);
+        Assert.Equal(["a"], ordinaryDot);
+        Assert.Equal(ordinaryDot, graced);
     }
 
     [Fact]
-    public void Graph_SiblingResolveFallback_CreatesSummarySiblingEdge()
+    public void Graph_UnconditionalSiblingFallback_CreatesSummarySiblingEdge()
     {
-        // An unconditional Resolve fallback participates like a written callee
-        // name: `5~.t` beside a sibling property `t` records the summary
-        // sibling edge the runtime resolution genuinely uses.
+        // An UNCONDITIONAL fallback participates like a written callee name:
+        // the certain-miss numeric receiver's `.t` beside a sibling property
+        // `t` records the summary sibling edge the runtime genuinely uses.
+        var root = ParseValidRoot(
+            """
+            Outer = {
+                t(x) = x + 10
+                P = 5.t
+                P
+            }
+            Outer
+            """);
         var outer = Assert.IsType<Algorithm.User>(
-            Assert.Single(ParseValidRoot(
-                """
-                Outer = {
-                    t(x) = x + 10
-                    P = 5~.t
-                    P
-                }
-                Outer
-                """).Properties, property => property.Name == "Outer").Value);
+            Assert.Single(root.Properties, property => property.Name == "Outer").Value);
         var graph = PropertyDependencyGraphBuilder.Build(outer);
         Assert.True(graph.TryGetPropertyIndex("P", out var pIndex));
         Assert.True(graph.TryGetPropertyIndex("t", out var tIndex));
@@ -599,6 +669,61 @@ public class DotCallFallbackExposureTests
         Assert.False(stringDot.LexicalFallbackIsUnconditional());
         var stringRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run(stringSource));
         Assert.Equal("5", stringRun.ToDisplayString());
+    }
+
+    [Fact]
+    public void SelectionClassification_IsTheOneSharedFact_AndUnconditionalIsItsAlwaysProjection()
+    {
+        static Expr.DotCall LastEdge(string source)
+            => Assert.IsType<Expr.DotCall>(SourceProvenance.ParseValid(source).Root.Output[^1]);
+
+        static LexicalFallbackSelection SelectionOf(Expr.DotCall edge)
+            => edge.GetLexicalFallbackSelection(
+                edge.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider());
+
+        // Never: the receiver's statically known algorithm declares the
+        // member, or the dot-only string intrinsic pre-empts both channels.
+        var memberHit = LastEdge("Obj = {\n    public t = 42\n    0\n}\n{public t = 1\n0}.t");
+        Assert.Equal(LexicalFallbackSelection.Never, SelectionOf(memberHit));
+        Assert.Equal(LexicalFallbackSelection.Never, SelectionOf(LastEdge("5.string")));
+
+        // A property declared inside a conditional branch is a structural
+        // local-only error at runtime, not a lexical miss, so it is also Never.
+        var conditionalBranchBody = new Algorithm.User(
+            Parent: null,
+            Parameters: [],
+            Opens: [],
+            Properties: [new Property("t", new Algorithm.User(null, [], [], [], [new Expr.Num(1m)]))],
+            Output: [new Expr.Num(0m)]);
+        var conditionalReceiver = new Algorithm.Conditional(
+            Parent: null,
+            Opens: [],
+            Branches: [new CondBranch(new Pattern.Bind("x"), conditionalBranchBody)]);
+        var conditionalMember = new Expr.DotCall(
+            new Expr.AlgorithmExpr(conditionalReceiver),
+            "t");
+        Assert.Equal(LexicalFallbackSelection.Never, SelectionOf(conditionalMember));
+
+        // Always: no structural channel can exist on the receiver.
+        Assert.Equal(LexicalFallbackSelection.Always, SelectionOf(LastEdge("5.t")));
+        Assert.Equal(LexicalFallbackSelection.Always, SelectionOf(LastEdge("{public u = 1\n0}.t")));
+
+        // Conditional: runtime-valued receivers (parameters, and lexical names
+        // this scope-free view cannot resolve).
+        Assert.Equal(LexicalFallbackSelection.Conditional, SelectionOf(LastEdge("V = 5\nV.t")));
+        Assert.Equal(
+            LexicalFallbackSelection.Conditional,
+            SelectionOf(Assert.IsType<Expr.DotCall>(
+                SourceProvenance.ParseValid("K(a) = a.t\nK(1)").Root.Properties[0].Value.Output[0])));
+
+        // The exposure predicate is exactly the Always projection.
+        foreach (var source in new[] { "5.t", "{public u = 1\n0}.t", "5.string", "V = 5\nV.t" })
+        {
+            var edge = LastEdge(source);
+            Assert.Equal(
+                SelectionOf(edge) == LexicalFallbackSelection.Always,
+                edge.LexicalFallbackIsUnconditional());
+        }
     }
 
     [Fact]

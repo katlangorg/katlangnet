@@ -30,6 +30,38 @@ internal readonly record struct StaticStructuralMemberProvider(
     StaticStructuralMemberProviderKind Kind,
     Algorithm? Algorithm = null);
 
+/// <summary>
+/// The ONE static classification of a dot edge's structural-vs-lexical
+/// selection: whether the edge's stored lexical fallback can be the selected
+/// resolution at runtime. Consumers differ in WHICH states they act on, never
+/// in how the states are derived:
+/// <list type="bullet">
+/// <item>implicit parameter inference includes the fallback callable for
+/// <see cref="Conditional"/> and <see cref="Always"/> (a MAY-selection
+/// question: if the fallback can be needed, its callable identity must be
+/// representable in the inferred signature);</item>
+/// <item>dependency/exposure analysis charges the fallback only for
+/// <see cref="Always"/> (a MUST-selection question: charging a conditional
+/// fallback would revoke working structural/open access).</item>
+/// </list>
+/// </summary>
+internal enum LexicalFallbackSelection
+{
+    /// <summary>Structural resolution (a member hit, a local-only/no-branch
+    /// member error, or the dot-only <c>string</c> intrinsic) always
+    /// pre-empts the fallback.</summary>
+    Never,
+
+    /// <summary>The receiver resolves to a runtime value this static view
+    /// cannot inspect (parameter or unresolved/ambiguous lexical reference):
+    /// the fallback may or may not be selected.</summary>
+    Conditional,
+
+    /// <summary>Structural resolution is statically impossible: the fallback
+    /// is unconditionally the selected resolution.</summary>
+    Always,
+}
+
 internal static class AstHelpers
 {
     internal static bool TryGetUnresolvedLoadArguments(
@@ -59,26 +91,40 @@ internal static class AstHelpers
     internal static bool IsCoreOpenForm(this Expr expr)
         => expr is Expr.AlgorithmExpr
             or Expr.Resolve
-            or Expr.DotCall { Args: null, ResolutionMode: DotResolutionMode.Ordinary };
+            or Expr.DotCall { Args: null };
 
     /// <summary>
-    /// Whether this edge selects the independently established ordinary-dot
-    /// <c>.string</c> value intrinsic. Extension edges treat <c>string</c> as
-    /// their stored lexical callable like every other member name.
+    /// Whether this edge selects the independently established dot-only
+    /// <c>.string</c> value intrinsic. Grace composed with dot syntax shares
+    /// it: <c>x~.string</c> and <c>x.~string</c> build the SAME ordinary dot
+    /// edge as <c>x.string</c>; Grace only affects inferred name order, so the
+    /// intrinsic applies identically.
     /// </summary>
     internal static bool UsesOrdinaryDotStringIntrinsic(this Expr.DotCall dotCall)
-        => dotCall.ResolutionMode == DotResolutionMode.Ordinary
-            && string.Equals(dotCall.Name, "string", StringComparison.Ordinal);
+        => string.Equals(dotCall.Name, "string", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Strips grace ordering wrappers from an expression. Grace annotates
+    /// implicit PARAMETER ORDER only — it never changes what the decorated
+    /// occurrence resolves to or how a dot edge dispatches — so every
+    /// semantic classification of a raw (pre-elaboration) expression looks
+    /// through it. Elaborated trees contain no grace; there this is the
+    /// identity.
+    /// </summary>
+    internal static Expr UnwrapGraceOperand(this Expr expr)
+    {
+        while (expr is Expr.Grace(var inner, _))
+            expr = inner;
+        return expr;
+    }
 
     /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are
-    /// strict values rather than neutral higher-order argument slots. Only an
-    /// ordinary structural Math member has that consumer contract; extension
-    /// edges bypass the registry surface.
+    /// strict values rather than neutral higher-order argument slots. Only a
+    /// structural Math member has that consumer contract.
     /// </summary>
     internal static bool HasRegistryProvenStrictValueArguments(this Expr.DotCall dotCall)
-        => dotCall.ResolutionMode == DotResolutionMode.Ordinary
-            && dotCall.Target is Expr.Resolve { Name: "Math" }
+        => dotCall.Target is Expr.Resolve { Name: "Math" }
             && BuiltinRegistry.IsMathFunctionMember(dotCall.Name);
 
     /// <summary>
@@ -145,49 +191,63 @@ internal static class AstHelpers
     }
 
     /// <summary>
-    /// The ONE static representation of a dot edge's structural-vs-fallback
-    /// selection possibility, for static consumers (dependency/exposure
-    /// analysis, editor classification). Returns true when the edge's stored
-    /// lexical fallback is UNCONDITIONALLY the selected resolution:
-    /// <list type="bullet">
-    /// <item>every <see cref="DotResolutionMode.ExtensionOnly"/> edge —
-    /// extension resolution bypasses structural lookup and the ordinary-dot
-    /// <c>string</c> intrinsic by the language rule;</item>
-    /// <item>an ORDINARY edge whose receiver's general structural-member
-    /// capability is definitely absent, or whose statically known algorithm
-    /// neither declares the member nor defines it in a conditional branch.</item>
-    /// </list>
-    /// Returns false when structural resolution (a member hit, a local-only /
-    /// arity / no-branch member error, or the ordinary-dot <c>string</c>
-    /// intrinsic) may pre-empt the fallback: parameter and lexical-name
-    /// receivers resolve to runtime algorithm values this static view cannot
-    /// inspect, and a member-bearing literal receiver selects structurally.
-    /// Static consumers must treat a conditional fallback as unselected
-    /// rather than guessing — the evaluator remains the only place that
-    /// decides the actual dispatch.
+    /// Derives the shared <see cref="LexicalFallbackSelection"/> fact for one
+    /// dot edge from the receiver's algorithm-position capability. Callers
+    /// supply the provider so each layer can bring its own resolution power
+    /// to a <see cref="StaticStructuralMemberProviderKind.LexicalReference"/>
+    /// receiver (the detector and the editor resolve it through their
+    /// elaborated scope to a <c>KnownAlgorithm</c>; scope-free consumers pass
+    /// the raw shape classification and an unresolved reference stays
+    /// <see cref="LexicalFallbackSelection.Conditional"/> — the safe state in
+    /// both directions). The mapping itself mirrors the evaluator's DotCall
+    /// law exactly:
+    /// the dot-only <c>string</c> intrinsic pre-empts both channels on every
+    /// receiver; a statically known algorithm with the member (declared, or
+    /// defined in a conditional branch — which the evaluator turns into a
+    /// local-only ERROR, not a fallback) never selects the fallback; a
+    /// statically known algorithm without the member, and every
+    /// definitely-memberless value shape, always selects it; runtime-valued
+    /// receivers may select it.
     /// </summary>
-    internal static bool LexicalFallbackIsUnconditional(this Expr.DotCall dotCall)
+    internal static LexicalFallbackSelection GetLexicalFallbackSelection(
+        this Expr.DotCall dotCall,
+        StaticStructuralMemberProvider receiverProvider)
     {
-        if (dotCall.ResolutionMode == DotResolutionMode.ExtensionOnly)
-            return true;
-
-        // The ordinary-dot `string` value intrinsic pre-empts BOTH structural
+        // The dot-only `string` value intrinsic pre-empts BOTH structural
         // lookup and the lexical fallback on every receiver shape.
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
-            return false;
+            return LexicalFallbackSelection.Never;
 
-        var provider = dotCall.Target.GetStaticStructuralMemberProvider();
-        return provider.Kind switch
+        return receiverProvider.Kind switch
         {
             StaticStructuralMemberProviderKind.LexicalReference
-                or StaticStructuralMemberProviderKind.RuntimeParameter => false,
-            StaticStructuralMemberProviderKind.DefinitelyAbsent => true,
+                or StaticStructuralMemberProviderKind.RuntimeParameter
+                => LexicalFallbackSelection.Conditional,
+            StaticStructuralMemberProviderKind.DefinitelyAbsent
+                => LexicalFallbackSelection.Always,
             StaticStructuralMemberProviderKind.KnownAlgorithm =>
-                !HasStructuralMemberOrConditionalBranchMember(provider.Algorithm!, dotCall.Name),
+                HasStructuralMemberOrConditionalBranchMember(receiverProvider.Algorithm!, dotCall.Name)
+                    ? LexicalFallbackSelection.Never
+                    : LexicalFallbackSelection.Always,
             _ => throw new InvalidOperationException(
-                $"Unhandled static structural-member provider kind: {provider.Kind}"),
+                $"Unhandled static structural-member provider kind: {receiverProvider.Kind}"),
         };
     }
+
+    /// <summary>
+    /// The MUST-selection projection of <see cref="GetLexicalFallbackSelection"/>
+    /// for scope-free static consumers (dependency/exposure analysis).
+    /// Returns true when the edge's stored lexical fallback is
+    /// UNCONDITIONALLY the selected resolution. A conditional fallback — a
+    /// receiver that may resolve structurally at runtime, including every
+    /// lexical reference this scope-free view cannot resolve — must be
+    /// treated as unselected rather than guessed: the evaluator remains the
+    /// only place that decides the actual dispatch.
+    /// </summary>
+    internal static bool LexicalFallbackIsUnconditional(this Expr.DotCall dotCall)
+        => dotCall.GetLexicalFallbackSelection(
+                dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider())
+            == LexicalFallbackSelection.Always;
 
     private static bool HasStructuralMemberOrConditionalBranchMember(Algorithm receiver, string name)
     {

@@ -271,7 +271,7 @@ public static class ImplicitArgumentResolver
 
             case Expr.DotCall dotCall:
                 // `with` keeps the stored dot-edge facts (member span, lexical
-                // fallback, resolution mode, marker span) intact.
+                // fallback) intact.
                 return dotCall with
                 {
                     Target = ProcessOpenExpr(dotCall.Target),
@@ -787,15 +787,14 @@ public static class ImplicitArgumentResolver
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? callableKey,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
     {
-        // Ordinary dot only: an extension edge (`Math~.Pow`) bypasses the
-        // structural registry surface entirely — by the extension law it is
-        // the plain call `Pow(Math)` — so bare-builtin lifting never applies.
+        // `Math~.Pow` reaches this same structural arm: its ordinary receiver
+        // Grace is consumed by parameter detection before implicit-call
+        // rewriting, so Grace cannot change registry facts.
         if (expr is Expr.DotCall
             {
                 Target: Expr.Resolve { Name: var ownerName },
                 Name: var memberName,
                 Args: null,
-                ResolutionMode: DotResolutionMode.Ordinary,
             }
             && !paramMap.ContainsKey(ownerName)
             && BuiltinRegistry.TryGetBuiltinCallableSignature(ownerName, memberName, out signature)
@@ -850,9 +849,9 @@ public static class ImplicitArgumentResolver
                 items.Select(item => ProcessExprNested(item, paramMap)).ToList())
             { Span = expr.Span },
             // `with` keeps the stored dot-edge facts (member span, lexical
-            // fallback, resolution mode, marker span) — a positional rebuild
-            // here silently degraded extension edges inside argument bundles,
-            // capture rows, and list elements to ordinary dots.
+            // fallback) — a positional rebuild here silently dropped the
+            // elaborated fallback identity inside argument bundles, capture
+            // rows, and list elements.
             Expr.DotCall dotCall => dotCall with
             {
                 Target = ProcessExprNested(dotCall.Target, paramMap),

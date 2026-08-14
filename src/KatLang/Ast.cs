@@ -344,25 +344,6 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
 // ── Expressions (Lean: Expr) ────────────────────────────────────────────────
 
 /// <summary>
-/// How a <see cref="Expr.DotCall"/> edge resolves its member.
-/// <see cref="Ordinary"/> (<c>a.f</c>): structural member lookup on the
-/// resolved receiver first; lexical fallback only on a structural miss.
-/// <see cref="ExtensionOnly"/> (<c>a~.f</c> / <c>a.~f</c>): structural lookup
-/// is bypassed entirely — the member is a callable-name occurrence and the
-/// stored lexical fallback is always invoked with the receiver injected as the
-/// leading argument segment. The mode belongs to exactly one dot edge.
-/// Lean: <c>DotResolutionMode</c>.
-/// </summary>
-public enum DotResolutionMode
-{
-    /// <summary>Structural-first dot resolution (<c>a.f</c>).</summary>
-    Ordinary,
-
-    /// <summary>Extension-call resolution (<c>a~.f</c> / <c>a.~f</c>): lexical fallback only.</summary>
-    ExtensionOnly,
-}
-
-/// <summary>
 /// Abstract base for all KatLang expressions.
 /// Each sealed nested record corresponds to a constructor in the Lean <c>Expr</c> inductive.
 /// </summary>
@@ -473,13 +454,13 @@ public abstract record Expr
     /// context. <c>null</c> means NO argument-list syntax (property-style access
     /// <c>a.f</c>); <see cref="OutputBundle.Empty"/> means an explicit empty
     /// list (<c>a.f()</c>) — the two remain distinct.
-    /// <para><b>Resolution mode:</b> an ORDINARY dot edge (<c>a.f</c>) tries
-    /// structural member lookup on the resolved receiver first and uses the
-    /// lexical fallback only on a structural miss; an EXTENSION dot edge
-    /// (<c>a~.f</c> / <c>a.~f</c> — one canonical node) explicitly bypasses
-    /// structural lookup and always calls the lexical fallback with the
-    /// receiver injected as the leading argument segment. The mode belongs to
-    /// exactly this dot edge and never leaks to chained edges.</para>
+    /// <para><b>Resolution:</b> a dot edge tries structural member lookup on
+    /// the resolved receiver first and uses the lexical fallback only on a
+    /// structural miss. Written Grace composes with this ordinary edge:
+    /// <c>a~.f</c> carries postfix Grace on the receiver occurrence, while
+    /// <c>a.~f</c> carries prefix Grace on the fallback/name occurrence.
+    /// Parameter detection consumes either annotation; Grace changes inferred
+    /// parameter ORDER only and never selects a different resolution.</para>
     /// <para><b>Lexical fallback identity:</b> <see cref="LexicalFallback"/>
     /// carries the member's lexical-fallback callee as an ordinary
     /// elaboratable name expression — <see cref="Expr.Resolve"/>, or
@@ -487,11 +468,13 @@ public abstract record Expr
     /// a parameter reference — so every runtime consumer CONSUMES the
     /// front-end's Param-vs-Resolve decision instead of reconstructing it.
     /// <c>null</c> means the unelaborated default <c>Resolve(Name)</c>
-    /// (host-built trees keep plain lexical-fallback semantics). Producers
-    /// must store only Resolve/Param nodes here; any other expression is outside
-    /// the elaborated contract (host-built defensive evaluation still follows
-    /// that expression's ordinary <c>ResolveAlg</c> behavior).</para>
-    /// Lean: <c>dotMember : Expr → Ident → Expr → DotResolutionMode → Option OutputBundle → Expr</c>
+    /// (host-built trees keep plain lexical-fallback semantics). Elaborated
+    /// producers must store only Resolve/Param nodes here; a raw
+    /// parser tree may temporarily store the documented Grace wrapper, and any
+    /// other expression is outside the elaborated contract (host-built
+    /// defensive evaluation still follows that expression's ordinary
+    /// <c>ResolveAlg</c> behavior).</para>
+    /// Lean: <c>dotMember : Expr → Ident → Expr → Option OutputBundle → Expr</c>
     /// (with <c>Expr.dotCall</c> kept as the ordinary/lexical smart constructor).
     /// </summary>
     public sealed record DotCall(Expr Target, string Name, OutputBundle? Args = null) : Expr
@@ -505,20 +488,13 @@ public abstract record Expr
         /// <summary>
         /// The member's lexical-fallback callee identity as an ordinary name
         /// expression (<see cref="Expr.Resolve"/> or <see cref="Expr.Param"/>),
-        /// decided once by front-end elaboration. <c>null</c> means the
-        /// unelaborated default <c>Resolve(Name)</c>.
+        /// decided once by front-end elaboration. A raw parser tree may temporarily
+        /// carry <see cref="Expr.Grace"/> around its Resolve when prefix Grace is
+        /// written on the member occurrence (<c>a.~f</c>); elaboration consumes
+        /// that wrapper. <c>null</c> means the unelaborated default
+        /// <c>Resolve(Name)</c>.
         /// </summary>
         public Expr? LexicalFallback { get; init; }
-
-        /// <summary>How this dot edge resolves its member (see type remarks).</summary>
-        public DotResolutionMode ResolutionMode { get; init; } = DotResolutionMode.Ordinary;
-
-        /// <summary>
-        /// Exact span of the extension marker <c>~</c> on extension-dot edges
-        /// (<c>a~.f</c> stores the marker before the dot, <c>a.~f</c> after
-        /// it); null for ordinary dot edges.
-        /// </summary>
-        public SourceSpan? ExtensionMarkerSpan { get; init; }
 
         /// <summary>
         /// The effective lexical-fallback callee: the stored elaborated
@@ -530,8 +506,22 @@ public abstract record Expr
     }
 
     /// <summary>
-    /// Grace weight annotation. <c>Grace(inner, w)</c> marks an identifier with reordering weight.
-    /// Prefix <c>~x</c> → weight -1, postfix <c>x~</c> → weight +1. Consumed by ParameterDetector.
+    /// Grace weight annotation on exactly ONE bare parameter/name occurrence.
+    /// Prefix <c>~x</c> → weight -1 (one position earlier), postfix
+    /// <c>x~</c> → weight +1 (one position later); repeated markers and
+    /// repeated graced occurrences of the same name sum. SOURCE-VALID Grace
+    /// wraps a single <see cref="Resolve"/> occurrence — the parser produces
+    /// it only for written identifier Grace: this includes postfix Grace on a
+    /// receiver before an ordinary dot (<c>a~.f</c>) and prefix Grace on the
+    /// dot member's fallback/name occurrence (<c>a.~f</c>). Repeated markers
+    /// still decorate that same one occurrence (<c>a~~.f</c>). Grace is NOT an
+    /// expression operator: it
+    /// never distributes a weight through a compound operand (complex
+    /// operands are parse errors; a host-built one is handled defensively
+    /// with no reordering effect).
+    /// Grace affects implicit parameter ordering ONLY: front-end elaboration
+    /// consumes the weight and strips the wrapper, so no elaborated tree
+    /// contains one and evaluation semantics never observe it.
     /// Not part of the Lean specification.
     /// </summary>
     public sealed record Grace(Expr Inner, int Weight) : Expr;

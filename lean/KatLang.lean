@@ -730,19 +730,6 @@ end Pattern
 -- Syntax
 --------------------------------------------------------------------------------
 
-/-- How one dot edge resolves its member.
-    `.ordinary` (`a.f`): structural member lookup on the resolved receiver
-    first; the stored lexical fallback applies only on a structural miss.
-    `.extensionOnly` (`a~.f` / `a.~f` — one canonical node): structural lookup
-    is bypassed entirely — the member is a callable-name occurrence and the
-    stored lexical fallback is always invoked with the receiver injected as
-    the leading argument segment. The mode belongs to exactly one dot edge and
-    never leaks to chained edges. C#: `DotResolutionMode`. -/
-inductive DotResolutionMode where
-  | ordinary
-  | extensionOnly
-  deriving Repr, BEq, DecidableEq
-
 mutual
   inductive Expr where
     | param   : Ident -> Expr
@@ -825,18 +812,20 @@ mutual
     -- channel. `dotMember`'s `none` means NO argument-list syntax (`a.f`);
     -- `some []` is an explicit empty list (`a.f()`). C#: `Expr.Call`/`Expr.DotCall`.
     | call    : Expr -> List Expr -> Expr
-    -- * dotMember: one dot edge `a.f` / `a.f(args)` / `a~.f` / `a.~f`, carrying
-    --   the ELABORATED member facts beside the structural member name:
-    --   `fallback` is the member's lexical-fallback callee identity as an
-    --   ordinary name expression (`.resolve f`, or `.param f` once a front-end
-    --   decides the member is a parameter reference), and `mode` selects
-    --   structural-first ordinary resolution or extension-only resolution.
-    --   Runtime consumers CONSUME these facts (`resolveAlg fallback`) instead
-    --   of reconstructing the Param-vs-Resolve decision from environments.
+    -- * dotMember: one dot edge `a.f` / `a.f(args)`, carrying the ELABORATED
+    --   member facts beside the structural member name: `fallback` is the
+    --   member's lexical-fallback callee identity as an ordinary name
+    --   expression (`.resolve f`, or `.param f` once a front-end decides the
+    --   member is a parameter reference). Resolution is structural-first with
+    --   the fallback applying only on a structural miss. Runtime consumers
+    --   CONSUME these facts (`resolveAlg fallback`) instead of reconstructing
+    --   the Param-vs-Resolve decision from environments. The C# front end
+    --   consumes ordinary Grace composed with dot syntax (`a~.f` / `a.~f`),
+    --   so Lean receives the SAME `dotMember` executable body as for `a.f`.
     --   Hand-built ordinary/lexical edges use the `Expr.dotCall` smart
-    --   constructor declared after this mutual block. C#: `Expr.DotCall`
-    --   (`LexicalFallback` + `ResolutionMode`).
-    | dotMember : Expr -> Ident -> Expr -> DotResolutionMode -> Option (List Expr) -> Expr
+    --   constructor declared after this mutual block.
+    --   C#: `Expr.DotCall` (`LexicalFallback`).
+    | dotMember : Expr -> Ident -> Expr -> Option (List Expr) -> Expr
     -- NOTE: load('url') is surface-only syntax, represented as Call(Resolve("load"), ...)
     -- in the parser and elaborated to algorithmExpr(...) by the load elaboration pass.
     -- It is NOT a core Expr constructor.  See load elaboration section below.
@@ -963,14 +952,12 @@ end
 abbrev OutputBundle := List Expr
 
 /-- Ordinary/lexical dot-call smart constructor: `a.f` / `a.f(args)` with the
-    unelaborated fallback identity `.resolve f` and ordinary (structural-first)
-    resolution. Hand-built ASTs keep plain lexical-fallback semantics through
-    this form; elaborated trees carry the front-end's Param-vs-Resolve decision
-    (and the extension mode, where written) in the full `Expr.dotMember`
-    constructor. C#: an `Expr.DotCall` with null `LexicalFallback` and
-    `DotResolutionMode.Ordinary`. -/
+    unelaborated fallback identity `.resolve f`. Hand-built ASTs keep plain
+    lexical-fallback semantics through this form; elaborated trees carry the
+    front-end's Param-vs-Resolve decision in the full `Expr.dotMember`
+    constructor. C#: an `Expr.DotCall` with null `LexicalFallback`. -/
 def Expr.dotCall (target : Expr) (name : Ident) (args : Option OutputBundle) : Expr :=
-  .dotMember target name (.resolve name) .ordinary args
+  .dotMember target name (.resolve name) args
 
 /-- Surface same-name clause-group classification.
   Front-ends must decide ordinary-vs-conditional elaboration only after
@@ -1766,7 +1753,7 @@ mutual
     | .call fn args => do
         validateExplicitParamOutputInvariantExpr fn
         args.forM validateExplicitParamOutputInvariantExpr
-    | .dotMember target _ fallback _ args? => do
+    | .dotMember target _ fallback args? => do
         validateExplicitParamOutputInvariantExpr target
         -- The stored lexical fallback is a real child (Resolve/Param for
         -- front-end trees, but hand-built trees could hide algorithms in it),
@@ -2578,11 +2565,11 @@ def Expr.openForm? : Expr -> Option OpenForm
   -- `open (M)` is NOT an open form: it is rejected by open-form validation
   -- with badOpenForm, exactly like a spread-marked target.
   | .resolve n       => some (.resolve n)
-  -- Only ORDINARY argumentless dot paths are open forms: an extension edge
-  -- (`open A~.B`) explicitly bypasses structural lookup, and `open` consumes
-  -- structural identity, so it is rejected like a spread-marked target.
-  | .dotMember o n _ .ordinary none => some (.dotCall o n)
-  | _                => none          -- capture, extension/argument dot forms, call, and all other forms are rejected
+  -- Only argumentless dot paths are open forms. The C# front end rejects a
+  -- Grace-marked open target such as `open A~.B` before Lean encoding; valid
+  -- graced dot sources otherwise encode as the same dotMember as ordinary dot.
+  | .dotMember o n _ none => some (.dotCall o n)
+  | _                => none          -- capture, argument-bearing dot forms, call, and all other forms are rejected
 
 def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
@@ -2603,7 +2590,7 @@ def Expr.kind : Expr -> String
   | .algorithmExpr _ => "algorithmExpr"
   | .capture _    => "capture"
   | .call _ _     => "call"
-  | .dotMember _ _ _ _ _ => "dotCall"
+  | .dotMember _ _ _ _ => "dotCall"
 
 /-- Render an empty-sequence core node by depth for diagnostics. Evaluation
   canonicalizes repeated ordinary parentheses back to `()`. -/
@@ -2631,7 +2618,7 @@ def indexSelectorNeedsParens : Expr -> Bool
   | .unary _ _      => true
   | .binary _ _ _   => true
   | .call _ _       => true
-  | .dotMember _ _ _ _ _ => true
+  | .dotMember _ _ _ _ => true
   | .index _ _      => true
   | .sequenceSpread _ => true
   | .num v          => decide (v < 0)
@@ -2644,7 +2631,7 @@ def indexSelectorNeedsParens : Expr -> Bool
   `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
   coverage, not of indexing. -/
 def openExprNameIndexSelectorNeedsParens : Expr -> Bool
-  | .dotMember _ _ _ _ _ => true
+  | .dotMember _ _ _ _ => true
   | .index _ _        => true
   | .sequenceSpread _ => true
   | _                 => false
@@ -2654,10 +2641,8 @@ def openExprNameIndexSelectorNeedsParens : Expr -> Bool
 def openExprName (e : Expr) : String :=
   match e with
   | .resolve n => n
-  -- Canonical extension rendering is the `~.` spelling for both written
-  -- forms (`a~.t` and `a.~t` are one semantic node). C#: ExprNameRenderer.
-  | .dotMember o n _ mode _ =>
-      openExprName o ++ (if mode == .extensionOnly then "~." else ".") ++ n
+  | .dotMember o n _ _ =>
+      openExprName o ++ "." ++ n
   -- Indexing is source-faithful postfix `target:selector`, never the `(index)`
   -- kind fallback. Only the forms this renderer prints BARE can continue the
   -- postfix chain and rebind; every unmodelled kind is already self-delimiting
@@ -2716,10 +2701,10 @@ partial def exprDiagnosticName : Expr -> String
   | .algorithmExpr algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
   | .capture rows => "(" ++ String.intercalate ", " (rows.map exprDiagnosticName) ++ ")"
   | .call fn _ => exprDiagnosticName fn ++ "(...)"
-  | .dotMember target name _ mode none =>
-      exprDiagnosticName target ++ (if mode == .extensionOnly then "~." else ".") ++ name
-  | .dotMember target name _ mode (some _) =>
-      exprDiagnosticName target ++ (if mode == .extensionOnly then "~." else ".") ++ name ++ "(...)"
+  | .dotMember target name _ none =>
+      exprDiagnosticName target ++ "." ++ name
+  | .dotMember target name _ (some _) =>
+      exprDiagnosticName target ++ "." ++ name ++ "(...)"
 
 def binaryExprDiagnosticName (op : BinaryOp) (left right : Expr) : String :=
   exprDiagnosticName left ++ " " ++ op.symbol ++ " " ++ exprDiagnosticName right
@@ -3472,10 +3457,9 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
           else pure r
       | none => .error (Error.unknownName n)
     | [] => .error (Error.unknownName n)
-  -- Only ORDINARY argumentless dot paths resolve as open targets; an
-  -- extension edge bypasses structural lookup by definition and falls to the
-  -- badOpenForm default below.
-  | .dotMember o n _ .ordinary none => do
+  -- Only argumentless dot paths resolve as open targets. Grace-marked open
+  -- targets are rejected by the C# front end before Lean encoding.
+  | .dotMember o n _ none => do
     let a <- resolveAlgForOpen o ctx
     -- First check if property exists at all so ownership still wins over opens.
     match Algorithm.lookupPropDefAny? a n with
@@ -3735,13 +3719,12 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       match ctx.callStack with
       | a::_ => lookupLexical a n ctx
       | []   => .error (Error.unknownName n)
-  | .dotMember o n fallback mode args =>
-      -- Lift a.f / a.f(args) (and the extension spellings) to a wrapper
-      -- algorithm; evalDotCall handles all semantics (builtin property special
-      -- cases, structural property, receiver injection, lexical fallback).
-      -- The whole node — including its elaborated fallback identity and
-      -- resolution mode — rides along unchanged.
-      pure (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback mode args)))
+  | .dotMember o n fallback args =>
+      -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all
+      -- semantics (builtin property special cases, structural property,
+      -- receiver injection, lexical fallback). The whole node — including its
+      -- elaborated fallback identity — rides along unchanged.
+      pure (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
       -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm
@@ -5231,26 +5214,21 @@ mutual
       front-end's Param-vs-Resolve decision is CONSUMED here, never
       reconstructed from runtime environments:
       - a `.resolve` fallback takes the ordinary name-based path, including
-        the ordinary-dot sequence-builtin receiver view (ORDINARY edges only:
-        an extension edge is the plain lexical call `F(receiver, ...)`, so its
-        receiver takes the ordinary written argument boundary through
-        `evalResolvedCallCounted`);
+        the dotted sequence-builtin receiver view;
       - any other fallback (normally `.param`) resolves through canonical
         `resolveAlg`, so a parameter shadows a same-name builtin exactly as in
         plain-call position. Non-name hand-built fallbacks are outside the
         post-elaboration contract and follow their ordinary `resolveAlg`
         behavior defensively. -/
   partial def callLexicalWithReceiverCounted (name : Ident) (receiver : Expr)
-      (fallback : Expr) (mode : DotResolutionMode)
+      (fallback : Expr)
       (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match fallback with
     | .resolve fallbackName =>
-      match mode, <- (if mode == .ordinary
-          then trySequenceBuiltinDotCall fallbackName receiver extraArgs ctx env
-          else pure none) with
-      | .ordinary, some (b, args) =>
+      match <- trySequenceBuiltinDotCall fallbackName receiver extraArgs ctx env with
+      | some (b, args) =>
         applyBuiltinCountedResolved b args ctx env
-      | _, _ =>
+      | none =>
         let callee <- resolveAlg (.resolve fallbackName) ctx
         let combinedArgs := prepareLexicalDotCallArgs receiver extraArgs
         evalResolvedCallCounted callee combinedArgs ctx env fallbackName .injectedDotReceiverLeading
@@ -5266,7 +5244,7 @@ mutual
       (count 1) and only a caller-site spread `value*` re-spreads
       it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
-      Smart dispatch (ORDINARY mode):
+      Smart dispatch:
       - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):
         - If no args and 0-param → value access
@@ -5277,11 +5255,9 @@ mutual
       When resolveAlg returns notAnAlgorithm (e.g. numeric literal target),
       value-based intrinsics are checked before lexical fallback.
 
-      EXTENSION mode (`a~.f` / `a.~f`) bypasses the intrinsic and structural
-      steps entirely: the member is a callable-name occurrence and the stored
-      lexical fallback is always invoked with the receiver as one injected
-      leading segment — the same fallback machinery, minus the ordinary-dot
-      structural precedence.
+      (The C# front end consumes the Grace annotation in `a~.f` / `a.~f`, so
+      Lean receives the same dotMember and the same structural-first dispatch
+      as for ordinary `a.f`.)
 
       Optimization note for executable evaluators: repeated references to the
       same eligible structural or lexical property may be reused within one
@@ -5290,11 +5266,8 @@ mutual
       to one run and must not be interpreted as memoizing arbitrary calls or as
       changing the semantic behavior of dotCall itself. -/
   partial def evalDotCallCounted (target : Expr) (name : Ident)
-      (fallback : Expr) (mode : DotResolutionMode) (argsOpt : Option OutputBundle)
+      (fallback : Expr) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    if mode == .extensionOnly then
-      callLexicalWithReceiverCounted name target fallback mode argsOpt ctx env
-    else
     match <- evalAttempt (resolveAlg target ctx) with
     | .ok targetAlg =>
       if name = "string" then do
@@ -5330,14 +5303,14 @@ mutual
             if Algorithm.conditionalBranchesDefineProperty targetAlg name then
               .error (Error.localOnlyProperty (openExprName target) name .localConditional)
             else
-              callLexicalWithReceiverCounted name target fallback mode argsOpt ctx env
+              callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
       if name = "string" then do
         let val <- eval target ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
       else
-        callLexicalWithReceiverCounted name target fallback mode argsOpt ctx env
+        callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error e => .error e
 
   /-- Evaluate a spread operand and supply its immediate items. Spreading an
@@ -5534,8 +5507,8 @@ mutual
           match Result.select? ar (Int.toNat n) with
           | some projected => pure projected
           | none => .error Error.badIndex
-    | .dotMember o n fallback mode argsOpt => withCtx (CtxMsg.dotCall o n) do
-        evalDotCallCounted o n fallback mode argsOpt ctx env
+    | .dotMember o n fallback argsOpt => withCtx (CtxMsg.dotCall o n) do
+        evalDotCallCounted o n fallback argsOpt ctx env
     | .call f args =>
         evalCallCountedExpr f args ctx env
     | _ => do
@@ -5647,9 +5620,9 @@ mutual
       projection parity guards pin this equivalence (values, error
       diagnostics, and evaluator state) case by case. -/
   partial def evalDotCall (target : Expr) (name : Ident)
-      (fallback : Expr) (mode : DotResolutionMode) (argsOpt : Option OutputBundle)
+      (fallback : Expr) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- evalDotCallCounted target name fallback mode argsOpt ctx env
+    let out <- evalDotCallCounted target name fallback argsOpt ctx env
     pure out.fst
 
   partial def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
@@ -5788,8 +5761,8 @@ mutual
                   .error (Error.withContext (CtxMsg.property n) (Error.arityMismatch (Algorithm.params resolved.alg).length 0))
         | [] => .error (Error.unknownName n)
 
-    | .dotMember o n fallback mode argsOpt => withCtx (CtxMsg.dotCall o n) do
-        evalDotCall o n fallback mode argsOpt ctx env
+    | .dotMember o n fallback argsOpt => withCtx (CtxMsg.dotCall o n) do
+        evalDotCall o n fallback argsOpt ctx env
 
     -- Call semantics:
     -- 1. Resolve f to an Algorithm
@@ -6279,7 +6252,7 @@ partial def postElabInvariant : Expr -> Bool
   -- host-compatibility state: `Expr.dotCall` (the ordinary/lexical smart
   -- constructor) already builds a coherent edge, so this arm rejects only
   -- hand-built incoherence.
-  | .dotMember a n fallback _ args =>
+  | .dotMember a n fallback args =>
       (match fallback with
        | .resolve fn => fn == n
        | .param fn   => fn == n

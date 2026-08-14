@@ -526,13 +526,33 @@ public class EvaluatorTests
         Assert.DoesNotContain("while evaluating", formatted);
     }
 
+    /// <summary>
+    /// Wraps one expression in a CLOSED explicit-parameter probe so a dot
+    /// edge's unresolvable member reaches the RUNTIME lookup.
+    ///
+    /// Implicit parameter inference includes a dot edge's lexical fallback
+    /// whenever that fallback may be selected, so at root (or in any
+    /// implicitly parameterized body) an unresolvable member name becomes an
+    /// implicit parameter instead. A closed explicit parameter list asks the
+    /// DEFINITE question and takes no fallback contribution — the MAY vs MUST
+    /// distinction — so the member stays a lexical name and its runtime miss
+    /// stays observable.
+    /// </summary>
+    private static string ClosedMemberProbe(string definitions, string expression)
+        => $"{definitions}Probe(probeInput) = {expression}\nProbe(0)";
+
     private static void AssertUnknownDotMember(string source, string expectedName)
     {
         var result = EvalFull(source);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        // Skip the probe's outer call frame to reach the dot edge's own context.
+        var error = result.Error;
+        while (error is EvalError.WithContext { Inner: EvalError.WithContext nested })
+            error = nested;
+
+        var contextual = Assert.IsType<EvalError.WithContext>(error);
         var unresolved = Assert.IsType<EvalError.UnknownName>(contextual.Inner);
         Assert.Equal(expectedName, unresolved.Name);
     }
@@ -1873,10 +1893,16 @@ public class EvaluatorTests
     /// pre-fix rendering; a bracket selector such as `Rows:[0]` is legitimate
     /// syntax, so only the bracket form of this specific index is banned.
     /// </summary>
+    /// <summary>
+    /// The receiver-rendering probe: <paramref name="definitions"/> plus the
+    /// dot edge under test, wrapped by <see cref="ClosedMemberProbe"/> so the
+    /// unresolvable member reaches the runtime lookup that renders the
+    /// receiver.
+    /// </summary>
     private static void AssertIndexDiagnosticName(
-        string source, string expectedName, string forbiddenBracketName)
+        string definitions, string expression, string expectedName, string forbiddenBracketName)
     {
-        var result = EvalFull(source);
+        var result = EvalFull(ClosedMemberProbe(definitions, expression));
         if (result.IsOk)
             Assert.Fail($"Expected a diagnostic but got: {result.Value}");
 
@@ -1888,16 +1914,16 @@ public class EvaluatorTests
     [Theory]
     // The renderer is syntax-based, so a sequence target and a list target
     // render identically.
-    [InlineData("Rows = [[1, 2]]\nRows:0.Missing")]
-    [InlineData("Rows = [[1, 2], [3, 4]]\nRows:0.Missing")]
-    [InlineData("Rows = ((1, 2), (3, 4))\nRows:0.Missing")]
-    public void Eval_Index_DiagnosticName_RendersSourceFaithfulColonSyntax(string source)
-        => AssertIndexDiagnosticName(source, "Rows:0", "Rows[0]");
+    [InlineData("Rows = [[1, 2]]\n")]
+    [InlineData("Rows = [[1, 2], [3, 4]]\n")]
+    [InlineData("Rows = ((1, 2), (3, 4))\n")]
+    public void Eval_Index_DiagnosticName_RendersSourceFaithfulColonSyntax(string definitions)
+        => AssertIndexDiagnosticName(definitions, "Rows:0.Missing", "Rows:0", "Rows[0]");
 
     [Fact]
     public void Eval_Index_ChainedDiagnosticName_RendersEachSelector()
         => AssertIndexDiagnosticName(
-            "Rows = [[[1]]]\nRows:0:0.Missing", "Rows:0:0", "Rows[0][0]");
+            "Rows = [[[1]]]\n", "Rows:0:0.Missing", "Rows:0:0", "Rows[0][0]");
 
     [Fact]
     public void Eval_Index_DiagnosticName_ParenthesizesOperandsThatWouldRebind()
@@ -1905,25 +1931,27 @@ public class EvaluatorTests
         // Indexing binds tighter than every binary operator, so a bare
         // `Rows + Rows:0` would read as `Rows + (Rows:0)`.
         AssertIndexDiagnosticName(
-            "Rows = (1, 2)\n(Rows + Rows):0.Missing",
+            "Rows = (1, 2)\n",
+            "(Rows + Rows):0.Missing",
             "(Rows + Rows):0",
             "(Rows + Rows)[0]");
 
         // The selector is a primary in source syntax, so a compound selector
         // keeps the parentheses it was written with.
         AssertIndexDiagnosticName(
-            "Rows = ((1, 2), (3, 4))\ni = 0\nRows:(i + 1).Missing",
+            "Rows = ((1, 2), (3, 4))\ni = 0\n",
+            "Rows:(i + 1).Missing",
             "Rows:(i + 1)",
             "Rows[(i + 1)]");
 
         // Established call abbreviation is preserved on an index target.
         AssertIndexDiagnosticName(
-            "take([1, 2, 3], 1):0.Missing", "take(...):0", "take(...)[0]");
+            "", "take([1, 2, 3], 1):0.Missing", "take(...):0", "take(...)[0]");
 
         // A list-literal selector is legitimate syntax and stays bare: the ban
         // above is on bracket INDEXING, not on brackets as such.
         AssertIndexDiagnosticName(
-            "Rows = ((1, 2), (3, 4))\nRows:[0].Missing", "Rows:[0]", "Rows[[0]]");
+            "Rows = ((1, 2), (3, 4))\n", "Rows:[0].Missing", "Rows:[0]", "Rows[[0]]");
     }
 
     [Fact]
@@ -2084,33 +2112,19 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnPropertyReceiver()
-    {
-        var source = """
-            Data = 1, 7
-            Data.arity
-            """;
-
-        AssertUnknownDotMember(source, "arity");
-    }
+        => AssertUnknownDotMember(ClosedMemberProbe("Data = 1, 7\n", "Data.arity"), "arity");
 
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnInlineParenReceiver()
-        => AssertUnknownDotMember("(1, 7).arity", "arity");
+        => AssertUnknownDotMember(ClosedMemberProbe("", "(1, 7).arity"), "arity");
 
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnNestedParenReceiver()
-        => AssertUnknownDotMember("((1, 7)).arity", "arity");
+        => AssertUnknownDotMember(ClosedMemberProbe("", "((1, 7)).arity"), "arity");
 
     [Fact]
     public void Eval_Length_IsNoLongerRecognizedAsIntrinsic()
-    {
-        AssertUnknownDotMember(
-            """
-            X = 1, 2, 3
-            X.length
-            """,
-            "length");
-    }
+        => AssertUnknownDotMember(ClosedMemberProbe("X = 1, 2, 3\n", "X.length"), "length");
 
     // ── string intrinsic tests ──────────────────────────────────────────
 
@@ -8703,15 +8717,15 @@ public class EvaluatorTests
 
     [Fact]
     public void Eval_MathRand_IsUnknownMember()
-        => AssertUnknownDotMember("Math.Rand", "Rand");
+        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.Rand"), "Rand");
 
     [Fact]
     public void Eval_MathRandCall_IsUnknownMember()
-        => AssertUnknownDotMember("Math.Rand()", "Rand");
+        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.Rand()"), "Rand");
 
     [Fact]
     public void Eval_MathRandInt_IsUnknownMember()
-        => AssertUnknownDotMember("Math.RandInt(1, 7)", "RandInt");
+        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.RandInt(1, 7)"), "RandInt");
 
     [Fact]
     public void Eval_ExplicitZeroParameterCall_ReevaluatesRandomPropertyBody()
@@ -9256,18 +9270,21 @@ public class EvaluatorTests
     [Fact]
     public void Eval_DotCall_MissingProperty_UsesKatLangFacingMessage()
     {
-        var source = """
+        var source = ClosedMemberProbe(
+            """
             Lib = {
                 A = 1
             }
-            Lib.B
-            """;
+
+            """,
+            "Lib.B");
 
         var result = EvalFull(source);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        var contextual = Assert.IsType<EvalError.WithContext>(result.Error);
+        var callContext = Assert.IsType<EvalError.WithContext>(result.Error);
+        var contextual = Assert.IsType<EvalError.WithContext>(callContext.Inner);
         var dotContext = Assert.IsType<DotCallContext>(contextual.ErrorContext);
         Assert.Equal("Lib", dotContext.ReceiverDescription);
         Assert.Equal("B", dotContext.PropertyName);
@@ -9285,7 +9302,7 @@ public class EvaluatorTests
     [Fact]
     public void Eval_DotCall_MissingProperty_OnExpression_RendersReceiver()
     {
-        var result = EvalFull("(2 + 3).B");
+        var result = EvalFull(ClosedMemberProbe("", "(2 + 3).B"));
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
@@ -13459,7 +13476,7 @@ public class EvaluatorTests
         // first failure: the unknown-name error from `Math.Nope` is reported
         // before the later `1 / 0` divide-by-zero is ever evaluated. (This is an
         // evaluation ordering test — the source contains no spread expression.)
-        var error = GetEvalError("(1, Math.Nope, 1 / 0)");
+        var error = GetEvalError(ClosedMemberProbe("", "(1, Math.Nope, 1 / 0)"));
         Assert.NotNull(error);
 
         var inner = error!;

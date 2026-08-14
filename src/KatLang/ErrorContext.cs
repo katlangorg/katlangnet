@@ -29,13 +29,6 @@ public sealed record ProgramEvaluationContext() : ErrorContext
 
 public sealed record DotCallContext(string ReceiverDescription, string PropertyName) : ErrorContext
 {
-    /// <summary>
-    /// True for an extension-dot edge (<c>recv~.Name</c> / <c>recv.~Name</c>):
-    /// structural member lookup was bypassed by the written marker, so
-    /// member-not-found diagnostics must not claim a property lookup happened.
-    /// </summary>
-    public bool IsExtension { get; init; }
-
     public override string ToLegacyString() => $"while evaluating dotCall .{PropertyName} of {ReceiverDescription}";
 }
 

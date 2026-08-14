@@ -289,11 +289,17 @@ public class ImplicitArgumentResolverTests
         var root = Resolve(source);
 
         var roundB = root.Properties.Single(p => p.Name == "RoundB").Value;
-        Assert.Empty(roundB.Params);
+
+        // The alias is a wrapper algorithm with no members, so the edge cannot
+        // resolve `Round` through Math's native signature: it is an ordinary
+        // dot edge whose lexical fallback is the only possible resolution, and
+        // its callable becomes the property's own inferred parameter.
+        Assert.Equal(["Round"], roundB.Params);
 
         var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(roundB.Output));
         Assert.Null(dotCall.Args);
         Assert.Equal("Round", dotCall.Name);
+        Assert.Equal("Round", Assert.IsType<Expr.Param>(dotCall.EffectiveLexicalFallback).Name);
     }
 
     // â”€â”€ End-to-end evaluation tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

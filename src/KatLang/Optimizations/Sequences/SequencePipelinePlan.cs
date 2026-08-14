@@ -22,7 +22,7 @@ internal readonly record struct SequencePipelineInvocation(
 {
     // The dot invocation carries its ORIGINAL node so recognizers and
     // legality probes consume the elaborated dot-edge facts (member name,
-    // lexical fallback, resolution mode) instead of loose pieces.
+    // lexical fallback) instead of loose pieces.
     public Expr? DotTarget => Dot?.Target;
 
     public string? DotName => Dot?.Name;

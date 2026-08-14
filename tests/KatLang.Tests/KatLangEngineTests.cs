@@ -226,9 +226,15 @@ public class KatLangEngineTests
     [Fact]
     public void Run_LoadedHtml_ReportsLoadSiteAndFollowingEvaluationError()
     {
+        // The follow-on row is inside a CLOSED parameter list so the failed
+        // module's missing member stays a lexical name: at root the dot
+        // edge's may-selected fallback would be inferred as an implicit
+        // parameter instead, and the second error would be about the
+        // unfillable parameter rather than the member.
         var source = """
             A = load('https://katlang.org/libraries2/example.kat')
-            A.X
+            Use(z) = A.X
+            Use(0)
             """;
         var options = new RunOptions
         {

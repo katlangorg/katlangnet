@@ -148,7 +148,9 @@ internal static class FrontEndFingerprint
             case Expr.EmptySequence es: sb.Append("Empty{").Append(es.Depth).Append('}'); break;
             case Expr.SequenceSpread(var o): sb.Append("Spread("); Expr(sb, o); sb.Append(')'); break;
             case Expr.ListLiteral(var items): sb.Append("List["); foreach (var it in items) Expr(sb, it); sb.Append(']'); break;
-            case Expr.Grace(var inner, var w): sb.Append("Grace{").Append(w).Append("}("); Expr(sb, inner); sb.Append(')'); break;
+            case Expr.Grace grace:
+                sb.Append("Grace{").Append(grace.Weight).Append("}(");
+                Expr(sb, grace.Inner); sb.Append(')'); break;
             case Expr.AlgorithmExpr(var alg): sb.Append("ABlk("); Alg(sb, alg); sb.Append(')'); break;
             case Expr.Capture(var captureBody): sb.Append("Cap["); foreach (var row in captureBody) Expr(sb, row); sb.Append(']'); break;
             case Expr.Call(var fn, var args):
@@ -160,9 +162,7 @@ internal static class FrontEndFingerprint
             case Expr.NativeCall nc: sb.Append("Native{").Append(nc.FnName).Append('(').Append(string.Join(",", nc.ArgNames)).Append(")}"); break;
             case Expr.DotCall dc:
                 sb.Append("Dot{").Append(dc.Name)
-                    .Append(",mode:").Append(dc.ResolutionMode)
                     .Append(",member@").Append(Span(dc.MemberSpan))
-                    .Append(",extension@").Append(Span(dc.ExtensionMarkerSpan))
                     .Append(",fallback:");
                 if (dc.LexicalFallback is { } fallback)
                     Expr(sb, fallback);

@@ -403,10 +403,10 @@ public sealed class ModuleLoader
                 { Span = expr.Span };
 
             case Expr.DotCall dotCall:
-                // `with` keeps every stored dot-edge fact (member span, lexical
-                // fallback, resolution mode, extension marker span) intact —
-                // rebuilding positionally here silently degraded extension
-                // edges to ordinary dots for every module-elaborated tree.
+                // `with` keeps every stored dot-edge fact (member span,
+                // lexical fallback) intact — rebuilding positionally here
+                // silently dropped the elaborated fallback identity for every
+                // module-elaborated tree.
                 return dotCall with
                 {
                     Target = ProcessExpr(dotCall.Target, dotCall.Args is null ? context : LoadContext.RuntimeExpr, depth + 1),
@@ -415,8 +415,11 @@ public sealed class ModuleLoader
                         : null,
                 };
 
-            case Expr.Grace(var inner, var weight):
-                return new Expr.Grace(ProcessExpr(inner, context, depth + 1), weight) { Span = expr.Span };
+            case Expr.Grace grace:
+                // `with` keeps the stored Grace weight intact — module
+                // elaboration runs BEFORE parameter detection, so the
+                // annotation is still live here.
+                return grace with { Inner = ProcessExpr(grace.Inner, context, depth + 1) };
 
             // Leaf nodes — no transformation needed
             case Expr.Resolve:

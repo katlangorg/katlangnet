@@ -27,13 +27,9 @@ public class AstWalkerExhaustivenessTests
     private sealed class DotMetadataWalker : AstWalker
     {
         public List<SourceSpan> MemberSpans { get; } = [];
-        public List<SourceSpan> ExtensionMarkerSpans { get; } = [];
 
         protected override void VisitDotMemberIdentifier(Expr.DotCall expr, SourceSpan span)
             => MemberSpans.Add(span);
-
-        protected override void VisitExtensionDotMarker(Expr.DotCall expr, SourceSpan span)
-            => ExtensionMarkerSpans.Add(span);
     }
 
     private static Algorithm.User EmptyAlgorithm(params Expr[] output)
@@ -129,22 +125,18 @@ public class AstWalkerExhaustivenessTests
     }
 
     [Fact]
-    public void VisitExpr_SurfacesEachDotEdgeSourceMetadataSpanOnce()
+    public void VisitExpr_SurfacesTheDotMemberSpanOnce()
     {
         var memberSpan = new SourceSpan(1, 4, 1, 4);
-        var markerSpan = new SourceSpan(1, 2, 1, 2);
         var edge = new Expr.DotCall(new Expr.Num(1), "F")
         {
             LexicalFallback = new Expr.Resolve("F"),
-            ResolutionMode = DotResolutionMode.ExtensionOnly,
             MemberSpan = memberSpan,
-            ExtensionMarkerSpan = markerSpan,
         };
 
         var walker = new DotMetadataWalker();
         walker.VisitExpr(edge);
 
         Assert.Equal([memberSpan], walker.MemberSpans);
-        Assert.Equal([markerSpan], walker.ExtensionMarkerSpans);
     }
 }
