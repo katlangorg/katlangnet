@@ -10,7 +10,7 @@ Each row maps a semantic area to its Lean witness, C# owner, C# tests, and wheth
 | Front-end elaboration / load/open invariants | `lean/KatLang.lean` load/open invariants | `FrontEndPipeline.cs`, `ModuleLoader.cs`, `LoadElaborationGuard.cs` | `ParserTests`, module/load tests | Yes |
 | Lookup / ownership / open | `lean/KatLang.lean` lookup/open definitions | `Evaluator.cs` lookup/open paths; `ElaboratedScopeLookup.cs` (the SECOND lookup implementation, used by `ParameterDetector` and `Semantics/`) | `EvaluatorTests` lookup/open coverage, `LookupCoherenceTests` (declaration-identity relation across the runtime, editor, and parameter-detector views), `SemanticExplorerCases.lean` `open`/visibility family | Yes |
 | Dot-call receiver rules | `lean/KatLang.lean` dot-call semantics | `Evaluator.cs` dot-call paths | `EvaluatorTests` dot-call coverage | Yes |
-| Dot member/fallback binding and Grace composition (`a.t`, `a~.t`, `a.~t`) | `lean/KatLang.lean` `Expr.dotMember` / `callLexicalWithReceiverCounted`; `postElabInvariant`. Lean sees one ordinary `dotMember` and no Grace. C# inference walks receiver, MAY-selected fallback occurrence, then arguments. Ordinary `(a,t)` plus postfix Grace on `a` or prefix Grace on `t` yields `(t,a)` through the one general Grace pass; runtime fallback assembly as `t(a,...)` is independent. Grace applies only to its individual bare name occurrence, is stripped during elaboration, and never affects structural-first selection. CLOSED explicit lists, conditional bodies, and exposure/dependency charging retain their established MUST-selection rules. | `Ast.cs` (`Expr.DotCall.LexicalFallback`, `Expr.Grace`); `Parser.cs` composes the existing identifier Grace productions with ordinary dot and keeps only compound-receiver recovery; `ParameterDetector.cs` owns source order, first-occurrence deduplication, Grace collection/reordering, fallback participation, fallback rewriting, and null→Resolve normalization; `AstHelpers.GetLexicalFallbackSelection` owns Never/Conditional/Always; `Evaluator.cs` owns runtime selection; `DotCallElaborationInvariant.cs` rejects surviving Grace | `GraceEligibilityTests`, `GraceDotCompositionTests`, `DotCallHigherOrderParameterTests`, `DotCallFallbackInvariantTests`, `DotCallFallbackExposureTests`, CoreTests `graceDot*`/`higherOrderDot*`/`dotMemberFallbackCoherence*`, LanguageSpec `dot-member-fallback-*` / `grace-dot-*` | Yes for DotCall evaluation semantics; Grace and implicit-signature construction are C# front-end-only, and Lean consumes the elaborated parameter list plus the same ordinary body |
+| Dot member/fallback binding and Grace composition (`a.t`, `a~.t`, `a.~t`) | `lean/KatLang.lean` `Expr.dotMember` / `callLexicalWithReceiverCounted`; `postElabInvariant`. Lean sees one ordinary `dotMember` and no Grace. C# inference walks receiver, MAY-selected fallback occurrence, then arguments. Ordinary `(a,t)` plus postfix Grace on `a` or prefix Grace on `t` yields `(t,a)` through the one general Grace pass; runtime fallback assembly as `t(a,...)` is independent. Grace applies only to its individual bare name occurrence, is stripped during elaboration, and never affects structural-first selection. CLOSED explicit lists, conditional bodies, and exposure/dependency charging retain their established MUST-selection rules. Normative laws: the 'Grace + DotCall semantic laws' section below. | `Ast.cs` (`Expr.DotCall.LexicalFallback`, `Expr.Grace`); `Parser.cs` composes the existing identifier Grace productions with ordinary dot and keeps only compound-receiver recovery; `ParameterDetector.cs` owns source order, first-occurrence deduplication, Grace collection/reordering, fallback participation, fallback rewriting, and null→Resolve normalization; `AstHelpers.GetLexicalFallbackSelection` owns Never/Conditional/Always; `Evaluator.cs` owns runtime selection; `DotCallElaborationInvariant.cs` rejects surviving Grace | `GraceEligibilityTests`, `GraceDotCompositionTests`, `DotCallHigherOrderParameterTests`, `DotCallFallbackInvariantTests`, `DotCallFallbackExposureTests`, CoreTests `graceDot*`/`higherOrderDot*`/`dotMemberFallbackCoherence*`, LanguageSpec `dot-member-fallback-*` / `grace-dot-*` | Yes for DotCall evaluation semantics; Grace and implicit-signature construction are C# front-end-only, and Lean consumes the elaborated parameter list plus the same ordinary body |
 | Evaluation / user calls | `lean/KatLang.lean` evaluator/user-call definitions | `Evaluator.cs` | `EvaluatorTests` | Yes |
 | Collecting parameter binding | `lean/KatLang.lean` collecting-parameter binding facts | `Evaluator.cs`, `CallableBindingPlan` parity tests | `EvaluatorTests`, `CallableBindingPlanParityTests` | Yes for observable semantics |
 | Sequence-value / recursive parameter patterns | `lean/KatLang.lean` parameter pattern semantics | `Evaluator.cs`, `Parser.cs` | `EvaluatorTests`, `ParserTests` | Yes |
@@ -35,6 +35,201 @@ Each row maps a semantic area to its Lean witness, C# owner, C# tests, and wheth
 | Source/module processing policy (limits and cancellation) | None — host runtime policy outside the mathematical core (parsing/module loading, not evaluation) | `SourceProcessingLimits.cs`, `SourceProcessingBudget.cs`, `Parser.cs` (`ParseSyntax` ceiling), `FrontEndPipeline.cs`, `ModuleLoader.cs`, `RunOptions.cs` | `SourceProcessingLimitsTests`, `ModuleLoaderTests`, `ModuleLoaderCancellationTests` | No |
 | Output formatting (`exact`/`readable`/`concise`) | None — host-side presentation over finished `Result` values; Lean models no rendering | public policies in `src/KatLang/Formatting/*`; formatter-neutral canonical value renderer in `src/KatLang/Rendering/*`; `RunResult.AppendSuccessRows`/`BoundedDisplayWriter` in `KatLangEngine.cs` | `Formatting/*Tests` plus the non-friend `KatLang.Formatting.PublicApi.Tests` project | No |
 | Generator prompts / docs | C# tooling/docs | prompt/docs files | prompt harness if relevant | No, unless grammar/semantics change |
+
+## Grace + DotCall semantic laws (normative)
+
+These laws pin the final Grace + DotCall architecture. They are stated once, here, because collapsing them into one rule (ordering inferred from fallback-call assembly, extension-specific resolution modes) is a known drift direction; the separations below are what prevent it. The manifest row "Dot member/fallback binding and Grace composition" carries the Lean/C# ownership mapping; this section is the normative statement.
+
+### 1. Grace is frontend-only
+
+The law: `Expr.Grace(Inner, Weight)` is a front-end parameter-ordering annotation on exactly one bare name occurrence, and nothing downstream of parameter elaboration ever observes it.
+
+- `Expr.Grace` may exist only in the raw/frontend AST; source-valid Grace wraps a single `Expr.Resolve` occurrence.
+- Prefix `~x` contributes weight −1 per marker: the inferred parameter moves one position EARLIER.
+- Postfix `x~` contributes weight +1 per marker: the inferred parameter moves one position LATER.
+- Repeated markers and repeated graced occurrences of the same name SUM (`~~x` is −2; `~x~` nets 0 and produces no node). The general arithmetic is `ParameterDetector.ApplyGraceReordering`: one swap per weight unit; movement stops at the parameter-list boundary or against a neighbor whose same-direction weight is equal or more extreme; excess movement is silently ignored, never an error.
+- Grace applies only to a bare name/parameter occurrence, never to a compound expression (§8).
+- Grace changes ONLY inferred parameter ordering (`Algorithm.User.Params`); it never changes resolution, selection, evaluation, or output.
+- Grace MUST be consumed during parameter elaboration: `ParameterDetector` collects the weights and strips the wrapper, `DotCallElaborationInvariant` rejects any survivor, and an `Expr.Grace` reaching the evaluator is host-API defense only (see the defensive-branch entry below), never a language state.
+- No `Expr.Grace` node and no Grace provenance flag of any kind survives into the executable AST.
+
+Lifecycle:
+
+```text
+source
+  ↓
+raw AST (Parser.ParseSyntax) — may contain Expr.Grace
+  ↓
+ParameterDetector (CollectFreeParams) — free-name occurrences in semantic source order; Grace weights summed per name
+  ↓
+ApplyGraceReordering — establishes Algorithm.User.Params
+  ↓
+Grace stripped (occurrences rewritten to ordinary Param/Resolve; DotCallElaborationInvariant rejects survivors)
+  ↓
+executable AST
+  ↓
+Evaluator / Optimizer / Lean (Expr.dotMember) — no Grace, no Grace provenance
+```
+
+### 2. The ordinary DotCall law — the only runtime law
+
+```text
+R.F(args...)
+
+1. evaluate R once;
+2. if the resolved receiver structurally owns member F, use it;
+3. otherwise resolve the stored lexical fallback F;
+4. invoke the fallback as F(R, args...) — the receiver enters as ONE leading
+   argument segment (receiver-segment rule; see the compositional dot-call
+   collecting receiver entry below).
+```
+
+The invariant: this is the ONLY runtime DotCall law. There is no runtime "extension-dot" mode, no resolution-mode bit, and no second dispatch path for any spelling. The `.string` intrinsic and the dotted sequence-builtin views are established arms of this one law, not modes.
+
+### 3. Four independent semantic questions
+
+Four questions, four owners. They must not be collapsed into one rule.
+
+1. **Fallback participation** — "Can lexical fallback be needed?" Owned by the shared classification `AstHelpers.GetLexicalFallbackSelection` (`LexicalFallbackSelection.Never / Conditional / Always`). Implicit-signature construction includes the member's fallback occurrence when selection MAY happen (`Conditional` or `Always`); exposure/dependency charging requires MUST (`Always` only). MAY and MUST are different projections of the same fact and are never interchangeable.
+2. **Source occurrence ordering** — "Where does the participating free-name occurrence appear in the semantic source traversal?" For a DotCall the traversal is: receiver occurrences, then the participating member/fallback occurrence, then written argument occurrences. Implicit parameter order follows first semantic source occurrence (`ParameterDetector.CollectFreeParams`).
+3. **Grace reordering** — "How does Grace modify the already-established inferred parameter order?" By the ONE ordinary prefix/postfix weight mechanism of §1, identically in every syntactic context. No construct gets its own permutation rule.
+4. **Runtime dispatch** — "At execution time, does structural lookup win or is lexical fallback invoked?" Owned by `Evaluator` alone, decided per evaluation, independent of inferred parameter order and of Grace.
+
+### 4. Source occurrence order is not fallback invocation order
+
+Do not infer implicit parameter order from runtime lexical-fallback invocation order.
+
+```text
+a.t    has semantic source occurrence order (a, t)
+```
+
+even though the selected fallback executes conceptually as `t(a)`. Therefore:
+
+```text
+source occurrence order != fallback invocation order
+```
+
+This is a permanent architectural law, and its violation is a known regression class: question 2 of §3 is answered by the source traversal, question 4 by the runtime, and neither answers the other.
+
+### 5. Grace + DotCall composition
+
+There is no semantic concept of an "extension property call with Grace". The graced dot spellings compose from ordinary Grace (§1) and the ordinary DotCall (§2), and their parameter order falls out of §3. Informal names such as "extension call" in tests, fuzz families, and the patents refer to the dotted SPELLING, never to a separate semantic category.
+
+`a.t` — base occurrence order `(a, t)`, inferred params `(a, t)`. Raw conceptual AST (`Args = null` is property-style access; `Args` omitted below):
+
+```text
+DotCall(
+    Target = Resolve("a"),
+    Name = "t",
+    Args = null,
+    LexicalFallback = Resolve("t"))
+```
+
+`a~.t` — postfix Grace on `a`, then ordinary DotCall:
+
+```text
+DotCall(
+    Target = Grace(Resolve("a"), +1),
+    Name = "t",
+    LexicalFallback = Resolve("t"))
+```
+
+Base `(a, t)` becomes `(t, a)`: postfix Grace moves `a` one position later.
+
+`a.~t` — ordinary DotCall with prefix Grace on the fallback/name occurrence `t`:
+
+```text
+DotCall(
+    Target = Resolve("a"),
+    Name = "t",
+    LexicalFallback = Grace(Resolve("t"), -1))
+```
+
+Base `(a, t)` becomes `(t, a)`: prefix Grace moves `t` one position earlier.
+
+### 6. Same executable body after elaboration
+
+The invariant: after parameter elaboration, valid `a.t`, `a~.t`, and `a.~t` in the same lexical environment have the SAME ordinary executable DotCall body:
+
+```text
+DotCall(
+    Target = Param("a"),
+    Name = "t",
+    LexicalFallback = Param("t"))
+```
+
+Only the enclosing `Algorithm.User.Params` may differ. Consequences:
+
+- Grace does not bypass structural lookup.
+- Grace does not force lexical fallback.
+- Grace does not lower a DotCall to a direct `Call`.
+- Grace does not alter `.string`.
+- Grace does not alter dotted sequence-builtin semantics.
+- Grace does not alter optimizer or runtime dispatch.
+- Lean needs no Grace or extension runtime form: it receives `Expr.dotMember` with the elaborated fallback and the finished parameter list.
+
+### 7. Constitutional examples
+
+Semantic laws, not implementation tests (pinned by `GraceEligibilityTests`, `GraceDotCompositionTests`, and the LanguageSpec `grace-dot-*` cases):
+
+```katlang
+K = a.t
+K(7, {x+1})
+# 8
+# inferred params: (a,t)
+```
+
+```katlang
+K = a~.t
+K({x+1}, 7)
+# 8
+# inferred params: (t,a)
+```
+
+```katlang
+K = a.~t
+K({x+1}, 7)
+# 8
+# inferred params: (t,a)
+```
+
+```katlang
+K = (x+y)+~z
+# inferred params: (x,z,y)
+```
+
+Structural-collision law: when the receiver owns the member,
+
+```text
+Obj.t
+Obj~.t
+Obj.~t
+```
+
+must all select the SAME structural member. Grace never converts a structural hit into a fallback call.
+
+### 8. Grace eligibility
+
+The law: `~x` and `x~` operate on ONE bare name occurrence. Compound Grace is unsupported — `~(x+y)`, `(x+y)~`, `f(x)~`, `x.y~`, `[x]~`, `5~` are parse errors, and no ordering semantics are ever assigned to a multi-name operand.
+
+The compositional consequence — decided by the one-name law itself, not by any special extension-receiver rule:
+
+- `(x+y)~.t` is INVALID: the postfix marker would decorate the compound receiver `(x+y)`.
+- `(x+y).~t` is VALID: the prefix marker decorates the bare fallback/member occurrence `t`.
+
+The dot contributes nothing to eligibility.
+
+### 9. Do not reintroduce
+
+- `ExtensionOnly` runtime resolution, or any extension-specific DotCall runtime mode.
+- Lowering `a~.t` (or any graced dot) to a direct `t(a)` call.
+- Synthetic "extension receiver Grace" injected by the parser or elaboration.
+- Extension-specific parameter swapping outside the one general Grace pass.
+- Parameter ordering derived from fallback call assembly (§4).
+- Runtime branches keyed on whether the source spelled `~.`.
+- Semantic provenance such as `IsExtensionReceiver` — unless a strictly parser/recovery-only source fact is genuinely necessary, and then it must remain a frontend syntax concern and must not create a new semantic category.
+
+Syntax-specific parser handling for adjacency or recovery is legitimate frontend work; it never becomes a semantic mode.
 
 ## Published API compatibility corrections
 
