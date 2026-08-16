@@ -143,6 +143,18 @@ public static class Evaluator
             ? provider.CacheIdentity
             : valEnv;
 
+    /// <summary>
+    /// Lexical-scope identity of the caller that resolves an assignment-deconstruction group's
+    /// hoisted <c>$deconstruct$</c> source, used to key the shared-bind cache. Returns a
+    /// never-matching token when the call stack is empty: no evaluator run reaches that state
+    /// (the root context always carries the prelude), so the defensive path gives up reuse
+    /// rather than risking an alias.
+    /// </summary>
+    private static object DeconstructionOwnerIdentity(EvalCtx ctx)
+        => ctx.Head is { } caller
+            ? StructuralOwnerIdentity.FromOwner(caller)
+            : new object();
+
     /// <summary>Value environment: maps parameter names to results. Lean: ValEnv.lookup (Option).</summary>
     private static Result? LookupVal(IReadOnlyList<(string Name, Result Value)> env, string name)
     {
@@ -1977,6 +1989,12 @@ public static class Evaluator
 
         var execution = new DeconstructionBindingExecution(
             group,
+            // The CALLER lexical scope resolves the hoisted `$deconstruct$` source, so the bind
+            // is a function of it too. A structural scope identity (not the caller REFERENCE)
+            // keeps the N targets of one group in one scope sharing a single bind — the
+            // evaluator rebuilds that caller record for every demanded target — while separating
+            // owners that resolve the same hoisted source differently.
+            DeconstructionOwnerIdentity(ctx),
             ValueEnvironmentCacheIdentity(valEnv),
             ctx.AlgEnv,
             ctx.CountedParamEnv);

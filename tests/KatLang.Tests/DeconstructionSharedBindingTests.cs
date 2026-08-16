@@ -350,4 +350,110 @@ public class DeconstructionSharedBindingTests
         _ = Atoms(source);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
+
+    // ── Owner identity in the shared-bind cache key ──────────────────────────
+
+    /// <summary>
+    /// Builds a program in which ONE parser-elaborated deconstruction group is placed under TWO
+    /// owners that resolve its hoisted <c>$deconstruct$</c> source differently.
+    ///
+    /// <para>Each library gets its OWN <see cref="Property"/> object over the SAME parsed
+    /// algorithm, so the zero-argument property cache cannot alias them (distinct binding
+    /// identities) and any shared result is attributable to the deconstruction bind cache alone.
+    /// The public AST is host-constructible with shared (acyclic) subtrees, so this is a
+    /// supported input shape for <see cref="Evaluator.Run(Expr)"/>.</para>
+    /// </summary>
+    private static Expr SharedDeconstructionGroupUnderTwoOwners(string sharedBody)
+    {
+        var parsed = Parser.Parse($"Base = 7\nShared = {sharedBody}\nShared");
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        var sharedAlgorithm = parsed.Root.Properties.First(p => p.Name == "Shared").Value;
+
+        static Algorithm.User Alg(IReadOnlyList<Property> properties, params Expr[] output)
+            => new(Parent: null, Parameters: [], Opens: [], Properties: properties, Output: [.. output]);
+
+        static Property Base(int value)
+            => new("Base", Alg([], new Expr.Num(value)));
+
+        var lib1 = new Property(
+            "Lib1", Alg([Base(1), new Property("Shared", sharedAlgorithm, IsPublic: true)]), IsPublic: true);
+        var lib2 = new Property(
+            "Lib2", Alg([Base(2), new Property("Shared", sharedAlgorithm, IsPublic: true)]), IsPublic: true);
+
+        return new Expr.AlgorithmExpr(Alg(
+            [lib1, lib2],
+            new Expr.DotCall(new Expr.Resolve("Lib1"), "Shared", null),
+            new Expr.DotCall(new Expr.Resolve("Lib2"), "Shared", null)));
+    }
+
+    /// <summary>
+    /// The shared-bind cache key carries the CALLER's lexical scope identity. Without it, one
+    /// group placed under two owners aliased to a single entry and every owner saw the first
+    /// owner's bound values (<c>[1, 1]</c>).
+    /// </summary>
+    [Fact]
+    public void SharedBind_DoesNotAliasOneGroupAcrossDifferentOwners()
+    {
+        var expr = SharedDeconstructionGroupUnderTwoOwners("{\n  a, b = (Base, 99)\n  a\n}");
+
+        var plain = Evaluator.Run(expr);
+        Assert.False(plain.IsError);
+        Assert.Equal([1m, 2m], plain.Value.ToAtoms());
+
+        var counted = Evaluator.RunCounted(expr);
+        Assert.False(counted.IsError);
+        Assert.Equal([1m, 2m], counted.Value.Value.ToAtoms());
+
+        // Two owners are two binding contexts: the group binds once per owner, never once total.
+        var observations = new EvaluationObservations();
+        _ = Evaluator.RunCountedObserved(expr, observations: observations);
+        Assert.Equal(2, observations.DeconstructionFullBindCount);
+    }
+
+    /// <summary>
+    /// Control for <see cref="SharedBind_DoesNotAliasOneGroupAcrossDifferentOwners"/>: the SAME
+    /// construction without a deconstruction already resolved per owner, so the expectation above
+    /// is the construct's ordinary meaning rather than a property of the bind cache.
+    /// </summary>
+    [Fact]
+    public void SharedAlgorithmWithoutDeconstruction_AlreadyResolvesPerOwner()
+    {
+        var expr = SharedDeconstructionGroupUnderTwoOwners("{\n  Base\n}");
+
+        var result = Evaluator.Run(expr);
+        Assert.False(result.IsError);
+        Assert.Equal([1m, 2m], result.Value.ToAtoms());
+
+        var observations = new EvaluationObservations();
+        _ = Evaluator.RunCountedObserved(expr, observations: observations);
+        Assert.Equal(0, observations.DeconstructionFullBindCount);
+    }
+
+    /// <summary>
+    /// The owner identity must be a STRUCTURAL scope identity, not the caller reference: the
+    /// evaluator rebuilds the caller record for every demanded target, so a reference-keyed
+    /// owner would give every target its own entry and restore the O(N^2) rebind this cache
+    /// exists to prevent. Pins that one group in one scope still binds exactly once no matter
+    /// how many targets are demanded, at several nesting depths.
+    /// </summary>
+    [Theory]
+    [InlineData("a, b, c = (1, 2, 3)\na, b, c", 1)]
+    [InlineData("a, b, c = (1, 2, 3)\na, a, b, b, c, c", 1)]
+    [InlineData("a, *r = (1, 2, 3)\na, r", 1)]
+    [InlineData("S = {\n  a, b, c = (1, 2, 3)\n  a, b, c\n}\nS", 1)]
+    [InlineData("a, b = (1, 2)\nc, d = (3, 4)\na, b, c, d", 2)]
+    [InlineData("F(n) = {\n  a, b = (n, n + 1)\n  a, b\n}\nF(1), F(2)", 2)]
+    public void OwnerIdentity_KeepsOneBindPerGroupPerScope(string source, long expectedBinds)
+        => Assert.Equal(expectedBinds, CountFullBinds(source));
+
+    /// <summary>
+    /// The same reuse guarantee at width: N targets of one group demanded together must still
+    /// perform exactly ONE bind.
+    /// </summary>
+    [Theory]
+    [InlineData(2)]
+    [InlineData(10)]
+    [InlineData(64)]
+    public void OwnerIdentity_KeepsOneBindForWideDeconstructions(int n)
+        => Assert.Equal(1, CountFullBinds(WideSource(n, $"range(1, {n})") + "\n" + AllTargets(n)));
 }

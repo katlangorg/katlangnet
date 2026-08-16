@@ -7,13 +7,28 @@ namespace KatLang.Evaluation.Caching;
 /// A deconstruction <c>x0, ..., x{N-1} = RHS</c> elaborates to N target properties that each
 /// apply the SAME shared N-capture pattern to the SAME hoisted <c>$deconstruct$</c> source, so
 /// demanding every target formerly rebound the whole pattern N times (O(N^2)). Binding the
-/// pattern is a pure function of the shared pattern and the source value; the source value is a
-/// pure function of the environments that the zero-argument property cache already keys on, so
-/// the same (group, environments) always yields the same bind. The group identity is a stable
-/// per-deconstruction token shared by its N target helpers.
+/// pattern is a pure function of the shared pattern and the source value. The group identity is
+/// a stable per-deconstruction token shared by its N target helpers.
+///
+/// <para>The source value is NOT a function of the environments alone: the helper's argument is
+/// <c>Resolve("$deconstruct$N")</c>, evaluated in the CALLER's lexical context, so it depends on
+/// the owning scope as well. The public AST is host-constructible with shared (acyclic) subtrees,
+/// so one parser-elaborated group can be placed under two different owners that resolve that
+/// hoisted source differently; keying without the owner returned the first owner's bound values
+/// for the second. <see cref="OwnerIdentity"/> closes that, exactly as
+/// <see cref="ZeroArgPropertyCacheKey"/> does for structural property access — and for the same
+/// reason it is a <see cref="StructuralOwnerIdentity"/> (empty scope components compare as
+/// resolution-equivalent; non-empty components compare by reference) rather than the owner
+/// reference: the evaluator rebuilds the caller record for every demanded target, so keying on
+/// the reference would restore the O(N^2) rebind this cache exists to prevent.</para>
+///
+/// <para>No run identity is carried, unlike the zero-argument property cache: a
+/// <see cref="RunScopedDeconstructionBindingCache"/> is constructed inside the evaluator's root
+/// context and is never host-supplied, so one instance can never span two runs.</para>
 /// </summary>
 internal readonly record struct DeconstructionBindingExecution(
     object GroupIdentity,
+    object OwnerIdentity,
     object ValueEnvironmentIdentity,
     object AlgorithmEnvironmentIdentity,
     object CountedParamEnvironmentIdentity);
@@ -42,6 +57,7 @@ internal interface IDeconstructionBindingCache
 
 internal readonly record struct DeconstructionBindingCacheKey(
     object GroupIdentity,
+    object OwnerIdentity,
     object ValueEnvironmentIdentity,
     object AlgorithmEnvironmentIdentity,
     object CountedParamEnvironmentIdentity);
@@ -56,6 +72,7 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
 
     public bool Equals(DeconstructionBindingCacheKey x, DeconstructionBindingCacheKey y)
         => ReferenceEquals(x.GroupIdentity, y.GroupIdentity)
+            && ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
             && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
             && ReferenceEquals(x.AlgorithmEnvironmentIdentity, y.AlgorithmEnvironmentIdentity)
             && ReferenceEquals(x.CountedParamEnvironmentIdentity, y.CountedParamEnvironmentIdentity);
@@ -64,6 +81,9 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
     {
         var hash = new HashCode();
         hash.Add(RuntimeHelpers.GetHashCode(obj.GroupIdentity));
+        hash.Add(obj.OwnerIdentity is StructuralOwnerIdentity owner
+            ? owner.GetHashCode()
+            : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.ValueEnvironmentIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.AlgorithmEnvironmentIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.CountedParamEnvironmentIdentity));
@@ -101,6 +121,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
     {
         var key = new DeconstructionBindingCacheKey(
             execution.GroupIdentity,
+            execution.OwnerIdentity,
             execution.ValueEnvironmentIdentity,
             execution.AlgorithmEnvironmentIdentity,
             execution.CountedParamEnvironmentIdentity);

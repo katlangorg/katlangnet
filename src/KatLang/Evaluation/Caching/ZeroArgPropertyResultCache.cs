@@ -68,12 +68,14 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 /// different owners alias to a single cache entry and return the other owner's
 /// value. The value actually evaluated is the property wired to
 /// <c>ScopeCtx(Owner.Parent, Owner.Opens, Owner.Properties)</c>, so this
-/// identity captures that scope and its complete parent chain, comparing every
-/// opens/property-list component BY REFERENCE. Each intermediate
-/// <see cref="ScopeCtx"/> can be minted afresh along a nested structural path,
-/// so comparing any scope record itself would split equivalent rebuilt paths.
-/// Rebuilt owners over the same live scope therefore keep hitting at every
-/// nesting depth, while genuinely different owners never collide.
+/// identity captures that scope and its complete parent chain. Non-empty
+/// opens/property-list components compare BY REFERENCE; separately allocated
+/// empty components compare as resolution-equivalent because they contribute
+/// nothing to lookup. Each intermediate <see cref="ScopeCtx"/> can be minted
+/// afresh along a nested structural path, so comparing any scope record itself
+/// would split equivalent rebuilt paths. Rebuilt owners over the same resolving
+/// scope therefore keep hitting at every nesting depth, while owners with
+/// resolution-distinct components never collide.
 /// </summary>
 internal sealed class StructuralOwnerIdentity
 {
@@ -107,8 +109,8 @@ internal sealed class StructuralOwnerIdentity
 
         for (var i = 0; i < _scopeChain.Length; i++)
         {
-            if (!ReferenceEquals(_scopeChain[i].Opens, other._scopeChain[i].Opens)
-                || !ReferenceEquals(_scopeChain[i].Properties, other._scopeChain[i].Properties))
+            if (!ComponentEquals(_scopeChain[i].Opens, other._scopeChain[i].Opens)
+                || !ComponentEquals(_scopeChain[i].Properties, other._scopeChain[i].Properties))
             {
                 return false;
             }
@@ -117,14 +119,29 @@ internal sealed class StructuralOwnerIdentity
         return true;
     }
 
+    /// <summary>
+    /// A scope level participates in name resolution ONLY through its opens and properties, so
+    /// two EMPTY lists resolve identically no matter which instance they are. Comparing them by
+    /// reference would split otherwise-equivalent chains: the parser gives every elaborated
+    /// helper — for example each target of one assignment deconstruction — its own empty
+    /// collections, so a per-target wrapper level would make every target look like a different
+    /// owner. Non-empty lists still compare by REFERENCE: they are the live declaration lists,
+    /// and two distinct lists are two distinct scopes even when their contents look alike.
+    /// </summary>
+    private static bool ComponentEquals<T>(IReadOnlyList<T> x, IReadOnlyList<T> y)
+        => ReferenceEquals(x, y) || (x.Count == 0 && y.Count == 0);
+
+    private static int ComponentHash<T>(IReadOnlyList<T> component)
+        => component.Count == 0 ? 0 : RuntimeHelpers.GetHashCode(component);
+
     public override int GetHashCode()
     {
         var hash = new HashCode();
         hash.Add(_scopeChain.Length);
         foreach (var component in _scopeChain)
         {
-            hash.Add(RuntimeHelpers.GetHashCode(component.Opens));
-            hash.Add(RuntimeHelpers.GetHashCode(component.Properties));
+            hash.Add(ComponentHash(component.Opens));
+            hash.Add(ComponentHash(component.Properties));
         }
 
         return hash.ToHashCode();
@@ -155,7 +172,8 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
     /// <summary>
     /// Lexical owners are live per-run objects compared by reference; a
     /// structural owner identity is a computed <see cref="StructuralOwnerIdentity"/>
-    /// whose own equality compares the owner scope components by reference.
+    /// whose equality treats empty scope components as resolution-equivalent and
+    /// compares non-empty components by reference.
     /// </summary>
     internal static bool OwnerIdentityEquals(object x, object y)
         => x is StructuralOwnerIdentity structural
