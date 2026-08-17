@@ -1,4 +1,4 @@
-# Semantic Alignment Manifest
+# Semantic Alignment Manifest.
 
 Lean is authoritative for observable KatLang semantics. If Lean is silent or ambiguous, stop and ask before changing C# semantics.
 
