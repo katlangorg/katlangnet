@@ -266,7 +266,7 @@ public class EvaluationLimitsTests
             Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
         Assert.Equal(maxDepth, budget.PeakDepth);
         Assert.True(
-            budget.ConsumedSteps <= 4L * maxDepth,
+            budget.ConsumedSteps <= 2L * maxDepth,
             $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
     }
 
@@ -283,9 +283,167 @@ public class EvaluationLimitsTests
         Assert.False(result.IsError);
         Assert.Equal(new Result.Atom(0), result.Value.Value);
         Assert.True(
-            budget.ConsumedSteps <= 4L * maxDepth,
+            budget.ConsumedSteps <= 2L * maxDepth,
             $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
     }
+
+    [Theory]
+    [InlineData("F(v) = v.string\nx = F(x)\nx")]
+    [InlineData("F(v) = v.string*\nx = F(x)\nx")]
+    public void DotStringAlgEnvRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
+    {
+        // The ordinary-dot `string` intrinsic evaluates an algorithm-resolving
+        // receiver for its value, so an AlgEnv-bound Param receiver is the same
+        // demand funnel as a bare `v`: the retained resource-limit error must
+        // short-circuit the demand (a depth charge alone leaves the retry tree
+        // exponential). The plain body reaches the counted dot-call twin; the
+        // spread body reaches the plain twin through the spread operand.
+        const int maxDepth = 24;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = maxDepth });
+
+        Assert.True(result.IsError);
+        Assert.Equal(
+            maxDepth,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
+        Assert.Equal(maxDepth, budget.PeakDepth);
+        Assert.True(
+            budget.ConsumedSteps <= 2L * maxDepth,
+            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+    }
+
+    [Theory]
+    [InlineData("A = A.string\nA")]
+    [InlineData("A = A.string*\nA")]
+    [InlineData("A(n) = A.string\nA(1)")]
+    public void DotStringLexicalSelfRecursion_TerminatesWithStructuredDepthError(string source)
+    {
+        // A name-resolved `.string` receiver re-enters the named algorithm's body
+        // with no dynamic-invocation chokepoint on the path, so the receiver
+        // evaluation must consume depth: uncharged, these shapes recursed outside
+        // every budget and terminated the process with an uncatchable
+        // StackOverflowException. The zero-parameter and parameterized receiver
+        // forms exercise the same funnel; the spread body reaches the plain twin.
+        const int maxDepth = 24;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = maxDepth });
+
+        Assert.True(result.IsError);
+        Assert.Equal(
+            maxDepth,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
+        Assert.Equal(maxDepth, budget.PeakDepth);
+        Assert.True(
+            budget.ConsumedSteps <= 2L * maxDepth,
+            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+    }
+
+    [Theory]
+    [InlineData("F(v) = v.string\nF({1 / 0})")]
+    [InlineData("F(v) = v.string*\nF({1 / 0})")]
+    public void DotStringSemanticErrorParamDemand_ChargesDepthWithoutSteps(string source)
+    {
+        // The brace argument has an algorithm channel, but its eager value-channel
+        // attempt fails with a NON-resource semantic error. Nothing is sticky, and
+        // written brace evaluation itself consumes no dynamic depth, so the only way
+        // to reach PeakDepth 2 is for the Param receiver's `.string` demand to use the
+        // shared depth-only re-entry funnel. The spread spelling reaches the plain
+        // dot-call twin; the other spelling reaches the counted twin.
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+
+        var (demanded, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 2 });
+        Assert.True(demanded.IsError);
+        Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
+        Assert.Equal(2, budget.PeakDepth);
+        Assert.Equal(1, budget.ConsumedSteps);
+
+        // One level less makes the Param receiver's demand boundary fail before
+        // re-entering the brace body. Without that charge this reports DivByZero.
+        var (limited, _) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 1 });
+        Assert.True(limited.IsError);
+        Assert.Equal(
+            1,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(limited.Error).Limit);
+    }
+
+    [Theory]
+    [InlineData("Bad = 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)")]
+    [InlineData("Bad = 1 / 0\nG(w) = w*\nF(v) = G(v)\nF(Bad)")]
+    public void SemanticErrorThunkDemand_ChargesArgumentEvaluationDepthWithoutSteps(string source)
+    {
+        // Pins the EvalResolvedAlgOutputForValueDemand charge in isolation: a
+        // SEMANTIC value-channel error is never retained, so the forwarded demand
+        // genuinely re-evaluates the thunk instead of being sticky-short-circuited.
+        // The demanded thunk is the deepest budget entry (F invocation 1,
+        // G invocation 2, demanded thunk 3 — the
+        // property access also peaks at 2), and it contributes NO step (exactly 3:
+        // property access plus the two invocations).
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+
+        var (demanded, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 3 });
+        Assert.True(demanded.IsError);
+        Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
+        Assert.Equal(3, budget.PeakDepth);
+        Assert.Equal(3, budget.ConsumedSteps);
+
+        // One level less and the thunk charge itself is the failing entry, so the
+        // depth kind pre-empts the body's division error. Removing the charge makes
+        // this run report DivByZero instead.
+        var (limited, _) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 2 });
+        Assert.True(limited.IsError);
+        Assert.Equal(
+            2,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(limited.Error).Limit);
+    }
+
+    [Fact]
+    public void SemanticErrorThunkDemands_BalanceDepthAcrossRows()
+    {
+        // Each of the three G(v) rows re-evaluates the semantic-error thunk once
+        // during its argument assembly (charge, error, exit). A leaked enter would
+        // accumulate: PeakDepth would grow past 3 with the row index instead of
+        // staying at the one-thunk profile.
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
+            "Bad = 1 / 0\nG(w) = 0\nF(v) = G(v), G(v), G(v)\nF(Bad)").Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 24 });
+
+        Assert.False(result.IsError);
+        Assert.Equal(3, budget.PeakDepth);
+        Assert.Equal(5, budget.ConsumedSteps);
+    }
+
+    [Theory]
+    [InlineData("Double(n) = n * 2\nApply(f, x) = f(x)\nApply(Double, 3)", "6")]
+    [InlineData("Big = range(1, 200000)\nUse(f, x) = x\nUse(Big, 3)", "3")]
+    [InlineData("Deep = Deep\nUse(f, x) = x\nUse(Deep, 3)", "3")]
+    [InlineData("Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)", "5")]
+    public void DualChannelFallback_PreservedUnderDemandDepthAccounting(string source, string expected)
+    {
+        // Higher-order dispatch, unused resource-failing arguments (the per-collection
+        // ceiling and the depth limit alike), and sticky forwarding through an
+        // intermediate callee keep their pre-accounting results.
+        var result = Evaluator.RunFlat(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.False(result.IsError);
+        Assert.Equal([decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture)], result.Value);
+    }
+
+    private static EvalError Innermost(EvalError error)
+        => error is EvalError.WithContext(_, var inner) ? Innermost(inner) : error;
 
     [Theory]
     [InlineData("F(v) = 0\nA = F(A)\nA")]

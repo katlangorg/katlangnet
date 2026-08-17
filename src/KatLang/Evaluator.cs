@@ -5195,14 +5195,19 @@ public static class Evaluator
     }
 
     /// <summary>
-    /// Evaluate a zero-parameter algorithm obtained from <c>AlgEnv</c> as the value
-    /// of a parameter. This thunk evaluation re-enters an algorithm body, so it uses
-    /// the same depth-only charge as builtin argument evaluation. In particular, a
+    /// Evaluate an algorithm body demanded for its VALUE outside the dynamic-invocation
+    /// chokepoints: a zero-parameter <c>AlgEnv</c> thunk demanded from parameter value
+    /// position (both <c>Expr.Param</c> twins), or the ordinary-dot <c>string</c>
+    /// intrinsic's name-resolved receiver. Each re-enters an algorithm body, so it uses
+    /// the same depth-only charge as builtin argument evaluation; left uncharged, a
+    /// demand-time re-entry recurses outside every budget chokepoint (exponential
+    /// dual-channel retry for <c>F(v) = v.string; x = F(x)</c>, an uncatchable process
+    /// <see cref="StackOverflowException"/> for <c>A = A.string</c>). In particular, a
     /// value-channel failure may still retain this algorithm for the established
     /// dual-channel fallback; charging each re-entry keeps that fallback bounded by
     /// the deterministic evaluator depth limit.
     /// </summary>
-    private static EvalResult<Result> EvalAlgEnvThunkOutput(
+    private static EvalResult<Result> EvalResolvedAlgOutputForValueDemand(
         Algorithm algorithm,
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
@@ -5216,6 +5221,41 @@ public static class Evaluator
         finally
         {
             ctx.Budget.ExitInvocation();
+        }
+    }
+
+    /// <summary>
+    /// Evaluate the ordinary-dot <c>string</c> intrinsic's algorithm-resolving receiver
+    /// for its value (shared by the plain and counted dot-call twins — the intrinsic
+    /// needs ONE value either way, so plain/counted behavior stays identical by
+    /// construction). Name-resolved receivers — a lexical <c>Resolve</c> or an
+    /// <c>AlgEnv</c>-bound <c>Param</c> — are the shapes that can re-enter recursively,
+    /// so they go through the depth-charged demand funnel, and a <c>Param</c> receiver
+    /// first honors its binding's retained resource-limit value error exactly like the
+    /// ordinary <c>Expr.Param</c> value paths (retention stays governed by the
+    /// <c>IsResourceLimit</c> policy at the binding sites; this consumer only reads it).
+    /// Written receiver shapes (brace block, capture, dot-chain wrapper) carry no name
+    /// to cycle back through and their nesting is parser-bounded, so they stay on the
+    /// uncharged written-syntax policy like every other block/capture evaluation.
+    /// </summary>
+    private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
+        Expr target,
+        Algorithm targetAlg,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        switch (target)
+        {
+            case Expr.Param(var name):
+                if (LookupAlgBinding(ctx.AlgEnv, name) is { ValueError: { } stickyLimit })
+                    return AtSpanIfMissing(stickyLimit, target.Span);
+                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
+
+            case Expr.Resolve:
+                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
+
+            default:
+                return EvalAlgOutput(targetAlg, ctx, valEnv);
         }
     }
 
@@ -6738,7 +6778,7 @@ public static class Evaluator
                         if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
                             return conditionalError with { Span = expr.Span };
                         if (algBound.Params.Count == 0)
-                            return WithSpan(expr.Span, EvalAlgEnvThunkOutput(algBound, ctx, valEnv));
+                            return WithSpan(expr.Span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
                         return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
                     }
                     return new EvalError.UnknownName(name) { Span = expr.Span };
@@ -6894,7 +6934,7 @@ public static class Evaluator
                             return conditionalError with { Span = expr.Span };
                         if (algBound.Params.Count == 0)
                         {
-                            var valueR = WithSpan(expr.Span, EvalAlgEnvThunkOutput(algBound, ctx, valEnv));
+                            var valueR = WithSpan(expr.Span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
                             return valueR.IsError
                                 ? valueR.Error
                                 : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
@@ -7266,25 +7306,6 @@ public static class Evaluator
             }
         }
         return EvalResult<IReadOnlyList<Algorithm?>>.Ok(result);
-    }
-
-    /// <summary>
-    /// Bind algorithm-typed parameters: zip parameter names with algorithms.
-    /// Only includes entries where the argument resolved to an algorithm.
-    /// Lean: bindAlgParams.
-    /// </summary>
-    private static IReadOnlyList<(string, Algorithm)> BindAlgParams(
-        IReadOnlyList<string> paramNames,
-        IReadOnlyList<Algorithm?> algs)
-    {
-        var result = new List<(string, Algorithm)>();
-        var count = Math.Min(paramNames.Count, algs.Count);
-        for (var i = 0; i < count; i++)
-        {
-            if (algs[i] is { } alg)
-                result.Add((paramNames[i], alg));
-        }
-        return result;
     }
 
     // ── Call evaluation ─────────────────────────────────────────────────────
@@ -7897,7 +7918,7 @@ public static class Evaluator
         // Value-based intrinsic: "string" — evaluate algorithm output and convert
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
-            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             return ResultToString(ctx, val.Value);
         }
@@ -8349,7 +8370,7 @@ public static class Evaluator
 
         if (dotCall.UsesOrdinaryDotStringIntrinsic())
         {
-            var val = EvalAlgOutput(targetAlg, ctx, valEnv);
+            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
             if (outR.IsError) return outR.Error;

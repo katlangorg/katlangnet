@@ -3,8 +3,8 @@ using System.Diagnostics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Process-isolated regression proving that builtin-argument recursion is bounded by
-/// the budget chokepoints: before the depth-charged argument-evaluation chokepoint
+/// Process-isolated regressions proving that evaluator re-entry recursion is bounded by
+/// the budget chokepoints. Before the depth-charged argument-evaluation chokepoint
 /// (<c>EvaluationBudget.TryEnterArgumentEvaluation</c>), a zero-parameter property
 /// reaching itself through a builtin argument (<c>A = count(A)</c>,
 /// <c>A = range(1, A)</c>, <c>A = if(1, A, 0)</c>, a loop's initial state or count)
@@ -23,6 +23,10 @@ public class EvaluationLimitsProcessTests
     [Fact]
     public async Task BuiltinArgumentRecursion_IsStructurallyBounded_InSubprocess()
         => await RunProbeChild("BuiltinArgumentRecursion_ProbeChild");
+
+    [Fact]
+    public async Task ResolvedValueDemandRecursion_IsStructurallyBounded_InSubprocess()
+        => await RunProbeChild("ResolvedValueDemandRecursion_ProbeChild");
 
     [Fact]
     public void BuiltinArgumentRecursion_ProbeChild()
@@ -52,6 +56,38 @@ public class EvaluationLimitsProcessTests
             Assert.True(
                 result.Error is EvalError.EvaluationDepthExceeded or EvalError.EvaluationStackExhausted,
                 $"expected a structured resource error for `{source.Replace("\n", " ; ")}`, got {result.Error}");
+        }
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public void ResolvedValueDemandRecursion_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // These are the original AlgEnv reproducer, its ordinary-dot `string`
+        // counterpart, and the lexical `string` receiver that formerly reached
+        // an uncatchable CLR stack overflow. A small explicit limit pins the
+        // deterministic error; the default public path separately proves that
+        // the process returns normally under the production ceiling.
+        foreach (var source in new[]
+        {
+            "F(v) = v\nx = F(x)\nx",
+            "F(v) = v.string\nx = F(x)\nx",
+            "A = A.string\nA",
+        })
+        {
+            var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+            var bounded = Evaluator.Run(expr, new EvaluationLimits { MaxDepth = 24 });
+            Assert.True(bounded.IsError);
+            Assert.Equal(
+                24,
+                Assert.IsType<EvalError.EvaluationDepthExceeded>(bounded.Error).Limit);
+
+            var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+            Assert.Single(failure.Errors);
         }
 
         WriteProbeMarker();

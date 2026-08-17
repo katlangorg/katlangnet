@@ -107,14 +107,15 @@ internal sealed class EvaluationBudget
 
     /// <summary>
     /// Charges one level of depth — and NO step — for re-entering an algorithm body
-    /// outside a dynamic invocation: builtin argument and control-argument body
-    /// evaluation. Argument evaluation is not a unit of semantic work (steps count
+    /// outside a dynamic invocation: builtin argument/control-argument evaluation and
+    /// value demand through a name- or parameter-resolved algorithm. These boundaries
+    /// are not units of semantic work (steps count
     /// dynamic invocations and loop iterations only, and the frozen plain/dot work
-    /// parity depends on that), but it IS a level of host recursion: without this
-    /// charge a zero-parameter property that reaches itself through a builtin
-    /// argument (<c>A = count(A)</c>, <c>A = if(1, A, 0)</c>, <c>A = range(1, A)</c>)
-    /// recurses outside every budget chokepoint and terminates the process with an
-    /// uncatchable <see cref="StackOverflowException"/>. Same contract as
+    /// parity depends on that), but each IS a level of host recursion: without this
+    /// charge a zero-parameter property can reach itself through a builtin argument
+    /// (<c>A = count(A)</c>), an <c>AlgEnv</c> value thunk, or a name-resolved
+    /// <c>.string</c> receiver and recurse outside every budget chokepoint. Same
+    /// contract as
     /// <see cref="TryEnterInvocation"/>: on <c>null</c>, balance with
     /// <see cref="ExitInvocation"/> from a <c>finally</c> block; on an error the
     /// depth is left unchanged.
