@@ -43,6 +43,8 @@ public static class Evaluator
     /// Wraps the algorithm chain (current algorithm + enclosing callers) used for
     /// both lexical resolution and runtime dispatch.
     /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
+    /// A binding may additionally retain a resource-limit failure from its eager value
+    /// channel; that failure is observed only if the parameter is demanded as a value.
     /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
     /// by this copied struct, so every derived context charges the same run's counters
     /// and no copy can reset them.
@@ -50,7 +52,7 @@ public static class Evaluator
     /// </summary>
     internal readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
-        IReadOnlyList<(string Name, Algorithm Value)> AlgEnv,
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> AlgEnv,
         IReadOnlyList<(string Name, CountedResult Value)> CountedParamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
         IDeconstructionBindingCache DeconstructionBindingCache,
@@ -91,7 +93,7 @@ public static class Evaluator
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(IReadOnlyList<(string, Algorithm)> algEnv)
+        public EvalCtx WithAlgEnv(IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> algEnv)
             => new(
                 CallStack,
                 algEnv,
@@ -202,13 +204,20 @@ public static class Evaluator
         return removedAny ? filtered : env;
     }
 
-    /// <summary>Algorithm environment: maps parameter names to algorithms. Lean: AlgEnv.lookup.</summary>
-    private static Algorithm? LookupAlg(IReadOnlyList<(string Name, Algorithm Value)> env, string name)
+    private static (Algorithm Algorithm, EvalError? ValueError)? LookupAlgBinding(
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+        string name)
     {
-        foreach (var (n, v) in env)
-            if (n == name) return v;
+        foreach (var (n, algorithm, valueError) in env)
+            if (n == name) return (algorithm, valueError);
         return null;
     }
+
+    /// <summary>Algorithm environment: maps parameter names to algorithms. Lean: AlgEnv.lookup.</summary>
+    private static Algorithm? LookupAlg(
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> env,
+        string name)
+        => LookupAlgBinding(env, name) is { } binding ? binding.Algorithm : null;
 
     // ── Algorithm helpers ────────────────────────────────────────────────────
 
@@ -1197,7 +1206,7 @@ public static class Evaluator
     private readonly record struct UserCallBindings(
         IReadOnlyList<(string, Result)> ValueBindings,
         IReadOnlyList<(string, CountedResult)> CountedBindings,
-        IReadOnlyList<(string, Algorithm)> AlgorithmBindings);
+        IReadOnlyList<(string Name, Algorithm Value, EvalError? ValueError)> AlgorithmBindings);
 
     private readonly record struct CountedParameterPatternBindings(
         IReadOnlyList<(string, CountedResult)> CountedBindings);
@@ -1656,13 +1665,18 @@ public static class Evaluator
             case CaptureParameterPattern { Kind: ParameterKind.Normal } capture:
                 {
                     var valueBindings = new List<(string, Result)>(1);
-                    var algorithmBindings = new List<(string, Algorithm)>(1);
+                    var algorithmBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>(1);
 
                     if (input.Value is not null)
                         valueBindings.Add((capture.Name, input.Value));
 
                     if (allowAlgorithmBindings && input.Algorithm is not null)
-                        algorithmBindings.Add((capture.Name, input.Algorithm));
+                    {
+                        algorithmBindings.Add((
+                            capture.Name,
+                            input.Algorithm,
+                            input.ValueError is { IsResourceLimit: true } ? input.ValueError : null));
+                    }
 
                     if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
                         return input.ValueError ?? new EvalError.BadArity();
@@ -1726,7 +1740,7 @@ public static class Evaluator
 
         var valueBindings = new List<(string, Result)>();
         var countedBindings = new List<(string, CountedResult)>();
-        var algorithmBindings = new List<(string, Algorithm)>();
+        var algorithmBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>();
         // Running name -> value indexes over the accumulators. The prior implementation rebuilt a
         // name set and linear-scanned the accumulators on EVERY added binding, which is O(k) per
         // binding and O(patterns^2) across a whole pattern list — the residual quadratic in one
@@ -2338,7 +2352,7 @@ public static class Evaluator
                 Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
             };
 
-        var algBindings = new List<(string, Algorithm)>();
+        var algBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>();
         var valueParams = new List<string>();
         var valueResults = new List<Result>();
 
@@ -2352,7 +2366,12 @@ public static class Evaluator
 
             var slot = slots[i];
             if (slot.Algorithm is not null)
-                algBindings.Add((parameterNames[i], slot.Algorithm));
+            {
+                algBindings.Add((
+                    parameterNames[i],
+                    slot.Algorithm,
+                    slot.ValueError is { IsResourceLimit: true } ? slot.ValueError : null));
+            }
 
             if (slot.Value is not null)
             {
@@ -5175,6 +5194,31 @@ public static class Evaluator
         }
     }
 
+    /// <summary>
+    /// Evaluate a zero-parameter algorithm obtained from <c>AlgEnv</c> as the value
+    /// of a parameter. This thunk evaluation re-enters an algorithm body, so it uses
+    /// the same depth-only charge as builtin argument evaluation. In particular, a
+    /// value-channel failure may still retain this algorithm for the established
+    /// dual-channel fallback; charging each re-entry keeps that fallback bounded by
+    /// the deterministic evaluator depth limit.
+    /// </summary>
+    private static EvalResult<Result> EvalAlgEnvThunkOutput(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (ctx.Budget.TryEnterArgumentEvaluation() is { } limitError)
+            return limitError;
+        try
+        {
+            return EvalAlgOutput(algorithm, ctx, valEnv);
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
+    }
+
     private static EvalResult<CountedResult> EvalResolvedArgumentCounted(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
@@ -6685,13 +6729,16 @@ public static class Evaluator
 
                     var val = LookupVal(valEnv, name);
                     if (val is not null) return EvalResult<Result>.Ok(val);
-                    var algBound = LookupAlg(ctx.AlgEnv, name);
-                    if (algBound is not null)
+                    var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
+                    if (algBinding is { } bound)
                     {
+                        if (bound.ValueError is { } stickyLimit)
+                            return AtSpanIfMissing(stickyLimit, expr.Span);
+                        var algBound = bound.Algorithm;
                         if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
                             return conditionalError with { Span = expr.Span };
                         if (algBound.Params.Count == 0)
-                            return WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
+                            return WithSpan(expr.Span, EvalAlgEnvThunkOutput(algBound, ctx, valEnv));
                         return new EvalError.ArityMismatch(algBound.Params.Count, 0) { Span = expr.Span };
                     }
                     return new EvalError.UnknownName(name) { Span = expr.Span };
@@ -6837,14 +6884,17 @@ public static class Evaluator
                     if (val is not null)
                         return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
 
-                    var algBound = LookupAlg(ctx.AlgEnv, name);
-                    if (algBound is not null)
+                    var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
+                    if (algBinding is { } bound)
                     {
+                        if (bound.ValueError is { } stickyLimit)
+                            return AtSpanIfMissing(stickyLimit, expr.Span);
+                        var algBound = bound.Algorithm;
                         if (ConditionalValueAccessError(name, algBound) is { } conditionalError)
                             return conditionalError with { Span = expr.Span };
                         if (algBound.Params.Count == 0)
                         {
-                            var valueR = WithSpan(expr.Span, EvalAlgOutput(algBound, ctx, valEnv));
+                            var valueR = WithSpan(expr.Span, EvalAlgEnvThunkOutput(algBound, ctx, valEnv));
                             return valueR.IsError
                                 ? valueR.Error
                                 : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
