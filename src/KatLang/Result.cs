@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace KatLang;
 
 /// <summary>
@@ -20,6 +22,21 @@ namespace KatLang;
 /// value, atom collection, string, or AST is required output, not traversal
 /// overhead. Display rendering follows the same no-recursion rule
 /// (<c>KatLangEngine.AppendValue</c>).</para>
+///
+/// <para>A value is also a DAG, not a tree: an immutable child may be shared by
+/// many parents (<c>W = [x, x]</c> applied n times reaches n+1 distinct nodes
+/// through 2^n root-to-leaf paths), so a walk whose work is proportional to
+/// PATHS is exponential on legally built values. The two walks a shared node can
+/// blow up — structural equality and structural hashing in
+/// <see cref="ValueComparer"/> — therefore memoize by REFERENCE IDENTITY for the
+/// duration of ONE top-level operation: equality expands each ordered
+/// <c>(left, right)</c> reference pair at most once, hashing computes each
+/// node's hash at most once. That memo is the one deliberate exception to the
+/// O(nesting depth) rule above: it is O(distinct nodes or pairs actually
+/// reached), never O(paths), and it is allocated lazily on the first nested
+/// descent so flat values still allocate none. Memo state belongs to one call
+/// and is discarded with it; no hash or comparison result is ever cached on a
+/// <see cref="Result"/>.</para>
 /// </summary>
 public abstract record Result
 {
@@ -31,7 +48,17 @@ public abstract record Result
     /// sequence and list values structurally by ordered child results.
     /// Different value kinds compare unequal (a list never equals a sequence).
     /// </summary>
-    public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer();
+    public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer(observations: null);
+
+    /// <summary>
+    /// Returns a value comparer bound to <paramref name="observations"/>: the shared observer-less
+    /// <see cref="ValueComparer"/> when it is <c>null</c> (every production path), otherwise a fresh
+    /// comparer that records the structural work its equality and hash walks perform. The observer
+    /// is passive — it changes neither equality, hashing, memoization, nor traversal order — and
+    /// belongs to one measured operation, so counts never cross operations, runs, or threads.
+    /// </summary>
+    internal static IEqualityComparer<Result> CreateObservedValueComparer(ValueTraversalObservations? observations)
+        => observations is null ? ValueComparer : new ValueSemanticComparer(observations);
 
     /// <summary>A single numeric value.</summary>
     public sealed record Atom(decimal Value) : Result;
@@ -726,8 +753,37 @@ public abstract record Result
         return SequenceValue.TakeOwnership(items.ToArray()).Normalize();
     }
 
-    private sealed class ValueSemanticComparer : IEqualityComparer<Result>
+    /// <summary>
+    /// KatLang value semantics over possibly SHARED value graphs. Both walks memoize by REFERENCE
+    /// identity for the duration of one top-level operation, because an immutable value is a DAG,
+    /// not a tree: <c>W = [x, x]</c> applied n times builds a value with n+1 distinct nodes but
+    /// 2^n root-to-leaf paths, and a walk that expands paths instead of nodes is exponential in n.
+    /// The memos hold ONLY object references; they never call value equality or the structural hash
+    /// on themselves, which would re-enter the very walks they bound.
+    /// </summary>
+    private sealed class ValueSemanticComparer(ValueTraversalObservations? observations)
+        : IEqualityComparer<Result>
     {
+        // Value-kind tags mixed into every structural hash, so a list value never hashes like a
+        // sequence value over the same elements. These are the tags the previous streaming hash
+        // used, kept for continuity of the recipe.
+        private const int AtomTag = 0;
+        private const int StrTag = 1;
+        private const int SequenceTag = 2;
+        private const int ListTag = 3;
+
+        /// <summary>
+        /// Placeholder stored for a structure node while its own hash is still being folded, and
+        /// the contribution of a value that is neither leaf nor structure. KatLang values cannot be
+        /// cyclic — every <see cref="Result"/> is immutable and built from children that already
+        /// exist, and public construction snapshots its input — so a node can never be
+        /// re-encountered while it is still in progress, and this placeholder is never read for any
+        /// constructible value. Seeding it anyway costs one dictionary write per node and makes the
+        /// walk TOTAL: an invariant-violating aliased graph terminates with an arbitrary but stable
+        /// hash instead of looping forever inside the host.
+        /// </summary>
+        private const int InProgressHash = 0;
+
         public bool Equals(Result? x, Result? y)
         {
             if (ReferenceEquals(x, y)) return true;
@@ -759,6 +815,8 @@ public abstract record Result
                     return false;
             }
 
+            observations?.RecordEqualityPairExpansion();
+
             // Pairwise structural walk with indexed continuation frames (see
             // the depth note on the class): the registers hold the current
             // collection pair and next child index, and the stack holds one
@@ -766,7 +824,21 @@ public abstract record Result
             // entry per pending sibling. Pairs compare left to right, and the
             // reference fast path applies at every level so shared subtrees
             // short-circuit.
+            //
+            // EXPANDED-PAIR MEMO (this operation only): a nested pair is expanded at most once per
+            // top-level comparison, keyed by the ORDERED pair of object references. The reference
+            // fast path above helps only when the SAME object is on both sides; two independently
+            // built equal DAGs share no object at all, so without this memo the walk expands paths
+            // (2^n for the n-fold [x, x] shape) instead of deciding the n+1 distinct pairs.
+            // Recording a pair when it is DESCENDED INTO — before its children are compared — is
+            // what makes "already expanded" mean "already decided equal": the walk RETURNS FALSE
+            // the instant any mismatch is found anywhere, so a pair can only be re-encountered
+            // after its own subtree finished without one. A pair is never re-encountered while it
+            // is still in progress, since that needs a value reachable from itself (see
+            // InProgressHash) — and were such a graph ever handed in, skipping the repeat is
+            // exactly the coinductive answer and still terminates instead of hanging the host.
             var suspended = new Stack<(IReadOnlyList<Result> Left, IReadOnlyList<Result> Right, int Next)>();
+            HashSet<ReferencePair>? expandedPairs = null;
             var next = 0;
 
             while (true)
@@ -785,143 +857,252 @@ public abstract record Result
                 if (ReferenceEquals(left, right)) continue;
                 if (left is null || right is null) return false;
 
+                IReadOnlyList<Result> childLeft;
+                IReadOnlyList<Result> childRight;
                 switch (left, right)
                 {
                     case (Atom(var leftValue), Atom(var rightValue)):
                         if (leftValue != rightValue) return false;
-                        break;
+                        continue;
 
                     case (Str(var leftValue), Str(var rightValue)):
                         if (!StringComparer.Ordinal.Equals(leftValue, rightValue)) return false;
+                        continue;
+
+                    case (SequenceValue(var childLeftItems), SequenceValue(var childRightItems)):
+                        if (childLeftItems.Count != childRightItems.Count) return false;
+                        (childLeft, childRight) = (childLeftItems, childRightItems);
                         break;
 
-                    case (SequenceValue(var childLeft), SequenceValue(var childRight)):
-                        if (childLeft.Count != childRight.Count) return false;
-                        if (childLeft.Count > 0)
-                        {
-                            // Tail descent: a parent with no children left to
-                            // visit has no continuation worth suspending.
-                            if (next < leftItems.Count)
-                                suspended.Push((leftItems, rightItems, next));
-                            (leftItems, rightItems, next) = (childLeft, childRight, 0);
-                        }
-
-                        break;
-
-                    case (ListValue(var childLeft), ListValue(var childRight)):
-                        if (childLeft.Count != childRight.Count) return false;
-                        if (childLeft.Count > 0)
-                        {
-                            // Tail descent: a parent with no children left to
-                            // visit has no continuation worth suspending.
-                            if (next < leftItems.Count)
-                                suspended.Push((leftItems, rightItems, next));
-                            (leftItems, rightItems, next) = (childLeft, childRight, 0);
-                        }
-
+                    case (ListValue(var childLeftItems), ListValue(var childRightItems)):
+                        if (childLeftItems.Count != childRightItems.Count) return false;
+                        (childLeft, childRight) = (childLeftItems, childRightItems);
                         break;
 
                     default:
                         return false;
                 }
+
+                // Equal empty collections are decided by the count check alone.
+                if (childLeft.Count == 0) continue;
+
+                // Allocated on the first nested descent, so a comparison that never leaves the top
+                // level (two flat collections of leaves) allocates no memo at all.
+                expandedPairs ??= [];
+                if (!expandedPairs.Add(new ReferencePair(left, right))) continue;
+
+                observations?.RecordEqualityPairExpansion();
+
+                // Tail descent: a parent with no children left to visit has no
+                // continuation worth suspending.
+                if (next < leftItems.Count)
+                    suspended.Push((leftItems, rightItems, next));
+                (leftItems, rightItems, next) = (childLeft, childRight, 0);
             }
         }
 
         public int GetHashCode(Result obj)
         {
-            // Depth-first pre-order visit with indexed continuation frames
-            // (see the depth note on the class): each node contributes its
-            // kind tag, leaves their value, structures their count then their
-            // children. The registers hold the current collection and next
-            // child index; the stack holds one suspended parent frame per
-            // open structure level.
-            var hash = new HashCode();
+            // Structural hash COMPOSED BOTTOM-UP: every node mixes its kind tag, its child count,
+            // and its children's hashes, so one node contributes exactly one int — and that int can
+            // be memoized by reference and replayed at every later occurrence of the same shared
+            // node. The previous walk streamed each reachable node's tokens into ONE accumulator in
+            // pre-order, a shape that admits no memoization at all: a subtree's contribution
+            // depends on the accumulator state and queue position it lands in, so it can only be
+            // reproduced by re-walking the subtree, once per path reaching it (exponential on a
+            // shared DAG). Composition is therefore required here, not a convenience.
+            //
+            // The equality contract is preserved BY CONSTRUCTION: equal values have the same kind
+            // tag and child count and pairwise-equal children, so by induction they fold to the
+            // same hash (equal decimals and ordinal-equal strings already hash equal). Hash VALUES
+            // are not observable and never were — System.HashCode is seeded per process, so they
+            // already differed between runs, and no KatLang result depends on them (distinct keeps
+            // input order and uses its set only as a duplicate filter).
+            if (TryHashLeaf(obj, out var leafHash))
+                return leafHash;
+            if (!TryOpenStructure(obj, out var tag, out var items))
+                return InProgressHash;
 
-            IReadOnlyList<Result> items;
-            switch (obj)
-            {
-                case Atom(var value):
-                    hash.Add(0);
-                    hash.Add(value);
-                    return hash.ToHashCode();
-
-                case Str(var value):
-                    hash.Add(1);
-                    hash.Add(value, StringComparer.Ordinal);
-                    return hash.ToHashCode();
-
-                case SequenceValue(var rootItems):
-                    hash.Add(2);
-                    hash.Add(rootItems.Count);
-                    items = rootItems;
-                    break;
-
-                case ListValue(var rootItems):
-                    hash.Add(3);
-                    hash.Add(rootItems.Count);
-                    items = rootItems;
-                    break;
-
-                default:
-                    return hash.ToHashCode();
-            }
-
-            var suspended = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+            // Post-order visit with indexed continuation frames (see the depth note on the class):
+            // the registers hold the node being folded, its collection, the next child index, and
+            // its accumulator; the stack holds one suspended parent frame per open structure level,
+            // never one entry per pending sibling. A parent must survive its last child — it still
+            // has that child's hash to fold — so this walk keeps the frame the pre-order walk could
+            // drop; the memo below already makes storage proportional to distinct nodes.
+            //
+            // NODE-HASH MEMO (this operation only): each distinct non-empty structure node is
+            // expanded at most once per top-level hash, keyed by object reference. It is seeded
+            // with InProgressHash at descent and overwritten with the real hash at completion.
+            // Lifetime is deliberately ONE call: no hash is cached on a Result, so no per-value
+            // state is added and a second GetHashCode recomputes the graph.
+            var node = obj;
+            var accumulator = new HashCode();
+            accumulator.Add(tag);
+            accumulator.Add(items.Count);
             var next = 0;
+
+            var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, HashCode Accumulator)>();
+            Dictionary<Result, int>? structureHashes = null;
+
+            observations?.RecordHashStructureExpansion();
 
             while (true)
             {
                 if (next >= items.Count)
                 {
-                    if (suspended.Count == 0) return hash.ToHashCode();
-                    (items, next) = suspended.Pop();
+                    var nodeHash = accumulator.ToHashCode();
+                    if (structureHashes is not null)
+                        structureHashes[node] = nodeHash;
+                    if (suspended.Count == 0)
+                        return nodeHash;
+
+                    (node, items, next, accumulator) = suspended.Pop();
+                    accumulator.Add(nodeHash);
                     continue;
                 }
 
                 var child = items[next];
                 next++;
 
+                int childTag;
+                IReadOnlyList<Result> childItems;
                 switch (child)
                 {
-                    case Atom(var value):
-                        hash.Add(0);
-                        hash.Add(value);
+                    // A leaf streams its own tokens straight into its parent's fold, exactly as the
+                    // previous walk did: it opens no path, so it needs neither a node hash of its
+                    // own nor a memo entry, and folding it in place keeps flat collections at their
+                    // previous cost.
+                    case Atom(var number):
+                        accumulator.Add(AtomTag);
+                        accumulator.Add(number);
+                        continue;
+
+                    case Str(var text):
+                        accumulator.Add(StrTag);
+                        accumulator.Add(text, StringComparer.Ordinal);
+                        continue;
+
+                    case SequenceValue(var sequenceItems):
+                        (childTag, childItems) = (SequenceTag, sequenceItems);
                         break;
 
-                    case Str(var value):
-                        hash.Add(1);
-                        hash.Add(value, StringComparer.Ordinal);
+                    case ListValue(var listItems):
+                        (childTag, childItems) = (ListTag, listItems);
                         break;
 
-                    case SequenceValue(var childItems):
-                        hash.Add(2);
-                        hash.Add(childItems.Count);
-                        if (childItems.Count > 0)
-                        {
-                            // Tail descent: a parent with no children left to
-                            // visit has no continuation worth suspending.
-                            if (next < items.Count)
-                                suspended.Push((items, next));
-                            (items, next) = (childItems, 0);
-                        }
-
-                        break;
-
-                    case ListValue(var childItems):
-                        hash.Add(3);
-                        hash.Add(childItems.Count);
-                        if (childItems.Count > 0)
-                        {
-                            // Tail descent: a parent with no children left to
-                            // visit has no continuation worth suspending.
-                            if (next < items.Count)
-                                suspended.Push((items, next));
-                            (items, next) = (childItems, 0);
-                        }
-
-                        break;
+                    default:
+                        continue;
                 }
+
+                if (childItems.Count == 0)
+                {
+                    accumulator.Add(EmptyStructureHash(childTag));
+                    continue;
+                }
+
+                if (structureHashes is not null && structureHashes.TryGetValue(child, out var memoized))
+                {
+                    accumulator.Add(memoized);
+                    continue;
+                }
+
+                // Allocated on the first nested descent, so hashing a flat collection of leaves
+                // allocates no memo at all.
+                structureHashes ??= new Dictionary<Result, int>(ReferenceEqualityComparer.Instance);
+                structureHashes[child] = InProgressHash;
+
+                observations?.RecordHashStructureExpansion();
+
+                suspended.Push((node, items, next, accumulator));
+                (node, items, next) = (child, childItems, 0);
+                accumulator = new HashCode();
+                accumulator.Add(childTag);
+                accumulator.Add(childItems.Count);
             }
+        }
+
+        /// <summary>
+        /// Hash of a leaf value, or <c>false</c> when the value is a structure. Leaves contribute in
+        /// place: they open no path, so nothing about them can expand exponentially.
+        /// </summary>
+        private static bool TryHashLeaf(Result value, out int hash)
+        {
+            var leaf = new HashCode();
+            switch (value)
+            {
+                case Atom(var number):
+                    leaf.Add(AtomTag);
+                    leaf.Add(number);
+                    hash = leaf.ToHashCode();
+                    return true;
+
+                case Str(var text):
+                    leaf.Add(StrTag);
+                    leaf.Add(text, StringComparer.Ordinal);
+                    hash = leaf.ToHashCode();
+                    return true;
+
+                default:
+                    hash = 0;
+                    return false;
+            }
+        }
+
+        /// <summary>Kind tag and ordered children of a structure value, or <c>false</c> for a leaf.</summary>
+        private static bool TryOpenStructure(Result value, out int tag, out IReadOnlyList<Result> items)
+        {
+            switch (value)
+            {
+                case SequenceValue(var sequenceItems):
+                    (tag, items) = (SequenceTag, sequenceItems);
+                    return true;
+
+                case ListValue(var listItems):
+                    (tag, items) = (ListTag, listItems);
+                    return true;
+
+                default:
+                    (tag, items) = (0, []);
+                    return false;
+            }
+        }
+
+        /// <summary>Hash of an empty structure: the fold with no children to mix in.</summary>
+        private static int EmptyStructureHash(int tag)
+        {
+            var empty = new HashCode();
+            empty.Add(tag);
+            empty.Add(0);
+            return empty.ToHashCode();
+        }
+
+        /// <summary>
+        /// One ordered pair of <see cref="Result"/> OBJECT REFERENCES, the equality memo's key.
+        /// Identity is deliberately <see cref="object.ReferenceEquals"/> plus
+        /// <see cref="RuntimeHelpers.GetHashCode"/> on both sides — the same reference-identity
+        /// discipline the AST preflight and the evaluator's caches use. Keying the memo on value
+        /// equality or on the structural hash would re-enter the walks the memo exists to bound,
+        /// and record equality on <see cref="Result"/> is not KatLang value equality either.
+        /// </summary>
+        private readonly struct ReferencePair : IEquatable<ReferencePair>
+        {
+            private readonly Result left;
+            private readonly Result right;
+
+            internal ReferencePair(Result left, Result right)
+            {
+                this.left = left;
+                this.right = right;
+            }
+
+            public bool Equals(ReferencePair other)
+                => ReferenceEquals(left, other.left) && ReferenceEquals(right, other.right);
+
+            public override bool Equals(object? obj)
+                => obj is ReferencePair other && Equals(other);
+
+            public override int GetHashCode()
+                => HashCode.Combine(RuntimeHelpers.GetHashCode(left), RuntimeHelpers.GetHashCode(right));
         }
     }
 }
