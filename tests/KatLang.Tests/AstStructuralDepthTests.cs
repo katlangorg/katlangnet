@@ -44,18 +44,18 @@ public class AstStructuralDepthTests
     }
 
     /// <summary>Block(User { Output = [inner] }) nesting: 2 counted nodes per level plus the leaf.</summary>
-    internal static Expr BlockSpine(int levels)
+    internal static Expr BlockSpine(int levels, Expr? leaf = null)
     {
-        Expr expr = new Expr.Num(1);
+        Expr expr = leaf ?? new Expr.Num(1);
         for (var i = 0; i < levels; i++)
             expr = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [expr]));
         return expr;
     }
 
     /// <summary>Call(Resolve, [inner]) nesting around a defined F (a Call node weighs two units — it absorbed its former transparent Args wrapper).</summary>
-    internal static Expr CallSpine(int levels)
+    internal static Expr CallSpine(int levels, Expr? leaf = null)
     {
-        Expr expr = new Expr.Num(1);
+        Expr expr = leaf ?? new Expr.Num(1);
         for (var i = 0; i < levels; i++)
             expr = new Expr.Call(new Expr.Resolve("F"), [expr]);
 
@@ -1854,10 +1854,16 @@ public class AstStructuralDepthProcessTests
             AssertDepthRejected(AstStructuralDepthTests.ListSpine(max + 1));
 
             // ── Nested blocks (algorithm bodies; still recursive, ceiling-bounded)
+            // Two counted nodes per level make the pure shape odd-cost. An OUTER spine
+            // wrapper cannot add one unit because its edge to the non-spine block is a
+            // charged machine re-entry; innermost spine padding is still one iterative
+            // node and retains an honest exact-ceiling construction.
             AssertFlatValue(AstStructuralDepthTests.BlockSpine((max - 1) / 2), 1m);              // depth max - 1
             AssertFlatValue(
-                new Expr.Unary(UnaryOp.Minus, AstStructuralDepthTests.BlockSpine((max - 1) / 2)), // depth max
-                -1m);
+                AstStructuralDepthTests.BlockSpine(
+                    (max - 1) / 2,
+                    new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))),
+                -1m);                                                                            // depth max
             AssertDepthRejected(AstStructuralDepthTests.BlockSpine((max + 1) / 2));              // depth max + 1
 
             // ── Nested calls (invocation machinery; frame cost differs from blocks)
@@ -1866,13 +1872,18 @@ public class AstStructuralDepthProcessTests
             // a structural error, never process death.
             AssertValueOrEstablishedRuntimeStop(CallSpine((max - 4) / 2), 1m);                    // depth max - 1
             AssertValueOrEstablishedRuntimeStop(
-                new Expr.Unary(UnaryOp.Minus, CallSpine((max - 4) / 2)), -1m);                    // depth max
+                CallSpine(
+                    (max - 4) / 2,
+                    new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))),
+                -1m);                                                                             // depth max
             AssertDepthRejected(CallSpine((max - 2) / 2));                                        // depth max + 1
 
             // ── Dot-call chains (weight 3 per link) ─────────────────────────
-            AssertFlatValue(DotCallChain(links: (max - 3) / 3, extraUnary: 2), 1m);               // 297 + 2 + 1 = max
-            AssertFlatValue(DotCallChain(links: (max - 3) / 3, extraUnary: 1), -1m);              // depth max - 1
-            AssertDepthRejected(DotCallChain(links: max / 3, extraUnary: 0));                     // 300 + 1 = max + 1
+            // Innermost unary padding stays within one iterative run; putting the same
+            // wrappers OUTSIDE the dot-call chain would instead cross a charged edge.
+            AssertFlatValue(DotCallChain(links: (max - 3) / 3, innerUnary: 2), 1m);               // 297 + 2 + 1 = max
+            AssertFlatValue(DotCallChain(links: (max - 3) / 3, innerUnary: 1), 1m);               // depth max - 1
+            AssertDepthRejected(DotCallChain(links: max / 3, innerUnary: 0));                     // 300 + 1 = max + 1
 
             // ── Parser-produced source reaching the same evaluation boundary ─
             // The parser's own chain guard caps a flat chain at 256 operators
@@ -1998,15 +2009,16 @@ public class AstStructuralDepthProcessTests
             return expr;
         }
 
-        static Expr CallSpine(int levels) => AstStructuralDepthTests.CallSpine(levels);
+        static Expr CallSpine(int levels, Expr? leaf = null)
+            => AstStructuralDepthTests.CallSpine(levels, leaf);
 
-        static Expr DotCallChain(int links, int extraUnary)
+        static Expr DotCallChain(int links, int innerUnary)
         {
             Expr expr = new Expr.Num(1);
+            for (var i = 0; i < innerUnary; i++)
+                expr = new Expr.Unary(UnaryOp.Minus, expr);
             for (var i = 0; i < links; i++)
                 expr = new Expr.DotCall(expr, "count", null);
-            for (var i = 0; i < extraUnary; i++)
-                expr = new Expr.Unary(UnaryOp.Minus, expr);
             return expr;
         }
 

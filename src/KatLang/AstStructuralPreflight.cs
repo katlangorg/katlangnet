@@ -29,11 +29,13 @@ internal enum AstConsumerProfile
     /// validation walker's flat-output traversal, and the evaluator's flat and counted
     /// spread/join evaluation, pinned by
     /// <c>Eval_SequenceSpread_LongChain_IsStackSafeForFlatAndCountedEvaluation</c>), so
-    /// those two node kinds add NO depth WITHIN one kind: an arbitrarily long
+    /// those two node kinds add NO depth in the INTERIOR of a spine: an arbitrarily long
     /// single-kind host-built join chain stays accepted, exactly as it evaluates
-    /// today. The exception is the ALTERNATION link — a spread whose operand is a
-    /// construct — which re-enters generic evaluation recursively and weighs EIGHT
-    /// units (see <c>Weight</c>). A <see cref="Expr.DotCall"/>
+    /// today. What is charged is each RE-ENTRY from the iterative join machinery into
+    /// generic recursive evaluation — the ALTERNATION link (a spread whose operand is a
+    /// construct) and the HAND-OFF from a spine to a non-join composite expression — at
+    /// EIGHT units each (see <c>TransitionWeight</c> and <c>JoinReentryWeight</c>).
+    /// A <see cref="Expr.DotCall"/>
     /// link weighs THREE units, matching the several large resolution frames each
     /// link consumes at evaluation time. Every other node kind counts one level —
     /// including the unary/binary/index/list spines that the evaluator itself handles
@@ -69,18 +71,21 @@ internal enum AstConsumerProfile
 /// the parser front end).</para>
 ///
 /// <para><b>Depth definition.</b> Structural AST depth is a consumer-profile-weighted
-/// cost over the longest parent-to-descendant reference path, counting both endpoints;
+/// cost over the longest parent-to-descendant reference path, counting both endpoints
+/// plus any evaluator-machine transition cost on the traversed edges;
 /// a one-unit root alone has depth 1. Counted nodes are <see cref="Expr"/>, <see cref="Algorithm"/>,
 /// <see cref="Pattern"/>, <see cref="ParameterPattern"/>, and <see cref="ScopeCtx"/>
 /// instances. <see cref="Property"/> and <see cref="CondBranch"/> are membranes: the
 /// traversal passes through them to their contents without adding a level. On the
 /// evaluator gates (<see cref="AstConsumerProfile.EvaluatorIterativeJoinSpines"/>) the
 /// two internal sequence-join node kinds (<see cref="Expr.SequenceConstruct"/>,
-/// <see cref="Expr.SequenceSpread"/>) also contribute no depth within one kind,
+/// <see cref="Expr.SequenceSpread"/>) also contribute no depth in a spine's INTERIOR,
 /// because every consumer behind those gates walks single-kind spines with an
 /// explicit iterative stack — an arbitrarily long single-kind host-built join chain
-/// is a supported, pinned shape. A spread-of-construct ALTERNATION link is the
-/// exception: it re-enters generic evaluation recursively and is weighted. This is
+/// is a supported, pinned shape. Each RE-ENTRY into generic recursive evaluation is
+/// weighted instead: a spread-of-construct alternation link, and a hand-off from a
+/// spine to a non-join composite expression. Charging re-entries rather than spine
+/// length is what makes an interleaved chain bounded while a pure one stays free. This is
 /// distinct from — and deliberately much larger than — the runtime limit on
 /// simultaneously active dynamic algorithm invocations
 /// (<see cref="EvaluationLimits.MaxDepth"/>): a deeply RECURSIVE program has a shallow
@@ -196,11 +201,11 @@ internal static class AstStructuralPreflight
         const int OnStack = -1;
         var heights = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
 
-        var rootWeight = Weight(root, profile);
+        var rootWeight = NodeWeight(root, profile);
         if (rootWeight > maxDepth)
             return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(root));
 
-        frames[frameCount++] = new Frame(root, rootWeight);
+        frames[frameCount++] = new Frame(root, rootWeight, incomingTransitionWeight: 0);
         pathWeight = rootWeight;
         heights[root] = OnStack;
 
@@ -211,21 +216,23 @@ internal static class AstStructuralPreflight
             if (!TryGetChild(frame.Node, frame.NextChildIndex, out var child))
             {
                 // All children processed: this node's weighted height is now exact.
-                var height = frame.MaxChildHeight + frame.Weight;
+                var height = frame.MaxChildHeight + frame.NodeWeight;
+                var heightAtParent = frame.IncomingTransitionWeight + height;
                 heights[frame.Node] = height;
-                pathWeight -= frame.Weight;
+                pathWeight -= frame.NodeWeight + frame.IncomingTransitionWeight;
                 frameCount--;
                 if (frameCount > 0)
                 {
                     ref var parent = ref frames[frameCount - 1];
-                    if (height > parent.MaxChildHeight)
-                        parent.MaxChildHeight = height;
+                    if (heightAtParent > parent.MaxChildHeight)
+                        parent.MaxChildHeight = heightAtParent;
                 }
 
                 continue;
             }
 
             frame.NextChildIndex++;
+            var transitionWeight = TransitionWeight(frame.Node, child, profile);
 
             if (heights.TryGetValue(child, out var childHeight))
             {
@@ -235,48 +242,42 @@ internal static class AstStructuralPreflight
                 // Completed shared node: the deepest path through THIS occurrence is the
                 // current weighted path plus the memoized weighted height — judged
                 // without re-walking the shared subtree.
-                if (pathWeight + childHeight > maxDepth)
+                if (pathWeight + transitionWeight + childHeight > maxDepth)
                     return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child));
 
-                if (childHeight > frame.MaxChildHeight)
-                    frame.MaxChildHeight = childHeight;
+                var childHeightAtParent = transitionWeight + childHeight;
+                if (childHeightAtParent > frame.MaxChildHeight)
+                    frame.MaxChildHeight = childHeightAtParent;
                 continue;
             }
 
-            var childWeight = Weight(child, profile);
-            if (pathWeight + childWeight > maxDepth)
+            var childWeight = NodeWeight(child, profile);
+            if (pathWeight + transitionWeight + childWeight > maxDepth)
                 return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child));
 
             heights[child] = OnStack;
             if (frameCount == frames.Length)
                 Array.Resize(ref frames, frames.Length * 2);
-            frames[frameCount++] = new Frame(child, childWeight);
-            pathWeight += childWeight;
+            frames[frameCount++] = new Frame(child, childWeight, transitionWeight);
+            pathWeight += transitionWeight + childWeight;
         }
 
         return null;
     }
 
     /// <summary>
-    /// Structural depth cost of one node under the gate's consumer profile. On the
-    /// evaluator gates: the internal sequence-join spines are free WITHIN one kind,
-    /// because every downstream consumer walks single-kind spines iteratively — but
-    /// an ALTERNATION link (a spread whose operand is a construct) re-enters generic
-    /// evaluation recursively (~6 CLR frames per link, measured to overflow a 1 MiB
-    /// Debug stack between 80 and 96 alternations) and therefore weighs EIGHT units,
-    /// admitting at most 37 links under the 300-unit ceiling (≥2.1x Debug margin).
-    /// The machine-evaluated unary/binary/index/list spines still cost one unit each
-    /// so that the small-framed recursive consumers around evaluation — validation
-    /// walk, planner analysis, pattern binding — stay bounded too. A dot-call link costs THREE
-    /// units, because each link's resolution machinery (pipeline planning, algorithm
-    /// resolution, lexical receiver-injection fallback) consumes several large frames —
-    /// process-isolated probes measured pure dot-call chains failing at ~160 links
-    /// (Debug) / ~250 links (Release) on a 1 MiB stack, so the 300-unit evaluation
-    /// ceiling admits at most ~100 links, a ≥1.6x margin in both configurations.
-    /// Everything else is one level everywhere; the fully-recursive front-end profile
-    /// counts every node as one level.
+    /// Base structural-depth cost of one node under the gate's consumer profile. On the
+    /// evaluator gates the internal sequence-join nodes are zero-weight because their
+    /// same-kind spines are iterative; <see cref="TransitionWeight"/> separately charges
+    /// the traversed edges that re-enter recursive evaluation. The machine-evaluated
+    /// unary/binary/index/list nodes still cost one unit each so that the small-framed
+    /// recursive consumers around evaluation — validation walk, planner analysis, pattern
+    /// binding — stay bounded too. A dot-call link costs THREE units because each link's
+    /// resolution machinery consumes several large frames. Everything else is one level;
+    /// the fully-recursive front-end profile has no transition charges and counts every
+    /// node as one level (apart from the established absorbed wrapper weights below).
     /// </summary>
-    private static int Weight(object node, AstConsumerProfile profile)
+    private static int NodeWeight(object node, AstConsumerProfile profile)
     {
         // A Capture node stands for what was previously a Block wrapper PLUS its
         // transparent wrapper Algorithm — two nodes costing two units on every
@@ -297,17 +298,6 @@ internal static class AstStructuralPreflight
         if (profile != AstConsumerProfile.EvaluatorIterativeJoinSpines)
             return 1;
 
-        // The join kinds are free only WITHIN one kind: construct spines flatten
-        // iteratively and consecutive spread layers unwrap iteratively, but each
-        // ALTERNATION — a spread whose operand is a construct — re-enters generic
-        // evaluation recursively (~6 CLR frames per alternation, measured to
-        // overflow a 1 MiB Debug stack between 80 and 96 alternations). Charging
-        // EIGHT units per alternation link admits at most 37 links under the
-        // 300-unit evaluation ceiling, a >=2.1x margin in Debug (>=2.9x Release),
-        // while pure single-kind chains keep their pinned unbounded acceptance.
-        if (node is Expr.SequenceSpread(Expr.SequenceConstruct))
-            return 8;
-
         return node switch
         {
             Expr.SequenceConstruct or Expr.SequenceSpread => 0,
@@ -315,6 +305,112 @@ internal static class AstStructuralPreflight
             _ => 1,
         };
     }
+
+    /// <summary>
+    /// Additional cost of traversing one parent-to-child edge under the evaluator
+    /// profile. Re-entry belongs to the edge the evaluator actually follows, not to every
+    /// path through the parent node: attaching it to the node would make a long iterative
+    /// binary/list/join spine pay for shallow composite siblings that execute sequentially
+    /// and never remain on the CLR stack together.
+    /// </summary>
+    private static int TransitionWeight(object parent, object child, AstConsumerProfile profile)
+    {
+        if (profile != AstConsumerProfile.EvaluatorIterativeJoinSpines
+            || parent is not Expr parentExpr
+            || child is not Expr childExpr)
+        {
+            return 0;
+        }
+
+        // A spine node already contributes its ordinary one-unit node cost. Seven more
+        // units on the delegated edge make that traversed spine layer cost eight in total,
+        // preserving the calibrated re-entry bound without penalizing sibling paths.
+        if (IsExpressionSpineNode(parentExpr)
+            && !IsExpressionSpineNode(childExpr)
+            && HasRecursiveChildren(childExpr))
+        {
+            return SpineReentryWeight - 1;
+        }
+
+        // Spread -> construct is the recursively evaluated ALTERNATION link between the
+        // two iterative join helpers. A construct can then make a separate hand-off to a
+        // non-join composite below; those are distinct nested CLR transitions and each
+        // belongs to its own traversed edge.
+        if (parentExpr is Expr.SequenceSpread && childExpr is Expr.SequenceConstruct)
+            return JoinReentryWeight;
+
+        if (IsJoinNode(parentExpr)
+            && !IsJoinNode(childExpr)
+            && HasRecursiveChildren(childExpr))
+        {
+            return JoinReentryWeight;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Cost of ONE re-entry into the iterative expression-spine machine
+    /// (<c>Evaluator.EvalExpressionSpineCounted</c>). Process-isolated probes measured an
+    /// index/capture alternation surviving ~60 alternations and overflowing a 1 MiB Debug
+    /// stack by ~80, while the corresponding PURE spine and PURE capture chains were safe
+    /// at the same ceiling; charging the delegation point admits at most 27 alternations,
+    /// a >=2.2x margin. Deliberately the same order as
+    /// <see cref="JoinReentryWeight"/>: both are one hand-off from an iterative machine
+    /// into recursive evaluation.
+    /// </summary>
+    private const int SpineReentryWeight = 8;
+
+    /// <summary>
+    /// Classifies the node kinds owned by the iterative expression-spine machine.
+    ///
+    /// <para>Only the operand positions the machine actually drives are inspected. A
+    /// <see cref="Expr.Binary"/>'s or <see cref="Expr.Index"/>'s SECOND operand and a
+    /// list's later elements are siblings on separate paths: the preflight already judges
+    /// each path independently, so a wide-but-shallow expression such as
+    /// <c>1 + f(2) + g(3)</c> pays nothing along its long spine path.</para>
+    /// </summary>
+    private static bool IsExpressionSpineNode(Expr expr)
+        => expr is Expr.Unary or Expr.Binary or Expr.Index or Expr.ListLiteral;
+
+    /// <summary>
+    /// Cost of ONE re-entry from the iterative join machinery into generic recursive
+    /// evaluation. Both re-entry shapes are the same measured frame burst
+    /// (<c>EvalSequenceConstructCounted</c> -> <c>EvalSequenceSpreadOperandItems</c> ->
+    /// <c>Eval</c> -> ...), so they share one constant: the ALTERNATION link (a spread
+    /// directly over a construct) and the HAND-OFF from a join spine to a non-join
+    /// composite. Process-isolated probes measured both classes overflowing a 1 MiB Debug
+    /// stack between 80 and 100 re-entries, so 8 units — admitting at most 37 — keeps a
+    /// >=2.1x margin in Debug and more in Release.
+    /// </summary>
+    private const int JoinReentryWeight = 8;
+
+    /// <summary>
+    /// Classifies the two node kinds owned by the iterative join machinery.
+    ///
+    /// <para>Join spines are walked iteratively, so their LENGTH is genuinely free — an
+    /// arbitrarily long single-kind chain stays a supported, pinned shape. What is not
+    /// free is each hand-off: when a spine's leaf is a non-join composite expression, the
+    /// evaluator recurses into it, and that expression may contain another join spine
+    /// below, so a path can cross the boundary repeatedly. Charging the hand-off rather
+    /// than the spine length is what makes the cost proportional to the frames actually
+    /// consumed — measured identical for one join per level and for sixty-four.</para>
+    ///
+    /// <para>Leaves are excluded because they terminate the spine without recursing, which
+    /// is what keeps pure chains such as <c>SequenceConstruct(prev, Num)</c> free. The leaf
+    /// test is <see cref="TryGetChild"/> itself rather than a duplicated node list, so it
+    /// can never drift from the traversal (and inherits its fail-loud exhaustiveness).</para>
+    ///
+    /// <para>Before this charge, a host-built tree interleaving ONE zero-cost join with
+    /// each weight-1 or weight-2 layer measured exactly at the 300-unit ceiling and then
+    /// terminated the process, while the corresponding pure chains were safe at the very
+    /// same layer counts.</para>
+    /// </summary>
+    private static bool IsJoinNode(Expr expr)
+        => expr is Expr.SequenceConstruct or Expr.SequenceSpread;
+
+    private static bool HasRecursiveChildren(Expr expr)
+        => TryGetChild(expr, 0, out _);
 
     /// <summary>Maps a rejection to the evaluator's structured error protocol.</summary>
     internal static EvalError ToEvalError(AstStructuralRejection rejection, int effectiveLimit)
@@ -351,10 +447,11 @@ internal static class AstStructuralPreflight
             + "Reduce how deeply parentheses, brackets, braces, calls, operators, and patterns nest "
             + "inside one expression, or split the program into smaller named properties.";
 
-    private struct Frame(object node, int weight)
+    private struct Frame(object node, int nodeWeight, int incomingTransitionWeight)
     {
         public readonly object Node = node;
-        public readonly int Weight = weight;
+        public readonly int NodeWeight = nodeWeight;
+        public readonly int IncomingTransitionWeight = incomingTransitionWeight;
         public int NextChildIndex;
         public int MaxChildHeight;
     }
