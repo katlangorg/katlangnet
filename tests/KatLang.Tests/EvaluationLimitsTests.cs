@@ -245,6 +245,49 @@ public class EvaluationLimitsTests
     }
 
     [Theory]
+    [InlineData("F(v) = v\nx = F(x)\nx")]
+    [InlineData("F(v) = v*\nx = F(x)\nx")]
+    public void AlgEnvThunkRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
+    {
+        // The ordinary F body reaches EvalCounted(Param); the spread body reaches the
+        // plain Eval(Param) twin while evaluating the spread operand. In both cases, the
+        // failed value-channel attempt is retained for the established algorithm-channel
+        // fallback. Every zero-parameter AlgEnv re-entry must therefore consume depth or
+        // the retries grow exponentially.
+        const int maxDepth = 24;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = maxDepth });
+
+        Assert.True(result.IsError);
+        Assert.Equal(
+            maxDepth,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
+        Assert.Equal(maxDepth, budget.PeakDepth);
+        Assert.True(
+            budget.ConsumedSteps <= 4L * maxDepth,
+            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+    }
+
+    [Fact]
+    public void UnusedAlgEnvThunkArgument_RemainsLazyAndCheap()
+    {
+        const int maxDepth = 24;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
+            "F(v) = 0\nx = F(x)\nx").Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = maxDepth });
+
+        Assert.False(result.IsError);
+        Assert.Equal(new Result.Atom(0), result.Value.Value);
+        Assert.True(
+            budget.ConsumedSteps <= 4L * maxDepth,
+            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+    }
+
+    [Theory]
     [InlineData("F(v) = 0\nA = F(A)\nA")]
     [InlineData("Bad = 1 / 0\nF(v) = 0\nF(Bad)")]
     public void UnusedResolveArgument_IsNeverEvaluated(string source)
