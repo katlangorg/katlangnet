@@ -8168,24 +8168,44 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var rangeR = WithSpan(
-            callSpan,
-            WithCallCtx(
-                CallDiagnosticName.FromExpression(function),
-                ctx,
-                EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
-        if (rangeR.IsError)
-            return rangeR;
+        // Depth parity with the generic strategy: the fused pipeline consumes this
+        // `range(...)` call as the FILTER's collection argument, which the generic
+        // spelling evaluates inside one depth-only argument-evaluation level
+        // (EvalSequenceBuiltinDotReceiverCounted for the dotted form, the builtin
+        // argument funnel for the plain one). The generic-source adapter
+        // (EvaluateDotReceiverIterationItemsForSequenceOptimizer) already charges its
+        // equivalent level; charging it here too keeps every fused source shape on the
+        // same dynamic depth as the generic path, so a `MaxDepth` verdict cannot depend
+        // on which strategy an unrelated configured budget selected. The outer
+        // collection-argument level is charged once by SequencePipelineOptimizer.TryExecute.
+        if (ctx.Budget.TryEnterArgumentEvaluation() is { } depthError)
+            return AtSpanIfMissing(depthError, callSpan);
 
-        // Optimizer/generic boundary parity: a fused pipeline evaluates the range's
-        // bounds and then iterates them WITHOUT materializing the list, so it must still
-        // reject exactly the sizes the generic `range` builtin rejects. The check
-        // consumes no cumulative budget precisely because nothing is materialized here —
-        // and if the pipeline is not fused after all, the generic path reserves for real,
-        // so the same range is never charged twice.
-        return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
-            ? AtSpanIfMissing(limitError, callSpan)
-            : rangeR;
+        try
+        {
+            var rangeR = WithSpan(
+                callSpan,
+                WithCallCtx(
+                    CallDiagnosticName.FromExpression(function),
+                    ctx,
+                    EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
+            if (rangeR.IsError)
+                return rangeR;
+
+            // Optimizer/generic boundary parity: a fused pipeline evaluates the range's
+            // bounds and then iterates them WITHOUT materializing the list, so it must still
+            // reject exactly the sizes the generic `range` builtin rejects. The check
+            // consumes no cumulative budget precisely because nothing is materialized here —
+            // and if the pipeline is not fused after all, the generic path reserves for real,
+            // so the same range is never charged twice.
+            return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
+                ? AtSpanIfMissing(limitError, callSpan)
+                : rangeR;
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
     }
 
     private static EvalResult<InclusiveRange> EvalBuiltinRangeCallArguments(
@@ -8508,6 +8528,22 @@ public static class Evaluator
     /// both loop strategies charge those budgets identically. With none of those opt-in
     /// budgets, every requested optimization remains eligible. This is strategy
     /// independence by construction rather than by parallel accounting.</para>
+    ///
+    /// <para><b>This construction covers OPT-IN budgets only.</b> It works because an
+    /// unconfigured step / cumulative-item / cumulative-string budget has no verdict at
+    /// all, so pinning one strategy from the moment it is configured settles the
+    /// question. An ALWAYS-ACTIVE budget — dynamic depth, the per-collection ceiling,
+    /// the per-string ceiling — has a verdict on every run and therefore cannot be
+    /// protected this way: whichever strategy runs, its accounting is observable. Those
+    /// budgets must instead be EQUALIZED between the strategies
+    /// (<see cref="EvaluationBudget.CheckCollectionSize"/> on the fused range path;
+    /// the argument-evaluation levels charged by
+    /// <c>SequencePipelineOptimizer.TryExecute</c> and
+    /// <see cref="EvaluateRangeCallArgumentsForSequenceOptimizer"/>). Adding a strategy
+    /// switch here is never a way to make an always-active budget safe — and because
+    /// this method's switches are driven by which UNRELATED budgets the caller
+    /// configured, any inequality between the strategies becomes cross-talk. Pinned by
+    /// <c>BudgetCrossTalkMatrixTests</c>.</para>
     /// </summary>
     private static EvalCtx CreateRootCtx(
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,

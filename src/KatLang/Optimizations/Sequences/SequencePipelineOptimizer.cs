@@ -17,6 +17,18 @@ internal static class SequencePipelineOptimizer
         Recognized,
     }
 
+    private readonly record struct BuiltinRangeSourceSyntax(
+        Expr Function,
+        OutputBundle Arguments,
+        SourceSpan? Span);
+
+    private readonly record struct FilterCountPipelinePreparation(
+        FilterCountPipelineSyntax Syntax,
+        Algorithm Predicate,
+        Expr? PredicateExpression,
+        BuiltinRangeSourceSyntax? DirectRangeSource,
+        string DirectRangeFallbackReason);
+
     internal static bool TryExecute(
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
@@ -25,28 +37,95 @@ internal static class SequencePipelineOptimizer
         SequencePipelineDiagnostics? diagnostics,
         out EvalResult<Evaluator.CountedResult> result)
     {
-        var status = TryRecognizeFilterCountPipeline(
+        result = default;
+
+        // Purely syntactic shape recognition: no lookup, no evaluation, no budget
+        // charge. An expression that is not a filter-count pipeline therefore reaches
+        // the generic evaluator having consumed nothing here.
+        if (!TryRecognizeFilterCountSyntax(invocation, out var syntax, out var syntaxFallbackReason))
+        {
+            if (syntaxFallbackReason is not null)
+            {
+                RecordFilterCountFallback(
+                    diagnostics,
+                    diagnostics is null
+                        ? null
+                        : CreateDiagnosticPlan(
+                            syntax.Form,
+                            syntax.Source,
+                            predicateExpr: null,
+                            predicateAlg: null),
+                    syntaxFallbackReason);
+            }
+
+            return false;
+        }
+
+        // Finish every PURE eligibility check before committing to fusion. In
+        // particular, an optimizer-disabled run and a lookup/shape fallback must not
+        // charge PeakDepth merely because the tree looked like a candidate. That would
+        // make the forced-generic oracle pass through the same accounting under review.
+        var preparationStatus = TryPrepareFilterCountPipeline(
+            syntax,
             invocation,
             services,
             ctx,
             diagnostics,
-            out var plan,
-            out result);
-
-        if (status is FilterCountRecognitionStatus.NotRecognized or FilterCountRecognitionStatus.Fallback)
-        {
-            result = default;
+            out var preparation);
+        if (preparationStatus is FilterCountRecognitionStatus.NotRecognized or FilterCountRecognitionStatus.Fallback)
             return false;
-        }
+        if (preparationStatus != FilterCountRecognitionStatus.Recognized)
+            throw new InvalidOperationException($"Unexpected filter-count preparation status '{preparationStatus}'.");
 
-        if (status == FilterCountRecognitionStatus.Error)
+        // Dynamic depth is an ALWAYS-ACTIVE budget, so it cannot be made
+        // strategy-independent the way the opt-in step and cumulative budgets are —
+        // `Evaluator.CreateRootCtx` protects those by forcing the generic strategy
+        // once they are configured, which presupposes an unconfigured state where the
+        // budget has no verdict. Depth always has one, so it has to be EQUALIZED here
+        // instead, exactly as the always-active per-collection ceiling already is
+        // (`EvaluationBudget.CheckCollectionSize`).
+        //
+        // The generic spelling evaluates this pipeline's collection argument through
+        // one depth-only argument-evaluation level and runs the filter callbacks
+        // INSIDE it (`Evaluator.EvalSequenceBuiltinDotReceiverCounted`, or the
+        // plain-call argument funnel). A fused pipeline that elided that level would
+        // let the same program survive a depth limit the generic strategy rejects,
+        // and which strategy runs depends on which UNRELATED budgets the caller
+        // configured — so an unrelated, non-binding `MaxStringLength` would decide a
+        // `MaxDepth` verdict.
+        //
+        // This is the COMMIT point: all remaining paths either evaluate the source and
+        // execute fusion or return a committed source-evaluation error. When the level
+        // is unavailable the generic path charges the same funnel and reports the same
+        // limit error, so fallback cannot mask or double-charge a limit.
+        if (ctx.Budget.TryEnterArgumentEvaluation() is not null)
+            return false;
+
+        try
+        {
+            var status = TryCreateFilterCountPlan(
+                preparation,
+                services,
+                ctx,
+                diagnostics,
+                out var plan,
+                out result);
+
+            if (status == FilterCountRecognitionStatus.Error)
+                return true;
+            if (status != FilterCountRecognitionStatus.Recognized)
+                throw new InvalidOperationException($"Unexpected committed filter-count status '{status}'.");
+
+            result = WithContext(
+                plan!.EvaluationSyntax,
+                ctx,
+                ExecuteFilterCount(plan, ctx, valEnv, diagnostics));
             return true;
-
-        result = WithContext(
-            plan!.EvaluationSyntax,
-            ctx,
-            ExecuteFilterCount(plan, ctx, valEnv, diagnostics));
-        return true;
+        }
+        finally
+        {
+            ctx.Budget.ExitInvocation();
+        }
     }
 
     private static string FormName(FilterCountPipelineForm form)
@@ -58,36 +137,21 @@ internal static class SequencePipelineOptimizer
             _ => form.ToString(),
         };
 
-    private static FilterCountRecognitionStatus TryRecognizeFilterCountPipeline(
+    /// <summary>
+    /// Everything after the purely syntactic shape match that can still reject fusion
+    /// without evaluating source or callback code. No budget is charged here; the
+    /// caller enters the collection-argument depth level only after this method returns
+    /// <see cref="FilterCountRecognitionStatus.Recognized"/>.
+    /// </summary>
+    private static FilterCountRecognitionStatus TryPrepareFilterCountPipeline(
+        FilterCountPipelineSyntax syntax,
         SequencePipelineInvocation invocation,
         SequencePipelineEvaluationServices services,
         Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
-        out FilterCountPipelinePlan? plan,
-        out EvalResult<Evaluator.CountedResult> result)
+        out FilterCountPipelinePreparation preparation)
     {
-        plan = null;
-        result = default;
-
-        if (!TryRecognizeFilterCountSyntax(invocation, out var syntax, out var fallbackReason))
-        {
-            if (fallbackReason is not null)
-            {
-                RecordFilterCountFallback(
-                    diagnostics,
-                    diagnostics is null
-                        ? null
-                        : CreateDiagnosticPlan(
-                            syntax.Form,
-                            syntax.Source,
-                            predicateExpr: null,
-                            predicateAlg: null),
-                    fallbackReason);
-                return FilterCountRecognitionStatus.Fallback;
-            }
-
-            return FilterCountRecognitionStatus.NotRecognized;
-        }
+        preparation = default;
 
         var predicateExpr = TryGetPredicateExpression(syntax);
         var diagnosticPlan = diagnostics is null
@@ -109,11 +173,11 @@ internal static class SequencePipelineOptimizer
         return syntax.Form switch
         {
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
-                TryNormalizeDotFilterCount(
-                    syntax, services, ctx, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
+                TryPrepareDotFilterCount(
+                    syntax, services, diagnostics, predicateExpr, diagnosticPlan, out preparation),
             FilterCountPipelineForm.PlainCountPlainFilter =>
-                TryNormalizePlainFilterCount(
-                    syntax, services, ctx, diagnostics, predicateExpr, diagnosticPlan, out plan, out result),
+                TryPreparePlainFilterCount(
+                    syntax, services, diagnostics, predicateExpr, diagnosticPlan, out preparation),
             _ => throw new InvalidOperationException($"Unsupported filter-count pipeline form '{syntax.Form}'."),
         };
     }
@@ -295,18 +359,15 @@ internal static class SequencePipelineOptimizer
         return !ReferenceEquals(supplied, expression);
     }
 
-    private static FilterCountRecognitionStatus TryNormalizeDotFilterCount(
+    private static FilterCountRecognitionStatus TryPrepareDotFilterCount(
         FilterCountPipelineSyntax syntax,
         SequencePipelineEvaluationServices services,
-        Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
         Expr? predicateExpr,
         SequencePipelinePlan? diagnosticPlan,
-        out FilterCountPipelinePlan? plan,
-        out EvalResult<Evaluator.CountedResult> result)
+        out FilterCountPipelinePreparation preparation)
     {
-        plan = null;
-        result = default;
+        preparation = default;
 
         if (syntax.DotFilterArgs is null || syntax.DotFilterArgs.Count == 0)
         {
@@ -364,53 +425,29 @@ internal static class SequencePipelineOptimizer
 
         var predicateAlg = predicateArgsR.Value[0];
 
-        // Source evaluation is the COMMIT point. After TryCreateSourcePlan returns
-        // Recognized the source has been observed (a generic receiver iterated, or
-        // a direct range's bounds evaluated), and there is NO further fallback: the
-        // predicate is already resolved, so the only remaining step is fused
-        // execution. A source-evaluation failure is propagated as a committed
-        // optimized-path error (Error status), never a fallback that would
-        // re-evaluate the source.
-        var sourcePlanStatus = TryCreateSourcePlan(
+        var isDirectRange = TryRecognizeBuiltinRangeSource(
             syntax.Source,
             services,
-            diagnostics,
+            out var directRangeSource,
+            out var directRangeFallbackReason);
+        preparation = new FilterCountPipelinePreparation(
             syntax,
-            ctx,
-            () => services.EvaluateDotReceiverIterationItems(syntax.Source),
-            out var sourcePlan,
-            out result);
-        if (sourcePlanStatus == FilterCountRecognitionStatus.Error)
-            return FilterCountRecognitionStatus.Error;
-        if (sourcePlanStatus != FilterCountRecognitionStatus.Recognized)
-            throw new InvalidOperationException($"Unexpected source-plan status '{sourcePlanStatus}'.");
-
-        var sourceKind = SourceKind(sourcePlan!);
-        plan = new FilterCountPipelinePlan(
-            syntax.Source,
-            sourcePlan!,
             predicateAlg,
-            syntax.Form,
             predicateExpr,
-            syntax,
-            diagnostics is null
-                ? null
-                : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
+            isDirectRange ? directRangeSource : null,
+            directRangeFallbackReason);
         return FilterCountRecognitionStatus.Recognized;
     }
 
-    private static FilterCountRecognitionStatus TryNormalizePlainFilterCount(
+    private static FilterCountRecognitionStatus TryPreparePlainFilterCount(
         FilterCountPipelineSyntax syntax,
         SequencePipelineEvaluationServices services,
-        Evaluator.EvalCtx ctx,
         SequencePipelineDiagnostics? diagnostics,
         Expr? predicateExpr,
         SequencePipelinePlan? diagnosticPlan,
-        out FilterCountPipelinePlan? plan,
-        out EvalResult<Evaluator.CountedResult> result)
+        out FilterCountPipelinePreparation preparation)
     {
-        plan = null;
-        result = default;
+        preparation = default;
 
         var filterFunction = syntax.PlainFilterFunction!;
         var filterArgs = syntax.PlainFilterArgs!;
@@ -452,131 +489,39 @@ internal static class SequencePipelineOptimizer
         }
 
         // Plain `count(filter(SOURCE, pred))` only fuses a direct builtin-range
-        // source. Use a range-ONLY probe that never evaluates a
-        // generic/non-range source: evaluating a generic source here only to
-        // reject the plan would double-evaluate it once the path falls back to
-        // the generic evaluator. Non-range sources are deferred WITHOUT being
-        // evaluated here, so the generic evaluator runs them exactly once.
-        var sourcePlanStatus = TryCreateDirectRangeSourcePlan(
+        // source. Recognition is lookup-only and never evaluates range bounds or a
+        // generic/non-range source, so a fallback remains budget- and side-effect-free.
+        if (!TryRecognizeBuiltinRangeSource(
             syntax.Source,
             services,
-            diagnostics,
-            syntax,
-            ctx,
-            out var sourcePlan,
-            out result);
-        if (sourcePlanStatus == FilterCountRecognitionStatus.Error)
-            return FilterCountRecognitionStatus.Error;
-        if (sourcePlanStatus != FilterCountRecognitionStatus.Recognized)
+            out var directRangeSource,
+            out var directRangeFallbackReason))
         {
-            result = default;
+            diagnostics?.RecordDirectRangeFusionFallback(directRangeFallbackReason);
             RecordFilterCountFallback(diagnostics, diagnosticPlan, "non-range source for plain filter-count");
             return FilterCountRecognitionStatus.Fallback;
         }
 
-        var sourceKind = SourceKind(sourcePlan!);
         var predicateAlg = filterArgAlgsR.Value[1];
-        plan = new FilterCountPipelinePlan(
-            syntax.Source,
-            sourcePlan!,
-            predicateAlg,
-            syntax.Form,
-            predicateExpr,
+        preparation = new FilterCountPipelinePreparation(
             syntax,
-            diagnostics is null
-                ? null
-                : CreateDiagnosticPlan(syntax.Form, syntax.Source, predicateExpr, predicateAlg, sourceKind));
+            predicateAlg,
+            predicateExpr,
+            directRangeSource,
+            DirectRangeFallbackReason: "");
         return FilterCountRecognitionStatus.Recognized;
     }
 
-    // Range-only source probe for the plain filter-count path. Unlike
-    // TryCreateSourcePlan it NEVER evaluates a generic/non-range source: it only
-    // commits to fusion for a direct builtin-range source (whose bounds it must
-    // evaluate to fuse). A non-range source is deferred to the generic evaluator
-    // WITHOUT being touched here, so falling back never double-evaluates it.
-    private static FilterCountRecognitionStatus TryCreateDirectRangeSourcePlan(
+    /// <summary>
+    /// Lookup-only direct-range recognition. This method never evaluates a bound or a
+    /// generic source, which lets the caller establish the exact depth-charge commit
+    /// point after every possible optimizer fallback.
+    /// </summary>
+    private static bool TryRecognizeBuiltinRangeSource(
         Expr source,
         SequencePipelineEvaluationServices services,
-        SequencePipelineDiagnostics? diagnostics,
-        FilterCountPipelineSyntax evaluationSyntax,
-        Evaluator.EvalCtx ctx,
-        out FilterCountSourcePlan? sourcePlan,
-        out EvalResult<Evaluator.CountedResult> result)
-    {
-        sourcePlan = null;
-        result = default;
-
-        var rangeSourceR = WithContext(
-            evaluationSyntax,
-            ctx,
-            TryEvaluateBuiltinRangeSource(source, services));
-        if (rangeSourceR.IsError)
-        {
-            // The direct builtin-range bounds themselves failed to evaluate.
-            // Surface that error; no non-range source was evaluated here, so there
-            // is no double evaluation.
-            result = rangeSourceR.Error;
-            return FilterCountRecognitionStatus.Error;
-        }
-
-        if (rangeSourceR.Value.IsDirectRange)
-        {
-            sourcePlan = new FilterCountSourcePlan.DirectRange(rangeSourceR.Value.Range);
-            return FilterCountRecognitionStatus.Recognized;
-        }
-
-        // Non-range source: defer to the generic evaluator without evaluating it.
-        diagnostics?.RecordDirectRangeFusionFallback(rangeSourceR.Value.FallbackReason);
-        return FilterCountRecognitionStatus.Fallback;
-    }
-
-    private static FilterCountRecognitionStatus TryCreateSourcePlan(
-        Expr source,
-        SequencePipelineEvaluationServices services,
-        SequencePipelineDiagnostics? diagnostics,
-        FilterCountPipelineSyntax evaluationSyntax,
-        Evaluator.EvalCtx ctx,
-        Func<EvalResult<IReadOnlyList<Evaluator.CountedResult>>> evaluateGenericSource,
-        out FilterCountSourcePlan? sourcePlan,
-        out EvalResult<Evaluator.CountedResult> result)
-    {
-        sourcePlan = null;
-        result = default;
-
-        var rangeSourceR = WithContext(
-            evaluationSyntax,
-            ctx,
-            TryEvaluateBuiltinRangeSource(source, services));
-        if (rangeSourceR.IsError)
-        {
-            result = rangeSourceR.Error;
-            return FilterCountRecognitionStatus.Error;
-        }
-
-        if (rangeSourceR.Value.IsDirectRange)
-        {
-            sourcePlan = new FilterCountSourcePlan.DirectRange(rangeSourceR.Value.Range);
-            return FilterCountRecognitionStatus.Recognized;
-        }
-
-        diagnostics?.RecordDirectRangeFusionFallback(rangeSourceR.Value.FallbackReason);
-
-        var sourceItemsR = WithContext(evaluationSyntax, ctx, evaluateGenericSource());
-        if (sourceItemsR.IsError)
-        {
-            result = sourceItemsR.Error;
-            return FilterCountRecognitionStatus.Error;
-        }
-
-        sourcePlan = new FilterCountSourcePlan.Generic(
-            sourceItemsR.Value,
-            rangeSourceR.Value.FallbackReason);
-        return FilterCountRecognitionStatus.Recognized;
-    }
-
-    private static EvalResult<SequencePipelineRangeSourceEvaluation> TryEvaluateBuiltinRangeSource(
-        Expr source,
-        SequencePipelineEvaluationServices services)
+        out BuiltinRangeSourceSyntax rangeSource,
+        out string fallbackReason)
     {
         // Recognized plain sources are bare expressions (a spread filter
         // argument is an ordinary arity error and never reaches this probe).
@@ -586,27 +531,104 @@ internal static class SequencePipelineOptimizer
         source = UnwrapSpread(source);
 
         if (source is not Expr.Call(var function, var callArgs))
-            return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
-                SequencePipelineRangeSourceEvaluation.Fallback("source is not builtin range"));
+        {
+            rangeSource = default;
+            fallbackReason = "source is not builtin range";
+            return false;
+        }
 
         var calleeR = services.ResolveAlgorithm(function);
         if (calleeR.IsError || !IsBuiltin(calleeR.Value, BuiltinId.@range))
         {
-            return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
-                SequencePipelineRangeSourceEvaluation.Fallback("source is not builtin range"));
+            rangeSource = default;
+            fallbackReason = "source is not builtin range";
+            return false;
         }
 
         if (callArgs.Count != 2)
         {
-            return EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
-                SequencePipelineRangeSourceEvaluation.Fallback("range argument shape unsupported"));
+            rangeSource = default;
+            fallbackReason = "range argument shape unsupported";
+            return false;
         }
 
-        var rangeR = services.EvaluateRangeCallArguments(function, callArgs, source.Span);
-        return rangeR.IsError
-            ? rangeR.Error
-            : EvalResult<SequencePipelineRangeSourceEvaluation>.Ok(
-                SequencePipelineRangeSourceEvaluation.Direct(rangeR.Value));
+        rangeSource = new BuiltinRangeSourceSyntax(function, callArgs, source.Span);
+        fallbackReason = "";
+        return true;
+    }
+
+    /// <summary>
+    /// The committed fused region. The caller holds the outer collection-argument
+    /// depth level across source evaluation and the later callbacks. No fallback is
+    /// possible from here: source failures are returned as optimized-path errors.
+    /// </summary>
+    private static FilterCountRecognitionStatus TryCreateFilterCountPlan(
+        FilterCountPipelinePreparation preparation,
+        SequencePipelineEvaluationServices services,
+        Evaluator.EvalCtx ctx,
+        SequencePipelineDiagnostics? diagnostics,
+        out FilterCountPipelinePlan? plan,
+        out EvalResult<Evaluator.CountedResult> result)
+    {
+        plan = null;
+        result = default;
+
+        FilterCountSourcePlan sourcePlan;
+        if (preparation.DirectRangeSource is { } directRangeSource)
+        {
+            var rangeR = WithContext(
+                preparation.Syntax,
+                ctx,
+                services.EvaluateRangeCallArguments(
+                    directRangeSource.Function,
+                    directRangeSource.Arguments,
+                    directRangeSource.Span));
+            if (rangeR.IsError)
+            {
+                result = rangeR.Error;
+                return FilterCountRecognitionStatus.Error;
+            }
+
+            sourcePlan = new FilterCountSourcePlan.DirectRange(rangeR.Value);
+        }
+        else
+        {
+            if (preparation.Syntax.Form == FilterCountPipelineForm.PlainCountPlainFilter)
+                throw new InvalidOperationException("A committed plain filter-count pipeline must have a direct range source.");
+
+            diagnostics?.RecordDirectRangeFusionFallback(preparation.DirectRangeFallbackReason);
+            var sourceItemsR = WithContext(
+                preparation.Syntax,
+                ctx,
+                services.EvaluateDotReceiverIterationItems(preparation.Syntax.Source));
+            if (sourceItemsR.IsError)
+            {
+                result = sourceItemsR.Error;
+                return FilterCountRecognitionStatus.Error;
+            }
+
+            sourcePlan = new FilterCountSourcePlan.Generic(
+                sourceItemsR.Value,
+                preparation.DirectRangeFallbackReason);
+        }
+
+        var sourceKind = SourceKind(sourcePlan);
+        plan = new FilterCountPipelinePlan(
+            preparation.Syntax.Source,
+            sourcePlan,
+            preparation.Predicate,
+            preparation.Syntax.Form,
+            preparation.PredicateExpression,
+            preparation.Syntax,
+            diagnostics is null
+                ? null
+                : CreateDiagnosticPlan(
+                    preparation.Syntax.Form,
+                    preparation.Syntax.Source,
+                    preparation.PredicateExpression,
+                    preparation.Predicate,
+                    sourceKind));
+        return FilterCountRecognitionStatus.Recognized;
     }
 
     private static EvalResult<Evaluator.CountedResult> ExecuteFilterCount(

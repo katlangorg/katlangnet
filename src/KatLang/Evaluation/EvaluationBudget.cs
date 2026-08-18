@@ -64,6 +64,18 @@ internal sealed class EvaluationBudget
     /// depend on which internal execution strategy ran — the same strategy-independence
     /// rule <see cref="HasStepLimit"/> and <see cref="HasConfiguredStringLimit"/>
     /// already apply.
+    ///
+    /// <para>These flags may select a strategy only to protect an opt-in budget verdict,
+    /// and a new flag must not be added as a substitute for equalizing an always-active
+    /// one. <see cref="HasConfiguredStringLimit"/> deliberately groups the explicit
+    /// per-string and cumulative-string policies, but that does not make the per-string
+    /// ceiling opt-in: it still has a verdict on every run. Forcing a strategy protects
+    /// a budget only while there is an unconfigured state in which it has no verdict; depth
+    /// (<see cref="TryEnterInvocation"/>, <see cref="TryEnterArgumentEvaluation"/>), the
+    /// per-collection ceiling, and the per-string ceiling have a verdict on every run,
+    /// so they must be EQUALIZED between the strategies instead — see
+    /// <see cref="CheckCollectionSize"/> and the notes on
+    /// <c>Evaluator.CreateRootCtx</c>.</para>
     /// </summary>
     internal bool HasConfiguredMaterializationLimit { get; }
 
