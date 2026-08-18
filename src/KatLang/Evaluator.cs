@@ -2408,46 +2408,124 @@ public static class Evaluator
     private static Expr EmptyResultExpr()
         => new Expr.EmptySequence(0);
 
-    private static Expr ResultToExpr(Result result)
+    /// <summary>
+    /// Post-order rebuild with explicit frames and a REFERENCE-IDENTITY memo, the same
+    /// discipline as <see cref="Result.Normalize"/>: reification is a pure function of the
+    /// node — each kind maps to its expression form using only the node's own kind and its
+    /// children's reified forms, with no parent, position, span, or evaluator context — so
+    /// one node's expression is built once per conversion scope and REUSED at every shared
+    /// occurrence. A value is a DAG, not a tree (<c>Wrap = [x, x]</c> + <c>repeat</c>
+    /// reaches n+1 distinct nodes through 2^n root-to-leaf paths in n in-budget steps), so
+    /// a rebuild proportional to PATHS is exponential on ordinary in-budget values, and no
+    /// evaluation budget bounds it: the blow-up happens inside one uncharged conversion.
+    /// Lean: <c>resultToExpr</c> — a pure function on inductive values, where reference
+    /// sharing is not expressible; the memo is C#-only implementation machinery.
+    ///
+    /// <para>The produced expression preserves the input's sharing as a shared (acyclic)
+    /// <see cref="Expr"/> subgraph — an explicitly supported AST shape (the structural
+    /// preflight and the pre-evaluation walker are reference-memoized for exactly this).
+    /// Reified nodes are immutable and spanless, no evaluator cache keys on
+    /// <see cref="Expr"/> reference identity, and evaluation work is charged per VISIT,
+    /// so a shared subexpression still evaluates once per semantic occurrence: sharing
+    /// changes host object topology only. Reified values nest as deep as any runtime
+    /// value (unbounded — see the depth note on <see cref="Result"/>), so the walk stays
+    /// iterative. A direct call owns one operation-local memo; the multi-output
+    /// <see cref="CountedArgAlgorithm"/> path deliberately shares one memo across every
+    /// emitted root in the ONE wrapper it is building, because those roots can share a
+    /// deep subgraph. Nothing is cached on a <see cref="Result"/> or across wrappers.
+    /// The direct-call memo is allocated lazily on the first nested descent, so flat
+    /// structures allocate none. Leaves reify fresh per converting edge (bounded by the
+    /// unique edge count); only structure nodes are memoized. Termination relies on the
+    /// acyclicity every constructible value has.</para>
+    ///
+    /// <para><paramref name="observations"/> is the passive run-scoped observer: one
+    /// <see cref="EvaluationObservations.RecordResultToExprStructureExpansion"/> per
+    /// structure node expanded (frame pushed), pinned by the shared-value-graph
+    /// regressions to the distinct-structure-node count. Internal for those tests;
+    /// production reaches this only through <see cref="CountedArgAlgorithm"/>, which
+    /// passes the run's observer.</para>
+    /// </summary>
+    internal static Expr ResultToExpr(Result result, EvaluationObservations? observations = null)
+        => ResultToExpr(result, observations, sharedMemo: null);
+
+    /// <summary>
+    /// Core conversion. A non-null <paramref name="sharedMemo"/> extends the conversion scope
+    /// across several roots of one output bundle; it never escapes the operation that owns it.
+    /// Scalar/string/empty-sequence leaves deliberately bypass the memo and remain one fresh
+    /// expression per explicit incoming edge.
+    /// </summary>
+    private static Expr ResultToExpr(
+        Result result,
+        EvaluationObservations? observations,
+        Dictionary<Result, Expr>? sharedMemo)
     {
         if (ResultToExprLeaf(result) is { } leaf)
             return leaf;
 
-        // Reified values nest as deep as any runtime value (unbounded — see
-        // the depth note on Result), so the rebuild is an iterative post-order
-        // walk: each frame fills a fresh array of converted children, and a
-        // completed frame hands its expression to the parent frame's open slot.
+        if (sharedMemo is not null && sharedMemo.TryGetValue(result, out var sharedRoot))
+            return sharedRoot;
+
         var frames = new Stack<ResultToExprFrame>();
+        // One completed expression per distinct nested structure node reached, for the
+        // duration of THIS conversion scope only. A direct call allocates it on the first
+        // nested descent; a multi-root counted-argument conversion supplies its wrapper-local
+        // memo so sharing between emitted roots is preserved too.
+        var memo = sharedMemo;
         frames.Push(new ResultToExprFrame(result));
-        Expr? completed = null;
+        observations?.RecordResultToExprStructureExpansion();
 
         while (true)
         {
             var frame = frames.Peek();
-            if (completed is not null)
-            {
-                frame.Converted[frame.Next++] = completed;
-                completed = null;
-            }
 
             while (frame.Next < frame.Converted.Length)
             {
-                if (ResultToExprLeaf(frame.Source[frame.Next]) is not { } childLeaf)
+                var child = frame.Source[frame.Next];
+                if (ResultToExprLeaf(child) is { } childLeaf)
+                    frame.Converted[frame.Next++] = childLeaf;
+                else if (memo is not null && memo.TryGetValue(child, out var reified))
+                    frame.Converted[frame.Next++] = reified;
+                else
                     break;
-                frame.Converted[frame.Next++] = childLeaf;
             }
 
             if (frame.Next < frame.Converted.Length)
             {
+                memo ??= new Dictionary<Result, Expr>(ReferenceEqualityComparer.Instance);
                 frames.Push(new ResultToExprFrame(frame.Source[frame.Next]));
+                observations?.RecordResultToExprStructureExpansion();
                 continue;
             }
 
             frames.Pop();
-            completed = frame.Complete();
+            var completed = frame.Complete();
+            // Commit only after every child has completed. Storing the root matters for the
+            // multi-root wrapper scope: a later emitted root may be this exact node or may reach
+            // it as a descendant. For a direct call the operation-local entry dies on return.
+            memo?.TryAdd(frame.Node, completed);
             if (frames.Count == 0)
                 return completed;
+
+            var parent = frames.Peek();
+            parent.Converted[parent.Next++] = completed;
         }
+    }
+
+    /// <summary>
+    /// Reify all top-level results of ONE counted-argument wrapper with one reference-identity
+    /// memo. The roots remain separate output occurrences, but any structure shared by their
+    /// value graph is converted once and reused. The returned bundle owns the fresh root array;
+    /// the memo is discarded before this method returns.
+    /// </summary>
+    private static OutputBundle ResultsToExprBundle(
+        IReadOnlyList<Result> results,
+        EvaluationObservations? observations)
+    {
+        var converted = new Expr[results.Count];
+        var memo = new Dictionary<Result, Expr>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < results.Count; i++)
+            converted[i] = ResultToExpr(results[i], observations, memo);
+        return OutputBundle.TakeOwnership(converted);
     }
 
     /// <summary>
@@ -2470,6 +2548,7 @@ public static class Evaluator
     /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr"/> walk.</summary>
     private sealed class ResultToExprFrame
     {
+        public readonly Result Node;
         public readonly IReadOnlyList<Result> Source;
         public readonly Expr[] Converted;
         public readonly bool IsSequence;
@@ -2477,6 +2556,7 @@ public static class Evaluator
 
         public ResultToExprFrame(Result structure)
         {
+            Node = structure;
             switch (structure)
             {
                 case Result.SequenceValue(var items):
@@ -2916,9 +2996,8 @@ public static class Evaluator
         OutputBundle output = arg.EmittedCount switch
         {
             0 => [EmptyResultExpr()],
-            1 => [ResultToExpr(arg.Value)],
-            // Freshly materialized here, so ownership transfers copy-free.
-            _ => OutputBundle.TakeOwnership(arg.Value.ToItems().Select(ResultToExpr).ToArray()),
+            1 => [ResultToExpr(arg.Value, ctx.Observations)],
+            _ => ResultsToExprBundle(arg.Value.ToItems(), ctx.Observations),
         };
 
         var algorithm = new Algorithm.User(
