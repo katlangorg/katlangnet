@@ -466,6 +466,29 @@ public static class Evaluator
             : result;
 
     /// <summary>
+    /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for one iterated filter item,
+    /// with the context CONSTRUCTED ONLY ON THE ERROR PATH (see <see cref="WithCallCtx{T}"/>).
+    ///
+    /// <para>This runs once per iterated item, and rendering the item is path-proportional on
+    /// a shared value graph, so eagerly interpolating the message charged every PASSING
+    /// predicate for a diagnostic nothing would ever read.</para>
+    /// </summary>
+    private static EvalResult<T> WithFilterItemCtx<T>(Result item, int index, EvalCtx ctx, EvalResult<T> result)
+        => result.IsError && !result.Error.IsResourceLimit
+            ? new EvalError.WithContext(FilterPredicateItemContext(item, index, ctx.Observations), result.Error) { Span = result.Error.Span }
+            : result;
+
+    private static ErrorContext FilterPredicateItemContext(
+        Result item,
+        int index,
+        EvaluationObservations? observations)
+    {
+        observations?.RecordFilterItemDiagnosticContext();
+        return new TextErrorContext(
+            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item)} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)");
+    }
+
+    /// <summary>
     /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for dot-call contexts,
     /// with the context constructed only on the error path (see
     /// <see cref="WithCallCtx{T}"/>).
@@ -950,7 +973,7 @@ public static class Evaluator
     private static string DescribeNumericScalarOperand(Result value) => value switch
     {
         Result.SequenceValue(var items) => $"a sequence value with {items.Count} {Pluralize(items.Count, "sequence element")}: {FormatResultForDiagnostic(value)}",
-        Result.Str(var text) => $"a string: '{text}'",
+        Result.Str => $"a string: {FormatResultForDiagnostic(value)}",
         Result.Atom(var number) => $"numeric value {number.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
         _ => $"a value: {FormatResultForDiagnostic(value)}",
@@ -959,74 +982,19 @@ public static class Evaluator
     private static string Pluralize(int count, string singular)
         => count == 1 ? singular : singular + "s";
 
+    /// <summary>
+    /// Renders one value as the bounded fragment a diagnostic quotes it by.
+    ///
+    /// <para>A value is a DAG, so this rendering is PATH-proportional by semantics — every
+    /// occurrence is spelled out, and repeated occurrences stay repeated occurrences — which
+    /// on a shared graph an ordinary in-budget loop builds is exponential in the graph's
+    /// size. <see cref="Rendering.DiagnosticValueRenderer"/> therefore bounds the fragment
+    /// DURING construction and abandons the walk once no further visible text can be
+    /// emitted; values that fit the bound render exactly as before. Callers embed the result
+    /// in a message, so the enclosing text is not itself bounded by this cap.</para>
+    /// </summary>
     internal static string FormatResultForDiagnostic(Result value)
-    {
-        switch (value)
-        {
-            case Result.Atom(var number):
-                return number.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            case Result.Str(var str):
-                return $"'{str}'";
-            case Result.SequenceValue:
-            case Result.ListValue:
-                break;
-            default:
-                return "value";
-        }
-
-        // Diagnostic values nest as deep and as wide as any runtime value
-        // (see the depth note on Result), so the walk uses indexed
-        // continuation frames: the builder is the required output; traversal
-        // storage is one suspended frame per open structure level.
-        var text = new System.Text.StringBuilder();
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next, char Close)>();
-        var (items, close) = value switch
-        {
-            Result.SequenceValue(var rootItems) => (rootItems, ')'),
-            Result.ListValue(var rootItems) => (rootItems, ']'),
-            _ => throw new ArgumentException("Diagnostic structure walk requires a sequence or list value.", nameof(value)),
-        };
-        text.Append(close == ')' ? '(' : '[');
-        var next = 0;
-
-        while (true)
-        {
-            if (next >= items.Count)
-            {
-                text.Append(close);
-                if (suspended.Count == 0) return text.ToString();
-                (items, next, close) = suspended.Pop();
-                continue;
-            }
-
-            if (next > 0) text.Append(", ");
-            var child = items[next];
-            next++;
-
-            switch (child)
-            {
-                case Result.Atom(var number):
-                    text.Append(number.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                    break;
-                case Result.Str(var str):
-                    text.Append('\'').Append(str).Append('\'');
-                    break;
-                case Result.SequenceValue(var childItems):
-                    suspended.Push((items, next, close));
-                    (items, next, close) = (childItems, 0, ')');
-                    text.Append('(');
-                    break;
-                case Result.ListValue(var childItems):
-                    suspended.Push((items, next, close));
-                    (items, next, close) = (childItems, 0, ']');
-                    text.Append('[');
-                    break;
-                default:
-                    text.Append("value");
-                    break;
-            }
-        }
-    }
+        => Rendering.DiagnosticValueRenderer.Render(value);
 
     /// <summary>
     /// Require an exact integer-valued number for integer-only builtins.
@@ -4317,7 +4285,7 @@ public static class Evaluator
     private static string DescribeSequenceItem(Result item) => item switch
     {
         Result.Atom(var n) => $"numeric value {n.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-        Result.Str(var s) => $"string value \"{s}\"",
+        Result.Str(var s) => $"string value {Rendering.DiagnosticValueRenderer.RenderDoubleQuotedString(s)}",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",
         Result.ListValue(var items) when items.Count == 0 => "empty list value",
@@ -4450,8 +4418,10 @@ public static class Evaluator
         EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
-        var predicateR = WithCtx(
-            $"while evaluating filter predicate for item {index}: {FormatResultForDiagnostic(item.Value)} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
+        var predicateR = WithFilterItemCtx(
+            item.Value,
+            index,
+            ctx,
             EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
         if (predicateR.IsError)
             return predicateR.Error;

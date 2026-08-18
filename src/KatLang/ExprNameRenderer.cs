@@ -233,14 +233,18 @@ internal static class ExprNameRenderer
     }
 
     /// <summary>
-    /// Returns a prefix length no greater than <paramref name="maximumLength"/> that
-    /// does not split a well-formed UTF-16 surrogate pair at the truncation boundary.
+    /// Returns a prefix length no greater than a non-negative
+    /// <paramref name="maximumLength"/> that does not split a well-formed UTF-16
+    /// surrogate pair at the truncation boundary. A non-positive maximum returns zero.
     /// Ill-formed caller text is otherwise preserved; the renderer never creates a
     /// new unpaired surrogate from a valid payload.
+    ///
+    /// <para>Shared with <see cref="Rendering.BoundedDiagnosticSink"/> so both bounded
+    /// diagnostic fragments cut text at the same boundary.</para>
     /// </summary>
-    private static int SafePrefixLength(string text, int maximumLength)
+    internal static int SafePrefixLength(string text, int maximumLength)
     {
-        var length = Math.Min(text.Length, maximumLength);
+        var length = Math.Clamp(maximumLength, 0, text.Length);
         if (length > 0
             && length < text.Length
             && char.IsHighSurrogate(text[length - 1])

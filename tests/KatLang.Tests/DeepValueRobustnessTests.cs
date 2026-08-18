@@ -1,3 +1,5 @@
+using KatLang.Rendering;
+
 namespace KatLang.Tests;
 
 /// <summary>
@@ -211,11 +213,15 @@ public class DeepValueRobustnessTests
     [Fact]
     public void DiagnosticFormattingHandlesDeepValues()
     {
-        const int depth = 100_000;
-        var text = Evaluator.FormatResultForDiagnostic(DeepListChain(depth, 0));
-        Assert.Equal(2 * depth + 1, text.Length);
-        Assert.StartsWith("[[[", text);
-        Assert.EndsWith("]]]", text);
-        Assert.Equal('0', text[depth]);
+        // Diagnostic rendering is bounded DURING construction, so a 200,000-level value
+        // cannot ask for a 400,001-character message. Descent is not free: every level
+        // emits its opening bracket, so the budget is spent after exactly
+        // MaxRenderedValueLength levels and the walk stops there. This still exercises
+        // deep structural traversal — 512 suspended frames — with no CLR recursion.
+        var text = Evaluator.FormatResultForDiagnostic(DeepListChain(DirectDepth, 0));
+
+        Assert.Equal(
+            new string('[', DiagnosticValueRenderer.MaxRenderedValueLength) + DiagnosticValueRenderer.TruncationMarker,
+            text);
     }
 }

@@ -1,3 +1,5 @@
+using KatLang.Rendering;
+
 namespace KatLang.Tests;
 
 /// <summary>
@@ -175,8 +177,14 @@ public class WideValueRobustnessTests
     [Fact]
     public void DiagnosticFormattingHandlesWideValues()
     {
-        var expected = $"[{string.Join(", ", Enumerable.Range(0, Wide))}]";
-        Assert.Equal(expected, Evaluator.FormatResultForDiagnostic(WideList(Wide)));
+        // The full expansion is ~588,000 characters. The diagnostic fragment is bounded
+        // during construction, so the renderer emits the budgeted prefix of exactly that
+        // text and stops — the naive expansion is the oracle, never the output.
+        var full = $"[{string.Join(", ", Enumerable.Range(0, Wide))}]";
+
+        Assert.Equal(
+            full[..DiagnosticValueRenderer.MaxRenderedValueLength] + DiagnosticValueRenderer.TruncationMarker,
+            Evaluator.FormatResultForDiagnostic(WideList(Wide)));
     }
 
     [Fact]

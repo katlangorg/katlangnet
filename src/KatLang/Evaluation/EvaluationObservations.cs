@@ -58,4 +58,16 @@ internal sealed class EvaluationObservations
 
     internal void RecordCallDiagnosticNameRender()
         => CallDiagnosticNameRenderCount = checked(CallDiagnosticNameRenderCount + 1);
+
+    /// <summary>
+    /// Number of per-item <c>filter</c> diagnostic contexts constructed during this run.
+    /// Passing predicates and resource-limit failures observe zero; an ordinary predicate
+    /// failure increments exactly once for the failing item whose context is attached.
+    /// This pins the error-path-only ownership of item rendering in both generic and fused
+    /// filter execution without relying on allocation or timing thresholds.
+    /// </summary>
+    public long FilterItemDiagnosticContextCount { get; private set; }
+
+    internal void RecordFilterItemDiagnosticContext()
+        => FilterItemDiagnosticContextCount = checked(FilterItemDiagnosticContextCount + 1);
 }
