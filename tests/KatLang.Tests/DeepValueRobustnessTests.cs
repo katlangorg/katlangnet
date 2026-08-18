@@ -180,8 +180,22 @@ public class DeepValueRobustnessTests
         // A redundant singleton sequence chain canonicalizes all the way to
         // its leaf; exact list structure is preserved at full depth.
         Assert.Equal(new Result.Atom(4), DeepSingletonSequenceChain(DirectDepth, 4).Normalize());
-        Assert.True(Result.ValueComparer.Equals(
-            DeepListChain(DirectDepth, 0), DeepListChain(DirectDepth, 0).Normalize()));
+
+        // An already-normal chain normalizes to ITSELF, so nothing is rebuilt
+        // and the input graph survives unchanged.
+        var normalChain = DeepListChain(DirectDepth, 0);
+        Assert.Same(normalChain, normalChain.Normalize());
+
+        // ...and the rebuilding path stays iterative at the same depth: one
+        // redundant singleton sequence at the bottom forces every one of the
+        // enclosing list levels to allocate fresh storage.
+        Result redundant = Result.SequenceValue.TakeOwnership([new Result.Atom(0)]);
+        for (var i = 0; i < DirectDepth; i++)
+            redundant = Result.ListValue.TakeOwnership([redundant]);
+
+        var rebuilt = redundant.Normalize();
+        Assert.False(ReferenceEquals(redundant, rebuilt));
+        Assert.True(Result.ValueComparer.Equals(DeepListChain(DirectDepth, 0), rebuilt));
     }
 
     [Fact]

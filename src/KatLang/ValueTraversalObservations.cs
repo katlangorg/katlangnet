@@ -46,4 +46,18 @@ internal sealed class ValueTraversalObservations
 
     internal void RecordHashStructureExpansion()
         => HashStructureExpansionCount = checked(HashStructureExpansionCount + 1);
+
+    /// <summary>
+    /// Number of structure NODES expanded across the <see cref="Result.Normalize"/> operations this
+    /// observer measured: the top-level structure of each normalization, plus every nested sequence
+    /// or list value descended into. Leaves normalize to themselves and record nothing, and a node
+    /// reached again through a second shared reference reuses its memoized normal form, so for ONE
+    /// top-level normalization this stays bounded by the number of distinct reachable structure
+    /// nodes — never the number of expanded tree paths. The memo lives for exactly one top-level
+    /// normalization, so normalizing the same value twice observes twice the count.
+    /// </summary>
+    public long NormalizeStructureExpansionCount { get; private set; }
+
+    internal void RecordNormalizeStructureExpansion()
+        => NormalizeStructureExpansionCount = checked(NormalizeStructureExpansionCount + 1);
 }

@@ -26,17 +26,26 @@ namespace KatLang;
 /// <para>A value is also a DAG, not a tree: an immutable child may be shared by
 /// many parents (<c>W = [x, x]</c> applied n times reaches n+1 distinct nodes
 /// through 2^n root-to-leaf paths), so a walk whose work is proportional to
-/// PATHS is exponential on legally built values. The two walks a shared node can
-/// blow up — structural equality and structural hashing in
-/// <see cref="ValueComparer"/> — therefore memoize by REFERENCE IDENTITY for the
-/// duration of ONE top-level operation: equality expands each ordered
-/// <c>(left, right)</c> reference pair at most once, hashing computes each
-/// node's hash at most once. That memo is the one deliberate exception to the
-/// O(nesting depth) rule above: it is O(distinct nodes or pairs actually
-/// reached), never O(paths), and it is allocated lazily on the first nested
-/// descent so flat values still allocate none. Memo state belongs to one call
-/// and is discarded with it; no hash or comparison result is ever cached on a
+/// PATHS is exponential on legally built values. The three walks a shared node
+/// can blow up — structural equality and structural hashing in
+/// <see cref="ValueComparer"/>, and the <see cref="Normalize"/> rebuild —
+/// therefore memoize by REFERENCE IDENTITY for the duration of ONE top-level
+/// operation: equality expands each ordered <c>(left, right)</c> reference pair
+/// at most once, hashing computes each node's hash at most once, and
+/// normalization computes each node's normal form at most once. That memo is
+/// the one deliberate exception to the O(nesting depth) rule above: it is
+/// O(distinct nodes or pairs actually reached), never O(paths), and it is
+/// allocated lazily on the first nested descent so flat values still allocate
+/// none. Memo state belongs to one call and is discarded with it; no hash,
+/// comparison result, or normal form is ever cached on a
 /// <see cref="Result"/>.</para>
+///
+/// <para>A value-PRODUCING walk must also preserve sharing, or it converts a
+/// compact DAG into the exponentially larger tree its paths spell out and hands
+/// that tree to every later operation. <see cref="Normalize"/> therefore rebuilds
+/// only what actually changes: an already-normal node normalizes to ITSELF, and
+/// a shared child contributes the SAME normalized reference to each of its
+/// parents.</para>
 /// </summary>
 public abstract record Result
 {
@@ -181,58 +190,103 @@ public abstract record Result
     /// list still canonicalizes) but the list boundary itself never collapses.
     /// Lean: Result.normalize
     /// </summary>
-    public Result Normalize()
+    public Result Normalize() => NormalizeCore(observations: null);
+
+    /// <summary>
+    /// <see cref="Normalize"/> with a passive observer recording the structural work the walk
+    /// performs. The observer changes neither the normalized value, the memoization, nor the
+    /// traversal order, and belongs to one measured operation, so counts never cross operations,
+    /// runs, or threads. Used only by the shared-value-graph complexity regressions.
+    /// </summary>
+    internal Result NormalizeObserved(ValueTraversalObservations observations)
+        => NormalizeCore(observations);
+
+    /// <summary>
+    /// Post-order rebuild with explicit frames (see the depth note on the class) and a
+    /// REFERENCE-IDENTITY memo (see the DAG note): normalization is a pure function of the node —
+    /// a sequence collapses when it holds exactly one normalized child and a list never collapses,
+    /// both decided from the node's own kind and its children's normal forms, with no parent,
+    /// position, or accumulator context — so one node's normal form is computed once per top-level
+    /// call and reused at every shared occurrence.
+    ///
+    /// <para>A frame allocates its destination array only when some child's normal form differs
+    /// from the written child, so an already-normal node normalizes to ITSELF: no replacement
+    /// value or child storage is allocated for it, and the input's sharing survives into the
+    /// output unchanged. Termination relies on the acyclicity every constructible value has (a
+    /// node is completed and memoized before any parent can reach it again); an ownership-violating
+    /// aliased graph is not a supported value and has no normal form to produce.</para>
+    /// </summary>
+    private Result NormalizeCore(ValueTraversalObservations? observations)
     {
         if (this is not (SequenceValue or ListValue))
             return this;
 
-        // Post-order rebuild with explicit frames (see the depth note on the
-        // class): each frame fills a fresh array of normalized children, and a
-        // completed frame hands its value to the parent frame's open slot.
         var frames = new Stack<NormalizeFrame>();
+        // One entry per distinct nested structure node reached, for the duration of THIS call
+        // only; allocated on the first nested descent, so flat values allocate none.
+        Dictionary<Result, Result>? memo = null;
         frames.Push(new NormalizeFrame(this));
-        Result? completed = null;
+        observations?.RecordNormalizeStructureExpansion();
 
         while (true)
         {
             var frame = frames.Peek();
-            if (completed is not null)
-            {
-                frame.Normalized[frame.Next++] = completed;
-                completed = null;
-            }
 
-            while (frame.Next < frame.Normalized.Length)
+            while (frame.Next < frame.Count)
             {
                 var child = frame.Source[frame.Next];
-                if (child is SequenceValue or ListValue)
+                if (child is not (SequenceValue or ListValue))
+                {
+                    // A leaf is its own normal form.
+                    frame.Accept(child);
+                }
+                else if (memo is not null && memo.TryGetValue(child, out var normalizedChild))
+                {
+                    frame.Accept(normalizedChild);
+                }
+                else
+                {
                     break;
-                frame.Normalized[frame.Next++] = child;
+                }
             }
 
-            if (frame.Next < frame.Normalized.Length)
+            if (frame.Next < frame.Count)
             {
+                memo ??= new Dictionary<Result, Result>(ReferenceEqualityComparer.Instance);
                 frames.Push(new NormalizeFrame(frame.Source[frame.Next]));
+                observations?.RecordNormalizeStructureExpansion();
                 continue;
             }
 
+            var normalized = frame.Complete();
             frames.Pop();
-            completed = frame.Complete();
             if (frames.Count == 0)
-                return completed;
+                return normalized;
+
+            // Every non-root frame was pushed through the descent above, which allocates the memo.
+            memo![frame.Node] = normalized;
+            frames.Peek().Accept(normalized);
         }
     }
 
-    /// <summary>One in-progress structure rebuild in the <see cref="Normalize"/> walk.</summary>
+    /// <summary>One in-progress structure rebuild in the <see cref="NormalizeCore"/> walk.</summary>
     private sealed class NormalizeFrame
     {
+        public readonly Result Node;
         public readonly IReadOnlyList<Result> Source;
-        public readonly Result[] Normalized;
         public readonly bool IsSequence;
         public int Next;
 
+        /// <summary>
+        /// Destination storage, allocated only once a child's normal form differs from the written
+        /// child. While it is <c>null</c> every accepted child so far IS the written child, so the
+        /// node is its own normal form and no new structure is built.
+        /// </summary>
+        private Result[]? rebuilt;
+
         public NormalizeFrame(Result structure)
         {
+            Node = structure;
             switch (structure)
             {
                 case SequenceValue(var items):
@@ -247,15 +301,38 @@ public abstract record Result
                     throw new ArgumentException(
                         "Normalize frames require a sequence or list value.", nameof(structure));
             }
+        }
 
-            Normalized = new Result[Source.Count];
+        public int Count => Source.Count;
+
+        /// <summary>Fills the open slot with that child's normal form.</summary>
+        public void Accept(Result normalizedChild)
+        {
+            if (rebuilt is null)
+            {
+                if (ReferenceEquals(normalizedChild, Source[Next]))
+                {
+                    Next++;
+                    return;
+                }
+
+                rebuilt = new Result[Source.Count];
+                for (var i = 0; i < Next; i++)
+                    rebuilt[i] = Source[i];
+            }
+
+            rebuilt[Next++] = normalizedChild;
         }
 
         public Result Complete()
         {
-            if (IsSequence)
-                return Normalized is [var single] ? single : SequenceValue.TakeOwnership(Normalized);
-            return ListValue.TakeOwnership(Normalized);
+            if (IsSequence && Source.Count == 1)
+                return rebuilt is null ? Source[0] : rebuilt[0];
+            if (rebuilt is null)
+                return Node;
+            return IsSequence
+                ? SequenceValue.TakeOwnership(rebuilt)
+                : ListValue.TakeOwnership(rebuilt);
         }
     }
 
