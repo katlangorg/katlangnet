@@ -86,13 +86,27 @@ internal sealed class EvaluationBudget
     /// Charges one dynamic algorithm invocation: one step of work, one level of depth.
     /// Returns <c>null</c> when the invocation may proceed, in which case — and only
     /// then — the caller MUST balance it with <see cref="ExitInvocation"/> from a
-    /// <c>finally</c> block. Returns the structured limit error otherwise, with depth
-    /// left unchanged so the failing invocation is never counted as entered.
+    /// <c>finally</c> block. Returns the structured limit error otherwise, with NEITHER
+    /// counter moved so the failing invocation is never counted as entered.
     /// </summary>
     internal EvalError? TryEnterInvocation()
     {
-        if (TryChargeStep() is { } stepError)
-            return stepError;
+        // Every ceiling is CHECKED before either counter moves, so a rejected enter is
+        // non-mutating in the cumulative step counter exactly as it is in depth — the
+        // invocation did not happen, and steps count dynamic invocations and loop
+        // iterations only. Charging the step first instead would count an invocation the
+        // depth (or stack) ceiling refused, which is observable whenever the refusal is
+        // absorbed and the run continues: a resource-limit failure of a parameter's eager
+        // value evaluation is retained on the algorithm binding rather than raised, so a
+        // program that binds such a parameter without demanding its value SUCCEEDS while
+        // having consumed one step per refused invocation. That made a lower MaxDepth
+        // consume more steps than the work performed and flipped an unrelated MaxSteps
+        // verdict — the cross-talk BudgetCrossTalkMatrixTests forbids.
+        //
+        // The step ceiling is still tested FIRST, so when both are exhausted the reported
+        // limit is unchanged.
+        if (_steps >= _maxSteps)
+            return new EvalError.EvaluationStepLimitExceeded(_maxSteps);
 
         if (_depth >= _maxDepth)
             return new EvalError.EvaluationDepthExceeded(_maxDepth);
@@ -106,6 +120,7 @@ internal sealed class EvaluationBudget
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
+        _steps++;
         _depth++;
         if (_depth > PeakDepth) PeakDepth = _depth;
         return null;
@@ -146,10 +161,35 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>
+    /// Dynamic invocation levels currently held open by this run. Observation only, like
+    /// <see cref="PeakDepth"/>: reading it cannot change what is evaluated. It exists so a
+    /// test can assert the scoped protocol's conservation invariant DIRECTLY — every
+    /// admitted level is released exactly once, on every exit path — instead of inferring
+    /// it from remaining capacity. <see cref="SourceProcessingBudget.CurrentDepth"/> is
+    /// the same observation for the front-end module-depth protocol.
+    /// </summary>
+    internal int CurrentDepth => _depth;
+
+    /// <summary>
     /// Leaves a level entered by a successful <see cref="TryEnterInvocation"/> or
     /// <see cref="TryEnterArgumentEvaluation"/>.
+    ///
+    /// <para>Fail-loud on underflow, like <see cref="SourceProcessingBudget.ExitModule"/>.
+    /// A double release is as damaging as a leak and much harder to see: it silently makes
+    /// every later nested region look shallower than it is, so a program can outrun the
+    /// depth ceiling it was supposed to hit, and <see cref="PeakDepth"/> stops meaning
+    /// anything. One comparison per released level is free next to the invocation it
+    /// balances, and it can only fire on an evaluator ownership bug — no input can reach
+    /// it, because a level is released only by the <c>finally</c> that paired with a
+    /// successful enter.</para>
     /// </summary>
-    internal void ExitInvocation() => _depth--;
+    internal void ExitInvocation()
+    {
+        if (_depth <= 0)
+            throw new InvalidOperationException("Cannot exit an evaluation depth level that was not entered.");
+
+        _depth--;
+    }
 
     /// <summary>The enforced single-collection item limit.</summary>
     internal int MaxCollectionItems => _maxCollectionItems;
@@ -246,14 +286,24 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryChargeExpressionNodeWork()
     {
-        _expressionEvaluationCheckpoints++;
-        if ((_expressionEvaluationCheckpoints & 4095) != 0)
+        if (_expressionEvaluationCheckpointsInBatch < 4095)
+        {
+            _expressionEvaluationCheckpointsInBatch++;
             return null;
+        }
 
-        return TryChargeStep();
+        // The boundary checkpoint belongs to the step it completes. Commit the batch
+        // marker only when that step is admitted: if the error is retained and evaluation
+        // continues elsewhere, advancing the marker on rejection would incorrectly admit
+        // another 4095 checkpoints despite an already exhausted step budget.
+        if (TryChargeStep() is { } stepError)
+            return stepError;
+
+        _expressionEvaluationCheckpointsInBatch = 0;
+        return null;
     }
 
-    private long _expressionEvaluationCheckpoints;
+    private int _expressionEvaluationCheckpointsInBatch;
 
     /// <summary>
     /// Charges one unit of semantic work (currently: one dynamic invocation, one
