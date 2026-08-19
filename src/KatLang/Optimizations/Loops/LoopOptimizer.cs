@@ -21,6 +21,12 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         while (true)
         {
+            // Fully-planned iterations bypass every charging budget chokepoint (planned
+            // expressions never re-enter Eval, and this path never runs under a step
+            // budget), so this is the one per-iteration host-cancellation observation.
+            // It must stay observation-only: charging any counter here would break the
+            // pinned optimized-vs-generic accounting parity.
+            ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
             var outputSlots = new List<Result>();
@@ -133,6 +139,9 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         for (var iteration = 0L; iteration < count; iteration++)
         {
+            // Same rule as the optimized while path: fully-planned iterations touch no
+            // charging chokepoint, so observe host cancellation here, observation-only.
+            ctx.Budget.ObserveCancellation();
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
             var outputSlots = new List<Result>();

@@ -14,6 +14,13 @@ namespace KatLang.Evaluation;
 /// <see cref="RunOptions"/> or <see cref="EvaluationLimits"/> instance — always start
 /// with fresh counters. Thread safety is by isolation: one budget belongs to one run on
 /// one thread.</para>
+///
+/// <para>The budget is also the run's cooperative HOST-CANCELLATION observation surface:
+/// every chokepoint method observes the run's <see cref="CancellationToken"/> via
+/// <see cref="ObserveCancellation"/> before touching any counter, so cancellation reaches
+/// exactly the places every unbounded execution shape must already pass through — with no
+/// parallel checkpoint system and no dependence on which opt-in limits are configured.
+/// See <see cref="ObserveCancellation"/> for the contract.</para>
 /// </summary>
 internal sealed class EvaluationBudget
 {
@@ -23,12 +30,13 @@ internal sealed class EvaluationBudget
     private readonly long _maxMaterializedItems;
     private readonly int _maxStringLength;
     private readonly long _maxMaterializedStringChars;
+    private readonly CancellationToken _cancellationToken;
     private int _depth;
     private long _steps;
     private long _materializedItems;
     private long _materializedStringChars;
 
-    internal EvaluationBudget(EvaluationLimits limits)
+    internal EvaluationBudget(EvaluationLimits limits, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(limits);
         _maxDepth = limits.EffectiveMaxDepth;
@@ -37,6 +45,7 @@ internal sealed class EvaluationBudget
         _maxMaterializedItems = limits.EffectiveMaxMaterializedItems ?? long.MaxValue;
         _maxStringLength = limits.EffectiveMaxStringLength;
         _maxMaterializedStringChars = limits.EffectiveMaxMaterializedStringChars ?? long.MaxValue;
+        _cancellationToken = cancellationToken;
         HasStepLimit = limits.EffectiveMaxSteps is not null;
         HasConfiguredStringLimit = limits.MaxStringLength is not null
             || limits.MaxMaterializedStringChars is not null;
@@ -44,8 +53,35 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
-    internal static EvaluationBudget Create(EvaluationLimits? limits)
-        => new(limits ?? EvaluationLimits.Default);
+    internal static EvaluationBudget Create(EvaluationLimits? limits, CancellationToken cancellationToken = default)
+        => new(limits ?? EvaluationLimits.Default, cancellationToken);
+
+    /// <summary>
+    /// Observes the run's host cancellation token, throwing
+    /// <see cref="OperationCanceledException"/> (carrying that token) when cancellation
+    /// has been requested, and doing nothing otherwise. The default token follows the
+    /// framework's fast non-cancellable path.
+    ///
+    /// <para>Cancellation is HOST DEMAND, not a language outcome. It deliberately throws
+    /// instead of returning an <see cref="EvalError"/>: a resource-limit error from a
+    /// parameter's eager value evaluation is RETAINED on the binding and the run
+    /// continues, so a cancellation modeled as an error could be absorbed into a value
+    /// and the cancelled run would keep running. The throw happens BEFORE any counter
+    /// mutation at every chokepoint, so a cancelled checkpoint is non-mutating exactly
+    /// like a rejected enter — the scoped depth protocol stays conserved, admitted
+    /// levels unwind through their ordinary <c>finally</c> releases, and an uncancelled
+    /// token changes no counter, verdict, or result. For the same reason it runs FIRST,
+    /// ahead of every structured limit check: host cancellation preempts limit
+    /// verdicts, and a cancelled token must never instead surface as a step or depth
+    /// error.</para>
+    ///
+    /// <para>Called at the head of every budget chokepoint, and directly by the
+    /// optimized loop executor, whose fully-planned iterations are the one unbounded
+    /// execution shape that otherwise touches no chokepoint (it must stay
+    /// observation-only there — charging anything would break optimized-vs-generic
+    /// accounting parity).</para>
+    /// </summary>
+    internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();
 
     /// <summary>The enforced depth limit (the internal ceiling, or a lower configured value).</summary>
     internal int MaxDepth => _maxDepth;
@@ -87,10 +123,14 @@ internal sealed class EvaluationBudget
     /// Returns <c>null</c> when the invocation may proceed, in which case — and only
     /// then — the caller MUST balance it with <see cref="ExitInvocation"/> from a
     /// <c>finally</c> block. Returns the structured limit error otherwise, with NEITHER
-    /// counter moved so the failing invocation is never counted as entered.
+    /// counter moved so the failing invocation is never counted as entered. A requested
+    /// host cancellation instead throws from <see cref="ObserveCancellation"/> before
+    /// any check or mutation — equally non-mutating, and never a structured error.
     /// </summary>
     internal EvalError? TryEnterInvocation()
     {
+        ObserveCancellation();
+
         // Every ceiling is CHECKED before either counter moves, so a rejected enter is
         // non-mutating in the cumulative step counter exactly as it is in depth — the
         // invocation did not happen, and steps count dynamic invocations and loop
@@ -149,6 +189,8 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryEnterArgumentEvaluation()
     {
+        ObserveCancellation();
+
         if (_depth >= _maxDepth)
             return new EvalError.EvaluationDepthExceeded(_maxDepth);
 
@@ -208,9 +250,13 @@ internal sealed class EvaluationBudget
     /// would be exactly the double charging a fused pipeline is supposed to avoid.</para>
     /// </summary>
     internal EvalError? CheckCollectionSize(long requestedCount)
-        => requestedCount > _maxCollectionItems
+    {
+        ObserveCancellation();
+
+        return requestedCount > _maxCollectionItems
             ? new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount)
             : null;
+    }
 
     /// <summary>
     /// RESERVES <paramref name="requestedCount"/> item slots for a collection that is
@@ -226,6 +272,8 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryReserveCollection(long requestedCount)
     {
+        ObserveCancellation();
+
         if (requestedCount < 0)
             throw new ArgumentOutOfRangeException(nameof(requestedCount), requestedCount, "Item count cannot be negative.");
 
@@ -256,6 +304,8 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryReserveString(long requestedLength)
     {
+        ObserveCancellation();
+
         if (requestedLength < 0)
             throw new ArgumentOutOfRangeException(nameof(requestedLength), requestedLength, "Length cannot be negative.");
 
@@ -286,6 +336,11 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryChargeExpressionNodeWork()
     {
+        // Observed on EVERY checkpoint, not only at batch boundaries: this is the
+        // densest chokepoint, so it is what bounds cancellation latency for pure
+        // expression work to well under one 4096-checkpoint batch.
+        ObserveCancellation();
+
         if (_expressionEvaluationCheckpointsInBatch < 4095)
         {
             _expressionEvaluationCheckpointsInBatch++;
@@ -313,6 +368,8 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryChargeStep()
     {
+        ObserveCancellation();
+
         if (_steps >= _maxSteps)
             return new EvalError.EvaluationStepLimitExceeded(_maxSteps);
 

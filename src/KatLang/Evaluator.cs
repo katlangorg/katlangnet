@@ -8559,6 +8559,35 @@ public static class Evaluator
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
         => Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
 
+    /// <summary>
+    /// Run evaluation under explicit resource limits and cooperative host cancellation.
+    /// <para>The token is observed once at entry — an already-cancelled token prevents
+    /// evaluation from starting — and then cooperatively at the evaluator's budget
+    /// chokepoints (dynamic invocations, loop iterations — optimized and generic —
+    /// argument evaluation, expression-work checkpoints, and collection/string
+    /// reservations), whether or not any opt-in budgets are configured. Cancellation
+    /// is observed again before the run completes, including after bounded host
+    /// projection in <see cref="RunFlat(Expr, EvaluationLimits?, CancellationToken)"/>.
+    /// Requested cancellation escapes as <see cref="OperationCanceledException"/> carrying this
+    /// token; it is never converted into an <see cref="EvalError"/> and never retained
+    /// on a binding, so a cancelled run does not continue. An uncancelled token changes
+    /// no result, no diagnostic, and no limit verdict.</para>
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
+        => Run(
+            expr,
+            new RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: true,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: true,
+            sequenceDiagnostics: null,
+            limits,
+            observations: null,
+            cancellationToken);
+
     internal static EvalResult<Result> Run(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -8601,14 +8630,15 @@ public static class Evaluator
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationLimits? limits,
-        EvaluationObservations? observations = null)
+        EvaluationObservations? observations = null,
+        CancellationToken cancellationToken = default)
         => CreateRootCtx(
             zeroArgPropertyResultCache,
             enableLoopOptimization,
             loopDiagnostics,
             enableSequencePipelineOptimization,
             sequenceDiagnostics,
-            EvaluationBudget.Create(limits),
+            EvaluationBudget.Create(limits, cancellationToken),
             observations);
 
     private static EvalCtx CreateRootCtx(
@@ -8718,13 +8748,24 @@ public static class Evaluator
         bool enableSequencePipelineOptimization,
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationLimits? limits = null,
-        EvaluationObservations? observations = null)
+        EvaluationObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
+        // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
+        // token stops the run before the structural preflight spends O(tree) work.
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (StructuralPreflight(expr, limits) is { } structuralError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return structuralError;
+        }
 
         if (PreEvaluationValidationError(expr) is { } validationError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return validationError;
+        }
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
@@ -8735,10 +8776,18 @@ public static class Evaluator
             enableSequencePipelineOptimization,
             sequenceDiagnostics,
             limits,
-            observations);
-        return expr is Expr.AlgorithmExpr(var alg)
+            observations,
+            cancellationToken);
+        var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
+
+        // A cancellation requested during the final operation must not be missed merely
+        // because that operation has no later charging checkpoint (for example, the last
+        // one-slot property result needs no collection reservation). This is observation
+        // only: every admitted depth level has already unwound, and no counter changes.
+        ctx.Budget.ObserveCancellation();
+        return result;
     }
 
     /// <summary>
@@ -8791,14 +8840,23 @@ public static class Evaluator
         IZeroArgPropertyResultCache? zeroArgPropertyResultCache = null,
         LoopOptimizationDiagnostics? loopDiagnostics = null,
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
-        EvaluationObservations? observations = null)
+        EvaluationObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
-        var budget = EvaluationBudget.Create(limits);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var budget = EvaluationBudget.Create(limits, cancellationToken);
         if (StructuralPreflight(expr, limits) is { } structuralError)
+        {
+            budget.ObserveCancellation();
             return (structuralError, budget);
+        }
 
         if (PreEvaluationValidationError(expr) is { } validationError)
+        {
+            budget.ObserveCancellation();
             return (validationError, budget);
+        }
 
         var ctx = CreateRootCtx(
             zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
@@ -8812,19 +8870,30 @@ public static class Evaluator
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
+
+        budget.ObserveCancellation();
         return (result, budget);
     }
 
     internal static EvalResult<CountedResult> RunCounted(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        EvaluationLimits? limits = null)
+        EvaluationLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (StructuralPreflight(expr, limits) is { } structuralError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return structuralError;
+        }
 
         if (PreEvaluationValidationError(expr) is { } validationError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return validationError;
+        }
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
@@ -8834,23 +8903,37 @@ public static class Evaluator
             loopDiagnostics: null,
             enableSequencePipelineOptimization: true,
             sequenceDiagnostics: null,
-            limits);
-        return expr is Expr.AlgorithmExpr(var alg)
+            limits,
+            observations: null,
+            cancellationToken);
+        var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
             : EvalCounted(expr, ctx, []);
+
+        ctx.Budget.ObserveCancellation();
+        return result;
     }
 
     internal static EvalResult<CountedRootProgramResult> RunCountedWithTopLevelProperty(
         Expr expr,
         string topLevelPropertyName,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        EvaluationLimits? limits = null)
+        EvaluationLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (StructuralPreflight(expr, limits) is { } structuralError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return structuralError;
+        }
 
         if (PreEvaluationValidationError(expr) is { } validationError)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return validationError;
+        }
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
@@ -8861,15 +8944,26 @@ public static class Evaluator
             loopDiagnostics: null,
             enableSequencePipelineOptimization: true,
             sequenceDiagnostics: null,
-            limits);
+            limits,
+            observations: null,
+            cancellationToken);
 
+        EvalResult<CountedRootProgramResult> result;
         if (expr is Expr.AlgorithmExpr(var alg))
-            return EvalRootProgramCountedWithTopLevelProperty(alg, expr.Span, ctx, topLevelPropertyName);
+        {
+            result = EvalRootProgramCountedWithTopLevelProperty(alg, expr.Span, ctx, topLevelPropertyName);
+        }
+        else
+        {
+            var outputR = EvalCounted(expr, ctx, []);
+            result = outputR.IsError
+                ? outputR.Error
+                : EvalResult<CountedRootProgramResult>.Ok(
+                    new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
+        }
 
-        var outputR = EvalCounted(expr, ctx, []);
-        return outputR.IsError
-            ? outputR.Error
-            : EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
+        ctx.Budget.ObserveCancellation();
+        return result;
     }
 
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
@@ -8997,16 +9091,33 @@ public static class Evaluator
 
     /// <summary>Host-boundary flattening run under explicit resource limits.</summary>
     public static EvalResult<IReadOnlyList<decimal>> RunFlat(Expr expr, EvaluationLimits? limits)
+        => RunFlat(expr, limits, cancellationToken: default);
+
+    /// <summary>
+    /// Host-boundary flattening run under explicit resource limits and cooperative host
+    /// cancellation. Same cancellation contract as
+    /// <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<IReadOnlyList<decimal>> RunFlat(
+        Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
     {
-        var r = Run(expr, limits);
+        var r = Run(expr, limits, cancellationToken);
         if (r.IsError) return r.Error;
 
         // Same rule as the engine: the host projection is bounded, so a successful
         // evaluation cannot be followed by an unbounded flattening allocation.
         var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
-        return r.Value.TryToHostAtoms(limit, out var atoms)
+        var result = r.Value.TryToHostAtoms(limit, out var atoms)
             ? EvalResult<IReadOnlyList<decimal>>.Ok(atoms)
             : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
+
+        // Host flattening belongs to this RunFlat operation and may walk a bounded but
+        // wide value graph after core evaluation has completed.
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
     }
 
 

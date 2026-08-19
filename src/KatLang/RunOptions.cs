@@ -32,12 +32,34 @@ public sealed class RunOptions
     /// The token is passed unchanged to <see cref="DownloadCodeWithCancellation"/>. Cancellation
     /// is checked at front-end phase boundaries and immediately before and after each module
     /// fetch. It does not cancel arbitrary evaluator computation after source processing has
-    /// completed; use <see cref="EvaluationLimits"/> to bound evaluator work.
+    /// completed; use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
+    /// <see cref="EvaluationLimits"/> to bound evaluator work.
     /// <para>An <see cref="OperationCanceledException"/> is propagated as host cancellation only
     /// when this token has been cancelled. A downloader cancellation or timeout while this token
     /// is not cancelled remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
     /// </summary>
     public CancellationToken SourceProcessingCancellationToken { get; init; }
+
+    /// <summary>
+    /// Host cancellation for evaluation. Observed once at evaluation entry — an
+    /// already-cancelled token prevents evaluation from starting — and then
+    /// cooperatively at the evaluator's budget chokepoints: dynamic invocations, loop
+    /// iterations (generic and optimized), argument evaluation, expression-work
+    /// checkpoints, and collection/string reservations. Observation does not depend on
+    /// any opt-in budget being configured, so cancellation also works under default
+    /// <see cref="EvaluationLimits"/>. A final observation before completion prevents
+    /// cancellation requested by the last evaluator operation from being missed; host
+    /// flattening entry points also observe after their bounded atom projection.
+    /// <para>Separate from <see cref="SourceProcessingCancellationToken"/>, which
+    /// governs parsing and module loading only. A host that wants one stop signal for
+    /// the whole pipeline passes the same token to both properties.</para>
+    /// <para>Requested cancellation escapes as
+    /// <see cref="OperationCanceledException"/> carrying this token — never a KatLang
+    /// diagnostic, and never a retained resource-limit value, so a cancelled run does
+    /// not continue. An uncancelled token changes no result, no diagnostic, and no
+    /// limit verdict.</para>
+    /// </summary>
+    public CancellationToken EvaluationCancellationToken { get; init; }
 
     /// <summary>
     /// Optional set of allowed hostnames for load directives. Defaults to katlang.org only.

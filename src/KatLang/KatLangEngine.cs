@@ -274,14 +274,19 @@ public static class KatLangEngine
     /// Parse and evaluate KatLang source code, returning a unified <see cref="RunResult"/>.
     /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies through front-end source
     /// and module processing only; evaluation is governed separately by
-    /// <see cref="RunOptions.EvaluationLimits"/>.
+    /// <see cref="RunOptions.EvaluationLimits"/> and cooperatively cancelled by
+    /// <see cref="RunOptions.EvaluationCancellationToken"/>.
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled before evaluation began.
+    /// The configured source-processing token was cancelled during front-end processing,
+    /// or the configured evaluation token was cancelled before or during evaluation
+    /// (including the additional-error evaluation performed for evaluable load
+    /// failures). Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
     public static RunResult Run(string source, RunOptions? options = null)
     {
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
+        var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
         var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
         var frontEndResult = FrontEndPipeline.Process(source, options);
 
@@ -292,7 +297,10 @@ public static class KatLangEngine
                 .Select(KatLangError.FromDiagnostic)
                 .ToList();
             if (frontEndResult.CanEvaluateAfterLoadErrors)
-                parseErrors.AddRange(EvaluateForAdditionalErrors(frontEndResult.ElaboratedRoot, options?.EvaluationLimits));
+                parseErrors.AddRange(EvaluateForAdditionalErrors(
+                    frontEndResult.ElaboratedRoot,
+                    options?.EvaluationLimits,
+                    evaluationCancellationToken));
 
             return new RunResult.ParseFailure(parseErrors)
             {
@@ -309,7 +317,8 @@ public static class KatLangEngine
             new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
             zeroArgPropertyResultCache,
-            options?.EvaluationLimits);
+            options?.EvaluationLimits,
+            evaluationCancellationToken);
 
         if (evalResult.IsError)
         {
@@ -348,7 +357,9 @@ public static class KatLangEngine
         // project into an enormous host list. Bounding it here means a successful
         // evaluation cannot be followed by an unbounded allocation on the way out.
         var hostAtomLimit = limits.EffectiveMaxCollectionItems;
-        if (!evalResult.Value.Output.Value.TryToHostAtoms(hostAtomLimit, out var hostAtoms))
+        var projected = evalResult.Value.Output.Value.TryToHostAtoms(hostAtomLimit, out var hostAtoms);
+        evaluationCancellationToken.ThrowIfCancellationRequested();
+        if (!projected)
         {
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
@@ -373,7 +384,9 @@ public static class KatLangEngine
     /// Throws <see cref="KatLangException"/> on parse or evaluation failure.
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled before evaluation began.
+    /// The configured source-processing token was cancelled during front-end processing,
+    /// or the configured evaluation token was cancelled before or during evaluation —
+    /// cancellation propagates and is never wrapped in a <see cref="KatLangException"/>.
     /// </exception>
     public static IReadOnlyList<decimal> EvaluateToAtoms(string source, RunOptions? options = null)
     {
@@ -392,7 +405,9 @@ public static class KatLangEngine
     /// Returns error text on failure instead of throwing.
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled before evaluation began.
+    /// The configured source-processing token was cancelled during front-end processing,
+    /// or the configured evaluation token was cancelled before or during evaluation —
+    /// cancellation propagates and is never rendered into the error string.
     /// </exception>
     public static string EvaluateToString(string source, RunOptions? options = null)
         => Run(source, options) switch
@@ -471,12 +486,14 @@ public static class KatLangEngine
             Inner: EvalError.MissingOutput,
         };
 
-    private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(Algorithm root, EvaluationLimits? limits)
+    private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(
+        Algorithm root, EvaluationLimits? limits, CancellationToken cancellationToken)
     {
         var evalResult = Evaluator.RunCounted(
             new Expr.AlgorithmExpr(root),
             new RunScopedZeroArgPropertyResultCache(),
-            limits);
+            limits,
+            cancellationToken);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
             return [];
 
