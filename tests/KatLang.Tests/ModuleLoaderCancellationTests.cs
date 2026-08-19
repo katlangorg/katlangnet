@@ -1,8 +1,11 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Host-cancellation coverage for parsing and compile-time module loading. Cancellation is a
-/// source-processing policy and is deliberately not an evaluator cancellation mechanism.
+/// Host-cancellation coverage for parsing and compile-time module loading over the
+/// async-only source-loading contract. Cancellation is a source-processing policy and is
+/// deliberately not an evaluator cancellation mechanism. Downloaders here complete
+/// synchronously unless a test needs a genuine suspension; suspension-focused coverage
+/// lives in <see cref="ModuleLoaderAsyncTests"/>.
 /// </summary>
 public class ModuleLoaderCancellationTests
 {
@@ -11,7 +14,7 @@ public class ModuleLoaderCancellationTests
     private const string Source = $"public Module = load('{ModuleUrl}')\nModule.Value";
 
     [Fact]
-    public void ParserParse_PreCancelledToken_PreventsDownloadAndPropagatesCancellation()
+    public async Task ParserParseAsync_PreCancelledToken_PreventsDownloadAndPropagatesCancellation()
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -19,21 +22,22 @@ public class ModuleLoaderCancellationTests
         var options = new RunOptions
         {
             SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCodeWithCancellation = (_, _) =>
+            DownloadCode = (_, _) =>
             {
                 calls++;
-                return "public Value = 1";
+                return ValueTask.FromResult("public Value = 1");
             },
         };
 
-        var exception = Assert.Throws<OperationCanceledException>(() => Parser.Parse(Source, options));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => Parser.ParseAsync(Source, options));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(0, calls);
     }
 
     [Fact]
-    public void EngineRun_PreCancelledToken_PreventsDownloadAndPropagatesCancellation()
+    public async Task EngineRunAsync_PreCancelledToken_PreventsDownloadAndPropagatesCancellation()
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -41,116 +45,125 @@ public class ModuleLoaderCancellationTests
         var options = new RunOptions
         {
             SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCodeWithCancellation = (_, _) =>
+            DownloadCode = (_, _) =>
             {
                 calls++;
-                return "public Value = 1";
+                return ValueTask.FromResult("public Value = 1");
             },
         };
 
-        var exception = Assert.Throws<OperationCanceledException>(() => KatLangEngine.Run(Source, options));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => KatLangEngine.RunAsync(Source, options));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(0, calls);
     }
 
     [Fact]
-    public void TokenAwareDownloader_ReceivesExactConfiguredToken()
+    public async Task Downloader_ReceivesExactConfiguredToken()
     {
         using var cancellation = new CancellationTokenSource();
         CancellationToken received = default;
         var options = new RunOptions
         {
             SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCodeWithCancellation = (_, token) =>
+            DownloadCode = (_, token) =>
             {
                 received = token;
-                return "public Value = 7";
+                return ValueTask.FromResult("public Value = 7");
             },
         };
 
-        var result = Parser.Parse(Source, options);
+        var result = await Parser.ParseAsync(Source, options);
 
         Assert.False(result.HasErrors, JoinDiagnostics(result.Diagnostics));
         Assert.Equal(cancellation.Token, received);
     }
 
+    /// <summary>
+    /// Source loading is async-only: every SYNCHRONOUS source-level entry point rejects a
+    /// downloader-configured options object before parsing, and the downloader is never
+    /// invoked. This replaces the removed synchronous downloader path — there is no
+    /// precedence rule and no blocking bridge.
+    /// </summary>
     [Fact]
-    public void BothDownloadersConfigured_TokenAwareDownloaderTakesPrecedence()
+    public void SynchronousEntryPoints_RejectDownloaderConfiguredOptions_WithoutInvokingDownloader()
     {
-        var legacyCalls = 0;
-        var tokenAwareCalls = 0;
+        var calls = 0;
         var options = new RunOptions
         {
-            DownloadCode = _ =>
+            DownloadCode = (_, _) =>
             {
-                legacyCalls++;
-                throw new InvalidOperationException("legacy downloader must not be selected");
-            },
-            DownloadCodeWithCancellation = (_, _) =>
-            {
-                tokenAwareCalls++;
-                return "public Value = 7";
+                calls++;
+                return ValueTask.FromResult("public Value = 7");
             },
         };
 
-        var result = Parser.Parse(Source, options);
+        Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run(Source, options));
+        Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToAtoms(Source, options));
+        Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToString(Source, options));
+        Assert.Throws<InvalidOperationException>(() => Parser.Parse(Source, options));
 
-        Assert.False(result.HasErrors, JoinDiagnostics(result.Diagnostics));
-        Assert.Equal(0, legacyCalls);
-        Assert.Equal(1, tokenAwareCalls);
+        // The rejection is configuration-driven, so load-free source is rejected too —
+        // deterministic fail-fast, mirroring the asynchronous host-operation rule.
+        Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run("1 + 1", options));
+
+        Assert.Equal(0, calls);
     }
 
     [Fact]
-    public void PublicModuleLoader_LegacyConstructorAndCancellationFactoryBothRemainAvailable()
+    public async Task PublicModuleLoader_ConstructorConfiguresDownloaderAndToken()
     {
         var root = ParseSyntaxRoot(Source);
-        var legacyDiagnostics = new List<Diagnostic>();
-        var legacyLoader = new ModuleLoader(
-            legacyDiagnostics,
-            _ => "public Value = 3");
+        var defaultTokenDiagnostics = new List<Diagnostic>();
+        var defaultTokenLoader = new ModuleLoader(
+            defaultTokenDiagnostics,
+            (_, _) => ValueTask.FromResult("public Value = 3"));
 
-        _ = legacyLoader.Elaborate(root);
+        _ = await defaultTokenLoader.ElaborateAsync(root);
 
         using var cancellation = new CancellationTokenSource();
-        var tokenAwareDiagnostics = new List<Diagnostic>();
+        var tokenDiagnostics = new List<Diagnostic>();
         CancellationToken received = default;
-        var tokenAwareLoader = ModuleLoader.CreateWithCancellation(
-            tokenAwareDiagnostics,
-            cancellation.Token,
+        var tokenLoader = new ModuleLoader(
+            tokenDiagnostics,
             (_, token) =>
             {
                 received = token;
-                return "public Value = 5";
-            });
+                return ValueTask.FromResult("public Value = 5");
+            },
+            allowedHosts: null,
+            cancellation.Token);
 
-        _ = tokenAwareLoader.Elaborate(root);
+        _ = await tokenLoader.ElaborateAsync(root);
 
-        Assert.Empty(legacyDiagnostics);
-        Assert.Empty(tokenAwareDiagnostics);
+        Assert.Empty(defaultTokenDiagnostics);
+        Assert.Empty(tokenDiagnostics);
         Assert.Equal(cancellation.Token, received);
     }
 
     [Fact]
-    public void CancellationRequestedDuringDownload_PropagatesWithoutFetchDiagnosticOrCommit()
+    public async Task CancellationRequestedDuringDownload_PropagatesWithoutFetchDiagnosticOrCommit()
     {
         using var cancellation = new CancellationTokenSource();
         var diagnostics = new List<Diagnostic>();
         var budget = new SourceProcessingBudget(SourceProcessingLimits.Default);
         var loader = new ModuleLoader(
             diagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (_, _) =>
+            (_, _) =>
             {
+                // The module text is returned successfully, but the host cancelled while
+                // the download was in flight: the post-fetch observation wins and the
+                // fetched module must never be committed.
                 cancellation.Cancel();
-                return "public Value = 7";
+                return ValueTask.FromResult("public Value = 7");
             },
             allowedHosts: null,
             budget,
             cancellation.Token);
 
-        var exception = Assert.Throws<OperationCanceledException>(
-            () => loader.Elaborate(ParseSyntaxRoot(Source)));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await loader.ElaborateAsync(ParseSyntaxRoot(Source)));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.DoesNotContain(diagnostics, IsFetchFailure);
@@ -162,21 +175,22 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void HostCancellationWinsWhenDownloaderThrowsDifferentException()
+    public async Task HostCancellationWins_WhenDownloaderThrowsDifferentException()
     {
         using var cancellation = new CancellationTokenSource();
         var diagnostics = new List<Diagnostic>();
-        var loader = ModuleLoader.CreateWithCancellation(
+        var loader = new ModuleLoader(
             diagnostics,
-            cancellation.Token,
             (_, _) =>
             {
                 cancellation.Cancel();
                 throw new InvalidOperationException("downloader shutdown race");
-            });
+            },
+            allowedHosts: null,
+            cancellation.Token);
 
-        var exception = Assert.Throws<OperationCanceledException>(
-            () => loader.Elaborate(ParseSyntaxRoot(Source)));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await loader.ElaborateAsync(ParseSyntaxRoot(Source)));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.DoesNotContain(diagnostics, IsFetchFailure);
@@ -185,38 +199,79 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void RegularTokenAwareDownloaderException_RemainsFetchDiagnostic()
+    public async Task HostCancellationWins_WhenDownloaderTaskFaultsWithDifferentException()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var diagnostics = new List<Diagnostic>();
+        var loader = new ModuleLoader(
+            diagnostics,
+            (_, _) =>
+            {
+                // A FAULTED awaitable (not a synchronous throw) racing host cancellation:
+                // the cancelled host token stays authoritative over the fault.
+                cancellation.Cancel();
+                return ValueTask.FromException<string>(new InvalidOperationException("socket torn down"));
+            },
+            allowedHosts: null,
+            cancellation.Token);
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await loader.ElaborateAsync(ParseSyntaxRoot(Source)));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.DoesNotContain(diagnostics, IsFetchFailure);
+        Assert.Equal(0, loader.CachedModuleCount);
+        Assert.Equal(0, loader.InProgressModuleCount);
+    }
+
+    [Fact]
+    public async Task RegularDownloaderException_RemainsFetchDiagnostic()
     {
         var options = new RunOptions
         {
-            DownloadCodeWithCancellation = (_, _) => throw new InvalidOperationException("network failed"),
+            DownloadCode = (_, _) => throw new InvalidOperationException("network failed"),
         };
 
-        var result = Parser.Parse(Source, options);
+        var result = await Parser.ParseAsync(Source, options);
 
         var diagnostic = Assert.Single(result.Diagnostics, IsFetchFailure);
         Assert.Contains("network failed", diagnostic.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RegularDownloaderFaultedTask_RemainsFetchDiagnostic()
+    {
+        var options = new RunOptions
+        {
+            DownloadCode = (_, _) => ValueTask.FromException<string>(
+                new InvalidOperationException("connection reset")),
+        };
+
+        var result = await Parser.ParseAsync(Source, options);
+
+        var diagnostic = Assert.Single(result.Diagnostics, IsFetchFailure);
+        Assert.Contains("connection reset", diagnostic.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void DownloaderCancellationWithoutHostCancellation_RemainsFetchDiagnostic(bool taskCanceled)
+    public async Task DownloaderCancellationWithoutHostCancellation_RemainsFetchDiagnostic(bool taskCanceled)
     {
         using var hostCancellation = new CancellationTokenSource();
         var options = new RunOptions
         {
             SourceProcessingCancellationToken = hostCancellation.Token,
-            DownloadCodeWithCancellation = (_, _) =>
+            DownloadCode = (_, _) =>
             {
                 if (taskCanceled)
-                    throw new TaskCanceledException("internal timeout");
+                    return ValueTask.FromException<string>(new TaskCanceledException("internal timeout"));
 
                 throw new OperationCanceledException("internal cancellation");
             },
         };
 
-        var result = Parser.Parse(Source, options);
+        var result = await Parser.ParseAsync(Source, options);
 
         Assert.False(hostCancellation.IsCancellationRequested);
         var diagnostic = Assert.Single(result.Diagnostics, IsFetchFailure);
@@ -227,21 +282,21 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void LegacyDownloaderOperationCanceled_WithoutConfiguredToken_RemainsFetchDiagnostic()
+    public async Task DownloaderOperationCanceled_WithoutConfiguredToken_RemainsFetchDiagnostic()
     {
         var options = new RunOptions
         {
-            DownloadCode = _ => throw new OperationCanceledException("stray downloader cancellation"),
+            DownloadCode = (_, _) => throw new OperationCanceledException("stray downloader cancellation"),
         };
 
-        var result = Parser.Parse(Source, options);
+        var result = await Parser.ParseAsync(Source, options);
 
         var diagnostic = Assert.Single(result.Diagnostics, IsFetchFailure);
         Assert.Contains("stray downloader cancellation", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void NestedModuleCancellation_RestoresDepthInProgressCacheAndReservations()
+    public async Task NestedModuleCancellation_RestoresDepthInProgressCacheAndReservations()
     {
         using var cancellation = new CancellationTokenSource();
         var diagnostics = new List<Diagnostic>();
@@ -249,11 +304,10 @@ public class ModuleLoaderCancellationTests
         var outerSource = $"public Nested = load('{NestedUrl}')";
         var loader = new ModuleLoader(
             diagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (url, _) =>
+            (url, _) =>
             {
                 if (url == ModuleUrl)
-                    return outerSource;
+                    return ValueTask.FromResult(outerSource);
 
                 Assert.Equal(NestedUrl, url);
                 cancellation.Cancel();
@@ -263,8 +317,8 @@ public class ModuleLoaderCancellationTests
             budget,
             cancellation.Token);
 
-        var exception = Assert.Throws<OperationCanceledException>(
-            () => loader.Elaborate(ParseSyntaxRoot(Source)));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await loader.ElaborateAsync(ParseSyntaxRoot(Source)));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(2, budget.PeakDepth);
@@ -277,7 +331,7 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void NestedCancellation_PreservesCompletedSiblingModule_AndSkipsRemainingFetches()
+    public async Task NestedCancellation_PreservesCompletedSiblingModule_AndSkipsRemainingFetches()
     {
         const string SiblingUrl = "https://katlang.org/cancellation/sibling.kat";
         const string RemainingUrl = "https://katlang.org/cancellation/remaining.kat";
@@ -295,16 +349,15 @@ public class ModuleLoaderCancellationTests
         var remainingFetches = 0;
         var loader = new ModuleLoader(
             diagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (url, _) =>
+            (url, _) =>
             {
                 switch (url)
                 {
                     case ModuleUrl:
-                        return outerSource;
+                        return ValueTask.FromResult(outerSource);
                     case SiblingUrl:
                         siblingFetches++;
-                        return SiblingSource;
+                        return ValueTask.FromResult(SiblingSource);
                     case NestedUrl:
                         cancellation.Cancel();
                         throw new OperationCanceledException("host cancelled nested fetch", cancellation.Token);
@@ -317,8 +370,8 @@ public class ModuleLoaderCancellationTests
             budget,
             cancellation.Token);
 
-        var exception = Assert.Throws<OperationCanceledException>(
-            () => loader.Elaborate(ParseSyntaxRoot(Source)));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await loader.ElaborateAsync(ParseSyntaxRoot(Source)));
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         // The completed sibling module stays cached and charged exactly once (its repeated load
@@ -336,7 +389,7 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void RollbackAfterCancellation_FreesBudgetCapacityForANewLoaderOnTheSameBudget()
+    public async Task RollbackAfterCancellation_FreesBudgetCapacityForANewLoaderOnTheSameBudget()
     {
         const string OuterUrl = "https://katlang.org/cancellation/reuse-outer.kat";
         const string InnerUrl = "https://katlang.org/cancellation/reuse-inner.kat";
@@ -356,11 +409,10 @@ public class ModuleLoaderCancellationTests
         var firstDiagnostics = new List<Diagnostic>();
         var firstLoader = new ModuleLoader(
             firstDiagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (url, _) =>
+            (url, _) =>
             {
                 if (url == OuterUrl)
-                    return outerSource;
+                    return ValueTask.FromResult(outerSource);
 
                 Assert.Equal(InnerUrl, url);
                 firstCancellation.Cancel();
@@ -370,7 +422,8 @@ public class ModuleLoaderCancellationTests
             budget,
             firstCancellation.Token);
 
-        Assert.Throws<OperationCanceledException>(() => firstLoader.Elaborate(root));
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await firstLoader.ElaborateAsync(root));
         Assert.Equal(0, budget.ModuleCount);
         Assert.Equal(0, budget.AggregateSource);
 
@@ -378,13 +431,12 @@ public class ModuleLoaderCancellationTests
         var secondDiagnostics = new List<Diagnostic>();
         var secondLoader = new ModuleLoader(
             secondDiagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (url, _) => url == OuterUrl ? outerSource : InnerSource,
+            (url, _) => ValueTask.FromResult(url == OuterUrl ? outerSource : InnerSource),
             allowedHosts: null,
             budget,
             secondCancellation.Token);
 
-        _ = secondLoader.Elaborate(root);
+        _ = await secondLoader.ElaborateAsync(root);
 
         Assert.Empty(secondDiagnostics);
         Assert.Equal(2, budget.ModuleCount);
@@ -393,7 +445,7 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void CancelledLoader_SecondElaborateThrows_WithoutDisturbingCommittedState()
+    public async Task CancelledLoader_SecondElaborateThrows_WithoutDisturbingCommittedState()
     {
         const string CompletedUrl = "https://katlang.org/cancellation/completed.kat";
         const string CompletedSource = "public Value = 17";
@@ -407,12 +459,11 @@ public class ModuleLoaderCancellationTests
         var fetches = 0;
         var loader = new ModuleLoader(
             diagnostics,
-            downloadCode: null,
-            downloadCodeWithCancellation: (url, _) =>
+            (url, _) =>
             {
                 fetches++;
                 if (url == CompletedUrl)
-                    return CompletedSource;
+                    return ValueTask.FromResult(CompletedSource);
 
                 Assert.Equal(ModuleUrl, url);
                 cancellation.Cancel();
@@ -422,7 +473,7 @@ public class ModuleLoaderCancellationTests
             budget,
             cancellation.Token);
 
-        Assert.Throws<OperationCanceledException>(() => loader.Elaborate(root));
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await loader.ElaborateAsync(root));
         Assert.Equal(2, fetches);
         Assert.Equal(1, loader.CachedModuleCount);
         Assert.Equal(1, budget.ModuleCount);
@@ -431,7 +482,7 @@ public class ModuleLoaderCancellationTests
         // Reuse of the cancelled loader is deterministic: its fixed token is still cancelled, so
         // a second elaboration throws immediately without fetching, double-rolling-back, or
         // touching the committed module state.
-        Assert.Throws<OperationCanceledException>(() => loader.Elaborate(root));
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await loader.ElaborateAsync(root));
         Assert.Equal(2, fetches);
         Assert.Equal(1, loader.CachedModuleCount);
         Assert.Equal(1, budget.ModuleCount);
@@ -441,35 +492,35 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void SequentialRuns_FreshOptionsAfterCancelledRun_SucceedWithoutCrossRunState()
+    public async Task SequentialRuns_FreshOptionsAfterCancelledRun_SucceedWithoutCrossRunState()
     {
         var downloads = 0;
 
-        string Download(string url, CancellationToken token)
+        ValueTask<string> Download(string url, CancellationToken token)
         {
             downloads++;
-            return "public Value = 11";
+            return ValueTask.FromResult("public Value = 11");
         }
 
         using var cancellation = new CancellationTokenSource();
         var cancelledOptions = new RunOptions
         {
             SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCodeWithCancellation = (url, token) =>
+            DownloadCode = (url, token) =>
             {
                 cancellation.Cancel();
                 return Download(url, token);
             },
         };
 
-        var exception = Assert.Throws<OperationCanceledException>(
-            () => KatLangEngine.Run(Source, cancelledOptions));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => KatLangEngine.RunAsync(Source, cancelledOptions));
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(1, downloads);
 
-        var freshOptions = new RunOptions { DownloadCodeWithCancellation = Download };
+        var freshOptions = new RunOptions { DownloadCode = Download };
 
-        var result = KatLangEngine.Run(Source, freshOptions);
+        var result = await KatLangEngine.RunAsync(Source, freshOptions);
 
         var success = Assert.IsType<RunResult.Success>(result);
         Assert.Equal([11m], success.Atoms);
@@ -477,66 +528,39 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public void LegacyDownloadCode_RemainsSupportedWithSourceProcessingToken()
-    {
-        using var cancellation = new CancellationTokenSource();
-        var calls = 0;
-        var options = new RunOptions
-        {
-            SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCode = _ =>
-            {
-                calls++;
-                return "public Value = 11";
-            },
-        };
-
-        var result = KatLangEngine.Run(Source, options);
-
-        var success = Assert.IsType<RunResult.Success>(result);
-        Assert.Equal([11m], success.Atoms);
-        Assert.Equal(1, calls);
-    }
-
-    [Fact]
     public async Task ConcurrentRuns_SharingRunOptions_KeepCancellationAndLoaderStateRunLocal()
     {
         const int runCount = 4;
         using var cancellation = new CancellationTokenSource();
+        var releaseDownloaders = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var enteredDownloaders = new CountdownEvent(runCount);
-        using var releaseDownloaders = new ManualResetEventSlim(false);
         var options = new RunOptions
         {
             SourceProcessingCancellationToken = cancellation.Token,
-            DownloadCodeWithCancellation = (_, token) =>
+            DownloadCode = async (_, token) =>
             {
                 Assert.Equal(cancellation.Token, token);
                 enteredDownloaders.Signal();
-                Assert.True(releaseDownloaders.Wait(TimeSpan.FromSeconds(10)));
+                await releaseDownloaders.Task;
                 return "public Value = 13";
             },
         };
 
         var tasks = Enumerable.Range(0, runCount)
-            .Select(index => Task.Factory.StartNew(
-                () => KatLangEngine.Run(
-                    $"public Module = load('https://katlang.org/cancellation/{index}.kat')\nModule.Value",
-                    options),
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default))
+            .Select(index => KatLangEngine.RunAsync(
+                $"public Module = load('https://katlang.org/cancellation/{index}.kat')\nModule.Value",
+                options))
             .ToArray();
 
-        try
-        {
-            Assert.True(
-                enteredDownloaders.Wait(TimeSpan.FromSeconds(10)),
-                "Runs did not overlap inside their token-aware downloaders.");
-        }
-        finally
-        {
-            releaseDownloaders.Set();
-        }
+        // All four runs are genuinely suspended inside their downloaders at once —
+        // run-local loader state and the shared options object never interfere.
+        Assert.True(
+            enteredDownloaders.Wait(TimeSpan.FromSeconds(10)),
+            "Runs did not overlap inside their suspended downloaders.");
+        Assert.All(tasks, task => Assert.False(task.IsCompleted));
+
+        releaseDownloaders.SetResult();
 
         var results = await Task.WhenAll(tasks);
         Assert.All(results, result => Assert.IsType<RunResult.Success>(result));

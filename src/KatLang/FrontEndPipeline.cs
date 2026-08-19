@@ -16,27 +16,24 @@ internal static class FrontEndPipeline
         return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source), hostOperations: null, CancellationToken.None);
     }
 
-    internal static FrontEndResult Process(
-        string source,
-        Func<string, string>? downloadCode,
-        IEnumerable<string>? allowedHosts = null)
-    {
-        var budget = new SourceProcessingBudget(null);
-        if (TryRejectMainSource(source, budget, out var rejected))
-            return rejected;
-
-        return ProcessWithModuleElaboration(
-            Parser.ParseSyntax(source),
-            downloadCode,
-            downloadCodeWithCancellation: null,
-            allowedHosts,
-            budget,
-            hostOperations: null,
-            CancellationToken.None);
-    }
-
+    /// <summary>
+    /// Synchronous options-configured front end. Module elaboration is ASYNC-ONLY
+    /// (obtaining source text for <c>load</c> awaits <see cref="RunOptions.DownloadCode"/>),
+    /// so a downloader-configured options object is rejected here before any parsing —
+    /// there is no synchronous module-fetching pipeline to fall back to, and no blocking
+    /// bridge is ever taken. Downloader-less options keep full synchronous processing:
+    /// parsing and every elaboration pass are CPU work, and <c>load</c> syntax without a
+    /// downloader keeps its established unavailability diagnostic.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="RunOptions.DownloadCode"/> is configured; use the asynchronous pipeline
+    /// (<see cref="ProcessAsync"/> via <see cref="KatLangEngine.RunAsync"/> or
+    /// <see cref="Parser.ParseAsync"/>).
+    /// </exception>
     internal static FrontEndResult Process(string source, RunOptions? options)
     {
+        ThrowIfSynchronousEntryWithDownloader(options);
+
         var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -47,17 +44,60 @@ internal static class FrontEndPipeline
         var syntaxResult = Parser.ParseSyntax(source);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (options?.DownloadCodeWithCancellation is not null || options?.DownloadCode is not null)
-            return ProcessWithModuleElaboration(
+        return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
+    }
+
+    /// <summary>
+    /// Asynchronous options-configured front end — the canonical path when
+    /// <see cref="RunOptions.DownloadCode"/> is configured. Parsing, parameter detection,
+    /// implicit-argument resolution, and exposure resolution remain synchronous CPU work;
+    /// only module acquisition awaits, inside <see cref="ModuleLoader.ElaborateAsync"/>.
+    /// With no downloader configured (or a downloader whose ValueTasks complete
+    /// synchronously) the returned task completes synchronously on the calling thread —
+    /// no work is scheduled elsewhere and nothing yields artificially.
+    /// </summary>
+    internal static async ValueTask<FrontEndResult> ProcessAsync(string source, RunOptions? options)
+    {
+        // MIRROR OF Process(string, RunOptions?) — keep in lock-step; only module
+        // elaboration is awaited.
+        var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var budget = new SourceProcessingBudget(options?.SourceProcessingLimits);
+        if (TryRejectMainSource(source, budget, out var rejected))
+            return rejected;
+
+        var syntaxResult = Parser.ParseSyntax(source);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (options?.DownloadCode is not null)
+            return await ProcessWithModuleElaborationAsync(
                 syntaxResult,
                 options.DownloadCode,
-                options.DownloadCodeWithCancellation,
                 options.AllowedHosts,
                 budget,
                 options.HostOperations,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
         return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
+    }
+
+    /// <summary>
+    /// The one enforcement point for the async-only source-loading contract on
+    /// synchronous entry paths (<see cref="KatLangEngine.Run"/>,
+    /// <see cref="Parser.Parse(string, RunOptions?)"/>): module downloading awaits, so a
+    /// synchronous entry cannot honor a downloader-configured options object and fails
+    /// fast instead of blocking a thread or silently ignoring the configuration.
+    /// </summary>
+    private static void ThrowIfSynchronousEntryWithDownloader(RunOptions? options)
+    {
+        if (options?.DownloadCode is not null)
+        {
+            throw new InvalidOperationException(
+                "RunOptions.DownloadCode is configured, but module loading is asynchronous; use " +
+                "KatLangEngine.RunAsync (or an async convenience entry point) or Parser.ParseAsync, " +
+                "or omit the downloader for source without load directives.");
+        }
     }
 
     /// <summary>
@@ -109,10 +149,9 @@ internal static class FrontEndPipeline
             syntaxResult.SyntaxRoot, diagnostics, hostOperations: hostOperations, cancellationToken: cancellationToken);
     }
 
-    private static FrontEndResult ProcessWithModuleElaboration(
+    private static async ValueTask<FrontEndResult> ProcessWithModuleElaborationAsync(
         SyntaxParseResult syntaxResult,
-        Func<string, string>? downloadCode,
-        Func<string, CancellationToken, string>? downloadCodeWithCancellation,
+        Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget budget,
         HostOperations? hostOperations,
@@ -124,11 +163,10 @@ internal static class FrontEndPipeline
         var loader = new ModuleLoader(
             diagnostics,
             downloadCode,
-            downloadCodeWithCancellation,
             allowedHosts,
             budget,
             cancellationToken);
-        var loadElaboratedRoot = loader.Elaborate(syntaxResult.SyntaxRoot);
+        var loadElaboratedRoot = await loader.ElaborateAsync(syntaxResult.SyntaxRoot).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var loadDiagnosticsEnd = diagnostics.Count;
 

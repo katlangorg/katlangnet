@@ -298,36 +298,39 @@ public sealed class Parser
         => FrontEndPipeline.Process(source).ToParseResult();
 
     /// <summary>
-    /// Compatibility wrapper for the full front-end pipeline with load elaboration.
-    /// Delegates to <see cref="FrontEndPipeline"/>.
-    /// </summary>
-    /// <param name="source">KatLang source code.</param>
-    /// <param name="downloadCode">
-    /// Injected code fetcher: URL → source text. In WASM, pass a JS interop downloader.
-    /// Calling this overload enables module elaboration; if null, a default HttpClient-based fetcher is used.
-    /// </param>
-    /// <param name="allowedHosts">
-    /// Optional set of allowed hostnames for load directives. Defaults to katlang.org only.
-    /// </param>
-    public static ParseResult Parse(
-        string source,
-        Func<string, string>? downloadCode,
-        IEnumerable<string>? allowedHosts = null)
-        => FrontEndPipeline.Process(source, downloadCode, allowedHosts).ToParseResult();
-
-    /// <summary>
-    /// Full pipeline with optional configuration via <see cref="RunOptions"/>.
-    /// When <paramref name="options"/> is null, or both <see cref="RunOptions.DownloadCode"/> and
-    /// <see cref="RunOptions.DownloadCodeWithCancellation"/> are null, module elaboration is
-    /// unavailable and <c>load</c> syntax is rejected. The configured
-    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies only to parsing, module
-    /// loading, and front-end source processing, not evaluator computation.
+    /// Synchronous full pipeline with optional configuration via <see cref="RunOptions"/>.
+    /// Module loading is ASYNC-ONLY, so this entry point requires a downloader-less
+    /// configuration: when <paramref name="options"/> is null or
+    /// <see cref="RunOptions.DownloadCode"/> is null, module elaboration is unavailable and
+    /// <c>load</c> syntax is rejected with a diagnostic. The configured
+    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies only to parsing and
+    /// front-end source processing, not evaluator computation.
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled.
     /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="RunOptions.DownloadCode"/> is configured — module downloading awaits, which
+    /// this synchronous entry point cannot do; use <see cref="ParseAsync"/>. Thrown before any
+    /// parsing.
+    /// </exception>
     public static ParseResult Parse(string source, RunOptions? options)
         => FrontEndPipeline.Process(source, options).ToParseResult();
+
+    /// <summary>
+    /// Asynchronous full pipeline with load elaboration — the canonical parse entry point when
+    /// <see cref="RunOptions.DownloadCode"/> is configured. Parsing and every elaboration pass
+    /// remain synchronous CPU work; only module acquisition awaits the downloader, so with no
+    /// <c>load</c> directives — or a downloader that completes synchronously — the returned task
+    /// completes synchronously on the calling thread. An incomplete download genuinely suspends
+    /// source processing and resumes it at the same point when the download completes.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// The configured source-processing token was cancelled; as with any async API, delivered
+    /// through the returned task.
+    /// </exception>
+    public static async Task<ParseResult> ParseAsync(string source, RunOptions? options = null)
+        => (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult();
 
     // ── Token access helpers ────────────────────────────────────────────────
 

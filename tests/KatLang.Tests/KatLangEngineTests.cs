@@ -2,16 +2,17 @@ namespace KatLang.Tests;
 
 public class KatLangEngineTests
 {
-    private static Func<string, string> MockDownloader(Dictionary<string, string> files)
+    private static Func<string, CancellationToken, ValueTask<string>> MockDownloader(
+        Dictionary<string, string> files)
     {
-        return url =>
+        return (url, _) =>
         {
             if (files.TryGetValue(url, out var content))
-                return content;
+                return ValueTask.FromResult(content);
 
             var trimmed = url.TrimEnd('/');
             if (files.TryGetValue(trimmed, out content))
-                return content;
+                return ValueTask.FromResult(content);
 
             throw new Exception($"404: {url}");
         };
@@ -206,7 +207,7 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_LoadWithDownloader_ReturnsSuccess()
+    public async Task RunAsync_LoadWithDownloader_ReturnsSuccess()
     {
         var source = "open Lib\npublic Lib = load('https://katlang.org/demo/lib.kat')\nX";
         var options = new RunOptions
@@ -217,14 +218,14 @@ public class KatLangEngineTests
             })
         };
 
-        var result = KatLangEngine.Run(source, options);
+        var result = await KatLangEngine.RunAsync(source, options);
 
         var success = Assert.IsType<RunResult.Success>(result);
         Assert.Equal([7m], success.Atoms);
     }
 
     [Fact]
-    public void Run_LoadedHtml_ReportsLoadSiteAndFollowingEvaluationError()
+    public async Task Run_LoadedHtml_ReportsLoadSiteAndFollowingEvaluationError()
     {
         // The follow-on row is inside a CLOSED parameter list so the failed
         // module's missing member stays a lexical name: at root the dot
@@ -238,15 +239,15 @@ public class KatLangEngineTests
             """;
         var options = new RunOptions
         {
-            DownloadCode = _ => """
+            DownloadCode = (_, _) => ValueTask.FromResult("""
                 <!doctype html>
                 <html>
                   <body>Not found</body>
                 </html>
-                """
+                """)
         };
 
-        var result = KatLangEngine.Run(source, options);
+        var result = await KatLangEngine.RunAsync(source, options);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         Assert.Collection(

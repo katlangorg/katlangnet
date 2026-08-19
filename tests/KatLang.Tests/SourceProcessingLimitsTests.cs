@@ -41,11 +41,36 @@ public class SourceProcessingLimitsTests
         return (Download, () => fetches);
     }
 
+    /// <summary>
+    /// Adapts a test's in-memory synchronous fetch to the async downloader contract:
+    /// the ValueTasks complete synchronously (throwing fetches throw synchronously),
+    /// so downloader-configured runs below complete synchronously and GetResult is
+    /// plain result extraction on a completed task.
+    /// </summary>
+    private static Func<string, CancellationToken, ValueTask<string>>? Adapt(Func<string, string>? downloader)
+        => downloader is null ? null : (url, _) => ValueTask.FromResult(downloader(url));
+
     private static RunResult Run(string source, SourceProcessingLimits limits, Func<string, string>? downloader = null)
-        => KatLangEngine.Run(source, new RunOptions { DownloadCode = downloader, SourceProcessingLimits = limits });
+    {
+        var options = new RunOptions { DownloadCode = Adapt(downloader), SourceProcessingLimits = limits };
+        if (downloader is null)
+            return KatLangEngine.Run(source, options);
+
+        var task = KatLangEngine.RunAsync(source, options);
+        Assert.True(task.IsCompleted);
+        return task.GetAwaiter().GetResult();
+    }
 
     private static ParseResult Parse(string source, SourceProcessingLimits limits, Func<string, string>? downloader = null)
-        => Parser.Parse(source, new RunOptions { DownloadCode = downloader, SourceProcessingLimits = limits });
+    {
+        var options = new RunOptions { DownloadCode = Adapt(downloader), SourceProcessingLimits = limits };
+        if (downloader is null)
+            return Parser.Parse(source, options);
+
+        var task = Parser.ParseAsync(source, options);
+        Assert.True(task.IsCompleted);
+        return task.GetAwaiter().GetResult();
+    }
 
     private static string FirstError(RunResult result)
     {
@@ -198,9 +223,10 @@ public class SourceProcessingLimitsTests
         // The import-depth crash boundary was ~562 levels; the default ceiling of 64 turns a deep
         // chain into a structured diagnostic long before the process can overflow.
         var (download, _) = ChainDownloader();
-        var result = KatLangEngine.Run(
+        var result = Run(
             $"public Lib = load('{Host}chain/500')\nLib.V",
-            new RunOptions { DownloadCode = download });
+            SourceProcessingLimits.Default,
+            download);
         Assert.Contains("over the maximum of 64 nested module levels", FirstError(result));
     }
 

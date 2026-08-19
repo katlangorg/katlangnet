@@ -157,7 +157,14 @@ public static class ConcurrencyHarness
     public static string ObserveEngine(string source, EvaluationLimits? limits = null, RunOptions? options = null)
     {
         var effective = options ?? (limits is null ? null : new RunOptions { EvaluationLimits = limits });
-        var run = KatLangEngine.Run(source, effective);
+        // Source loading is async-only, so downloader-configured observations go
+        // through the async engine entry. Corpus downloaders complete synchronously
+        // (possibly after blocking the lane thread on a test gate, which preserves the
+        // lanes' overlap semantics), so the returned task is already completed and
+        // GetResult is plain result extraction, not a blocking bridge.
+        var run = effective?.DownloadCode is null
+            ? KatLangEngine.Run(source, effective)
+            : KatLangEngine.RunAsync(source, effective).GetAwaiter().GetResult();
         var display = run.ToDisplayString().ReplaceLineEndings("\\n");
         return run switch
         {

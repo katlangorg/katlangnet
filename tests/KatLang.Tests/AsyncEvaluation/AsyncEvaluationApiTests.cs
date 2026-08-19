@@ -104,21 +104,25 @@ public class AsyncEvaluationApiTests
     }
 
     [Fact]
-    public async Task EngineRunAsync_LoadFailureWithAdditionalEvaluationErrors_MatchesEngineRun()
+    public async Task EngineRunAsync_LoadFailureWithAdditionalEvaluationErrors_ProjectsCombinedErrors()
     {
         // A failing module fetch surfaces load diagnostics; when the remainder is
-        // evaluable, the engine appends additional evaluation errors. The async engine
-        // must mirror that combined projection exactly.
+        // evaluable, the engine appends additional evaluation errors. Source loading is
+        // async-only, so RunAsync carries this combined projection alone — the
+        // synchronous entry point rejects the downloader-configured options up front.
         const string source = "open 'https://katlang.org/missing.kat'\n1 / 0";
         var options = new RunOptions
         {
-            DownloadCode = _ => throw new InvalidOperationException("fetch refused by test"),
+            DownloadCode = (_, _) => throw new InvalidOperationException("fetch refused by test"),
         };
 
-        var sync = KatLangEngine.Run(source, options);
+        Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run(source, options));
+
         var async = await KatLangEngine.RunAsync(source, options);
 
-        AssertEquivalentRunResults(sync, async);
+        var failure = Assert.IsType<RunResult.ParseFailure>(async);
+        Assert.Contains(failure.Errors, e => e.Message.Contains("failed to fetch", StringComparison.Ordinal));
+        Assert.Contains(failure.Errors, e => e.Message.Contains("Division by zero", StringComparison.Ordinal));
     }
 
     public static TheoryData<string, int?, long?, int?> LimitVerdictCases() => new()

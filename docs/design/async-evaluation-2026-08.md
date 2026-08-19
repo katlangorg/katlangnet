@@ -5,7 +5,9 @@ cancellation work — deliberately no version bump). C#-only host-execution surf
 Lean change (Lean models no host asynchrony).
 
 Phase 3 (public asynchronous host operations, same set and version) is documented in
-[the Phase 3 section below](#phase-3-public-asynchronous-host-operations-august-2026).
+[the Phase 3 section below](#phase-3-public-asynchronous-host-operations-august-2026),
+and Phase 4 (async-only source loading) in
+[the Phase 4 section below](#phase-4-async-only-source-loading-august-2026).
 
 ## What was added
 
@@ -14,7 +16,9 @@ Phase 3 (public asynchronous host operations, same set and version) is documente
   `Task<EvalResult<Result>>`, the same triple for `RunFlatAsync`, and
   `KatLangEngine.RunAsync(source, options?)` → `Task<RunResult>` with `Run`'s exact
   result/error projection (shared projection helpers, not a re-implementation).
-  Parsing, module loading, and front-end elaboration remain synchronous.
+  Parsing and front-end elaboration remain synchronous. (At Phase 2, module loading
+  was synchronous too; since Phase 4 module acquisition is async-only and `RunAsync`
+  awaits it — see the Phase 4 section.)
 - Internal async entry points (`RunCountedAsync`, `RunCountedWithTopLevelPropertyAsync`,
   `RunCountedObservedAsync`) and the async TWIN FAMILY in `Evaluator.Async.cs` —
   `async ValueTask` mirrors of the counted evaluation family (~70 members), each marked
@@ -371,3 +375,128 @@ operations fall back to the generic loop — pinned by test).
   concurrent runs, shared parsed tree under different host configurations with a
   synchronous lane completing while an async lane is suspended, sync/async semantic
   equivalence, and the async engine conveniences.
+
+# Phase 4: Async-only source loading (August 2026)
+
+Source-level execution is async-first end to end: obtaining source text for
+`load(...)` has ONE contract,
+
+```csharp
+public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
+```
+
+replacing BOTH former synchronous downloader properties (`Func<string, string>
+DownloadCode` and `Func<string, CancellationToken, string>
+DownloadCodeWithCancellation`) with no precedence rules, no compatibility shims, and no
+sync-over-async bridge anywhere in the library. An in-memory host returns
+`ValueTask.FromResult(text)` and the whole run completes synchronously; a networked host
+awaits ordinary managed I/O (`httpClient.GetStringAsync(url, token)`) and source
+processing genuinely suspends until the download completes. This is what lets a
+WASM/browser host (KatLangWeb) replace a synchronous-XHR JS bridge with normal async
+`HttpClient` networking.
+
+## Pipeline shape
+
+```text
+KatLangEngine.RunAsync / Parser.ParseAsync
+        ↓
+FrontEndPipeline.ProcessAsync            (async source/module orchestration)
+        ↓
+await options.DownloadCode(url, token)   (per module, inside ModuleLoader.ElaborateAsync)
+        ↓
+Parser / lexer / elaboration passes      (synchronous CPU work, unchanged)
+        ↓
+Evaluator.RunAsync                       (async host operations may suspend again)
+```
+
+One run can suspend during BOTH source processing (module download) and evaluation
+(asynchronous host operation). Parsing was NOT made async; only the orchestration that
+genuinely awaits module acquisition is (`ModuleLoader.ElaborateAsync`,
+`FrontEndPipeline.ProcessAsync`, and the entry points above them).
+
+## Entry-point routing (mirrors the Phase 3 rule)
+
+- `KatLangEngine.RunAsync` + the async conveniences and `Parser.ParseAsync` are
+  canonical for module-loading source. With no downloader — or a downloader whose
+  ValueTasks complete synchronously — they complete synchronously on the calling
+  thread (no offloading, no artificial yielding).
+- The synchronous source-level entry points (`KatLangEngine.Run` /
+  `EvaluateToAtoms` / `EvaluateToString`, `Parser.Parse(source, options)`) are KEPT for
+  downloader-less configurations: without module acquisition, source processing is pure
+  CPU work, exactly parallel to the synchronous low-level evaluator over a constructed
+  `Expr`. They cannot suspend, so a downloader-configured options object is rejected
+  with `InvalidOperationException` BEFORE parsing (one enforcement point in the
+  synchronous `FrontEndPipeline.Process(source, RunOptions?)`), deterministically and
+  configuration-driven — the same fail-fast shape as the asynchronous host-operation
+  rule. `load` syntax without a downloader keeps its established unavailability
+  diagnostic. The former `Parser.Parse(source, downloadCode, allowedHosts)` overload
+  and `ModuleLoader.CreateWithCancellation` are removed; the `ModuleLoader` constructor
+  takes the async downloader and the source-processing token directly (token last).
+- The low-level evaluator surface is untouched: `Evaluator.Run`/`RunFlat` stay
+  synchronous primitives over already-constructed `Expr`, alongside the Phase 2
+  `RunAsync`/`RunFlatAsync` twins.
+
+## Loader traversal: routed sync/async walks
+
+The loader's rewrite walk exists in two lock-step forms, routed per subtree:
+
+- Load-FREE subtrees take the byte-unchanged calibrated SYNCHRONOUS walk
+  (`ProcessAlgorithm`/`ProcessExpr`), preserving the measured stack envelope
+  (~1,300-1,700 counted levels per 1 MiB; 640-cap boundary tests unchanged).
+- Load-BEARING spines — the root-paths to unresolved `load` calls, marked up front by
+  one linear `AstWalker` pre-scan whose reach is a superset of the walk's — take
+  `// MIRROR OF`-tagged `async ValueTask` twins
+  (`ProcessAlgorithmAsync`/`ProcessExprAsync`/`ProcessLoadAsync`/`FetchAndSpliceAsync`),
+  so async state-machine frames are spent only where a suspension is possible.
+  Measured spine cost: ~837 B/counted level Release (matching the ~0.83 KB/level the
+  `NestedParseStackDebt` model prices) and ~1.1 KB/level Debug.
+- The pre-scan and BOTH walks probe the runtime's execution-stack reserve at every
+  level; exhaustion (for example a host thread below the documented 1 MiB envelope, or
+  Debug async-frame slack over the debt model at an extreme composition) unwinds to one
+  structured `ModuleElaborationStackExhausted` diagnostic with the established
+  placeholder root — never process death. The cumulative nested-load budget, the
+  parser stack-debt coupling (unchanged 2/3 unit per live level — the multiplier that
+  admits the supported 64-import top-level chains), and all `SourceProcessingLimits`
+  ceilings are unchanged and revalidated by the `DeepNestedModuleChains` /
+  `NearBoundaryShapes` subprocess probes in both configurations.
+
+## Suspension, caching, cancellation, errors
+
+- An incomplete `ValueTask<string>` suspends the elaboration at the fetch and resumes
+  it there exactly once; the downloader is never re-invoked after a suspension.
+  Caching is unchanged: each distinct successful URL is fetched once per elaboration
+  scope (fresh `ModuleLoader` per front-end run), failed URLs are re-fetched per load
+  site and never cached, cycles/domains/budgets behave identically.
+- The source-processing token is passed unchanged to the downloader and observed
+  before AND after each fetch; the post-fetch observation also catches cancellation
+  requested while a download was suspended, so a cancelled run never commits the
+  fetched module. Host cancellation stays authoritative over a differently-faulted
+  downloader, and the escaping `OperationCanceledException` always carries the exact
+  configured host token even if the downloader faulted with its own cancellation token;
+  a downloader's own cancellation/timeout without host cancellation remains the ordinary
+  `load: failed to fetch` diagnostic. Source-processing and evaluation cancellation remain
+  separate tokens; hosts may pass the same token to both.
+- Downloader failures keep the existing normalization, now uniformly: the `catch`
+  around the await covers a synchronously-throwing delegate and a faulted awaitable
+  identically → `load: failed to fetch '<url>': <message>`. Parse/elaboration failures
+  inside downloaded source keep their established diagnostics.
+
+## Performance
+
+Measured (Release, in-memory sync-completing downloader, small program): allocations
++512 B/run with one load (+0.7%) and +328 B/run for a downloader-configured run with no
+loads (the linear pre-scan), timing within process noise (≤ ~5%); the downloader-less
+synchronous path is byte-identical code. `ValueTask` end to end avoids per-node `Task`
+allocation on synchronous completion.
+
+## Divergence pinning
+
+`ModuleLoaderAsyncTests` (genuine suspension incl. `IsCompleted` fast-path pins,
+exactly-once fetch across suspension, nested suspension discovery order,
+cancellation-while-suspended and after-module-returns, faulted-awaitable fetch
+diagnostics, parse failure after suspension, module-load + async-host-operation
+double-suspension composition, concurrent independent runs with reverse-order release,
+tiny-thread reserve backstop), `ModuleLoaderCancellationTests` (async-contract
+cancellation matrix incl. the synchronous entry points' downloader rejection),
+`ModuleLoaderTests`, `SourceProcessingLimitsTests`, and the loader/front-end subprocess
+probes in `AstStructuralDepthProcessTests`.

@@ -356,16 +356,21 @@ internal static class SourceModuleProbe
         Dictionary<string, string>? files, int pad)
     {
         var dl = new FakeDownloader(pad);
-        Func<string, string> downloader = files is null
+        Func<string, string> fetch = files is null
             ? dl.Get
             : url => { dl.Calls++; var body = Lookup(files, url); dl.DownloadedChars += body?.Length ?? 0; return body ?? throw new Exception($"404 {url}"); };
+        // Source loading is async-only; the in-memory fetch completes synchronously,
+        // so ParseAsync completes synchronously and GetResult extracts the result.
+        Func<string, CancellationToken, ValueTask<string>> downloader =
+            (url, _) => ValueTask.FromResult(fetch(url));
 
         var sw = Stopwatch.StartNew();
         ParseResult result;
         string outcome, note = "";
         try
         {
-            result = Parser.Parse(mainSource, downloader);
+            result = Parser.ParseAsync(mainSource, new RunOptions { DownloadCode = downloader })
+                .GetAwaiter().GetResult();
             var errs = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
             var nodes = FrontEndStageProbe.CountNodes(result.Root);
             outcome = errs.Count == 0 ? "ok" : $"errors={errs.Count}";

@@ -8,28 +8,32 @@ namespace KatLang.Tests;
 public class ModuleLoaderTests
 {
     /// <summary>
-    /// Creates a mock downloader that serves content from a dictionary keyed by URL.
+    /// Creates a mock async downloader that serves content from a dictionary keyed by URL.
+    /// The returned ValueTasks complete synchronously, so parsing with these mocks never
+    /// actually suspends — genuine-suspension coverage lives in
+    /// <see cref="ModuleLoaderAsyncTests"/>.
     /// </summary>
-    private static Func<string, string> MockDownloader(Dictionary<string, string> files)
+    private static Func<string, CancellationToken, ValueTask<string>> MockDownloader(
+        Dictionary<string, string> files)
     {
-        return url =>
+        return (url, _) =>
         {
             // Normalize URL for lookup (Uri class may add trailing slash, etc.)
             if (files.TryGetValue(url, out var content))
-                return content;
+                return ValueTask.FromResult(content);
             // Try without trailing slash
             var trimmed = url.TrimEnd('/');
             if (files.TryGetValue(trimmed, out content))
-                return content;
+                return ValueTask.FromResult(content);
             throw new Exception($"404: {url}");
         };
     }
 
     /// <summary>Helper: parse with load elaboration using mock downloader.</summary>
-    private static ParseResult ParseWithLoad(string source, Dictionary<string, string> remoteFiles)
+    private static async Task<ParseResult> ParseWithLoad(string source, Dictionary<string, string> remoteFiles)
     {
         var downloader = MockDownloader(remoteFiles);
-        return Parser.Parse(source, downloader);
+        return await Parser.ParseAsync(source, new RunOptions { DownloadCode = downloader });
     }
 
     private static bool ContainsRawLoad(Algorithm algorithm)
@@ -82,10 +86,10 @@ public class ModuleLoaderTests
         };
 
     /// <summary>Helper: parse + evaluate with load elaboration.</summary>
-    private static EvalResult<IReadOnlyList<decimal>> EvalWithLoad(
+    private static async Task<EvalResult<IReadOnlyList<decimal>>> EvalWithLoad(
         string source, Dictionary<string, string> remoteFiles)
     {
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         if (result.HasErrors)
             throw new Exception(
                 "Parse/elaborate errors: " +
@@ -100,7 +104,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_BasicLibDefinition_EvaluatesRemoteValue()
+    public async Task Load_BasicLibDefinition_EvaluatesRemoteValue()
     {
         // Lib2 = load("https://katlang.org/demo/lib2.kat")
         // open Lib2
@@ -116,7 +120,7 @@ public class ModuleLoaderTests
             ["https://katlang.org/demo/lib2.kat"] = "public Val = 2"
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([2m], result.Value);
     }
@@ -126,7 +130,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_InOpenList_EvaluatesRemoteValue()
+    public async Task Load_InOpenList_EvaluatesRemoteValue()
     {
         var source = """
             open load('https://katlang.org/demo/lib3.kat')
@@ -138,13 +142,13 @@ public class ModuleLoaderTests
             ["https://katlang.org/demo/lib3.kat"] = "public Val2 = 3"
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([3m], result.Value);
     }
 
     [Fact]
-    public void Load_InOpenList_PublicApiCallingPrivateHelperWithCapturedNestedLocal_IsImported()
+    public async Task Load_InOpenList_PublicApiCallingPrivateHelperWithCapturedNestedLocal_IsImported()
     {
         var source = """
             open load('https://katlang.org/demo/local-helper.kat')
@@ -163,14 +167,14 @@ public class ModuleLoaderTests
                 """
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
 
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([6m], result.Value);
     }
 
     [Fact]
-    public void OpenStringLiteral_PublicTopLevelWrapperOverPrivateNestedHelpers_RemainsImportable()
+    public async Task OpenStringLiteral_PublicTopLevelWrapperOverPrivateNestedHelpers_RemainsImportable()
     {
         var source = """
             open 'https://katlang.org/libraries/math/number-theory.kat'
@@ -200,14 +204,14 @@ public class ModuleLoaderTests
                 """
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
 
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([12m], result.Value);
     }
 
     [Fact]
-    public void OpenStringLiteral_LoadedCallable_DetectsParameters()
+    public async Task OpenStringLiteral_LoadedCallable_DetectsParameters()
     {
         var source = """
             open 'https://katlang.org/demo/vec.kat'
@@ -224,14 +228,14 @@ public class ModuleLoaderTests
                 """
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
 
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([8m, 12m], result.Value);
     }
 
     [Fact]
-    public void OpenStringLiteral_LoadedCallable_CanUseSequenceBuiltins()
+    public async Task OpenStringLiteral_LoadedCallable_CanUseSequenceBuiltins()
     {
         // The spread supplies each vector as its own argument slot, so the
         // loaded single-variadic callable collects [(3, 4), (0, 0)].
@@ -252,7 +256,7 @@ public class ModuleLoaderTests
                 """
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
 
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([3m, 4m], result.Value);
@@ -263,7 +267,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_DomainBlocked_ProducesError()
+    public async Task Load_DomainBlocked_ProducesError()
     {
         var source = """
             Lib = load('https://evil.com/x.kat')
@@ -271,7 +275,7 @@ public class ModuleLoaderTests
 
         var remoteFiles = new Dictionary<string, string>();
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -283,7 +287,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_DynamicUrl_ProducesError()
+    public async Task Load_DynamicUrl_ProducesError()
     {
         // url = "https://katlang.org/demo/lib3.kat"
         // Lib = load(url)
@@ -295,7 +299,7 @@ public class ModuleLoaderTests
 
         var remoteFiles = new Dictionary<string, string>();
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -307,7 +311,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_RuntimePosition_ProducesError()
+    public async Task Load_RuntimePosition_ProducesError()
     {
         var source = """
             x = 1
@@ -316,7 +320,7 @@ public class ModuleLoaderTests
 
         var remoteFiles = new Dictionary<string, string>();
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -328,7 +332,7 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_CycleDetection_ProducesError()
+    public async Task Load_CycleDetection_ProducesError()
     {
         var source = """
             LibA = load('https://katlang.org/demo/A.kat')
@@ -344,7 +348,7 @@ public class ModuleLoaderTests
                 """,
         };
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -356,13 +360,13 @@ public class ModuleLoaderTests
     // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
     [Fact]
-    public void Load_HttpScheme_Rejected()
+    public async Task Load_HttpScheme_Rejected()
     {
         var source = """
             Lib = load('http://katlang.org/demo/lib.kat')
             """;
 
-        var result = ParseWithLoad(source, new Dictionary<string, string>());
+        var result = await ParseWithLoad(source, new Dictionary<string, string>());
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -370,13 +374,13 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_InvalidUrl_Rejected()
+    public async Task Load_InvalidUrl_Rejected()
     {
         var source = """
             Lib = load('not-a-url')
             """;
 
-        var result = ParseWithLoad(source, new Dictionary<string, string>());
+        var result = await ParseWithLoad(source, new Dictionary<string, string>());
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -384,13 +388,13 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_MultipleArgs_Rejected()
+    public async Task Load_MultipleArgs_Rejected()
     {
         var source = """
             Lib = load('https://katlang.org/a.kat', 'https://katlang.org/b.kat')
             """;
 
-        var result = ParseWithLoad(source, new Dictionary<string, string>());
+        var result = await ParseWithLoad(source, new Dictionary<string, string>());
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -398,7 +402,7 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_SubdomainAllowed()
+    public async Task Load_SubdomainAllowed()
     {
         var source = """
             open Lib
@@ -411,19 +415,19 @@ public class ModuleLoaderTests
             ["https://cdn.katlang.org/demo/lib.kat"] = "public X = 42"
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([42m], result.Value);
     }
 
     [Fact]
-    public void Load_CachesResults_SameUrlLoadedOnce()
+    public async Task Load_CachesResults_SameUrlLoadedOnce()
     {
         var fetchCount = 0;
-        Func<string, string> countingDownloader = url =>
+        Func<string, CancellationToken, ValueTask<string>> countingDownloader = (url, _) =>
         {
             fetchCount++;
-            return "public Val = 99";
+            return ValueTask.FromResult("public Val = 99");
         };
 
         var source = """
@@ -433,22 +437,22 @@ public class ModuleLoaderTests
             Val
             """;
 
-        var result = Parser.Parse(source, countingDownloader);
+        var result = await Parser.ParseAsync(source, new RunOptions { DownloadCode = countingDownloader });
         Assert.False(result.HasErrors, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
         Assert.Equal(1, fetchCount);
     }
 
     [Fact]
-    public void Load_FetchFailure_ProducesError()
+    public async Task Load_FetchFailure_ProducesError()
     {
-        Func<string, string> failingDownloader = url =>
+        Func<string, CancellationToken, ValueTask<string>> failingDownloader = (url, _) =>
             throw new Exception("Network error");
 
         var source = """
             Lib = load('https://katlang.org/demo/broken.kat')
             """;
 
-        var result = Parser.Parse(source, failingDownloader);
+        var result = await Parser.ParseAsync(source, new RunOptions { DownloadCode = failingDownloader });
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -456,21 +460,21 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_FetchedHtml_ProducesSingleUrlDiagnostic()
+    public async Task Load_FetchedHtml_ProducesSingleUrlDiagnostic()
     {
-        Func<string, string> htmlDownloader = _ => """
+        Func<string, CancellationToken, ValueTask<string>> htmlDownloader = (_, _) => ValueTask.FromResult("""
             <!doctype html>
             <html>
               <body>Not found</body>
             </html>
-            """;
+            """);
 
         var source = """
             A = load('https://katlang.org/libraries2/example.kat')
             A.X
             """;
 
-        var result = Parser.Parse(source, htmlDownloader);
+        var result = await Parser.ParseAsync(source, new RunOptions { DownloadCode = htmlDownloader });
 
         var errors = result.Diagnostics
             .Where(d => d.Severity == DiagnosticSeverity.Error)
@@ -483,16 +487,16 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_SizeExceeded_ProducesError()
+    public async Task Load_SizeExceeded_ProducesError()
     {
         var hugeContent = new string('x', 3 * 1024 * 1024); // 3 MB
-        Func<string, string> hugeDownloader = _ => hugeContent;
+        Func<string, CancellationToken, ValueTask<string>> hugeDownloader = (_, _) => ValueTask.FromResult(hugeContent);
 
         var source = """
             Lib = load('https://katlang.org/demo/huge.kat')
             """;
 
-        var result = Parser.Parse(source, hugeDownloader);
+        var result = await Parser.ParseAsync(source, new RunOptions { DownloadCode = hugeDownloader });
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -500,7 +504,7 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_TransitiveLoad_Works()
+    public async Task Load_TransitiveLoad_Works()
     {
         // A loads B; main loads A Ã¢â€ â€™ transitive loading
         var source = """
@@ -521,7 +525,7 @@ public class ModuleLoaderTests
                 """,
         };
 
-        var result = EvalWithLoad(source, remoteFiles);
+        var result = await EvalWithLoad(source, remoteFiles);
         Assert.True(result.IsOk, $"Expected success but got: {(result.IsError ? result.Error.ToString() : "")}");
         Assert.Equal([17m], result.Value);
     }
@@ -562,7 +566,7 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_WithDownloader_SuccessfulParseContainsNoRawLoadCalls()
+    public async Task Load_WithDownloader_SuccessfulParseContainsNoRawLoadCalls()
     {
         var source = "Lib = load('https://katlang.org/demo/lib.kat')\nLib.X";
         var remoteFiles = new Dictionary<string, string>
@@ -570,7 +574,7 @@ public class ModuleLoaderTests
             ["https://katlang.org/demo/lib.kat"] = "public X = 9"
         };
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
 
         Assert.False(result.HasErrors, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
         Assert.False(ContainsRawLoad(result.Root));
@@ -591,24 +595,24 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_NoArguments_Rejected()
+    public async Task Load_NoArguments_Rejected()
     {
         var source = """
             Lib = load()
             """;
 
-        var result = ParseWithLoad(source, new Dictionary<string, string>());
+        var result = await ParseWithLoad(source, new Dictionary<string, string>());
         Assert.True(result.HasErrors);
     }
 
     [Fact]
-    public void Load_NumericArg_Rejected()
+    public async Task Load_NumericArg_Rejected()
     {
         var source = """
             Lib = load(42)
             """;
 
-        var result = ParseWithLoad(source, new Dictionary<string, string>());
+        var result = await ParseWithLoad(source, new Dictionary<string, string>());
         Assert.True(result.HasErrors);
         Assert.Contains(result.Diagnostics,
             d => d.Severity == DiagnosticSeverity.Error &&
@@ -631,7 +635,7 @@ public class ModuleLoaderTests
     }
 
     [Fact]
-    public void Load_InsideListLiteral_InheritsSurroundingContext()
+    public async Task Load_InsideListLiteral_InheritsSurroundingContext()
     {
         // List-literal elements inherit the surrounding load context exactly
         // like parenthesized-group output slots: a load in a property-RHS list
@@ -645,7 +649,7 @@ public class ModuleLoaderTests
             ["https://katlang.org/m"] = "public Answer = 42",
         };
 
-        var result = ParseWithLoad(source, remoteFiles);
+        var result = await ParseWithLoad(source, remoteFiles);
         Assert.False(
             result.HasErrors,
             string.Join(Environment.NewLine, result.Diagnostics.Select(d => d.Message)));

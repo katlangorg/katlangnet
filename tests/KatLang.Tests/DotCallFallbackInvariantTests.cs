@@ -342,12 +342,12 @@ public class DotCallFallbackInvariantTests
     }
 
     [Fact]
-    public void ModuleElaborationPath_PreservesGracedDotFacts()
+    public async Task ModuleElaborationPath_PreservesGracedDotFacts()
     {
         // Regression family: a module-path rebuild once silently dropped
         // stored dot-edge facts. Both spellings must survive the load-enabled
         // pipeline as the SAME structural edge — 42 twice.
-        var run = KatLangEngine.Run(
+        var run = await KatLangEngine.RunAsync(
             """
             V(x) = 99
             Obj = {
@@ -358,7 +358,7 @@ public class DotCallFallbackInvariantTests
             Obj.V
             Obj~.V
             """,
-            new RunOptions { DownloadCode = _ => "public C = 5" });
+            new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public C = 5") });
         var success = Assert.IsType<RunResult.Success>(run);
         Assert.Equal($"42{Environment.NewLine}42", success.ToDisplayString());
     }

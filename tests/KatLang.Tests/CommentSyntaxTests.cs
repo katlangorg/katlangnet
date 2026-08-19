@@ -390,15 +390,15 @@ public class CommentSyntaxTests
     }
 
     [Fact]
-    public void CommentAtModuleEof_DoesNotCrossTheSourceModuleBoundary()
+    public async Task CommentAtModuleEof_DoesNotCrossTheSourceModuleBoundary()
     {
         const string url = "https://katlang.org/comment-syntax.kat";
-        var result = KatLangEngine.Run(
+        var result = await KatLangEngine.RunAsync(
             $"open '{url}'\nX",
             new RunOptions
             {
-                DownloadCode = requested => requested == url
-                    ? "public X = 6# ] invalid text ignored at module EOF"
+                DownloadCode = (requested, _) => requested == url
+                    ? ValueTask.FromResult("public X = 6# ] invalid text ignored at module EOF")
                     : throw new InvalidOperationException($"Unexpected URL: {requested}"),
             });
 

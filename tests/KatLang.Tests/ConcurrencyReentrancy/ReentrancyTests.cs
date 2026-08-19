@@ -13,8 +13,8 @@ namespace KatLang.Tests.ConcurrencyReentrancy;
 /// inside a charged invocation region on every zero-argument property access
 /// (the same seam <c>BudgetConservationTests</c> uses for fault injection —
 /// ordinary evaluation takes no host callback), and the public
-/// <see cref="RunOptions.DownloadCode"/> provider, invoked mid-front-end
-/// during a <see cref="KatLangEngine.Run"/>. Both are exercised here with
+/// <see cref="RunOptions.DownloadCode"/> provider, awaited mid-front-end
+/// during a <see cref="KatLangEngine.RunAsync"/>. Both are exercised here with
 /// full nested evaluator and engine runs, including nested failures that the
 /// host contains, nested failures the host propagates (outer unwinds through
 /// the production <c>finally</c> chain), multiple and recursive bounded
@@ -351,7 +351,7 @@ public class ReentrancyTests
     {
         var outerBaseline = ConcurrencyHarness.ObserveEngine(
             ConcurrencyCorpus.ModuleProgram,
-            options: new RunOptions { DownloadCode = _ => ConcurrencyCorpus.ModuleContentA });
+            options: new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(ConcurrencyCorpus.ModuleContentA) });
         Assert.StartsWith("engine ok n=3 ", outerBaseline, StringComparison.Ordinal);
         var nestedEngineBaseline = ConcurrencyHarness.ObserveEngine(ConcurrencyCorpus.MultiOut);
         var nestedEvalBaseline = ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.ClauseFamily);
@@ -360,11 +360,11 @@ public class ReentrancyTests
         string? nestedEval = null;
         var gatedOptions = new RunOptions
         {
-            DownloadCode = _ =>
+            DownloadCode = (_, _) =>
             {
                 nestedEngine = ConcurrencyHarness.ObserveEngine(ConcurrencyCorpus.MultiOut);
                 nestedEval = ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.ClauseFamily);
-                return ConcurrencyCorpus.ModuleContentA;
+                return ValueTask.FromResult(ConcurrencyCorpus.ModuleContentA);
             },
         };
 
@@ -387,22 +387,22 @@ public class ReentrancyTests
     {
         var outerBaseline = ConcurrencyHarness.ObserveEngine(
             ConcurrencyCorpus.ModuleProgram,
-            options: new RunOptions { DownloadCode = _ => ConcurrencyCorpus.ModuleContentA });
+            options: new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(ConcurrencyCorpus.ModuleContentA) });
         var nestedBaseline = ConcurrencyHarness.ObserveEngine(
             ConcurrencyCorpus.ModuleProgram,
-            options: new RunOptions { DownloadCode = _ => ConcurrencyCorpus.ModuleContentB });
+            options: new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(ConcurrencyCorpus.ModuleContentB) });
         Assert.StartsWith("engine ok n=3 ", outerBaseline, StringComparison.Ordinal);
         Assert.StartsWith("engine ok n=4 ", nestedBaseline, StringComparison.Ordinal);
 
         string? nested = null;
         var outerOptions = new RunOptions
         {
-            DownloadCode = _ =>
+            DownloadCode = (_, _) =>
             {
                 nested = ConcurrencyHarness.ObserveEngine(
                     ConcurrencyCorpus.ModuleProgram,
-                    options: new RunOptions { DownloadCode = _ => ConcurrencyCorpus.ModuleContentB });
-                return ConcurrencyCorpus.ModuleContentA;
+                    options: new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(ConcurrencyCorpus.ModuleContentB) });
+                return ValueTask.FromResult(ConcurrencyCorpus.ModuleContentA);
             },
         };
 

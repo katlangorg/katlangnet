@@ -193,6 +193,13 @@ internal static class SourceProcessingDiagnostics
             + "Move the load closer to the top level of its module, or split the module chain into smaller modules.",
             span);
 
+    internal static Diagnostic ModuleElaborationStackExhausted(int limit)
+        => Error(
+            "Module elaboration stopped: the host thread's remaining stack cannot safely walk this composition, "
+            + $"although it is within the structural depth limit of {Quantity(limit, "level")}. "
+            + "Run source processing on a thread with at least the documented 1 MiB stack, or reduce structural nesting around load directives.",
+            DefaultSpan);
+
     private static string Quantity(long value, string singular)
         => $"{value} {singular}{(value == 1 ? string.Empty : "s")}";
 

@@ -273,9 +273,14 @@ public static class KatLangEngine
     /// <summary>
     /// Parse and evaluate KatLang source code, returning a unified <see cref="RunResult"/>.
     /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies through front-end source
-    /// and module processing only; evaluation is governed separately by
+    /// processing only; evaluation is governed separately by
     /// <see cref="RunOptions.EvaluationLimits"/> and cooperatively cancelled by
     /// <see cref="RunOptions.EvaluationCancellationToken"/>.
+    /// <para>Source loading is ASYNC-ONLY: a configuration with
+    /// <see cref="RunOptions.DownloadCode"/> selects <see cref="RunAsync"/>, where module
+    /// downloads are awaited. This synchronous entry point serves downloader-less
+    /// configurations — parsing, elaboration, and evaluation are CPU work — and <c>load</c>
+    /// syntax without a downloader keeps its established rejection diagnostic.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
@@ -284,8 +289,9 @@ public static class KatLangEngine
     /// failures). Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation,
-    /// which this synchronous entry point cannot suspend for — use
+    /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation, or
+    /// <see cref="RunOptions.DownloadCode"/> is configured — either way this synchronous
+    /// entry point would have to suspend, which it cannot do; use
     /// <see cref="RunAsync"/>. Thrown before any parsing or evaluation.
     /// </exception>
     public static RunResult Run(string source, RunOptions? options = null)
@@ -293,6 +299,8 @@ public static class KatLangEngine
         var hostOperations = options?.HostOperations;
         // Fail fast on a configuration this synchronous entry point can never honor:
         // an asynchronous host operation completes only by suspending evaluation.
+        // (A configured DownloadCode is rejected just below by the synchronous
+        // front-end pipeline, before parsing, for the same reason.)
         if (hostOperations?.ContainsAsynchronousOperations == true)
         {
             throw new InvalidOperationException(
@@ -338,21 +346,24 @@ public static class KatLangEngine
 
     /// <summary>
     /// Asynchronous counterpart of <see cref="Run(string, RunOptions?)"/> with identical
-    /// result and error projection semantics.
+    /// result and error projection semantics — and the canonical entry point for source
+    /// that loads modules.
     ///
-    /// <para>Parsing, module loading, and front-end elaboration remain SYNCHRONOUS —
-    /// they run inline on the calling thread before the returned task's first
-    /// suspension opportunity, governed as before by
-    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> and
-    /// <see cref="RunOptions.SourceProcessingLimits"/>. Evaluation goes through the
-    /// evaluator's async surface: unless <see cref="RunOptions.HostOperations"/>
-    /// contains an ASYNCHRONOUS operation, the whole run completes synchronously on
-    /// the calling thread. This method never schedules work onto another thread and
-    /// never yields artificially — thread placement and scheduling remain the host's
-    /// responsibility. With asynchronous host operations configured, an incomplete
-    /// host awaitable genuinely suspends the run and resumes it — exactly once, at the
-    /// same point — when the operation completes (see <see cref="HostOperation"/> for
-    /// the full contract).</para>
+    /// <para>Parsing and front-end elaboration remain SYNCHRONOUS CPU work; module
+    /// acquisition is ASYNC-ONLY. With <see cref="RunOptions.DownloadCode"/> configured,
+    /// each module download is awaited where its <c>load</c> is elaborated — an incomplete
+    /// download genuinely suspends source processing and resumes it at the same point,
+    /// governed as before by <see cref="RunOptions.SourceProcessingCancellationToken"/> and
+    /// <see cref="RunOptions.SourceProcessingLimits"/>. Evaluation then goes through the
+    /// evaluator's async surface, where an incomplete asynchronous
+    /// <see cref="RunOptions.HostOperations"/> awaitable suspends and resumes the run the
+    /// same way (see <see cref="HostOperation"/> for the full contract) — one run can
+    /// suspend during both source processing and evaluation. When nothing actually
+    /// suspends (no downloader, a synchronously-completing downloader, no asynchronous
+    /// host operation), the whole run completes synchronously on the calling thread: this
+    /// method never schedules work onto another thread and never yields artificially —
+    /// thread placement and scheduling remain the host's (and the downloader's
+    /// awaitable's) responsibility.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>; as with any
@@ -360,13 +371,14 @@ public static class KatLangEngine
     /// </exception>
     public static async Task<RunResult> RunAsync(string source, RunOptions? options = null)
     {
-        // MIRROR OF Run(string, RunOptions?) — keep in lock-step; only the evaluation
-        // calls are awaited, through the evaluator's async entry points.
+        // MIRROR OF Run(string, RunOptions?) — keep in lock-step; only front-end module
+        // acquisition and the evaluation calls are awaited, through the async front-end
+        // pipeline and the evaluator's async entry points.
         var hostOperations = options?.HostOperations;
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
         var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
-        var frontEndResult = FrontEndPipeline.Process(source, options);
+        var frontEndResult = await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false);
 
         if (frontEndResult.HasErrors)
         {
@@ -523,9 +535,9 @@ public static class KatLangEngine
     /// <summary>
     /// Asynchronous counterpart of <see cref="EvaluateToAtoms"/>: a thin projection
     /// over <see cref="RunAsync"/> with identical success and failure semantics.
-    /// Like <see cref="RunAsync"/>, it completes synchronously unless
-    /// <see cref="RunOptions.HostOperations"/> contains an asynchronous operation
-    /// whose awaitable genuinely suspends the run.
+    /// Like <see cref="RunAsync"/>, it completes synchronously unless an incomplete
+    /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
+    /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="EvaluateToAtoms"/>; delivered through
@@ -563,9 +575,9 @@ public static class KatLangEngine
     /// <summary>
     /// Asynchronous counterpart of <see cref="EvaluateToString"/>: a thin projection
     /// over <see cref="RunAsync"/> with identical rendering and failure semantics.
-    /// Like <see cref="RunAsync"/>, it completes synchronously unless
-    /// <see cref="RunOptions.HostOperations"/> contains an asynchronous operation
-    /// whose awaitable genuinely suspends the run.
+    /// Like <see cref="RunAsync"/>, it completes synchronously unless an incomplete
+    /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
+    /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="EvaluateToString"/>; delivered through

@@ -483,7 +483,7 @@ public class HostOperationApiTests
     }
 
     [Fact]
-    public void LoadedModuleCode_ResolvesHostOperations_Too()
+    public async Task LoadedModuleCode_ResolvesHostOperations_Too()
     {
         // Module elaboration splices module trees into the root before parameter
         // detection, so host-operation names resolve inside loaded module code exactly
@@ -491,13 +491,13 @@ public class HostOperationApiTests
         var counter = new Counter();
         var options = new RunOptions
         {
-            DownloadCode = _ => "public Doubled = Data * 2",
+            DownloadCode = (_, _) => ValueTask.FromResult("public Doubled = Data * 2"),
             AllowedHosts = ["example.test"],
             HostOperations = HostOperations.Create(SyncConstant("Data", 21, counter)),
         };
 
         var result = Assert.IsType<RunResult.Success>(
-            KatLangEngine.Run("open 'https://example.test/lib.kat'\nDoubled", options));
+            await KatLangEngine.RunAsync("open 'https://example.test/lib.kat'\nDoubled", options));
         Assert.Equal("42", result.ToDisplayString());
         Assert.Equal(1, counter.Count);
     }

@@ -6179,7 +6179,7 @@ structure LoadCtx where
   allowedHosts : List String
   cache        : Assoc String Algorithm
   inProgress   : List String
-  fetch        : String -> Option String   -- abstract; in C# this is Func<string,string>
+  fetch        : String -> Option String   -- abstract host acquisition; C# awaits DownloadCode before this model
 
 /-- Positions where load is allowed (compile-time only).
     load is a directive, not a runtime expression. -/

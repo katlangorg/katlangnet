@@ -225,7 +225,11 @@ public class LifetimeDifferentialTests
             + string.Join("; ", syntax.Diagnostics.Select(d => d.Message.Split('\n')[0])));
 
         var before = diagnostics.Count;
-        var elaborated = loader.Elaborate(syntax.SyntaxRoot);
+        // The in-memory host downloader completes synchronously, so elaboration does
+        // too; GetResult extracts the completed ValueTask's result without blocking.
+        var task = loader.ElaborateAsync(syntax.SyntaxRoot);
+        Assert.True(task.IsCompleted);
+        var elaborated = task.GetAwaiter().GetResult();
         return (elaborated, diagnostics.Skip(before).ToList());
     }
 

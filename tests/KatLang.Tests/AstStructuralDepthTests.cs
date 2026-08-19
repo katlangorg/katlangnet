@@ -1305,18 +1305,20 @@ public class AstStructuralDepthTests
     }
 
     [Fact]
-    public void ModuleLoaderElaborate_GatesHostRoots_AtTheExactBoundary()
+    public async Task ModuleLoaderElaborate_GatesHostRoots_AtTheExactBoundary()
     {
         // Root User(1) + unary spine K => depth K + 1; the loader's boundary is the
-        // raw-syntax cap its own traversal was measured against.
+        // raw-syntax cap its own traversal was measured against. The spines are
+        // load-free, so the walk is the calibrated SYNCHRONOUS one and the returned
+        // ValueTask completes synchronously.
         var diagnostics = new List<Diagnostic>();
         var loader = new ModuleLoader(diagnostics);
-        var accepted = loader.Elaborate(
+        var accepted = await loader.ElaborateAsync(
             new Algorithm.User(null, [], [], [], [UnarySpine(ModuleLoader.MaxTraversalDepth - 1)]));
         Assert.Empty(diagnostics);
         Assert.NotEmpty(accepted.Output);
 
-        var rejected = loader.Elaborate(
+        var rejected = await loader.ElaborateAsync(
             new Algorithm.User(null, [], [], [], [UnarySpine(ModuleLoader.MaxTraversalDepth)]));
         Assert.Empty(rejected.Output);
         Assert.Contains(
@@ -1331,7 +1333,7 @@ public class AstStructuralDepthTests
         var properties = new List<Property>();
         var cyclic = new Algorithm.User(null, [], [], properties, [new Expr.Num(1)]);
         properties.Add(new Property("Self", cyclic));
-        cyclicLoader.Elaborate(cyclic);
+        await cyclicLoader.ElaborateAsync(cyclic);
         Assert.Contains(
             cyclicDiagnostics,
             d => d.Message.Contains("reference cycle", StringComparison.Ordinal));
@@ -1358,7 +1360,7 @@ public class AstStructuralDepthTests
     }
 
     [Fact]
-    public void ModuleLoaderElaborate_RechecksCachedModulesAtTheirFinalSplicePath()
+    public async Task ModuleLoaderElaborate_RechecksCachedModulesAtTheirFinalSplicePath()
     {
         const string url = "https://katlang.org/cache/deep.kat";
         var load = Assert.Single(Parser.ParseSyntax($"open '{url}'").SyntaxRoot.Opens);
@@ -1385,13 +1387,13 @@ public class AstStructuralDepthTests
         var diagnostics = new List<Diagnostic>();
         var loader = new ModuleLoader(
             diagnostics,
-            _ =>
+            (_, _) =>
             {
                 downloads++;
-                return "public S = " + new string('{', 80) + "1" + new string('}', 80);
+                return ValueTask.FromResult("public S = " + new string('{', 80) + "1" + new string('}', 80));
             });
 
-        var elaborated = loader.Elaborate(hostRoot);
+        var elaborated = await loader.ElaborateAsync(hostRoot);
         Assert.Empty(elaborated.Output);
         Assert.Equal(1, downloads);
         Assert.Contains(
@@ -1402,22 +1404,22 @@ public class AstStructuralDepthTests
     }
 
     [Fact]
-    public void ModuleLoader_MapsDownloadedRawStructuralRejectionToNestingDiagnostic()
+    public async Task ModuleLoader_MapsDownloadedRawStructuralRejectionToNestingDiagnostic()
     {
         const string url = "https://katlang.org/raw-structural-deep.kat";
         var downloads = 0;
         var diagnostics = new List<Diagnostic>();
         var loader = new ModuleLoader(
             diagnostics,
-            _ =>
+            (_, _) =>
             {
                 downloads++;
                 // Parser-recursion and per-chain limits each permit this composed
                 // source, but its finished raw tree is 641 levels deep.
-                return BracketChainComposition(levels: 9, chainOps: 70);
+                return ValueTask.FromResult(BracketChainComposition(levels: 9, chainOps: 70));
             });
 
-        loader.Elaborate(Parser.ParseSyntax($"open '{url}'").SyntaxRoot);
+        await loader.ElaborateAsync(Parser.ParseSyntax($"open '{url}'").SyntaxRoot);
 
         Assert.Equal(1, downloads);
         Assert.Equal(0, loader.CachedModuleCount);
@@ -1572,6 +1574,40 @@ public class AstStructuralDepthProcessTests
     private const string ProbeChildEnvironment = "KATLANG_AST_STRUCTURAL_PROBE_CHILD";
     private const string ProbeMarkerFileEnvironment = "KATLANG_AST_STRUCTURAL_PROBE_MARKER_FILE";
     private const string ProbeSuccessMarker = "katlang-ast-structural-preflight-ok";
+
+    /// <summary>
+    /// Wraps an in-memory synchronous fetch as the async downloader contract. The
+    /// returned ValueTasks complete synchronously (a throwing fetch throws
+    /// synchronously from the delegate), so probe elaborations never leave their
+    /// dedicated calibrated thread.
+    /// </summary>
+    private static Func<string, CancellationToken, ValueTask<string>> InMemoryDownloader(
+        Func<string, string> fetch)
+        => (url, _) => ValueTask.FromResult(fetch(url));
+
+    /// <summary>
+    /// Runs one elaboration whose downloader completes synchronously and asserts it
+    /// therefore completed synchronously — GetResult here is plain result extraction
+    /// on a completed ValueTask (possibly rethrowing its synchronously-captured
+    /// exception), never a blocking bridge.
+    /// </summary>
+    private static Algorithm ElaborateSynchronously(ModuleLoader loader, Algorithm root)
+    {
+        var task = loader.ElaborateAsync(root);
+        Assert.True(task.IsCompleted, "Elaboration with a synchronous downloader must complete synchronously.");
+        return task.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Same synchronous-completion contract for whole engine runs whose downloader
+    /// completes synchronously.
+    /// </summary>
+    private static RunResult RunEngineSynchronously(string source, RunOptions options)
+    {
+        var task = KatLangEngine.RunAsync(source, options);
+        Assert.True(task.IsCompleted, "An engine run with a synchronous downloader must complete synchronously.");
+        return task.GetAwaiter().GetResult();
+    }
 
     /// <summary>
     /// Launches one env-gated probe-child test in a fresh <c>dotnet vstest</c> process
@@ -1977,9 +2013,14 @@ public class AstStructuralDepthProcessTests
                         $"open 'https://katlang.org/chain/m{k + 1}.kat'\npublic X{k} = X{k + 1} + 1";
                 modules[$"https://katlang.org/chain/m{chainLength}.kat"] = $"public X{chainLength} = 1";
 
-                return KatLangEngine.Run(
+                // In-memory downloader ValueTasks complete synchronously, so RunAsync
+                // completes synchronously on this dedicated probe thread and GetResult
+                // is plain result extraction, never a block.
+                var task = KatLangEngine.RunAsync(
                     "open 'https://katlang.org/chain/m1.kat'\nX1",
-                    new RunOptions { DownloadCode = url => modules[url] });
+                    new RunOptions { DownloadCode = (url, _) => ValueTask.FromResult(modules[url]) });
+                Assert.True(task.IsCompleted);
+                return task.GetAwaiter().GetResult();
             }
         });
 
@@ -2253,16 +2294,17 @@ public class AstStructuralDepthProcessTests
                 new Algorithm.User(null, [], [], [], [AstStructuralDepthTests.UnarySpine(max - 1)]));
             Assert.NotEmpty(resolved.Output);
 
-            // ModuleLoader.Elaborate: placeholder + structured diagnostic at its own
-            // measured ceiling, boundary-exact.
+            // ModuleLoader.ElaborateAsync: placeholder + structured diagnostic at its
+            // own measured ceiling, boundary-exact. Load-free spines walk
+            // synchronously, so the ValueTasks complete synchronously on this thread.
             var loaderDiags = new List<Diagnostic>();
             var loader = new ModuleLoader(loaderDiags);
-            var acceptedRoot = loader.Elaborate(new Algorithm.User(
+            var acceptedRoot = ElaborateSynchronously(loader, new Algorithm.User(
                 null, [], [], [], [AstStructuralDepthTests.UnarySpine(ModuleLoader.MaxTraversalDepth - 1)]));
             Assert.Empty(loaderDiags);
             Assert.NotEmpty(acceptedRoot.Output);
 
-            var rejectedRoot = loader.Elaborate(new Algorithm.User(
+            var rejectedRoot = ElaborateSynchronously(loader, new Algorithm.User(
                 null, [], [], [], [AstStructuralDepthTests.UnarySpine(1_000_000)]));
             Assert.Empty(rejectedRoot.Output);
             Assert.Contains(
@@ -2278,12 +2320,14 @@ public class AstStructuralDepthProcessTests
             Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.Resolve(cyclic));
 
             // A pre-cancelled loader still honors cancellation FIRST, even for a
-            // deep host AST (cancellation ordering is unchanged by the gate).
+            // deep host AST (cancellation ordering is unchanged by the gate). The
+            // pre-await cancellation check faults the returned ValueTask synchronously.
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
-            var cancelledLoader = ModuleLoader.CreateWithCancellation([], cancelled.Token);
+            var cancelledLoader = new ModuleLoader(
+                [], downloadCode: null, allowedHosts: null, cancelled.Token);
             Assert.Throws<OperationCanceledException>(
-                () => cancelledLoader.Elaborate(new Algorithm.User(
+                () => ElaborateSynchronously(cancelledLoader, new Algorithm.User(
                     null, [], [], [], [AstStructuralDepthTests.UnarySpine(1_000_000)])));
         });
 
@@ -2456,9 +2500,9 @@ public class AstStructuralDepthProcessTests
             // inside the parser's own bare-1-MiB envelope, a pre-existing bound this
             // loader guard cannot widen: a ~250-brace source exhausts a fresh 1 MiB
             // thread in the parser alone).
-            var deepChain = KatLangEngine.Run(
+            var deepChain = RunEngineSynchronously(
                 "open 'https://katlang.org/deep/m1.kat'\nX1",
-                new RunOptions { DownloadCode = DeepChainModules(chain: 8, nest: 60) });
+                new RunOptions { DownloadCode = InMemoryDownloader(DeepChainModules(chain: 8, nest: 60)) });
             var deepFailure = Assert.IsType<RunResult.ParseFailure>(deepChain);
             // Rejected by the loader's cumulative accounting: with the parser's
             // stack-debt guard the third module's PARSE no longer fits above the
@@ -2468,9 +2512,9 @@ public class AstStructuralDepthProcessTests
                 e => e.Message.Contains("cumulative structural", StringComparison.Ordinal));
 
             // 2. Shallow nested loads keep working end-to-end.
-            var shallowChain = KatLangEngine.Run(
+            var shallowChain = RunEngineSynchronously(
                 "open 'https://katlang.org/deep/m1.kat'\nX1",
-                new RunOptions { DownloadCode = DeepChainModules(chain: 3, nest: 4) });
+                new RunOptions { DownloadCode = InMemoryDownloader(DeepChainModules(chain: 3, nest: 4)) });
             var shallowSuccess = Assert.IsType<RunResult.Success>(shallowChain);
             Assert.Equal(new[] { 3m }, shallowSuccess.Atoms);
 
@@ -2491,10 +2535,10 @@ public class AstStructuralDepthProcessTests
             }
 
             var flakyDiags = new List<Diagnostic>();
-            var flakyLoader = new ModuleLoader(flakyDiags, FlakyDownloader);
+            var flakyLoader = new ModuleLoader(flakyDiags, InMemoryDownloader(FlakyDownloader));
             var flakyParse = Parser.ParseSyntax("open 'https://katlang.org/deep/root.kat'\nY");
             Assert.False(flakyParse.HasErrors);
-            flakyLoader.Elaborate(flakyParse.SyntaxRoot);
+            ElaborateSynchronously(flakyLoader, flakyParse.SyntaxRoot);
             Assert.Contains(flakyDiags, d => d.Message.Contains("failed to fetch", StringComparison.Ordinal));
             Assert.Equal(2, flakyCalls["https://katlang.org/deep/flaky.kat"]);
             Assert.Equal(0, flakyLoader.InProgressModuleCount);
@@ -2527,11 +2571,11 @@ public class AstStructuralDepthProcessTests
             }
 
             var siblingDiags = new List<Diagnostic>();
-            var siblingLoader = new ModuleLoader(siblingDiags, SiblingDownloader);
+            var siblingLoader = new ModuleLoader(siblingDiags, InMemoryDownloader(SiblingDownloader));
             var siblingParse = Parser.ParseSyntax(
                 "A = {open 'https://katlang.org/deep/ok.kat'\nK}\nB = {open 'https://katlang.org/deep/deep1.kat'\nD1}\nA");
             Assert.False(siblingParse.HasErrors);
-            siblingLoader.Elaborate(siblingParse.SyntaxRoot);
+            ElaborateSynchronously(siblingLoader, siblingParse.SyntaxRoot);
             Assert.Contains(
                 siblingDiags,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal)
@@ -2562,14 +2606,14 @@ public class AstStructuralDepthProcessTests
             }
 
             var cacheDiags = new List<Diagnostic>();
-            var cacheLoader = new ModuleLoader(cacheDiags, CacheDownloader);
+            var cacheLoader = new ModuleLoader(cacheDiags, InMemoryDownloader(CacheDownloader));
             var cacheParse = Parser.ParseSyntax(
                 "First = {open 'https://katlang.org/deep/shared.kat'\nS}\n"
                 + "Second = " + new string('{', 90)
                 + "open 'https://katlang.org/deep/shared.kat'\nS"
                 + new string('}', 90) + "\nFirst");
             Assert.False(cacheParse.HasErrors);
-            cacheLoader.Elaborate(cacheParse.SyntaxRoot);
+            ElaborateSynchronously(cacheLoader, cacheParse.SyntaxRoot);
             Assert.DoesNotContain(
                 cacheDiags,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));
@@ -2580,12 +2624,12 @@ public class AstStructuralDepthProcessTests
             var cycleDiags = new List<Diagnostic>();
             var cycleLoader = new ModuleLoader(
                 cycleDiags,
-                url => url.EndsWith("c1.kat", StringComparison.Ordinal)
+                InMemoryDownloader(url => url.EndsWith("c1.kat", StringComparison.Ordinal)
                     ? "open 'https://katlang.org/deep/c2.kat'\npublic C1 = 1"
-                    : "open 'https://katlang.org/deep/c1.kat'\npublic C2 = 2");
+                    : "open 'https://katlang.org/deep/c1.kat'\npublic C2 = 2"));
             var cycleParse = Parser.ParseSyntax("open 'https://katlang.org/deep/c1.kat'\nC1");
             Assert.False(cycleParse.HasErrors);
-            cycleLoader.Elaborate(cycleParse.SyntaxRoot);
+            ElaborateSynchronously(cycleLoader, cycleParse.SyntaxRoot);
             Assert.Contains(cycleDiags, d => d.Message.Contains("load cycle detected", StringComparison.Ordinal));
             Assert.Equal(0, cycleLoader.InProgressModuleCount);
 
@@ -2593,9 +2637,8 @@ public class AstStructuralDepthProcessTests
             // propagates, run-local state unwinds, and a FRESH loader over the same
             // modules succeeds.
             using var cancelSource = new CancellationTokenSource();
-            var cancelLoader = ModuleLoader.CreateWithCancellation(
+            var cancelLoader = new ModuleLoader(
                 [],
-                cancelSource.Token,
                 (url, token) =>
                 {
                     if (url.EndsWith("m2.kat", StringComparison.Ordinal))
@@ -2604,34 +2647,37 @@ public class AstStructuralDepthProcessTests
                         token.ThrowIfCancellationRequested();
                     }
 
-                    return url.EndsWith("m1.kat", StringComparison.Ordinal)
+                    return ValueTask.FromResult(url.EndsWith("m1.kat", StringComparison.Ordinal)
                         ? "N1 = {open 'https://katlang.org/deep/m2.kat'\nN2 + 1}\npublic X1 = N1"
-                        : "public N2 = 1";
-                });
+                        : "public N2 = 1");
+                },
+                allowedHosts: null,
+                cancelSource.Token);
             var cancelParse = Parser.ParseSyntax("open 'https://katlang.org/deep/m1.kat'\nX1");
             Assert.False(cancelParse.HasErrors);
-            Assert.Throws<OperationCanceledException>(() => cancelLoader.Elaborate(cancelParse.SyntaxRoot));
+            Assert.Throws<OperationCanceledException>(
+                () => ElaborateSynchronously(cancelLoader, cancelParse.SyntaxRoot));
             Assert.Equal(0, cancelLoader.InProgressModuleCount);
 
             var retryDiags = new List<Diagnostic>();
             var retryLoader = new ModuleLoader(
                 retryDiags,
-                url => url.EndsWith("m1.kat", StringComparison.Ordinal)
+                InMemoryDownloader(url => url.EndsWith("m1.kat", StringComparison.Ordinal)
                     ? "N1 = {open 'https://katlang.org/deep/m2.kat'\nN2 + 1}\npublic X1 = N1"
-                    : "public N2 = 1");
-            retryLoader.Elaborate(cancelParse.SyntaxRoot);
+                    : "public N2 = 1"));
+            ElaborateSynchronously(retryLoader, cancelParse.SyntaxRoot);
             Assert.DoesNotContain(retryDiags, d => d.Severity == DiagnosticSeverity.Error);
             Assert.Equal(2, retryLoader.CachedModuleCount);
 
             // 8. A SHALLOW load site accepts a NEAR-BOUNDARY downloaded source: at a
             // top-level open the parser debt is a handful of units, so a module using
             // ~90 of its 95 brace-level capacity still parses, loads, and evaluates.
-            var nearBoundary = KatLangEngine.Run(
+            var nearBoundary = RunEngineSynchronously(
                 "open 'https://katlang.org/deep/near.kat'\nNB",
                 new RunOptions
                 {
-                    DownloadCode = _ =>
-                        "public NB = " + new string('{', 90) + "5" + new string('}', 90),
+                    DownloadCode = InMemoryDownloader(_ =>
+                        "public NB = " + new string('{', 90) + "5" + new string('}', 90)),
                 });
             Assert.Equal(new[] { 5m }, Assert.IsType<RunResult.Success>(nearBoundary).Atoms);
 
@@ -2642,17 +2688,18 @@ public class AstStructuralDepthProcessTests
                 + "open 'https://katlang.org/deep/leafy.kat'\nLF"
                 + new string('}', 80) + "\npublic X = 1";
             var deepSiteShallow = new List<Diagnostic>();
-            var deepSiteLoader = new ModuleLoader(deepSiteShallow, _ => "public LF = 2");
+            var deepSiteLoader = new ModuleLoader(
+                deepSiteShallow, InMemoryDownloader(_ => "public LF = 2"));
             var deepSiteParse = Parser.ParseSyntax(deepSitePrefix);
             Assert.False(deepSiteParse.HasErrors);
-            deepSiteLoader.Elaborate(deepSiteParse.SyntaxRoot);
+            ElaborateSynchronously(deepSiteLoader, deepSiteParse.SyntaxRoot);
             Assert.DoesNotContain(deepSiteShallow, d => d.Severity == DiagnosticSeverity.Error);
 
             var deepSiteDeep = new List<Diagnostic>();
             var deepSiteDeepLoader = new ModuleLoader(
                 deepSiteDeep,
-                _ => "public LF = " + new string('{', 80) + "2" + new string('}', 80));
-            deepSiteDeepLoader.Elaborate(Parser.ParseSyntax(deepSitePrefix).SyntaxRoot);
+                InMemoryDownloader(_ => "public LF = " + new string('{', 80) + "2" + new string('}', 80)));
+            ElaborateSynchronously(deepSiteDeepLoader, Parser.ParseSyntax(deepSitePrefix).SyntaxRoot);
             Assert.Contains(
                 deepSiteDeep,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));
@@ -2664,13 +2711,13 @@ public class AstStructuralDepthProcessTests
             var malformedDiags = new List<Diagnostic>();
             var malformedLoader = new ModuleLoader(
                 malformedDiags,
-                url => url.EndsWith("deepbad.kat", StringComparison.Ordinal)
+                InMemoryDownloader(url => url.EndsWith("deepbad.kat", StringComparison.Ordinal)
                     ? new string('(', 5_000) + "1"
-                    : "@@not katlang@@");
+                    : "@@not katlang@@"));
             var malformedParse = Parser.ParseSyntax(
                 "A = {open 'https://katlang.org/deep/deepbad.kat'\n1}\nB = {open 'https://katlang.org/deep/garbage.kat'\n1}\n1");
             Assert.False(malformedParse.HasErrors);
-            malformedLoader.Elaborate(malformedParse.SyntaxRoot);
+            ElaborateSynchronously(malformedLoader, malformedParse.SyntaxRoot);
             Assert.Contains(
                 malformedDiags,
                 d => d.Message.Contains("deepbad.kat", StringComparison.Ordinal)
@@ -2685,11 +2732,11 @@ public class AstStructuralDepthProcessTests
             // 11. A parser-budget rejection followed by SUCCESSFUL FRESH-LOADER reuse
             // of the same modules from a shallow site (the rejection is
             // position-dependent, and no partial module was cached).
-            var reuseModules = new Func<string, string>(
+            var reuseModules = InMemoryDownloader(
                 _ => "public RB = " + new string('{', 80) + "9" + new string('}', 80));
             var reuseDeep = new List<Diagnostic>();
             var reuseDeepLoader = new ModuleLoader(reuseDeep, reuseModules);
-            reuseDeepLoader.Elaborate(Parser.ParseSyntax(
+            ElaborateSynchronously(reuseDeepLoader, Parser.ParseSyntax(
                 "Deep = " + new string('{', 80)
                 + "open 'https://katlang.org/deep/reuse.kat'\nRB"
                 + new string('}', 80) + "\npublic X = 1").SyntaxRoot);
@@ -2697,7 +2744,7 @@ public class AstStructuralDepthProcessTests
                 reuseDeep,
                 d => d.Message.Contains("cumulative structural", StringComparison.Ordinal));
 
-            var reuseShallow = KatLangEngine.Run(
+            var reuseShallow = RunEngineSynchronously(
                 "open 'https://katlang.org/deep/reuse.kat'\nRB",
                 new RunOptions { DownloadCode = reuseModules });
             Assert.Equal(new[] { 9m }, Assert.IsType<RunResult.Success>(reuseShallow).Atoms);
@@ -2723,8 +2770,9 @@ public class AstStructuralDepthProcessTests
             }
 
             var shortCircuitDiags = new List<Diagnostic>();
-            var shortCircuitLoader = new ModuleLoader(shortCircuitDiags, ShortCircuitDownloader);
-            shortCircuitLoader.Elaborate(Parser.ParseSyntax(
+            var shortCircuitLoader = new ModuleLoader(
+                shortCircuitDiags, InMemoryDownloader(ShortCircuitDownloader));
+            ElaborateSynchronously(shortCircuitLoader, Parser.ParseSyntax(
                 "Deep = " + new string('{', 80)
                 + "open 'https://katlang.org/deep/sc1.kat'\nS1"
                 + new string('}', 80) + "\npublic X = 1").SyntaxRoot);

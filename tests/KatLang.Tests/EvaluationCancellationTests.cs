@@ -499,7 +499,7 @@ public class EvaluationCancellationTests
     }
 
     [Fact]
-    public void CancellationEscapesFromEngineAdditionalErrorEvaluation()
+    public async Task CancellationEscapesFromEngineAdditionalErrorEvaluation()
     {
         const string Source = """
             A = load('https://katlang.org/cancellation/not-katlang.kat')
@@ -512,11 +512,11 @@ public class EvaluationCancellationTests
         var options = new RunOptions
         {
             EvaluationCancellationToken = cts.Token,
-            DownloadCode = _ => "<!doctype html><html><body>Not found</body></html>",
+            DownloadCode = (_, _) => ValueTask.FromResult("<!doctype html><html><body>Not found</body></html>"),
         };
 
-        var thrown = Assert.Throws<OperationCanceledException>(() =>
-            KatLangEngine.Run(Source, options));
+        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            KatLangEngine.RunAsync(Source, options));
 
         Assert.Equal(cts.Token, thrown.CancellationToken);
     }

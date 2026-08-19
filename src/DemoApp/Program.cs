@@ -5,7 +5,7 @@ var source = """
     K(7, {x+1})
     """;
 
-switch (KatLangEngine.Run(source, new RunOptions { DownloadCode = DownloadCode }))
+switch (await KatLangEngine.RunAsync(source, new RunOptions { DownloadCode = DownloadCode }))
 {
     case RunResult.Success s:
         Console.WriteLine(s.ToDisplayString());
@@ -300,8 +300,8 @@ static string SequenceValueToString(Result.SequenceValue sequenceValue)
 
     return text.ToString();
 }
-static string DownloadCode(string url)
+static async ValueTask<string> DownloadCode(string url, CancellationToken cancellationToken)
 {
     using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-    return client.GetStringAsync(url).GetAwaiter().GetResult();
+    return await client.GetStringAsync(url, cancellationToken);
 }

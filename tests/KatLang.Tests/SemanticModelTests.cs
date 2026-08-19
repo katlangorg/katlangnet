@@ -4,16 +4,17 @@ namespace KatLang.Tests;
 
 public class SemanticModelTests
 {
-    private static Func<string, string> MockDownloader(Dictionary<string, string> files)
+    private static Func<string, CancellationToken, ValueTask<string>> MockDownloader(
+        Dictionary<string, string> files)
     {
-        return url =>
+        return (url, _) =>
         {
             if (files.TryGetValue(url, out var content))
-                return content;
+                return ValueTask.FromResult(content);
 
             var trimmed = url.TrimEnd('/');
             if (files.TryGetValue(trimmed, out content))
-                return content;
+                return ValueTask.FromResult(content);
 
             throw new Exception($"404: {url}");
         };
@@ -21,9 +22,12 @@ public class SemanticModelTests
 
     private static SemanticModel BuildModel(string source, Dictionary<string, string>? remoteFiles = null)
     {
+        // The in-memory downloader completes synchronously, so the async parse does
+        // too; GetResult extracts the completed task's result without blocking.
         var parseResult = remoteFiles is null
             ? Parser.Parse(source)
-            : Parser.Parse(source, MockDownloader(remoteFiles));
+            : Parser.ParseAsync(source, new RunOptions { DownloadCode = MockDownloader(remoteFiles) })
+                .GetAwaiter().GetResult();
         Assert.False(
             parseResult.HasErrors,
             string.Join(Environment.NewLine, parseResult.Diagnostics.Select(d => d.Message)));

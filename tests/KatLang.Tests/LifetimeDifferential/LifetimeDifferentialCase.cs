@@ -98,7 +98,13 @@ public sealed class LifetimeModuleHost
             : throw new InvalidOperationException($"404: no module registered for '{url}'");
     }
 
-    public Func<string, string> Downloader => Download;
+    /// <summary>
+    /// The async downloader contract over the in-memory map. The ValueTasks complete
+    /// synchronously (a missing file throws synchronously), so every
+    /// downloader-configured run in this campaign completes synchronously too.
+    /// </summary>
+    public Func<string, CancellationToken, ValueTask<string>> Downloader
+        => (url, _) => ValueTask.FromResult(Download(url));
 }
 
 /// <summary>
@@ -196,13 +202,17 @@ public static class LifetimeHarness
 {
     public static LifetimeObservation Observe(string source, LifetimeModuleHost? host)
     {
+        // Source loading is async-only; the in-memory host's ValueTasks complete
+        // synchronously, so the async entry points complete synchronously here and
+        // GetResult is plain result extraction on a completed task.
         var parsed = host is null
             ? Parser.Parse(source)
-            : Parser.Parse(source, host.Downloader);
-        var engineOptions = host is null
-            ? null
-            : new RunOptions { DownloadCode = host.Downloader };
-        var engineRun = KatLangEngine.Run(source, engineOptions);
+            : Parser.ParseAsync(source, new RunOptions { DownloadCode = host.Downloader })
+                .GetAwaiter().GetResult();
+        var engineRun = host is null
+            ? KatLangEngine.Run(source)
+            : KatLangEngine.RunAsync(source, new RunOptions { DownloadCode = host.Downloader })
+                .GetAwaiter().GetResult();
 
         if (parsed.HasErrors)
         {

@@ -6,37 +6,34 @@ namespace KatLang;
 public sealed class RunOptions
 {
     /// <summary>
-    /// Injected code fetcher: URL → source text. In WASM, pass a JS interop downloader.
-    /// If <see cref="DownloadCodeWithCancellation"/> is also supplied, that token-aware fetcher
-    /// takes precedence and this legacy callback is not called.
-    /// If this and <see cref="DownloadCodeWithCancellation"/> are both null, this configuration
-    /// does not provide module elaboration support, so any source that uses <c>load</c> is rejected
-    /// by the public parser/run pipeline.
+    /// Injected asynchronous code fetcher — the ONE source-loading contract: URL and the
+    /// configured <see cref="SourceProcessingCancellationToken"/> → source text. A host with the
+    /// source already in memory returns <c>ValueTask.FromResult(text)</c> and source processing
+    /// completes synchronously; a networked host awaits ordinary managed I/O (for example
+    /// <c>HttpClient.GetStringAsync(url, token)</c>) and source processing genuinely suspends
+    /// until the download completes.
+    /// <para>Configuring a downloader selects the ASYNCHRONOUS entry points
+    /// (<see cref="KatLangEngine.RunAsync"/>, the async conveniences, and
+    /// <see cref="Parser.ParseAsync"/>): the synchronous entry points cannot suspend for a
+    /// download and reject a downloader-configured options object with
+    /// <see cref="InvalidOperationException"/> before parsing anything. If this property is null,
+    /// the configuration does not provide module elaboration support, so any source that uses
+    /// <c>load</c> is rejected by the public parser/run pipeline with a diagnostic.</para>
     /// </summary>
-    public Func<string, string>? DownloadCode { get; init; }
-
-    /// <summary>
-    /// Injected token-aware code fetcher: URL and the configured
-    /// <see cref="SourceProcessingCancellationToken"/> → source text. In WASM, pass a JS
-    /// interop downloader that observes the token where the host integration permits it.
-    /// If both this property and <see cref="DownloadCode"/> are supplied, this token-aware
-    /// fetcher takes precedence deterministically.
-    /// <para>If both downloader properties are null, this configuration does not provide module
-    /// elaboration support, so any source that uses <c>load</c> is rejected by the public
-    /// parser/run pipeline.</para>
-    /// </summary>
-    public Func<string, CancellationToken, string>? DownloadCodeWithCancellation { get; init; }
+    public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
     /// <summary>
     /// Host cancellation for parsing, module fetching, and front-end source processing.
-    /// The token is passed unchanged to <see cref="DownloadCodeWithCancellation"/>. Cancellation
+    /// The token is passed unchanged to <see cref="DownloadCode"/>. Cancellation
     /// is checked at front-end phase boundaries and immediately before and after each module
     /// fetch. It does not cancel arbitrary evaluator computation after source processing has
     /// completed; use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
     /// <see cref="EvaluationLimits"/> to bound evaluator work.
     /// <para>An <see cref="OperationCanceledException"/> is propagated as host cancellation only
-    /// when this token has been cancelled. A downloader cancellation or timeout while this token
-    /// is not cancelled remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
+    /// when this token has been cancelled, and the escaping exception carries this exact token —
+    /// including when the downloader's awaitable faults with a different exception or cancellation
+    /// token while the host token is cancelled. A downloader cancellation or timeout while this
+    /// token is not cancelled remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
     /// </summary>
     public CancellationToken SourceProcessingCancellationToken { get; init; }
 

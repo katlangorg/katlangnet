@@ -475,7 +475,8 @@ public class ConcurrencyDifferentialTests
     private const string ModuleContentA = ConcurrencyCorpus.ModuleContentA;
     private const string ModuleContentB = ConcurrencyCorpus.ModuleContentB;
 
-    private static RunOptions ProviderFor(string content) => new() { DownloadCode = _ => content };
+    private static RunOptions ProviderFor(string content)
+        => new() { DownloadCode = (_, _) => ValueTask.FromResult(content) };
 
     /// <summary>
     /// Two concurrent engine runs importing the SAME module URL from their own
@@ -520,10 +521,10 @@ public class ConcurrencyDifferentialTests
         var gate = new EvaluationGate();
         var gatedOptions = new RunOptions
         {
-            DownloadCode = _ =>
+            DownloadCode = (_, _) =>
             {
                 gate.Pass();
-                return ModuleContentA;
+                return ValueTask.FromResult(ModuleContentA);
             },
         };
 
