@@ -67,6 +67,27 @@ public sealed class RunOptions
     public IEnumerable<string>? AllowedHosts { get; init; }
 
     /// <summary>
+    /// Optional host operations exposed to the program as ambient callables (resolved
+    /// like the built-in <c>Math</c> members; program-defined properties shadow them).
+    /// The names resolve during front-end parameter detection too, so referencing an
+    /// operation never turns it into an implicit parameter. Each operation receives the
+    /// evaluated argument values and <see cref="EvaluationCancellationToken"/>, and its
+    /// exceptions propagate to the host unchanged — see <see cref="HostOperation"/> for
+    /// the full contract.
+    /// <para>A set containing an ASYNCHRONOUS operation requires the asynchronous entry
+    /// points (<see cref="KatLangEngine.RunAsync"/> and the async conveniences), where
+    /// an incomplete host awaitable genuinely suspends evaluation and resumes it on
+    /// completion; synchronous entry points reject such a configuration with
+    /// <see cref="InvalidOperationException"/> before evaluating anything. Synchronous
+    /// operations work on every entry point and keep <c>RunAsync</c>'s synchronous
+    /// fast path.</para>
+    /// <para>Like <see cref="EvaluationLimits"/>, this is immutable configuration and
+    /// safe to share across concurrent and sequential runs — all run state lives in
+    /// run-scoped evaluator structures.</para>
+    /// </summary>
+    public HostOperations? HostOperations { get; init; }
+
+    /// <summary>
     /// Optional deterministic evaluation resource limits. When null,
     /// <see cref="KatLang.EvaluationLimits.Default"/> applies: hard depth, per-collection,
     /// per-string, and returned-display ceilings are enforced; step and cumulative

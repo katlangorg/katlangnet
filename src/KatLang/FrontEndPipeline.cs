@@ -13,7 +13,7 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source), CancellationToken.None);
+        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source), hostOperations: null, CancellationToken.None);
     }
 
     internal static FrontEndResult Process(
@@ -31,6 +31,7 @@ internal static class FrontEndPipeline
             downloadCodeWithCancellation: null,
             allowedHosts,
             budget,
+            hostOperations: null,
             CancellationToken.None);
     }
 
@@ -53,9 +54,10 @@ internal static class FrontEndPipeline
                 options.DownloadCodeWithCancellation,
                 options.AllowedHosts,
                 budget,
+                options.HostOperations,
                 cancellationToken);
 
-        return ProcessWithoutModuleElaboration(syntaxResult, cancellationToken);
+        return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
     }
 
     /// <summary>
@@ -91,6 +93,7 @@ internal static class FrontEndPipeline
 
     private static FrontEndResult ProcessWithoutModuleElaboration(
         SyntaxParseResult syntaxResult,
+        HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
@@ -102,7 +105,8 @@ internal static class FrontEndPipeline
             return new FrontEndResult(syntaxResult.SyntaxRoot, diagnostics);
         }
 
-        return FinalizeElaboration(syntaxResult.SyntaxRoot, diagnostics, cancellationToken: cancellationToken);
+        return FinalizeElaboration(
+            syntaxResult.SyntaxRoot, diagnostics, hostOperations: hostOperations, cancellationToken: cancellationToken);
     }
 
     private static FrontEndResult ProcessWithModuleElaboration(
@@ -111,6 +115,7 @@ internal static class FrontEndPipeline
         Func<string, CancellationToken, string>? downloadCodeWithCancellation,
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget budget,
+        HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
         var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
@@ -153,21 +158,23 @@ internal static class FrontEndPipeline
         return FinalizeElaboration(
             loadElaboratedRoot,
             diagnostics,
-            cancellationToken,
             canEvaluateAfterLoadErrors:
                 !syntaxResult.HasErrors &&
                 !loader.HasSourceProcessingErrors &&
                 diagnostics
                     .Skip(loadDiagnosticStart)
                     .Take(loadDiagnosticsEnd - loadDiagnosticStart)
-                    .Any(static d => d.Severity == DiagnosticSeverity.Error));
+                    .Any(static d => d.Severity == DiagnosticSeverity.Error),
+            hostOperations: hostOperations,
+            cancellationToken: cancellationToken);
     }
 
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
         List<Diagnostic> diagnostics,
-        CancellationToken cancellationToken = default,
-        bool canEvaluateAfterLoadErrors = false)
+        bool canEvaluateAfterLoadErrors = false,
+        HostOperations? hostOperations = null,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -193,7 +200,11 @@ internal static class FrontEndPipeline
             return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
         }
 
-        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(loadElaboratedRoot);
+        // Host-operation names resolve during parameter detection (through the
+        // configuration's extended semantic prelude), so referencing one never turns
+        // it into an implicit parameter — the front-end half of the same name-level
+        // agreement the built-in Math module relies on.
+        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(loadElaboratedRoot, hostOperations);
         diagnostics.AddRange(parameterDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();

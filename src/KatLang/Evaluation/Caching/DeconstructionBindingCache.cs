@@ -53,6 +53,18 @@ internal interface IDeconstructionBindingCache
     EvalResult<IReadOnlyList<Result>> GetOrBind(
         DeconstructionBindingExecution execution,
         Func<EvalResult<IReadOnlyList<Result>>> bind);
+
+    /// <summary>
+    /// Async twin of <see cref="GetOrBind"/>, used only by the evaluator's async twin
+    /// family (whose bind callback awaits async twin evaluation). Same store, same keys,
+    /// same never-store-errors rule: one run uses exactly one of the two members
+    /// throughout, and both implementations below are run-scoped, so the shared-bind
+    /// semantics are unchanged. This interface is internal and never host-supplied, so
+    /// the member carries no public-surface cost.
+    /// </summary>
+    ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+        DeconstructionBindingExecution execution,
+        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind);
 }
 
 internal readonly record struct DeconstructionBindingCacheKey(
@@ -108,6 +120,11 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
         DeconstructionBindingExecution execution,
         Func<EvalResult<IReadOnlyList<Result>>> bind)
         => bind();
+
+    public ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+        DeconstructionBindingExecution execution,
+        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind)
+        => bind();
 }
 
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
@@ -130,6 +147,34 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
             return EvalResult<IReadOnlyList<Result>>.Ok(cached);
 
         var result = bind();
+        if (result.IsError)
+            return result.Error;
+
+        _results[key] = result.Value;
+        return result;
+    }
+
+    /// <summary>
+    /// Async twin of <see cref="GetOrBind"/>: same key derivation, same store, same
+    /// never-store-errors rule. One run drives evaluation through exactly one of the
+    /// sync/async evaluator families, and within the async family each bind is awaited
+    /// before evaluation continues, so the dictionary is never touched concurrently.
+    /// </summary>
+    public async ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+        DeconstructionBindingExecution execution,
+        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind)
+    {
+        var key = new DeconstructionBindingCacheKey(
+            execution.GroupIdentity,
+            execution.OwnerIdentity,
+            execution.ValueEnvironmentIdentity,
+            execution.AlgorithmEnvironmentIdentity,
+            execution.CountedParamEnvironmentIdentity);
+
+        if (_results.TryGetValue(key, out var cached))
+            return EvalResult<IReadOnlyList<Result>>.Ok(cached);
+
+        var result = await bind().ConfigureAwait(false);
         if (result.IsError)
             return result.Error;
 

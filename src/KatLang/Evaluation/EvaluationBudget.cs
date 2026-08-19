@@ -36,7 +36,10 @@ internal sealed class EvaluationBudget
     private long _materializedItems;
     private long _materializedStringChars;
 
-    internal EvaluationBudget(EvaluationLimits limits, CancellationToken cancellationToken = default)
+    internal EvaluationBudget(
+        EvaluationLimits limits,
+        HostOperations? hostOperations = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(limits);
         _maxDepth = limits.EffectiveMaxDepth;
@@ -46,6 +49,7 @@ internal sealed class EvaluationBudget
         _maxStringLength = limits.EffectiveMaxStringLength;
         _maxMaterializedStringChars = limits.EffectiveMaxMaterializedStringChars ?? long.MaxValue;
         _cancellationToken = cancellationToken;
+        HostOperations = hostOperations;
         HasStepLimit = limits.EffectiveMaxSteps is not null;
         HasConfiguredStringLimit = limits.MaxStringLength is not null
             || limits.MaxMaterializedStringChars is not null;
@@ -53,8 +57,30 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>Creates a fresh budget for one run; <c>null</c> limits mean <see cref="EvaluationLimits.Default"/>.</summary>
-    internal static EvaluationBudget Create(EvaluationLimits? limits, CancellationToken cancellationToken = default)
-        => new(limits ?? EvaluationLimits.Default, cancellationToken);
+    internal static EvaluationBudget Create(
+        EvaluationLimits? limits,
+        HostOperations? hostOperations = null,
+        CancellationToken cancellationToken = default)
+        => new(limits ?? EvaluationLimits.Default, hostOperations, cancellationToken);
+
+    /// <summary>
+    /// The run's host cancellation token, exposed so host-facing evaluation sites
+    /// (host operations) can hand the exact token to host code. Identity matters:
+    /// hosts correlate cancellation by comparing this token to the one they supplied.
+    /// </summary>
+    internal CancellationToken CancellationToken => _cancellationToken;
+
+    /// <summary>
+    /// The run's configured host operations, or <c>null</c> for the ordinary
+    /// language-only configuration. Carried here rather than on <c>EvalCtx</c> for the
+    /// same reason as the cancellation token: the budget is the one run-scoped object
+    /// already shared by reference through every copied context, so run-scoped host
+    /// execution configuration rides it without growing the hot by-value context
+    /// struct, and it participates in the run-identity contract automatically (a run's
+    /// operations can never bleed into another run any more than its counters can).
+    /// Immutable configuration only — all mutable state stays in the counters above.
+    /// </summary>
+    internal HostOperations? HostOperations { get; }
 
     /// <summary>
     /// Observes the run's host cancellation token, throwing

@@ -50,11 +50,20 @@ public static class ParameterDetector
     /// preflight. Only for callers that ALREADY gated the tree at the shared
     /// elaboration ceiling (the front-end pipeline's common gate); it must never
     /// become reachable with an unvalidated host tree.
+    ///
+    /// <para>When <paramref name="hostOperations"/> is supplied, detection resolves
+    /// names against that configuration's extended signature-only prelude, so a
+    /// referenced host operation name resolves like <c>Math</c> instead of becoming an
+    /// implicit parameter — the front-end half of the runtime prelude's name-level
+    /// agreement.</para>
     /// </summary>
-    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) DetectPrevalidated(Algorithm root)
+    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) DetectPrevalidated(
+        Algorithm root,
+        HostOperations? hostOperations = null)
     {
         var diagnostics = new List<Diagnostic>();
-        var preludeScope = ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm());
+        var preludeScope = ElaboratedScopeLookup.CreateScope(
+            hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm());
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
@@ -83,7 +92,7 @@ public static class ParameterDetector
         if (alg is Algorithm.User { IsAssignmentDeconstructionHelper: true } deconstructionHelper)
             return RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper);
 
-        var newOpens = ProcessOpenExprs(alg.Opens, diagnostics);
+        var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
 
@@ -185,14 +194,33 @@ public static class ParameterDetector
         return helper with { Output = rewrittenOutput };
     }
 
+    /// <summary>
+    /// The detection's prelude scope: the root ancestor of any scope chain built during
+    /// this detection, since every chain starts at the prelude scope
+    /// <see cref="DetectPrevalidated"/> created. Open-target processing anchors on it
+    /// (rather than allocating a second prelude), which also keeps the host-operation
+    /// extended prelude — when one is configured — in force for open targets.
+    /// </summary>
+    private static ElaboratedPropertyScope RootPreludeScope(ElaboratedPropertyScope scope)
+    {
+        var current = scope;
+        while (current.Parent is not null)
+            current = current.Parent;
+        return current;
+    }
+
     private static IReadOnlyList<Expr> ProcessOpenExprs(
         IReadOnlyList<Expr> opens,
+        ElaboratedPropertyScope parentScope,
         List<Diagnostic>? diagnostics)
     {
         if (opens.Count == 0)
             return opens;
 
-        var openParentScope = ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm());
+        // Most algorithms have no open declaration. Resolve the detection-wide
+        // prelude only when an open target actually needs processing, preserving the
+        // zero-walk fast path for deeply nested ordinary algorithms.
+        var openParentScope = RootPreludeScope(parentScope);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, openParentScope, diagnostics));

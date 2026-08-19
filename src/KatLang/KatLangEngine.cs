@@ -283,8 +283,23 @@ public static class KatLangEngine
     /// (including the additional-error evaluation performed for evaluable load
     /// failures). Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation,
+    /// which this synchronous entry point cannot suspend for — use
+    /// <see cref="RunAsync"/>. Thrown before any parsing or evaluation.
+    /// </exception>
     public static RunResult Run(string source, RunOptions? options = null)
     {
+        var hostOperations = options?.HostOperations;
+        // Fail fast on a configuration this synchronous entry point can never honor:
+        // an asynchronous host operation completes only by suspending evaluation.
+        if (hostOperations?.ContainsAsynchronousOperations == true)
+        {
+            throw new InvalidOperationException(
+                "RunOptions.HostOperations contains an asynchronous operation; use KatLangEngine.RunAsync " +
+                "(or an async convenience entry point), or configure only synchronous host operations.");
+        }
+
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
         var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
@@ -292,20 +307,16 @@ public static class KatLangEngine
 
         if (frontEndResult.HasErrors)
         {
-            var parseErrors = frontEndResult.Diagnostics
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .Select(KatLangError.FromDiagnostic)
-                .ToList();
-            if (frontEndResult.CanEvaluateAfterLoadErrors)
-                parseErrors.AddRange(EvaluateForAdditionalErrors(
-                    frontEndResult.ElaboratedRoot,
-                    options?.EvaluationLimits,
-                    evaluationCancellationToken));
-
-            return new RunResult.ParseFailure(parseErrors)
-            {
-                DisplayOptions = diagnosticDisplayOptions,
-            };
+            return FrontEndFailureResult(
+                frontEndResult,
+                diagnosticDisplayOptions,
+                frontEndResult.CanEvaluateAfterLoadErrors
+                    ? EvaluateForAdditionalErrors(
+                        frontEndResult.ElaboratedRoot,
+                        options?.EvaluationLimits,
+                        hostOperations,
+                        evaluationCancellationToken)
+                    : []);
         }
 
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
@@ -318,8 +329,117 @@ public static class KatLangEngine
             DisplayDecimalsPropertyName,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
+            hostOperations,
             evaluationCancellationToken);
 
+        return ProjectEvaluationOutcome(
+            frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
+    }
+
+    /// <summary>
+    /// Asynchronous counterpart of <see cref="Run(string, RunOptions?)"/> with identical
+    /// result and error projection semantics.
+    ///
+    /// <para>Parsing, module loading, and front-end elaboration remain SYNCHRONOUS —
+    /// they run inline on the calling thread before the returned task's first
+    /// suspension opportunity, governed as before by
+    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> and
+    /// <see cref="RunOptions.SourceProcessingLimits"/>. Evaluation goes through the
+    /// evaluator's async surface: unless <see cref="RunOptions.HostOperations"/>
+    /// contains an ASYNCHRONOUS operation, the whole run completes synchronously on
+    /// the calling thread. This method never schedules work onto another thread and
+    /// never yields artificially — thread placement and scheduling remain the host's
+    /// responsibility. With asynchronous host operations configured, an incomplete
+    /// host awaitable genuinely suspends the run and resumes it — exactly once, at the
+    /// same point — when the operation completes (see <see cref="HostOperation"/> for
+    /// the full contract).</para>
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>; as with any
+    /// async API, the exception is delivered through the returned task.
+    /// </exception>
+    public static async Task<RunResult> RunAsync(string source, RunOptions? options = null)
+    {
+        // MIRROR OF Run(string, RunOptions?) — keep in lock-step; only the evaluation
+        // calls are awaited, through the evaluator's async entry points.
+        var hostOperations = options?.HostOperations;
+        var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
+        var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
+        var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
+        var frontEndResult = FrontEndPipeline.Process(source, options);
+
+        if (frontEndResult.HasErrors)
+        {
+            return FrontEndFailureResult(
+                frontEndResult,
+                diagnosticDisplayOptions,
+                frontEndResult.CanEvaluateAfterLoadErrors
+                    ? await EvaluateForAdditionalErrorsAsync(
+                        frontEndResult.ElaboratedRoot,
+                        options?.EvaluationLimits,
+                        hostOperations,
+                        evaluationCancellationToken).ConfigureAwait(false)
+                    : []);
+        }
+
+        // An asynchronous host-operation configuration routes the run through the
+        // evaluator's async twin path, which awaits the property seam — so it gets the
+        // async-capable run-scoped cache. Every other configuration (including purely
+        // synchronous host operations) keeps the ordinary cache and with it the
+        // synchronous fast path.
+        IZeroArgPropertyResultCache zeroArgPropertyResultCache =
+            hostOperations?.ContainsAsynchronousOperations == true
+                ? new RunScopedAsyncZeroArgPropertyResultCache()
+                : new RunScopedZeroArgPropertyResultCache();
+
+        // One budget for the whole run, exactly as in Run.
+        var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
+            new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
+            DisplayDecimalsPropertyName,
+            zeroArgPropertyResultCache,
+            options?.EvaluationLimits,
+            hostOperations,
+            evaluationCancellationToken).ConfigureAwait(false);
+
+        return ProjectEvaluationOutcome(
+            frontEndResult, evalResult, limits, diagnosticDisplayOptions, evaluationCancellationToken);
+    }
+
+    /// <summary>
+    /// Shared front-end failure projection for <see cref="Run"/> and
+    /// <see cref="RunAsync"/>: the front end's error diagnostics plus any
+    /// additional-error evaluation results, in that order.
+    /// </summary>
+    private static RunResult.ParseFailure FrontEndFailureResult(
+        FrontEndResult frontEndResult,
+        DisplayOptions diagnosticDisplayOptions,
+        IReadOnlyList<KatLangError> additionalEvaluationErrors)
+    {
+        var parseErrors = frontEndResult.Diagnostics
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(KatLangError.FromDiagnostic)
+            .ToList();
+        parseErrors.AddRange(additionalEvaluationErrors);
+
+        return new RunResult.ParseFailure(parseErrors)
+        {
+            DisplayOptions = diagnosticDisplayOptions,
+        };
+    }
+
+    /// <summary>
+    /// Shared post-evaluation projection for <see cref="Run"/> and
+    /// <see cref="RunAsync"/>: error classification, DisplayDecimals handling, bounded
+    /// host-atom projection, and success construction — byte-for-byte the former inline
+    /// body of <see cref="Run"/>.
+    /// </summary>
+    private static RunResult ProjectEvaluationOutcome(
+        FrontEndResult frontEndResult,
+        EvalResult<Evaluator.CountedRootProgramResult> evalResult,
+        EvaluationLimits limits,
+        DisplayOptions diagnosticDisplayOptions,
+        CancellationToken evaluationCancellationToken)
+    {
         if (evalResult.IsError)
         {
             var evalError = KatLangError.FromEvalError(evalResult.Error);
@@ -401,6 +521,30 @@ public static class KatLangEngine
     }
 
     /// <summary>
+    /// Asynchronous counterpart of <see cref="EvaluateToAtoms"/>: a thin projection
+    /// over <see cref="RunAsync"/> with identical success and failure semantics.
+    /// Like <see cref="RunAsync"/>, it completes synchronously unless
+    /// <see cref="RunOptions.HostOperations"/> contains an asynchronous operation
+    /// whose awaitable genuinely suspends the run.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// Same cancellation contract as <see cref="EvaluateToAtoms"/>; delivered through
+    /// the returned task.
+    /// </exception>
+    public static async Task<IReadOnlyList<decimal>> EvaluateToAtomsAsync(string source, RunOptions? options = null)
+    {
+        // MIRROR OF EvaluateToAtoms — keep in lock-step.
+        return await RunAsync(source, options).ConfigureAwait(false) switch
+        {
+            RunResult.Success s => s.Atoms,
+            RunResult.NoProgramOutput n => throw new KatLangException([n.Diagnostic]),
+            RunResult.ParseFailure p => throw new KatLangException(p.Errors),
+            RunResult.EvalFailure e => throw new KatLangException(e.Errors),
+            _ => throw new InvalidOperationException("Unknown RunResult variant."),
+        };
+    }
+
+    /// <summary>
     /// Parse and evaluate, returning atoms joined by spaces as a display string.
     /// Returns error text on failure instead of throwing.
     /// </summary>
@@ -411,6 +555,25 @@ public static class KatLangEngine
     /// </exception>
     public static string EvaluateToString(string source, RunOptions? options = null)
         => Run(source, options) switch
+        {
+            RunResult.Success s => FormatAtomsJoined(s),
+            var r => r.ToDisplayString(),
+        };
+
+    /// <summary>
+    /// Asynchronous counterpart of <see cref="EvaluateToString"/>: a thin projection
+    /// over <see cref="RunAsync"/> with identical rendering and failure semantics.
+    /// Like <see cref="RunAsync"/>, it completes synchronously unless
+    /// <see cref="RunOptions.HostOperations"/> contains an asynchronous operation
+    /// whose awaitable genuinely suspends the run.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// Same cancellation contract as <see cref="EvaluateToString"/>; delivered through
+    /// the returned task.
+    /// </exception>
+    public static async Task<string> EvaluateToStringAsync(string source, RunOptions? options = null)
+        // MIRROR OF EvaluateToString — keep in lock-step.
+        => await RunAsync(source, options).ConfigureAwait(false) switch
         {
             RunResult.Success s => FormatAtomsJoined(s),
             var r => r.ToDisplayString(),
@@ -487,13 +650,32 @@ public static class KatLangEngine
         };
 
     private static IReadOnlyList<KatLangError> EvaluateForAdditionalErrors(
-        Algorithm root, EvaluationLimits? limits, CancellationToken cancellationToken)
+        Algorithm root, EvaluationLimits? limits, HostOperations? hostOperations, CancellationToken cancellationToken)
     {
         var evalResult = Evaluator.RunCounted(
             new Expr.AlgorithmExpr(root),
             new RunScopedZeroArgPropertyResultCache(),
             limits,
+            hostOperations,
             cancellationToken);
+        if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
+            return [];
+
+        return [KatLangError.FromEvalError(evalResult.Error)];
+    }
+
+    /// <summary>MIRROR OF <see cref="EvaluateForAdditionalErrors"/> — keep in lock-step.</summary>
+    private static async Task<IReadOnlyList<KatLangError>> EvaluateForAdditionalErrorsAsync(
+        Algorithm root, EvaluationLimits? limits, HostOperations? hostOperations, CancellationToken cancellationToken)
+    {
+        var evalResult = await Evaluator.RunCountedAsync(
+            new Expr.AlgorithmExpr(root),
+            hostOperations?.ContainsAsynchronousOperations == true
+                ? new RunScopedAsyncZeroArgPropertyResultCache()
+                : new RunScopedZeroArgPropertyResultCache(),
+            limits,
+            hostOperations,
+            cancellationToken).ConfigureAwait(false);
         if (!evalResult.IsError || IsTopLevelNoProgramOutput(evalResult.Error))
             return [];
 

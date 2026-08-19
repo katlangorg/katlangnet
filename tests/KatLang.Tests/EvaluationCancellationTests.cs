@@ -185,7 +185,7 @@ public class EvaluationCancellationTests
                 ast,
                 new RunScopedZeroArgPropertyResultCache(),
                 limits: null,
-                cts.Token));
+                cancellationToken: cts.Token));
         Assert.Equal(cts.Token, fromCounted.CancellationToken);
 
         var fromCountedWithTopLevelProperty = Assert.Throws<OperationCanceledException>(() =>
@@ -194,7 +194,7 @@ public class EvaluationCancellationTests
                 "A",
                 new RunScopedZeroArgPropertyResultCache(),
                 limits: null,
-                cts.Token));
+                cancellationToken: cts.Token));
         Assert.Equal(cts.Token, fromCountedWithTopLevelProperty.CancellationToken);
     }
 
@@ -413,7 +413,7 @@ public class EvaluationCancellationTests
         cancelled.Cancel();
         var cancelledCtx = Evaluator.EvalCtx.Empty with
         {
-            Budget = EvaluationBudget.Create(null, cancelled.Token),
+            Budget = EvaluationBudget.Create(null, cancellationToken: cancelled.Token),
         };
 
         var thrown = Assert.Throws<OperationCanceledException>(() =>
@@ -432,7 +432,7 @@ public class EvaluationCancellationTests
         using var live = new CancellationTokenSource();
         var liveCtx = Evaluator.EvalCtx.Empty with
         {
-            Budget = EvaluationBudget.Create(null, live.Token),
+            Budget = EvaluationBudget.Create(null, cancellationToken: live.Token),
         };
         var handled = LoopOptimizer.TryEvaluateRepeat(
             step,
@@ -457,7 +457,7 @@ public class EvaluationCancellationTests
         cancelled.Cancel();
         var ctx = Evaluator.EvalCtx.Empty with
         {
-            Budget = EvaluationBudget.Create(null, cancelled.Token),
+            Budget = EvaluationBudget.Create(null, cancellationToken: cancelled.Token),
         };
 
         var thrown = Assert.Throws<OperationCanceledException>(() =>

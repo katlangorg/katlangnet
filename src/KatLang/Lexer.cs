@@ -9,6 +9,39 @@ namespace KatLang;
 /// </summary>
 public static class Lexer
 {
+    /// <summary>
+    /// Whether <paramref name="text"/> is lexed as one identifier token rather than a
+    /// keyword. Kept on the lexer so host-facing signature validation cannot drift from
+    /// the language's identifier and keyword rules.
+    /// </summary>
+    internal static bool IsValidIdentifier(string text)
+    {
+        if (text.Length == 0 || (!char.IsLetter(text[0]) && text[0] != '_'))
+            return false;
+
+        for (var i = 1; i < text.Length; i++)
+        {
+            if (!char.IsLetterOrDigit(text[i]) && text[i] != '_')
+                return false;
+        }
+
+        return ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
+    }
+
+    private static TokenKind ClassifyIdentifierOrKeyword(string text)
+        => text switch
+        {
+            "div" => TokenKind.KeywordDiv,
+            "mod" => TokenKind.KeywordMod,
+            "and" => TokenKind.KeywordAnd,
+            "or" => TokenKind.KeywordOr,
+            "xor" => TokenKind.KeywordXor,
+            "not" => TokenKind.KeywordNot,
+            "public" => TokenKind.KeywordPublic,
+            "open" => TokenKind.KeywordOpen,
+            _ => TokenKind.Identifier,
+        };
+
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
         var tokens = new List<Token>();
@@ -132,18 +165,10 @@ public static class Lexer
                 { i++; col++; }
 
                 var text = source[start..i];
-                var token = text switch
-                {
-                    "div"    => Token.Create(TokenKind.KeywordDiv, start, i - start, startLine, startCol),
-                    "mod"    => Token.Create(TokenKind.KeywordMod, start, i - start, startLine, startCol),
-                    "and"    => Token.Create(TokenKind.KeywordAnd, start, i - start, startLine, startCol),
-                    "or"     => Token.Create(TokenKind.KeywordOr, start, i - start, startLine, startCol),
-                    "xor"    => Token.Create(TokenKind.KeywordXor, start, i - start, startLine, startCol),
-                    "not"    => Token.Create(TokenKind.KeywordNot, start, i - start, startLine, startCol),
-                    "public" => Token.Create(TokenKind.KeywordPublic, start, i - start, startLine, startCol),
-                    "open"   => Token.Create(TokenKind.KeywordOpen, start, i - start, startLine, startCol),
-                    _        => Token.CreateIdentifier(text, start, i - start, startLine, startCol),
-                };
+                var wordKind = ClassifyIdentifierOrKeyword(text);
+                var token = wordKind == TokenKind.Identifier
+                    ? Token.CreateIdentifier(text, start, i - start, startLine, startCol)
+                    : Token.Create(wordKind, start, i - start, startLine, startCol);
                 tokens.Add(token);
                 continue;
             }

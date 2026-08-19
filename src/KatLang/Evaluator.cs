@@ -27,7 +27,7 @@ namespace KatLang;
 ///   (0-param algorithm → auto-evaluate; multi-param → arity mismatch)
 /// - <c>ResolveAlg(Param(x))</c>: checks AlgEnv before returning NotAnAlgorithm
 /// </summary>
-public static class Evaluator
+public static partial class Evaluator
 {
     private readonly record struct ResolvedLexicalProperty(
         Algorithm? Owner,
@@ -6930,7 +6930,7 @@ public static class Evaluator
                 }
 
             case Expr.NativeCall(var fnName, var argNames):
-                return EvalNativeCall(fnName, argNames, valEnv);
+                return EvalNativeCall(fnName, argNames, ctx, valEnv);
 
             // Catch-all: uses Expr.kind for clear diagnostics
             default:
@@ -7090,8 +7090,22 @@ public static class Evaluator
     private static EvalResult<Result> EvalNativeCall(
         string fnName,
         IReadOnlyList<string> argNames,
+        EvalCtx ctx,
         IReadOnlyList<(string, Result)> valEnv)
     {
+        // Host-operation dispatch precedes the built-in switch. Host wrapper bodies
+        // carry the "host:"-prefixed native name (a spelling no built-in native uses,
+        // since ':' cannot appear in an identifier), so registered host operations and
+        // built-in Math natives can never collide. An unregistered host-prefixed name —
+        // a host-built AST evaluated without its configuration — falls through to the
+        // ordinary unknown-native-function error below.
+        if (ctx.Budget.HostOperations is { } hostOperations
+            && fnName.StartsWith(HostOperations.NativeNamePrefix, StringComparison.Ordinal)
+            && hostOperations.TryGetByNativeName(fnName, out var hostOperation))
+        {
+            return InvokeSynchronousHostOperation(hostOperation, argNames, ctx, valEnv);
+        }
+
         var args = new decimal[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
@@ -7155,6 +7169,104 @@ public static class Evaluator
         }
 
         return EvalResult<Result>.Ok(new Result.Atom(result));
+    }
+
+    /// <summary>
+    /// Invokes a SYNCHRONOUS host operation at its wrapper-body evaluation site. Runs
+    /// inside the wrapper call's already-charged invocation region, exactly like a Math
+    /// native, so no additional budget accounting applies here. Host exceptions
+    /// propagate unchanged — host code failing is a host outcome, never a KatLang
+    /// diagnostic (the same contract as the zero-argument property cache seam).
+    /// </summary>
+    private static EvalResult<Result> InvokeSynchronousHostOperation(
+        HostOperation hostOperation,
+        IReadOnlyList<string> argNames,
+        EvalCtx ctx,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        // Every entry point routes asynchronous configurations away from the
+        // synchronous evaluator; reaching one here means a routing guard was bypassed.
+        // Fail loud instead of blocking on the awaitable or silently skipping the call.
+        if (hostOperation.SynchronousImplementation is not { } implementation)
+        {
+            throw new InvalidOperationException(
+                $"Asynchronous host operation '{hostOperation.Name}' reached the synchronous evaluator; " +
+                "async host configurations must route through the async evaluation path.");
+        }
+
+        if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
+            return signatureError;
+
+        var argumentsR = CollectHostOperationArguments(argNames, valEnv);
+        if (argumentsR.IsError) return argumentsR.Error;
+
+        var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
+        return value is null
+            ? throw new InvalidOperationException(
+                $"Host operation '{hostOperation.Name}' returned null; host operations must return a KatLang value.")
+            : EvalResult<Result>.Ok(value);
+    }
+
+    /// <summary>
+    /// A host operation may be reached only through the synthetic wrapper built by its
+    /// matching <see cref="HostOperations"/> set. <see cref="Expr.NativeCall"/> remains
+    /// publicly host-constructible for Math compatibility, so reject forged host calls
+    /// whose environment-binding metadata does not exactly match the registered
+    /// signature instead of invoking host code with an unexpected argument list.
+    /// </summary>
+    private static EvalError? ValidateHostOperationNativeSignature(
+        HostOperation hostOperation,
+        IReadOnlyList<string> argNames)
+    {
+        // The synthesized runtime wrapper stores the operation's immutable parameter
+        // list directly, so every ordinary call takes this allocation-free O(1) path.
+        // The element comparison is only for host-constructed ASTs.
+        if (ReferenceEquals(argNames, hostOperation.ParameterNames))
+            return null;
+
+        if (argNames.Count == hostOperation.ParameterNames.Count)
+        {
+            var matches = true;
+            for (var i = 0; i < argNames.Count; i++)
+            {
+                if (!string.Equals(argNames[i], hostOperation.ParameterNames[i], StringComparison.Ordinal))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+                return null;
+        }
+
+        return new EvalError.IllegalInEval(
+            $"invalid native-call signature for host operation: {hostOperation.Name}");
+    }
+
+    /// <summary>
+    /// Collects a host operation's evaluated argument values from the wrapper's bound
+    /// parameter environment, in declaration order, as the read-only snapshot handed to
+    /// host code. Unlike Math natives there is no numeric coercion: host operations
+    /// receive the full KatLang values.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>> CollectHostOperationArguments(
+        IReadOnlyList<string> argNames,
+        IReadOnlyList<(string, Result)> valEnv)
+    {
+        if (argNames.Count == 0)
+            return EvalResult<IReadOnlyList<Result>>.Ok([]);
+
+        var arguments = new Result[argNames.Count];
+        for (var i = 0; i < argNames.Count; i++)
+        {
+            var value = LookupVal(valEnv, argNames[i]);
+            if (value is null)
+                return new EvalError.UnknownName(argNames[i]);
+            arguments[i] = value;
+        }
+
+        return EvalResult<IReadOnlyList<Result>>.Ok(Array.AsReadOnly(arguments));
     }
 
     private static bool IsWholeNumber(decimal value) => value == Math.Floor(value);
@@ -8586,7 +8698,56 @@ public static class Evaluator
             sequenceDiagnostics: null,
             limits,
             observations: null,
+            hostOperations: null,
             cancellationToken);
+
+    /// <summary>
+    /// Run evaluation with SYNCHRONOUS host operations ambiently in scope, under the
+    /// ordinary limits and cancellation contracts of
+    /// <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/>.
+    ///
+    /// <para>Each operation resolves like a prelude member (see
+    /// <see cref="HostOperations"/>), so a preparsed program that references host
+    /// operation names — typically obtained from
+    /// <see cref="Parser.Parse(string, RunOptions?)"/> with the same operations
+    /// configured on <see cref="RunOptions.HostOperations"/> — evaluates them at the
+    /// referencing sites. Host-operation delegates run inline on the calling thread;
+    /// exceptions they throw propagate to the caller unchanged (see
+    /// <see cref="HostOperation"/> for the full contract).</para>
+    ///
+    /// <para>This synchronous entry point accepts synchronous operations only: a set
+    /// containing an asynchronous operation is rejected with
+    /// <see cref="InvalidOperationException"/> before anything is evaluated — use
+    /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// for asynchronous operations. All parameters are explicit on this overload so
+    /// existing <c>Run</c> call sites (including literal-null arguments) keep binding
+    /// exactly as before.</para>
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="hostOperations"/> contains an asynchronous operation.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    public static EvalResult<Result> Run(
+        Expr expr,
+        HostOperations hostOperations,
+        EvaluationLimits? limits,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(hostOperations);
+        return Run(
+            expr,
+            new RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: true,
+            loopDiagnostics: null,
+            enableSequencePipelineOptimization: true,
+            sequenceDiagnostics: null,
+            limits,
+            observations: null,
+            hostOperations,
+            cancellationToken);
+    }
 
     internal static EvalResult<Result> Run(
         Expr expr,
@@ -8631,6 +8792,7 @@ public static class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationLimits? limits,
         EvaluationObservations? observations = null,
+        HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
         => CreateRootCtx(
             zeroArgPropertyResultCache,
@@ -8638,7 +8800,7 @@ public static class Evaluator
             loopDiagnostics,
             enableSequencePipelineOptimization,
             sequenceDiagnostics,
-            EvaluationBudget.Create(limits, cancellationToken),
+            EvaluationBudget.Create(limits, hostOperations, cancellationToken),
             observations);
 
     private static EvalCtx CreateRootCtx(
@@ -8661,8 +8823,12 @@ public static class Evaluator
         var sequenceOptimize = loopOptimize
             && !budget.HasConfiguredStringLimit
             && !budget.HasConfiguredMaterializationLimit;
+        // A run configured with host operations resolves names against that
+        // configuration's extended prelude (the ordinary prelude plus one ambient
+        // wrapper member per operation); the budget carries the configuration, so the
+        // prelude choice and the dispatch registry can never disagree within a run.
         return new EvalCtx(
-            [PreludeAlg],
+            [budget.HostOperations?.RuntimePreludeAlgorithm ?? PreludeAlg],
             [],
             [],
             zeroArgPropertyResultCache,
@@ -8717,6 +8883,26 @@ public static class Evaluator
     }
 
     /// <summary>
+    /// Routing enforcement for the synchronous entry family: an asynchronous host
+    /// operation can complete only by suspending the evaluation spine, which the
+    /// synchronous pipeline is structurally unable to do — blocking a thread to
+    /// simulate completion is exactly what the async surface exists to avoid. The
+    /// configuration is rejected here, before any preflight or evaluation, as a host
+    /// configuration error (never a KatLang diagnostic), mirroring the async twin
+    /// family's own fail-loud ownership guards.
+    /// </summary>
+    private static void ThrowIfAsynchronousHostOperationsOnSynchronousEntry(HostOperations? hostOperations)
+    {
+        if (hostOperations?.ContainsAsynchronousOperations == true)
+        {
+            throw new InvalidOperationException(
+                "The configured host operations contain an asynchronous operation, which a synchronous " +
+                "evaluation entry point cannot suspend for. Use RunAsync (or an async KatLangEngine entry point), " +
+                "or configure only synchronous host operations.");
+        }
+    }
+
+    /// <summary>
     /// Shared pre-evaluation validation gate for every prebuilt-AST entry point.
     /// Lean: the validation pass <c>runResultM</c> runs before any evaluation
     /// (<c>validateExplicitParamOutputInvariantExpr</c>). The violation kinds map
@@ -8749,11 +8935,13 @@ public static class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics,
         EvaluationLimits? limits = null,
         EvaluationObservations? observations = null,
+        HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
         // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
         // token stops the run before the structural preflight spends O(tree) work.
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
 
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
@@ -8777,6 +8965,7 @@ public static class Evaluator
             sequenceDiagnostics,
             limits,
             observations,
+            hostOperations,
             cancellationToken);
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
@@ -8814,7 +9003,7 @@ public static class Evaluator
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
 
     /// <summary>
-    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?)"/>
+    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, CancellationToken)"/>
     /// and additionally hands back the run's <see cref="EvaluationBudget"/> so a test can
     /// read the OPERATIONAL counters this run actually charged (steps, materialized item
     /// slots and string units, peak dynamic depth).
@@ -8827,7 +9016,7 @@ public static class Evaluator
     ///
     /// <para>The optional <paramref name="loopDiagnostics"/> and
     /// <paramref name="sequenceDiagnostics"/> collectors are the SAME channel the internal
-    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?)"/>
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, CancellationToken)"/>
     /// overload already exposes, so an observed run can additionally record which execution
     /// path the optimizers actually took (planned, fused, fallen back, or generic). They are
     /// write-only counters the evaluator increments through a null-conditional call: supplying
@@ -8841,11 +9030,13 @@ public static class Evaluator
         LoopOptimizationDiagnostics? loopDiagnostics = null,
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
         EvaluationObservations? observations = null,
+        HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
 
-        var budget = EvaluationBudget.Create(limits, cancellationToken);
+        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken);
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
             budget.ObserveCancellation();
@@ -8879,9 +9070,11 @@ public static class Evaluator
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
+        HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
 
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
@@ -8905,6 +9098,7 @@ public static class Evaluator
             sequenceDiagnostics: null,
             limits,
             observations: null,
+            hostOperations,
             cancellationToken);
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
@@ -8919,9 +9113,11 @@ public static class Evaluator
         string topLevelPropertyName,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
+        HostOperations? hostOperations = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
 
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
@@ -8946,6 +9142,7 @@ public static class Evaluator
             sequenceDiagnostics: null,
             limits,
             observations: null,
+            hostOperations,
             cancellationToken);
 
         EvalResult<CountedRootProgramResult> result;
