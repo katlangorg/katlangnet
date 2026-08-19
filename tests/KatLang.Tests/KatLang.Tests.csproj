@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -31,8 +31,7 @@
     is shared; the rest of the harness stays out of normal validation.
   -->
   <ItemGroup>
-    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs"
-             Link="Metamorphic\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs" Link="Metamorphic\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--
@@ -43,8 +42,7 @@
     the frontend invariants, and the structural fingerprint. All of them are SharpFuzz-free.
   -->
   <ItemGroup>
-    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Utf16\*.cs"
-             Link="Utf16\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Utf16\*.cs" Link="Utf16\%(Filename)%(Extension)" />
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\SourceSpanValidator.cs" Link="Utf16\SourceSpanValidator.cs" />
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FuzzInvariants.cs" Link="Utf16\FuzzInvariants.cs" />
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndInvariants.cs" Link="Utf16\FrontEndInvariants.cs" />
@@ -58,8 +56,7 @@
     already included above, so nothing here is re-included.
   -->
   <ItemGroup>
-    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs"
-             Link="Editor\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs" Link="Editor\%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>
