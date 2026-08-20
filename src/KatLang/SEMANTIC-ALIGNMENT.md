@@ -149,11 +149,9 @@ DotCall(
 
 Base `(a, t)` becomes `(t, a)`: prefix Grace moves `t` one position earlier.
 
-`a~t` — the omitted-dot spelling. Between the two names the marker itself carries the edge, so the adjacent '.' may be omitted; the parser consumes the postfix run on the receiver and enters the SAME ordinary dot continuation, producing the `a~.t` raw SHAPE above (`Target = Grace(Resolve("a"), +1)`) — the same semantic tree with every semantic field equal, while source provenance necessarily differs (the dot occupies a column, so enclosing/member/fallback spans shift). No third representation exists: `a~t` shares `a~.t`'s raw shape, `a.~t` keeps its own distinct raw topology (Grace on the stored fallback occurrence), and the three converge at elaboration (§6). Surface constraints are frontend adjacency policy, not semantics: the member must sit on the receiver's postfix run's physical line (comments never bridge lines), a declaration-starting identifier is never the member (`a~ K = 5` stays a graced row plus a definition), only a bare-name postfix run opens the member (`(x + y)~t` stays two adjacency slots with prefix Grace on `t`), and the shorthand is grammar-local rather than a textual rewrite of `~` to `~.` — the indexing selector consumes one primary, so `x:a~t` is `Index(x, edge)` while `x:a~.t` is `DotCall(Index(x, Grace(a)), t)`, where no `a~.t` subexpression exists. Because the body is the ordinary structural-first edge, `K = a~t` infers `(t, a)` and the direct call `t(a)` is only its lexical-FALLBACK behavior — never a universal equivalence to `K(t, a) = t(a)` (a receiver owning `t` structurally splits the two; pinned by `OmittedDot_IsNotTheDirectCall_StructuralCollisionSplitsThem`).
-
 ### 6. Same executable body after elaboration
 
-The invariant: after parameter elaboration, valid `a.t`, `a~.t`, `a.~t`, and `a~t` in the same lexical environment have the SAME ordinary executable DotCall body:
+The invariant: after parameter elaboration, valid `a.t`, `a~.t`, and `a.~t` in the same lexical environment have the SAME ordinary executable DotCall body:
 
 ```text
 DotCall(
@@ -198,15 +196,6 @@ K({x+1}, 7)
 ```
 
 ```katlang
-K = a~t
-K({x+1}, 7)
-# 8
-# inferred params: (t,a) — the omitted-dot spelling of the same
-# structural-first edge; t(a) is its lexical FALLBACK, not a universal
-# direct-call equivalence
-```
-
-```katlang
 K = (x+y)+~z
 # inferred params: (x,z,y)
 ```
@@ -217,7 +206,6 @@ Structural-collision law: when the receiver owns the member,
 Obj.t
 Obj~.t
 Obj.~t
-Obj~t
 ```
 
 must all select the SAME structural member. Grace never converts a structural hit into a fallback call.

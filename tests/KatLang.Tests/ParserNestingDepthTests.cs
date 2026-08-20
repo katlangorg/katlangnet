@@ -104,21 +104,6 @@ public class ParserNestingDepthTests
     }
 
     [Fact]
-    public void OmittedDotGraceCallNestingBoundary_AtMaximumParses_OneBeyondDiagnoses()
-    {
-        // The omitted-dot graced edge (`a~t(...)`) charges exactly the same
-        // call-args budget as the dotted spelling: 3 units per level. Parsing
-        // the full 127-level capacity in-process is the stack-safety proof for
-        // the extra live ParsePrimary frame the omitted-dot entry keeps under
-        // each argument level (the dotted form pops ParsePrimary before its
-        // dot continuation runs; the compact form must not, so its per-level
-        // native frame cost is the shape this test exercises).
-        AssertParses("t(x) = x\n" + Rep("a~t(", 127) + "1" + Rep(")", 127));
-        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
-            "t(x) = x\n" + Rep("a~t(", 128) + "1" + Rep(")", 128))));
-    }
-
-    [Fact]
     public void PatternBoundary_AtMaximumParses_OneBeyondDiagnoses()
     {
         AssertParses("F" + Rep("(", 384) + "x" + Rep(")", 384) + " = x\nF(1)");

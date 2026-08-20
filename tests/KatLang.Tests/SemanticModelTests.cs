@@ -731,20 +731,6 @@ public class SemanticModelTests
             ["t", "a"],
             SingleProperty(prefixMemberGraced, "K").Parameters.Select(parameter => parameter.Name).ToList());
 
-        // The omitted-dot spelling `a~t` is the same graced edge, so its
-        // member identifier classifies and orders identically.
-        var omittedDot = BuildModel(
-            """
-            K = a~t
-            K({a+1}, 7)
-            """);
-        var omittedDotMember = ResolutionAt(omittedDot, 1, 7);
-        Assert.Equal(OccurrenceKind.DotMemberReference, omittedDotMember.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, omittedDotMember.Classification);
-        Assert.Equal(
-            ["t", "a"],
-            SingleProperty(omittedDot, "K").Parameters.Select(parameter => parameter.Name).ToList());
-
         var ungraced = BuildModel(
             """
             K = a.t

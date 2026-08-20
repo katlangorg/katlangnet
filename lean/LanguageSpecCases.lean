@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 174
+- specification surface cases: 173
 - excluded parse-level cases (Lean has no surface parser): 6
 - excluded C#-only cases (each carries an explicit reason in the corpus): 1
-- Lean-guarded cases: 167
-- probe observations (C#-only by design): 261
+- Lean-guarded cases: 166
+- probe observations (C#-only by design): 255
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -483,11 +483,6 @@ def case_grace_dot_higher_order_implicit : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["t", "a"] [] [] [.dotMember (.param "a") "t" (.param "t") none])] [.call (.resolve "K") [.algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)]), .num 7]])
 #guard obs case_grace_dot_higher_order_implicit == "ok raw=8 n=1"
 
--- grace-dot-omitted-dot [access-boundaries]: K = a~t \n K({a+1}, 7)
-def case_grace_dot_omitted_dot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "K" (alg ["t", "a"] [] [] [.dotMember (.param "a") "t" (.param "t") none])] [.call (.resolve "K") [.algorithmExpr (alg ["a"] [] [] [.binary .add (.param "a") (.num 1)]), .num 7]])
-#guard obs case_grace_dot_omitted_dot == "ok raw=8 n=1"
-
 -- grace-dot-keeps-structural-precedence [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 42 \n     0 \n } \n  \n Obj.V \n Obj~.V
 def case_grace_dot_keeps_structural_precedence : Expr :=
   .algorithmExpr (alg [] [] [privateProp "V" (alg ["x"] [] [] [.num 99]), privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 42])] [.num 0])] [.dotCall (.resolve "Obj") "V" none, .dotCall (.resolve "Obj") "V" none])
@@ -933,7 +928,7 @@ def case_list_builtin_collection : Expr :=
   .algorithmExpr (alg [] [] [] [.call (.resolve "count") [(.listLiteral [.num 1, .num 2, .num 3])]])
 #guard obs case_list_builtin_collection == "ok raw=3 n=1"
 
--- 167 canonical Lean-guarded specification cases.
+-- 166 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1018,7 +1013,6 @@ def specCaseIds : List String := [
   "dot-member-higher-order-parameter",
   "dot-member-fallback-implicit-signature",
   "grace-dot-higher-order-implicit",
-  "grace-dot-omitted-dot",
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
   "capture-suppresses-higher-order-identity",
@@ -1109,6 +1103,6 @@ def specCaseIds : List String := [
   "list-lone-collecting-assignment",
   "list-builtin-collection"
 ]
-#guard specCaseIds.length == 167
+#guard specCaseIds.length == 166
 
 end LanguageSpecCases
