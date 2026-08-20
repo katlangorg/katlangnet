@@ -7,7 +7,7 @@
 		<RootNamespace>KatLang</RootNamespace>
 
 		<PackageId>KatLang</PackageId>
-		<Version>0.8.170</Version>
+		<Version>0.8.172</Version>
 		<Authors>katlangorg</Authors>
 		<Company>Logics Research Centre SIA</Company>
 		<Copyright>Copyright © Logics Research Centre SIA and contributors</Copyright>
@@ -27,7 +27,7 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes>Corrects DotCall fallback participation and Grace composition across the parser, elaborator, evaluator, editor model, optimizer gates, Lean model, tests, and documentation. Ordinary dotted calls remain structural-first with ordinary lexical fallback. `a~.t(args)` is ordinary postfix Grace on receiver name `a` followed by ordinary dot; `a.~t(args)` is ordinary prefix Grace on the participating fallback/member occurrence `t`. Both elaborate to the same DotCall body as `a.t(args)`, while the two-name inferred order is `(t, a)` instead of ordinary `(a, t)`. A may-selected fallback participates at semantic source position (receiver, member/fallback, arguments), independently of runtime fallback invocation order. Grace remains restricted to one bare name occurrence and affects only inferred parameter ordering. Removes the provisional runtime-extension public surface shipped in 0.8.159 (`DotResolutionMode`, `Expr.DotCall.ResolutionMode`, `Expr.DotCall.ExtensionMarkerSpan`, `DotCallContext.IsExtension`, and `AstWalker.VisitExtensionDotMarker`) and the later `Expr.Grace.IsExtensionReceiver` provenance flag; this is an intentional source/binary compatibility correction because those members represented semantic state that no longer exists.</PackageReleaseNotes>
+		<PackageReleaseNotes>Adds the omitted-dot spelling of the graced dot edge: in the eligible parser context — a bare-name postfix Grace run followed by a same-line member identifier — `a~t` builds the same ordinary graced DotCall as `a~.t` (identical semantic raw shape; source spans differ) and elaborates to the same edge as `a.~t`. The edge keeps ordinary STRUCTURAL-FIRST DotCall semantics: `K = a~t` infers `(t, a)`, and the direct call `t(a)` describes only its lexical-fallback behavior — a receiver that owns the member structurally resolves to that member, so `K = a~t` is not universally equivalent to `K(t, a) = t(a)`. The shorthand is grammar-local, not a blanket textual rewrite of `~` to `~.` (for example, an indexing selector consumes one primary, so `x:a~t` selects with the whole edge while `x:a~.t` dot-chains the index result). The member identifier must follow the postfix Grace run on the same physical line; an identifier that begins a declaration keeps its declaration meaning (`a~ K = 5` stays a graced row plus a definition), a newline still separates rows, and compound receivers keep their existing adjacency parse (`(x + y)~t` remains two slots). COMPATIBILITY: `A~B` (a postfix-graced name followed by a same-line identifier) previously parsed as two adjacent expression slots and now denotes the compact graced dot edge — write `A~, B` when the graced value and the following value are intended as separate slots, mirroring the spread marker's `A*, B` rule. No new AST shape, operator, evaluation rule, or argument ordering is introduced; parameter inference, elaboration, and runtime behavior are exactly those of the dotted spellings.</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>

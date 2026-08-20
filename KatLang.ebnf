@@ -282,10 +282,16 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    ordinary postfix Grace on the bare receiver
                                    name followed by an ordinary dot; `recv.~Name`
                                    is ordinary dot with prefix Grace on the
-                                   member/fallback name occurrence. Repeated
+                                   member/fallback name occurrence; `recv~Name`
+                                   is the omitted-dot spelling of the same
+                                   graced edge (see OmittedDotGraceMember under
+                                   GraceIdentifier — the marker between the two
+                                   names carries the edge, so the adjacent '.'
+                                   may be omitted). Repeated
                                    markers use the normal same-occurrence
                                    weight arithmetic (`recv~~.Name`,
-                                   `recv.~~Name`). Parameter detection consumes
+                                   `recv.~~Name`, `recv~~Name`). Parameter
+                                   detection consumes
                                    Grace, so every form builds the SAME ordinary
                                    dot edge as `recv.Name`: structural member
                                    first, lexical fallback second.
@@ -391,7 +397,10 @@ Primary         = NumberLiteral
                 | BraceAlgorithmExpr
                 | ListLiteral ;
 
-GraceIdentifier = { "~" } Identifier { "~" } ;
+GraceIdentifier = { "~" } Identifier [ PostfixGraceRun ] ;
+PostfixGraceRun = "~" { "~" } [ OmittedDotGraceMember ] ;
+OmittedDotGraceMember
+                = Identifier [ CallArgs ] ;
                   (* Grace `~` applies ONLY to one bare parameter/name
                      occurrence — this production is its entire surface.
                      Attaching a marker to any other completed expression
@@ -401,7 +410,40 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      distributes through a compound operand. Postfix "~" is
                      same-physical-line only: a "~"-led line is its own
                      prefix-grace expression, never postfix grace on the
-                     previous line's identifier. *)
+                     previous line's identifier.
+                     THE OMITTED-DOT GRACED DOT EDGE: OmittedDotGraceMember
+                     is reachable ONLY through a non-empty PostfixGraceRun —
+                     between the two names the marker itself carries the dot
+                     edge, so the adjacent '.' may be omitted: `a~t` builds
+                     the same graced dot edge as `a~.t` (and elaborates like
+                     `a.~t`; see the "." PostfixOp). Plain adjacency `a t`
+                     has no marker and stays the ordinary two-slot expression
+                     list. The member identifier must sit on the same
+                     physical line as the run's last marker (`a~` newline `t`
+                     stays a graced row and a separate `t` row; a trailing
+                     comment never bridges the lines); whitespace between the
+                     postfix tokens is insignificant (`a ~ t` is the same
+                     edge, like `a ~ .t`). An identifier that begins a
+                     declaration is NEVER the member — mirroring the
+                     adjacency rule's declaration exclusions — so
+                     `a~ K = 5` stays a graced output row followed by the
+                     definition, and an explicit comma keeps two expression
+                     slots (`a~, t`). Only a bare-name postfix run opens the
+                     member: after a compound expression an unattached "~"
+                     re-enters as prefix Grace on the next name, so
+                     `(x + y)~t` remains the two adjacency slots `(x + y)`
+                     and `~t`. Weight arithmetic is the ordinary rule
+                     (`a~~t` ≡ `a~~.t`; the net-0 mixed run `~a~t` is the
+                     plain edge `a.t`).
+                     GRAMMAR-LOCAL, NOT A TEXTUAL REWRITE: the shorthand
+                     exists only where this production parses both names as
+                     one graced edge. In particular the indexing selector
+                     consumes ONE Primary, so `x:a~t` selects with the whole
+                     edge (`x:(a~t)`), while in `x:a~.t` the dot is a
+                     PostfixOp of the enclosing index chain
+                     (`DotCall(Index(x, Grace(a)), t)`) and no `a~.t`
+                     subexpression exists — writing `~` for `~.` is not a
+                     universal substitution across that boundary. *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* Empty parentheses "()" construct the empty sequence value,
                      displayed as (). Ordinary repeated parentheses around the empty

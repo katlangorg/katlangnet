@@ -409,7 +409,12 @@ public sealed class Parser
     // '~', and binary operators continue on the same physical line only —
     // the trailing-operator idiom (`A -` newline `1`) works because the
     // operator itself sits on the same line; only its right operand starts a
-    // new line. The star '*' is covered by the binary-operator row: a
+    // new line. The member identifier of an omitted-dot graced dot edge
+    // (`a~t` ≡ `a~.t`) is likewise same-physical-line only: it is not a
+    // continuation TOKEN in the policy table (identifiers ordinarily start
+    // adjacent expressions) but a member position opened by the just-consumed
+    // postfix grace run, decided by IsOmittedDotGraceMemberNext — `a~`
+    // newline `t` stays a graced row followed by a `t` row. The star '*' is covered by the binary-operator row: a
     // same-line star continues the expression either as infix multiplication
     // or as the directly attached postfix spread marker (disambiguated in
     // ParsePostfix), while a star on a later line never continues — `a*`
@@ -446,10 +451,12 @@ public sealed class Parser
             : policy.CanContinueAcrossLine;
     }
 
-    // The line primitive used by the policy. The only direct use outside
-    // MayContinueClosedExpression is StartsImplicitExpressionListSeparator, which
-    // is a contribution-policy decision (may a NEW expression start here?),
-    // not a continuation decision about the current expression.
+    // The line primitive used by the policy. Direct uses outside
+    // MayContinueClosedExpression are the contribution-policy decisions (may
+    // a NEW expression/target start here?) in StartsImplicitExpressionListSeparator
+    // and ParseOpenTargetList, plus IsOmittedDotGraceMemberNext, whose
+    // member-identifier continuation is conditional on the just-consumed
+    // postfix grace run and therefore cannot be a token-kind policy row.
     private bool IsSamePhysicalLineAsPreviousToken() => Current.Line == Previous.Line;
 
     // ── Comment-skipping declaration lookahead ──────────────────────────────
@@ -1435,6 +1442,29 @@ public sealed class Parser
             && PeekSignificant(offset) is { Kind: TokenKind.Dot } dot
             && dot.Line == Current.Line;
     }
+
+    /// <summary>
+    /// True when the identifier at <see cref="Current"/> is the MEMBER of an
+    /// omitted-dot graced dot edge. Called exactly when a postfix Grace run on
+    /// a bare name occurrence has just been consumed (so <see cref="Previous"/>
+    /// is the run's last marker): between the two parts of <c>a~t</c> the
+    /// marker itself carries the edge, so the adjacent '.' may be omitted —
+    /// <c>a~t</c> parses to the same graced dot edge as <c>a~.t</c> (and
+    /// <c>a.~t</c> elaborates to that same ordinary structural-first edge).
+    /// The member must sit on the same physical line as the
+    /// run's last marker: a physical newline never continues a closed
+    /// expression, so <c>a~</c> newline <c>t</c> stays a graced output row
+    /// followed by a <c>t</c> row. An identifier that begins a declaration
+    /// form is never an adjacent member — mirroring the implicit
+    /// expression-list separator's exclusions — so <c>a~ K = 5</c> stays a
+    /// graced output row followed by the definition the algorithm loop owns.
+    /// </summary>
+    private bool IsOmittedDotGraceMemberNext()
+        => Current.Kind == TokenKind.Identifier
+            && IsSamePhysicalLineAsPreviousToken()
+            && !LookaheadIsEquals()
+            && !LookaheadIsBindingPatternAssignment()
+            && !LookaheadIsClauseDefinition();
 
     /// <summary>
     /// Checks if the current tilde sequence is followed by Identifier '=' or 'public Identifier ='.
@@ -2550,12 +2580,16 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses one dot edge after its '.' token has been consumed:
+    /// Parses one dot edge after its edge token has been consumed —
+    /// the '.' itself, or, for the omitted-dot graced spelling
+    /// (<c>a~t</c> ≡ <c>a~.t</c>), the postfix Grace run's last '~' marker:
     /// <c>expr.Name</c> and <c>expr.Name(args)</c>. Ordinary written Grace
-    /// composes at either name occurrence: <c>expr~.Name</c> arrives with
-    /// postfix Grace already wrapped around <paramref name="lhs"/>, while
-    /// <c>expr.~Name</c> stores prefix Grace around the fallback/name
-    /// occurrence. Every spelling builds the SAME ordinary continuation: an
+    /// composes at either name occurrence: <c>expr~.Name</c> and <c>expr~Name</c>
+    /// arrive with postfix Grace already wrapped around <paramref name="lhs"/>,
+    /// while <c>expr.~Name</c> stores prefix Grace around the fallback/name
+    /// occurrence (the omitted-dot entry guarantees <see cref="Current"/> is
+    /// already the member identifier, so its edge token never begins member
+    /// Grace). Every spelling builds the SAME ordinary continuation: an
     /// <see cref="Expr.DotCall"/> storing its lexical-fallback identity as
     /// <c>Resolve(Name)</c> spanned at the member identifier (front-end
     /// elaboration may rewrite it to <c>Param(Name)</c>), or the fluent
@@ -2567,14 +2601,14 @@ public sealed class Parser
     /// calibration).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private Expr ParseDotCallContinuation(Expr lhs, Token dotToken)
+    private Expr ParseDotCallContinuation(Expr lhs, Token edgeToken)
     {
         // Prefix Grace on the member/fallback occurrence. The first marker is
         // recognized when it is attached to the dot; once that syntax has
         // begun, repeated markers use the ordinary prefix accumulation law.
         Token? memberGraceStart = null;
         var memberGraceWeight = 0;
-        if (Current.Kind == TokenKind.Tilde && IsDirectlyAttached(dotToken, Current))
+        if (Current.Kind == TokenKind.Tilde && IsDirectlyAttached(edgeToken, Current))
         {
             memberGraceStart = Current;
             while (Current.Kind == TokenKind.Tilde)
@@ -2611,7 +2645,7 @@ public sealed class Parser
             // a spread receiver is rejected before this arm. Prefix Grace on
             // the member is ordinary Grace on that lexical callee occurrence,
             // so preserve the same expression when lowering the fluent form.
-            return ParseSpreadReceiverContinuation(lhs, dotToken, lexicalFallback, memberSpan);
+            return ParseSpreadReceiverContinuation(lhs, edgeToken, lexicalFallback, memberSpan);
         }
 
         OutputBundle? args = IsCallArgumentStart() ? ParseCallArgs() : null;
@@ -2621,7 +2655,7 @@ public sealed class Parser
             MemberSpan = memberSpan,
             LexicalFallback = lexicalFallback,
         };
-        return GuardExpressionChainDepth(dotCall, TokenSpan(dotToken), lhs);
+        return GuardExpressionChainDepth(dotCall, TokenSpan(edgeToken), lhs);
     }
 
     /// <summary>
@@ -2788,19 +2822,25 @@ public sealed class Parser
                     // continuation of the previous line's identifier. A tilde
                     // before a following dot is still ordinary postfix Grace
                     // on this same bare name; the postfix loop then builds the
-                    // ordinary dot continuation.
+                    // ordinary dot continuation. A same-line member identifier
+                    // directly after the run is the omitted-dot spelling of
+                    // that same graced dot edge (`a~t` ≡ `a~.t`).
                     if (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                     {
                         var weight = 0;
+                        var lastMarker = Current;
                         while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                         {
-                            Advance();
+                            lastMarker = Advance();
                             weight++;
                         }
-                        return new Expr.Grace(
+                        var graced = new Expr.Grace(
                             new Expr.Resolve(token.StringValue!) { Span = TokenSpan(token) },
                             weight)
                         { Span = MakeSpan(token) };
+                        return IsOmittedDotGraceMemberNext()
+                            ? ParseDotCallContinuation(graced, lastMarker)
+                            : graced;
                     }
                     return new Expr.Resolve(token.StringValue!) { Span = TokenSpan(token) };
                 }
@@ -2832,13 +2872,24 @@ public sealed class Parser
                     // Postfix grace: each same-line ~ after the identifier
                     // increments weight; a '~' on a later line never continues,
                     // including one immediately before an ordinary dot.
+                    Token? lastPostfixMarker = null;
                     while (Current.Kind == TokenKind.Tilde && MayContinueClosedExpression(TokenKind.Tilde))
                     {
-                        Advance();
+                        lastPostfixMarker = Advance();
                         weight++;
                     }
                     var resolve = new Expr.Resolve(graceToken.StringValue!) { Span = TokenSpan(graceToken) };
-                    return weight == 0 ? resolve : new Expr.Grace(resolve, weight) { Span = MakeSpan(startToken) };
+                    Expr occurrence = weight == 0
+                        ? resolve
+                        : new Expr.Grace(resolve, weight) { Span = MakeSpan(startToken) };
+                    // A same-line member identifier directly after a POSTFIX
+                    // run is the omitted-dot graced dot edge (`~a~t` ≡ `~a~.t`,
+                    // including the weight-0 form that carries no Grace node);
+                    // with no postfix marker a following identifier stays an
+                    // ordinary adjacent expression (`~a t` is two slots).
+                    return lastPostfixMarker is { } marker && IsOmittedDotGraceMemberNext()
+                        ? ParseDotCallContinuation(occurrence, marker)
+                        : occurrence;
                 }
 
             case TokenKind.LParen:

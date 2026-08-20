@@ -1486,6 +1486,30 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "grace-dot-omitted-dot",
+            Category = "access-boundaries",
+            Source = "K = a~t\nK({a+1}, 7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            LeanProgram = LProg(
+                [LFn("K", ["t", "a"], ".dotMember (.param \"a\") \"t\" (.param \"t\") none")],
+                [LCall("K", ".algorithmExpr (alg [\"a\"] [] [] [.binary .add (.param \"a\") (.num 1)])", ".num 7")]),
+            Probes =
+            [
+                new SpecProbe("K = a~.t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K = a.~t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K(t, a) = t(a)\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K(t, a) = a~t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("K = a ~ t\nK({a+1}, 7)", "ok raw=8 n=1"),
+                new SpecProbe("Obj = {\n    public t = 42\n    0\n}\nK = a~t\nK({a+1}, Obj)", "ok raw=42 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The omitted-dot spelling of the graced dot edge: between the two parts the `~` marker itself carries the edge, so the adjacent '.' may be omitted — `a~t` parses to the same graced dot edge as `a~.t` and elaborates like `a.~t` too. The body stays the ordinary STRUCTURAL-FIRST dot edge: `K = a~t` infers `(t, a)`, and the direct call `t(a)` describes only its lexical-fallback arm (here `7` has no members, so the fallback fires and the `K(t, a) = t(a)` probe agrees), never a universal equivalence — the structural-collision probe shows a receiver owning `t` resolves to its own member (42) where `t(a)` would call the supplied callable. The member must follow the run on the same physical line (a newline still separates rows), an identifier that begins a declaration keeps its declaration meaning (`a~ K = 5` stays a graced row plus a definition), and whitespace between the postfix tokens is insignificant.",
+        },
+        new()
+        {
             Id = "grace-dot-keeps-structural-precedence",
             Category = "access-boundaries",
             Source = "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\n\nObj.V\nObj~.V",

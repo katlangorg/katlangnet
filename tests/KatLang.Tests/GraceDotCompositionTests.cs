@@ -88,7 +88,13 @@ public class GraceDotCompositionTests
         Assert.Equal(BodyShapeOf(right, propertyName), BodyShapeOf(left, propertyName));
     }
 
-    /// <summary>Span-free structural rendering of an elaborated expression.</summary>
+    /// <summary>
+    /// Span-free structural rendering of an elaborated expression. The stored
+    /// <see cref="Expr.DotCall.LexicalFallback"/> is rendered directly — a
+    /// missing (host-shorthand) fallback stays distinct from an explicitly
+    /// stored one, so shape equality never hides that difference behind
+    /// <see cref="Expr.DotCall.EffectiveLexicalFallback"/>.
+    /// </summary>
     private static string Shape(Expr expr) => expr switch
     {
         Expr.Num(var value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -107,7 +113,7 @@ public class GraceDotCompositionTests
         Expr.DotCall dotCall =>
             $"DotCall({Shape(dotCall.Target)},{dotCall.Name},"
             + $"{(dotCall.Args is null ? "null" : "[" + string.Join(",", dotCall.Args.Select(Shape)) + "]")},"
-            + $"fallback={Shape(dotCall.EffectiveLexicalFallback)})",
+            + $"storedFallback={(dotCall.LexicalFallback is null ? "null" : Shape(dotCall.LexicalFallback))})",
         Expr.AlgorithmExpr(var algorithm) =>
             $"Alg([{string.Join(",", algorithm.Params)}],[{string.Join(",", algorithm.Output.Select(Shape))}])",
         _ => expr.GetType().Name,
@@ -1005,6 +1011,10 @@ public class GraceDotCompositionTests
         {
             ("K = a.t\nK(7, {x + 1})", "K = a~.t\nK({x + 1}, 7)"),
             ("K = a.t\nK(7, {x + 1})", "K = a.~t\nK({x + 1}, 7)"),
+            ("K = a.t\nK(7, {x + 1})", "K = a~t\nK({x + 1}, 7)"),
+            ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K(xs) = xs~filter({a > 1}).count\nK((1, 2, 3))"),
+            ("S = 1, 2, 3\nS.take(2)", "S = 1, 2, 3\nS~take(2)"),
+            ("V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj.V", "V(x) = 99\nObj = {\n    public V = 42\n    0\n}\nObj~V"),
             ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K(xs) = xs~.filter({a > 1}).count\nK((1, 2, 3))"),
             ("K(xs) = xs.filter({a > 1}).count\nK((1, 2, 3))", "K(xs) = xs.~filter({a > 1}).count\nK((1, 2, 3))"),
             ("S = 1, 2, 3\nS.take(2)", "S = 1, 2, 3\nS~.take(2)"),
@@ -1029,6 +1039,339 @@ public class GraceDotCompositionTests
                 $"Optimizer changed the result of:{Environment.NewLine}{graced}");
         }
     }
+
+    // ── K. The omitted-dot spelling: `a~t` ≡ `a~.t` ≡ `a.~t` ────────────────
+    // Between the two parts the grace marker itself carries the dot edge, so
+    // the adjacent '.' may be omitted — in the eligible parser context (a
+    // bare-name postfix Grace run followed by a same-line member identifier).
+    // The compact spelling is pure surface: it parses to the same SEMANTIC
+    // raw-AST shape as `a~.t` (source spans differ — the dot occupies a
+    // column), while `a.~t` keeps its own raw topology (prefix Grace on the
+    // stored fallback occurrence); all three elaborate to the same ordinary
+    // structural-first dot edge, so inference, structural precedence, and
+    // runtime behavior follow from the dotted laws above with nothing added.
+    // The shorthand is grammar-local, not a general textual rewrite of `~`
+    // to `~.` (see the index-selector boundary pinned in ParserTests).
+
+    /// <summary>
+    /// Exhaustive span-free rendering for SEMANTIC raw-tree equality. Every
+    /// semantic field of every node these comparisons can contain is
+    /// rendered; source provenance (Span/MemberSpan/declaration spans) is the
+    /// ONLY thing omitted. The stored <see cref="Expr.DotCall.LexicalFallback"/>
+    /// is rendered directly — null (host shorthand) stays distinct from an
+    /// explicitly stored fallback — and an unhandled node or algorithm kind
+    /// fails loudly instead of comparing vacuously.
+    /// </summary>
+    private static string SemanticTree(Expr expr) => expr switch
+    {
+        Expr.Num(var value) => $"Num({value.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+        Expr.StringLiteral(var text) => $"Str('{text}')",
+        Expr.Param(var name) => $"Param({name})",
+        Expr.Resolve(var name) => $"Resolve({name})",
+        Expr.Grace(var inner, var weight) => $"Grace({SemanticTree(inner)},{weight})",
+        Expr.Unary(var op, var operand) => $"Unary({op},{SemanticTree(operand)})",
+        Expr.Binary(var op, var left, var right) => $"Binary({op},{SemanticTree(left)},{SemanticTree(right)})",
+        Expr.Index(var target, var selector) => $"Index({SemanticTree(target)},{SemanticTree(selector)})",
+        Expr.SequenceSpread(var operand) => $"Spread({SemanticTree(operand)})",
+        Expr.EmptySequence => "EmptySequence",
+        Expr.ListLiteral(var items) => $"List([{string.Join(",", items.Select(SemanticTree))}])",
+        Expr.Capture(var body) => $"Capture([{string.Join(",", body.Select(SemanticTree))}])",
+        Expr.Call(var function, var args) => $"Call({SemanticTree(function)},[{string.Join(",", args.Select(SemanticTree))}])",
+        Expr.DotCall dotCall =>
+            $"DotCall(target={SemanticTree(dotCall.Target)},name={dotCall.Name},"
+            + $"args={(dotCall.Args is null ? "null" : "[" + string.Join(",", dotCall.Args.Select(SemanticTree)) + "]")},"
+            + $"storedFallback={(dotCall.LexicalFallback is null ? "null" : SemanticTree(dotCall.LexicalFallback))})",
+        Expr.AlgorithmExpr(var algorithm) => $"Alg({SemanticAlgorithm(algorithm)})",
+        _ => throw new Xunit.Sdk.XunitException(
+            $"SemanticTree: unhandled expression kind {expr.GetType().Name} — extend the renderer."),
+    };
+
+    private static string SemanticAlgorithm(Algorithm algorithm)
+    {
+        var user = Assert.IsType<Algorithm.User>(algorithm);
+        if (user.ParameterPatterns.Count > 0 || user.ExplicitParameterPatterns.Count > 0)
+        {
+            throw new Xunit.Sdk.XunitException(
+                "SemanticTree: parameter patterns are not rendered — extend the renderer.");
+        }
+
+        return $"User(params=[{string.Join(",", user.Parameters.Select(p => $"{p.Name}:{p.Kind}"))}],"
+            + $"opens=[{string.Join(",", user.Opens.Select(SemanticTree))}],"
+            + $"props=[{string.Join(",", user.Properties.Select(p => $"{p.Name}:{p.IsPublic}:{p.Exposure}:{SemanticAlgorithm(p.Value)}"))}],"
+            + $"output=[{string.Join(",", user.Output.Select(SemanticTree))}])";
+    }
+
+    /// <summary>Semantic raw-tree rendering of a property body row of clean source.</summary>
+    private static string SemanticRawBody(string source, string propertyName = "K")
+    {
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Empty(syntax.Diagnostics);
+        var property = Assert.Single(syntax.Root.Properties, p => p.Name == propertyName);
+        return SemanticTree(Assert.Single(property.Value.Output));
+    }
+
+    [Fact]
+    public void OmittedDot_RawParse_IsThePostfixGracedDotEdge()
+    {
+        var syntax = Parser.ParseSyntax("K = a~t");
+        Assert.Empty(syntax.Diagnostics);
+        var edge = Assert.IsType<Expr.DotCall>(
+            Assert.Single(Assert.Single(syntax.Root.Properties).Value.Output));
+        var receiverGrace = Assert.IsType<Expr.Grace>(edge.Target);
+        Assert.Equal(+1, receiverGrace.Weight);
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(receiverGrace.Inner).Name);
+        Assert.Equal("t", edge.Name);
+        Assert.Null(edge.Args);
+        Assert.Equal("t", Assert.IsType<Expr.Resolve>(edge.LexicalFallback).Name);
+
+        // The compact spelling and the postfix-dotted spelling build the same
+        // SEMANTIC raw-AST shape — every semantic field agrees, including the
+        // stored fallback; only source spans differ (the dot occupies a
+        // column, so provenance can never be byte-identical).
+        Assert.Equal(SemanticRawBody("K = a~.t"), SemanticRawBody("K = a~t"));
+        Assert.Equal(SemanticRawBody("K = a~.t(b, c)"), SemanticRawBody("K = a~t(b, c)"));
+        Assert.Equal(SemanticRawBody("K = a~~.t"), SemanticRawBody("K = a~~t"));
+
+        // `a.~t` is NOT that raw shape: prefix member Grace lives on the
+        // stored fallback occurrence, a genuinely different raw topology.
+        // The three spellings converge only at ELABORATION (see
+        // OmittedDot_AllThreeSpellings_InferTheSameOrderAndBody).
+        Assert.NotEqual(SemanticRawBody("K = a.~t"), SemanticRawBody("K = a~t"));
+        Assert.Equal(
+            "DotCall(target=Resolve(a),name=t,args=null,storedFallback=Grace(Resolve(t),-1))",
+            SemanticRawBody("K = a.~t"));
+        Assert.Equal(
+            "DotCall(target=Grace(Resolve(a),1),name=t,args=null,storedFallback=Resolve(t))",
+            SemanticRawBody("K = a~t"));
+    }
+
+    [Fact]
+    public void OmittedDot_AllThreeSpellings_InferTheSameOrderAndBody()
+    {
+        Assert.Equal(["t", "a"], ParamsOf("K = a~t"));
+        Assert.Equal(["t", "a"], ParamsOf("K = a~.t"));
+        Assert.Equal(["t", "a"], ParamsOf("K = a.~t"));
+
+        AssertSameElaboratedBody("K(t, a) = a~t", "K(a, t) = a.t");
+        AssertSameElaboratedBody("K(t, a) = a~t", "K(t, a) = a~.t");
+        AssertSameElaboratedBody("K(t, a) = a~t", "K(t, a) = a.~t");
+
+        AssertResult("K = a~t\nK({x+1}, 7)", Atom(8));
+        AssertResult("K = a~.t\nK({x+1}, 7)", Atom(8));
+        AssertResult("K = a.~t\nK({x+1}, 7)", Atom(8));
+    }
+
+    [Theory]
+    [InlineData("{x + 1}", "7", 8)]
+    [InlineData("{x * 2}", "21", 42)]
+    [InlineData("{x - 40}", "82", 42)]
+    public void OmittedDot_FallbackAgreesWithTheDirectCallOnMemberlessReceivers(
+        string callable, string value, decimal expected)
+    {
+        // `K = a~t` infers `(t, a)` and its body is the ordinary
+        // structural-first dot edge. When structural lookup MISSES — here the
+        // receiver is a plain atom with no members — the edge takes its
+        // lexical fallback, which invokes `t(a)`, so on such receivers it
+        // agrees with the explicit direct-call definition `K(t, a) = t(a)`.
+        // That agreement is the FALLBACK arm only, never a universal
+        // equivalence: see OmittedDot_IsNotTheDirectCall_StructuralCollisionSplitsThem.
+        var compact = Evaluate($"K = a~t\nK({callable}, {value})");
+        var directCall = Evaluate($"K(t, a) = t(a)\nK({callable}, {value})");
+        Assert.True(
+            Result.ValueComparer.Equals(compact, directCall),
+            $"Fallback of `K = a~t` diverged from `K(t, a) = t(a)`: {compact} vs {directCall}");
+        Assert.True(Result.ValueComparer.Equals(Atom(expected), compact));
+    }
+
+    [Fact]
+    public void OmittedDot_IsNotTheDirectCall_StructuralCollisionSplitsThem()
+    {
+        // THE NON-EQUIVALENCE REGRESSION PIN: `K = a~t` is NOT universally
+        // `K(t, a) = t(a)`. The compact spelling IS the ordinary dot edge, so
+        // structural lookup on the resolved receiver runs FIRST and the
+        // lexical callable is only the fallback — exactly like `a~.t` and
+        // `a.t`. With a receiver that owns the member structurally, the
+        // inferred definition and the explicit direct-call definition
+        // diverge, so no test, spec case, or document may state the
+        // direct-call form as a universal equivalence.
+        const string defs =
+            """
+            Obj = {
+                public t = 42
+                0
+            }
+            Edge = a~t
+            DirectCall(t, a) = t(a)
+            """;
+
+        // Structural collision: the edge reads Obj's own member; the direct
+        // call invokes the supplied callable on Obj's value (its output 0).
+        AssertResult(defs + "\nEdge({x + 100}, Obj)", Atom(42));
+        AssertResult(defs + "\nDirectCall({x + 100}, Obj)", Atom(100));
+
+        // Memberless receiver: structural lookup misses, the edge falls back
+        // to the SAME lexical call — the one arm where the two forms agree.
+        AssertResult(defs + "\nEdge({x + 100}, 7)", Atom(107));
+        AssertResult(defs + "\nDirectCall({x + 100}, 7)", Atom(107));
+
+        // The dotted spellings split identically — the compact form changes
+        // nothing about dispatch.
+        AssertResult(defs + "\nEdgeDotted = a~.t\nEdgeDotted({x + 100}, Obj)", Atom(42));
+        AssertResult(defs + "\nEdgeDotted = a.~t\nEdgeDotted({x + 100}, Obj)", Atom(42));
+    }
+
+    [Fact]
+    public void OmittedDot_MultiArgument_FollowsTheDottedSpelling()
+    {
+        Assert.Equal(["t", "a", "b", "c"], ParamsOf("K = a~t(b, c)"));
+        AssertResult("K = a~t(b, c)\nK({a+b+c}, 1, 10, 100)", Atom(111));
+        AssertSameElaboratedBody("K(t, a, b, c) = a~t(b, c)", "K(a, t, b, c) = a.t(b, c)");
+    }
+
+    [Fact]
+    public void OmittedDot_RepeatedAndMixedRuns_UseOrdinaryWeightArithmetic()
+    {
+        // `a~~t` is two postfix markers (+2) on `a`, like `a~~.t`.
+        Assert.Equal(["t", "a"], ParamsOf("K = a~~t"));
+        AssertResult("K = a~~t\nK({x + 1}, 7)", Atom(8));
+        AssertSameElaboratedBody("K(t, a) = a~~t", "K(a, t) = a.t");
+
+        // `~a~t` nets weight 0: the run still carries the omitted dot, so it
+        // is the plain edge `a.t` with the ordinary `(a, t)` order.
+        Assert.Equal(["a", "t"], ParamsOf("K = ~a~t"));
+        AssertResult("K = ~a~t\nK(7, {x + 1})", Atom(8));
+        AssertSameElaboratedBody("K(a, t) = ~a~t", "K(a, t) = a.t");
+    }
+
+    [Fact]
+    public void OmittedDot_WhitespaceBetweenTheTokensIsInsignificant()
+    {
+        // Mirrors the dotted `a ~ .t` rule: the run and the member continue
+        // the expression on the same physical line regardless of spacing.
+        Assert.Equal(["t", "a"], ParamsOf("K = a ~ t"));
+        AssertResult("K(a, t) = a ~ t\nK(7, {a+1})", Atom(8));
+        AssertSameElaboratedBody("K(t, a) = a ~ t", "K(t, a) = a~t");
+    }
+
+    [Fact]
+    public void OmittedDot_StructuralPrecedence_IsUnchanged()
+    {
+        // The receiver HAS the member: every spelling selects it.
+        AssertResult(StructuralSplit + "\nObj~V", Atom(42));
+        AssertResult(StructuralSplit + "\nK(o, V) = o~V\nK(Obj, {x + 1})", Atom(42));
+        // No structural member → the lexical parameter is used.
+        AssertResult("K(o, V) = o~V\nK(7, {x + 1})", Atom(8));
+    }
+
+    [Fact]
+    public void OmittedDot_StaticFallbackCertainty_MatchesTheDottedSpelling()
+    {
+        Assert.Empty(ParamsOf("Obj = { public t = 42 0 }\nK = Obj~t"));
+        Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S~t"));
+        Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a~t\nK(7)"));
+        AssertResult("t(x) = x + 1\nK = a~t\nK(7)", Atom(8));
+    }
+
+    [Fact]
+    public void OmittedDot_SpecialForms_AreTheOrdinaryDotForms()
+    {
+        AssertResult("v = 5\nv~string", Str("5"));
+        AssertResult("S = 1, 2, 3\nS~count", Atom(3));
+        AssertResult("S = 1, 2, 3\nS~take(2)", List(Atom(1), Atom(2)));
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS~Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertSameElaboratedBody("K(v) = v~string", "K(v) = v.string");
+        AssertSameElaboratedBody("K(S) = S~take(2)", "K(S) = S.take(2)");
+    }
+
+    [Fact]
+    public void OmittedDot_ChainsLikeTheDottedSpelling()
+    {
+        AssertResult("K(a, t) = a~t.string\nK(7, {a+1})", Str("8"));
+        AssertSameElaboratedBody("K(a, t) = a~t.string", "K(a, t) = a.t.string");
+    }
+
+    [Fact]
+    public void OmittedDot_ExplicitEmptyArgs_KeepTheOrdinaryDotDistinction()
+    {
+        var withArgs = Assert.IsType<Expr.DotCall>(
+            SourceProvenance.ParseValid("F(x) = x + 1\nv = 3\nv~F()").Root.Output[^1]);
+        Assert.NotNull(withArgs.Args);
+        Assert.Empty(withArgs.Args);
+
+        var propertyStyle = Assert.IsType<Expr.DotCall>(
+            SourceProvenance.ParseValid("F(x) = x + 1\nv = 3\nv~F").Root.Output[^1]);
+        Assert.Null(propertyStyle.Args);
+
+        AssertResult("F(x) = x + 1\nv = 3\nv~F()", Atom(4));
+        AssertResult("F(x) = x + 1\nv = 3\nv~F", Atom(4));
+    }
+
+    [Fact]
+    public void OmittedDot_MemberIdentifierKeepsItsSourceSpan()
+    {
+        var root = SourceProvenance.ParseValid("K(a, t) = a~t\nK(7, {a+1})").Root;
+        var dotCall = Assert.IsType<Expr.DotCall>(root.Properties[0].Value.Output[0]);
+        Assert.Equal(new SourceSpan(1, 13, 1, 13), dotCall.MemberSpan);
+        Assert.Equal(new SourceSpan(1, 11, 1, 11), dotCall.Target.Span);
+    }
+
+    [Fact]
+    public void OmittedDot_SecondPostfixGraceEdge_IsRejectedLikeTheDottedSpelling()
+        // The second edge's receiver is the first edge's RESULT — a non-name
+        // expression — so a following `~.u` keeps the one-name rejection.
+        => AssertParseFails(
+            """
+            Dub(x) = x * 2
+            Inc(x) = x + 1
+            v = 5
+            v~Inc~.Dub
+            """,
+            GraceEligibilityFragment);
+
+    [Fact]
+    public void OmittedDot_IsNotAnOpenTarget()
+        => AssertParseFails(
+            """
+            M = {
+                public C = 5
+            }
+            R = {
+                open M~C
+                C
+            }
+            R
+            """,
+            "'grace' is not allowed in open declarations");
+
+    [Fact]
+    public void OmittedDot_IsRejectedInConditionalBranchBodies()
+        // Grace is not permitted in branch bodies; the compact spelling IS a
+        // graced edge, so it is rejected exactly like `a~.t` there.
+        => AssertParseFails(
+            "P(0) = 0\nP(x) = a~t\nP(1)",
+            "Grace is not allowed in conditional branch bodies");
+
+    [Fact]
+    public void OmittedDot_ReceiverEvaluatesExactlyOnce()
+    {
+        var error = AssertBothEvaluatorsFail("F(x) = x + 1\nbad = 1/0\nbad~F");
+        Assert.IsType<EvalError.DivByZero>(error);
+    }
+
+    [Fact]
+    public void OmittedDot_NestedLexicalScope_ResolvesLikeTheOrdinaryEdge()
+        => AssertResult(
+            """
+            Outer = {
+                t(a) = a + 1
+                K1 = a.t
+                K2 = a~t
+                K1(41)
+                K2(41)
+            }
+            Outer
+            """,
+            Seq(Atom(42), Atom(42)));
 
     [Fact]
     public void UnknownMember_RendersTheOrdinaryDotDiagnostic_InBothSpellings()

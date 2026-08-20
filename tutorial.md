@@ -516,7 +516,7 @@ Add(
 
 The same applies to dot calls and callback braces: `A.B (1)` is the dot call `A.B(1)` and `values.map { n * 2 }` is `values.map{n * 2}`, but `A.B` followed by `(1)` on the next line is the expression list `A.B, (1)`, and `values.map` followed by `{ n * 2 }` on the next line is not a callback call (write `values.map{` and break inside the braces instead). This is only about same-line whitespace between the callee and its delimiter — inside the argument list adjacency still creates argument slots, so `Add (1 2)` is the two-argument call `Add(1, 2)`. Comma and a newline both keep separate slots: `F, (1)` and `F` followed by `(1)` are expression-list structure. Non-callable targets never become calls: `2 (3)` stays the expression list `2, 3`.
 
-Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A`, while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. For `*` the trailing operator must stay detached: `A *` at the end of a line continues as the multiplication `A * B` onto the next line, while the directly attached `A*` is a completed spread expression, so `A*` followed by `B` is a spread slot and a separate row (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
+Postfix indexing follows the same line rule: `Pair:0`, `Pair :0`, and `Pair : 0` all index on the same line, but a `:`-led line never continues the previous expression — it is a parse error rather than a silent continuation, so `P = Pair` followed by a line `:0` does not define `P = Pair:0`. Postfix grace `~` is same-line only in the same way: `A~B` graces `A` and takes `B` as the omitted-dot member of the same graced dot edge (`A~B` ≡ `A~.B`, see [Grace with DotCall](#grace-with-dotcall)), while `A` followed by a line `~B` keeps `A` ungraced and parses `~B` as its own prefix-grace row. Binary operators follow the rule too: an operator-led line never continues the previous expression, so `A` followed by a line `-1` is the expression list `A, -1`, never the subtraction `A - 1` — put the operator at the end of the line (`A -` then `1` on the next line) when you want the arithmetic to continue. For `*` the trailing operator must stay detached: `A *` at the end of a line continues as the multiplication `A * B` onto the next line, while the directly attached `A*` is a completed spread expression, so `A*` followed by `B` is a spread slot and a separate row (see [Spread with the Postfix Star](#spread-with-the-postfix-star)). Comments never change any of these decisions: `A # note` followed by `-1` parses exactly like `A` followed by `-1`. Leading-dot lines are the one intentionally supported continuation: a line starting with `.` continues the dot-call chain, so method-chain layout works as long as each argument delimiter stays on the same line as its member name:
 
 ```
 (1, 2, 3)
@@ -1129,7 +1129,7 @@ K(Obj)
 
 ### Grace with DotCall
 
-[Grace](#reordering-parameters-with-grace-operator) and ordinary dot syntax compose without creating another call form. `receiver~.Name(args...)` is postfix Grace on the bare receiver name followed by ordinary dot. `receiver.~Name(args...)` is ordinary dot with prefix Grace on the participating member/fallback name. In both cases `~` can change inferred parameter order only; it never changes structural-first member selection or lexical fallback execution:
+[Grace](#reordering-parameters-with-grace-operator) and ordinary dot syntax compose without creating another call form. `receiver~.Name(args...)` is postfix Grace on the bare receiver name followed by ordinary dot. `receiver.~Name(args...)` is ordinary dot with prefix Grace on the participating member/fallback name. `receiver~Name(args...)` is the compact spelling with the adjacent dot omitted — the same edge as both dotted forms. In every case `~` can change inferred parameter order only; it never changes structural-first member selection or lexical fallback execution:
 
 <!-- spec:grace-dot-keeps-structural-precedence -->
 ```
@@ -1163,7 +1163,23 @@ K({a+1}, 7)
 
 The executable body is still exactly ordinary `a.t`: parameter detection strips Grace, leaving the same DotCall target `a`, structural name `t`, and lexical fallback `t`. Only the enclosing inferred list differs. The prefix-member spelling works the same way: `K = a.~t` with `K({a+1}, 7)` also returns `8`.
 
-Repeated markers use ordinary weight arithmetic. `a~~.t` is two postfix markers on `a`; with only `t` after it, the result is still `(t, a)`. `a~.~t` applies postfix Grace to `a` and prefix Grace to `t`, again through the same general pass. No token-sequence-specific permutation exists.
+Because the graced edge is recognized by the marker itself, the dot may be omitted when `~` sits between the two names: `a~t` is the compact spelling of the same graced dot edge. It parses to the same semantic tree as `a~.t` (only source positions differ, since the dot occupies a column), and `a.~t` — which carries its Grace on the member occurrence instead — elaborates to the same edge. Like every dot edge, the body stays **structural-first**: `t` is looked up on the resolved receiver before the lexical fallback is considered, so `K = a~t` infers `(t, a)` and the direct call `t(a)` describes only its *fallback* behavior, not a universal equivalence:
+
+<!-- spec:grace-dot-omitted-dot -->
+```
+K = a~t
+K({a+1}, 7)
+```
+
+**Result:** `8`
+
+Here `7` has no members, so structural lookup misses and the fallback invokes the callable — the same result `K(t, a) = t(a)` would give. With a receiver that owns the member the two definitions diverge, exactly as for the dotted spellings: given `Obj = { public t = 42  0 }`, the edge `K({x + 100}, Obj)` reads Obj's own `t` (42), while the explicit direct-call definition `K(t, a) = t(a)` invokes the supplied callable on Obj's value (100). Write `t(a)` when you always want the lexical call; write the dot edge (in any spelling) when you want structural-first member access.
+
+The compact member follows the ordinary postfix rules: it must sit on the **same physical line** as the grace run (a newline still separates rows, so `a~` on one line and `t` on the next stay two output rows — and a trailing comment never bridges the lines), whitespace between the tokens is insignificant (`a ~ t` is the same edge, exactly like `a ~ .t`), and argument lists attach as usual (`a~t(b, c)` ≡ `a~.t(b, c)`). An identifier that begins a declaration keeps its declaration meaning — `a~ K = 5` stays a graced output row followed by the definition `K = 5` — and an explicit comma keeps two expression slots (`a~, t`), mirroring the spread marker's `A*, B` rule. Only a bare-name postfix run opens the compact member: after a compound expression an unattached `~` still re-enters as prefix Grace on the next name (`(x + y)~t` remains the two adjacency slots `(x + y)` and `~t`).
+
+The shorthand is grammar-local — it applies where the parser recognizes both names as one graced edge — so it is not a blanket textual rewrite of `~` to `~.`. The one visible boundary is the indexing selector, which consumes a single primary: `x:a~t` selects with the whole edge (`x:(a~t)`), whereas in `x:a~.t` the dot continues the enclosing index chain (`(x:a~).t`) and no `a~.t` subexpression exists there at all.
+
+Repeated markers use ordinary weight arithmetic. `a~~.t` is two postfix markers on `a`; with only `t` after it, the result is still `(t, a)`. `a~.~t` applies postfix Grace to `a` and prefix Grace to `t`, again through the same general pass. No token-sequence-specific permutation exists. The omitted-dot spelling follows the same arithmetic: `a~~t` is `a~~.t`, and the mixed run `~a~t` nets weight 0, leaving the plain edge `a.t`.
 
 Grace still applies only to **one bare name occurrence**. Consequently `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and `a~.t~.u` reject because postfix Grace would decorate a compound receiver at the failing edge. By contrast, `(x + y).~t` is valid: its prefix Grace decorates the bare fallback name `t`, not the receiver. Ordinary ungraced dot retains full receiver generality (`(x + y).t` and `(1, 2, 3).Mean` are unchanged).
 
@@ -3926,6 +3942,7 @@ Only `public` exported properties are exposed through `load` and `open`.
 | `*` (postfix, directly attached) | Spread marker (`value*` contributes the operand's items to the surrounding supply; a `*` with a valid same-line right operand is multiplication instead) | — |
 | `~` (prefix) | Grace: move parameter one position earlier | — |
 | `~` (postfix) | Grace: move parameter one position later | — |
+| `~` (between two bare names) | Omitted-dot graced dot edge: `a~t` parses like `a~.t` and elaborates like `a.~t` too (same-line member; ordinary structural-first DotCall semantics) | — |
 | `[` `]` | Exact immutable list literal (`[1, 2, 3]`; never a call or indexing delimiter — `A[1]` is the adjacency list `A, [1]`) | — |
 
 ### Builtin Algorithms, Intrinsics, and Keywords

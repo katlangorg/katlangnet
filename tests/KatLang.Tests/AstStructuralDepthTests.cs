@@ -2419,6 +2419,14 @@ public class AstStructuralDepthProcessTests
             AssertBoundary(n => Rep("[", n) + "1" + Rep("]", n), 127);
             AssertBoundary(n => "f(x) = x\n" + Rep("f(", n) + "1" + Rep(")", n), 127);
 
+            // The omitted-dot graced call chain (`a~t(...)`) charges the same
+            // 3 units/level but keeps one extra ParsePrimary frame LIVE under
+            // each argument level (the dotted spelling pops ParsePrimary
+            // before its dot continuation runs), so this dedicated
+            // small-stack boundary is the proof that the added per-level
+            // native frame stays inside the same budget capacity.
+            AssertBoundary(n => "t(x) = x\n" + Rep("a~t(", n) + "1" + Rep(")", n), 127);
+
             // Prefix unary: ~1 unit/level.
             AssertBoundary(n => Rep("-", n) + "1", 382);
 
